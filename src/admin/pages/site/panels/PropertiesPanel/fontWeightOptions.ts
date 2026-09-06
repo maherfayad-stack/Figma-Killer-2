@@ -13,12 +13,21 @@ export function getFontWeightOptions(
   fonts: SiteFontsSettings | null | undefined,
   fallbackOptions: readonly string[],
 ): string[] {
-  const entry = resolveFontEntryForWeightOptions(fontFamilyValue, fonts)
+  const entry = resolveFontEntryForFamily(fontFamilyValue, fonts)
   const installedWeights = entry ? weightOptionsForEntry(entry) : []
   return installedWeights.length > 0 ? installedWeights : [...fallbackOptions]
 }
 
-function resolveFontEntryForWeightOptions(
+/**
+ * Resolves the installed `FontEntry` a `fontFamily` CSS value refers to —
+ * a design-token `var(--font-…)` reference, an exact family stack, or a
+ * bare family name, in that precedence. Shared with `useFontVariationAxes`
+ * (G9's Variable tab needs the very same "which installed font is this"
+ * resolution the weight picker already had; the name generalised from
+ * `resolveFontEntryForWeightOptions` accordingly — it answers one question,
+ * used by two callers).
+ */
+export function resolveFontEntryForFamily(
   fontFamilyValue: unknown,
   fonts: SiteFontsSettings | null | undefined,
 ): FontEntry | undefined {

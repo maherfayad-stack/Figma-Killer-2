@@ -1268,6 +1268,180 @@ Error messages are symmetric and leak nothing: a hostname-triggered block would 
 
 ---
 
+### panel-05 — inspector disclosure wave 2: Layout, Spacing, Size, Appearance, Typography, rotation
+
+Follows [`panel-04`](#panel-04). Plan: `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`.
+Branch `feat/inspector-progressive-disclosure`. **G6 (Fill), G7 (Stroke) and
+G8 (Effects) are NOT started** — they are the three `PropertyList` consumers.
+
+**Landed:** G3+G4 (one agent — they rewrite the same cluster), G2, G5, G9, and
+G10's missing rotation row. Measured/estimated at panel width 300: Layout
+≈440 → ≈176px, Spacing body ≈253 → ≈26px, Size 4 rows → 1 for a width-only
+element, Typography 8 grid entries → 4 rows.
+
+**Three judgement calls that are load-bearing — do not "simplify" them back.**
+
+1. **The layout settings ⚙ is RESIDENT, not inside the flex/grid block.**
+   `alignSelf` / `justifySelf` / `flex` / `gridColumn` / `gridRow` are
+   item-level: governed by the PARENT's display, which a class-style editor
+   cannot observe. The first implementation nested the trigger in the flex/grid
+   block, which made them unreachable on a plain `<div>` inside a flex row —
+   the most common node there is. Only container-level entries (`flexWrap`,
+   `rowGap`/`columnGap`) are mode-filtered. `propertiesPanel-redesign.test.tsx`
+   pins this by opening the trigger with no `display` set.
+2. **`SpacingBoxControl` was not deleted.** It moved behind the Spacing
+   section's "Box model" ⚙. It is the best control in the panel for "which side
+   is which"; it was only the wrong *default* at 253px resident.
+3. **Rotation writes the standalone `rotate` property, never a rewritten
+   `transform`.** Verified first that the publisher's gate is now permissive
+   (`isEmittableProperty`, not the old `ALLOWED_PROPS`) and that the canvas
+   imports the same `bagToCSS`. A `transform` already containing
+   `rotate()`/`rotateX()`/`rotate3d()` would silently compound, so that case
+   refuses and falls back to a raw row — the gradient/box-shadow rule.
+
+**`cssControlTypes.ts` was split.** It held how a property is CONTROLLED and how
+the panel is DIVIDED INTO SECTIONS; curating the typography long tail pushed it
+one line over the 700 budget. The registry is now `classStyleSections.ts`
+(`ClassStyleSectionDefinition`, `CLASS_STYLE_SECTIONS`,
+`getClassStyleSectionSetCounts`, `getActiveStyleTab`); six importers were
+repointed. 701 → 428 + 304.
+
+**A trap worth stating once.** G9 first reached eight typography properties via
+`as keyof CSSPropertyBag`. That cast is never cosmetic here: `keyof
+CSSPropertyBag` types the whole style pipeline, so a property that only reaches
+disk by defeating it is ALSO invisible to the section's search and its "N set"
+count — and after `panel-04`'s Law 1 that count is what decides whether a
+section may collapse and hide the user's own work. All eight are now real
+schema members and the casts are gone. **If a control needs a property the bag
+does not model, add it to the bag.**
+
+**`bun run icons:sync` cannot run in this environment** — `scripts/sync-icons.ts`
+reads sources from a sibling checkout of the PRIVATE upstream icons repo.
+Removing orphans by hand is equivalent to its step 4 (done for the three icons
+`alignmentOptions.tsx` orphaned). ADDING an icon needs someone with that
+checkout. Consequences: `RotateIcon` was hand-authored into
+`src/ui/components/InspectorIcons` (the sanctioned escape hatch), and
+**`AppearanceSection` stands in `ColorsSwatchSolidIcon` for Figma's droplet —
+vendor a real `droplet-solid` and swap it.**
+
+**MERGE HAZARD — a deliberate decision, recorded so it is not lost.**
+`feat/prototype-mode` is **20 commits / 592 files ahead of `main` and unmerged**,
+and already contains a **parent-aware** sizing model this branch cannot see:
+`elementSizing.ts` (172 lines), `useFrameParentLayout` in
+`useInspectComputedStyle.ts`, and a larger `SizeSection.tsx`. This branch was
+cut from `main`, so G2 wrote its own 84-line `elementSizing.ts` mapping Hug →
+`fit-content` and Fill → `100%` **without consulting the parent**. The user chose
+to stay on `main` and reconcile at merge. **At merge: keep prototype-mode's
+parent-aware `currentSizingMode`/`sizingPatch`/`useFrameParentLayout` and layer
+this branch's `AddablePropertyField` disclosure UI on top. Do not take this
+branch's `elementSizing.ts` wholesale — it is the weaker model.**
+
+**Verification:** `bun test src/__tests__/architecture` 511/511; `bun test src/ui
+src/admin src/__tests__/panels src/__tests__/fonts` 1179/1179; `bun run build`
+and `bun run lint` clean.
+
+**Human action needed — still not dogfooded end to end.** Per
+`dogfood-ui-before-gating`. Drive `:5173`: a plain `<div>` with no `display`
+should show the display switcher, a two-field padding row, a Clip content
+checkbox and a resident ⚙ — open it and confirm `alignSelf` is writable. Then
+`display: flex` → the 3×3 pad, gap, and container-only rows appear in the ⚙;
+`display: grid` → the inverse. Check Size shows one row for a width-only
+element and that "Add minimum width" writes nothing until you type. Check
+Typography is four rows and its ⚙ tabs. Check Position's rotation field, and
+that a node with `transform: translateX(20px)` keeps it.
+
+---
+
+### panel-04 — the inspector's progressive-disclosure pass: wave 1 (four primitives + three orders)
+
+**Branch:** `feat/inspector-progressive-disclosure`, off `main`. Plan:
+[`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`](STUDIO-INSPECTOR-DISCLOSURE-PLAN.md) —
+the second half of `STUDIO-FIGMA-PARITY-PLAN.md` §10 Track G. Track G's density
+passes shipped; **this is disclosure.** Figma's panel is not smaller because its
+controls are smaller — it is smaller because at rest it does not draw controls
+for things you have not used. The plan derives five laws from a 31-screenshot
+reference set and turns them into eleven work orders. Wave 1 landed seven of
+them in parallel; **G2, G3, G4, G5, G6, G7, G8, G9 are NOT started.**
+
+**Four new primitives, all unwired on purpose.** Later orders consume them; a
+wave-1 agent reaching into `LayoutSection` would have collided with the wave-4
+rewrite. Signatures are in each component's doc comment.
+- `InspectorPopover` (`src/ui/components/InspectorPopover/`) — the anchored
+  *panel* (not menu) behind Law 2. Presence-mounted like `ContextMenu`; no
+  `open` prop. **It also collapsed the duplicate positioning maths:**
+  `useAnchorPosition.ts` + `usePointPosition.ts` are DELETED, merged into
+  `src/ui/lib/useAnchoredFloating.ts`, and `ContextMenu` was rebuilt on it.
+  There is now exactly one copy in the tree.
+- `PropertyList` (Law 1's list shape) — renders `null` when empty; the header
+  and `+` stay in the caller's `Section`. The eye is opt-in via
+  `onToggleVisible` and **absent by default** (plan §8 decision 1: CSS has no
+  disabled declaration, so no storage model was invented).
+- `ExpandableFieldCluster` (Law 4) — `linked` is derived by the caller, never
+  stored; **expanding writes nothing**; sticky per cluster id.
+- `AddablePropertyField` + `RevealedField` (Law 3) — `onAdd(key)` *reveals*, and
+  is tested to write nothing.
+
+**Three orders landed.** `G1` (empty-section law) added
+`ClassStyleSectionDefinition.collapsedWhenEmpty` on background/border/effects/
+interaction/typography and collapses them to a one-line `[styles][+]` header;
+`G10` mounted `AlignBar` for single-node selection with honest-write resolution,
+moved distribute/tidy into an overflow menu, added F29 constraint side-pickers,
+and moved `zIndex` behind a settings trigger; `G3.3` built the `AlignGrid` 3×3
+pad (component only, not wired).
+
+**Three traps a future agent must not re-learn.**
+1. **Emptiness must be judged across contexts.** `G1` threads a new
+   `crossContextStyles` prop from `StyleRuleComposer` so a value set only on a
+   non-active breakpoint keeps its section open. Judging on the active tab alone
+   hides the user's own work behind a `+`. `InlineStyleComposer` deliberately
+   does NOT pass it — `style=""` has no context axis.
+2. **`Button` + `aria-expanded` + a closing overlay destroys the trigger node.**
+   `Tooltip.tsx` does `if (disabled) return children` vs mounting
+   `TooltipInner` — a different element type at the same tree position — so the
+   `aria-expanded` flip that closes an overlay makes React tear down and
+   recreate the `<button>`. A synchronous `triggerRef.current?.focus()` in a
+   close handler focuses a discarded node and focus lands on `<body>`. Defer one
+   rAF past cleanup and re-query the ref. `InspectorPopover` has a regression
+   test using the real `Button`+tooltip combo.
+3. **Portalled surfaces escape `data-field-skin="inspector"`.** The panel root
+   sets it and the cascade does the rest — but a portal renders outside that
+   subtree and would draw admin pill controls. `InspectorPopover` sets it on its
+   own root; anything portalled must.
+
+**Gate note.** The `AlignGrid` agent verified against four hand-picked
+architecture tests and shipped a real `admin-spacing-token-policy` failure
+(`gap: 2px`, `padding: 1px`). Its stated reason — that the clamp()-based
+`--space-*` scale would breach the pad's 48px budget — was false: `.grid` pins
+`width`/`height` with `box-sizing: border-box`, so gap and padding shrink the
+`1fr` cells, not the box. **Run the whole `src/__tests__/architecture` folder,
+not a subset.**
+
+**Verification at wave end:** `bun test src/__tests__/architecture` 511/511,
+`bun test src/ui src/admin src/__tests__/panels` 1060/1060, `bun run build`
+clean, `bun run lint` clean. No tokens added to `globals.css`; no `icons:sync`
+needed (`MinusIcon`'s new import in `AddablePropertyField` incidentally fixed a
+pre-existing `vendor-icons-fresh` orphan failure). Pre-existing unrelated
+failures remain in `cmsPlugins` / `exportDialog` / the plugin scheduler.
+
+**Known limitation, documented not fixed:** G10's constraint side-switch
+(`left`→`right`) correctly never leaves both properties set, but costs **two
+undo entries** — `onChange`/`onClearProperty` are single-property. A one-call
+multi-key commit needs a patch-shaped prop on `StyleSectionsEditor` /
+`StyleRuleComposer` / `InlineStyleComposer`.
+
+**Human action needed — nothing here has been dogfooded in a browser.** Per
+`dogfood-ui-before-gating`, green gates have given false confidence in this repo
+before. Drive `:5173`: (a) select a plain `<div>` with an empty class and
+confirm Background/Border/Effects/Interaction/Typography are single `+` lines
+while Position/Size/Layout/Spacing keep their controls; (b) set a value on a
+non-desktop breakpoint and confirm that section stays open with its dot lit on
+the Desktop tab; (c) select a div inside a flex row and confirm the align
+buttons that cannot write honestly are disabled *with a reason*; (d) set
+`position: absolute` and confirm the Left▾/Top▾ pickers move the value rather
+than duplicating it.
+
+---
+
 ### mcp-09 — the component API the extractor could not find was sitting in 29 Figma Code Connect files
 - **Agent:** mcp-tooling
 - **Stage:** done.
@@ -1920,6 +2094,30 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### meta-07 — the first three screens a new user sees still spoke in the CMS's voice
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** nothing on a first-contact surface calls this product a CMS, or calls it "ALM Figma Killer". The product is **Studio**, and the thing that fails to load is the user's React project.
+- **Scope:** `src/admin/preauth/AdminPreAuthForm.tsx`, `src/admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx`, `src/admin/pages/site/toolbar/SettingsButton.tsx`, `src/admin/modals/{SiteImport/SiteImportModal,ImportHtml/ImportHtmlModal}.tsx`, `src/admin/shared/ExportDialog/ExportDialog.tsx`, `src/admin/spotlight/commands/help.ts`, `src/admin/AppLoadingScreen.tsx`, `src/ui/components/AlmLogo/AlmLogo.tsx`, `server/handlers/cms/me.ts`, `index.html`, `src/admin/pages/site/preferences/{catalog,editorPreferences}.ts`, `docs/design.md`, and the tests/e2e helpers that pinned the old strings.
+- **Done so far:**
+  - **Pre-auth** (`AdminPreAuthForm.tsx:41-42`): "Set Up CMS"/"Create Admin" → "Set up Studio"/"Create account"; "Admin Login"/"Sign In" → "Sign in to Studio"/"Sign in". `:128` brand fallback `'ALM Figma Killer'` → `'Studio'`.
+  - **Canvas load failure** (`AdminCanvasEditorBody.tsx:222`): "Could not load CMS site" → "Could not open this project". What failed is a directory of `.tsx` under `studio-workspace/`, not a CMS document.
+  - **Settings gear** (`SettingsButton.tsx:31`): `openSettings('general')` → `openSettings('preferences')`. 'general' is the CMS site's meta tags — site name, description, favicon. Both source-reading gates updated (`settingsModal.test.tsx`, `toolbar.test.ts`).
+  - **Product name unified to "Studio"** in four `eyebrow=` props, the spotlight "About …" command + its copied env-info block, `AlmLogo`'s `aria-label`, `AppLoadingScreen`'s label, `index.html`'s `<title>` and pre-hydration loader label, and the TOTP `issuer` in `server/handlers/cms/me.ts:188`.
+  - **Bonus, landed:** a third `theme` option, **System**. `catalog.ts:183` adds it; `editorPreferences.ts:260` adds `resolveEditorTheme(theme, prefersLight)` and a `matchMedia('(prefers-color-scheme: light)')` subscription, so `useEditorAppearancePreferences` now returns the RESOLVED theme.
+- **Next step:** none for this entry. The setup form's "Site name" field (and the `setupCms({ siteName })` call under it) is still CMS-shaped — left alone deliberately, it is a data-model question, not a copy one.
+- **Decisions:**
+  - **`resolveEditorTheme` collapses three states into two before the stamp.** `globals.css` gates the light palette on `[data-editor-theme='light']`, and `AdminPageLayout.tsx:125` / `AdminCanvasLayout.tsx:231` each mirror the same attribute onto their own roots. Stamping a literal `system` would match no token block anywhere. The raw preference is what gets persisted and what the Select shows; only the stamp is resolved.
+  - **Renamed the TOTP issuer.** The issuer is provisioning-time only — it is not an input to TOTP verification — so an already-enrolled authenticator entry keeps working; only new enrolments get the new label. Confirmed against `server/auth/mfa.ts:17-20`.
+  - **No identifier renames.** `AlmLogo`, `setupCms`, `loginCms`, `CMS_API_PREFIX` are untouched. This is user-facing voice, not a refactor.
+- **Landmines:**
+  - The pre-auth headings are **e2e selectors**, not just copy: `tests/e2e/helpers/auth.ts` drives setup and login by accessible name. Changing this copy without changing that helper silently breaks every authenticated e2e spec. Updated here (`accessibility.e2e.ts`, `auth.e2e.ts`, `helpers/auth.ts`) but **not run** — see `standing-02`.
+  - `resolveEditorTheme` deliberately falls back to dark for an unrecognised stored value. A newer build could write a theme this one has never heard of, and the old behaviour stamped it verbatim, which would have matched neither palette. Pinned by a test.
+  - `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx` is **timing-flaky**, not broken: consecutive runs of that one file gave 2 fails then 1 fail with an identical tree. Do not chase it as a regression.
+- **Verification:** `bun run lint` ✅ (exit 0). `tsc -b` ✅ (exit 0). `bun test` → 10209 pass / 80 fail; diffed the failing-test set against a run on `feat/dashboard-import-entry` — identical except the one flaky canvas-unroll case above. All are `standing-01`-class (claudeCli driver suite, canvas/NodeRenderer/VC suites, `icon-catalog-integrity`'s `chevron-left` sample). `bun test src/__tests__/{settings,toolbar,app,admin,spotlight}` → 289 pass / 0 fail after updating the three copy-pinning gates. **Playwright not run** (`standing-02`).
+- **Human action needed:** **dogfood.** (1) Log out and confirm the login heading reads "Sign in to Studio" and the button "Sign in"; on a fresh DB the setup screen reads "Set up Studio" / "Create account". (2) Click the toolbar gear and confirm it opens on **Preferences**, not General. (3) Settings → Preferences → Theme → **System**, then flip macOS between Light and Dark with the modal open and confirm the chrome repaints live, with no reload — and that reopening the modal still shows "System" selected. (4) Confirm the browser tab title reads "Studio". (5) If anyone has TOTP enrolled, confirm their existing code still verifies (it should — the issuer is not part of the algorithm).
+
 ### board-27c — canvas silently drops `color-mix()`, system colours, slash-alpha `rgb()` from a project's own CSS
 - **Agent:** studio-architect
 - **Stage:** design — **implemented, see `board-27e` below (this entry's design shipped unchanged from what's written here).**
@@ -2200,6 +2398,95 @@ Verified directly against the live iframe DOM (`class` attribute literally empty
 
 - **Verification:** `bun run build` → passes. `bun run lint` → **0 errors** (after moving `createVendorCssMemo` out of the component module). `bun test src/__tests__/{canvas,store,persistence,editor-store,architecture}` → **1784 pass / 11 fail**; all 11 match the pre-existing baseline measured on this same branch with the changes stashed out (5 × B3 NodeRenderer lock-down, `visual-component-ref inline base.body root`, `canvas body context menu`, `pin ⇄ unroll`, 2 × `selection does not leak between two board frames`, plus the `pixel-art-icons chevron-left` catalog gate). `bun run bench --only=agent-turn` → runs (it could not even import before).
 - **Human action needed: dogfood the canvas.** Open a board with **6+ frames at mixed widths** (`studio-workspace/test-3` has the 178 KB CSS corpus these numbers came from) at **~50% zoom**, then: (a) type into a text node and watch that the save status goes `unsaved` and stays there until you STOP typing — it should not flip to `saving` mid-word; (b) drag a frame by its header and watch that the other frames' content does not flicker/re-render; (c) zoom out past the virtualization boundary so 6 → 15 frames mount and see whether the stall is visibly shorter than the 290 ms `perf-01` recorded. (c) is the one number I could not measure here.
+### docs-01 — `PROJECT-BRIEF.md` re-verified against the shipped tree; 8 of its 10 "does NOT work" items had already landed
+- **Agent:** studio-scribe
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** the brief's two status lists describe the tree as it is, so a new agent
+  stops re-solving solved problems. Every claim checked against source, not
+  against another doc.
+- **Scope:** `PROJECT-BRIEF.md` (§2 diagram + invariant 1, §3 table + both status
+  lists, §6 trap 11), `README.md` (quick-start entry point),
+  `docs/e2e/agent-upgrade-dogfood.md` (A1's URL),
+  `STUDIO-FIGMA-PARITY-PLAN.md` (§1 header note only — the table body is left
+  as written, per §0a's own rule). No source files touched.
+- **Sources of truth used, in this order:** `STUDIO-FIGMA-PARITY-PLAN.md` §0a
+  (the per-track ledger) and `STATE.md`'s `parity-01`, then **every claim
+  re-read in the code** before it was written down. Two of the claims handed to
+  me did not survive that check — see Landmines.
+- **Corrected from "not built" to shipped** (each verified by reading the file):
+  - New-CSS creation — `src/core/css-codemods/insertRule.ts`,
+    `studioCssWriteback.ts`'s `op: 'insert'` / `op: 'create'` +
+    `ensureStylesheetImport` (the ts-morph half that wires the new stylesheet's
+    `import` into the page).
+  - Project-wide component catalog — `server/handlers/studio/components.ts`,
+    `studio/componentCatalog.ts`. Live consumers confirmed:
+    `InstanceCallSiteView.tsx:154` (swap candidates) and `SlotPicker.tsx:73`.
+  - Dependency install — `server/handlers/studio/installDeps.ts` +
+    `DependenciesPanel/useDependencyInstallJob.ts`. The `// TODO(Phase G)` stubs
+    the brief cited are gone; `DepsSection.tsx`'s own header records their
+    deletion.
+  - Scroll unrolling (`canvasScrollUnroll.ts` + `CanvasScrollUnrollInjector.tsx`),
+    frame multi-select and bulk actions (`boardFrameSelectionActions.ts`,
+    `BoardFramesLayer/useMarqueeSelection.ts`, `FrameBulkInspector.tsx`).
+  - Visual-audit MCP tools — 46 `studio_*` names counted in
+    `server/ai/mcp/tools/studio/`, incl. `studio_export_frames`,
+    `studio_diff_frames`, `studio_fidelity_report`, `studio_compare`,
+    `studio_quality_check`.
+  - Trust tiers — `server/handlers/studio/trustTier.ts`,
+    `studio/studioProjectTrust.ts`; invariant 1 in §2 rewritten, because it
+    still claimed the relaxation had not shipped.
+  - Class-to-source writes (`setJsxClassName.ts` + the `kind: 'class'` edit),
+    which the brief never mentioned at all and which is the only way to edit a
+    Tailwind element.
+- **Left listed as open, each re-confirmed in code:** CSS-in-JS is
+  detection-only (`styleToolchainDetect.ts:86`); reparent/duplicate/wrap still
+  refuse (`sourceStructure.ts:148-177`); JS-driven animation is not frozen
+  (`CanvasAnimationInjector.tsx:66` says so explicitly); Tailwind/Sass/PostCSS
+  compile needs Tier-1 promotion so a fresh import renders unstyled
+  (`styleCompile.ts:444`); the insert picker lists `registry.list()`, not the
+  catalog (`ModuleInserterDialog.tsx:118`); a package-sourced instance cannot be
+  detached (`detachComponent.ts:309`).
+- **Decisions:** the brief no longer tries to carry granular per-track status —
+  it now points at `STUDIO-FIGMA-PARITY-PLAN.md` §0a for that and keeps only the
+  orientation-level set. Two lists in one file was how this drifted in the first
+  place.
+- **Landmines — two claims I was handed that the code does not support:**
+  1. **Breakpoint-scoped CSS writes do NOT reach disk.** `insertRule` and both
+     the `insert`/`create` payload schemas take an `atMedia` query, but a
+     repo-wide grep finds **no producer**: `collectStyleRuleEdits`
+     (`styleRuleWriteback.ts:529-534`) still routes any real `@media` context to
+     `unwritableContexts`. The capability exists end-to-end below the editor and
+     is unreachable from it. Wiring one producer closes it.
+  2. **Trap 11 is half-fixed, not fixed.** `selectCanvasPageFor`'s `pageId`
+     lookup is memoised (`lookupCanvasPageById`, `store.ts:303`), but the
+     `frameId` branch added at `store.ts:344-350` does an uncached
+     `selectActiveBoard(s)?.frames.find(...)` — a scan over boards then frames —
+     ahead of the memo, on the same per-node path. The trap text now describes
+     that instead of the fixed half.
+  Also: `.module.scss`/`.sass`/`.less` are detected and warned about
+  (`styleCompile.ts:195`), not "undetected" as the brief said.
+- **Known gap, stated not hidden:** `CLAUDE.md` still carries two of the same
+  stale claims — "Studio mode is entered at `/admin/site?studio`" and the
+  parse-never-execute parenthetical "until that ships, it holds absolutely".
+  Both are false in this tree (there is no `studioMode.ts` and no `?studio`
+  param; `src/admin/router.tsx:57` renders the editor unconditionally, and Tier 1
+  ships). I did not edit `CLAUDE.md` — it is the rule book and out of a scribe's
+  lane. **Someone with that lane should fix those two lines.** Everything else I
+  found stale in the same sweep was corrected here.
+- **Second known gap:** `Recently landed` holds **58** entries against the
+  protocol's "roughly ten". Archiving ~48 of them is a ~9,000-line move through
+  a file several agents append to concurrently, and folding it into a docs PR
+  would guarantee a merge collision and bury the actual correction. Left
+  deliberately undone and recorded here so it is a stated gap, not a silent one.
+  It wants its own PR, run when no other wave is in flight.
+- **Next step:** none for this entry. If you touch the style panel, close
+  Landmine 1; if you touch the store, close Landmine 2.
+- **Verification:** `bun test src/__tests__/architecture` — see the commit. No
+  source files changed, so build/lint are unaffected.
+- **Human action needed:** none.
+
+---
 
 ### parity-01 — Phase 0 + Band 1/2 of `STUDIO-FIGMA-PARITY-PLAN.md` executed by 13 parallel agents. **Uncommitted, in the working tree, awaiting human review.**
 - **Agent:** coordinator (13 specialist agents, 4 waves, disjoint file sets)

@@ -9,7 +9,7 @@
 import { useEditorStore } from '@site/store/store'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
 import { StyleSectionsEditor } from './StyleSectionsEditor'
-import { getActiveStyleTab } from './cssControlTypes'
+import { getActiveStyleTab } from './classStyleSections'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 
 // ---------------------------------------------------------------------------
@@ -159,10 +159,17 @@ export function StyleRuleComposer({
   // when the toolbar context switcher changes the target.
   const sectionKey = activeContextId ?? 'base'
 
+  // Every context bag this rule holds, regardless of which tab is active —
+  // STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G1's empty-section law must not
+  // collapse a section that has a value set on some OTHER breakpoint or
+  // condition than the one currently open.
+  const crossContextStyles = [cls.styles, ...Object.values(cls.contextStyles)]
+
   return (
     <StyleSectionsEditor
       storedStyles={storedStyles}
       currentStyles={currentStyles}
+      crossContextStyles={crossContextStyles}
       sectionKey={sectionKey}
       styleQuery={styleQuery}
       onChange={handleChange}

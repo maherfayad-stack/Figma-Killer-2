@@ -1,0 +1,66 @@
+/*
+ * EffectsSection — F13/F20/F21's list shape: the body is a `PropertyList`
+ * (imported from `@ui/components/PropertyList`, no local styling needed for
+ * the rows themselves) plus the popover contents this file DOES own — the
+ * shadow-layer swatch, the shadow-layer field grid, and the raw-text
+ * fallback note.
+ */
+
+/* ── Leading swatch (shadow layers) ────────────────────────────────────── */
+
+.swatch {
+    width: var(--space-l);
+    height: var(--space-l);
+    border-radius: var(--radius-sm);
+    background: var(--effect-swatch-color);
+    flex-shrink: 0;
+}
+
+.swatchInset {
+    background: transparent;
+    border: var(--space-4xs) solid var(--effect-swatch-color);
+}
+
+/* ── EffectEditorPopover — raw-text fallback ──────────────────────────── */
+
+.rawEditor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.rawEditorReason {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+}
+
+/* ── EffectEditorPopover — shadow layer fields (F21) ──────────────────── */
+
+.shadowFields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-m);
+}
+
+.insetRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    color: var(--text);
+    font-size: var(--text-xs);
+}
+
+.shadowGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-s);
+}
+
+/* ── EffectsSectionActions — header ⚙ badge ───────────────────────────── */
+
+.settingsBadge {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+}

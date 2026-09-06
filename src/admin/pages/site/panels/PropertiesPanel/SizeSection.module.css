@@ -4,7 +4,28 @@
  * (width-family on the left, height-family on the right) so the six most
  * common size fields occupy three compact rows instead of six full-width
  * ones. Each field carries its label *inside* the leading edge (via the
- * Input `prefix` slot), matching Figma's "W 1440 / H 732" cells. */
+ * Input `prefix` slot), matching Figma's "W 1440 / H 732" cells. The rare
+ * `aspectRatio`/`boxSizing` pair live behind `.sizeSettingsTrigger`'s ⚙
+ * popover rather than a resident second row — see `SizeSection.tsx`. */
+
+/* W/H plus the settings trigger (aspectRatio/boxSizing's popover), one row —
+ * the pair grows, the trigger stays its own intrinsic width. `flex-start`
+ * keeps the trigger flush with the fields' top edge even when an axis grows
+ * a second (mode segmented) row underneath itself. */
+.sizeRow {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--inspector-field-gap);
+    min-width: 0;
+}
+
+.sizeRow > .sizeGrid {
+    flex: 1 1 auto;
+}
+
+.sizeSettingsTrigger {
+    flex-shrink: 0;
+}
 
 /* Two equal columns on the inspector's own field gap — the same rhythm
  * `StackedPropertyGrid` uses for its paired cells, so the Size block lines up
@@ -16,55 +37,35 @@
     min-width: 0;
 }
 
-.sizeGrid + .sizeGrid {
-    margin-top: var(--inspector-group-gap);
-}
-
 /* Grid items default to `min-width: auto`, which lets a long value push a
  * cell past its track and the whole panel into horizontal overflow. */
 .sizeGrid > * {
     min-width: 0;
 }
 
-/* One dimension cell wraps a single in-field-labelled input plus a
- * hover-revealed clear button overlaid on the trailing edge. */
-.dimCell {
-    position: relative;
+/* One axis cell stacks the W/H `AddablePropertyField` above its own
+ * Fixed/Hug/Fill `SegmentedControl` — the segmented row only mounts while
+ * that axis's mode is Hug or Fill, so this gap only ever costs height when
+ * it's actually shown. */
+.axisCell {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
     min-width: 0;
 }
 
-.dimInput {
-    width: 100%;
+.modeRow {
+    min-width: 0;
 }
 
-/* Clear button overlays the trailing edge of the input on hover/focus,
- * fading in/out so the cell stays compact when idle. Mirrors
- * PositionSection's .directionClearBtn. */
-.dimClearBtn.dimClearBtn {
-    position: absolute;
-    top: 50%;
-    right: 4px;
-    width: 18px;
-    height: 18px;
-    border-radius: 6px;
-    background: var(--bg-surface-2);
-    border: 1px solid var(--border-muted);
-    color: var(--text-muted);
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(-50%);
-    transition:
-        opacity 100ms ease,
-        background-color 100ms ease,
-        color 100ms ease;
+/* A revealed min/max constraint row (Law 3 — `RevealedField`) sits below the
+ * W/H grid as its own full-width row, not paired into the two-column grid:
+ * each axis's constraints reveal independently, so pairing them would leave
+ * empty cells whenever only one axis has one. */
+.revealedRow {
+    margin-top: var(--inspector-group-gap);
 }
 
-.dimCell:hover .dimClearBtn,
-.dimCell:focus-within .dimClearBtn {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.dimClearBtn.dimClearBtn:hover {
-    color: var(--text);
+.revealedRow + .revealedRow {
+    margin-top: var(--inspector-field-gap);
 }
