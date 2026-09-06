@@ -29,6 +29,12 @@
  * know nothing: buttons, inputs, labels and containers all report the same way,
  * which is what makes this cover "all components" rather than the one that was
  * complained about.
+ *
+ * ## Where it reads
+ *
+ * The iframe's document, never the frame host element. Every board frame renders
+ * its page inside its own `<iframe>` (`IframeFrameSurface`), so both the nodes
+ * and the window that resolves style for them belong to that iframe.
  */
 import { parseValue } from '@core/utils/typeboxHelpers'
 import { StudioComputedStylesInputSchema, aiToolError, aiToolOk } from '@core/ai'
@@ -111,12 +117,25 @@ export function runStudioComputedStyles(rawInput: unknown): AiToolOutput {
     )
   }
 
-  const doc = frame.ownerDocument
-  const view = doc.defaultView
-  if (!view) return aiToolError('The board frame has no window to read styles from.')
+  // Every board frame renders its page inside its own `<iframe>`
+  // (`IframeFrameSurface`), so both halves of this read belong to the iframe,
+  // not to the admin page that hosts it: the `[data-node-id]` elements live in
+  // its `contentDocument`, and the style that applies to them is resolved by
+  // its own `defaultView` against its own stylesheets and font set. Reading the
+  // host finds no page nodes at all — and would resolve font availability
+  // against the ADMIN document, which knows nothing about the fonts the user's
+  // project loaded. `studio_page_diagnostics` reaches through the same iframe.
+  const iframe = frame.querySelector<HTMLIFrameElement>('iframe')
+  const doc = iframe?.contentDocument ?? null
+  const view = doc?.defaultView ?? null
+  if (!doc?.body || !view) {
+    return aiToolError(
+      `The board frame for page "${input.pageId}" has not finished mounting its document yet, so there is nothing to measure — this is NOT an empty page. Take a studio_screenshot to force the frame to settle, then call this again.`,
+    )
+  }
 
   const wanted = input.nodeIds ? new Set(input.nodeIds) : null
-  const elements = Array.from(frame.querySelectorAll<HTMLElement>('[data-node-id]'))
+  const elements = Array.from(doc.querySelectorAll<HTMLElement>('[data-node-id]'))
 
   const rows: ComputedStyleRow[] = []
   let skippedNoText = 0
