@@ -7,6 +7,11 @@
  * Sizes:     micro (18px) | xs (26px) | sm (28px, default) | md (32px) | lg (44px touch target)
  * Icon-only: iconOnly={true} → square, requires aria-label
  * Pressed:   pressed={true} → aria-pressed + active bg (toolbar toggles)
+ * Loading:   loading={true} → disabled + aria-busy + a centred spinner. The
+ *            resting label stays in flow (hidden) so the button keeps its exact
+ *            width — an async action must never resize the row it lives in.
+ *            Callers pass their normal children; do NOT also swap the label to
+ *            "Saving…" or hand-roll `aria-busy`.
  * Tooltip:   tooltip={...} → wraps with Tooltip primitive (works for disabled too).
  *            Auto-suppressed while aria-expanded={true} (open dropdown/menu),
  *            so the tooltip never overlays the popup it triggered.
@@ -39,6 +44,12 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   dangerHover?: boolean;
   numeric?: boolean;
   /**
+   * In-flight state for an async action. Disables the button, sets `aria-busy`,
+   * and overlays a spinner on top of the (still laid-out, visually hidden)
+   * children so the button's width does not change mid-request.
+   */
+  loading?: boolean;
+  /**
    * Tooltip content shown on hover. Works even for disabled buttons — icon-only
    * disabled buttons especially benefit from a tooltip to communicate their
    * purpose when they cannot be activated.
@@ -67,6 +78,7 @@ export function Button(
     navItem = false,
     dangerHover = false,
     numeric = false,
+    loading = false,
     className,
     children,
     type = "button",
@@ -97,10 +109,15 @@ export function Button(
     // still lands on the rendered <button> for accessibility.
     const popupOpen = rest['aria-expanded'] === true || rest['aria-expanded'] === 'true'
 
+    // `loading` is a disabled state with a reason: the action is already in
+    // flight, so a second click must not land. Everything below treats the two
+    // identically — only the spinner and `aria-busy` tell them apart.
+    const inert = !!disabled || loading;
+
     // When a tooltip is provided alongside disabled, use aria-disabled instead
     // of the native disabled attribute so that mouseenter still fires and the
     // tooltip can show (native disabled silently swallows pointer events).
-    const useAriaDisabled = !!disabled && !!tooltip;
+    const useAriaDisabled = inert && !!tooltip;
 
     // effectiveAriaDisabled is true when:
     //   • disabled+tooltip combo (converts to aria-disabled), OR
@@ -114,6 +131,7 @@ export function Button(
         type={type}
         aria-label={ariaLabel}
         aria-pressed={pressed !== undefined ? pressed : undefined}
+        aria-busy={loading || undefined}
         data-active={active ? "true" : undefined}
         data-tone={tone !== "default" ? tone : undefined}
         data-danger-hover={dangerHover ? "true" : undefined}
@@ -128,16 +146,25 @@ export function Button(
           menuItem && styles.menuItem,
           navItem && styles.navItem,
           numeric && styles.numeric,
+          loading && styles.loading,
           className,
         )}
         {...restProps}
         // Override disabled/aria semantics and click interception for both the
         // disabled+tooltip case and the direct aria-disabled case.
-        disabled={useAriaDisabled ? undefined : (disabled || undefined)}
+        disabled={useAriaDisabled ? undefined : (inert || undefined)}
         aria-disabled={effectiveAriaDisabled ? true : undefined}
         onClick={effectiveAriaDisabled ? (e: React.MouseEvent<HTMLButtonElement>) => e.preventDefault() : onClick}
       >
-        {children}
+        {loading ? (
+          <>
+            <span className={styles.spinner} aria-hidden="true" />
+            {/* Still laid out, just invisible — this is what pins the width. */}
+            <span className={styles.loadingLabel}>{children}</span>
+          </>
+        ) : (
+          children
+        )}
       </button>
     );
 

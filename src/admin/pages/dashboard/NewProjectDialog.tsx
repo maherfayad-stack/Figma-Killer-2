@@ -70,8 +70,8 @@ export function NewProjectDialog({ open, busy, onClose, onCreate }: NewProjectDi
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => submit()} disabled={busy}>
-            {busy ? 'Creating…' : 'Create project'}
+          <Button variant="primary" onClick={() => submit()} loading={busy}>
+            Create project
           </Button>
         </>
       }

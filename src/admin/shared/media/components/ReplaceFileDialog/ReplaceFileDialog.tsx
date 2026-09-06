@@ -88,9 +88,10 @@ export function ReplaceFileDialog({ asset, open, onClose, onReplace }: ReplaceFi
           <Button
             variant="primary"
             onClick={() => void handleConfirm()}
-            disabled={!picked || busy}
+            disabled={!picked}
+            loading={busy}
           >
-            {busy ? 'Replacing…' : 'Replace file'}
+            Replace file
           </Button>
         </>
       )}

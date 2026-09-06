@@ -140,9 +140,10 @@ export function PluginSettingsDialog({
             size="sm"
             type="button"
             onClick={() => void save()}
-            disabled={loading || saving || !schema || schema.length === 0 || loadError !== null}
+            disabled={loading || !schema || schema.length === 0 || loadError !== null}
+            loading={saving}
           >
-            {saving ? 'Saving...' : 'Save settings'}
+            Save settings
           </Button>
         </>
       }
