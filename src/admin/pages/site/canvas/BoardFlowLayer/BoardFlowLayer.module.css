@@ -1,0 +1,133 @@
+/*
+ * The flow-map overlay. Sits inside CanvasTransformLayer, so children position
+ * in BOARD coordinates and inherit pan/zoom without any math here.
+ *
+ * Every visible dimension counter-scales by `1 / var(--canvas-zoom)` so a
+ * connector is the same weight on screen at every zoom — the CommentPin
+ * pattern. A stroke width in board units would be a hairline on a zoomed-out
+ * board (exactly when the flow map is most useful) and a stripe up close.
+ */
+
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    /*
+     * Below the comment pins (z-index 6) and above the board furniture. A
+     * connector is part of the board's own reading; a review pin is a thing
+     * you click, and has to stay on top of everything including this.
+     */
+    z-index: 5;
+}
+
+/*
+ * The curve's own SVG viewport, in board coordinates. `overflow: visible` is
+ * belt and braces — flowGeometry pads the box to the control hull, which a
+ * cubic bezier cannot leave — but a stroke half-width still rounds outward.
+ */
+.curve {
+    position: absolute;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.curve path {
+    fill: none;
+    stroke: var(--canvas-flow-code);
+    stroke-width: calc(1.5px / var(--canvas-zoom));
+    stroke-linecap: round;
+    /*
+     * Dashed, and that is the honest reading: this line is not part of the
+     * user's layout, it is Studio annotating it. Dash geometry counter-scales
+     * with everything else so the rhythm is constant on screen.
+     */
+    stroke-dasharray: calc(7px / var(--canvas-zoom)) calc(5px / var(--canvas-zoom));
+    opacity: 0.85;
+}
+
+/*
+ * The arrowhead. A rotated triangle rather than an SVG <marker> so it can
+ * counter-scale in CSS: a marker lives in the SVG's own user space and would
+ * grow and shrink with the board.
+ *
+ * `--flow-arrow-angle` is set per connector by the layer (the travel direction
+ * at the tip); the default here is what keeps that `var()` fallback-free, per
+ * the no-css-var-fallbacks rule.
+ */
+.arrow {
+    --flow-arrow-angle: 0deg;
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: var(--canvas-flow-code);
+    /* A triangle pointing east, so 0deg is "travelling right". */
+    clip-path: polygon(100% 50%, 0% 0%, 0% 100%);
+    /*
+     * Order matters: counter-scale FIRST so the rotation and the centring
+     * translate both happen in screen space, then rotate, then pull the shape
+     * back so its TIP — not its centre — sits on the endpoint.
+     */
+    transform: scale(calc(1 / var(--canvas-zoom))) rotate(var(--flow-arrow-angle)) translate(-100%, -50%);
+    transform-origin: 0 0;
+    pointer-events: none;
+}
+
+/*
+ * The chip's anchor point. Zero-sized on purpose — it marks a COORDINATE, and
+ * the chip hangs off it via its own transform rather than being laid out in a
+ * box. Same shape as BoardCommentsLayer's `.anchored`.
+ */
+.chipAnchor {
+    position: absolute;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+}
+
+/*
+ * The evidence chip. The ONLY part of this layer that takes pointer events, and
+ * only so its tooltip can open on hover — there is no click handler anywhere in
+ * a read-only layer.
+ */
+.chip {
+    position: absolute;
+    display: block;
+    max-width: 220px;
+    overflow: hidden;
+    padding: var(--space-4xs) var(--space-xs);
+    border-radius: var(--radius-sm);
+    background: var(--canvas-flow-code-chip);
+    color: var(--canvas-flow-code-chip-text);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    transform: scale(calc(1 / var(--canvas-zoom))) translate(-50%, -50%);
+    transform-origin: 0 0;
+    pointer-events: auto;
+    cursor: default;
+}
+
+.evidence {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.evidenceRow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-px);
+}
+
+.evidenceCode {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+}
+
+.evidenceWhere {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+}

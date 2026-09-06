@@ -340,6 +340,21 @@
        neighbors. A fourth neon identity distinct from the selection (green),
        hover (pink), and selector (orange) rings above. */
     --canvas-snap-guide-color: #00c8ff;
+    /* Code-derived flow connector (prototype mode): the line Studio draws
+       between two frames because the user's own source navigates between them.
+       Deliberately ACHROMATIC, and deliberately the only canvas affordance that
+       is — every neon above (selection, hover, selector, snap, ruler) marks
+       something the user is doing right now, and this marks something their
+       repository has always said. A flow map is the substrate the board sits
+       on, not an interaction with it, so it reads as structure. Fixed rather
+       than theme-derived for the same reason --canvas-comment-pin-ring is: it
+       floats over the USER'S rendered page, whose colours have nothing to do
+       with the editor's theme. Authored prototype links, when they land, take a
+       saturated identity colour — loud for "you drew this", quiet for "your
+       code does this". */
+    --canvas-flow-code: #8e9bb0;
+    --canvas-flow-code-chip: #1c2129;
+    --canvas-flow-code-chip-text: #d7dee9;
     /* Persisted ruler guide (D1): a user-placed guide line dragged out from
        a ruler, saved to `boards.json` — a DIFFERENT concept from the
        transient snap guide above (see `RulerGuidesLayer`'s doc for the name
