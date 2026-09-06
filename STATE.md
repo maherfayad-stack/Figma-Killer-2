@@ -12,6 +12,133 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### server-17 — Studio had no version control at all, so a designer could not ship
+
+**Status:** landed on `feat/studio-git-v1`. **Needs human dogfooding** against a
+real repository with a real remote — every route and refusal is covered by
+tests against real `git` (including a push to a local bare remote), but nobody
+has driven the panel in a browser yet.
+
+**What was wrong.** Studio's document IS the user's repository, and the editor
+knew nothing about that. Every canvas edit was an unattributed working-tree
+mutation; there was no way to see what had changed, no way to attribute it, and
+no way to ship it without leaving the tool for a terminal. There is no export
+step in this product, so git IS the publish verb — and it did not exist.
+
+**What landed.** `docs/features/studio-git.md` is the full writeup; this entry
+is the coordination summary.
+
+Server (`server/handlers/studio/`), all new:
+
+- `git.ts` — routing only, registered in `STUDIO_SUB_ROUTERS`.
+- `gitRunner.ts` — the only place `git` is spawned, plus the repository guard.
+- `gitOperations.ts` — the eight allowed operations, each building its own argv.
+- `gitStatusParse.ts` — pure `--porcelain=v2 --branch -z` parser.
+- `gitPaths.ts` — every caller-supplied path/branch/sha/message judged before
+  it can reach an argv.
+
+| Method | Route | Request | Response |
+|---|---|---|---|
+| GET | `/admin/api/studio/git/status` | `?dir` | `{ isRepo, status: { branch, entries[], excludedCount, hasOrigin } \| null }` |
+| GET | `/admin/api/studio/git/diff` | `?dir&file` | `{ file, staged, unstaged, untracked, truncated }` |
+| GET | `/admin/api/studio/git/log` | `?dir&limit` | `{ commits: [{ sha, shortSha, author, date, subject }] }` |
+| POST | `/admin/api/studio/git/branch` | `{ dir?, create? } \| { dir?, switch? }` | `{ ok, branch, created }` |
+| POST | `/admin/api/studio/git/commit` | `{ dir?, message, files[] }` | `{ ok, sha, shortSha, files }` |
+| POST | `/admin/api/studio/git/push` | `{ dir? }` | `{ ok, branch, output }` |
+| POST | `/admin/api/studio/git/init` | `{ dir?, confirm: true, message? }` | `{ ok, branch, sha, filesCommitted }` |
+| POST | `/admin/api/studio/git/restore` | `{ dir?, sha, file }` | `{ ok, file, sha }` |
+
+Client: `src/admin/pages/site/studio/gitRequests.ts` (wire contract) +
+`src/admin/pages/site/panels/GitPanel/` (rail panel). Agent:
+`server/ai/mcp/tools/studio/gitTools.ts` — `studio_git_commit` only.
+
+**Four things to know before you touch any of it.**
+
+1. **`studio-workspace/` is inside Studio's OWN working tree.** Git discovers a
+   repository by walking up from its `cwd`, so running git in a project with no
+   `.git` of its own silently finds THIS repo and reports — or commits into —
+   it. `assertOwnGitRepo` (containment on the real path + not the workspace
+   root + `<dir>/.git` exists) is what stops that, with
+   `GIT_CEILING_DIRECTORIES` as an independent second stop. **Never weaken it.**
+   `status` and `init` are the only routes exempt from the `.git` half, both
+   deliberately: `status` must be able to answer `isRepo: false` so the panel
+   can offer `init`, and `init` is about to create the repository.
+2. **The route surface IS the allowed command set.** There is no generic
+   "run git with these args" entry point and there must never be one. No force
+   push, no reset, no clean, no stash, no `git add -A` outside `init`.
+3. **Create-a-branch and switch-to-a-branch are deliberately asymmetric.**
+   Creating is allowed with a dirty tree (it moves a pointer; it cannot lose a
+   byte) — that IS the intended flow. Switching refuses and returns the dirty
+   file list. Studio never stashes: a stash is an invisible place a designer's
+   screen went.
+4. **Studio holds no git credentials.** The subprocess env is an allowlist of
+   locators with no token variable, and `GIT_TERMINAL_PROMPT=0` makes an
+   unauthenticated push fail fast with git's real message instead of hanging.
+
+**Decisions a later agent might want to revisit, with the reasoning.**
+
+- **The diff view is not CodeMirror**, despite the work order asking for it.
+  `@codemirror/merge` is not a dependency, no language mode understands a
+  unified diff, and `codemirror-lazy-only.test.ts` permits exactly one
+  CodeMirror consumer because a second static import pulls ~605 kB into the
+  eager admin chunk. `gitDiffLines.ts` is a pure, unit-tested parser and the
+  rendering is plain rows. Revisit only if highlighting INSIDE hunks is needed
+  — and widen the gate deliberately, not by accident.
+- **`studio.git.write` is a new capability**, separate from `studio.write`, and
+  is NOT granted to the built-in Admin role (same posture as
+  `studio.run.project`). Writing a file is a draft the user can undo in the
+  editor; a commit attaches their git identity to a change their team reads.
+  The human panel is unaffected — it is gated by `site.structure.edit` like
+  every other editing panel.
+- **`studio_git_commit` is in the MCP registry but NOT in
+  `STUDIO_AGENT_TOOL_NAMES`**, so the in-canvas agent is not offered it. That
+  list is documented as a deliberate decision each time; whether the in-canvas
+  turn loop should commit is a product call nobody has made.
+- **`status` entries carry `agentAuthored`**, paired server-side with
+  `turnWriteLog.ts`. Honest scope: the write log resets each turn, so it means
+  "written by the agent during the MOST RECENT turn", not "ever". A durable
+  per-file authorship record is a separate, larger feature.
+
+**Rejections covered by tests** (`server/handlers/__tests__/git.test.ts`,
+`gitPaths.test.ts`, `gitStatusParse.test.ts`,
+`server/ai/mcp/tools/studio/gitTools.test.ts`,
+`src/__tests__/studio/gitDiffLines.test.ts`):
+
+- `dir` outside `studio-workspace/` → 404 on every route.
+- `dir` with no `.git` of its own → 404 on every route except `status`
+  (explicitly asserted so it can never resolve to Studio's own repo).
+- `studio-workspace/` itself → 404.
+- Path traversal on both separators, absolute/UNC/drive-letter paths,
+  `node_modules`/`dist`/`.git`/`.studio` paths, flag-looking paths → 404 on
+  `diff`, `commit`, `restore`.
+- **Symlink escape** — both a symlinked leaf and a symlinked parent directory.
+- One unusable path in a commit's `files` fails the WHOLE commit; nothing is
+  staged and HEAD does not move.
+- Empty file list / blank message → 400.
+- Branch switch over a dirty tree → 409 with `dirtyFiles`, work untouched,
+  still on the original branch.
+- Branch names git itself rejects, and flag-looking ones → 409.
+- Push with no `origin` → 409.
+- `restore` addressed by `HEAD~1`/`@{-1}`/a branch name → 400.
+- No filesystem path appears in any error body.
+- MCP: the tool is invisible with `studio.write` alone, and invisible without
+  `ai.tools.write`.
+
+**Verification.** `bun run build` ✅, `bun run lint` ✅, all 104 architecture
+gates ✅, the five suites above ✅ (111 tests). Full `bun test`: 10314 pass / 81
+fail — every failure is either the `claudeCli` family (pre-existing; the driver
+is disabled on macOS hosts because the CLI keeps credentials in the Keychain)
+or a batch-run isolation flake in `canvas/` suites that pass in isolation.
+
+**Conflict risk for whoever merges next.** The rail registration is its own
+final commit and touches three files an in-flight agent also owns:
+`store/slices/uiSlice.ts`, `sidebars/PanelRail/PanelRail.tsx`,
+`sidebars/LeftSidebar/LeftSidebar.tsx`. Each edit is additive (one `'git'`
+member, one `gitPanelOpen` flag + setter, one rail item, one panel mount) — a
+conflict there should be resolvable by taking both sides.
+
+---
+
 ### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
 
 **What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the
