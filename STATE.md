@@ -1553,6 +1553,311 @@ conflict there should be resolvable by taking both sides.
 
 ---
 
+### perf-03 — the Layers tree rendered every expanded node and paid 17 store subscriptions per row; it is now flat, windowed, and costs one
+
+- **Agent:** perf-hunter
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Branch:** `fix/layers-tree-virtualization`, based on
+  `feat/constraint-refusal-ui` (NOT `main` — it stacks on `panel-10`).
+- **Goal:** the audited next-panel-to-fall-over. `DomPanel` had zero windowing,
+  `TreeNode` carried ~17 `useEditorStore` subscriptions per row, and
+  `StudioPagesTree` mounted one of those trees per expanded board frame.
+
+**Before / after — measured, same file, same fixture, on both checkouts**
+
+Harness: `src/__tests__/panels/layersTreePerf.test.tsx`. Fixture: one synthetic
+imported-shaped page, **2,441 nodes at depth 11** (40 sections, a 6-deep wrapper
+spine each, fanning out to 6 branches x 8 leaves), rendered into a stubbed 640px
+scroll viewport at the compact 28px row height, then **fully expanded**
+(`Ctrl+E`). The file is written against `<DomPanel />` + the store only, so it
+runs unchanged on the pre-windowing checkout — that is where the "before" column
+comes from, not from an estimate.
+
+| Measurement | Before | After | Δ |
+|---|---|---|---|
+| Rows mounted, everything expanded | 2,441 | **32** | 76x fewer |
+| Rows mounted, default (collapsed) state | 41 | **32** | window-bounded |
+| `useEditorStore` subscriptions per row (`TreeNode.tsx`) | 17 | **1** | 17x |
+| **Selector invocations per store commit** | **41,497** | **32** | **1,297x** |
+| Expand-all wall time (median of 4/5 warm runs) | 611 ms (557 / 609 / 611 / 627) | **17.3 ms** (14.3 / 15.6 / 17.3 / 18.3 / 23.5) | 35x |
+| Hover commit wall time (median of 3/5 warm runs) | 8.6 ms (6.9 / 8.6 / 9.0) | **0.9 ms** (0.8 / 0.8 / 0.9 / 1.2 / 1.2) | 9.5x |
+
+The 41,497 is the number that mattered: it is what EVERY store commit — a
+keystroke, a hover, a drag move — paid before React began any work.
+
+The four STRUCTURAL rows above are deterministic and were reproduced twice:
+once in this worktree before any edit, once in an independent detached worktree
+at `origin/feat/constraint-refusal-ui`. The two WALL-TIME rows are same-worktree,
+warm-cache medians — the fair comparison, since a fresh worktree's cold
+transpile cache alone swings the "before" expand-all between 580 ms and 3,201 ms.
+Do not quote the wall times as a cross-machine contract; the harness prints
+them and gates only the structural numbers, deliberately.
+
+- **Mechanism (what actually changed, in order of size):**
+  1. **The tree is flat.** `layerRows.ts:flattenLayerRows(nodes, rootIds,
+     expandedIds, alwaysExpandedId)` walks ONLY expanded branches and returns
+     `{nodeId, depth, hasChildren, expanded, subtreeEnd, posInSet, setSize}[]`.
+     A collapsed 40,000-node page flattens to one row. `subtreeEnd` is what
+     replaces the old wrapper `<div>` semantics — the open-container-group
+     highlight and the drag-source dimming are both "this row plus its visible
+     subtree", i.e. an index range.
+  2. **Only the visible slice is mounted.** `rowWindow.ts:computeRowWindow` is
+     uniform-height arithmetic; `useRowWindow.ts` measures the shared scroll
+     ancestor. Rows outside the slice become two spacer blocks whose heights
+     sum to exactly the missing rows, so the scrollbar never moves.
+  3. **`TreeNode` went on a diet: 17 subscriptions → 1.** Everything that is a
+     per-TREE fact (the page, the root id, VC names, the class registry, layer
+     display prefs, live drop state, selection) is read ONCE in
+     `LayerRowList.tsx` and passed as a prop. All 11 store ACTIONS became
+     `useEditorStore.getState().x(...)` inside the handler — the pattern
+     `perf-02` established for `BoardFrameView`. The one survivor is
+     `useEditorStore((s) => s.hoveredNodeId === nodeId)`: hover affects exactly
+     two rows per pointer move, so making it a prop would re-render the window.
+  4. **The DnD context was split in two.** `DomPanelDropStateContext` (live,
+     re-published every `dragMove`) and `DomPanelRowRegistryContext` (stable
+     forever). They used to be one object, so every row re-rendered on every
+     pointer move of a drag just to keep hold of a `registerRow` that never
+     changed. Only the list consumes the live half now.
+  5. **Auto-expand is O(depth).** `getAncestors` (`@core/page-tree`, walks the
+     denormalised `parentId`) replaced `getAncestorIds`, a BFS over every node
+     of the page with a path-array copy per child. `hooks/useTreeWalkOrder.ts`
+     had no other caller and is deleted.
+- **Budgets added** (`layersTreePerf.test.tsx`, three gates, calibrated then
+  tightened so a regression actually fails):
+  - rows mounted with everything expanded ≤ **48** (actual 32; pre-windowing 2,441)
+  - store subscriptions per row ≤ **3** (actual 1; before 17)
+  - selector invocations per commit ≤ **144** (actual 32; before 41,497)
+- **Scope:** `panels/DomPanel/{layerRows.ts, rowWindow.ts, useRowWindow.ts,
+  LayerRowList.tsx+css}` (new) · `panels/DomPanel/{DomPanel,TreeNode,
+  PageLayerSubtree,DomPanelDndContext,DomTreeContext,expansionStore,
+  useDomPanelDnd}` · `TreeNode.module.css` · deleted
+  `hooks/useTreeWalkOrder.ts` · tests
+  `src/__tests__/panels/{layerRows,layersTreePerf,layersTreeWindowing}` · docs
+  `editor.md`, `agent-refs/path-index.md`, `reference/canvas-dnd.md`,
+  `reference/react-compiler.md`, `features/editor-preferences.md`.
+  Untouched by design: `LayerNodeContextMenu.tsx` (panel-10's `ConstraintNotice`
+  wiring), `LayerTreeNodeContent.tsx`, `domPanelDnd.ts`, `src/ui/Tree/**`.
+- **Decisions:**
+  - **If we cannot measure, we do not window.** A zero row height or zero
+    viewport (no scroll ancestor, headless runner, panel rendered outside its
+    host) returns the FULL range. Truncating a tree because layout was
+    unavailable would trade correctness for speed; rendering everything is
+    merely slow. This is also why the whole existing `domPanel.test.tsx` suite
+    passes untouched — happy-dom lays nothing out, so those tests exercise the
+    full-render path, exactly as before.
+  - **The first paint uses a guess, corrected in a LAYOUT effect.** Rows
+    `[0, 60)` at an assumed 28px, then measured before the browser paints. The
+    alternative (render all, then window) paid the full 2,441-row render once
+    per mount.
+  - **Scroll offset is quantized to the row grid** before it enters state, so
+    a 1px wheel tick commits nothing and the re-render count equals rows
+    crossed, not scroll events fired. That is not a debounce — nothing is
+    delayed, the state simply does not change until the window does.
+  - **`React.memo` on `TreeNode` is kept and now earns its keep** (compiler
+    exception #2): the list re-renders on every scroll tick, drag move and
+    selection change, and every prop is a primitive or a store-stable object,
+    so the shallow compare is honest.
+  - **Flat DOM means flat ARIA.** There is no nested `role="group"` any more;
+    each row states `aria-level` / `aria-posinset` / `aria-setsize`, the form
+    the WAI-ARIA tree pattern defines for exactly this case.
+  - **`PageLayerSubtree` was NOT made collapsed-by-default.** The work order
+    asked for that to stop "N frames = N full trees", but windowing against the
+    SHARED scroller already does it better: an off-screen page subtree mounts
+    **zero** rows and stands in for itself with one spacer, and the user still
+    sees layers on the first click instead of two. Gated by a test.
+- **Landmines:**
+  - **`ExpansionStore` is copy-on-write now.** `getExpandedIds()` is the
+    `useSyncExternalStore` snapshot AND an input to the flatten. If you make
+    `expanded` mutate in place again, React sees no change and — worse — the
+    React Compiler hands back a stale row list. A version counter was tried
+    first and is NOT enough for the same reason: the counter is not a
+    dependency of `flattenLayerRows`, so the compiler still caches.
+  - **Auto-scroll during drag was dead code before this branch, and is fixed
+    here.** `runAutoScroll` called `scrollBy` on `DomPanel`'s `.treeArea`,
+    which is `overflow: visible` by design (`DomPanel.module.css` — the single
+    scroller is `StudioPagesTree`'s page list, an ancestor), and compared the
+    pointer against that element's FULL content rect rather than a viewport. It
+    now resolves the real scroll ancestor once per gesture via
+    `findScrollContainer`. **This is the one change in this branch that the
+    tests cannot prove — it needs the dogfood below.**
+  - A row outside the mounted window registers no rect, so it is not a drop
+    target. Fine — it is off screen, and the pointer is not. But auto-scroll
+    near an edge has a ONE-FRAME lag: `scrollBy` → `measureRows()` runs before
+    the scroll listener's `setState` has re-rendered the new rows, so the newly
+    revealed rows resolve on the next rAF tick. If drag-to-edge ever feels like
+    it "sticks" for a frame, that is where it lives.
+  - **Do not put `flattenLayerRows` inside a Zustand selector.** It returns a
+    fresh array; a selector returning one re-renders every consumer on every
+    commit (the `EMPTY_PAGES` note in `StudioPagesTree` is the same hazard).
+  - `data-open-container-group="true"` still marks only the HEAD of the group
+    (the tests address it that way). The background is painted on every row of
+    the span via `.openContainerGroup` + `.openContainerGroupStart/Middle/End`,
+    which flatten the corners facing a neighbour — that is what reproduces the
+    old wrapper's single rounded block.
+  - New handle: `data-drag-source="true"` on every row of the dragged subtree.
+    Added because CSS Modules are not injected in happy-dom, so a class check
+    is not a testable assertion in this repo.
+- **Tried and did NOT help — do not repeat:**
+  - **Counting store subscriptions at runtime by patching
+    `useEditorStore.subscribe`.** It reports **0**. zustand v5's bound hook
+    closes over the internal store object and `Object.assign`s a COPY of
+    `subscribe` onto the exported hook, so patching the hook's property patches
+    the copy. The honest count is the source-level one the harness now does.
+  - **A version counter as the expansion snapshot** — see Landmines. It
+    re-renders correctly and still yields a stale flatten.
+  - **`React.memo` alone**, before the DnD context split, would have been
+    decorative here for the same reason `perf-02` recorded for
+    `BoardFrameView`: the shared context value changed identity on every drag
+    move, so no bailout could ever fire.
+- **Verification:**
+  - `bunx tsc -b` clean. `bun run build` cannot run in a worktree (it hardcodes
+    `./node_modules/vite/bin/vite.js`); ran
+    `bun ../../../node_modules/vite/bin/vite.js build` — built in 66s.
+  - `bun test src/__tests__/{panels,dom-panel,dom-panel-dnd,panels.test.ts}` —
+    **653 pass, 0 fail** (49 files), including all 39 pre-existing
+    `domPanel.test.tsx` tests unmodified.
+  - `bun test src/__tests__/architecture` — 479 pass, 18 fail, ALL
+    `icon-catalog-integrity` (vendored `dist/` unbuilt in a worktree; known).
+  - `bun test src/__tests__/canvas` — 671 pass, 10 fail. Confirmed
+    **pre-existing and identical** by running the same directory in a detached
+    `git worktree` at `origin/feat/constraint-refusal-ui`: same 10 names, same
+    5 file-level errors, `diff` clean. (Attribution was done against a real
+    baseline worktree, never `git stash` — the stash stack is shared between
+    parallel agents.)
+  - `bun eslint` over every changed/added `.ts`/`.tsx` — clean.
+  - Whole suite, both worktrees: baseline 10,240 pass / 96 distinct failure
+    names; this branch 10,221 pass / 105. The 10-name delta is entirely
+    `src/__tests__/canvas/{canvasAnimationInjectorMounting,canvasFrameMounting,
+    nodeRendererEditorAttrs,propertiesLayerLadder,slotContentReactivity,
+    slotPropertyPanelEdit}` — **11 pass / 0 fail when those six files are run
+    on their own** in this branch. That is the documented shared-global
+    isolation flake (`bunfig.toml`'s own comment: fails in a batch, passes in
+    isolation, moves between runs), not a regression. Running
+    `src/__tests__/canvas` as a directory gives byte-identical failure sets on
+    both branches (10 fail / 5 errors, `diff` clean).
+- **Human action needed — dogfood, three things the tests cannot see.** Open
+  `/admin/site?studio` on a real imported project (a deep one — `esim-journey`,
+  not `untitled`), expand the active page in the Layers panel, then `Ctrl+E` to
+  expand everything.
+  1. **Scroll feel.** Wheel-scroll the layers list fast, top to bottom. No blank
+     bands, no jitter, no scrollbar jump. Then switch Settings → density to
+     *comfortable* (36px rows) and scroll again — the row height is measured,
+     not assumed, so this is the case that would expose a wrong constant.
+  2. **Drag feel — the one real behaviour change.** Drag a layer to the top and
+     bottom edges of the list and hold. It should auto-scroll (it did NOT
+     before this branch — see Landmines), and the drop line should keep
+     resolving onto rows as they scroll in. Drop somewhere far from where you
+     started and confirm the move landed where the line said.
+  3. **Focus.** Click a row, press Tab/arrows to confirm it has keyboard focus,
+     then wheel-scroll it far out of view and back. Focus must return to the
+     same row, and `Enter` must still act on it. Also click a node on the
+     CANVAS that is deep inside a collapsed branch — the tree should expand the
+     path and scroll that row into view even though it was never mounted.
+
+---
+
+### panel-10 — a refusal now shows its reason, its way forward, and where in the source it lives
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** make `EditConstraint`'s `actions` and `origin` reach the screen. The
+  engine has computed both for a while; nothing in `src/` rendered either, so
+  every refusal died as a 6-second warning toast carrying one sentence.
+- **Scope:** `src/core/page-tree/editConstraint.ts` (+ barrel) ·
+  `src/admin/pages/site/ui/ConstraintNotice/` (new) ·
+  `src/admin/pages/site/store/{constraintActions,openSourceFile}.ts` (new) ·
+  `store/slices/site/{structuralSourceEdits,nodeActions,deleteNodesAction}.ts` ·
+  `canvas/{canvasDnd.ts,CanvasDropIndicators.tsx (new),BreakpointSelectionOverlay.tsx+css}` ·
+  `panels/DomPanel/LayerNodeContextMenu.tsx+css` ·
+  `panels/PropertiesPanel/jumpToSource.ts` (import-only rewrite — see Landmines) ·
+  `@ui/components/Toast/{toastBus,ToastProvider,Toast.module.css}`.
+- **Done so far:**
+  - `describeStructuralRefusal` (`editConstraint.ts:379`) is the one place a
+    refusal gets its `origin` + `actions`. `explainStructuralConstraint` and
+    `explainGestureConstraint` now both delegate to it, and the store's plan
+    objects call it directly — they hold the NODE, which is where `origin`
+    comes from, and re-deriving the refusal later would be a second copy of the
+    rule.
+  - `StructuralPlan`'s refusal branch carries `constraint: EditConstraint`
+    instead of `{reason, message}` (`structuralSourceEdits.ts:58`).
+  - `toastStructuralRefusal` (`structuralSourceEdits.ts:308`) is now
+    **persistent** (`durationMs: null`), **deduped** (`dedupeKey`, so a repeat
+    counts up on the card already showing instead of stacking), and carries the
+    constraint's first runnable action — or a jump to its `origin` — as the
+    toast button.
+  - Toast bus: new optional `dedupeKey` + `repeatCount`
+    (`toastBus.ts:60`/`:82`), rendered as a `×N` on the title.
+    `ToastProvider`'s timer effect now keeps per-toast REMAINING time in a ref
+    (`ToastProvider.tsx:86`) — it re-armed every visible toast's full countdown
+    on every push/dismiss/hover before, so a burst kept itself alive and a
+    mouse crossing the stack reset the lot.
+  - `ConstraintNotice` (`ui/ConstraintNotice/ConstraintNotice.tsx`) renders a
+    constraint whole; `constraintActions.ts` is the one `kind` → handler table.
+    Mounted today as the layers context menu's refusal **footer**
+    (`LayerNodeContextMenu.tsx:576`), under the disabled Duplicate/Wrap/Delete
+    items it explains.
+  - Reason-on-drag: `canvasDnd.ts:217` now attaches the whole
+    `explainGestureConstraint` result (the seam that had zero consumers) to the
+    invalid drop target, and `CanvasDropIndicators.tsx` paints the sentence in
+    a chip beside the refused rect while the pointer is still down.
+- **Next step:** none for this entry. The obvious follow-up is
+  `InstanceCallSiteView.tsx`'s hand-rolled detach-refusal card
+  (`PropertiesPanel/InstanceCallSiteView.tsx:234`) — it renders a refusal with
+  its own markup and its own extract button, and is a straight swap for
+  `<ConstraintNotice constraint={explainDetachConstraint(...)} nodeId={nodeId} />`.
+  Left alone because `PropertiesPanel/**` was another agent's this wave.
+- **Decisions:**
+  - **A kind with no honest handler renders as plain text, not a disabled
+    button** — "Drag them one by one" is advice, not a command the editor can
+    run; a greyed-out button would claim it could.
+  - **Copy is rendered as the engine authored it.** The only sentence this
+    change contributes is the "Open `<file>:<line>`" affordance label.
+  - `constraintActions.ts` lives beside the STORE, not beside the component,
+    and takes `openSource` as context instead of importing `jumpToSource` —
+    see Landmines.
+  - The drag chip is opaque `--bg-body` with `--warning-text`, not an amber
+    wash: it floats over the USER's page, which can be any colour.
+- **Landmines:**
+  - **Nothing in the store's import graph may import `@site/store/store`.**
+    `jumpToSource` does, so importing it (even transitively, via a barrel that
+    also exports a component) from a store slice fails
+    `no-circular-dependencies.test.ts`. That is why the jump resolution was
+    split into `store/openSourceFile.ts` (takes the state it needs, so a slice
+    can call it with its own `get`) with `jumpToSource.ts` reduced to the
+    component-side wrapper. If you add a refusal surface, follow that split.
+  - `BreakpointSelectionOverlay.tsx` was 4 lines under the 700-line module
+    ceiling; the chip pushed it over. The drag-time layer is now
+    `CanvasDropIndicators.tsx`. Do not grow that file again without splitting.
+  - `decodeSourceNodeId` on a composite (inlined) id returns the COMPONENT's
+    file, not the call site's — so a shared-component refusal's "open" lands in
+    the component definition. That is correct (it is where the markup is), but
+    it surprised the test that expected the page file.
+- **Verification:**
+  - `bunx tsc -b` — clean. `bun run build` cannot run in a worktree (it hardcodes
+    `./node_modules/vite/bin/vite.js`, which only exists at the repo root);
+    ran `bun ../../../node_modules/vite/bin/vite.js build` instead — built.
+  - `bun test src/__tests__/architecture` — 492 pass, 19 fail, ALL
+    `icon-catalog-integrity` (the vendored `dist/` is unbuilt in a worktree;
+    known pre-existing).
+  - `bun test --parallel=4 src/__tests__/{editor-store,panels,studio,ui,dom-panel}`
+    — 1248 pass, 0 fail. `src/__tests__/canvas` — 679 pass, 2 fail
+    (`canvasScrollUnrollPinInteraction`, `canvasSelectionToolbar`); confirmed
+    pre-existing by re-running them on a `git stash -u` of this branch.
+  - `bun x eslint <every changed .ts/.tsx>` — clean.
+- **Human action needed:** **dogfood** at `/admin/site?studio` on an imported
+  project. (1) Drag a `.map` row or a shared-component element in the canvas —
+  a warning chip should follow the refused drop box with the reason, readable at
+  25% and 200% zoom. (2) Let go: the toast should stay until dismissed, and its
+  button should open the right file; repeat the same drag twice more and the
+  toast should show `×3` rather than stacking. (3) Right-click that element in
+  the Layers panel — the footer under the greyed-out Delete/Duplicate should
+  explain why and offer "Open the array in code". Check the footer does not
+  stretch the menu.
+
+---
+
 ### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
 
 **What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the

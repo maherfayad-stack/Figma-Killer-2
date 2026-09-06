@@ -1,0 +1,18 @@
+/* LayerRowList — the windowed body of the Layers tree. */
+
+/* The container is focusable (tabIndex=-1) purely as a parking spot for a row
+   that scrolled out of the mounted window; it must never show a focus ring of
+   its own — the row it stands in for owns that affordance. */
+.tree {
+    outline: none;
+}
+
+/* Stands in for the rows the window is not mounting. Its height is written as
+   a custom property because it is a computed pixel value; the rule below is
+   where the property is read, so there is no `var(--x, fallback)` anywhere. */
+.spacer {
+    --layer-spacer-h: 0px;
+
+    flex-shrink: 0;
+    height: var(--layer-spacer-h);
+}

@@ -41,13 +41,28 @@
 }
 
 /* ── Open container group highlight ─────────────────────────────────────── */
+/* The tree is a FLAT, windowed row list — there is no wrapper element around a
+   container and its children any more, so the highlight is reconstructed per
+   row: every row of the span carries `.openContainerGroup`, and the three
+   modifiers below flatten the corners that face a neighbour in the same span.
+   A one-row span carries `.openContainerGroup` alone and keeps all four. */
 .openContainerGroup {
     border-radius: 8px;
     background: var(--bg-surface);
 }
 
-.openContainerGroup > [role="treeitem"] {
-    border-radius: 8px;
+.openContainerGroupStart {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.openContainerGroupMiddle {
+    border-radius: 0;
+}
+
+.openContainerGroupEnd {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
 }
 
 /* ── Drag/drop state ─────────────────────────────────────────────────────── */

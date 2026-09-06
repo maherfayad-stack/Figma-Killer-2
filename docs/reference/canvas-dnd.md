@@ -80,8 +80,19 @@ Canvas node reorder (move an existing node) — RAW POINTER, not @dnd-kit
 DOM panel / layer tree reorder — the ONE real @dnd-kit/core canvas-adjacent surface
 ─────────────────────────────────────────────────────────────────────────
   <DndContext>  (DomPanel.tsx, autoScroll={false} — see useDomPanelDnd.ts)
-    <TreeNode>  useDraggable/useDroppable, one SortableContext per parent group
+    <LayerRowList>  flattens the tree and mounts only the visible row slice
+      <TreeNode>    useDraggable per MOUNTED row; there is no droppable and no
+                    SortableContext — the drop target is resolved from
+                    measured row rects (`measureRows` + `findDomDropRow`)
   onDragEnd → useDomPanelDnd.ts → the same `moveNodes` store action
+
+  Windowing consequences, both deliberate:
+   - only mounted rows register a rect, so an off-screen row is never a drop
+     target. It is also off screen, and the pointer is inside the viewport.
+   - dnd-kit's own auto-scroll stays off. `useDomPanelDnd`'s `runAutoScroll`
+     drives the nearest SCROLLABLE ancestor (`findScrollContainer`), which is
+     `StudioPagesTree`'s page list — the panel's own `.treeArea` is
+     `overflow: visible`, so scrolling it moved nothing.
 
 New-module insertion — raw pointer, no DndContext at all
 ─────────────────────────────────────────────────────────────────────────
