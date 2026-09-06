@@ -23,6 +23,7 @@ type CrudActions = Pick<
   | 'createClass'
   | 'createAmbientRule'
   | 'updateClassStyles'
+  | 'setRuleRawCss'
   | 'setClassContextStyles'
   | 'applyCssRules'
   | 'deleteCssRules'
@@ -345,6 +346,8 @@ export function createCrudActions({ get, mutateSite }: SiteSliceHelpers): CrudAc
         order: nextRuleOrder(site.styleRules),
         styles: input.styles ?? {},
         contextStyles: input.contextStyles ?? {},
+        ...(input.rawCss ? { rawCss: input.rawCss } : {}),
+        ...(input.scope ? { scope: input.scope } : {}),
         createdAt: now,
         updatedAt: now,
       }
@@ -381,6 +384,22 @@ export function createCrudActions({ get, mutateSite }: SiteSliceHelpers): CrudAc
         draftClass.updatedAt = Date.now()
         return true
       }, coalesceKeyForPatch('style', classId, patch))
+    },
+
+    setRuleRawCss(ruleId, rawCss) {
+      const { site } = get()
+      const rule = site?.styleRules[ruleId]
+      if (!rule) return
+      if (rule.kind !== 'ambient') return
+      if (rule.rawCss === rawCss) return
+
+      mutateSite((site) => {
+        const draftRule = site.styleRules[ruleId]
+        if (!draftRule) return false
+        draftRule.rawCss = rawCss
+        draftRule.updatedAt = Date.now()
+        return true
+      }, coalesceKeyForPatch('style', ruleId, { rawCss }))
     },
 
     setClassContextStyles(classId, contextId, patch) {

@@ -30,6 +30,7 @@ import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
 import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
+import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
 
 // ---------------------------------------------------------------------------
 // Class style inspector sections
@@ -62,9 +63,13 @@ export interface ClassStyleSectionDefinition {
 // ---------------------------------------------------------------------------
 // Section order — WS-6.1's Figma-shaped top-to-bottom flow, extended by
 // STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5: Position → Size → Auto layout →
-// Spacing → Appearance → Fill → Stroke → Effects → Typography → Interaction
-// (Studio's own addition — Figma has no CSS-cursor/pointer-events concept, so
-// it stays last rather than displacing anything Figma-native).
+// Spacing → Appearance → Fill → Stroke → Effects → Typography → Animations →
+// Interaction. The last two are Studio's own additions — Figma has no
+// CSS-cursor/pointer-events concept, and its motion lives in prototyping
+// rather than in the style panel at all — so both stay at the end rather than
+// displacing anything Figma-native. Animations (W5-5) sits between them
+// because it is still a statement about the ELEMENT (how it behaves over
+// time), where Interaction is a statement about the pointer.
 // Order is read by consumers via array iteration (`StyleCategoryRail`'s rail
 // buttons, `StyleSectionsEditor`'s scroll order) — changing it changes both
 // at once, deliberately, since they're meant to stay in lockstep.
@@ -218,14 +223,39 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     icon: SparklesSolidIcon,
     collapsedWhenEmpty: true,
     // `opacity` moved to the `appearance` section (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5).
+    // `transition`/`animation` moved to the `animations` section below (W5-5):
+    // they are motion, not effects, and a property may only be claimed by one
+    // section — this array drives the "N set" count and the style search, so a
+    // property listed twice would be counted twice and shown twice.
     properties: [
       'boxShadow',
       'filter',
       'backdropFilter',
       'transform',
       'transformOrigin',
-      'transition',
+    ],
+  },
+  {
+    id: 'animations',
+    title: 'Animations',
+    icon: VideoSolidIcon,
+    // Law 1 in full: an element with no motion costs exactly one header line.
+    // This section is the most expensive one to render (it resolves keyframes
+    // against the whole rule registry), so collapsing when empty is not just
+    // the visual convention here — it is also what keeps that work off the
+    // panel for the overwhelming majority of elements.
+    collapsedWhenEmpty: true,
+    properties: [
       'animation',
+      'animationName',
+      'animationDuration',
+      'animationTimingFunction',
+      'animationDelay',
+      'animationIterationCount',
+      'animationDirection',
+      'animationFillMode',
+      'animationPlayState',
+      'transition',
     ],
   },
   {

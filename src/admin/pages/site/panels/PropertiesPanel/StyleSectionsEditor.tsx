@@ -28,6 +28,7 @@ import { TypographySection } from './TypographySection'
 import { AppearanceSection, AppearanceSectionActions } from './AppearanceSection'
 import { FillSection, FillSectionActions } from './FillSection'
 import { EffectsSection, EffectsSectionActions } from './EffectsSection'
+import { AnimationsSection, AnimationsSectionActions } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
 import { SectionStylesMenu } from './SectionStylesMenu'
 import { cssPropertyLabel } from './cssControlTypes'
@@ -48,6 +49,7 @@ const APPEARANCE_SECTION_ID = 'appearance'
 const FILL_SECTION_ID = 'fill'
 const INTERACTION_SECTION_ID = 'interaction'
 const EFFECTS_SECTION_ID = 'effects'
+const ANIMATIONS_SECTION_ID = 'animations'
 const BORDER_SECTION_ID = 'border'
 
 // ---------------------------------------------------------------------------
@@ -305,6 +307,16 @@ function StyleSectionGroup({
   //  the section on its own — no `onReveal` needed.
   const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={onChange} />
 
+  //  Animations' "+" is a typed menu too (Animation / Transition), and like
+  //  Effects' it has to be reachable at the one-line Law-1 rest state, since
+  //  that is the only way to add the first animation. Creating one also
+  //  creates a `@keyframes` rule, which needs to know WHICH NODE it belongs to
+  //  so its first write can be co-located with that node's page — hence
+  //  `styleTarget`, the same prop the section styles menu already uses.
+  const animationsActions = (
+    <AnimationsSectionActions storedStyles={storedStyles} onChange={onChange} styleTarget={styleTarget} />
+  )
+
   const sectionActions =
     section.id === APPEARANCE_SECTION_ID ? (
       <>
@@ -319,6 +331,11 @@ function StyleSectionGroup({
     ) : section.id === FILL_SECTION_ID ? (
       <>
         {fillActions}
+        {stylesMenu}
+      </>
+    ) : section.id === ANIMATIONS_SECTION_ID ? (
+      <>
+        {animationsActions}
         {stylesMenu}
       </>
     ) : (
@@ -347,6 +364,8 @@ function StyleSectionGroup({
               effectsActions
             ) : section.id === FILL_SECTION_ID ? (
               fillActions
+            ) : section.id === ANIMATIONS_SECTION_ID ? (
+              animationsActions
             ) : (
               <Button
                 variant="ghost"
@@ -484,6 +503,19 @@ function StyleSectionGroup({
             onPreview={onPreview}
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
+          />
+        ) : section.id === ANIMATIONS_SECTION_ID ? (
+          <AnimationsSection
+            key={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            visibleProperties={section.properties}
+            activeTab={activeTab}
+            onChange={onChange}
+            onRemove={onRemove}
+            onClearProperties={onClearProperties}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
           />
         ) : section.id === INTERACTION_SECTION_ID ? (
           <InteractionSection

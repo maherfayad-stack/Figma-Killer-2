@@ -26,6 +26,23 @@ interface CreateAmbientRuleInput {
   name?: string
   styles?: Partial<CSSPropertyBag>
   contextStyles?: Record<string, Partial<CSSPropertyBag>>
+  /**
+   * Verbatim CSS for a stylesheet-level at-rule that has no declaration bag
+   * of its own — today that means `@keyframes`, whose body is a list of steps
+   * rather than a property→value map (`siteImport/keyframesToStyleRule.ts`
+   * produces exactly this shape on import; the Animations section produces it
+   * when a user creates an animation).
+   */
+  rawCss?: string
+  /**
+   * Which node this rule was created for, in the same shape `createClass`
+   * takes it. In Studio this is the only signal
+   * `resolveCssInsertDestination` has for which PAGE a brand-new rule belongs
+   * to, and therefore which stylesheet its first write is co-located with —
+   * without it, a project whose pages each own a stylesheet refuses the write
+   * as "N candidates, Studio will not guess".
+   */
+  scope?: StyleRule['scope']
 }
 
 export interface ClassPreviewAssignment {
@@ -132,6 +149,23 @@ export interface StyleRuleSlice {
 
   /** Shallow-merge a style patch into a class's base styles. */
   updateClassStyles(classId: string, patch: Partial<CSSPropertyBag>): void
+
+  /**
+   * Replace an at-rule's verbatim CSS body (W5-5 — the Animations section's
+   * keyframe editor).
+   *
+   * A `@keyframes` rule carries its steps as one opaque `rawCss` string, not
+   * as a `CSSPropertyBag`, so `updateClassStyles` has nothing to merge into
+   * it. The CALLER computes the new text with the keyframes codemods
+   * (`@core/css-codemods`'s `setDeclarationAtKeyframe` / `insertKeyframes`) —
+   * the same functions the server runs against the real `.css` file — so the
+   * canvas preview and the eventual disk write can never disagree about what
+   * an edit means. This action only stores the result.
+   *
+   * A no-op for a rule that is not an ambient at-rule, or when the text is
+   * unchanged.
+   */
+  setRuleRawCss(ruleId: string, rawCss: string): void
 
   /**
    * Apply parsed authored CSS by exact emitted selector. Merge patches only

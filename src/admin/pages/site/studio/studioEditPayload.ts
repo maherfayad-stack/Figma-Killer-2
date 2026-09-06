@@ -47,3 +47,11 @@ export type StudioEditPayload =
   | { kind: 'css'; op: 'unset'; nodeId: string; file: string; selector: string; property: string; atMedia?: string }
   | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atMedia?: string }
   | { kind: 'css'; op: 'create'; nodeId: string; pageFile: string; selector: string; declarations: Record<string, string>; atMedia?: string }
+  // W5-5 — the same three moves inside a `@keyframes` block. A keyframes
+  // target is a FILE + ANIMATION NAME + STEP rather than a file + selector,
+  // which is why these are their own variants rather than a widened `set`:
+  // `selector` would have to carry `@keyframes fade` and `step` would have
+  // nowhere to go. Server side: `studioCssKeyframes.ts`.
+  | { kind: 'css'; op: 'keyframe-set'; nodeId: string; file: string; name: string; step: string; property: string; value: string }
+  | { kind: 'css'; op: 'keyframe-unset'; nodeId: string; file: string; name: string; step: string; property: string }
+  | { kind: 'css'; op: 'keyframes-insert'; nodeId: string; file: string; name: string; steps: Array<{ keyText: string; declarations: Record<string, string> }> }

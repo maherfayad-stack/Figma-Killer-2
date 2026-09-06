@@ -5,9 +5,9 @@
  * Two exports:
  *
  *   - `EffectsSectionActions` — the section header's ⚙ (transform /
- *     transformOrigin / transition / animation, Law 2 — these are not
- *     effects in Figma's sense and stay raw-text, edited by people who know
- *     the syntax, see this file's "SETTINGS POPOVER" doc below) and the "+"
+ *     transformOrigin, Law 2 — a transform is not an effect in Figma's
+ *     sense and stays raw-text, edited by people who know the syntax, see
+ *     this file's "SETTINGS POPOVER" doc below) and the "+"
  *     that opens F20's typed add menu. `StyleSectionsEditor` mounts this in
  *     `Section`'s `actions` slot, in BOTH the collapsed-empty header and the
  *     open-body header — unlike Appearance's header actions (which only
@@ -44,7 +44,7 @@
  * and falls back to a raw `transform` field only when `transform` already
  * contains a rotate-family function (so it never adds a second, silently
  * compounding rotation). This section's ⚙ ALSO exposes a raw `transform`
- * field (plus `transformOrigin`/`transition`/`animation`) unconditionally —
+ * field (plus `transformOrigin`) unconditionally —
  * the two surfaces do not contradict each other because they write the exact
  * same `storedStyles.transform` through the exact same `onChange`: Position's
  * row is the typed front door for the 90% case (pure rotation, no other
@@ -100,17 +100,17 @@ function parseBlurRadius(value: string): string | undefined {
 // EffectsSectionActions — header ⚙ + "+" (see module doc)
 // ---------------------------------------------------------------------------
 
+// `transition`/`animation` left for the Animations section (W5-5), which
+// gives both a typed surface instead of a raw text field. A property may be
+// claimed by exactly one section — the registry's `properties` array drives
+// the "N set" count and the style search, so listing motion here as well
+// would count it twice and show it twice.
 const ADVANCED_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
   'transform',
   'transformOrigin',
-  'transition',
-  'animation',
 ]
 
-const ADVANCED_SPEC: ReadonlyArray<StackedGridEntry> = [
-  ['transform', 'transformOrigin'],
-  ['transition', 'animation'],
-]
+const ADVANCED_SPEC: ReadonlyArray<StackedGridEntry> = [['transform', 'transformOrigin']]
 
 interface EffectsSectionActionsProps {
   activeTab: string
@@ -171,7 +171,7 @@ export function EffectsSectionActions({
         aria-haspopup="dialog"
         aria-expanded={settingsOpen}
         aria-label="Effects settings"
-        tooltip="Transform, transition & animation"
+        tooltip="Transform & transform origin"
         data-testid="effects-settings-trigger"
         onClick={() => setSettingsOpen((open) => !open)}
       >

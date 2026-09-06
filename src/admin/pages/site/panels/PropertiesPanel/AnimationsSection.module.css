@@ -1,0 +1,116 @@
+/*
+ * AnimationsSection — the rows themselves are `@ui/components/PropertyList`'s
+ * and need no styling here. What this file owns is the scrub row under the
+ * list and the popover contents: the timing field grid, the keyframe step
+ * blocks, and the raw-text fallback note.
+ *
+ * No transitions and no animations anywhere in this file. A panel that
+ * animates while the user is holding an animation still would be making its
+ * own motion compete with the thing being inspected — and the one tonal
+ * change that could have carried a transition (the scrub thumb) is the control
+ * a reduced-motion user is most likely to be dragging.
+ */
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+/* ── Scrub row ─────────────────────────────────────────────────────────── */
+
+.scrubRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    padding: var(--space-2xs) var(--space-xs);
+}
+
+.scrubTrack {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: var(--inspector-row-h);
+    margin: 0;
+    accent-color: var(--accent-1);
+    cursor: pointer;
+}
+
+.scrubTrack:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.scrubValue {
+    flex: 0 0 auto;
+    min-width: 4ch;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+/* ── Popover bodies ────────────────────────────────────────────────────── */
+
+.tabBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+}
+
+.fieldGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--inspector-field-gap);
+}
+
+.iterationRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+}
+
+.emptyNote {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.5;
+}
+
+/* ── Keyframe steps ────────────────────────────────────────────────────── */
+
+.keyframeStep {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding: var(--space-xs);
+    border-radius: var(--inspector-field-radius);
+    background: var(--bg-surface-2);
+}
+
+.keyframeOffset {
+    color: var(--text-subtle);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+}
+
+.keyframeDeclaration {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+}
+
+/* ── Raw-text fallback (mirrors EffectsSection's) ──────────────────────── */
+
+.rawEditor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.rawEditorReason {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.5;
+}

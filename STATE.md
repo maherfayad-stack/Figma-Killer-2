@@ -8,6 +8,149 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### style-04 — an Animations section: timing, keyframes, and a scrub
+
+- **Agent:** studio-implementer
+- **Stage:** done (needs human dogfood)
+- **Updated:** 2026-09-06
+- **Branch:** `feat/animation-editing` off `main` (W5-5, `STUDIO-WAVE4-PLAN.md`).
+- **Goal:** build the SURFACE for animation editing. The write path already
+  existed — `insertRule` for a new rule, `setDeclaration`/`removeDeclaration`
+  for timing properties, `CanvasAnimationInjector` for the freeze — and none of
+  it was reachable. An imported app full of motion read as a still with no
+  explanation and no control.
+
+**The parser delivers TWO shapes, and both had to be modelled.** happy-dom's
+CSSOM neither expands `animation:` into longhands nor collapses longhands into a
+shorthand — whichever the author wrote is what lands in `StyleRule.styles`
+(verified against the real parser, not assumed). So `animationValue.ts` resolves
+either, and an edit writes back into **the shape it found**: a project that wrote
+`animation: fade 300ms` gets that line rewritten, never a competing
+`animation-duration` longhand appended below it whose cascade position the user
+never asked about. A rule that sets BOTH is `mixed` and refused — the shorthand
+resets every longhand before it and is reset by any after it, so which wins is a
+source-order question this module deliberately does not model. Parsing is strict
+and refusal is whole-value: one unclaimable token and the entire declaration
+becomes a raw text row with the reason, never a partial read that silently drops
+what it did not understand (`boxShadowLayers.ts`'s posture, verbatim).
+
+**The eight `animation-*` longhands are now real `CSSPropertyBag` members.** They
+already round-tripped through storage on the permissive `isEmittableProperty`
+gate while being invisible to `keyof CSSPropertyBag` — to the style search, to a
+section's "N set" count, to every typed read. The `transition-*` longhands were
+deliberately NOT added: nothing edits them, and a key the panel cannot control
+would put an empty row in the search results.
+
+**`transition`/`animation` MOVED out of Effects** (registry + that section's ⚙
+popover). A property may be claimed by exactly one section — `properties` drives
+the "N set" count and the search — so leaving them would have counted and shown
+them twice. Effects keeps `transform`/`transformOrigin`.
+
+**`@keyframes` needed a third codemod scope.** `setDeclaration` addresses the
+top level and `setDeclarationAtMedia` one level down inside `@media`; neither can
+reach a keyframe step, whose container is matched by NAME and whose "selector" is
+an offset. `src/core/css-codemods/keyframes.ts` is that scope, built to
+`setDeclarationAtMedia`'s shape: `setDeclarationAtKeyframe`,
+`removeDeclarationAtKeyframe`, `insertKeyframes`, plus the READ side
+(`readKeyframeSteps`) the inspector needs because a block reaches the editor as
+one opaque `rawCss` string. **`insertRule` could not have done the create** —
+its docblock offers "a new `@keyframes` step" as a use case, but
+`buildRuleWithDeclarations` throws unless the parsed fragment is a `rule` node,
+and `@keyframes x { … }` parses to an `atrule`, so that branch was never
+reachable. `insertKeyframes` is it, with the same insert-vs-merge discipline.
+
+**The keyframes save diff is per-declaration, and that is load-bearing.**
+`keyframesWriteback.ts` parses both sides of `rawCss` and compares declaration by
+declaration. Sending the block text would be a rewrite: every comment, blank line,
+and unparsed step gone on the first duration change. Adding or removing a whole
+STEP needs no op of its own — a step that appears contributes `keyframe-set`
+edits (the codemod creates the step), one that disappears contributes
+`keyframe-unset` edits (the codemod drops a step it empties). Two ops, four
+behaviours.
+
+**The honest-target gate is stricter here than for a class.** A second
+`@keyframes` of the same name does not merge with the first the way two rules
+with the same selector do — it REPLACES it entirely — so
+`analyzeKeyframesTarget` refuses `duplicate-keyframes` (a `-webkit-` twin counts)
+before any writer runs.
+
+**`freezePoint` is an axis now, not two keywords.** `'start'` and `'end'` are its
+endpoints; a 0…1 number holds every animation at that fraction. The mechanism is
+a negative `animation-delay` on a paused animation — and, because a negative
+delay is measured against a DURATION that differs per animation and that no `*`
+selector can read, the rule also forces `animation-duration: 1s`. That is
+invisible (a paused animation does not advance) and it is the ONLY reason one
+delay means the same fraction for a 200 ms fade and a 4 s orbit. Drop it and the
+slider silently starts lying; `canvasAnimationScrub.test.tsx` pins both halves.
+
+**The scrub state is a module store, not editor state and not a prop.** It is
+ephemeral (in `site` it would be undoable, savable, and part of a diff reaching
+the user's repo) and cross-cutting (the control is in the inspector, the
+consumers are one injector per board frame). `animationScrubStore.ts` is
+`studioRawCssStores.ts`'s pattern for `studioRawCssStores.ts`'s reasons. The
+play-once phase machine lives there too: restarting a CSS animation from JS means
+taking `animation` away and giving it back, and that two-phase sequence has to be
+the same phase in every frame at once or a board replays raggedly. **No file
+outside `CanvasAnimationInjector.tsx` was touched on the canvas side** —
+`IframeFrameSurface` needed no edit.
+
+**Refused in UI copy, on purpose:** JS animation (framer-motion/GSAP — the W8.1
+freeze gap, a different fix in a different layer, not something to fake with a row
+that pretends to control it); a transition's PROPERTY LIST (timing is editable,
+deciding what transitions is a statement about the element's other declarations
+and has no surface yet); scroll-driven animation. A compiled/unmapped animation
+is not refused at all — it is the graying `StyleWriteLockContext` already applies,
+from the one verdict `classCssWritability.ts` computes, and the keyframe editor
+asks the same question of the `@keyframes` rule and shows the same standard
+notice while still SHOWING the steps read-only (knowing what `shimmer` does is
+most of why anyone opens it).
+
+**One honest gap, documented in `studio-import.md` and in the refusal itself:** a
+brand-new animation in a project with no editable stylesheet anywhere is
+reported, not written. The class path answers that with `op: 'create'`, whose
+machinery (`ensureStylesheetImport`'s "reachability by construction") exists to
+make a CLASS reachable from JSX and means nothing for an at-rule. The first class
+created in such a project creates the stylesheet and the animation is writable
+from then on.
+
+**Two cycles avoided deliberately, both would have failed
+`no-circular-dependencies`:** `UnmappedStyleRule` moved to
+`cssInsertDestination.ts` (beside the destination resolution that produces most
+of its reasons) so `keyframesWriteback.ts` need not import its sibling; and the
+`@keyframes fade` prelude parse became `keyframesNameFromSelector` in
+`@core/css-codemods`, beside the matcher it has to agree with, so both the panel
+and the save path read it from one place rather than each owning a copy of the
+vendor-prefix spelling.
+
+**Verified.** `bun run build` and `bun run lint` clean. New suites green:
+`css-codemods/__tests__/keyframes.test.ts` (23), `animationValue.test.ts` (25),
+`keyframesWriteback.test.ts` (9), `canvasAnimationScrub.test.tsx` (18).
+`src/__tests__/architecture` 510/510, `src/__tests__/studio` 166/166, every
+`PropertiesPanel/__tests__` file green run individually.
+
+**Pre-existing failures, confirmed not this branch's:** the `streamClaudeCli`
+cluster (54 in `server/`), `icon-catalog-integrity`, and the iframe-timeout
+canvas batch flakes (11 in `src/__tests__/canvas`, none animation-related). One
+worth naming because it will bite the next agent:
+**`src/__tests__/studio/resolvedTextEditing.test.ts` contaminates the editor
+store for any `PropertiesPanel` test file that runs after it in the same
+`bun test` invocation** (every such file passes alone; run together they fail on
+`state.site?.settings.fonts` with `state` undefined). Narrowed to that one file;
+untouched by this branch.
+
+**Needs human dogfood.** Nothing here has been driven in a browser. Three things
+to look at first: (1) an edited imported `@keyframes` renders from
+`ClassStyleInjector`'s overlay while `AuthoredCssInjector` still holds the raw
+on-disk snapshot of the same block — for `@keyframes` the LAST definition wins
+entirely, so confirm DOM order actually lands the overlay second (the mechanism
+is the existing `styleRuleNeedsCanvasOverlay` + `updatedAt > 0` path an edited
+imported class rule already takes, but a class merges declaration-by-declaration
+and a keyframes block does not); (2) the scrub against a real animated frame, and
+whether 1% steps feel right; (3) creating an animation end to end in a project
+with exactly one stylesheet, and again in one with several.
+
+---
+
 ### struct-06 — duplicate, wrap and same-file reparent write real code (W4-1)
 - **Agent:** parser-surgeon
 - **Stage:** done (built + gated). **Needs human dogfood** — nothing here was driven in a browser.

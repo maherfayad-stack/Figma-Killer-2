@@ -17,7 +17,7 @@
  * `StudioEdit` union and calls `applyCssEdit`; this module imports nothing
  * back.
  *
- * ## Three ops, one edit kind
+ * ## Seven ops, one edit kind
  *
  *   - `op: 'set'` — an existing rule's declaration, `setDeclaration` (or
  *     `setDeclarationAtMedia` when the edit carries an `atMedia` query — a
@@ -47,8 +47,16 @@
  *     `.tsx` in the same edit needs filesystem + AST access the client does
  *     not have, which is why this is server-decided rather than
  *     client-resolved like `insert`.
+ *   - `op: 'keyframe-set'` / `'keyframe-unset'` / `'keyframes-insert'` — the
+ *     same three moves one scope over, inside a `@keyframes` block (W5-5).
+ *     Their schemas and their pure writers live in `studioCssKeyframes.ts`;
+ *     the editability check, the containment guard, and the single
+ *     `writeFileSync` below are shared with every op above, which is the whole
+ *     reason that module is pure. Their honest-target gate is
+ *     `analyzeKeyframesTarget`, not `analyzeDeclarationTarget` — see
+ *     `applyCssEdit`.
  *
- * All three share the discriminator `kind: 'css'` (so the `StudioEdit`
+ * All of them share the discriminator `kind: 'css'` (so the `StudioEdit`
  * union's top-level dispatch and `StudioEditRefusal.kind` stay unchanged),
  * disambiguated by `op`.
  *
@@ -107,6 +115,7 @@ import {
   setDeclarationAtMedia,
 } from '@core/css-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { applyKeyframeEdit, CssKeyframeEditSchemas, isKeyframeEdit } from './studioCssKeyframes'
 
 /**
  * One CSS declaration writeback (WS-6.3, `panel-02`) — `setDeclaration` /
@@ -216,7 +225,16 @@ const CssCreateEditSchema = Type.Object({
  * union; they add their own sibling schemas the same way this module already
  * sits beside `studioStructuralWriteback.ts`'s `StructuralEditSchemas`.
  */
-export const CssEditSchema = Type.Union([CssSetEditSchema, CssUnsetEditSchema, CssInsertEditSchema, CssCreateEditSchema])
+export const CssEditSchema = Type.Union([
+  CssSetEditSchema,
+  CssUnsetEditSchema,
+  CssInsertEditSchema,
+  CssCreateEditSchema,
+  // W5-5's three `@keyframes` ops. Their schemas and their (pure) writers live
+  // in `studioCssKeyframes.ts`; this module still owns the path guard, the
+  // editability check, and the single `writeFileSync` — see `applyCssEdit`.
+  ...CssKeyframeEditSchemas,
+])
 
 export type CssEdit = Static<typeof CssEditSchema>
 type CssCreateEdit = Extract<CssEdit, { op: 'create' }>
@@ -539,6 +557,21 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
   if (filePath === null) return { applied: false }
 
   const cssText = readFileSync(filePath, 'utf8')
+
+  if (isKeyframeEdit(edit)) {
+    // `analyzeDeclarationTarget` is not the right gate here and is not run:
+    // its four rules are about a SELECTOR's declarations in the cascade, and a
+    // keyframe step is neither. The equivalent question for a `@keyframes`
+    // block — is there exactly one of them by this name? — is asked by
+    // `analyzeKeyframesTarget` inside `applyKeyframeEdit`, which refuses with
+    // its own sentence.
+    const outcome = applyKeyframeEdit(cssText, edit)
+    if ('refusal' in outcome) {
+      return { applied: false, refusal: outcome.refusal }
+    }
+    if (outcome.changed) writeFileSync(filePath, outcome.css, 'utf8')
+    return { applied: true }
+  }
 
   if (edit.op === 'insert') {
     // No `analyzeDeclarationTarget` gate here — a brand-new rule has no

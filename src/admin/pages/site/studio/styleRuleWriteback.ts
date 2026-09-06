@@ -128,7 +128,9 @@ import {
   replaceStyleRuleSources,
   resolveCssInsertDestination,
   type StyleRuleSource,
+  type UnmappedStyleRule,
 } from './cssInsertDestination'
+import { collectKeyframesEdits, commitKeyframesBaseline, type CssKeyframeEditPayload } from './keyframesWriteback'
 
 /**
  * The destination half of this module lives in `cssInsertDestination.ts` (the
@@ -144,6 +146,7 @@ export {
   StyleRuleSourceSchema,
   type CssInsertDestination,
   type StyleRuleSource,
+  type UnmappedStyleRule,
 } from './cssInsertDestination'
 
 /**
@@ -226,8 +229,18 @@ export interface CssCreateEditPayload {
   atMedia?: string
 }
 
-/** One `kind: 'css'` edit, matching `server/handlers/studioCssWriteback.ts`'s `CssEditSchema` union. */
-export type CssEditPayload = CssSetEditPayload | CssUnsetEditPayload | CssInsertEditPayload | CssCreateEditPayload
+/**
+ * One `kind: 'css'` edit, matching `server/handlers/studioCssWriteback.ts`'s
+ * `CssEditSchema` union — including W5-5's three `@keyframes` ops, whose
+ * payload shapes and diff live in `keyframesWriteback.ts` for the same
+ * one-reason-per-module split the server side makes.
+ */
+export type CssEditPayload =
+  | CssSetEditPayload
+  | CssUnsetEditPayload
+  | CssInsertEditPayload
+  | CssCreateEditPayload
+  | CssKeyframeEditPayload
 
 /** `nodeId` prefix an `op: 'create'` edit is synthesized with — see `ruleIdFromCssCreateNodeId`. */
 const CSS_CREATE_NODE_ID_PREFIX = 'css:create:'
@@ -334,6 +347,10 @@ export interface CommitBaselineOptions {
 export function commitBaseline(styleRules: Record<string, StyleRule>, options: CommitBaselineOptions = {}): void {
   const pageIndex = buildClassPageIndex(options.pages ?? [])
   const refused = options.refusedRuleIds
+  // `@keyframes` bodies are diffed on `rawCss`, not on a declaration bag, so
+  // they keep their own baseline — advanced here under the identical
+  // refusal rule (`keyframesWriteback.ts`).
+  commitKeyframesBaseline(styleRules, refused)
   const previousBaseline = baseline
   const previousContextBaseline = contextBaseline
   baseline = new Map()
@@ -368,21 +385,6 @@ export function commitBaseline(styleRules: Record<string, StyleRule>, options: C
 /** Every context on a rule that is a REAL media query, not the synthetic studio viewport. */
 function realContextIds(rule: StyleRule): string[] {
   return Object.keys(rule.contextStyles ?? {}).filter((id) => id !== STUDIO_BREAKPOINT_ID)
-}
-
-/**
- * One class the user changed that could not be written, and the specific
- * reason — `style-02`. `label` and `reason` are separate fields because the
- * caller renders them in different places: the label names WHICH class in the
- * toast title/lead, the reason is the toast body. Concatenating the two into
- * one string (as this used to) produced a self-contradictory sentence — the
- * generic lead said "no hand-editable CSS file in this project" while the
- * appended reason said "Studio found 4 candidate stylesheets".
- */
-export interface UnmappedStyleRule {
-  label: string
-  /** A complete, user-readable sentence, or `null` for "no source, no more specific reason". */
-  reason: string | null
 }
 
 /** What a save should do about the CSS side of the document. */
@@ -508,6 +510,15 @@ export function collectStyleRuleEdits(
   const unwritableContexts: string[] = []
   const ruleIdByNodeId: Record<string, string> = {}
   const pageIndex = buildClassPageIndex(pages)
+
+  // `@keyframes` blocks first (W5-5). They are diffed on `rawCss` rather than
+  // on a declaration bag, so they get their own collector — but they share
+  // this plan, so one save carries a keyframe edit and the class edit that
+  // references it together, and one refusal path reports both.
+  const keyframes = collectKeyframesEdits(styleRules, pages)
+  edits.push(...keyframes.edits)
+  unmapped.push(...keyframes.unmapped)
+  Object.assign(ruleIdByNodeId, keyframes.ruleIdByNodeId)
 
   for (const [ruleId, rule] of Object.entries(styleRules)) {
     // A framework-generated utility (`.text-color-metal`, `.bg-color-metal-5`,

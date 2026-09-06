@@ -124,6 +124,16 @@ const ENUM_OPTIONS = new Map<keyof CSSPropertyBag, string[]>([
   ['appearance',       ['auto', 'none']],
   ['visibility',       ['visible', 'hidden', 'collapse']],
   ['mixBlendMode',     BLEND_MODE_KEYWORDS],
+  // Animation longhands (W5-5). The Animations section gives each of these a
+  // typed control of its own; these entries are for the OTHER doors into the
+  // same property — a style search that surfaces it, and the generic fallback
+  // row. `animationTimingFunction` is deliberately absent: its value set is
+  // open (`cubic-bezier()`, `steps()`, `linear()`), so a select would be a
+  // lie that silently discards a custom curve. It stays a text control here,
+  // and the section's own editor offers presets alongside a curve field.
+  ['animationDirection', ['normal', 'reverse', 'alternate', 'alternate-reverse']],
+  ['animationFillMode',  ['none', 'forwards', 'backwards', 'both']],
+  ['animationPlayState', ['running', 'paused']],
 ])
 
 // ---------------------------------------------------------------------------

@@ -106,6 +106,28 @@ export type CssInsertDestination =
   | { ok: false; reason: 'no-editable-stylesheet' | 'ambiguous-stylesheet'; message: string }
 
 /**
+ * One rule the user changed that could not be written, and the specific
+ * reason — `style-02`. `label` and `reason` are separate fields because the
+ * caller renders them in different places: the label names WHICH rule in the
+ * toast title/lead, the reason is the toast body. Concatenating the two into
+ * one string (as this used to) produced a self-contradictory sentence — the
+ * generic lead said "no hand-editable CSS file in this project" while the
+ * appended reason said "Studio found 4 candidate stylesheets".
+ *
+ * Declared HERE, beside the destination resolution that produces most of
+ * these reasons, rather than in `styleRuleWriteback.ts` where it started:
+ * `keyframesWriteback.ts` (W5-5) reports the same shape, and having it import
+ * the type from its sibling would make the two modules mutually dependent
+ * (`no-circular-dependencies.test.ts`). `styleRuleWriteback.ts` re-exports it,
+ * so every existing import site is unchanged.
+ */
+export interface UnmappedStyleRule {
+  label: string
+  /** A complete, user-readable sentence, or `null` for "no source, no more specific reason". */
+  reason: string | null
+}
+
+/**
  * `classId -> the one page FILE every node carrying that class lives in`.
  *
  * `style-02` — the co-location step below used to read the page out of
