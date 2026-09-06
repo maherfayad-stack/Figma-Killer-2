@@ -92,3 +92,63 @@
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+
+/*
+ * The links leaving this screen. A list rather than "hunt for the connector on
+ * the board": the panel should be able to answer "what does this screen do"
+ * without the user aiming at a curve first.
+ */
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    list-style: none;
+}
+
+/* Layout only — the Button primitive owns surface, radius, focus and hover. */
+.row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-4xs);
+    width: 100%;
+    height: auto;
+    padding: var(--space-2xs) var(--space-xs);
+    text-align: left;
+}
+
+.rowAction {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.rowTarget {
+    font-size: var(--text-s);
+}
+
+/* A broken link is listed, never hidden — it is the visible cost of an edit,
+   and silently dropping it is how a prototype rots without anyone noticing. */
+.rowBroken {
+    color: var(--danger-text);
+    font-size: var(--text-xs);
+}
+
+.warning {
+    margin: 0;
+    padding: var(--space-2xs) var(--space-xs);
+    border-radius: var(--radius);
+    background: var(--bg-surface-2);
+    color: var(--danger-text);
+    font-size: var(--text-xs);
+}
+
+.actions {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2xs);
+    margin-top: var(--space-2xs);
+}

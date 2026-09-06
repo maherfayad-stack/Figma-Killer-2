@@ -132,11 +132,35 @@ it, and the next edit would silently author a second link on the same element.
 
 ---
 
-## The board layer
+## The two board layers, and why they are two
 
-`src/admin/pages/site/canvas/BoardFlowLayer/`, mounted in `StudioBoardLayers`
-beside `BoardCommentsLayer` — in the **parent document**, inside
-`CanvasTransformLayer`, positioned in **board coordinates**.
+Both mount in `StudioBoardLayers`, derived under authored, in the **parent
+document**, inside `CanvasTransformLayer`, positioned in **board coordinates**.
+Both render `null` outside prototype mode, so a normal editing session pays one
+store read each.
+
+| | `BoardFlowLayer/` | `BoardPrototypeLayer/` |
+|---|---|---|
+| Draws | derived `CodeFlowEdge`s | authored `PrototypeLink`s |
+| Anchored to | frame → frame | **element** → frame |
+| Interactive | no — hover only, for the evidence tooltip | yes: click to select, `+` handle to author |
+| Voice | quiet, achromatic, dashed | saturated, solid |
+
+This is one feature with two line families, not two prototype systems: one
+store slice, one mode toggle, one inspector, one file on disk. They are drawn by
+two components because they are different claims that want different geometry.
+
+A derived edge covers **every page at once** — it is a read of the whole
+repository — so measuring an element per edge is exactly the cross-document
+measurement pass that would make the board a stutter machine, and it is the
+wrong granularity anyway: the fact is "Home navigates to Details", and the
+element that does it is named in the chip's tooltip where it does not have to be
+measured to be true. An authored link is the opposite: the user placed it
+deliberately, on a specific element, one at a time, and the `+` handle that
+creates it has to sit beside that element or the gesture means nothing. So
+`BoardPrototypeLayer` measures only the handful of elements links actually start
+from, on a `ResizeObserver` over their frames' documents — never on pan or zoom,
+which cannot move a board-space endpoint.
 
 - **Nothing is ever inserted into a user iframe.** Selection rings are portaled
   into each iframe to dodge coordinate conversion; a connector cannot be,
@@ -150,16 +174,7 @@ beside `BoardCommentsLayer` — in the **parent document**, inside
   `zoom` is committed 100 ms after the last gesture, so subscribing to it would
   make every connector lag the board.
 
-### Frame-to-frame, not element-to-frame
-
-Figma anchors a connector to the element you attached it to, because there that
-element is a shape in the same document. Here it is a DOM node inside another
-browsing context, and tracking its rect means a cross-document measurement pass
-on every frame move, resize and reflow.
-
-It is also the wrong granularity for the claim: the fact is "Home navigates to
-Details", and the element that does it is named in the chip's tooltip, where it
-does not have to be measured to be true.
+### Frame-to-frame, for the DERIVED half
 
 One line per **frame pair**, with the count on the chip — three buttons on Home
 that all reach Details is one flow, and three curves between the same two frames
@@ -167,6 +182,123 @@ stack invisibly on top of each other. A page with several frames on the board
 (the "duplicate as variant" case) connects each source frame to the **nearest**
 copy of the target page: every variant shows its outgoing flow without drawing
 S × T lines for one fact.
+
+---
+
+## Authoring a link
+
+Two entry points, one draft, so they cannot drift apart:
+
+- **Drag the `+` handle** beside the selected element onto another frame. The
+  rubber band SNAPS to a frame once the cursor is over it — routed exactly as
+  the committed connector will be — because a band that keeps chasing the cursor
+  over a valid target is a drag that never says whether releasing will do
+  anything. The frame under the cursor takes a wash, not just a ring: at board
+  zoom a 2px outline on a 1440px frame is easy to miss.
+- **The selection toolbar's link button**, which sets a request that
+  `usePrototypeLinkPick` converts into a `pick` draft once it has board
+  geometry the toolbar has no way to know. It exists because the handle can only
+  be drawn where the canvas can MEASURE the node, and "we could not measure it"
+  is not an answer to give someone who has already selected the thing. A drag
+  commits on pointer-up; a pick commits on the next click and cancels on Escape.
+
+The draft is deliberately NOT a `PrototypeLink` with a null target: a half-drawn
+gesture the user abandons must leave nothing behind, and giving it the real shape
+is how it ends up accidentally persisted. It becomes a link only at the drop, in
+`prototypeActions.commitLinkDraft`, where the `NodeHint` is captured against the
+tree as it stands.
+
+**The drop decides the action.** Dragging onto a `popup` or `sheet` page means
+"present this over the current screen"; onto a `screen`, "navigate to it"
+(`defaultLinkPresentation`, keyed on `PageKind`). Asking the user to say so
+twice — once by aiming, once in a dropdown — is a question the drop already
+answered.
+
+**Every drop target is an iframe**, and a left-click pointer event inside an
+iframe never reaches the parent document's `window`. Without
+`markCanvasPointerRelay` the drag went silent the instant the cursor entered the
+only thing it was aiming at, which read as "the drop does nothing" rather than
+"the drag stopped". Three architecture gates sit directly on this file:
+`single-drag-mechanism` (raw pointer events, no `@dnd-kit`, no `dataTransfer`),
+`canvas-overlay-pointerdown` (no `stopPropagation` in `onPointerDown` under
+`canvas/`), and the relay requirement itself.
+
+`back` and `close` are authored in the inspector instead, because there is
+nothing to drag TO: "go back" names no screen, it names the one you came from,
+which is only known while the player is running. They draw a chip on their own
+element rather than a connector — an interaction you cannot see on the board is
+one you will forget you authored.
+
+---
+
+## Playing it
+
+Live view with the **Play** toggle armed: a click follows a link instead of
+selecting a node. Both meanings at once is not resolvable, which is the whole
+reason the toggle exists. `setCanvasView` arms it on the way into live and
+disarms it on the way out, so the flag can never be set where no control exists
+to clear it.
+
+The machine is `src/core/studio-prototype/playback.ts` — pure, no DOM, no store,
+no React — over two stacks:
+
+- `screens` — everything `navigate` pushed. `back` pops it.
+- `overlays` — everything `overlay` presented on top of the current screen.
+  `close` pops it, and so does `back` when one is showing, because that is what
+  the gesture means to someone looking at a sheet over a screen.
+
+Navigating out from under an overlay drops every overlay: it belonged to the
+screen being left. Each stack entry remembers HOW IT ARRIVED, because `back` has
+no transition of its own — going back means reversing whatever brought you here,
+and a bare stack of page ids no longer says what that was. `applyPlayAction`
+returns the SAME state object when nothing changed, and aliases nothing from its
+argument when something did: the store hands it a Mutative draft, and an object
+assigned back into a draft while still holding references into it does not
+survive finalization.
+
+Arming the player changes what is **being looked at**, never what is being
+edited. Selection, the properties panel and the page tree all keep pointing at
+the editing page, so disarming puts the editor back exactly where it was.
+
+### Two screen slots, and no `key`
+
+`PrototypeScreenStack` mounts two frames for the life of the player and moves
+pages BETWEEN them. A push has to animate the departing screen too — it
+parallaxes back a third of the way and darkens under the arriving one, which is
+what stops the motion reading as a cross-dissolve — so both have to be on screen
+at once.
+
+Keying a slot on the page id is the obvious way to replay a CSS entrance, and it
+remounts the `<iframe>`; the React portal that renders the page into the frame's
+body does not survive that, so every navigation landed on an empty device.
+`playbackMotion.ts` replays the entrance with the Web Animations API against a
+frame that stays put — which also means one source for every duration instead of
+the same numbers written twice, once per language. `prefers-reduced-motion` is
+honoured there explicitly, because the global CSS rule that clamps
+`animation-duration` cannot see a script-driven animation.
+
+The numbers are the design system's own motion tokens. Two principles are baked
+into them: `EASE_IOS` is the curve the DS `BottomSheet` uses (a sheet the DS
+animates and a sheet Studio animates have to move identically), and dismissal is
+quicker than presentation (arriving is the moment worth drawing out; leaving
+should get out of the way).
+
+### The overlay owns its own unmounting
+
+React removes a component the moment its parent stops rendering it, so an
+overlay wired straight to "is one presented?" VANISHES rather than dismissing.
+`PrototypeOverlay` keeps the last presented page mounted, plays the exit, and
+only then drops it.
+
+It supplies motion and a dim and **nothing about the overlay's shape**: an
+overlay page is scaffolded at screen size and draws its own panel, corner radius
+and scrim (`pageKinds.ts`), so a height chosen here would be a second opinion
+about a decision the design already made. A fixed top inset cropped the top off
+every full-screen sheet, which is what that rule replaced.
+
+Because the overlay page covers the screen completely, there is no outside left
+to tap — so `close` on the affordance the design itself drew is the only honest
+dismissal, and the scrim is presentation only.
 
 ---
 
@@ -178,11 +310,27 @@ S × T lines for one fact.
   is an overlay on the design board. It is **not persisted** — restoring it on
   load would open the editor in a state where the first click selects nothing,
   with no memory of having asked for that.
+- **Play** is the same shape one axis over: a pressed-state toggle shown only
+  in LIVE view, because that is the only place following a link means anything.
 - **The inspector body swaps** in prototype mode (`PrototypePanel` replaces
   `PropertiesPanel` inside `RightSidebar`), the way Figma's Design/Prototype
   tabs work. Not a third tab in the Properties/Comments strip: those are two
   panels you choose between, this is the same inspector showing a different
   layer of the same selection.
+- **The inspector answers two questions**, because a link can be reached two
+  ways. Selecting the ELEMENT shows (and authors) the link on it; clicking the
+  CONNECTOR (`selectedLinkId`) shows that link, which is how you reach one whose
+  source element is off-screen or gone. The second wins when both are live — the
+  user just clicked a specific line. Editing there goes through `updateLink`
+  (the whole link, anchor included) and never `saveLink`, which is keyed on an
+  element and would silently re-anchor the link to whatever is selected on the
+  canvas.
+- **Every screen's outgoing links are listed**, so the panel answers "what does
+  this screen do" without the user hunting a connector first. A link whose
+  source element is gone is listed and marked, never hidden.
+- **Delete / Backspace removes the selected link**, Escape deselects it, from a
+  document-level listener in the CAPTURE phase — a link and a node can be
+  selected at once, and only one of them was meant.
 - Every control **saves on change**. A link is three enum choices, each a
   complete statement, and the server merges op-by-op — a form-and-submit would
   add an "edited but not saved" state that has no meaning here.
@@ -224,7 +372,16 @@ indistinguishable from a caller that failed to load its pages.
 | `server/handlers/studio/prototypeRoutes.ts` | the three routes |
 | `src/admin/pages/site/store/slices/prototypeSlice.ts` | both collections + `boardMode` |
 | `src/admin/pages/site/studio/prototypeActions.ts` | every round trip |
-| `src/admin/pages/site/canvas/BoardFlowLayer/` | the connectors |
+| `src/core/studio-prototype/playback.ts` | the player's stack machine |
+| `src/admin/pages/site/canvas/BoardFlowLayer/` | the derived connectors |
+| `src/admin/pages/site/canvas/BoardPrototypeLayer/` | the authored connectors, the `+` handle, the drag |
+| `src/admin/pages/site/canvas/playbackMotion.ts` | every animation the player runs |
+| `src/admin/pages/site/canvas/PrototypeScreenStack.tsx` | the two screen slots |
+| `src/admin/pages/site/canvas/PrototypeOverlay.tsx` | a sheet or popup over the screen that opened it |
+| `src/admin/pages/site/canvas/usePrototypePlayback.ts` | which page the live frame shows while armed |
+| `src/admin/pages/site/canvas/usePrototypeLinkKeyboard.ts` | Delete removes a link, Escape deselects |
+| `src/admin/pages/site/studio/playNavigation.ts` | a click in the armed frame → the machine |
+| `src/admin/pages/site/store/slices/prototypeSelectors.ts` | derived reads (never zustand selectors — see its doc) |
 | `src/admin/pages/site/panels/PrototypePanel/` | the inspector |
 
 ---
@@ -233,15 +390,10 @@ indistinguishable from a caller that failed to load its pages.
 
 Tracked in [`STUDIO-PROTOTYPE-PLAN.md`](../../STUDIO-PROTOTYPE-PLAN.md).
 
-- **Play mode.** Following a link in live mode: history stack, transition
-  runtime, back/close, scrim dismiss.
-- **The drag-from-`+` gesture.** An alternative input for the same model the
-  inspector already writes. Must be raw pointer events —
-  `single-drag-mechanism.test.ts` bans `@dnd-kit` and `dataTransfer` in new
-  files, and `canvas-overlay-pointerdown.test.ts` bans `stopPropagation` in
-  `onPointerDown` under `canvas/`.
-- **Element-level anchoring** for authored connectors.
 - **`back`-shaped code flows.** `router.back()` is a real fact with no drawable
   destination and, today, no consumer.
 - **Pruning on page delete.** `prunePrototypeLinks` and the `prune` op exist;
-  nothing calls them yet. A link to a deleted page simply draws nothing.
+  nothing calls them yet. A link to a deleted page simply draws nothing, and
+  the inspector's list shows it pointing at "Deleted page".
+- **A trigger other than `click`.** The schema has one, and the reader repairs
+  anything else to it.
