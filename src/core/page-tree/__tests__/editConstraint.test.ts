@@ -15,7 +15,6 @@ import {
   explainCssRuleConstraint,
   explainDetachConstraint,
   explainGestureConstraint,
-  explainInstanceDuplicateConstraint,
   explainMintedInsertConstraint,
   explainPropConstraint,
   explainStructuralConstraint,
@@ -186,35 +185,40 @@ describe('explainStructuralConstraint', () => {
     expect(constraint.explanation).toContain('one branch of several')
   })
 
-  it('row 11 — reparent refuses on any source-derived node with no action', () => {
+  // Rows 11-13, rewritten by W4-1: reparent, duplicate and wrap WRITE now, so
+  // the constraint they produce is `null` for an ordinary element. What still
+  // refuses — and what each refusal offers as a way forward — is asserted here
+  // instead, because the copy is the whole product surface of these rows.
+  it('row 11 — reparent into a container in ANOTHER file refuses, and offers the source', () => {
     const node = { id: 'src/screens/Home.jsx:9:1' }
-    const constraint = explainStructuralConstraint({ kind: 'reparent', node })
+    expect(explainStructuralConstraint({ kind: 'reparent', node, destination: { id: 'src/screens/Home.jsx:20:3' } })).toBeNull()
+
+    const constraint = explainStructuralConstraint({
+      kind: 'reparent',
+      node,
+      destination: { id: 'src/screens/About.jsx:4:3' },
+    })
     assertWellFormed(constraint)
-    expect(constraint.reason).toBe('reparent')
-    expect(constraint.actions).toEqual([])
+    expect(constraint.reason).toBe('cross-file')
+    expect(constraint.explanation).toContain('different file')
+    expect(constraint.actions[0]?.kind).toBe('jump-to-source')
   })
 
-  it('row 12 — duplicate refuses on ANY source-derived node (ordinary elements: no action)', () => {
-    const node = { id: 'src/screens/Home.jsx:9:1' }
-    const constraint = explainStructuralConstraint({ kind: 'duplicate', node })
+  it('row 12 — duplicate is allowed on an ordinary element and refused on a list row', () => {
+    expect(explainStructuralConstraint({ kind: 'duplicate', node: { id: 'src/screens/Home.jsx:9:1' } })).toBeNull()
+
+    const constraint = explainStructuralConstraint({ kind: 'duplicate', node: { id: 'src/screens/Home.jsx:9:1#2' } })
     assertWellFormed(constraint)
-    expect(constraint.reason).toBe('duplicate')
-    expect(constraint.actions).toEqual([])
+    expect(constraint.reason).toBe('list-row')
   })
 
-  it('row 12 (instance escape hatch, R5) — a studio.instance gets the extract offer instead', () => {
-    const constraint = explainInstanceDuplicateConstraint()
-    assertWellFormed(constraint)
-    expect(constraint.reason).toBe('duplicate')
-    expect(constraint.actions.some((a) => a.kind === 'extract')).toBe(true)
-  })
-
-  it('row 13 — wrap refuses on any source-derived node with no action', () => {
+  it('row 13 — wrap is allowed on one element and refused on a multi-selection', () => {
     const node = { id: 'src/screens/Home.jsx:9:1' }
-    const constraint = explainStructuralConstraint({ kind: 'wrap', node })
+    expect(explainStructuralConstraint({ kind: 'wrap', node })).toBeNull()
+
+    const constraint = explainStructuralConstraint({ kind: 'wrap', node, multi: true })
     assertWellFormed(constraint)
-    expect(constraint.reason).toBe('wrap')
-    expect(constraint.actions).toEqual([])
+    expect(constraint.reason).toBe('multi-select')
   })
 
   it('row 14 — multi-select reorder refuses with an actionable instruction', () => {
@@ -223,7 +227,7 @@ describe('explainStructuralConstraint', () => {
     const constraint = explainStructuralConstraint({ kind: 'reorder', node, anchor, multi: true })
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('multi-select')
-    expect(constraint.actions[0]?.label).toContain('one by one')
+    expect(constraint.actions[0]?.label).toContain('one at a time')
   })
 
   it('row 15 — no-sibling-anchor refuses with no action', () => {

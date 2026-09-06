@@ -23,8 +23,16 @@
  * **The §2 invariant this whole module exists to enforce:** every edit
  * surface either WRITES, REFUSES with a reason and a way forward, or IS NOT
  * OFFERED. A refusal with an empty `actions` array is still honest — some
- * reasons (`route-chrome`, `wrap`, `code-placed`) truly have no way forward
- * yet — but it must be a deliberate empty array, not a missing one.
+ * reasons (`route-chrome`, `code-placed`, `no-sibling-anchor`) truly have no
+ * way forward yet — but it must be a deliberate empty array, not a missing one.
+ *
+ * W4-1 retired one of this module's own entries rather than reword it:
+ * `explainInstanceDuplicateConstraint` existed because duplicate refused every
+ * imported node, so a `studio.instance` was offered "duplicate the COMPONENT as
+ * a new file" as the nearest true thing. Duplicating a call site is now an
+ * ordinary write (`duplicateJsxElement` copies `<SheetShell/>` and the board
+ * re-reads it), so that sentence had become false — and a refusal that is no
+ * longer true is worse than no refusal at all.
  */
 import { isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
 import {
@@ -350,14 +358,21 @@ function structuralActions(
       // the caller (which DOES have store access) can wire the `run` handler.
       return [{ label: 'Detach or edit the component definition', kind: 'detach' }]
     case 'multi-select':
-      return [{ label: 'Drag them one by one', kind: 'select-container' }]
+      return [{ label: 'Do them one at a time', kind: 'select-container' }]
     case 'insert':
       return [{ label: 'Select the container to insert into', kind: 'select-container' }]
-    // Rows 9-16 — `route-chrome`, `code-placed`, `reparent`, `duplicate`,
-    // `wrap`, `cross-file`, `no-sibling-anchor` genuinely have no way forward
-    // today (per `sourceStructure.ts`'s own doc: "deliberately NOT built
-    // rather than approximated"). An empty array here is the honest answer,
-    // not a gap.
+    case 'cross-file':
+      // W4-1 — a reparent refused for crossing files, or a reorder whose anchor
+      // is in another file. The one useful next step is to look at where the
+      // element actually lives, which `origin` already names.
+      return node && decodeSourceNodeId(node.id)
+        ? [{ label: 'Open it in code', kind: 'jump-to-source', target: decodeSourceNodeId(node.id)! }]
+        : []
+    // `route-chrome`, `code-placed`, `no-sibling-anchor`, and the residual
+    // `reparent`/`duplicate`/`wrap` (W4-1 lifted those three for ordinary
+    // elements; what still refuses under those names is a gesture with no
+    // second location to write against) genuinely have no way forward today.
+    // An empty array here is the honest answer, not a gap.
     default:
       return []
   }
@@ -479,27 +494,6 @@ export function explainDetachConstraint(reason: string, message: string): EditCo
     scope: 'node',
     explanation: message,
     actions: offersExtract ? [{ label: 'Duplicate as a new file and edit that', kind: 'extract' }] : [],
-  }
-}
-
-/**
- * R5's fix — the SAME explanation `explainDetachConstraint` would give for a
- * Detach failure, offered from an attempted DUPLICATE gesture on a
- * `studio.instance` node instead. `sourceStructure.ts`'s generic `duplicate`
- * refusal ("copy the JSX in the file instead") is accurate but blanket; a
- * `studio.instance` has a real, working duplicate-as-new-component-file
- * escape hatch (`extractInstanceCopy`) that the generic message never
- * mentions. Callers on a canvas/layers-tree Duplicate gesture: check
- * `moduleId === 'studio.instance'` first and call this instead of
- * `explainStructuralConstraint({kind:'duplicate', …})`.
- */
-export function explainInstanceDuplicateConstraint(): EditConstraint {
-  return {
-    reason: 'duplicate',
-    scope: 'node',
-    explanation:
-      'This is a component instance — Studio cannot duplicate the call site itself, but it can duplicate the COMPONENT as a new file you can edit independently.',
-    actions: [{ label: 'Duplicate as a new file', kind: 'extract' }],
   }
 }
 

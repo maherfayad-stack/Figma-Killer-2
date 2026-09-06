@@ -67,7 +67,7 @@ import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/module-picker'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
-import { explainInstanceDuplicateConstraint, explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
+import { explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
@@ -188,7 +188,7 @@ export function LayerNodeContextMenu({
   // R4 — pre-computed constraints for Duplicate/Wrap/Delete, so the menu
   // greys out an item the store would refuse rather than letting the user
   // click and then explaining after the fact. All-or-nothing across
-  // `targetIds`, matching `planSourceCopy`/`deleteNodes`'s own "the whole
+  // `targetIds`, matching `planSourceDuplicate`/`deleteNodes`'s own "the whole
   // gesture refuses if ANY selected node refuses" semantics — the FIRST
   // refusal found is what the tooltip explains.
   //
@@ -205,26 +205,19 @@ export function LayerNodeContextMenu({
   const structuralConstraints = ((): { duplicate: EditConstraint | null; wrap: EditConstraint | null; delete: EditConstraint | null } => {
     if (!activePage || targetIds.length === 0) return { duplicate: null, wrap: null, delete: null }
     const nodes = targetIds.map((id) => activePage.nodes[id]).filter((n) => n !== undefined)
+    // `multi` is what tells the rule a WRAP is being asked of several elements
+    // at once — one wrapper spanning N ranges, which W4-1's `wrapJsxElement`
+    // does not write. Duplicate and delete are safe in bulk (the save batch is
+    // ordered bottom-to-top), so they pass it through unchanged and are
+    // enabled for a multi-selection.
     const firstRefusal = (kind: 'duplicate' | 'wrap' | 'delete'): EditConstraint | null => {
       for (const node of nodes) {
-        const constraint = explainStructuralConstraint({ kind, node })
+        const constraint = explainStructuralConstraint({ kind, node, multi: nodes.length > 1 })
         if (constraint) return constraint
       }
       return null
     }
-    // R5 — a single `studio.instance`'s Duplicate gets the real "duplicate as
-    // a new file" wording instead of the generic "cannot duplicate imported
-    // code" every other node shows, since that hatch genuinely exists for it
-    // (reachable today from the Properties panel's Component section /
-    // Detach's own failure card — `InstanceCallSiteView.tsx`, not touched by
-    // this track). Still disabled here: this menu has no wiring to the
-    // extract flow itself, only a truer explanation of why the direct
-    // gesture refuses and where the real one lives.
-    const duplicate =
-      !isMulti && nodes.length === 1 && nodes[0]?.moduleId === 'studio.instance'
-        ? explainInstanceDuplicateConstraint()
-        : firstRefusal('duplicate')
-    return { duplicate, wrap: firstRefusal('wrap'), delete: firstRefusal('delete') }
+    return { duplicate: firstRefusal('duplicate'), wrap: firstRefusal('wrap'), delete: firstRefusal('delete') }
   })()
 
   // The one refusal the footer explains in full. Delete first, then Duplicate,

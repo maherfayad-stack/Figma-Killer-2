@@ -1,8 +1,8 @@
 /**
- * studioStructuralWriteback — the three studio edit kinds that change WHERE
- * markup is rather than what it says: `move`, `delete` and `insert`
- * (`struct-01`, `struct-02`). Their schemas and their dispatch into
- * `@core/ast-codemods`, in one place.
+ * studioStructuralWriteback — the studio edit kinds that change WHERE markup is
+ * rather than what it says: `move`, `delete`, `insert` (`struct-01`,
+ * `struct-02`) and, since W4-1, `duplicate`, `wrap` and `reparent`. Their
+ * schemas and their dispatch into `@core/ast-codemods`, in one place.
  *
  * Split out of `studioWriteback.ts` for the same reason `studioCssWriteback.ts`
  * was: that module owns the VALUE edits, which all share one shape — decode a
@@ -27,7 +27,13 @@
  * formatting will not admit a byte-exact move, this insert would shadow a name
  * the file already binds.
  */
-import { deleteJsxElement, insertJsxElement, moveJsxElement } from '@core/ast-codemods'
+import {
+  deleteJsxElement,
+  duplicateJsxElement,
+  insertJsxElement,
+  moveJsxElement,
+  wrapJsxElement,
+} from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -161,8 +167,63 @@ const InsertEditSchema = Type.Object({
   props: Type.Optional(InsertPropsSchema),
 })
 
-/** The three structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */
-export const StructuralEditSchemas = [MoveEditSchema, DeleteEditSchema, InsertEditSchema] as const
+/**
+ * One element copied in place (W4-1) — `duplicateJsxElement`. `nodeId` is the
+ * element being copied, and it is the ONLY field: the copy lands as its own next
+ * sibling, in the same scope, so there is no anchor to resolve and no import to
+ * reconcile (every binding the markup reads was already in scope one line up).
+ */
+const DuplicateEditSchema = Type.Object({
+  kind: Type.Literal('duplicate'),
+  nodeId: Type.String(),
+})
+
+/**
+ * One element wrapped in a new container (W4-1) — `wrapJsxElement`. `nodeId` is
+ * the element being wrapped; `name`/`importSpecifier` spell the wrapper exactly
+ * as `insert` spells a new element (an intrinsic tag with no specifier, a
+ * component with one, and the import written alongside).
+ *
+ * The wrapper carries no props: it is a container the user is about to style on
+ * the canvas, and writing a module's schema defaults into their source as
+ * attributes would put Studio's own vocabulary in their repository.
+ */
+const WrapEditSchema = Type.Object({
+  kind: Type.Literal('wrap'),
+  nodeId: Type.String(),
+  name: Type.String(),
+  importSpecifier: Type.Optional(Type.String()),
+})
+
+/**
+ * One element moved into a DIFFERENT parent (W4-1) — `moveJsxElement`'s
+ * destination-parent form. `parentNodeId` is the new container; the optional
+ * `anchorNodeId`/`position` name an existing child of it to land beside, for the
+ * same reason `move` uses an anchor rather than an index. Without them the
+ * element is appended as the last child, which is a real position — the same
+ * reading `insert` already gives a missing anchor.
+ *
+ * Cross-FILE is refused before it reaches here: `applyStudioEdit` drops a
+ * `parentNodeId` that decodes to another file, and the store refuses the gesture
+ * with `cross-file` from the two ids alone.
+ */
+const ReparentEditSchema = Type.Object({
+  kind: Type.Literal('reparent'),
+  nodeId: Type.String(),
+  parentNodeId: Type.String(),
+  anchorNodeId: Type.Optional(Type.String()),
+  position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
+})
+
+/** The structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */
+export const StructuralEditSchemas = [
+  MoveEditSchema,
+  DeleteEditSchema,
+  InsertEditSchema,
+  DuplicateEditSchema,
+  WrapEditSchema,
+  ReparentEditSchema,
+] as const
 
 export const StructuralEditSchema = Type.Union([...StructuralEditSchemas])
 export type StructuralEdit = Static<typeof StructuralEditSchema>
@@ -179,28 +240,40 @@ export type StructuralEditOutcome = { ok: true } | { ok: false; reason: string; 
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
 export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind'] {
-  return kind === 'move' || kind === 'delete' || kind === 'insert'
+  return (
+    kind === 'move' ||
+    kind === 'delete' ||
+    kind === 'insert' ||
+    kind === 'duplicate' ||
+    kind === 'wrap' ||
+    kind === 'reparent'
+  )
 }
 
 /**
  * Run one structural edit's codemod.
  *
  * `anchor` is the caller's already-decoded, same-file `anchorNodeId`, or `null`
- * when the edit carried none or it named a different file. The two kinds treat
- * that absence differently, and the difference is not an oversight:
+ * when the edit carried none or it named a different file. The kinds treat that
+ * absence differently, and the difference is not an oversight:
  *
  *  - A **move** without a same-file anchor is a refusal. "Put this element
  *    before that one" is the entire content of the edit; without the anchor
  *    there is no order to write.
- *  - An **insert** without one simply appends. The anchor is a refinement on
- *    top of a container that is already an honest target, so dropping it costs
- *    the user a position they can fix with a drag — refusing would cost them
- *    the whole action.
+ *  - An **insert** or a **reparent** without one simply appends. The anchor is a
+ *    refinement on top of a container that is already an honest target, so
+ *    dropping it costs the user a position they can fix with a drag — refusing
+ *    would cost them the whole action.
+ *
+ * `destination` is the same-file decoding of a `reparent`'s `parentNodeId`. It
+ * is `null` for every other kind, and a `null` on a reparent is `cross-file`:
+ * the new parent is in another module, where the markup's bindings do not exist.
  */
 export function applyStructuralEdit(
   loc: JsxLocation,
   edit: StructuralEdit,
   anchor: { line: number; col: number } | null,
+  destination: { line: number; col: number } | null = null,
 ): StructuralEditOutcome {
   switch (edit.kind) {
     case 'move': {
@@ -237,6 +310,35 @@ export function applyStructuralEdit(
         props: edit.props,
         ...(edit.importSpecifier === undefined ? {} : { importSpecifier: edit.importSpecifier }),
         ...(edit.children === undefined ? {} : { children: edit.children }),
+      })
+      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+    }
+    case 'duplicate': {
+      const result = duplicateJsxElement(loc)
+      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+    }
+    case 'wrap': {
+      const result = wrapJsxElement({
+        ...loc,
+        name: edit.name,
+        ...(edit.importSpecifier === undefined ? {} : { importSpecifier: edit.importSpecifier }),
+      })
+      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+    }
+    case 'reparent': {
+      if (!destination) {
+        return {
+          ok: false,
+          reason: 'cross-file',
+          message:
+            'The container this element would move into is in a different file. Studio can move an element to a new parent within one file; across files the markup would land where the values it reads do not exist.',
+        }
+      }
+      const result = moveJsxElement({
+        ...loc,
+        destinationLine: destination.line,
+        destinationCol: destination.col,
+        ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }

@@ -8,8 +8,9 @@
  *
  * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
  * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'move' |
- * 'delete' | 'insert' | 'insert-slot' | 'promote-component' | 'add-slot-prop' |
- * 'css'`) lives in `studioEditSchemas.ts` (split out for the
+ * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'reparent' | 'insert-slot' |
+ * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
+ * `studioEditSchemas.ts` (split out for the
  * `module-size-budgets` ceiling) and is re-exported below verbatim, so every
  * existing consumer's import path is unchanged.
  *
@@ -23,11 +24,12 @@
  *
  *   - `studioCssWriteback.ts` — `css`. Its target is a FILE + SELECTOR rather
  *     than a decoded `line:col`, and it writes through a postcss CST.
- *   - `studioStructuralWriteback.ts` — `move` / `delete` / `insert`. These
- *     change WHERE markup is: they take a second location (an anchor sibling),
- *     they change the file's line count (invalidating every id below them,
- *     which is why `isSharedSourceNodeId` always reports them as shared), and
- *     each can refuse for reasons only the AST can see.
+ *   - `studioStructuralWriteback.ts` — `move` / `delete` / `insert` /
+ *     `duplicate` / `wrap` / `reparent`. These change WHERE markup is: they
+ *     take a second and sometimes a third location (an anchor sibling, a
+ *     destination parent), they change the file's line count (invalidating
+ *     every id below them, which is why `isSharedSourceNodeId` always reports
+ *     them as shared), and each can refuse for reasons only the AST can see.
  *   - `studioSlotWriteback.ts` (E2.4/E2.2) — `insert-slot` / `promote-component`
  *     / `add-slot-prop`. `insert-slot` writes into a component PROP rather
  *     than a child list or an existing attribute's scalar; `promote-component`
@@ -268,13 +270,19 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * (`PropEditSchema`'s own field, not `insert-slot`'s `propName`), so without
  * this exemption two DIFFERENT slot fills on one call site would collapse to
  * whichever the batch listed first.
+ *
+ * `duplicate` and `wrap` (W4-1) are exempt for the same reason as `insert`:
+ * neither overwrites the span its nodeId points at, both ADD around it. Two
+ * duplicates of one element in a batch are two copies the user asked for
+ * (`⌘D ⌘D`), and two wraps are two nested containers — collapsing either to one
+ * would silently drop work while `written` reported the truth.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(edits: readonly T[]): T[] {
   const byTarget = new Map<string, T>()
   const passthrough: T[] = []
   for (const edit of edits) {
     const loc = studioEditLocation(edit.nodeId)
-    if (!loc || edit.kind === 'insert' || edit.kind === 'insert-slot') {
+    if (!loc || edit.kind === 'insert' || edit.kind === 'insert-slot' || edit.kind === 'duplicate' || edit.kind === 'wrap') {
       passthrough.push(edit)
       continue
     }
@@ -410,18 +418,26 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       return { applied: true }
     case 'move':
     case 'delete':
-    case 'insert': {
-      // Both ends decode through the same guard, so a hand-crafted
-      // `anchorNodeId` cannot name a file outside the workspace or a file that
-      // is not app source — and a cross-file anchor is dropped here rather than
-      // reaching a codemod that would need an AST to notice. What each kind
-      // does with a missing anchor is `applyStructuralEdit`'s call.
+    case 'insert':
+    case 'duplicate':
+    case 'wrap':
+    case 'reparent': {
+      // Every end decodes through the same guard, so a hand-crafted
+      // `anchorNodeId`/`parentNodeId` cannot name a file outside the workspace
+      // or a file that is not app source — and a cross-file anchor or
+      // destination is dropped here rather than reaching a codemod that would
+      // need an AST to notice. What each kind does with a missing one is
+      // `applyStructuralEdit`'s call (a reparent refuses `cross-file`; an
+      // insert appends).
       const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
       const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const parentId = 'parentNodeId' in edit ? edit.parentNodeId : undefined
+      const destination = parentId ? studioEditLocation(parentId) : null
       const result = applyStructuralEdit(
         loc,
         edit,
         anchor && anchor.rel === target.rel ? anchor : null,
+        destination && destination.rel === target.rel ? destination : null,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       return { applied: true }

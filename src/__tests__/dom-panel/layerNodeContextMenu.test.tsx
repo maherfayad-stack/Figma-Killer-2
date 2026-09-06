@@ -886,12 +886,18 @@ describe('LayerNodeContextMenu — multi-delete confirmation', () => {
 // exact predicate the store's own guard consults, never a re-derived rule.
 // ---------------------------------------------------------------------------
 
-function renderMenuForNode(nodeId: string, page: ReturnType<typeof makePage>) {
+function renderMenuForNode(
+  nodeId: string,
+  page: ReturnType<typeof makePage>,
+  /** The whole selection, when the gesture is a multi-select one. Defaults to just `nodeId`. */
+  selectedNodeIds: string[] = [nodeId],
+) {
   localStorage.clear()
   useEditorStore.setState({
     site: makeSite({ pages: [page], files: [], visualComponents: [] }),
     activePageId: page.id,
     selectedNodeId: nodeId,
+    selectedNodeIds,
     hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
@@ -935,7 +941,11 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     expect(containerItem.getAttribute('aria-disabled')).toBeNull()
   })
 
-  it('a source-derived node with NO structural lock can still be deleted, but not duplicated or wrapped', () => {
+  // W4-1 — an ordinary imported element can now be duplicated and wrapped:
+  // both write real JSX into the user's file and the board re-reads it. This
+  // test asserted the opposite until then, and is the gate that moved with the
+  // lifted refusal.
+  it('a source-derived node with NO structural lock can be deleted, duplicated AND wrapped', () => {
     const page = makePage({
       id: 'page-src',
       rootNodeId: 'root',
@@ -946,15 +956,13 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     })
     renderMenuForNode('src/screens/Home.jsx:9:1', page)
 
-    const deleteItem = screen.getByRole('menuitem', { name: /delete/i })
-    expect(deleteItem.getAttribute('aria-disabled')).toBeNull()
-
-    const duplicateItem = screen.getByRole('menuitem', { name: /duplicate/i })
-    expect(duplicateItem.getAttribute('aria-disabled')).toBe('true')
+    for (const label of [/delete/i, /duplicate/i]) {
+      expect(screen.getByRole('menuitem', { name: label }).getAttribute('aria-disabled')).toBeNull()
+    }
 
     fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /wrap in/i }))
     const containerItem = within(screen.getByRole('menu', { name: 'Wrap in' })).getByRole('menuitem', { name: /container/i })
-    expect(containerItem.getAttribute('aria-disabled')).toBe('true')
+    expect(containerItem.getAttribute('aria-disabled')).toBeNull()
   })
 
   it('a structurally locked source node (e.g. spread props) cannot be deleted either, and the tooltip names the reason', () => {
@@ -990,7 +998,10 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     }
   })
 
-  it('R5 — a `studio.instance` node gets the real "duplicate as a new file" wording instead of the generic refusal', () => {
+  // W4-1 retired R5's instance-specific wording along with the refusal it
+  // explained: duplicating a call site is now an ordinary write (a second
+  // `<Component/>` in the file), so the menu offers it like any other element.
+  it('a `studio.instance` call site can be duplicated — the call site is ordinary JSX', () => {
     const page = makePage({
       id: 'page-instance',
       rootNodeId: 'root',
@@ -1001,10 +1012,28 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     })
     renderMenuForNode('src/screens/Home.jsx:9:1', page)
 
-    const duplicateItem = screen.getByRole('menuitem', { name: /duplicate/i })
-    expect(duplicateItem.getAttribute('aria-disabled')).toBe('true')
-    fireEvent.mouseEnter(duplicateItem)
-    expect(screen.getByRole('tooltip').textContent).toContain('new file')
+    expect(screen.getByRole('menuitem', { name: /duplicate/i }).getAttribute('aria-disabled')).toBeNull()
+  })
+
+  // The multi-select half of the same rule: several elements can be duplicated
+  // or deleted in one batch (ordered bottom-to-top), but ONE wrapper around
+  // several ranges is not a write `wrapJsxElement` makes.
+  it('a multi-selection can be duplicated but not wrapped', () => {
+    const page = makePage({
+      id: 'page-multi',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1', 'src/screens/Home.jsx:12:1'] }),
+        'src/screens/Home.jsx:9:1': makeNode({ id: 'src/screens/Home.jsx:9:1' }),
+        'src/screens/Home.jsx:12:1': makeNode({ id: 'src/screens/Home.jsx:12:1' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1', page, ['src/screens/Home.jsx:9:1', 'src/screens/Home.jsx:12:1'])
+
+    expect(screen.getByRole('menuitem', { name: /duplicate/i }).getAttribute('aria-disabled')).toBeNull()
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /wrap in/i }))
+    const containerItem = within(screen.getByRole('menu', { name: 'Wrap in' })).getByRole('menuitem', { name: /container/i })
+    expect(containerItem.getAttribute('aria-disabled')).toBe('true')
   })
 })
 
@@ -1042,26 +1071,12 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     expect(screen.getByTestId('constraint-action-edit-array')).toBeTruthy()
   })
 
-  it('offers the extract hatch on an instance whose duplicate refuses', () => {
+  // W4-1 — a plain imported element refuses NOTHING in this menu any more, so
+  // the footer is silent for it. The footer's own behaviour is asserted above
+  // on a `.map` row, which still refuses all three gestures.
+  it('says nothing for an ordinary imported element, now that all three gestures write', () => {
     const page = makePage({
-      id: 'page-instance',
-      rootNodeId: 'root',
-      nodes: {
-        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1'] }),
-        'src/screens/Home.jsx:9:1': makeNode({ id: 'src/screens/Home.jsx:9:1', moduleId: 'studio.instance' }),
-      },
-    })
-    renderMenuForNode('src/screens/Home.jsx:9:1', page)
-
-    // Delete is allowed on this node, so the footer explains the Duplicate
-    // refusal — the only one the user actually hit.
-    expect(screen.getByTestId('constraint-notice').getAttribute('data-constraint-reason')).toBe('duplicate')
-    expect(screen.getByTestId('constraint-action-extract')).toBeTruthy()
-  })
-
-  it('renders a way forward the editor cannot perform as advice, not a button', () => {
-    const page = makePage({
-      id: 'page-shared',
+      id: 'page-src',
       rootNodeId: 'root',
       nodes: {
         root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1'] }),
@@ -1070,10 +1085,23 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     })
     renderMenuForNode('src/screens/Home.jsx:9:1', page)
 
-    // `duplicate` has no way forward at all for a plain source node — the
-    // footer states the reason and offers only the jump to its source.
+    expect(screen.queryByTestId('constraint-notice')).toBeNull()
+  })
+
+  it('explains a shared-component refusal and names where the markup really lives', () => {
+    const shared = 'src/screens/Home.jsx:9:1~src/ui/Icon.jsx:3:4'
+    const page = makePage({
+      id: 'page-shared',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: [shared] }),
+        [shared]: makeNode({ id: shared }),
+      },
+    })
+    renderMenuForNode(shared, page)
+
     const notice = screen.getByTestId('constraint-notice')
-    expect(notice.getAttribute('data-constraint-reason')).toBe('duplicate')
-    expect(screen.getByTestId('constraint-origin').textContent).toContain('Home.jsx:9')
+    expect(notice.getAttribute('data-constraint-reason')).toBe('shared-component')
+    expect(screen.getByTestId('constraint-origin').textContent).toContain('Icon.jsx:3')
   })
 })

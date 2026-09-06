@@ -84,10 +84,60 @@ describe('refuseStructuralEdit', () => {
     expect(refusal?.message).toContain('dynamic — rendered in code')
   })
 
-  it('refuses every gesture that would need a source position that does not exist yet', () => {
+  // W4-1 — duplicate, wrap and a same-file reparent now WRITE (the source is
+  // asked to grow the markup and the board re-reads it), so what used to be
+  // three blanket refusals is now the ordinary placement question. These tests
+  // replace the ones that asserted the blanket refusal; the shapes that still
+  // refuse are asserted immediately below, because a verb that silently starts
+  // writing where it used to refuse is the regression that matters here.
+  it('allows a duplicate and a wrap of a plain element — the copy is written, not minted', () => {
+    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: PLAIN } })).toBeNull()
+    expect(refuseStructuralEdit({ kind: 'wrap', node: { id: PLAIN } })).toBeNull()
+  })
+
+  it('still refuses a duplicate or a wrap of markup with no single honest target', () => {
+    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: LIST_ROW } })?.reason).toBe('list-row')
+    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: INLINED } })?.reason).toBe('shared-component')
+    expect(refuseStructuralEdit({ kind: 'wrap', node: { id: 'app/layout.tsx:3:4' } })?.reason).toBe('route-chrome')
+    expect(refuseStructuralEdit({ kind: 'wrap', node: { id: PLAIN, lockReason: 'a spread' } })?.reason).toBe(
+      'code-placed',
+    )
+  })
+
+  it('refuses a wrap of SEVERAL elements — one wrapper is one write spanning all of them', () => {
+    const refusal = refuseStructuralEdit({ kind: 'wrap', node: { id: PLAIN }, multi: true })
+    expect(refusal?.reason).toBe('multi-select')
+    // A multi DUPLICATE is fine: the save batch is ordered bottom-to-top.
+    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: PLAIN }, multi: true })).toBeNull()
+  })
+
+  it('allows a reparent into a plain container in the same file', () => {
+    expect(
+      refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN }, destination: { id: SIBLING } }),
+    ).toBeNull()
+  })
+
+  it('refuses a reparent with no container to write into', () => {
     expect(refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN } })?.reason).toBe('reparent')
-    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: PLAIN } })?.reason).toBe('duplicate')
-    expect(refuseStructuralEdit({ kind: 'wrap', node: { id: PLAIN } })?.reason).toBe('wrap')
+  })
+
+  it('refuses a reparent into a container that is not an ordinary element', () => {
+    expect(
+      refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN }, destination: { id: LIST_ROW } })?.reason,
+    ).toBe('list-row')
+    expect(
+      refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN }, destination: { id: INLINED } })?.reason,
+    ).toBe('shared-component')
+  })
+
+  it('refuses a reparent across files, and says it is a different file', () => {
+    const refusal = refuseStructuralEdit({
+      kind: 'reparent',
+      node: { id: PLAIN },
+      destination: { id: 'pages/About.tsx:9:4' },
+    })
+    expect(refusal?.reason).toBe('cross-file')
+    expect(refusal?.message).toContain('different file')
   })
 
   it('allows an INSERT into a plain container — the new element is written, not minted', () => {
@@ -193,17 +243,53 @@ describe('previewStructuralMove', () => {
     expect(result).toEqual({ ok: true, commit: null })
   })
 
-  it('refuses a reparent (different parent) for a source-derived node, before anything else is computed', () => {
+  // W4-1 — a cross-parent move inside one file is now a real write, committed
+  // as `reparent` (`moveJsxElement`'s destination-parent form). The commit
+  // names the container, and the anchor the element lands beside inside it.
+  it('previews a cross-parent move as ok, naming the destination container', () => {
+    const CONTAINER = 'pages/Home.tsx:18:4'
     const tree = page({
-      root: node('root', ['container', C]),
-      container: node('container', [A, B]),
+      root: node('root', [CONTAINER, C]),
+      [CONTAINER]: node(CONTAINER, [A, B]),
       [A]: node(A),
       [B]: node(B),
       [C]: node(C),
     })
-    const result = previewStructuralMove(tree, [A], 'root', 0)
+    // Move C out of the root and into the container, between A and B.
+    const result = previewStructuralMove(tree, [C], CONTAINER, 1)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.commit).toEqual({
+        nodeId: C,
+        destinationParentNodeId: CONTAINER,
+        anchorNodeId: A,
+        position: 'after',
+      })
+    }
+  })
+
+  it('refuses a cross-parent move into a container that is markup from a shared component', () => {
+    const tree = page({
+      root: node('root', [INLINED, C]),
+      [INLINED]: node(INLINED, []),
+      [C]: node(C),
+    })
+    const result = previewStructuralMove(tree, [C], INLINED, 0)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('reparent')
+    if (!result.ok) expect(result.refusal.reason).toBe('shared-component')
+  })
+
+  it('refuses a cross-parent move of SEVERAL nodes — each write moves the others lines', () => {
+    const CONTAINER = 'pages/Home.tsx:18:4'
+    const tree = page({
+      root: node('root', [CONTAINER, A, B]),
+      [CONTAINER]: node(CONTAINER, []),
+      [A]: node(A),
+      [B]: node(B),
+    })
+    const result = previewStructuralMove(tree, [A, B], CONTAINER, 0)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.refusal.reason).toBe('multi-select')
   })
 
   it('refuses moving a canvas-only (nanoid) node into a studio-imported parent — nothing to write', () => {

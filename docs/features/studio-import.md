@@ -21,7 +21,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. The resolved **prop** is read-only (writing an edited literal back over the expression would destroy the binding in the user's source file), but the **node is not locked**: it is an ordinary element at a known line and column.
 - **CSS writes back two ways.** A rule *declaration* edited in the CSS Classes panel rewrites its `.css` file on save, for plain hand-authored stylesheets — see [CSS write-back](#css-write-back-ws-63-panel-02). An element's own `className` *attribute* — adding/removing a class token, independent of whether that class has a mapped rule at all — writes back through a separate codemod, and is how a Tailwind element is edited at all, since a Tailwind utility class has no `.css` declaration to rewrite — see [`className` write-back](#classname-write-back-track-b2-setjsxclassname).
-- **Writeback covers values, plus three structural verbs** — a sibling reorder, a delete (`struct-01`, below) and an insert (adding a design-system component from the picker, which writes the element *and* its import) — and only for nodes whose id is a real single source location. Every other structural gesture (reparent, duplicate, wrap) **refuses with a reason**; none of them silently no-ops any more.
+- **Writeback covers values, plus every structural verb** — reorder, delete, insert (which writes the element *and* its import), and since W4-1 duplicate, wrap and a same-file reparent — and only for nodes whose id is a real single source location. Everything else **refuses with a reason**; none of them silently no-ops any more.
 
 ---
 
@@ -992,7 +992,9 @@ Until `struct-01` the `StudioEdit` union carried value kinds only, and `saveSite
 |---|---|
 | The editor's structural store actions (layers drag, canvas drag, context menus, Delete, spotlight, agent) | `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts` |
 | Plugins and agents | `applyTreeOperation` (`src/core/page-tree/treeOperations.ts`), which throws `SourceStructureError` |
-| The write itself | `moveJsxElement` / `deleteJsxElement` re-derive the same facts from the AST |
+| The write itself | `moveJsxElement` / `deleteJsxElement` / `duplicateJsxElement` / `wrapJsxElement` re-derive the same facts from the AST |
+
+**W4-1 lifted three of these refusals by building the write instead of rewording it.** `reparent`, `duplicate` and `wrap` used to refuse on every imported node because "the copy/wrapper would have no source location of its own". That was true of a node minted on the CANVAS and false of one the SOURCE is asked to grow — which is exactly what `insert` had already demonstrated (`struct-02`): write the markup into the `.tsx`, re-read the board, and the new element arrives as an ordinary parsed node with a real `rel:line:col`. `duplicateJsxElement` copies an element's own bytes in as its next sibling; `wrapJsxElement` replaces an element's range with that element inside a container it writes (a wrapper written INTO the source is real DOM the user can read and delete — the "no wrapper divs" trap is about the CANVAS inventing elements the file does not contain); `moveJsxElement` grew a destination-parent form. What still refuses is below.
 
 | Refusal | Because |
 |---|---|
@@ -1000,15 +1002,23 @@ Until `struct-01` the `StudioEdit` union carried value kinds only, and `saveSite
 | `shared-component` | an inlined id: the markup lives in the component's own file, so moving it here moves every instance. (Stricter than the VALUE rule, which writes and warns — a drag says "move THIS one", and there is no way to honour that.) |
 | `route-chrome` | a Next `layout`/`template`, composed into every route below it |
 | `code-placed` | the parser recorded a structural `lockReason` (spread, dynamic child) |
-| `reparent`, `insert`, `duplicate`, `wrap` | each needs a source position that does not exist yet. Deliberately not approximated: a node minted with a nanoid id can never be written back, so accepting the gesture would recreate the silent no-op somewhere new |
+| `multi-select` (wrap) | one wrapper around several elements is one write spanning all of their ranges, and in the code they may not be neighbours — `wrapJsxElement` writes around ONE element's own range |
+| `reparent` | asked with no container to write into, or with one that is not an ordinary element. **Not** a blanket refusal any more: W4-1 |
+| `cross-file` (reparent) | the new parent is in another module, where the values the markup reads do not exist |
 | `multi-select` | several elements REORDERED at once. A multi DELETE is allowed — `applyStudioEditBatch` orders bottom-to-top, so no removal can move another's line |
 | `cross-file`, `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file |
 
-### The two codemods
+### The codemods
 
 `src/core/ast-codemods/moveJsxElement.ts` relocates a JSX child to sit immediately before or after a named sibling. **An anchor, not an index** — the editor's child list and the JSX child list are not the same list (one `{items.map(…)}` child contributes N canvas nodes, `{cond && <X/>}` contributes one of two, whitespace contributes none), so an index computed on the canvas does not name a position in the source, while "immediately after that element" does under every one of those shapes.
 
 `src/core/ast-codemods/deleteJsxElement.ts` removes a JSX child and the line it owned. It tidies up nothing else — no collapsing an emptied parent, no reformatting the gap.
+
+W4-1 added three more, all holding the same byte-exactness standard (the AST LOCATES; the write is a splice of the original bytes):
+
+- **`duplicateJsxElement.ts`** — copies the element's own text in again as its next sibling. No import reconciliation and no scope analysis, by construction: the copy lands in the same file, in the same scope, one line below the original, so every binding its markup captures is in scope precisely because it was in scope before.
+- **`wrapJsxElement.ts`** — replaces the element's range with `<div>…that element…</div>`, writing the wrapper's `import` when it is a component. It is the ONE structural codemod that re-hangs bytes it did not otherwise change: the wrapped subtree gains one indentation level (`reindentBlock`, leading whitespace only), because leaving its inner lines at their old column produces code nobody would write by hand. An element sharing a line with a sibling is wrapped in place, with no reindentation at all.
+- **`moveJsxElement.ts`'s destination-parent form** — a cross-parent move within one file. Placement inside the new parent is `jsxChildPlacement.ts`, the same function an insert uses, so a reparented element lands with exactly the whitespace a newly inserted one would have had. Its own refusal, and the honest half of the verb: **`out-of-scope`**, when `subtreeFreeVariables.ts` finds a name the markup reads that is not bound where it would land (an element lifted out of a `.map` callback loses the row it read; one dragged into another component in the same file loses that component's props). The refusal NAMES the variables — a static scope walk over the declarations enclosing the destination, never an evaluation of any of them.
 
 `src/core/ast-codemods/pruneOrphanedImports.ts` is the other half of a delete, and the reason it is a separate pass is worth knowing before you move it. Removing markup can be the last use of an imported binding, and leaving that import behind fails the user's own `noUnusedLocals` build — so it has to go. This used to be a REFUSAL (`orphans-import`, "remove the element and its import together in the file"), which meant Studio could insert an element it was then unable to remove: `insertJsxElement` writes the import it needs, so the asymmetry was the bug, not the missing refusal. The import's only reason to exist WAS the element — one fact in two places, the second derived mechanically rather than guessed.
 

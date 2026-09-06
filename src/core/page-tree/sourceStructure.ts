@@ -37,31 +37,39 @@
  *     spread, a dynamic child, a branch the source chooses at runtime. The
  *     source does not place this element at a fixed position, so neither can
  *     we.
- *   - **`reparent`**, **`duplicate`**, **`wrap`** — each needs a source
- *     position that does not exist yet (a new wrapper element, a copy with no
- *     line and column of its own). Deliberately NOT built rather than
- *     approximated: a new node minted with a nanoid id can never be written
- *     back, so accepting the gesture would recreate the silent no-op in a new
- *     place.
- *
- * **`insert` is the exception, and the shape of its answer is why.** It used to
- * refuse alongside those three, for the same stated reason — but a design-system
- * component added from the picker never needs a canvas-minted node at all:
- * `insertJsxElement` writes the element (and the import that names it) into the
- * user's file, and the board re-reads it, so what appears on the canvas is an
- * ordinary parsed node with a real `rel:line:col`. The question is therefore not
- * "does this new node have a source position" but "is this CONTAINER a place a
- * child can honestly be written", which is the same placement question a reorder
- * asks about an element. `planSourceInsert` resolves the container (the synthetic
- * page root becomes the page's returned root element) and asks it here.
- *   - **`multi-select`** — several elements REORDERED at once. Each move shifts
- *     the others' line numbers, and the anchor a reorder writes against is
- *     resolved per element; one gesture, N interdependent targets. (A multi
- *     DELETE is fine — the save route orders a batch bottom-to-top, so no
- *     removal can move another's line.)
+ *   - **`multi-select`** — several elements REORDERED (or WRAPPED) at once.
+ *     Each write shifts the others' line numbers, and the anchor a reorder
+ *     writes against is resolved per element; one gesture, N interdependent
+ *     targets. (A multi DELETE or DUPLICATE is fine — the save route orders a
+ *     batch bottom-to-top, so no write can move a pending one's line.)
  *   - **`cross-file`** / **`no-sibling-anchor`** — a reorder is written as
  *     "put this element before/after that one", so it needs a sibling that is
- *     itself a plain element in the same file to write against.
+ *     itself a plain element in the same file to write against. A reparent
+ *     needs its new parent in that same file, for a stronger reason: across
+ *     files the markup would land where the values it reads do not exist.
+ *
+ * **What `insert` taught the other four verbs (`struct-02`, then W4-1).**
+ * `reparent`, `duplicate` and `wrap` used to be blanket refusals, on the stated
+ * grounds that each "needs a source position that does not exist yet". That was
+ * true of a node MINTED ON THE CANVAS, and false of a position the SOURCE is
+ * asked to grow: `insertJsxElement` writes the element (and the import that
+ * names it) into the user's file, the board re-reads it, and what appears on the
+ * canvas is an ordinary parsed node with a real `rel:line:col`. W4-1 generalised
+ * that write-then-re-read shape to the other three —
+ * `duplicateJsxElement`/`wrapJsxElement`/`moveJsxElement`'s destination-parent
+ * form — so the question for all of them is the one this rule was always able to
+ * answer: is this an ordinary, singly-placed element (`refusePlacement`), and is
+ * the second location it names in the same file?
+ *
+ * An `insert` is the one asked about a CONTAINER rather than about a node that
+ * exists; `planSourceInsert` resolves the container (the synthetic page root
+ * becomes the page's returned root element) before asking here.
+ *
+ * The refusals only a PARSE can answer stay with the codemods and arrive at
+ * save time: `not-siblings`, `expression-child`, `mixed-indentation`,
+ * `no-jsx-parent`, `into-own-descendant`, and — the one W4-1 added —
+ * `out-of-scope`, a reparent whose markup reads a binding that does not exist
+ * where it would land. See `src/core/ast-codemods/moveJsxElement.ts`.
  *
  * The rule is pure and knows nothing about HTTP: the store's mutation guards
  * consult it BEFORE mutating, `applyTreeOperation` consults it so a plugin or
@@ -125,81 +133,112 @@ const GESTURE: Record<StructuralEditKind, string> = {
  * Whether this node's PLACE can be written back to the user's source, and if
  * not, why. `null` means the edit may proceed — either because the node is not
  * source-derived at all (an ordinary CMS node), or because it is a plain
- * element the codemods can honestly move or remove.
+ * element the codemods can honestly move, copy, wrap or remove.
  *
  * `anchor` is required for `reorder` only: the sibling the moved element is
  * written against (`moveJsxElement` writes "put A immediately before/after B",
  * never an index, because the editor's child order and the JSX child order
  * disagree wherever an expression child renders more than one node).
+ *
+ * `destination` is required for `reparent` only: the container the element
+ * lands INSIDE. It has to satisfy the same "ordinary, singly-placed element"
+ * test the moved node does, and live in the same file.
  */
 export function refuseStructuralEdit(input: {
   kind: StructuralEditKind
   node: SourceStructureNode
   anchor?: SourceStructureNode | null
-  /** True when this gesture reorders more than one node at once. */
+  /** The new parent, for `reparent`. */
+  destination?: SourceStructureNode | null
+  /** True when this gesture moves or wraps more than one node at once. */
   multi?: boolean
 }): StructuralRefusal | null {
-  const { kind, node, anchor, multi } = input
+  const { kind, node, anchor, destination, multi } = input
   if (!isSourceDerivedNodeId(node.id)) return null
 
   const gesture = GESTURE[kind]
 
-  switch (kind) {
-    case 'reparent':
-      return {
-        reason: 'reparent',
-        message:
-          'Studio can reorder an element among its own siblings in the code, but not move it into a different parent yet — that needs a source position the element does not have. Move it in the file instead.',
-      }
-    case 'insert':
-      // An insert is asked about the CONTAINER, not about a node that exists —
-      // the new element has no id yet, and it never gets a canvas-minted one:
-      // `insertJsxElement` writes it to the file and the board re-reads it. So
-      // the only question is whether this container is a place the codemod can
-      // honestly write a child, which is the same placement question a reorder
-      // asks. `refusePlacement` below answers it.
-      //
-      // The synthetic page root is the one container with no source location of
-      // its own; `planSourceInsert` resolves it to the page's returned root
-      // element before asking, so it never reaches here.
-      break
-    case 'duplicate':
-      return {
-        reason: 'duplicate',
-        message:
-          'Studio cannot duplicate an element in imported code yet. The copy would have no source location of its own, so it could never be written back — copy the JSX in the file instead.',
-      }
-    case 'wrap':
-      return {
-        reason: 'wrap',
-        message:
-          'Studio cannot wrap imported code in a new element yet. The wrapper would have no source location of its own, so it could never be written back — add it in the file instead.',
-      }
-    case 'reorder':
-    case 'delete':
-      break
-  }
-
-  // A multi-DELETE is safe: the save route orders a batch bottom-to-top, so
-  // removing a lower element cannot move a higher one's line. A multi-REORDER
-  // is not — each element is written against an anchor whose position the
-  // previous write may already have changed, and the gesture's meaning
-  // ("all of these, in this order, there") has no single source target.
-  if (multi && kind === 'reorder') {
+  // A multi-DELETE or multi-DUPLICATE is safe: the save route orders a batch
+  // bottom-to-top, so a write cannot move the line of one still pending above
+  // it. A multi-REORDER is not — each element is written against an anchor
+  // whose position the previous write may already have changed, and the
+  // gesture's meaning ("all of these, in this order, there") has no single
+  // source target. A multi-WRAP is not either, for a nearer reason: one
+  // wrapper around several elements is one write spanning all of them, and
+  // Studio writes a wrapper around one element's own range.
+  if (multi && (kind === 'reorder' || kind === 'reparent')) {
     return {
       reason: 'multi-select',
-      message: `${gesture} several elements at once — Studio writes a reorder one element at a time, because each write moves the others' line numbers. Drag them one by one.`,
+      message: `${gesture} several elements at once — Studio writes a move one element at a time, because each write moves the others' line numbers. Drag them one by one.`,
+    }
+  }
+  if (multi && kind === 'wrap') {
+    return {
+      reason: 'multi-select',
+      message:
+        'Studio wraps one element at a time: a single wrapper around several elements is one write spanning all of them, and in the code they may not even be neighbours. Wrap them one by one, or wrap a container they already share.',
     }
   }
 
   const placement = refusePlacement(node, gesture)
   if (placement) return placement
 
-  // An insert is written INTO this container, so a plain container at a known
-  // location is the whole requirement — there is no sibling to write against
-  // (the anchor is an optional refinement `planSourceInsert` drops when it is
-  // not addressable, since appending is still an honest position).
-  if (kind === 'delete' || kind === 'insert') return null
+  switch (kind) {
+    case 'insert':
+      // An insert is asked about the CONTAINER, not about a node that exists —
+      // the new element has no id yet, and it never gets a canvas-minted one:
+      // `insertJsxElement` writes it to the file and the board re-reads it. So
+      // the only question is whether this container is a place the codemod can
+      // honestly write a child, which `refusePlacement` just answered.
+      //
+      // The synthetic page root is the one container with no source location of
+      // its own; `planSourceInsert` resolves it to the page's returned root
+      // element before asking, so it never reaches here.
+      return null
+    case 'delete':
+      return null
+    case 'duplicate':
+      // `duplicateJsxElement` writes the element's own source text in again as
+      // its next sibling, in the same file and the same scope — so an ordinary
+      // element at a known location is the whole requirement. There is no
+      // second place to check: no anchor (the copy's position is "right here"),
+      // and no import to reconcile (every binding the markup reads was already
+      // in scope one line up).
+      return null
+    case 'wrap':
+      // `wrapJsxElement` replaces the element's own range with the same element
+      // inside a container it writes. The wrapper is REAL DOM once it is in the
+      // file — Studio's "no wrapper divs" rule is about the CANVAS inventing
+      // elements the source does not contain, which is the opposite of this.
+      return null
+    case 'reparent': {
+      if (!destination) {
+        return {
+          reason: 'reparent',
+          message:
+            'Studio writes a move into a new parent as "put this element inside that one", so it needs a container that is itself an ordinary element in the code.',
+        }
+      }
+      const destinationPlacement = refusePlacement(destination, 'Moved into')
+      if (destinationPlacement) {
+        return {
+          reason: destinationPlacement.reason,
+          message: `The container this would move into is not an ordinary element: ${lowerFirst(destinationPlacement.message)}`,
+        }
+      }
+      const fromFile = decodeSourceNodeId(node.id)?.rel
+      const intoFile = decodeSourceNodeId(destination.id)?.rel
+      if (fromFile !== intoFile) {
+        return {
+          reason: 'cross-file',
+          message: `This element is written in ${fromFile} and the container is in a different file (${intoFile}). Studio moves an element to a new parent within one file; across files the markup would land where the values it reads do not exist.`,
+        }
+      }
+      return null
+    }
+    case 'reorder':
+      break
+  }
 
   if (!anchor) {
     return {
@@ -285,10 +324,22 @@ export function refusePlacement(node: SourceStructureNode, gesture: string): Str
   return null
 }
 
-/** Where a reordered element is written: next to which sibling, on which side. */
+/**
+ * Where a moved element is written.
+ *
+ * A REORDER names a sibling: "put this immediately before/after that one",
+ * never an index, because the editor's child list and the JSX child list are
+ * not the same list. A REPARENT (W4-1) additionally names the container it
+ * lands in — `destinationParentNodeId` — because the sibling alone does not
+ * say which element it is now a child of, and because a destination with no
+ * addressable child of its own still has an honest answer: append.
+ */
 export interface StructuralMoveCommit {
   nodeId: string
-  anchorNodeId: string
+  /** The new parent, for a cross-parent move. Absent for a same-parent reorder. */
+  destinationParentNodeId?: string
+  /** The existing child to land beside, or `null` to append as the last child (reparent only). */
+  anchorNodeId: string | null
   position: 'before' | 'after'
 }
 
@@ -315,28 +366,22 @@ export type StructuralMovePreview =
  * moment of a post-hoc refusal toast. Per `STATE.md`'s `shared-component`
  * refusal-rate finding, that was true for roughly HALF of all real drags.
  *
- * **Identical logic to `structuralSourceEdits.ts`'s `planSourceMove`, by
- * design — not a coincidence.** That function could not be deleted/re-pointed
- * at this one in this pass because it lives under `src/admin/pages/site/
- * store/**`, owned by a concurrent agent this task was explicitly told not to
- * touch. This is real, disclosed duplication, not an oversight: the two
- * copies must be kept in sync by hand until a future pass collapses
- * `planSourceMove` into a thin wrapper over `previewStructuralMove` (mirroring
- * how `refusePlacement` itself was already lifted out and published for
- * exactly this reason). Whoever does that pass: `planSourceMove`'s own
- * `refuseCanvasOnlyNodeIntoSource` inner helper is the ONE piece of logic this
- * function could not also absorb, because `refuseCanvasOnlyNodeIntoSource`'s
- * message ("Add the component from the picker instead...") is UI-facing
- * product copy that belongs with the store's toast wiring, not in a pure core
- * module — this function's own version below is a deliberately reason-only
- * (no message) subset the caller can still act on.
+ * **`structuralSourceEdits.ts`'s `planSourceMove` is now a thin wrapper over
+ * this function** (W4-1 collapsed the disclosed duplication its predecessor
+ * documented). The store adds exactly one thing this pure module cannot: the
+ * `EditConstraint` dressing (`describeStructuralRefusal`), which needs the NODE
+ * to derive `origin` from. Keeping one copy of the rule is what makes a lifted
+ * refusal — reparent, here — impossible to lift in the drag preview and forget
+ * in the committed gesture, which is precisely how the two copies would have
+ * disagreed.
  *
  * **What a caller gets:** the exact same 4 structural-source reasons
  * `refuseStructuralEdit`/`refusePlacement` already answer
  * (`list-row`/`shared-component`/`route-chrome`/`code-placed`), plus
  * `reparent`/`no-sibling-anchor`/`cross-file`/`multi-select` for the
- * reorder-specific questions "does this even land in the same parent" and
- * "is there an ordinary sibling to write the move against". A tree-shape
+ * move-specific questions "is the container it lands in an ordinary element in
+ * the same file" and "is there an ordinary sibling to write the move
+ * against". A tree-shape
  * rejection (locked node, cycle, dropping into a non-container) is NOT this
  * function's job — `resolvePageTreeDropTarget` already answers that and
  * returns `null` before a caller should even reach this. Call this ONLY
@@ -362,22 +407,55 @@ export function previewStructuralMove(
   // this; inventing a refusal for it would explain the wrong thing.
   if (!node || !newParent) return { ok: true, commit: null }
 
+  const multi = nodeIds.length > 1
+
+  // "Same parent?" read off the child list rather than the denormalised
+  // `parentId` pointer: the list is the thing the move is actually about, and
+  // it cannot be stale relative to itself.
   if (!newParent.children.includes(nodeId)) {
-    const refusal =
-      refuseStructuralEdit({ kind: 'reparent', node }) ?? previewCanvasOnlyNodeIntoSourceRefusal(tree, newParent)
-    return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+    // Dragging a node that is NOT source-derived into a studio tree. Unlike a
+    // reparent — which relocates markup the file already contains — this node
+    // exists only on the canvas, so there is nothing to relocate. Asked first
+    // because it is about the node's ORIGIN, not about the destination.
+    const canvasOnly = isSourceDerivedNodeId(nodeId)
+      ? null
+      : previewCanvasOnlyNodeIntoSourceRefusal(tree, newParent)
+    if (canvasOnly) return { ok: false, refusal: canvasOnly }
+    if (!isSourceDerivedNodeId(nodeId)) return { ok: true, commit: null }
+
+    // The synthetic page root is a container the same way it is for an insert:
+    // resolved to the page's own returned root element before it is judged.
+    const container = resolveSourceContainer(tree, newParentId)
+    if (!container.ok) return { ok: false, refusal: container.refusal }
+
+    const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node, multi })
+    if (refusal) return { ok: false, refusal }
+    return {
+      ok: true,
+      commit: {
+        nodeId,
+        destinationParentNodeId: container.node.id,
+        // `newIndex` counts the DROP PARENT's children. When the container had
+        // to be re-resolved (the page root became the page's root element), that
+        // index names a position in a different list, so it is dropped rather
+        // than applied to the wrong one — appending is an honest position, and
+        // the user can drag within the new parent, which already writes.
+        ...resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined),
+      },
+    }
   }
 
-  const multi = nodeIds.length > 1
   const reordered = simulateStructuralReorder(newParent.children, nodeIds, newIndex)
   if (reordered === null) return { ok: true, commit: null }
 
   const index = reordered.indexOf(nodeId)
-  const candidates: StructuralMoveCommit[] = []
+  // A reorder always names a real sibling — `anchorNodeId` is only nullable for
+  // the reparent case above, where appending is a position of its own.
+  const candidates: { anchorNodeId: string; position: 'before' | 'after' }[] = []
   const previous = reordered[index - 1]
-  if (previous !== undefined) candidates.push({ nodeId, anchorNodeId: previous, position: 'after' })
+  if (previous !== undefined) candidates.push({ anchorNodeId: previous, position: 'after' })
   const next = reordered[index + 1]
-  if (next !== undefined) candidates.push({ nodeId, anchorNodeId: next, position: 'before' })
+  if (next !== undefined) candidates.push({ anchorNodeId: next, position: 'before' })
 
   let firstRefusal: StructuralRefusal | null = null
   for (const candidate of candidates) {
@@ -387,12 +465,94 @@ export function previewStructuralMove(
       anchor: tree.nodes[candidate.anchorNodeId] ?? { id: candidate.anchorNodeId },
       multi,
     })
-    if (!refusal) return { ok: true, commit: isSourceDerivedNodeId(nodeId) ? candidate : null }
+    if (!refusal) return { ok: true, commit: isSourceDerivedNodeId(nodeId) ? { nodeId, ...candidate } : null }
     firstRefusal ??= refusal
   }
 
   const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null, multi })
   return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+}
+
+/**
+ * The container a write into `parentId` really targets, or why there isn't one.
+ *
+ * **The synthetic page root becomes the page's returned root element.**
+ * `<pageId>:body` is not a source location — nothing was written at it — so it
+ * can never be a container. A page's JSX returns exactly one root element, and
+ * that element is what "put this in the page" means. When the root has anything
+ * other than exactly one source-derived child (an empty imported page, or a
+ * route composed entirely from layout chrome), there is no single honest answer
+ * and it refuses with what the user can do about it.
+ *
+ * Shared by every write that names a container: `planSourceInsert` (which
+ * dresses these refusals as `EditConstraint`s) and `previewStructuralMove`'s
+ * reparent branch. One resolution, so dropping a node on a page's background
+ * and adding one from the picker cannot disagree about which element that means.
+ */
+export function resolveSourceContainer(
+  tree: NodeTree<PageNode>,
+  parentId: string,
+): { ok: true; node: PageNode } | { ok: false; refusal: StructuralRefusal } {
+  const parent = tree.nodes[parentId]
+  if (!parent) {
+    // No node to point at: the whole refusal is that there ISN'T one any more.
+    return {
+      ok: false,
+      refusal: {
+        reason: 'insert',
+        message: 'The element this would go inside is no longer on the board. Reload the project and try again.',
+      },
+    }
+  }
+  if (parentId !== tree.rootNodeId || !isStudioPageRootId(tree.rootNodeId)) return { ok: true, node: parent }
+
+  const sourceChildren = parent.children.filter((id) => isSourceDerivedNodeId(id))
+  const only = sourceChildren.length === 1 ? tree.nodes[sourceChildren[0]!] : undefined
+  if (!only) {
+    // Same "no single node to point at" case: the page root is synthetic, and
+    // the several real candidates are exactly what makes this ambiguous.
+    return {
+      ok: false,
+      refusal: {
+        reason: 'insert',
+        message:
+          sourceChildren.length === 0
+            ? 'This page has no element in its code to put anything inside. Add a root element to the file first.'
+            : 'This page has several top-level elements, so Studio cannot tell which one this belongs inside. Select the container you want, then try again.',
+      },
+    }
+  }
+  return { ok: true, node: only }
+}
+
+/**
+ * The existing child a written element is placed beside, resolved from a canvas
+ * child index — shared by an insert and by a reparent, because "which neighbour
+ * does this land next to" is the same question for both.
+ *
+ * `index` names a position among the CANVAS's children, which is not the
+ * source's child list. When the neighbour it points at is an ordinary element,
+ * the write is made against it; when it is not (a `.map` row, an inlined
+ * component, an expression child), the element is appended as the last child
+ * instead. Appending is a real position, not a silent no-op — and the user can
+ * then drag it within its new parent, which already writes.
+ */
+export function resolveContainerAnchor(
+  tree: NodeTree<PageNode>,
+  container: PageNode,
+  index: number | undefined,
+): { anchorNodeId: string | null; position: 'before' | 'after' } {
+  const children = container.children
+  if (index === undefined || index >= children.length) return { anchorNodeId: null, position: 'after' }
+
+  const addressable = (id: string | undefined): boolean =>
+    id !== undefined && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }, 'Moved') === null
+
+  const previous = children[index - 1]
+  if (addressable(previous)) return { anchorNodeId: previous!, position: 'after' }
+  const next = children[index]
+  if (addressable(next)) return { anchorNodeId: next!, position: 'before' }
+  return { anchorNodeId: null, position: 'after' }
 }
 
 /**
@@ -471,6 +631,41 @@ export function refuseMintedNodeInsert(input: {
     reason: 'insert',
     message:
       'This element was created in the editor, so it has no markup in your project for Studio to write. Add a component from the canvas picker instead — that one writes the element and its import into the file.',
+  }
+}
+
+/**
+ * The refusal for DUPLICATING, WRAPPING or REPARENTING a studio-imported node
+ * through a caller that mutates a tree instead of writing source — or `null` on
+ * an ordinary CMS tree, where a canvas mutation is the whole story.
+ *
+ * The sibling of `refuseMintedNodeInsert`, and W4-1 is why it exists. Those
+ * three verbs now WRITE (`duplicateJsxElement`, `wrapJsxElement`,
+ * `moveJsxElement`'s destination-parent form), so `refuseStructuralEdit` no
+ * longer refuses them — but "the source can take this edit" is only half the
+ * question. The other half is whether the CALLER is one that issues the write.
+ *
+ *   - The editor is: `nodeActions` asks the source to grow the element and the
+ *     board re-reads it, so the copy/wrapper on screen is a parsed node with a
+ *     real `rel:line:col`.
+ *   - `applyTreeOperation`'s callers are not: `mutatePageTree` persists a tree
+ *     into a `data_row`, never into a `.tsx`. Duplicating a source-derived node
+ *     there mints a nanoid child that no file describes — the silent no-op
+ *     `struct-01` exists to prevent, in a new place.
+ *
+ * A REORDER through that dispatcher is a different case and stays permitted:
+ * it mints nothing, and the node ids it rearranges keep meaning exactly what
+ * they meant.
+ */
+export function refuseMintedNodeCopy(input: {
+  kind: 'duplicate' | 'wrap' | 'reparent'
+  node: SourceStructureNode
+}): StructuralRefusal | null {
+  if (!isSourceDerivedNodeId(input.node.id)) return null
+  const verb = input.kind === 'duplicate' ? 'duplicate' : input.kind === 'wrap' ? 'wrap' : 'move'
+  return {
+    reason: input.kind,
+    message: `Studio ${verb}s imported markup by editing your project's source and re-reading it. This path changes the canvas tree only, so the ${input.kind === 'reparent' ? 'move' : input.kind} would never reach the file — do it from the editor, which writes it.`,
   }
 }
 

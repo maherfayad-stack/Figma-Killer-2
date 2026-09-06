@@ -171,22 +171,30 @@ therefore reached **no** code path at all: the tree changed, the save reported
 success, the `.tsx` was untouched, and the change was gone on reload. In Studio
 the repository IS the document, so that was a silent no-op.
 
-Three kinds now exist — **`move`** (`moveJsxElement`), **`delete`**
-(`deleteJsxElement`) and **`insert`** (`insertJsxElement`) — and everything else
-refuses out loud.
+Six kinds now exist — **`move`** and **`reparent`** (`moveJsxElement`, whose
+destination-parent form is W4-1's), **`delete`** (`deleteJsxElement`),
+**`insert`** (`insertJsxElement`), **`duplicate`** (`duplicateJsxElement`) and
+**`wrap`** (`wrapJsxElement`) — and everything else refuses out loud.
 
-**`insert` is the one that does not mint a node.** Adding a design-system
-component from the picker writes `<Button … />` *and* the `import` that names it
-into the user's file, then reloads the board — so what appears on the canvas is
-an ordinary parsed node with a real `rel:line:col`, not a nanoid the editor
-invented. That is why it can exist at all while `duplicate`/`wrap`/`reparent`
-still refuse: they need a source position for markup that already exists on the
-canvas, and an insert asks the source to create one. The module declares its own
-source spelling via `ModuleDefinition.sourceImport` (`{ specifier, name }`), so
-nothing in the store is coupled to a particular design system. The
-plugin/agent dispatcher (`applyTreeOperation`) still refuses, via
-`refuseMintedNodeInsert` — those callers hand over a node object whose id was
-minted outside a parse.
+**None of them mints a node; all of them ask the SOURCE to grow one.** Adding a
+design-system component from the picker writes `<Button … />` *and* the `import`
+that names it into the user's file, then reloads the board — so what appears on
+the canvas is an ordinary parsed node with a real `rel:line:col`, not a nanoid
+the editor invented. W4-1 generalised that write-then-re-read shape to the last
+three Figma verbs, which is why they stopped refusing: a duplicate is the
+element's own bytes written in again, a wrap replaces its range with itself
+inside a container, and a reparent splices its bytes into a different parent in
+the same file. The module declares its own source spelling via
+`ModuleDefinition.sourceImport` / `sourceIntrinsic`, so nothing in the store is
+coupled to a particular design system. The plugin/agent dispatcher
+(`applyTreeOperation`) still refuses — `refuseMintedNodeInsert` for an insert,
+`refuseMintedNodeCopy` for a duplicate/wrap/reparent — because those callers
+persist a TREE (into a `data_row`), never a `.tsx`, so the write would never
+reach the file. A reorder through them mints nothing and stays allowed.
+
+**A wrapper written into the source is legitimate.** The "no wrapper divs" rule
+is about the CANVAS inventing DOM the source does not have; a `<div>` in the
+`.tsx` is real DOM the user can read, style and delete.
 
 **The gate runs before the mutation, not after.** One pure rule,
 `refuseStructuralEdit(...)` in `src/core/page-tree/sourceStructure.ts`, is
@@ -200,15 +208,19 @@ from the node id and `lockReason` alone:
 | `shared-component` | an inlined id — the markup is in the component's own file, so a move there moves every instance |
 | `route-chrome` | a Next `layout`/`template` — one file, many frames |
 | `code-placed` | the parser recorded a structural `lockReason` |
-| `reparent` / `duplicate` / `wrap` | needs a source position that does not exist yet; a node minted with a nanoid id can never be written back |
 | `insert` | asked about the CONTAINER, not a node — it refuses only when the container itself is a `.map` row / inlined / route chrome / code-placed |
-| `multi-select` | several elements REORDERED at once (a multi DELETE is fine — the batch is ordered bottom-to-top) |
-| `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file |
+| `reparent` | no container to write into, or one that is not an ordinary element. `duplicate`/`wrap` carry no refusal of their own beyond the four above |
+| `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or DUPLICATE is fine — the batch is ordered bottom-to-top |
+| `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file |
 
 The AST adds the refusals only it can answer: `not-siblings`,
 `expression-child` (the element comes out of `{cond && <X/>}`, so its position
 is decided at runtime), `mixed-indentation`, `no-jsx-parent` (it is what the
-component returns), `stale-source`.
+component returns), `stale-source`, `into-own-descendant`, and W4-1's
+**`out-of-scope`** — a reparent whose markup reads a binding that does not exist
+where it would land (`subtreeFreeVariables.ts`; the refusal names the
+variables). It is a static scope walk over the declarations enclosing the
+destination, never an evaluation of any of them.
 
 **A refusal reaches the user as an `EditConstraint`, never a bare string.**
 `describeStructuralRefusal` (`src/core/page-tree/editConstraint.ts`) dresses
@@ -245,7 +257,8 @@ the text on disk differs from the text ts-morph parsed. An AST rewrite that
 reformats an untouched sibling is a defect.
 
 **Commit shape.** Structural edits are one-shot commits
-(`commitStudioMove` / `commitStudioDelete` in `studioSaveRequests.ts`), like
+(`commitStudioMove` / `commitStudioDelete` / `commitStudioDuplicate` / … in
+`studioStructuralCommits.ts`), like
 asset/detach/swap — never the `saveSite` diff, which has no notion of parent or
 order. They always reload afterwards: a successful write shifted every
 `line:col` below it, and a refused one has to be taken back.
