@@ -598,8 +598,8 @@ describe('commitBaseline — refusedRuleIds', () => {
     const refusedNodeId = first.edits[0]!.nodeId
 
     // The join the caller makes: the save response echoes the synthetic
-    // nodeId back on `refusals`, and `ruleIdByNodeId` maps it to the rule.
-    expect(first.ruleIdByNodeId[refusedNodeId]).toBe(RULE_ID)
+    // nodeId back on `refusals`, and `ruleIdsByNodeId` maps it to the rule.
+    expect(first.ruleIdsByNodeId[refusedNodeId]).toEqual([RULE_ID])
     commitBaseline({ [RULE_ID]: edited }, { refusedRuleIds: new Set([RULE_ID]) })
 
     const second = collectStyleRuleEdits({ [RULE_ID]: edited })

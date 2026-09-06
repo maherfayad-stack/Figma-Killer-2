@@ -226,13 +226,32 @@ and then render unstyled. Do NOT attempt full fidelity in one pass — ship phas
   the extraction rate on a real OSS styled-components repo and record it in the
   handoff (the instance work set the precedent: a measured % beats a claim).
 
-**Phase B — writeback (~0.5–1 day).** Value edits to a declaration that lives in
-a resolvable template: a new codemod `setStyledDeclaration.ts` that locates the
-declaration inside the template literal's quasi text (postcss can't parse a
-template with holes — do offset math against the raw quasi, reuse
-`setStringLiteral`'s single-origin discipline) and rewrites the value in place.
-Everything else — new declarations, renames, interpolated values — REFUSES with a
-named reason. Wire into the `collectStyleRuleEdits` plan as a new edit kind.
+**Phase B — writeback (~0.5–1 day). SHIPPED** — see
+`docs/features/studio-import.md`'s "Write-back — value edits land in the
+template" and STATE's `style-05`.
+
+`src/core/ast-codemods/setStyledDeclaration.ts` locates a declaration's value
+span in the raw quasi text and rewrites it in place; the flattening it matches
+against is Phase A's OWN walk (`flattenTemplateDeclarations`), not a second
+implementation of the nesting rules. Every interpolation is a hole on the write
+side — including the ones Phase A resolves for rendering — because the value is
+not written in that template. `kind: 'styled'` is wired end to end: a load-time
+`styledStyleRuleSources` map (server) → the load stream's meta line → the client
+registry → `collectStyleRuleEdits` → `applyStudioEdit`, with refusals on the
+standard `refusalToasts` path. The pre-flight writability resolver reports
+styled rules as editable and no longer greys their rows.
+
+Also fixed here, routed from Phase A's handoff: a class add/remove on a styled
+node used to return `{ ok: true }` with the file untouched. It refuses by name.
+
+**Measured** (every declaration Phase A put on the canvas, dry-run through the
+codemod): `bchiang7/v4` **871/907 writable (96.0%)**;
+`react-boilerplate` **103/137 (75.2%)**, whose 34 refusals are one
+`${buttonStyles}` mixin splice.
+
+Deliberately still refused, by name: new declarations, removals, property
+renames, emotion object styles (Phase C), and `ThemeProvider` interpolation
+resolution (a `staticEvalCore` change — see Phase A's handoff).
 
 **Phase C — emotion object styles + `css` prop (~0.5 day).** Object-literal
 styles are ordinary AST — easier than templates: read via the evaluator, write
@@ -368,7 +387,7 @@ That was the audit's core finding about docs debt; this wave closes it.
 | 2 | W4-1 reparent/duplicate/wrap | constraint-UI + style-writeback PRs merged | ast-codemods, sourceStructure, structuralSourceEdits |
 | 2 | W4-2B warm CLI | W4-2A (same area) | claudeCli.ts |
 | 2 | W5-1 prototype, W5-3 Storybook | — | prototype*, pageScaffold |
-| 3 | W4-4B/C CSS-in-JS writeback | W4-4A + style-writeback merged | css writeback plan, new codemod |
+| 3 | ~~W4-4B CSS-in-JS writeback~~ **done** (`style-05`) · W4-4C emotion object styles | W4-4A + style-writeback merged | css writeback plan, new codemod |
 | 3 | W5-2 share links | W4-2A | new share route |
 | 3 | W5-4 deploy | W4-3 | subprocessRunner consumers |
 | 3 | W5-5 animation editing | inspector PRs merged | inspector section registry, insertRule consumers |

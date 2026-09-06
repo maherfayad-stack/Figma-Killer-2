@@ -97,7 +97,7 @@ describe('collectStyleRuleEdits — the @keyframes half', () => {
     const plan = collectStyleRuleEdits({ [KEYFRAMES_ID]: keyframesRule(edited) })
 
     const nodeId = plan.edits[0]!.nodeId
-    expect(plan.ruleIdByNodeId[nodeId]).toBe(KEYFRAMES_ID)
+    expect(plan.ruleIdsByNodeId[nodeId]).toEqual([KEYFRAMES_ID])
   })
 
   it('reports an IMPORTED block with no source instead of dropping the change', () => {

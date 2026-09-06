@@ -408,7 +408,7 @@ export async function tryServeStudio(
       // convert for every route not asked for, while the meta below stays a
       // full, fresh project-wide recompute. See `studioLoadResponse.ts`.
       const loaded = await loadStudioPages(dir, { pageIds: pageIdsParam })
-      const { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss } = loaded
+      const { pages, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline
       // stays a pure read: opening the board is the moment the board may be
@@ -444,7 +444,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss, trust, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, trust, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -455,6 +455,7 @@ export async function tryServeStudio(
         componentSources,
         styleRules,
         styleRuleSources,
+        styledStyleRuleSources,
         conditions,
         vendorCss,
         authoredCss,

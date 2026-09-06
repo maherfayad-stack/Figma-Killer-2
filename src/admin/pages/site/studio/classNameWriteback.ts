@@ -61,6 +61,7 @@ import {
 import { registry } from '@core/module-engine'
 import { collectClassIdsDrift } from './loadedValuesBaseline'
 import { buildClassPageIndex, getStudioStyleRuleSources, resolveCssInsertDestination } from './styleRuleWriteback'
+import { getStudioStyledRuleSources, styledClassRefusal } from './styledRuleSources'
 import type { ClassAssignmentDriftDetail } from '@site/panels/classAssignmentUnsavedNotice'
 
 /**
@@ -133,6 +134,16 @@ type ClassTokenResult =
  *   - a rule the editor authored that has no source YET resolves through
  *     `resolveCssInsertDestination`, the same destination its declarations
  *     will be inserted into on this very save — so the pair always agrees.
+ *   - a CSS-in-JS synthetic class REFUSES (W4-4 Phase B). There is no class
+ *     token behind it AT ALL: `Card_sc__a1b2c3` is a hash Studio computed so
+ *     the canvas could render the template, styled-components generates its
+ *     own name at runtime, and the `.tsx` holds neither. The old code fell
+ *     through to the `isImportedStyleRuleId` literal branch below and returned
+ *     that hash — so ADDING the class wrote a token that matches nothing in
+ *     the user's real app, and REMOVING it made `setJsxClassName` search for a
+ *     token that was never there, no-op with `{ ok: true }`, and leave the
+ *     canvas showing a change the file does not have. Exactly `style-02`'s
+ *     CSS-Modules bug, reachable again through a different door.
  *   - a `create` destination REFUSES: the server picks that file's name and
  *     convention (`detectStylesheetConvention`), so the client cannot yet
  *     tell whether the class is reachable as a literal or only as a binding.
@@ -156,6 +167,12 @@ function resolveClassToken(
 
   const moduleToken = (file: string, local: string | undefined): ClassTokenResult =>
     local ? { ok: true, token: { kind: 'module', file, local } } : { ok: true, token: { kind: 'literal', token: rule.name } }
+
+  // W4-4 Phase B — checked before every branch below, because a styled rule
+  // has no `styleRuleSources` entry and WOULD reach the imported-rule literal
+  // fallback. See this function's doc.
+  const styled = getStudioStyledRuleSources()[classId]
+  if (styled) return { ok: false, ...styledClassRefusal(styled.componentName) }
 
   const source = getStudioStyleRuleSources()[classId]
   if (source) {

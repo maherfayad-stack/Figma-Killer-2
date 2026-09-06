@@ -55,3 +55,11 @@ export type StudioEditPayload =
   | { kind: 'css'; op: 'keyframe-set'; nodeId: string; file: string; name: string; step: string; property: string; value: string }
   | { kind: 'css'; op: 'keyframe-unset'; nodeId: string; file: string; name: string; step: string; property: string }
   | { kind: 'css'; op: 'keyframes-insert'; nodeId: string; file: string; name: string; steps: Array<{ keyText: string; declarations: Record<string, string> }> }
+  // W4-4 Phase B — one declaration VALUE inside a styled-components/emotion
+  // template (`server/handlers/studioEditSchemas.ts`'s `StyledEditSchema`).
+  // Unlike `css`, its `nodeId` is a REAL `rel:line:col` — the `styled.…` tag's
+  // own position — so it rides the server's location decoder, path guard and
+  // batch ordering unchanged. There is no `op`: a styled edit only ever sets
+  // an existing declaration's value, and `styleRuleWriteback.ts` refuses the
+  // add/remove cases client-side before one is built.
+  | { kind: 'styled'; nodeId: string; className: string; selector: string; property: string; value: string; atMedia?: string }

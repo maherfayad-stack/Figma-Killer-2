@@ -125,12 +125,32 @@ import {
   buildClassPageIndex,
   getStudioStyleRuleSources,
   isEditorAuthoredRuleId,
-  replaceStyleRuleSources,
   resolveCssInsertDestination,
-  type StyleRuleSource,
   type UnmappedStyleRule,
 } from './cssInsertDestination'
-import { collectKeyframesEdits, commitKeyframesBaseline, type CssKeyframeEditPayload } from './keyframesWriteback'
+import { collectKeyframesEdits, type CssKeyframeEditPayload } from './keyframesWriteback'
+import {
+  getStudioStyledRuleSources,
+  styledEditNodeId,
+  type StyledEditPayload,
+  type StyledRuleSource,
+} from './styledRuleSources'
+import { baselineFor, contextBaselineFor, effectiveStudioStyles, realContextIds } from './styleRuleBaseline'
+
+/**
+ * The BASELINE half of this module lives in `styleRuleBaseline.ts` (what the
+ * last save left behind, and the `studio`-context fold every diff here reads
+ * through). Re-exported verbatim so every existing import site is unchanged —
+ * the same arrangement `cssInsertDestination.ts` already has.
+ */
+export {
+  commitBaseline,
+  effectiveStudioStyles,
+  setStudioStyleRuleSources,
+  STUDIO_BREAKPOINT_ID,
+  type CommitBaselineOptions,
+  type StudioStyleSourcesOptions,
+} from './styleRuleBaseline'
 
 /**
  * The destination half of this module lives in `cssInsertDestination.ts` (the
@@ -149,23 +169,6 @@ export {
   type UnmappedStyleRule,
 } from './cssInsertDestination'
 
-/**
- * The synthetic per-frame breakpoint every studio board frame mounts. Declared
- * here rather than imported because its producer,
- * `canvas/BoardFramesLayer/BoardFramesLayer.tsx`, builds it as a private
- * const; `styleRuleWriteback.test.ts` asserts the two stay in agreement, so
- * this cannot silently drift back into writing nothing.
- */
-export const STUDIO_BREAKPOINT_ID = 'studio'
-
-/**
- * The declarations a studio board is actually SHOWING for this rule: the
- * synthetic `studio` context folded over the rule's own base bag. See this
- * module's "The `studio` context IS the base declaration set".
- */
-function effectiveStudioStyles(rule: StyleRule): Record<string, unknown> {
-  return { ...rule.styles, ...(rule.contextStyles?.[STUDIO_BREAKPOINT_ID] ?? {}) }
-}
 
 /** One EXISTING rule's declaration change, matching `studioCssWriteback.ts`'s `CssSetEditSchema`. */
 export interface CssSetEditPayload {
@@ -242,6 +245,14 @@ export type CssEditPayload =
   | CssCreateEditPayload
   | CssKeyframeEditPayload
 
+/**
+ * Everything one save round trip should write for the STYLE side of the
+ * document. Two edit KINDS, because a project can hold both a `.css` file and
+ * a `styled.div` and the user edits them through the same inspector row — see
+ * `styledRuleSources.ts` for why the two write paths must not be one.
+ */
+export type StyleEditPayload = CssEditPayload | StyledEditPayload
+
 /** `nodeId` prefix an `op: 'create'` edit is synthesized with — see `ruleIdFromCssCreateNodeId`. */
 const CSS_CREATE_NODE_ID_PREFIX = 'css:create:'
 
@@ -258,138 +269,10 @@ export function ruleIdFromCssCreateNodeId(nodeId: string): string | null {
   return nodeId.startsWith(CSS_CREATE_NODE_ID_PREFIX) ? nodeId.slice(CSS_CREATE_NODE_ID_PREFIX.length) : null
 }
 
-/**
- * Every style rule's EFFECTIVE declarations as last synced, keyed by rule id —
- * `effectiveStudioStyles`, not the raw `styles` bag. Same "only write what the
- * user actually changed" discipline `fsCodemodAdapter`'s `loadedValues`
- * applies to node props.
- */
-let baseline = new Map<string, Record<string, unknown>>()
-
-/**
- * Every rule's REAL (non-studio) context bags as last synced, keyed
- * `ruleId::contextId`. Kept separate from `baseline` because those bags are
- * not folded into the effective value — comparing a `mobile` override against
- * the effective base would report every imported override as "changed" the
- * first time a save ran.
- */
-let contextBaseline = new Map<string, Record<string, unknown>>()
-
-/**
- * Record the load's mapping + baseline. Called once per `loadSite`, and once
- * per TARGETED reload (`studioLiveReloadFetch.ts`) — which is why it takes the
- * full `CommitBaselineOptions` rather than just `pages`: a reload triggered by
- * a save whose CSS edits the server refused must not adopt the on-disk value
- * as the new baseline for those rules, or the user's retry diffs as "no
- * change" and is never attempted again (`style-02`'s bug #3, reachable through
- * the reload path even after that fix).
- */
-export function setStudioStyleRuleSources(
-  sources: Record<string, StyleRuleSource>,
-  styleRules: Record<string, StyleRule>,
-  options: CommitBaselineOptions = {},
-): void {
-  replaceStyleRuleSources(sources)
-  commitBaseline(styleRules, options)
-}
-
-/**
- * Advance the diff baseline to the state just sent — see this module's
- * "Baseline discipline". Called ONLY after a save round trip completes
- * without throwing (the caller's `await apiRequest(...)` having already
- * succeeded), which is exactly the moment Track B1's source synthesis below
- * needs: a `commitBaseline` call that never runs means the save never
- * landed, so nothing should be assumed writable yet either.
- *
- * Track B1 — synthesizes a `styleRuleSources` entry for a rule that just had
- * its first successful write (an `insert` edit `collectStyleRuleEdits` just
- * sent), so it is writable through the ordinary `set` path on its VERY NEXT
- * edit, with no reload. Restricted to editor-authored, non-generated rules
- * with no source yet — the identical gate `collectStyleRuleEdits` checks
- * before ever emitting an insert for one — so a rule that legitimately has
- * no honest destination (an imported, unmapped rule) never gets a
- * fabricated source here either. Harmless to re-attempt for a rule that
- * hasn't been styled yet at all (zero declarations): `setDeclaration`
- * already creates a missing rule on demand, so a synthesized-but-not-yet-
- * written source just means the NEXT edit takes the ordinary `set` path
- * instead of needing its own `insert`.
- *
- * Only an `existing` destination is synthesized here — a `create`
- * destination's real file name is decided by the SERVER (project convention
- * detection needs a full workspace file listing this client does not have),
- * so guessing one here would be exactly the fabricated-write-target bug this
- * module exists to prevent. See `recordCreatedStylesheet` for the `create`
- * counterpart of this seam.
- *
- * ## `refusedRuleIds` — a baseline must never advance past a refusal
- *
- * `style-02`. This ran unconditionally after every save, including the ones
- * where the server REFUSED the write (a duplicated selector, a covering
- * shorthand, a compiled stylesheet). The declaration never reached disk, but
- * the baseline adopted it anyway — so the user's obvious next move, setting
- * the SAME value again, diffed as "no change", produced no edit, and was
- * never even attempted a second time. The refusal was reported once and then
- * became permanent and invisible.
- *
- * A rule named here keeps its PREVIOUS baseline entry, so the very same
- * change is re-sent on the next save. The caller joins server refusals back
- * to rule ids through `StyleRuleEditPlan.ruleIdByNodeId`, and de-dupes the
- * repeat refusal TOAST rather than the repeat attempt — reporting a thing
- * twice is cheap; silently dropping a user's work is not.
- */
-export interface CommitBaselineOptions {
-  /** The document's pages, for `buildClassPageIndex`. Empty is safe — it only costs the co-location step. */
-  pages?: readonly Page[]
-  /** Rules whose write was refused; their baseline entry is preserved, not advanced. */
-  refusedRuleIds?: ReadonlySet<string>
-}
-
-export function commitBaseline(styleRules: Record<string, StyleRule>, options: CommitBaselineOptions = {}): void {
-  const pageIndex = buildClassPageIndex(options.pages ?? [])
-  const refused = options.refusedRuleIds
-  // `@keyframes` bodies are diffed on `rawCss`, not on a declaration bag, so
-  // they keep their own baseline — advanced here under the identical
-  // refusal rule (`keyframesWriteback.ts`).
-  commitKeyframesBaseline(styleRules, refused)
-  const previousBaseline = baseline
-  const previousContextBaseline = contextBaseline
-  baseline = new Map()
-  contextBaseline = new Map()
-  for (const [id, rule] of Object.entries(styleRules)) {
-    if (refused?.has(id)) {
-      // Nothing reached disk for this rule — keep the baseline it was diffed
-      // against so the same change is attempted again next save.
-      const previous = previousBaseline.get(id)
-      if (previous) baseline.set(id, previous)
-      for (const contextId of realContextIds(rule)) {
-        const key = `${id}::${contextId}`
-        const previousContext = previousContextBaseline.get(key)
-        if (previousContext) contextBaseline.set(key, previousContext)
-      }
-      continue
-    }
-    baseline.set(id, effectiveStudioStyles(rule))
-    for (const contextId of realContextIds(rule)) {
-      contextBaseline.set(`${id}::${contextId}`, { ...rule.contextStyles![contextId] })
-    }
-    const sources = getStudioStyleRuleSources()
-    if (!sources[id] && isEditorAuthoredRuleId(id) && !isGeneratedClass(rule)) {
-      const destination = resolveCssInsertDestination(rule, pageIndex)
-      if (destination.ok && destination.kind === 'existing') {
-        sources[id] = { file: destination.file, selector: rule.selector }
-      }
-    }
-  }
-}
-
-/** Every context on a rule that is a REAL media query, not the synthetic studio viewport. */
-function realContextIds(rule: StyleRule): string[] {
-  return Object.keys(rule.contextStyles ?? {}).filter((id) => id !== STUDIO_BREAKPOINT_ID)
-}
 
 /** What a save should do about the CSS side of the document. */
 export interface StyleRuleEditPlan {
-  edits: CssEditPayload[]
+  edits: StyleEditPayload[]
   /**
    * Classes the user changed that have no hand-editable `.css` source — the
    * caller must TELL them, not skip silently. See this module's doc.
@@ -408,8 +291,14 @@ export interface StyleRuleEditPlan {
    * (`css:<file>#<selector>#<property>`), and the save response echoes it back
    * on `refusals` — this is what lets the caller tell `commitBaseline` which
    * rules must NOT advance. See `commitBaseline`'s `refusedRuleIds`.
+   *
+   * A LIST, not one id, because W4-4 Phase B's `styled` edits target a real
+   * `rel:line:col` — the template's own tag — which every declaration in that
+   * template legitimately shares. One refused `color` write there must hold
+   * back the base rule AND the `:hover` rule flattened out of the same
+   * template, since neither reached disk under that node id.
    */
-  ruleIdByNodeId: Record<string, string>
+  ruleIdsByNodeId: Record<string, string[]>
 }
 
 /**
@@ -505,11 +394,18 @@ export function collectStyleRuleEdits(
   pages: readonly Page[] = [],
   contexts: StyleRuleContexts = {},
 ): StyleRuleEditPlan {
-  const edits: CssEditPayload[] = []
+  const edits: StyleEditPayload[] = []
   const unmapped: UnmappedStyleRule[] = []
   const unwritableContexts: string[] = []
-  const ruleIdByNodeId: Record<string, string> = {}
+  const ruleIdsByNodeId: Record<string, string[]> = {}
   const pageIndex = buildClassPageIndex(pages)
+
+  /** Records which rule an emitted edit's join key belongs to — see `StyleRuleEditPlan.ruleIdsByNodeId`. */
+  const claim = (nodeId: string, ruleId: string): void => {
+    const claimed = ruleIdsByNodeId[nodeId] ?? []
+    if (!claimed.includes(ruleId)) claimed.push(ruleId)
+    ruleIdsByNodeId[nodeId] = claimed
+  }
 
   // `@keyframes` blocks first (W5-5). They are diffed on `rawCss` rather than
   // on a declaration bag, so they get their own collector — but they share
@@ -518,7 +414,7 @@ export function collectStyleRuleEdits(
   const keyframes = collectKeyframesEdits(styleRules, pages)
   edits.push(...keyframes.edits)
   unmapped.push(...keyframes.unmapped)
-  Object.assign(ruleIdByNodeId, keyframes.ruleIdByNodeId)
+  for (const [nodeId, ruleId] of Object.entries(keyframes.ruleIdByNodeId)) claim(nodeId, ruleId)
 
   for (const [ruleId, rule] of Object.entries(styleRules)) {
     // A framework-generated utility (`.text-color-metal`, `.bg-color-metal-5`,
@@ -543,6 +439,19 @@ export function collectStyleRuleEdits(
     if (isGeneratedClass(rule)) continue
 
     const label = rule.selector || rule.name
+
+    // W4-4 Phase B — a rule flattened out of a styled-component template.
+    // Checked BEFORE the `.css` paths below because it can never have a
+    // `styleRuleSources` entry (it reached the registry through `extraCss`),
+    // so it would otherwise fall straight through to `unmapped` — which is
+    // exactly what Phase A did, and is now wrong: the declarations are
+    // hand-written in a `.tsx` this map names.
+    const styled = getStudioStyledRuleSources()[ruleId]
+    if (styled) {
+      pushStyledEdits({ ruleId, rule, styled, label, contexts, edits, unmapped, claim })
+      continue
+    }
+
     const source = getStudioStyleRuleSources()[ruleId]
 
     /** One `(scope, property)` write, once a source is known to exist. */
@@ -550,7 +459,7 @@ export function collectStyleRuleEdits(
       if (!source) return
       for (const change of changes) {
         const nodeId = `css:${source.file}#${source.selector}#${atMedia ?? ''}#${change.property}`
-        ruleIdByNodeId[nodeId] = ruleId
+        claim(nodeId, ruleId)
         edits.push(
           change.value === null
             ? {
@@ -579,7 +488,7 @@ export function collectStyleRuleEdits(
     // --- real breakpoint/condition overrides (style-03) ----------------------
     for (const contextId of realContextIds(rule)) {
       const contextChanges = diffDeclarations(
-        contextBaseline.get(`${ruleId}::${contextId}`) ?? {},
+        contextBaselineFor(ruleId, contextId),
         rule.contextStyles?.[contextId] ?? {},
       )
       if (contextChanges.length === 0) continue
@@ -601,7 +510,7 @@ export function collectStyleRuleEdits(
     }
 
     // --- unconditional declarations -----------------------------------------
-    const changes = diffDeclarations(baseline.get(ruleId) ?? {}, effectiveStudioStyles(rule))
+    const changes = diffDeclarations(baselineFor(ruleId), effectiveStudioStyles(rule))
     if (changes.length === 0) continue
 
     if (!source) {
@@ -626,7 +535,7 @@ export function collectStyleRuleEdits(
       if (Object.keys(declarations).length === 0) continue
       if (destination.kind === 'existing') {
         const nodeId = `css:insert:${destination.file}#${rule.selector}`
-        ruleIdByNodeId[nodeId] = ruleId
+        claim(nodeId, ruleId)
         edits.push({
           kind: 'css',
           op: 'insert',
@@ -643,7 +552,7 @@ export function collectStyleRuleEdits(
       // pick that up from the save response). `nodeId` carries the rule id
       // itself so the response can be joined back to it — see
       // `ruleIdFromCssCreateNodeId`.
-      ruleIdByNodeId[`${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`] = ruleId
+      claim(`${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`, ruleId)
       edits.push({
         kind: 'css',
         op: 'create',
@@ -657,5 +566,88 @@ export function collectStyleRuleEdits(
     pushScopedEdits(changes, undefined)
   }
 
-  return { edits, unmapped, unwritableContexts, ruleIdByNodeId }
+  return { edits, unmapped, unwritableContexts, ruleIdsByNodeId }
+}
+
+/**
+ * W4-4 Phase B — one styled rule's changes, split into the value edits that
+ * can reach the user's template and the ones that cannot.
+ *
+ * ## Only a SET is a value edit
+ *
+ * A cleared declaration (`value === null`) is not a value change: writing it
+ * means deleting a line from a template the user wrote, next to
+ * interpolations whose position decides what the surrounding CSS means. Same
+ * for a property the template never declared, which would mean adding one.
+ * Both are reported through `unmapped` — the caller's existing “Style not
+ * saved to source” toast, which is the right title for them — rather than
+ * being silently dropped, the one outcome this whole module exists to
+ * prevent. The server refuses them a second time by name if one ever reaches
+ * it (`setStyledDeclaration`'s `declaration-not-in-template`); saying so here
+ * is what stops the user waiting two seconds to find out.
+ *
+ * ## A real breakpoint IS writable here
+ *
+ * Unlike the `.css` path, a styled template's nested `@media` is part of the
+ * same template, so an override under one writes through the same codemod
+ * with the query attached. Only a context this document cannot name a `@media`
+ * query for (`@container`/`@supports`) is unwritable, and it takes the same
+ * `unmapped` report rather than `unwritableContexts` — the sentence a user
+ * needs here is about the template, not about at-rule support.
+ */
+function pushStyledEdits(args: {
+  ruleId: string
+  rule: StyleRule
+  styled: StyledRuleSource
+  label: string
+  contexts: StyleRuleContexts
+  edits: StyleEditPayload[]
+  unmapped: UnmappedStyleRule[]
+  claim: (nodeId: string, ruleId: string) => void
+}): void {
+  const { ruleId, rule, styled, label, contexts, edits, unmapped, claim } = args
+  const nodeId = styledEditNodeId(styled)
+
+  const push = (changes: readonly PropertyChange[], atMedia: string | undefined): void => {
+    for (const change of changes) {
+      if (change.value === null) {
+        unmapped.push({
+          label,
+          reason:
+            `Clearing “${change.property}” would mean deleting a line from ${styled.componentName}'s styled template. ` +
+            'Studio only changes values inside a template it did not write, so this stays on the canvas and will be ' +
+            `lost on reload — remove the declaration in ${styled.file} instead.`,
+        })
+        continue
+      }
+      claim(nodeId, ruleId)
+      edits.push({
+        kind: 'styled',
+        nodeId,
+        className: styled.className,
+        selector: rule.selector,
+        property: change.property,
+        value: change.value,
+        ...(atMedia ? { atMedia } : {}),
+      })
+    }
+  }
+
+  for (const contextId of realContextIds(rule)) {
+    const changes = diffDeclarations(contextBaselineFor(ruleId, contextId), rule.contextStyles?.[contextId] ?? {})
+    if (changes.length === 0) continue
+    const atMedia = mediaQueryForContext(contextId, contexts)
+    if (!atMedia) {
+      unmapped.push({
+        label,
+        reason:
+          `${label} changed under a container or feature query. Studio writes an override into a styled template as ` +
+          'a nested @media block only, so this stays on the canvas and will be lost on reload.',
+      })
+      continue
+    }
+    push(changes, atMedia)
+  }
+
+  push(diffDeclarations(baselineFor(ruleId), effectiveStudioStyles(rule)), undefined)
 }

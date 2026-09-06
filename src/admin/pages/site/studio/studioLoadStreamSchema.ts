@@ -20,6 +20,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { ConditionDefSchema, PageSchema, StyleRuleSchema } from '@core/page-tree'
 import { TrustTierSchema } from './studioProjectTrust'
 import { StyleRuleSourceSchema } from './styleRuleWriteback'
+import { StyledRuleSourceSchema } from './styledRuleSources'
 
 /**
  * One `kind: 'component'` node's classification (Phase 7A — multi-file
@@ -46,6 +47,15 @@ export const StudioLoadStreamLineSchema = Type.Union([
     componentSources: Type.Record(Type.String(), ComponentSourceSchema),
     styleRules: Type.Record(Type.String(), StyleRuleSchema),
     styleRuleSources: Type.Record(Type.String(), StyleRuleSourceSchema),
+    /**
+     * W4-4 Phase B — the CSS-in-JS counterpart of `styleRuleSources`: which
+     * styled-component template (a `.tsx` file plus the `styled.…` tag's
+     * `line:col`) each rule flattened out of. A styled rule reaches the
+     * registry through `extraCss` and so never appears in `styleRuleSources`;
+     * this is what lets a VALUE edit on one write back into the user's own
+     * template instead of being refused as unmapped.
+     */
+    styledStyleRuleSources: Type.Record(Type.String(), StyledRuleSourceSchema),
     conditions: Type.Array(ConditionDefSchema),
     vendorCss: Type.String(),
     /**

@@ -58,6 +58,7 @@ import type { StyleRule } from '@core/page-tree'
 import { isImportedStyleRuleId } from '@core/page-tree'
 import { classifyStylesheetEditability } from '@core/css-codemods'
 import { getStudioStyleRuleSources, resolveCssInsertDestination } from '@site/studio/styleRuleWriteback'
+import { getStudioStyledRuleSources } from '@site/studio/styledRuleSources'
 import type { ClassCssEditability } from './StyleTargetChip'
 
 /**
@@ -68,6 +69,14 @@ import type { ClassCssEditability } from './StyleTargetChip'
  * for what each of the five outcomes means and writes.
  */
 export function resolveClassCssEditability(cls: StyleRule): ClassCssEditability {
+  // W4-4 Phase B — a styled-component's synthetic class. It has an `sc-` id
+  // and no `styleRuleSources` entry, so before this it resolved to `unmapped`
+  // and every property row was greyed out — the right answer while nothing
+  // could write a template, and the wrong one now that `setStyledDeclaration`
+  // can. Checked FIRST because both branches below would claim it otherwise.
+  const styled = getStudioStyledRuleSources()[cls.id]
+  if (styled) return { kind: 'styled-template', file: styled.file, componentName: styled.componentName }
+
   const source = getStudioStyleRuleSources()[cls.id]
   if (source) {
     const editability = classifyStylesheetEditability(source.file)
@@ -109,6 +118,12 @@ export function classCssWriteLockReason(
   options: { studioSession: boolean },
 ): string | null {
   if (!editability) return null
+  // A styled template is writable for the VALUE edits these rows produce, so
+  // there is no lock here. The edits it CANNOT take (a new declaration, a
+  // cleared one) refuse by name at save time with a sentence naming the
+  // template — greying the whole class instead would be a bigger lie than the
+  // one this module was written to remove.
+  if (editability.kind === 'styled-template') return null
   if (editability.kind === 'compiled') return editability.reason
   if (editability.kind === 'unmapped') {
     if (!options.studioSession) return null

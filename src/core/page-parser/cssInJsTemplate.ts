@@ -44,10 +44,24 @@
  * element. Anything else is an ordinary descendant. Comma lists on either
  * side cross-produce, as CSS nesting itself specifies.
  *
+ * ## Two readers of one walk (W4-4 Phase B)
+ *
+ * Phase A needed only the flattened CSS TEXT. The write-back
+ * (`@core/ast-codemods`'s `setStyledDeclaration`) needs the same flattening —
+ * the same `&` substitution, the same pseudo rule, the same `@media`
+ * descent — but paired with WHERE in the template body each surviving
+ * declaration's value was written, so a value edit can be spliced back into
+ * the quasi it came from.
+ *
+ * Both come off ONE walk (`flattenToRules`). Re-deriving the nesting rules in
+ * the codemod would mean two implementations of "which element does this
+ * declaration style", and the day they disagreed the editor would write a
+ * value into a rule the canvas never showed.
+ *
  * Pure: no ts-morph, no filesystem, no evaluator. Never throws — a parse
  * failure comes back as a `template-unreadable` finding with no CSS.
  */
-import postcss, { type AtRule, type ChildNode, type Container, type Rule } from 'postcss'
+import postcss, { type AtRule, type ChildNode, type Container, type Declaration, type Rule } from 'postcss'
 import type { CssInJsFinding } from './types'
 
 /** Interpolation the evaluator declined, in a position postcss can still parse. See this module's "The sentinel". */
@@ -64,6 +78,33 @@ export function sentinelDeclaration(index: number): string {
 }
 
 const SENTINEL_RE = new RegExp(`${SENTINEL_PREFIX}(\\d+)__`)
+
+/** True when `text` carries a substituted interpolation — the write-back's "this value is not written in this template" test. */
+export function containsUnresolvedSentinel(text: string): boolean {
+  return text.includes(SENTINEL_PREFIX)
+}
+
+/**
+ * True when the next thing written into a template body would start a
+ * STATEMENT rather than continue a declaration's value — i.e. nothing since
+ * the last `;`/`{`/`}` has opened a property with a `:`. That is the
+ * `${sharedMixin}` shape, and it needs a whole valid declaration substituted
+ * rather than a bare word, or postcss rejects the entire template.
+ *
+ * Lives here rather than in `cssInJsExtract.ts` (its first caller) because it
+ * is a question about CSS TEXT, and both the read side and the write side
+ * (`setStyledDeclaration`) have to answer it identically — the sentinel each
+ * one substitutes has to occupy the same position, or the two disagree about
+ * which declaration is which.
+ */
+export function isStatementPosition(textSoFar: string): boolean {
+  let segment = textSoFar
+  for (const delimiter of [';', '{', '}']) {
+    const index = segment.lastIndexOf(delimiter)
+    if (index >= 0) segment = segment.slice(index + 1)
+  }
+  return !segment.includes(':')
+}
 
 /** One unresolved interpolation, as the extractor recorded it. */
 export interface TemplateSentinel {
@@ -100,12 +141,135 @@ export function flattenTemplateCss(
   body: string,
   sentinels: readonly TemplateSentinel[],
 ): FlattenedTemplateCss {
-  const findings: CssInJsFinding[] = []
+  const walked = flattenToRules(className, body, sentinels)
+  if (!('rules' in walked)) return { css: '', declarationCount: 0, findings: walked.findings }
+  const declarationCount = walked.rules.reduce((n, r) => n + r.declarations.filter((d) => !d.dropped).length, 0)
+  return { css: serializeFlatRules(walked.rules), declarationCount, findings: walked.findings }
+}
 
+/**
+ * One surviving declaration, paired with WHERE its value is written in `body`
+ * — the write-back's whole reason for existing. `valueStart`/`valueEnd` are
+ * offsets into `body` itself (the `.<className>{…}` wrapper this module parses
+ * through is already subtracted), so a caller that built `body` out of a
+ * template literal's quasis can map them straight back into the source file.
+ *
+ * `selector` and `conditions` are the FLATTENED ones — the same strings
+ * `flattenTemplateCss` serialises and therefore the same ones the style
+ * registry ends up keyed by.
+ */
+export interface TemplateDeclarationSpan {
+  selector: string
+  /** `@media (…)`, outermost first — the same list `flattenTemplateCss` wraps this rule in. */
+  conditions: string[]
+  property: string
+  /** The declaration's value exactly as written in `body`, unparsed. */
+  value: string
+  valueStart: number
+  valueEnd: number
+  important: boolean
+  /**
+   * True when this declaration carries an unresolved interpolation and was
+   * therefore DROPPED from the rendered CSS. Reported rather than omitted
+   * because "this property is set from a `${…}`" and "this property is not in
+   * this template at all" are two different sentences to show a user, and only
+   * the walk can tell them apart.
+   */
+  interpolated: boolean
+}
+
+/**
+ * Every declaration this template contributes, with its value's span in
+ * `body` — INCLUDING the interpolated ones `flattenTemplateCss` drops, flagged
+ * as such. Same walk, same nesting rules — see this module's "Two readers of
+ * one walk". Empty when the body does not parse at all.
+ */
+export function flattenTemplateDeclarations(
+  className: string,
+  body: string,
+  sentinels: readonly TemplateSentinel[],
+): TemplateDeclarationSpan[] {
+  const walked = flattenToRules(className, body, sentinels)
+  if (!('rules' in walked)) return []
+
+  // Everything postcss reported is offset into the wrapper this module parses
+  // (`.<className>{` + body + `\n}`), so the prefix comes back off once here.
+  const prefix = className.length + 2
+  const spans: TemplateDeclarationSpan[] = []
+  for (const rule of walked.rules) {
+    for (const declaration of rule.declarations) {
+      const span = declarationValueSpan(declaration.node, body, prefix)
+      if (!span) continue
+      spans.push({
+        selector: rule.selector,
+        conditions: [...rule.conditions],
+        property: declaration.node.prop,
+        important: declaration.node.important === true,
+        interpolated: declaration.dropped,
+        ...span,
+      })
+    }
+  }
+  return spans
+}
+
+/**
+ * The offsets of a declaration's VALUE inside `body`, or `undefined` when the
+ * arithmetic does not check out against the text itself.
+ *
+ * postcss gives the declaration's own start offset plus `raws.between` — the
+ * colon and whatever whitespace or comment surrounds it — so the value begins
+ * exactly `prop.length + between.length` in. The final
+ * `body.slice(...) === raw` assertion is not defensive noise: this arithmetic
+ * is what decides which bytes of a user's file get overwritten, so a shape it
+ * does not anticipate (a comment spliced INSIDE the property name, which
+ * postcss records separately and this does not model) must produce NO span
+ * rather than a span pointing at the wrong characters.
+ */
+function declarationValueSpan(
+  node: Declaration,
+  body: string,
+  prefix: number,
+): { value: string; valueStart: number; valueEnd: number } | undefined {
+  const start = node.source?.start?.offset
+  if (start === undefined) return undefined
+  const between = node.raws.between ?? ':'
+  const value = node.raws.value?.raw ?? node.value
+  const valueStart = start - prefix + node.prop.length + between.length
+  const valueEnd = valueStart + value.length
+  if (valueStart < 0 || valueEnd > body.length) return undefined
+  if (body.slice(valueStart, valueEnd) !== value) return undefined
+  return { value, valueStart, valueEnd }
+}
+
+/**
+ * One declaration the walk reached: the text `flattenTemplateCss` serialises,
+ * the postcss node the write-back reads offsets off, and whether it was
+ * DROPPED for carrying an interpolation. A dropped declaration is kept in the
+ * walk (and skipped at serialisation) so the write side can tell "set from a
+ * `${…}`" apart from "not written here at all".
+ */
+interface FlatDeclaration {
+  text: string
+  node: Declaration
+  dropped: boolean
+}
+
+interface FlatRule {
+  selector: string
+  /** `@media (…)`, outermost first. */
+  conditions: string[]
+  declarations: FlatDeclaration[]
+}
+
+/** The one walk both public readers share — see this module's "Two readers of one walk". */
+function flattenToRules(
+  className: string,
+  body: string,
+  sentinels: readonly TemplateSentinel[],
+): { rules: FlatRule[]; findings: CssInJsFinding[] } | { findings: CssInJsFinding[] } {
   if (body.length > MAX_TEMPLATE_BODY_BYTES) {
     return {
-      css: '',
-      declarationCount: 0,
       findings: [
         {
           kind: 'template-unreadable',
@@ -120,8 +284,6 @@ export function flattenTemplateCss(
     root = postcss.parse(`.${className}{${body}\n}`)
   } catch (err) {
     return {
-      css: '',
-      declarationCount: 0,
       findings: [
         {
           kind: 'template-unreadable',
@@ -133,25 +295,27 @@ export function flattenTemplateCss(
 
   const rule = root.first
   if (!rule || rule.type !== 'rule') {
-    return { css: '', declarationCount: 0, findings: [{ kind: 'template-unreadable', message: 'This template produced no CSS rule.' }] }
+    return { findings: [{ kind: 'template-unreadable', message: 'This template produced no CSS rule.' }] }
   }
 
-  const out: FlatRule[] = []
-  flatten(rule, `.${className}`, [], out, findings, sentinels, 0)
-
-  const declarationCount = out.reduce((n, r) => n + r.declarations.length, 0)
-  return { css: out.map(serializeFlatRule).join('\n'), declarationCount, findings }
+  const findings: CssInJsFinding[] = []
+  const rules: FlatRule[] = []
+  flatten(rule, `.${className}`, [], rules, findings, sentinels, 0)
+  return { rules, findings }
 }
 
-interface FlatRule {
-  selector: string
-  /** `@media (…)`, outermost first. */
-  conditions: string[]
-  declarations: string[]
+function serializeFlatRules(rules: readonly FlatRule[]): string {
+  return rules
+    .map(serializeFlatRule)
+    .filter((block) => block.length > 0)
+    .join('\n')
 }
 
+/** `''` for a rule whose every declaration was dropped — an empty block would be CSS the app never had. */
 function serializeFlatRule(rule: FlatRule): string {
-  const block = `${rule.selector} { ${rule.declarations.join('; ')}; }`
+  const kept = rule.declarations.filter((d) => !d.dropped)
+  if (kept.length === 0) return ''
+  const block = `${rule.selector} { ${kept.map((d) => d.text).join('; ')}; }`
   return rule.conditions.reduceRight((inner, condition) => `${condition} { ${inner} }`, block)
 }
 
@@ -174,7 +338,7 @@ function flatten(
     return
   }
 
-  const declarations: string[] = []
+  const declarations: FlatDeclaration[] = []
   const children: (Rule | AtRule)[] = []
 
   for (const node of container.nodes ?? []) {
@@ -196,9 +360,11 @@ function flatten(
                 message: `\`${node.prop}\` was dropped: its value depends on \`${expression}\`, which cannot be read from source.`,
               },
         )
+        // Kept in the walk, out of the CSS — see `FlatDeclaration.dropped`.
+        declarations.push({ text: '', node, dropped: true })
         continue
       }
-      declarations.push(`${node.prop}: ${node.value}${node.important ? ' !important' : ''}`)
+      declarations.push({ text: `${node.prop}: ${node.value}${node.important ? ' !important' : ''}`, node, dropped: false })
       continue
     }
     if (node.type === 'rule' || node.type === 'atrule') children.push(node)

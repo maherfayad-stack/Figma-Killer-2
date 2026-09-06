@@ -67,6 +67,7 @@ import {
   resolveComponentSources,
   STUDIO_ASSET_SENTINEL,
   type ComponentSource,
+  type CssInJsTemplate,
   type ParsedPage,
   type StaticEvalOptions,
 } from '@core/page-parser'
@@ -78,6 +79,7 @@ import { getCachedRouteParse, hashWorkspaceConfig, setCachedRouteParse } from '.
 import { resolveModuleId, resolveTextProp } from './studio/moduleMapping'
 import { compileProjectStyles } from './studio/styleCompile'
 import { readStudioMeta } from './studio/studioMeta'
+import { styledStyleRuleSources, type StyledStyleRuleSource } from './studio/styledStyleRuleSources'
 import type { RoutePageEntry } from './studio/routePageEntry'
 import { discoverStories, storyFilesIn, type DiscoveredStory, type StorySummary } from './studio/storyDiscovery'
 import { buildStoryRouteEntries } from './studio/storyPages'
@@ -139,9 +141,13 @@ function rewriteStudioAssetSentinels(page: Page, dir: string): void {
  * call site it is inlined at, and per route that inlines it, so a shared
  * `styled.div` legitimately arrives many times.
  */
-function cssInJsExtraCss(compiledCss: string, entries: readonly RoutePageEntry[]): string {
-  const templates = entries.flatMap((entry) => entry.expanded.cssInJs?.templates ?? [])
+function cssInJsExtraCss(compiledCss: string, templates: readonly CssInJsTemplate[]): string {
   return [compiledCss, cssInJsStylesheet(templates)].filter(Boolean).join('\n')
+}
+
+/** Every CSS-in-JS template these routes contributed — the input to both `cssInJsExtraCss` (render) and `styledStyleRuleSources` (write-back). */
+function cssInJsTemplatesOf(entries: readonly RoutePageEntry[]): CssInJsTemplate[] {
+  return entries.flatMap((entry) => entry.expanded.cssInJs?.templates ?? [])
 }
 
 /** Result of the load pipeline: every parsed page, the merged component classification (keyed by node id), and the merged imported-CSS registry. */
@@ -165,6 +171,17 @@ export interface StudioLoadResult {
    * `kind: 'css'` `StudioEdit`.
    */
   styleRuleSources: Record<string, StyleRuleSource>
+  /**
+   * W4-4 Phase B — the CSS-in-JS counterpart of `styleRuleSources`:
+   * `StyleRule.id -> the styled-component template it was flattened out of`
+   * (`.tsx` file + the `styled.…` tag's `line:col` + the synthetic class).
+   * A styled rule reaches the registry through `extraCss` and so has no
+   * `styleRuleSources` entry by construction — this is what lets a VALUE edit
+   * on one still land in the user's own template instead of being refused as
+   * unmapped. Two separate maps on purpose: see
+   * `studio/styledStyleRuleSources.ts`'s "Why a separate map".
+   */
+  styledStyleRuleSources: Record<string, StyledStyleRuleSource>
   /** §6 — reusable `@media`/`@container`/`@supports` conditions the rules reference. */
   conditions: ConditionDef[]
   /**
@@ -482,7 +499,7 @@ function discoverProjectStories(
 export async function loadStudioPages(dir: string, options: StudioLoadOptions = {}): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
-    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [] }
+    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [] }
   }
 
   // One shared, workspace-wide ts-morph Project so a page's local
@@ -532,11 +549,12 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   // §6 — read every stylesheet the pages import, in cascade order, plus the
   // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules)
   // and W4-4's CSS-in-JS templates.
+  const cssInJsTemplates = cssInJsTemplatesOf(routeEntries)
   const { styleRules, conditions, classIdsByName, sources: styleRuleSources, authoredCss } = await loadStudioStyles(
     routeEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
     project,
     dir,
-    cssInJsExtraCss(compiledStyles.css, routeEntries),
+    cssInJsExtraCss(compiledStyles.css, cssInJsTemplates),
     // The inverse of this map is what lets a compiled CSS-Modules rule point
     // back at the `.module.css` it was renamed from — without it every such
     // rule is unmapped, which is what produced "Style not saved to source".
@@ -577,7 +595,20 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
     .filter((story) => builtStoryPageIds.has(story.summary.pageId))
     .map((story) => story.summary)
 
-  return { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss: compiledStyles.vendorCss, authoredCss, stories: storySummaries }
+  return {
+    pages,
+    componentSources,
+    styleRules,
+    styleRuleSources,
+    // W4-4 Phase B — computed AFTER the registry, from the same templates the
+    // stylesheet was built out of, because it maps rule IDS and only
+    // `loadStudioStyles` has minted those.
+    styledStyleRuleSources: styledStyleRuleSources(styleRules, cssInJsTemplates),
+    conditions,
+    vendorCss: compiledStyles.vendorCss,
+    authoredCss,
+    stories: storySummaries,
+  }
 }
 
 /**
@@ -636,7 +667,7 @@ export async function loadStudioPageInLocale(dir: string, pageId: string, locale
     [{ parsed: expanded, relFile: entry.relFile }],
     project,
     dir,
-    cssInJsExtraCss(compiledStyles.css, [entry]),
+    cssInJsExtraCss(compiledStyles.css, cssInJsTemplatesOf([entry])),
   )
   const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
 

@@ -18,6 +18,12 @@ export type {
 } from './setJsxClassName'
 export { setStringLiteral, StringLiteralTargetError } from './setStringLiteral'
 export type { SetStringLiteralParams } from './setStringLiteral'
+export { setStyledDeclaration } from './setStyledDeclaration'
+export type {
+  SetStyledDeclarationParams,
+  SetStyledDeclarationResult,
+  StyledDeclarationRefusalReason,
+} from './setStyledDeclaration'
 export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpecifier'
 export type { SetImportSpecifierParams } from './setImportSpecifier'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'

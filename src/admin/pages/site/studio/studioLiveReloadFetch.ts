@@ -111,7 +111,7 @@ export async function fetchStudioPagesById(
     },
   })
   if (!meta) throw new Error('Studio load stream produced no metadata line.')
-  const { missingPageIds, styleRules, styleRuleSources, conditions, vendorCss, authoredCss, trust } = meta
+  const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, trust } = meta
 
   // The per-load leaves, in the same order and with the same calls
   // `fsCodemodAdapter.ts`'s `loadSite` makes. Each is its own tiny external
@@ -124,7 +124,10 @@ export async function fetchStudioPagesById(
   // it is the write-back map, so a rule the agent's edit just introduced can
   // be edited by the user and land in the right file instead of being treated
   // as unmapped, in-memory-only styling.
-  setStudioStyleRuleSources(styleRuleSources, styleRules, { refusedRuleIds: options.refusedRuleIds })
+  setStudioStyleRuleSources(styleRuleSources, styleRules, {
+    refusedRuleIds: options.refusedRuleIds,
+    styledSources: styledStyleRuleSources,
+  })
 
   mergeLoadedValuesBaseline(pages)
 
