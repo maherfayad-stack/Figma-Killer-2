@@ -1007,3 +1007,73 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     expect(screen.getByRole('tooltip').textContent).toContain('new file')
   })
 })
+
+// ---------------------------------------------------------------------------
+// The refusal footer — the half a disabled item's tooltip cannot carry: where
+// the refusal lives in the user's source, and what to do instead.
+// ---------------------------------------------------------------------------
+
+describe('LayerNodeContextMenu — refusal footer', () => {
+  it('says nothing when nothing is refused', () => {
+    const page = makePage({
+      id: 'page-cms',
+      rootNodeId: 'root',
+      nodes: { root: makeNode({ id: 'root', moduleId: 'base.body', children: ['leaf'] }), leaf: makeNode({ id: 'leaf' }) },
+    })
+    renderMenuForNode('leaf', page)
+
+    expect(screen.queryByTestId('constraint-notice')).toBeNull()
+  })
+
+  it('explains the refusal and offers to open the source it names', () => {
+    const page = makePage({
+      id: 'page-loop',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1#0'] }),
+        'src/screens/Home.jsx:9:1#0': makeNode({ id: 'src/screens/Home.jsx:9:1#0' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1#0', page)
+
+    const notice = screen.getByTestId('constraint-notice')
+    expect(notice.getAttribute('data-constraint-reason')).toBe('list-row')
+    expect(notice.textContent).toContain('list')
+    expect(screen.getByTestId('constraint-action-edit-array')).toBeTruthy()
+  })
+
+  it('offers the extract hatch on an instance whose duplicate refuses', () => {
+    const page = makePage({
+      id: 'page-instance',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1'] }),
+        'src/screens/Home.jsx:9:1': makeNode({ id: 'src/screens/Home.jsx:9:1', moduleId: 'studio.instance' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1', page)
+
+    // Delete is allowed on this node, so the footer explains the Duplicate
+    // refusal — the only one the user actually hit.
+    expect(screen.getByTestId('constraint-notice').getAttribute('data-constraint-reason')).toBe('duplicate')
+    expect(screen.getByTestId('constraint-action-extract')).toBeTruthy()
+  })
+
+  it('renders a way forward the editor cannot perform as advice, not a button', () => {
+    const page = makePage({
+      id: 'page-shared',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1'] }),
+        'src/screens/Home.jsx:9:1': makeNode({ id: 'src/screens/Home.jsx:9:1' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1', page)
+
+    // `duplicate` has no way forward at all for a plain source node — the
+    // footer states the reason and offers only the jump to its source.
+    const notice = screen.getByTestId('constraint-notice')
+    expect(notice.getAttribute('data-constraint-reason')).toBe('duplicate')
+    expect(screen.getByTestId('constraint-origin').textContent).toContain('Home.jsx:9')
+  })
+})

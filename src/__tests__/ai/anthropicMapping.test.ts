@@ -3,9 +3,14 @@ import {
   AnthropicTurnTranslator,
   buildSystemBlocks,
   mapHistory,
-  type AnthropicMessage,
 } from '../../../server/ai/drivers/anthropic'
-import type { AiMessage } from '../../../server/ai/runtime/types'
+import {
+  buildToolDefinitions,
+  withMessageCacheBreakpoints,
+  type AnthropicMessage,
+} from '../../../server/ai/drivers/anthropicWire'
+import { Type } from '@core/utils/typeboxHelpers'
+import type { AiMessage, AiTool } from '../../../server/ai/runtime/types'
 import type { SseFrame } from '../../../server/ai/drivers/http/sse'
 
 function frame(obj: unknown): SseFrame {
@@ -161,5 +166,52 @@ describe('Anthropic buildSystemBlocks', () => {
 
   test('returns a single string for the 1-element form', () => {
     expect(buildSystemBlocks(['just one'])).toBe('just one')
+  })
+})
+
+describe('Anthropic prompt-cache breakpoints', () => {
+  const tool = (name: string): AiTool => ({
+    name,
+    description: `${name} description`,
+    scope: 'site',
+    execution: 'server',
+    inputSchema: Type.Object({}),
+  })
+
+  test('marks only the LAST tool definition — one marker caches the whole tool block', () => {
+    const built = buildToolDefinitions([tool('a'), tool('b'), tool('c')]) as Array<
+      Record<string, unknown>
+    >
+    expect(built.map((t) => t.name)).toEqual(['a', 'b', 'c'])
+    expect(built[0]!.cache_control).toBeUndefined()
+    expect(built[1]!.cache_control).toBeUndefined()
+    expect(built[2]!.cache_control).toEqual({ type: 'ephemeral' })
+  })
+
+  test('marks the last content block of each requested message and leaves the input untouched', () => {
+    const messages: AnthropicMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'one' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'two' }, { type: 'text', text: 'three' }] },
+      { role: 'user', content: [{ type: 'text', text: 'four' }] },
+    ]
+
+    const marked = withMessageCacheBreakpoints(messages, [0, 2])
+
+    expect(marked[0]!.content[0]).toEqual({ type: 'text', text: 'one', cache_control: { type: 'ephemeral' } })
+    expect(marked[1]).toBe(messages[1]!) // untouched index keeps its identity
+    expect(marked[2]!.content[0]).toEqual({ type: 'text', text: 'four', cache_control: { type: 'ephemeral' } })
+    // Only the LAST block of a multi-block message carries the marker.
+    const assistant = withMessageCacheBreakpoints(messages, [1])[1]!
+    expect(assistant.content[0]).toEqual({ type: 'text', text: 'two' })
+    expect(assistant.content[1]).toEqual({ type: 'text', text: 'three', cache_control: { type: 'ephemeral' } })
+
+    // The caller's array — the loop's append-only history — is never written to.
+    expect(messages[0]!.content[0]).toEqual({ type: 'text', text: 'one' })
+    expect(messages[1]!.content[1]).toEqual({ type: 'text', text: 'three' })
+  })
+
+  test('skips an index with no content rather than synthesising a block', () => {
+    const messages: AnthropicMessage[] = [{ role: 'user', content: [] }]
+    expect(withMessageCacheBreakpoints(messages, [0, 9])).toEqual([{ role: 'user', content: [] }])
   })
 })

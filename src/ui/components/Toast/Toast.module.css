@@ -116,6 +116,14 @@
     overflow-wrap: anywhere;
 }
 
+/* Repeat counter for a `dedupeKey`ed toast that collapsed a second push. */
+.repeat {
+    margin-inline-start: var(--space-2xs);
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
+}
+
 .body {
     margin: 0;
     color: var(--text-muted);

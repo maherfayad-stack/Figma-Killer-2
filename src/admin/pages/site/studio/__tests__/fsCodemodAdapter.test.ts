@@ -737,8 +737,33 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       })
     }
 
+    /**
+     * `style-02` — a class token's SPELLING now comes from the rule's source
+     * FILE, so these fixtures have to say which file `class-1` lives in.
+     * `pages/Home.css` is a plain stylesheet: the class name IS the DOM name,
+     * so the token stays a plain literal, exactly as before.
+     */
+    function loadWithPlainCssSource() {
+      stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test',
+          projectName: 'studio-test',
+          pages: [],
+          componentSources: {},
+          styleRules: {},
+          styleRuleSources: { 'class-1': { file: 'pages/Home.css', selector: '.card' } },
+          conditions: [],
+          vendorCss: '',
+          trust: 'static',
+          paletteHiddenModuleIds: [],
+        },
+      })
+    }
+
+    const literal = (token: string) => ({ kind: 'literal', token })
+
     it('assigning a class sends exactly one `kind: \'class\'` edit and produces no toast', async () => {
-      stubFetch()
+      loadWithPlainCssSource()
       await loadThenResetCalls()
 
       await fsCodemodAdapter.saveSite(siteWithClassIds(['class-1']))
@@ -747,12 +772,12 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       expect(saveCall).toBeDefined()
       const body = saveCall!.body as { edits: Array<Record<string, unknown>> }
       const classEdits = body.edits.filter((e) => e.kind === 'class')
-      expect(classEdits).toEqual([{ kind: 'class', nodeId: 'pages/Home.tsx:3:1', add: ['card'], remove: [] }])
+      expect(classEdits).toEqual([{ kind: 'class', nodeId: 'pages/Home.tsx:3:1', add: [literal('card')], remove: [] }])
       expect(collectToasts()).toHaveLength(0)
     })
 
     it('removing a class sends `remove: [\'card\']`', async () => {
-      stubFetch()
+      loadWithPlainCssSource()
       await loadThenResetCalls()
 
       // First save assigns the class (advances the baseline), then a second
@@ -767,11 +792,11 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       expect(saveCall).toBeDefined()
       const body = saveCall!.body as { edits: Array<Record<string, unknown>> }
       const classEdits = body.edits.filter((e) => e.kind === 'class')
-      expect(classEdits).toEqual([{ kind: 'class', nodeId: 'pages/Home.tsx:3:1', add: [], remove: ['card'] }])
+      expect(classEdits).toEqual([{ kind: 'class', nodeId: 'pages/Home.tsx:3:1', add: [], remove: [literal('card')] }])
     })
 
     it('does NOT re-send the same class edit on the next save tick when nothing further changed', async () => {
-      stubFetch()
+      loadWithPlainCssSource()
       await loadThenResetCalls()
 
       await fsCodemodAdapter.saveSite(siteWithClassIds(['class-1']))
@@ -786,6 +811,18 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
     it('a server-side refusal (e.g. css-module-binding) surfaces as a named toast, not a silent drop', async () => {
       stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test',
+          projectName: 'studio-test',
+          pages: [],
+          componentSources: {},
+          styleRules: {},
+          styleRuleSources: { 'class-1': { file: 'pages/Home.css', selector: '.card' } },
+          conditions: [],
+          vendorCss: '',
+          trust: 'static',
+          paletteHiddenModuleIds: [],
+        },
         '/admin/api/studio/save': {
           ok: true,
           written: 0,

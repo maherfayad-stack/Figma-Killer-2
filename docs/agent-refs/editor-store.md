@@ -109,6 +109,16 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 `commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
 never both nothing and nothing said, which is what they used to do.
 
+A refused plan carries the full `EditConstraint`, not the rule's bare
+`{reason, message}`: only the planner still holds the NODE, and the node is
+where the refusal's `origin` comes from. `toastStructuralRefusal` renders it as
+a **persistent** toast (`durationMs: null` — a refusal explains why the canvas
+did not change, and a 6-second window was not enough to read one), **deduped**
+by gesture + reason + sentence so a repeated attempt counts up on the card
+already showing instead of stacking, and carrying the constraint's first
+runnable action (or a jump to its source) as the toast button. See
+`studio-pipeline.md` → "A refusal reaches the user as an `EditConstraint`".
+
 **`insertNode` does not mutate a studio tree at all.** It plans the write
 (`planSourceInsert` — which resolves the synthetic page root to the page's
 returned root element, and downgrades an unaddressable anchor to "append"),

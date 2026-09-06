@@ -75,9 +75,52 @@ const STUDIO_BREAKPOINT_BASE = {
   icon: 'monitor',
 } as const
 
+/**
+ * Interned per width, because the RESULT is a prop.
+ *
+ * `BreakpointFrame` is `memo()`'d (its own React-Compiler-exception comment
+ * says why), and a fresh object literal here would defeat that bailout on
+ * every single render of every frame — the memo would compare a new
+ * `Breakpoint` identity each time and re-render the whole frame subtree.
+ * A board settles on a handful of distinct widths, but a RESIZE DRAG walks
+ * through one width per pointer move, so the map is capped rather than left to
+ * grow with the drag. Nothing shares a `Breakpoint` mutably — every consumer
+ * only reads `width`/`label`/`mediaQuery`/`id`.
+ */
+const STUDIO_BREAKPOINT_CACHE_LIMIT = 64
+const studioBreakpointsByWidth = new Map<number, Breakpoint>()
+
+/**
+ * Interned per page id, for the same reason `buildStudioBreakpoint` is
+ * interned per width: this is the `onActivate` PROP of a `memo()`'d
+ * `BreakpointFrame`, so a fresh closure per render would defeat the bailout.
+ *
+ * Deliberately not left to the React Compiler. The compiler would memoize the
+ * closure inside the component, but it does not run in `bun test`, and the
+ * bailout this feeds is a documented React-Compiler EXCEPTION precisely
+ * because it is a different mechanism — so the prop identity that exception
+ * depends on should not itself depend on the compiler. The handler closes over
+ * nothing but the page id (the store is read imperatively at call time), so
+ * one instance per page is correct forever.
+ */
+const activateHandlersByPageId = new Map<string, () => void>()
+
+function activatePageHandler(pageId: string): () => void {
+  const cached = activateHandlersByPageId.get(pageId)
+  if (cached) return cached
+  const handler = () => useEditorStore.getState().openPageInCanvas(pageId)
+  activateHandlersByPageId.set(pageId, handler)
+  return handler
+}
+
 /** This frame's synthetic breakpoint, sized to ITS OWN board width. */
 function buildStudioBreakpoint(width: number): Breakpoint {
-  return { ...STUDIO_BREAKPOINT_BASE, width }
+  const cached = studioBreakpointsByWidth.get(width)
+  if (cached) return cached
+  if (studioBreakpointsByWidth.size >= STUDIO_BREAKPOINT_CACHE_LIMIT) studioBreakpointsByWidth.clear()
+  const breakpoint: Breakpoint = { ...STUDIO_BREAKPOINT_BASE, width }
+  studioBreakpointsByWidth.set(width, breakpoint)
+  return breakpoint
 }
 
 interface DragState {
@@ -194,7 +237,7 @@ function BoardFrameViewImpl({
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
   // logic runs (see the module doc's "Activation + edit routing" note).
-  const activatePage = () => useEditorStore.getState().openPageInCanvas(page.id)
+  const activatePage = activatePageHandler(page.id)
 
   const handleActivateCapture = () => {
     if (!isActive) activatePage()

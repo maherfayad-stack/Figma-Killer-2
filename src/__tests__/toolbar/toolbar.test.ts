@@ -650,14 +650,14 @@ describe('SettingsModal — WCAG 2.4.3 focus-return on close (Guideline #225)', 
 })
 
 describe('SettingsButton — section ID matches a valid SectionId', () => {
-  it("dispatches 'general' (a valid SectionId after dropping the Pages section)", () => {
+  it("dispatches 'preferences' (a valid SectionId, and the one that belongs to the user)", () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
       fileURLToPath(new URL('../../admin/pages/site/toolbar/SettingsButton.tsx', import.meta.url)),
       'utf-8',
     ) as string
-    // 'pages' / 'breakpoints' / 'conditions' were dropped from the modal —
-    // 'general' is the first NAV_ITEMS entry and the canonical default.
-    expect(src).toContain("openSettings('general')")
+    // 'general' is the CMS site's meta tags — the dormant half of this fork.
+    // The gear opens on the user's own preferences instead.
+    expect(src).toContain("openSettings('preferences')")
   })
 })

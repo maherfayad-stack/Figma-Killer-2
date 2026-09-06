@@ -1,36 +1,102 @@
 /**
- * TypographySection — Figma-style compact editor for the `typography` section.
+ * TypographySection — Figma-style compact editor for the `typography`
+ * section (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md G9 / F23).
  *
- * Font family spans the full width; weight/size, line-height/letter-spacing,
- * alignment/style, and decoration/transform pair into two columns each.
- * Colour, white-space, and text-shadow keep full-width rows — they read
- * better wide. All of it is just a layout spec over StackedPropertyGrid, so
- * the dispatch / token / preview / font-weight logic is shared with every
- * other property row.
+ * Target shape (F23's four rows):
  *
- * What each cell actually draws is NOT decided here. `ClassPropertyRow`
- * resolves it per property: the four alignment/style/decoration/transform
- * enums render as icon toggle groups with no words at all, line-height and
- * letter-spacing carry a caption plus a glyph inside the field, and family /
- * weight / size are captionless because their own values name them. This
- * file only says what sits beside what.
+ *   [ Inter                        ▾ ]
+ *   [ Regular ▾ ]         [ 12 ▾ ]
+ *   [ ⇕ Auto ]            [ ⟺ 0% ]
+ *   [ ≡ ≡ ≡ ]  [ ⊤ ⊹ ⊥ ]         [⚙]
+ *
+ * Rows 1–3 (family; weight+size; line-height+letter-spacing) are unchanged
+ * from before this pass and still rendered by `StackedPropertyGrid`, so the
+ * dispatch / token / preview / font-weight logic for those three is
+ * unchanged and shared with every other curated section.
+ *
+ * Row 4 is bespoke: `textAlign` and vertical-align are two icon-toggle
+ * GROUPS sharing one row plus a ⚙ trigger, a shape `StackedPropertyGrid`'s
+ * single/full-width-or-paired layout can't express — so this file builds it
+ * directly with `SegmentedControl` (the same dispatch `ClassPropertyRow`
+ * itself uses for an icon-enum property, just laid out by hand) rather than
+ * routing it through `ClassPropertyRow`'s row wrapper, which is sized to be
+ * a full-width row on its own.
+ *
+ * VERTICAL ALIGN HAS NO CSS EQUIVALENT — it isn't a `CSSPropertyBag`
+ * property at all. The nearest honest mapping is `alignItems` on the text
+ * node's OWN box (`verticalAlignWrite.ts`), which only means something once
+ * that box is itself a flex container. When it can't be written honestly for
+ * the current selection, the group renders DISABLED with the reason as its
+ * tooltip rather than disappearing — STUDIO-INSPECTOR-DISCLOSURE-PLAN §7 /
+ * §8.4: the asymmetry with Figma is real, and hiding it would be the lie
+ * this repo's second invariant forbids. It reads/writes the exact same
+ * `alignItems` property `LayoutSection`'s own alignment control does — see
+ * `verticalAlignWrite.ts`'s doc for why that's fine, not a conflict.
+ *
+ * SEARCH REACHABILITY: `fontStyle` / `textDecoration` / `textTransform` /
+ * `whiteSpace` moved off their old resident rows (4/5/7) into the settings
+ * popover's Basics tab (F25), but `cssControlTypes.ts`'s curated property
+ * list for this section — frozen for this pass, see the work order — still
+ * claims them, so a style search can narrow `visibleProperties` down to just
+ * one of them. Row 4 — the only way to reach the popover — stays reachable
+ * whenever ANY of those, or `textAlign`, survives the filter, not only
+ * `textAlign`. `SETTINGS_ONLY_PROPERTIES` is that list; `showSettingsTrigger`
+ * below is the gate.
+ *
+ * `color` and `textShadow` stay resident here rather than moving to
+ * Fill/Effects the way the plan's target eventually wants — see the G9
+ * handoff in STATE.md: G6 (Fill) and G8 (Effects) haven't run yet, and
+ * moving them now would delete the only way to reach them. That is the one
+ * way this section is not literally four rows today.
  */
 
+import { useRef, useState } from 'react'
+import type { IconComponent } from 'pixel-art-icons/types'
 import type { CSSPropertyBag } from '@core/page-tree'
+import { useEditorStore } from '@site/store/store'
+import { Button } from '@ui/components/Button'
+import { SegmentedControl } from '@ui/components/SegmentedControl'
+import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
+import { AlignStartVerticalSolidIcon } from 'pixel-art-icons/icons/align-start-vertical-solid'
+import { AlignCenterVerticalSolidIcon } from 'pixel-art-icons/icons/align-center-vertical-solid'
+import { AlignEndVerticalSolidIcon } from 'pixel-art-icons/icons/align-end-vertical-solid'
 import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGrid'
+import { getIconEnumOptions } from './cssPropertyIcons'
+import { TypographySettings } from './TypographySettings'
+import { useFontVariationAxes } from './useFontVariationAxes'
+import {
+  resolveVerticalAlignAvailability,
+  verticalAlignEdgeValue,
+  verticalAlignFromAlignItems,
+  type VerticalAlign,
+} from './verticalAlignWrite'
 import type { PropertyProvenance } from './stylePropertyProvenance'
+import styles from './TypographySection.module.css'
 
-const TYPOGRAPHY_SPEC: ReadonlyArray<StackedGridEntry> = [
+const TOP_SPEC: ReadonlyArray<StackedGridEntry> = [
   'fontFamily',
   // Weight before size: Figma's order, and the one that reads correctly —
   // the family and its weight are one choice, the size is a separate one.
   ['fontWeight', 'fontSize'],
   ['lineHeight', 'letterSpacing'],
-  ['textAlign', 'fontStyle'],
-  ['textDecoration', 'textTransform'],
-  'color',
+]
+
+// `color` / `textShadow` — see this file's header doc for why they're still
+// here instead of Fill / Effects.
+const BOTTOM_SPEC: ReadonlyArray<StackedGridEntry> = ['color', 'textShadow']
+
+/** See this file's "SEARCH REACHABILITY" doc. */
+const SETTINGS_ONLY_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
+  'fontStyle',
+  'textDecoration',
+  'textTransform',
   'whiteSpace',
-  'textShadow',
+]
+
+const VERTICAL_ALIGN_EDGES: ReadonlyArray<{ edge: VerticalAlign; icon: IconComponent; label: string }> = [
+  { edge: 'top', icon: AlignStartVerticalSolidIcon, label: 'Align top' },
+  { edge: 'middle', icon: AlignCenterVerticalSolidIcon, label: 'Align middle' },
+  { edge: 'bottom', icon: AlignEndVerticalSolidIcon, label: 'Align bottom' },
 ]
 
 interface TypographySectionProps {
@@ -48,6 +114,119 @@ interface TypographySectionProps {
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
-export function TypographySection(props: TypographySectionProps) {
-  return <StackedPropertyGrid spec={TYPOGRAPHY_SPEC} {...props} />
+export function TypographySection({
+  currentStyles,
+  storedStyles,
+  visibleProperties,
+  activeTab,
+  onChange,
+  onRemove,
+  onPreview,
+  onClearPreview,
+  provenanceByProperty,
+}: TypographySectionProps) {
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null)
+
+  const fonts = useEditorStore((state) => state.site?.settings.fonts ?? null)
+  const variationAxes = useFontVariationAxes(currentStyles.fontFamily, fonts)
+
+  const visible = new Set(visibleProperties)
+  const showTextAlignGroup = visible.has('textAlign')
+  const showSettingsTrigger =
+    showTextAlignGroup || SETTINGS_ONLY_PROPERTIES.some((prop) => visible.has(prop))
+
+  const textAlignOptions = getIconEnumOptions('textAlign') ?? []
+  const storedTextAlign = storedStyles.textAlign
+  const verticalAvailability = resolveVerticalAlignAvailability(currentStyles)
+  const currentVerticalEdge = verticalAlignFromAlignItems(storedStyles.alignItems)
+
+  const gridProps = {
+    currentStyles,
+    storedStyles,
+    activeTab,
+    onChange,
+    onRemove,
+    onPreview,
+    onClearPreview,
+    provenanceByProperty,
+  }
+
+  return (
+    <div className={styles.section}>
+      <StackedPropertyGrid spec={TOP_SPEC} visibleProperties={visibleProperties} {...gridProps} />
+
+      {(showTextAlignGroup || showSettingsTrigger) && (
+        <div className={styles.alignRow}>
+          {showTextAlignGroup && (
+            <div className={styles.alignGroups}>
+              <SegmentedControl
+                aria-label="Text align"
+                data-testid="typography-text-align"
+                value={
+                  typeof storedTextAlign === 'string' && storedTextAlign !== ''
+                    ? storedTextAlign
+                    : undefined
+                }
+                options={textAlignOptions.map((option) => ({
+                  value: option.value,
+                  icon: option.icon ? <option.icon size={14} aria-hidden="true" /> : undefined,
+                  ariaLabel: `Text align: ${option.tooltip}`,
+                  tooltip: option.tooltip,
+                }))}
+                onChange={(next) => onChange('textAlign', next)}
+                onClear={() => onRemove('textAlign')}
+              />
+              <SegmentedControl
+                aria-label="Vertical align"
+                data-testid="typography-vertical-align"
+                disabled={!verticalAvailability.available}
+                value={currentVerticalEdge}
+                options={VERTICAL_ALIGN_EDGES.map(({ edge, icon: EdgeIcon, label }) => ({
+                  value: edge,
+                  icon: <EdgeIcon size={14} aria-hidden="true" />,
+                  ariaLabel: label,
+                  tooltip: verticalAvailability.available ? label : verticalAvailability.reason,
+                }))}
+                onChange={(edge) => onChange('alignItems', verticalAlignEdgeValue(edge))}
+                onClear={() => onRemove('alignItems')}
+              />
+            </div>
+          )}
+          {showSettingsTrigger && (
+            <Button
+              ref={settingsTriggerRef}
+              variant="ghost"
+              size="xs"
+              iconOnly
+              aria-haspopup="dialog"
+              aria-expanded={settingsOpen}
+              aria-label="Typography settings"
+              tooltip="Typography settings"
+              data-testid="typography-settings-trigger"
+              onClick={() => setSettingsOpen((open) => !open)}
+            >
+              <SlidersHorizontalIcon size={14} aria-hidden="true" />
+            </Button>
+          )}
+        </div>
+      )}
+
+      <StackedPropertyGrid spec={BOTTOM_SPEC} visibleProperties={visibleProperties} {...gridProps} />
+
+      {settingsOpen && (
+        <TypographySettings
+          id="typography-settings"
+          anchorRef={settingsTriggerRef}
+          onClose={() => setSettingsOpen(false)}
+          storedStyles={storedStyles}
+          onChange={onChange}
+          onRemove={onRemove}
+          onPreview={onPreview}
+          onClearPreview={onClearPreview}
+          variationAxes={variationAxes}
+        />
+      )}
+    </div>
+  )
 }

@@ -1,9 +1,11 @@
 import type { PageNode } from '@core/page-tree'
 import type { NodeTree } from '@core/page-tree'
 import {
+  explainGestureConstraint,
   getParent,
   previewStructuralMove,
   resolvePageTreeDropTarget,
+  type EditConstraint,
   type PageTreeDropPosition,
   type PageTreeDropTarget,
 } from '@core/page-tree'
@@ -70,8 +72,13 @@ interface CanvasInvalidDropTarget {
    * Surfaced live, while the pointer is still down, instead of a post-hoc
    * toast after `pointerup` — see `previewStructuralMove`'s own doc for why
    * this is not a replacement for the store's own gate, only a preview of it.
+   *
+   * The full `EditConstraint` (`explainGestureConstraint`, the translation
+   * this preview verdict was built for), not just its sentence: the overlay
+   * renders the sentence beside the cursor, and the same object is what a
+   * post-drop surface would need to offer the way forward.
    */
-  refusalMessage?: string
+  constraint?: EditConstraint
 }
 
 export interface CanvasDropResolution {
@@ -203,13 +210,18 @@ export function resolveCanvasDropTarget({
   // replacement — see `previewStructuralMove`'s own doc.
   const preview = previewStructuralMove(tree, target.draggedIds, target.parentId, target.index)
   if (!preview.ok) {
+    // The refusal is about the DRAGGED element, not the candidate under the
+    // pointer — that is whose source position the explanation names and whose
+    // `rel:line:col` a jump would open.
+    const dragged = tree.nodes[target.draggedIds[0] ?? draggedId] ?? { id: draggedId }
+    const constraint = explainGestureConstraint(preview, dragged)
     return {
       target: null,
       invalid: {
         overId: candidate.nodeId,
         rect: candidate.rect,
         axis: candidate.axis,
-        refusalMessage: preview.refusal.message,
+        ...(constraint ? { constraint } : {}),
       },
     }
   }

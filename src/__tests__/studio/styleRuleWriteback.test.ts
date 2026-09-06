@@ -97,7 +97,7 @@ describe('collectStyleRuleEdits — what it refuses instead of dropping', () => 
     const plan = collectStyleRuleEdits({ [RULE_ID]: edited })
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.unmapped).toEqual(['.hero-title'])
+    expect(plan.unmapped).toEqual([{ label: '.hero-title', reason: null }])
   })
 
   it('reports a REAL breakpoint override, which needs a media query this edit kind cannot carry', () => {
@@ -203,8 +203,8 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
 
     expect(plan.edits).toHaveLength(0)
     expect(plan.unmapped).toHaveLength(1)
-    expect(plan.unmapped[0]).toContain('.new-class')
-    expect(plan.unmapped[0]).toContain('could not find a hand-editable .css file')
+    expect(plan.unmapped[0]!.label).toBe('.new-class')
+    expect(plan.unmapped[0]!.reason).toContain('could not find a hand-editable .css file')
   })
 
   it('emits a create edit, naming the page, when zero stylesheets exist but the rule is node-scoped to a real page', () => {
@@ -248,9 +248,9 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     const plan = collectStyleRuleEdits({ [NEW_RULE_ID]: edited })
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.unmapped[0]).toContain('.new-class')
-    expect(plan.unmapped[0]).toContain('pages/Home.css')
-    expect(plan.unmapped[0]).toContain('pages/Other.css')
+    expect(plan.unmapped[0]!.label).toBe('.new-class')
+    expect(plan.unmapped[0]!.reason).toContain('pages/Home.css')
+    expect(plan.unmapped[0]!.reason).toContain('pages/Other.css')
   })
 
   it('writes into the stylesheet co-located with the rule\'s own page instead of refusing', () => {
@@ -321,7 +321,7 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     const plan = collectStyleRuleEdits({ [RULE_ID]: rule(), 'sc-orphan': orphan })
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.unmapped).toEqual(['.orphan'])
+    expect(plan.unmapped).toEqual([{ label: '.orphan', reason: null }])
   })
 
   it('synthesizes a styleRuleSources entry after commitBaseline, so the next edit takes the ordinary set path', () => {
@@ -574,6 +574,64 @@ describe('framework-generated utility classes', () => {
     // The refusal path must survive — this is the case the toast exists for.
     const plan = collectStyleRuleEdits({ [RULE_ID]: rule() })
 
-    expect(plan.unmapped).toEqual(['.hero-title'])
+    expect(plan.unmapped).toEqual([{ label: '.hero-title', reason: null }])
+  })
+})
+
+
+/**
+ * `style-02` — a baseline must never advance past a refusal.
+ *
+ * `commitBaseline` used to run unconditionally after every save, including the
+ * ones where the server REFUSED the write (a duplicated selector, a covering
+ * shorthand, a compiled stylesheet). The declaration never reached disk, but
+ * the baseline adopted it — so the user's obvious next move, setting the SAME
+ * value again, diffed as "no change" and was never attempted a second time.
+ */
+describe('commitBaseline — refusedRuleIds', () => {
+  it('re-sends the same declaration on the next save when the server refused it', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { [STUDIO_BREAKPOINT_ID]: { width: '321px' } } })
+
+    const first = collectStyleRuleEdits({ [RULE_ID]: edited })
+    expect(first.edits).toHaveLength(1)
+    const refusedNodeId = first.edits[0]!.nodeId
+
+    // The join the caller makes: the save response echoes the synthetic
+    // nodeId back on `refusals`, and `ruleIdByNodeId` maps it to the rule.
+    expect(first.ruleIdByNodeId[refusedNodeId]).toBe(RULE_ID)
+    commitBaseline({ [RULE_ID]: edited }, { refusedRuleIds: new Set([RULE_ID]) })
+
+    const second = collectStyleRuleEdits({ [RULE_ID]: edited })
+    expect(second.edits).toHaveLength(1)
+    expect(second.edits[0]).toMatchObject({ property: 'width', value: '321px' })
+  })
+
+  it('does NOT re-send a declaration the server accepted', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { [STUDIO_BREAKPOINT_ID]: { width: '321px' } } })
+
+    expect(collectStyleRuleEdits({ [RULE_ID]: edited }).edits).toHaveLength(1)
+    commitBaseline({ [RULE_ID]: edited }, { refusedRuleIds: new Set() })
+
+    expect(collectStyleRuleEdits({ [RULE_ID]: edited }).edits).toHaveLength(0)
+  })
+
+  it('holds back only the refused rule, not its untouched neighbours', () => {
+    const OTHER_ID = 'sc-other'
+    const other = { ...rule(), id: OTHER_ID, name: 'other', selector: '.other' }
+    setStudioStyleRuleSources(
+      { ...SOURCES, [OTHER_ID]: { file: 'pages/Home.css', selector: '.other' } },
+      { [RULE_ID]: rule(), [OTHER_ID]: other },
+    )
+    const editedHero = rule({ contextStyles: { [STUDIO_BREAKPOINT_ID]: { width: '321px' } } })
+    const editedOther = { ...other, contextStyles: { [STUDIO_BREAKPOINT_ID]: { width: '9px' } } }
+
+    expect(collectStyleRuleEdits({ [RULE_ID]: editedHero, [OTHER_ID]: editedOther }).edits).toHaveLength(2)
+    commitBaseline({ [RULE_ID]: editedHero, [OTHER_ID]: editedOther }, { refusedRuleIds: new Set([RULE_ID]) })
+
+    const second = collectStyleRuleEdits({ [RULE_ID]: editedHero, [OTHER_ID]: editedOther })
+    expect(second.edits).toHaveLength(1)
+    expect(second.edits[0]).toMatchObject({ selector: '.hero-title' })
   })
 })

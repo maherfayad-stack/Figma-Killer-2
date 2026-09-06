@@ -42,6 +42,14 @@
  * isn't known until the drag lands (see `previewStructuralMove`, D2's
  * gesture-time seam this file does not need — this is a context menu, not a
  * drag).
+ *
+ * The greying-out was only half the answer, though: a disabled item's tooltip
+ * states the sentence and stops there, while the constraint it came from also
+ * knows WHERE in the user's source the refusal lives and what they can do
+ * instead. Those two now render in a footer at the bottom of the menu
+ * (`ConstraintNotice`, `@site/ui/ConstraintNotice`) — the same component the
+ * refusal toast and every other refusal surface share, so the wording and the
+ * ways forward cannot drift between them.
  */
 
 import { useEffect, useRef } from 'react'
@@ -76,6 +84,7 @@ import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
+import { ConstraintNotice } from '@site/ui/ConstraintNotice'
 import styles from './LayerNodeContextMenu.module.css'
 
 interface LayerNodeContextMenuProps {
@@ -217,6 +226,14 @@ export function LayerNodeContextMenu({
         : firstRefusal('duplicate')
     return { duplicate, wrap: firstRefusal('wrap'), delete: firstRefusal('delete') }
   })()
+
+  // The one refusal the footer explains in full. Delete first, then Duplicate,
+  // then Wrap: they nearly always share a reason (the same node lock refuses
+  // all three), and when they don't, the one the user is most likely to have
+  // reached for is the one worth the space — the other two keep their
+  // per-item tooltip.
+  const footerConstraint =
+    structuralConstraints.delete ?? structuralConstraints.duplicate ?? structuralConstraints.wrap
 
   // Whether the right-clicked node accepts children (root or canHaveChildren).
   // Used to gate the "Paste HTML here…" item — only offered when the target
@@ -544,6 +561,20 @@ export function LayerNodeContextMenu({
             <span aria-hidden="true"><TrashSolidIcon size={13} /></span>
             Delete
           </ContextMenuItem>
+        </>
+      )}
+
+      {/* The reason, once, at the foot of the menu. A disabled item's tooltip
+          can carry the sentence but not the two things that make a refusal
+          actionable — where in the source it lives, and what to do instead —
+          because a tooltip has nothing to click. The footer does, and it is
+          the same `ConstraintNotice` every other refusal surface renders. */}
+      {footerConstraint && (
+        <>
+          <ContextMenuSeparator />
+          <div role="presentation" className={styles.refusalFooter}>
+            <ConstraintNotice constraint={footerConstraint} nodeId={isMulti ? undefined : nodeId ?? undefined} compact />
+          </div>
         </>
       )}
     </UIContextMenu>

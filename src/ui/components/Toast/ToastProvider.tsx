@@ -19,7 +19,7 @@
  *   - Close affordance + optional action use the Button primitive
  *   - Pixel-art icons only (close, circle-alert, warning-diamond)
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
@@ -61,6 +61,15 @@ function ariaRoleForKind(kind: ToastKind): 'alert' | 'status' {
   return kind === 'error' || kind === 'warning' ? 'alert' : 'status'
 }
 
+/**
+ * Countdown identity: the toast, at this generation. A `dedupeKey` collapse
+ * keeps the id and refreshes `createdAt`, which is exactly the moment the
+ * countdown should start over.
+ */
+function timerKey(toast: Toast): string {
+  return `${toast.id}:${toast.createdAt}`
+}
+
 function ToastIcon({ kind }: { kind: ToastKind }) {
   if (kind === 'error') return <CircleAlertSolidIcon size={14} aria-hidden="true" />
   if (kind === 'warning') return <WarningDiamondSolidIcon size={14} aria-hidden="true" />
@@ -72,6 +81,9 @@ export function ToastProvider() {
   const [items, setItems] = useState<ReadonlyArray<Toast>>([])
   const [paused, setPaused] = useState(false)
   const portalRoot = typeof document !== 'undefined' ? getToastRoot() : null
+  // Per-toast time left, in ms — the state the timer effect cannot keep in a
+  // `setTimeout` alone. See the effect below for why it has to exist.
+  const remainingRef = useRef(new Map<string, number>())
 
   useEffect(() => {
     return subscribeToasts((next) => setItems(next))
@@ -80,27 +92,47 @@ export function ToastProvider() {
   // Single timer-lifecycle effect: arm a setTimeout per visible toast (unless
   // paused or opted-out), and clean them up on re-render / unmount.
   //
-  // Cleanup clears every timer this effect created, so when `items` or
-  // `paused` flips we drop the previous set entirely and the next setup phase
-  // re-arms a fresh batch. That means a toast's countdown restarts whenever
-  // the items list changes (e.g. a new toast arrives) — acceptable trade-off
-  // because durations are short (4–8s) and the alternative was carrying timer
-  // state across renders via a ref, which leaves setTimeout without a
-  // matching cleanup in the same effect.
+  // The effect re-runs whenever `items` or `paused` changes, and its cleanup
+  // clears every timer it armed — so the countdown is REBUILT on each run. It
+  // is rebuilt from `remainingRef`, not from the toast's full duration: this
+  // effect runs again every time ANY toast is pushed or dismissed, and
+  // restarting every visible toast's full countdown on each of those meant a
+  // burst of toasts kept each other alive indefinitely (and, with
+  // pause-on-hover, that a mouse crossing the stack reset the lot). Each entry
+  // is decremented by the time the previous arming actually ran for, so the
+  // total time a toast is visible is its own duration — plus however long the
+  // pointer rested on the stack, which is what pause-on-hover promises.
   useEffect(() => {
+    const remaining = remainingRef.current
+    const armedAt = Date.now()
+    // Drop countdowns for toasts no longer on the bus, and for the previous
+    // GENERATION of a `dedupeKey`ed toast that was just re-pushed — the key
+    // carries `createdAt`, which a repeat refreshes, so a collapsed repeat
+    // starts its countdown over rather than inheriting the original's.
+    const live = new Set(items.map(timerKey))
+    for (const key of remaining.keys()) {
+      if (!live.has(key)) remaining.delete(key)
+    }
     if (paused) return
+
     const timers = new Map<string, ReturnType<typeof setTimeout>>()
     for (const toast of items) {
       if (toast.durationMs === null) continue
-      const duration = toast.durationMs ?? DEFAULT_DURATION_MS[toast.kind]
+      const key = timerKey(toast)
+      const duration = remaining.get(key) ?? toast.durationMs ?? DEFAULT_DURATION_MS[toast.kind]
+      remaining.set(key, duration)
       const timer = setTimeout(() => {
-        timers.delete(toast.id)
+        timers.delete(key)
         dismissToast(toast.id)
       }, duration)
-      timers.set(toast.id, timer)
+      timers.set(key, timer)
     }
     return () => {
-      for (const timer of timers.values()) clearTimeout(timer)
+      const elapsed = Date.now() - armedAt
+      for (const [key, timer] of timers) {
+        clearTimeout(timer)
+        remaining.set(key, Math.max(0, (remaining.get(key) ?? 0) - elapsed))
+      }
       timers.clear()
     }
   }, [items, paused])
@@ -157,7 +189,17 @@ function ToastItem({ toast }: { toast: Toast }) {
         <ToastIcon kind={toast.kind} />
       </span>
       <div className={styles.content}>
-        <p className={styles.title}>{toast.title}</p>
+        <p className={styles.title}>
+          {toast.title}
+          {/* A collapsed repeat is otherwise invisible: the card is already
+              on screen saying the same thing, so without a count the user's
+              second attempt looks like it did nothing at all. */}
+          {toast.repeatCount > 1 && (
+            <span className={styles.repeat} data-toast-repeat={toast.repeatCount}>
+              ×{toast.repeatCount}
+            </span>
+          )}
+        </p>
         {toast.body && <p className={styles.body}>{toast.body}</p>}
         {toast.location && (
           <p className={styles.location}>{toast.location}</p>

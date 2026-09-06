@@ -1,0 +1,38 @@
+/*
+ * ExpandableFieldCluster — one row collapsed, two rows expanded, and a
+ * single toggle that never moves or changes shape between the two.
+ */
+
+.root {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    width: 100%;
+}
+
+/* Collapsed: 1–2 fields in a single row, each sharing the available width. */
+.row {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    flex: 1;
+    min-width: 0;
+}
+
+/* Expanded: up to 4 fields, two per row — height stays at two inspector rows
+   no matter how many fields the caller supplies. */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--inspector-field-gap);
+    flex: 1;
+    min-width: 0;
+}
+
+.cell {
+    min-width: 0;
+}
+
+.row > .cell {
+    flex: 1;
+}
