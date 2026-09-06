@@ -151,6 +151,48 @@ with exactly one stylesheet, and again in one with several.
 
 ---
 
+### server-18 — share links: a board is now showable to someone who is not an editor (W5-2)
+- **Agent:** server-engineer
+- **Stage:** done (built + gated). **Needs human dogfood** — a created link must be opened in a private window, on a browser that is not signed in. Nothing here was driven in a real browser.
+- **Updated:** 2026-09-06
+- **Branch:** `feat/share-links`
+- **Goal:** Studio's only way to show work to a non-editor was "Download code" (a zip of a React project). v1 share = a revocable `/share/<token>` URL that renders a read-only snapshot of a board — layout, frame images, page names — to a logged-out viewer.
+- **Scope (all new except the four wiring edits at the end):**
+  - `src/core/studio-share/{shareWire.ts,index.ts}` — the shared leaf. `SharedBoardSchema` (what a stranger may see), the management schemas, `SHARE_TOKEN_RE` / `SHARE_IMAGE_FILE_RE`, route constants.
+  - `server/handlers/studio/shareStore.ts` — `.studio/shares.json`: minting, constant-time matching, revoke, the token→project scan + memo, `resolveShareFile`'s containment guard.
+  - `server/handlers/studio/shareSnapshot.ts` — drives `captureFrames` (W4-2A) and writes `.studio/shares/<token>/{board.json,<id>-<n>.png}`.
+  - `server/handlers/studio/sharePublic.ts` — `tryServeSharePublic`: the three public GETs.
+  - `server/handlers/studio/shareRoutes.ts` — `GET/POST/DELETE /admin/api/studio/shares`, session-gated.
+  - `share.html` + `src/admin/shareViewer/{main.tsx,ShareViewer.tsx,ShareViewer.module.css,ShareUnavailable.tsx}` — Vite's THIRD HTML entry.
+  - `src/admin/pages/site/studio/shareLinks.ts`, `toolbar/ShareBoardButton.tsx`, `toolbar/ShareDialog.tsx(+.module.css)`.
+  - Tests: `shareStore.test.ts` (13), `sharePublic.test.ts` (9), `shareSnapshot.test.ts` (8), `shareRoutes.test.ts` (2).
+  - Wiring edits into files I do not own: `server/router.ts` (one route entry + handler), `server/handlers/studio.ts` (one call beside the comments call), `toolbar/StudioToolbarActions.tsx` (one component), `vite.config.ts` (third `input` + one proxy key).
+  - Docs: new `docs/features/studio-share.md`, `docs/README.md` row, `docs/agent-refs/path-index.md` (6 rows).
+- **Done so far:** create / list / update-in-place / revoke, the public viewer with pan+zoom, and the whole 404 surface. `bun run build` ✅, `bun run lint` ✅, `bun test src/__tests__/architecture` ✅ (1 pre-existing icon-catalog fail), my four suites 32/32 ✅. The built viewer chunk is **7.8 KB** — it ships no editor code, which was the point of the separate entry.
+- **Next step:** dogfood. Create a share on `studio-workspace/test4`, copy the link, open it in a private window; then revoke and reload. The one thing no test covers is whether the headless capture actually produces frames on this machine (it needs `bunx playwright install chromium`) — with no Chromium AND no open editor tab, `createShare` fails honestly with capture's own two-part message rather than writing an empty share.
+- **Decisions:**
+  - **v1 is a snapshot, and the UI says so.** A live share would put the parser (and a browser) on an anonymous request path and would change under a reviewer mid-review. Every row shows "shared \<time\>" and the action is called **Update**, which re-captures IN PLACE — same link, new pictures — because "share again to update" reads as a promise that the URL is stable.
+  - **`createdAt` and `snapshotAt` are separate fields.** An update must not make "this link has existed since Tuesday" false.
+  - **Capture is `captureFrames`, unforked.** Headless-first with the owner's open tab as fallback. A second rasteriser would be a second thing to keep in step with the canvas; the first time they disagreed a share would stop looking like the board.
+  - **Mounted on `/share/`, not under `/admin`.** A viewer must never be sent to an admin URL, and the admin session cookie is `Path=/admin` precisely so it never rides a public request. Placed before the static-asset and published-page resolvers, and it absorbs its namespace.
+  - **Revoked records are KEPT, their bytes DELETED.** For the viewer, revoked and never-existed must be indistinguishable; for the owner, a link somebody may still hold must not silently vanish from the dialog.
+  - **Every failure is one identical 404** (malformed / unknown / revoked / project deleted / file missing / wrong method). Distinguishing them tells a stranger whether a token was ever real.
+  - **The public routes hold no `dir`.** A token resolves to its project by scanning `studio-workspace/`; the mapping is memoised (immutable for a token's life) but the RECORD is re-read per request, which is what makes revocation immediate.
+  - **Frame images are `immutable`-cacheable because filenames are per-snapshot** (`<snapshotId>-<index>.png`). An update mints a new id, so the same URL can never mean two different pictures. `board.json` is `no-store` — it is the revocation check.
+  - **Comments on a share are v1.5, deliberately unbuilt.** A comment carries a byline and an anonymous viewer has no honest one; that is a design question (invite links? a name box?), not wiring. The seam is that a share already resolves to `(dir, record)` — everything a comment write needs except an author.
+- **Landmines:**
+  - **The Vite dev proxy key is the regex `'^/share/'`, not the string `'/share'`.** A prefix string would also swallow `/share.html`, which is Vite's own entry for the viewer and must be served BY Vite in dev. If share links 404 in dev after a config edit, check this first.
+  - **In dev the Bun handler 302s `/share/<token>` → `http://localhost:5173/share.html?token=…`**, because Vite's SPA fallback would otherwise answer the path with the ADMIN entry. So the viewer reads its token from EITHER the path or the query. Same two-mode dance as `captureRoute.ts`.
+  - **`new Response(Bun.file(path))` does not survive the test preload.** The suite runs under happy-dom, where a `BunFile` body serialises to `[object …]`. Both file routes read `await Bun.file(p).arrayBuffer()` instead — frames are bounded PNGs, so this costs nothing and keeps the handler testable as a plain function (PR #28's handoff: you cannot start `Bun.serve` in this suite).
+  - **`resolveActiveShare` scans `studio-workspace/` on a token it has never seen**, which is what a probe looks like. It deliberately does NOT use `listStudioProjects` (that walks each project's pages dir to count them) — one `readdir` plus one small file read per project. Keep it that way.
+  - **Token comparison hashes both sides before `timingSafeEqual`.** That function throws on unequal lengths, which would itself be a length oracle; SHA-256 digests are always 32 bytes. The scan also does not exit early on a match.
+  - **`shareSnapshot.test.ts` nearly shipped a flake:** it greps the written manifest for strings that must not leak, and `'f1'` (a fixture frame id) matched the random hex snapshot id about one run in eight. Fixture ids are now `frameIdMustNotLeak`-style. If you add a forbidden substring, make it long enough not to occur by chance.
+  - **`writeShareSnapshot` takes a second `overrides` argument that the route never passes** — a test seam for the capture and the page titles, mirroring `HeadlessCaptureOverrides`. It exists because the property worth asserting (that the manifest carries no page ids or source paths) is independent of who produced the pixels.
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test src/__tests__/architecture/` ✅ (1 pre-existing: `icon-catalog-integrity` chevron-left) · my four suites ✅. Full `bun test`: the known pre-existing clusters only — the `streamClaudeCli` suite, `icon-catalog-integrity`, the canvas in-batch flakes, and `server/ai/mcp/capture/` (which fails as a BATCH and passes per-file on `main` — inherited from PR #28, not touched here).
+- **Human action needed:** create a share, open the link in a private window, revoke it, reload. Confirm the frames are the board you shared and that the revoked link 404s.
+
+---
+
 ### struct-06 — duplicate, wrap and same-file reparent write real code (W4-1)
 - **Agent:** parser-surgeon
 - **Stage:** done (built + gated). **Needs human dogfood** — nothing here was driven in a browser.

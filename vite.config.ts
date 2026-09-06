@@ -196,15 +196,17 @@ export default defineConfig({
     // established budgets — `bundle-size-budgets.test.ts` is the actual gate.
     chunkSizeWarningLimit: 720,
     rolldownOptions: {
-      // TWO HTML entries. `index.html` is the admin app; `agent-capture.html`
-      // is the headless capture surface (W4-2A) — a separate entry so "no
-      // editor shell" is structural rather than a promise a lazy route would
-      // have to keep. They share the canvas/store/base-module chunks through
-      // the ordinary chunk graph, so the second entry costs a small entry
-      // chunk, not a second copy of the editor.
+      // THREE HTML entries. `index.html` is the admin app; `agent-capture.html`
+      // is the headless capture surface (W4-2A); `share.html` is the public
+      // share viewer (W5-2). The two extra entries exist so "no editor shell"
+      // is structural rather than a promise a lazy route would have to keep.
+      // agent-capture shares the canvas/store/base-module chunks through the
+      // ordinary chunk graph; `share.html` shares almost nothing, because a
+      // viewer renders PNGs rather than the canvas — which is the point.
       input: {
         index: path.resolve(__dirname, 'index.html'),
         'agent-capture': path.resolve(__dirname, 'agent-capture.html'),
+        share: path.resolve(__dirname, 'share.html'),
       },
       // Rolldown's manual chunk groups capture dependencies recursively by
       // default. That can accidentally put React internals into feature vendor
@@ -262,6 +264,18 @@ export default defineConfig({
       // the tracker uses POST and the GET-only `publicSiteDevProxyPlugin`
       // would otherwise drop those requests.
       '/_studio': {
+        target: CMS_DEV_SERVER_ORIGIN,
+        changeOrigin: true,
+      },
+      // Share links (W5-2). A REGEX key, not a prefix string: `/share`
+      // as a prefix would also swallow `/share.html`, which is Vite's own
+      // entry for the viewer and must be served by Vite in dev. The trailing
+      // slash means only the real share URLs (`/share/<token>`, its
+      // `board.json`, its `frames/*.png`) reach the Bun server — and they must
+      // be in this explicit map rather than relying on the GET-only public
+      // middleware, whose "no file extension" fallthrough rule would drop the
+      // PNG and JSON sub-paths.
+      '^/share/': {
         target: CMS_DEV_SERVER_ORIGIN,
         changeOrigin: true,
       },

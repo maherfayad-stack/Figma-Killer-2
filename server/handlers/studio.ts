@@ -272,6 +272,7 @@ import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
+import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
 import { tryServeStudioDeploy } from './studio/deploy'
@@ -397,6 +398,16 @@ export async function tryServeStudio(
   // author. See `studio/commentsRoutes.ts`'s module doc.
   const commentsResponse = await tryServeStudioComments(req, runtime, url, pathname)
   if (commentsResponse) return commentsResponse
+
+  // Same exception as comments, for the same reason: share management acts on
+  // behalf of a signed-in user (creating one publishes designs to anyone with
+  // the URL; the capture it drives runs on that user's behalf), so it needs
+  // the `DbClient` the uniform sub-router signature does not carry. The
+  // PUBLIC half of this feature is not here at all — it lives on `/share/*`
+  // in `server/router.ts`, outside `/admin` entirely. See
+  // `studio/shareRoutes.ts` and `studio/sharePublic.ts`.
+  const sharesResponse = await tryServeStudioShares(req, runtime, url, pathname)
+  if (sharesResponse) return sharesResponse
 
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
