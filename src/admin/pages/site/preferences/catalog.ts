@@ -285,7 +285,7 @@ export const PREFERENCE_CATALOG = [
     type: 'boolean',
     category: 'properties',
     label: 'Expand style sections by default',
-    description: 'Open every property section (Module, Layout, Typography, …) when an element is selected. Turn off to start with all sections collapsed.',
+    description: 'Open every property section that has controls to show (Module, Position, Size, Layout, Spacing, …) when an element is selected. Turn off to start with all sections collapsed. Sections that carry nothing — Background, Border, Effects, Interaction, Typography with no value set anywhere — stay a single “+” header line either way; this preference does not expand an empty section.',
     default: true,
   },
 

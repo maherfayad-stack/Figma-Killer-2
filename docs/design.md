@@ -434,6 +434,37 @@ radius. The title doubles as the disclosure toggle, with the chevron sharing the
 section icon's 16px box and appearing only on hover. `Section`'s `actions` slot
 carries the icon buttons Figma puts flush right of a title.
 
+**Progressive disclosure — the five laws.** Density is settled; what keeps the
+panel short now is *not drawing* what you have not used. The rules, and the
+Figma behaviour each one mirrors, are in
+[`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`](../STUDIO-INSPECTOR-DISCLOSURE-PLAN.md):
+
+1. **An unused section costs one line.** A section marked `collapsedWhenEmpty`
+   in `CLASS_STYLE_SECTIONS` with nothing set renders as a header plus a `+`.
+   Emptiness is judged **across every context**, not just the active
+   breakpoint — a value living on another tab is still the user's own work and
+   must never be hidden behind a `+`. Position, Size, Layout and Spacing are
+   always-present and never collapse.
+2. **Rare options live in a popover anchored to the cluster they modify** —
+   `InspectorPopover`, opened from a `⚙` at the cluster's right edge. Not an
+   "Advanced" accordion: that still costs a row and still pushes the panel down.
+3. **Optional fields are added, never pre-drawn.** `AddablePropertyField`'s
+   menu offers `Add minimum width…`; choosing it *reveals a row* and writes
+   nothing. The property is written on first commit. We edit real files — a
+   reveal that emitted `min-width: 0` would be a bug, not a convenience.
+4. **Multi-value properties expand in place and remember.**
+   `ExpandableFieldCluster` is the one idiom for padding, corner radius and
+   stroke sides. `linked` is derived from the values, never stored; expanding
+   writes nothing; the expand state is sticky per cluster id because the panel
+   remounts on every selection change.
+5. **The mode chooses the fields.** Nothing is disabled-but-visible; it is
+   absent. This already held for `display` and `position` and now extends
+   across the panel.
+
+Where a Figma control has no honest CSS translation (corner smoothing, miter
+join, stroke Inside/Center/Outside), we omit it rather than ship a lookalike
+that writes something else — see that plan's §7.
+
 **Opting in.** The panel root carries `data-field-skin="inspector"`; the skins
 themselves live beside the primitives they restyle (`Input.module.css`,
 `Select.module.css`, `ScrubInput.module.css`, `SegmentedControl.module.css`) as
@@ -441,6 +472,11 @@ themselves live beside the primitives they restyle (`Input.module.css`,
 or `skin` prop through the ~40 components between the panel shell and a leaf
 input would mean every new control had to remember to forward it, and the one
 that forgot would be a lone pill in a column of rectangles.
+
+One consequence worth knowing: anything **portalled** out of the panel escapes
+that cascade. `InspectorPopover` therefore sets `data-field-skin="inspector"`
+on its own root. Any future portalled inspector surface must do the same, or it
+will silently render admin-shaped pill controls inside the design tool.
 
 **What an unset row shows.** The placeholder is not a spec-default guess —
 `StyleSurface` reads the frame's real `getComputedStyle` and folds it under

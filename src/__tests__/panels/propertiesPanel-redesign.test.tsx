@@ -242,9 +242,14 @@ describe('StyleRuleComposer inline style filtering', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    // All sections always rendered — layout renders the DisplaySwitcher
-    // and typography renders the fontFamily row.
+    // Layout is one of Figma's always-present blocks — its DisplaySwitcher
+    // renders even for an empty class.
     expect(document.querySelector('[data-testid="css-display-switcher"]')).not.toBeNull()
+
+    // Typography is `collapsedWhenEmpty` (Law 1 / G1) — for an empty class it
+    // starts as a single header line; reveal it via "+" before asserting the
+    // fontFamily row exists.
+    fireEvent.click(screen.getByRole('button', { name: /add typography/i }))
     expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
 
     const typographyButton = screen.getByRole('button', { name: /show typography styles/i })
@@ -938,7 +943,10 @@ describe('LayoutSection — position block', () => {
   it('typing into a direction input writes the value to the matching property on blur', () => {
     const { nodeId, classIds } = loadSiteWithClasses(1)
     const clsId = classIds[0]
-    useEditorStore.getState().updateClassStyles(clsId, { position: 'absolute' })
+    // `relative` (not `absolute`) — absolute/fixed now render G10's F29
+    // constraint side-pickers instead of the plain 4-direction grid; see
+    // the "absolute position" tests below for that path.
+    useEditorStore.getState().updateClassStyles(clsId, { position: 'relative' })
     selectNode(nodeId)
     render(<PropertiesPanel />)
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
@@ -954,6 +962,20 @@ describe('LayoutSection — position block', () => {
     fireEvent.blur(topInput)
 
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.top).toBe('12px')
+  })
+
+  it('G10/F29: absolute position renders the constraint side-pickers instead of the 4-direction grid', () => {
+    const { nodeId, classIds } = loadSiteWithClasses(1)
+    const clsId = classIds[0]
+    useEditorStore.getState().updateClassStyles(clsId, { position: 'absolute', left: '10px' })
+    selectNode(nodeId)
+    render(<PropertiesPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
+
+    expect(document.querySelector('[data-testid="css-direction-input-top"]')).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'X anchor side' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Y anchor side' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'X offset (left)' })).toBeTruthy()
   })
 
   it('hides the position keyword and 4 offset fallback rows when position is active', () => {
@@ -989,14 +1011,21 @@ describe('LayoutSection — position block', () => {
     expect(document.querySelector('[data-testid="css-direction-input-top"]')).toBeNull()
   })
 
-  it('renders zIndex row inside the position section regardless of position value', () => {
+  it('G10/Law 2: zIndex is collapsed behind the position settings trigger, not a resident row', () => {
     const { nodeId } = loadSiteWithClasses(1)
     selectNode(nodeId)
     render(<PropertiesPanel />)
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    // zIndex always renders inside the position section as a generic
-    // ClassPropertyRow — even when the position keyword itself is unset.
+    // Not resident — even with the position keyword unset, zIndex used to
+    // always render a generic ClassPropertyRow here. It now costs one small
+    // trigger button until opened (Law 2 — rare options live behind a
+    // settings affordance, not a permanent row).
+    expect(document.querySelector('[data-testid="css-property-row-zIndex"]')).toBeNull()
+    expect(document.querySelector('[data-testid="position-settings-trigger"]')).not.toBeNull()
+
+    fireEvent.click(screen.getByTestId('position-settings-trigger'))
+
     expect(document.querySelector('[data-testid="css-property-row-zIndex"]')).not.toBeNull()
   })
 })
@@ -1008,6 +1037,10 @@ describe('ClassPropertyRow — token-aware properties', () => {
     selectNode(nodeId)
     render(<PropertiesPanel />)
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
+
+    // Typography is `collapsedWhenEmpty` (Law 1 / G1) — reveal it for this
+    // empty class before reaching for its fontSize row.
+    fireEvent.click(screen.getByRole('button', { name: /add typography/i }))
 
     const fontSizeRow = document.querySelector('[data-testid="css-property-row-fontSize"]')
     expect(fontSizeRow).not.toBeNull()
@@ -1241,7 +1274,7 @@ describe('HF-2 — Switching class pills resets StyleRuleComposer local state', 
     expect(searchInput2.placeholder).toBe('Search styles in .class-2...')
   })
 
-  it('switching to an empty class shows the full property catalog with no assigned-style leak', () => {
+  it('switching to an empty class collapses Typography again with no assigned-style leak', () => {
     // class-1 gets a fontFamily property; class-2 is empty
     const { nodeId } = loadSiteWithHeading()
     const storeState = useEditorStore.getState()
@@ -1254,15 +1287,20 @@ describe('HF-2 — Switching class pills resets StyleRuleComposer local state', 
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    // Open class-1 — fontFamily CSS property row should be visible
+    // Open class-1 — Typography has a set value, so it renders open with the
+    // fontFamily CSS property row visible.
     const pill1 = screen.getByRole('button', { name: /edit class \.class-1-isolation/i })
     fireEvent.click(pill1)
     expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
 
-    // Switch to class-2 — the full catalog appears, but the inherited class-1 value is not leaked.
+    // Switch to class-2 — Typography is `collapsedWhenEmpty` (Law 1 / G1) and
+    // class-2 has nothing set, so it collapses back to its "+" header: no
+    // fontFamily row at all, which is the strongest guarantee that class-1's
+    // value isn't leaking into it. The always-present sections (Position,
+    // via zIndex's generic row) still render their rows.
     const pill2 = screen.getByRole('button', { name: /edit class \.class-2-isolation/i })
     fireEvent.click(pill2)
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
     expect(screen.queryByDisplayValue('serif')).toBeNull()
     expect(document.querySelectorAll('[data-testid^="css-property-row-"]').length).toBeGreaterThan(0)
   })
@@ -1434,8 +1472,8 @@ describe('PP-20b — Module settings exclude visual CSS fields', () => {
 // PP-21: Empty class shows only the property search
 // ---------------------------------------------------------------------------
 
-describe('PP-21 — Empty class shows full property catalog', () => {
-  it('a class with no styles shows unset property rows and no empty-state message', () => {
+describe('PP-21 — Empty class: always-present sections stay resident, collapsible sections start as one line', () => {
+  it('a class with no styles shows the always-present rows, a collapsed Typography header, and no empty-state message', () => {
     const { nodeId } = loadSiteWithHeading()
     const state = useEditorStore.getState()
     const cls = state.createClass('empty-cls')
@@ -1446,12 +1484,15 @@ describe('PP-21 — Empty class shows full property catalog', () => {
     const pill = screen.getByRole('button', { name: /edit class \.empty-cls/i })
     fireEvent.click(pill)
 
-    // Full catalog rows are visible even before a property is assigned.
-    // Layout-position uses the DisplaySwitcher; typography still uses
-    // generic property rows (fontFamily).
+    // Position/Size/Layout/Spacing are Figma's always-present blocks — their
+    // rows render even before a property is assigned.
     expect(document.querySelector('[data-testid="css-display-switcher"]')).not.toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
     expect(document.querySelectorAll('[data-testid^="css-property-row-"]').length).toBeGreaterThan(0)
+
+    // Typography is `collapsedWhenEmpty` (Law 1 / G1) — an empty class
+    // renders it as a single header line with a "+", not its property grid.
+    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
+    expect(screen.getByRole('button', { name: /add typography/i })).toBeDefined()
 
     // Search affordance present; no extra empty state copy.
     expect(screen.getByRole('searchbox', { name: /search class style properties to add/i })).toBeDefined()
