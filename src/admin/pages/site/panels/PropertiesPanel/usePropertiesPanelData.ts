@@ -17,7 +17,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore, selectSelectedNode } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { resolveProps } from '@core/page-tree'
-import { buildClassTokenUsageMap, buildSelectorUsageMap, resolveSelectorUsage } from '../selectorUsage'
+import { NO_CLASS_TOKEN_USAGE, buildClassTokenUsageMap, resolveSelectorUsage } from '../selectorUsage'
 import type {
   AnyModuleDefinition,
 } from '@core/module-engine'
@@ -114,6 +114,10 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   const focusedPanel = useEditorStore((s) => s.focusedPanel)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const activeDocument = useEditorStore((s) => s.activeDocument)
+  // The site-slice class-usage index (see `nodeIndex.ts`). Its Map identity
+  // changes only when a class assignment actually changes, so subscribing to
+  // it re-renders the usage badge when it must and never on a prop keystroke.
+  const classUsageById = useEditorStore((s) => s._classIdToNodeCount)
 
   const [statusMessage, setStatusMessage] = useState('')
 
@@ -149,12 +153,19 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     : null
   // Ambient rules report "Unused" only when provably dead; class rules report
   // an exact reference count. `null` means "no badge" (unassessable ambient).
-  const selectorUsageById = buildSelectorUsageMap(site)
+  //
+  // The count comes from the store's `_classIdToNodeCount` index — an O(1)
+  // read. It used to come from `buildSelectorUsageMap(site)`, a walk of every
+  // node of every page run from THIS render body, i.e. once per keystroke
+  // (store-01b). The ambient token rollup is O(rules) and only an ambient
+  // selector can need it, so it is built only in that branch.
   const selectedSelectorUsage = selectedSelectorClass
     ? resolveSelectorUsage(
         selectedSelectorClass,
-        selectorUsageById,
-        buildClassTokenUsageMap(site?.styleRules ?? {}, selectorUsageById),
+        classUsageById,
+        selectedSelectorClass.kind === 'ambient'
+          ? buildClassTokenUsageMap(site?.styleRules ?? {}, classUsageById)
+          : NO_CLASS_TOKEN_USAGE,
       ).label
     : null
   const activeClass =

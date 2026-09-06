@@ -22,20 +22,15 @@ import { emptyDirtyMarks } from '@site/store/slices/site/dirtyTracking'
 import {
   applyNodeIndexPatch,
   clearNodeIndexes,
+  emptyNodeIndexes as emptyIndexes,
   inlineTailKey,
+  nodeIndexState,
   rebuildNodeIndexes,
   textOriginKey,
-  type NodeIndexes,
 } from '@site/store/slices/site/nodeIndex'
+import { studioSlotValue } from '@core/utils/studioSlotSentinel'
+import { lookupSlotOwner } from '@site/panels/PropertiesPanel/slotOwners'
 import { makeNode, makePage, makeSite } from '../fixtures'
-
-function emptyIndexes(): NodeIndexes {
-  return {
-    nodeIdToPageIds: new Map(),
-    textOriginKeyToCount: new Map(),
-    inlineTailToCount: new Map(),
-  }
-}
 
 const SHARED_ID = 'app/blog/layout.tsx:4:7'
 
@@ -125,6 +120,60 @@ describe('rebuildNodeIndexes', () => {
     expect(inlineTailKey('plain/File.tsx:1:1')).toBeUndefined()
   })
 
+  it('counts how many nodes carry each class id, across every page', () => {
+    const site = makeSite({
+      pages: [
+        makePage({
+          id: 'page-a',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b'] }),
+            a: makeNode({ id: 'a', classIds: ['hero', 'pad'] }),
+            b: makeNode({ id: 'b', classIds: ['hero'] }),
+          },
+        }),
+        makePage({
+          id: 'page-b',
+          nodes: {
+            root2: makeNode({ id: 'root2', moduleId: 'base.body', children: ['c'] }),
+            c: makeNode({ id: 'c', classIds: ['hero'] }),
+          },
+        }),
+      ],
+    })
+    const indexes = emptyIndexes()
+    rebuildNodeIndexes(indexes, site)
+
+    expect(indexes.classIdToNodeCount.get('hero')).toBe(3)
+    expect(indexes.classIdToNodeCount.get('pad')).toBe(1)
+    // A class nobody carries is absent, not 0 — callers default.
+    expect(indexes.classIdToNodeCount.has('unused')).toBe(false)
+  })
+
+  it('maps a slot-fill node back to the node + prop that fills its slot', () => {
+    const site = makeSite({
+      pages: [
+        makePage({
+          id: 'page-a',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['owner'] }),
+            owner: makeNode({
+              id: 'owner',
+              moduleId: 'studio.instance',
+              props: { callSiteProps: { icon: studioSlotValue('Home.tsx:12:9') } },
+            }),
+            'Home.tsx:12:9': makeNode({ id: 'Home.tsx:12:9', moduleId: 'base.icon' }),
+          },
+        }),
+      ],
+    })
+    const indexes = emptyIndexes()
+    rebuildNodeIndexes(indexes, site)
+
+    expect(indexes.slotOwnerBindings.get('Home.tsx:12:9')).toEqual([
+      { pageId: 'page-a', ownerNodeId: 'owner', ownerModuleId: 'studio.instance', propKey: 'icon' },
+    ])
+  })
+
   it('clearNodeIndexes empties every map', () => {
     const indexes = emptyIndexes()
     rebuildNodeIndexes(indexes, sharedNodeSite())
@@ -133,6 +182,8 @@ describe('rebuildNodeIndexes', () => {
     expect(indexes.nodeIdToPageIds.size).toBe(0)
     expect(indexes.textOriginKeyToCount.size).toBe(0)
     expect(indexes.inlineTailToCount.size).toBe(0)
+    expect(indexes.classIdToNodeCount.size).toBe(0)
+    expect(indexes.slotOwnerBindings.size).toBe(0)
   })
 })
 
@@ -208,6 +259,103 @@ describe('applyNodeIndexPatch', () => {
     expect(indexes.textOriginKeyToCount.get(textOriginKey(origin))).toBe(1)
   })
 
+  it('re-indexes classIds on a SURVIVING node id — the id-set diff cannot see it', () => {
+    // The landmine this facet exists to avoid: `classIds` changes on a node
+    // that keeps its id, so the pre/post id-set diff every other facet relies
+    // on reports "nothing entered, nothing left" and would leave the tally
+    // permanently stale.
+    const pre = makeSite({
+      pages: [
+        makePage({
+          id: 'page-a',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a'] }),
+            a: makeNode({ id: 'a', classIds: ['hero'] }),
+          },
+        }),
+      ],
+    })
+    const indexes = emptyIndexes()
+    rebuildNodeIndexes(indexes, pre)
+    expect(indexes.classIdToNodeCount.get('hero')).toBe(1)
+
+    const post = structuredClone(pre)
+    post.pages[0]!.nodes.a!.classIds = ['hero', 'pad']
+    applyNodeIndexPatch(indexes, pre, post, { ...emptyDirtyMarks(), pageIds: new Set(['page-a']) })
+    expect(indexes.classIdToNodeCount.get('hero')).toBe(1)
+    expect(indexes.classIdToNodeCount.get('pad')).toBe(1)
+
+    // …and removing it again drops the key entirely rather than leaving a 0.
+    const post2 = structuredClone(post)
+    post2.pages[0]!.nodes.a!.classIds = []
+    applyNodeIndexPatch(indexes, post, post2, { ...emptyDirtyMarks(), pageIds: new Set(['page-a']) })
+    expect(indexes.classIdToNodeCount.has('hero')).toBe(false)
+    expect(indexes.classIdToNodeCount.has('pad')).toBe(false)
+  })
+
+  it('drops a deleted node\'s class contribution but keeps its twin\'s', () => {
+    const pre = makeSite({
+      pages: [
+        makePage({
+          id: 'page-a',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b'] }),
+            a: makeNode({ id: 'a', classIds: ['hero'] }),
+            b: makeNode({ id: 'b', classIds: ['hero'] }),
+          },
+        }),
+      ],
+    })
+    const indexes = emptyIndexes()
+    rebuildNodeIndexes(indexes, pre)
+
+    const post = structuredClone(pre)
+    delete post.pages[0]!.nodes.b
+    post.pages[0]!.nodes.root!.children = ['a']
+    applyNodeIndexPatch(indexes, pre, post, { ...emptyDirtyMarks(), pageIds: new Set(['page-a']) })
+
+    expect(indexes.classIdToNodeCount.get('hero')).toBe(1)
+  })
+
+  it('re-points a slot binding when the owner\'s sentinel changes, without touching another page\'s', () => {
+    const ownerWith = (slotId: string) =>
+      makeNode({
+        id: 'owner',
+        moduleId: 'studio.instance',
+        props: { callSiteProps: { icon: studioSlotValue(slotId) } },
+      })
+    const pre = makeSite({
+      pages: [
+        makePage({
+          id: 'page-a',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['owner'] }),
+            owner: ownerWith('old-slot'),
+          },
+        }),
+        makePage({
+          id: 'page-b',
+          nodes: {
+            root2: makeNode({ id: 'root2', moduleId: 'base.body', children: ['owner'] }),
+            owner: ownerWith('shared-slot'),
+          },
+        }),
+      ],
+    })
+    const indexes = emptyIndexes()
+    rebuildNodeIndexes(indexes, pre)
+    expect(indexes.slotOwnerBindings.get('old-slot')).toHaveLength(1)
+
+    const post = structuredClone(pre)
+    post.pages[0]!.nodes.owner!.props = { callSiteProps: { icon: studioSlotValue('new-slot') } }
+    applyNodeIndexPatch(indexes, pre, post, { ...emptyDirtyMarks(), pageIds: new Set(['page-a']) })
+
+    expect(indexes.slotOwnerBindings.has('old-slot')).toBe(false)
+    expect(indexes.slotOwnerBindings.get('new-slot')?.[0]?.pageId).toBe('page-a')
+    // page-b was never marked; its binding is untouched.
+    expect(indexes.slotOwnerBindings.get('shared-slot')?.[0]?.pageId).toBe('page-b')
+  })
+
   it('marks.all falls back to a full rebuild', () => {
     const pre = sharedNodeSite()
     const post = makeSite({ pages: [makePage({ id: 'page-c', slug: 'new' })] })
@@ -252,9 +400,7 @@ function freshStore() {
     canRedo: false,
     hasUnsavedChanges: false,
     _dirtySave: emptyDirtyMarks(),
-    _nodeIdToPageIds: new Map(),
-    _textOriginKeyToCount: new Map(),
-    _inlineTailToCount: new Map(),
+    ...nodeIndexState(emptyIndexes()),
   } as Parameters<typeof useEditorStore.setState>[0])
 }
 
@@ -350,6 +496,150 @@ describe('editor store node-index wiring', () => {
     expect(useEditorStore.getState()._nodeIdToPageIds.get(SHARED_ID)).toEqual(['page-b'])
   })
 
+  it('class assignment / removal keeps the usage tally true through undo and redo', () => {
+    // The Selectors panel's "Used N times" badge and its Unused filter read
+    // this tally directly (`_classIdToNodeCount`). Before store-01b both
+    // rebuilt it from a full-site walk in a render body, once per keystroke.
+    useEditorStore.getState().loadSite(
+      makeSite({
+        pages: [
+          makePage({
+            id: 'page-a',
+            nodes: {
+              root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b'] }),
+              a: makeNode({ id: 'a', moduleId: 'base.text' }),
+              b: makeNode({ id: 'b', moduleId: 'base.text' }),
+            },
+          }),
+        ],
+      }),
+    )
+    useEditorStore.setState({ activePageId: 'page-a' })
+    const cls = useEditorStore.getState().createClass('hero')
+
+    useEditorStore.getState().addNodeClass('a', cls.id)
+    useEditorStore.getState().addNodeClass('b', cls.id)
+    expect(useEditorStore.getState()._classIdToNodeCount.get(cls.id)).toBe(2)
+
+    useEditorStore.getState().removeNodeClass('b', cls.id)
+    expect(useEditorStore.getState()._classIdToNodeCount.get(cls.id)).toBe(1)
+
+    // Undo the removal: b carries it again.
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState()._classIdToNodeCount.get(cls.id)).toBe(2)
+    // Redo it: back to one.
+    useEditorStore.getState().redo()
+    expect(useEditorStore.getState()._classIdToNodeCount.get(cls.id)).toBe(1)
+  })
+
+  it('deleting a node decrements every class it carried; deleting the class zeroes it out', () => {
+    useEditorStore.getState().loadSite(
+      makeSite({
+        pages: [
+          makePage({
+            id: 'page-a',
+            nodes: {
+              root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b'] }),
+              a: makeNode({ id: 'a', moduleId: 'base.text' }),
+              b: makeNode({ id: 'b', moduleId: 'base.text' }),
+            },
+          }),
+        ],
+      }),
+    )
+    useEditorStore.setState({ activePageId: 'page-a' })
+    const cls = useEditorStore.getState().createClass('hero')
+    useEditorStore.getState().addNodeClass('a', cls.id)
+    useEditorStore.getState().addNodeClass('b', cls.id)
+
+    useEditorStore.getState().deleteNode('b')
+    expect(useEditorStore.getState()._classIdToNodeCount.get(cls.id)).toBe(1)
+
+    // `deleteClasses` strips the id from every node on every page — a
+    // surviving-node classIds edit, invisible to an id-set diff.
+    useEditorStore.getState().deleteClass(cls.id)
+    expect(useEditorStore.getState()._classIdToNodeCount.has(cls.id)).toBe(false)
+  })
+
+  it('duplicateNode carries the original\'s classes into the tally', () => {
+    useEditorStore.getState().loadSite(
+      makeSite({
+        pages: [
+          makePage({
+            id: 'page-a',
+            nodes: {
+              root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a'] }),
+              a: makeNode({ id: 'a', moduleId: 'base.text' }),
+            },
+          }),
+        ],
+      }),
+    )
+    useEditorStore.setState({ activePageId: 'page-a' })
+    const cls = useEditorStore.getState().createClass('hero')
+    useEditorStore.getState().addNodeClass('a', cls.id)
+    expect(useEditorStore.getState()._classIdToNodeCount.get(cls.id)).toBe(1)
+
+    useEditorStore.getState().duplicateNode('a')
+    expect(useEditorStore.getState()._classIdToNodeCount.get(cls.id)).toBe(2)
+  })
+
+  it('a prop keystroke leaves the class index untouched — same Map, no rebuild', () => {
+    // The whole point of the index: typing into a prop must not rebuild it.
+    // Mutative only mints a new Map when the Map is actually written to, so
+    // identity-stability here IS the "no per-keystroke work" assertion.
+    useEditorStore.getState().loadSite(
+      makeSite({
+        pages: [
+          makePage({
+            id: 'page-a',
+            nodes: {
+              root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a'] }),
+              a: makeNode({ id: 'a', moduleId: 'base.text', classIds: ['hero'] }),
+            },
+          }),
+        ],
+      }),
+    )
+    useEditorStore.setState({ activePageId: 'page-a' })
+    const before = useEditorStore.getState()._classIdToNodeCount
+
+    useEditorStore.getState().updateNodeProps('a', { text: 'h' })
+    useEditorStore.getState().updateNodeProps('a', { text: 'he' })
+
+    expect(useEditorStore.getState()._classIdToNodeCount).toBe(before)
+    expect(useEditorStore.getState()._classIdToNodeCount.get('hero')).toBe(1)
+  })
+
+  it('loadSite wires the slot-owner reverse index that SlotFillNotice reads', () => {
+    useEditorStore.getState().loadSite(
+      makeSite({
+        pages: [
+          makePage({
+            id: 'page-a',
+            nodes: {
+              root: makeNode({ id: 'root', moduleId: 'base.body', children: ['owner'] }),
+              owner: makeNode({
+                id: 'owner',
+                moduleId: 'studio.instance',
+                props: { callSiteProps: { icon: studioSlotValue('Home.tsx:12:9') } },
+                children: ['Home.tsx:12:9'],
+              }),
+              'Home.tsx:12:9': makeNode({ id: 'Home.tsx:12:9', moduleId: 'base.icon' }),
+            },
+          }),
+        ],
+      }),
+    )
+
+    expect(lookupSlotOwner(useEditorStore.getState()._slotOwnerBindings, 'Home.tsx:12:9')).toMatchObject({
+      ownerNodeId: 'owner',
+      propKey: 'icon',
+    })
+    // A node that fills nobody's slot has no owner — the notice renders nothing.
+    expect(lookupSlotOwner(useEditorStore.getState()._slotOwnerBindings, 'root')).toBeNull()
+  })
+
   it('clearSite empties every index', () => {
     useEditorStore.getState().loadSite(sharedNodeSite())
     expect(useEditorStore.getState()._nodeIdToPageIds.size).toBeGreaterThan(0)
@@ -359,6 +649,8 @@ describe('editor store node-index wiring', () => {
     expect(useEditorStore.getState()._nodeIdToPageIds.size).toBe(0)
     expect(useEditorStore.getState()._textOriginKeyToCount.size).toBe(0)
     expect(useEditorStore.getState()._inlineTailToCount.size).toBe(0)
+    expect(useEditorStore.getState()._classIdToNodeCount.size).toBe(0)
+    expect(useEditorStore.getState()._slotOwnerBindings.size).toBe(0)
   })
 
   it('createSite rebuilds the index for the fresh site', () => {

@@ -14,7 +14,7 @@ import { clonePackageJson } from '@core/site-dependencies/manifest'
 import { cloneSiteRuntimeConfig } from '@core/site-runtime'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
-import { applyNodeIndexPatch } from './nodeIndex'
+import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type UndoRedoActions = Pick<SiteSlice, 'undo' | 'redo'>
@@ -49,11 +49,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
         // it is its own node-index invalidation point — same DirtyMarks, same
         // reasoning as helpers.ts. See nodeIndex.ts.
         applyNodeIndexPatch(
-          {
-            nodeIdToPageIds: state._nodeIdToPageIds,
-            textOriginKeyToCount: state._textOriginKeyToCount,
-            inlineTailToCount: state._inlineTailToCount,
-          },
+          nodeIndexesOf(state),
           site,
           restored,
           dirty,
@@ -89,11 +85,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
         mergeDirtyMarks(state._dirtySave, dirty)
         // redo bypasses runHistoricMutation too — same reasoning as undo above.
         applyNodeIndexPatch(
-          {
-            nodeIdToPageIds: state._nodeIdToPageIds,
-            textOriginKeyToCount: state._textOriginKeyToCount,
-            inlineTailToCount: state._inlineTailToCount,
-          },
+          nodeIndexesOf(state),
           site,
           restored,
           dirty,

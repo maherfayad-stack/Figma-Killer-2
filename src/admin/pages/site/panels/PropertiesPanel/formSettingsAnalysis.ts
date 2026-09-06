@@ -501,13 +501,32 @@ function optionFieldsFromSelect(page: Page, selectNode: PageNode): DataSelectOpt
   return options
 }
 
+/**
+ * Resolve a label's explicit `targetId` to a node on the same page. `targetId`
+ * can be either a page-tree node id or an authored HTML `id` prop, so this
+ * takes the node-id hit FIRST — one map lookup, and the shape every target
+ * picked through the UI has — and only falls back to comparing `id` props when
+ * that misses (a hand-authored `htmlFor` naming an element by its DOM id).
+ *
+ * The fallback is a scan, deliberately: it is bounded by ONE page's node map,
+ * runs only for a label whose `targetMode` is `explicit`, and only when the
+ * target isn't addressable by node id. That is not the WS-5.2 defect class —
+ * that is a walk of every node of EVERY page, and this module must never grow
+ * one: everything here takes a single `Page` and must stay page-scoped.
+ */
+function resolveExplicitTarget(page: Page, explicit: string): PageNode | undefined {
+  const byNodeId = page.nodes[explicit]
+  if (byNodeId) return byNodeId
+  return Object.values(page.nodes).find((node) => stringProp(node, 'id', '') === explicit)
+}
+
 function inferLabelTarget(
   page: Page,
   labelNode: PageNode,
 ): FormTargetSummary | null {
   const explicit = stringProp(labelNode, 'targetId', '')
   if (stringProp(labelNode, 'targetMode', 'auto') === 'explicit' && explicit) {
-    const explicitNode = Object.values(page.nodes).find((node) => node.id === explicit || stringProp(node, 'id', '') === explicit)
+    const explicitNode = resolveExplicitTarget(page, explicit)
     return explicitNode
       ? { nodeId: explicitNode.id, label: controlLabel(explicitNode) }
       : { nodeId: explicit, label: explicit }

@@ -12,6 +12,125 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### store-01b — the WS-5.2 defect came back one import away from its own gate: two more full-site walks per keystroke
+
+- **Agent:** store-engineer
+- **Stage:** done
+- **Branch:** `fix/selector-usage-index` (draft PR, based on
+  `feat/inspector-progressive-disclosure`, stacks on PR #5)
+
+**What was wrong.** `store-01` fixed three O(pages × nodes) selectors and
+built `no-full-site-scan-in-selectors.test.ts` to stop a fourth. The gate only
+looked *inside* files that call `useEditorStore(`. Two more instances of the
+identical defect were living one import hop out, and it never saw them:
+
+- `panels/selectorUsage.ts`'s `buildSelectorUsageMap(site)` — a walk of every
+  node of every page, called from **two render bodies**
+  (`SelectorsPanel.tsx`, `usePropertiesPanelData.ts`). Its comment claimed
+  "the React Compiler memoizes the result against `site`". Mutative replaces
+  the `site` reference on **every** mutation, so that memo missed on every
+  keystroke: ~20 000 node visits and a fresh `Map` per character typed.
+- `PropertiesPanel/slotOwners.ts`'s `buildSlotOwners(site)` — the same walk
+  behind a cache **keyed on `site` object identity**, which is the same bug
+  wearing a hat, for the same reason. Worse, it was reached from
+  `SlotFillNotice`'s `useEditorStore((s) => lookupSlotOwner(s.site, nodeId))`
+  — a *subscribed selector*, so it ran on every store change, not merely on
+  every render. Its own doc comment argued against wiring an index because
+  the path was "comparatively cold". It was the hottest of the two.
+
+**The durable lesson:** a cache keyed on `site` identity is not a fix for this
+defect class. Only an index maintained incrementally by the mutations
+themselves is.
+
+**What landed.**
+
+- **Two new facets on the existing WS-5.2 index** (`store/slices/site/nodeIndex.ts`),
+  maintained by the same `DirtyMarks` mechanism as the other three — not a
+  parallel one:
+  - `_classIdToNodeCount: Map<classId, number>` — the Selectors panel's
+    "Used N times" badge and its Unused filter.
+  - `_slotOwnerBindings: Map<slotNodeId, SlotOwnerEntry[]>` — the reverse
+    slot map, many-valued by page for the same `meta-05` reason
+    `_nodeIdToPageIds` is.
+- **`applyNodeIndexPatch` now also visits SURVIVING node ids.** This is the
+  one real design point. `textOrigin` and the inline tail are fixed for a
+  node id's lifetime, so the pre/post id-set diff was sufficient for them.
+  `classIds` and the slot sentinels in `props` change on a node that **keeps
+  its id** — an id-set diff reports "nothing entered, nothing left" and the
+  tally would go permanently stale. So each touched page's surviving ids are
+  compared by object reference (Mutative keeps untouched nodes identical), and
+  only the changed ones are re-indexed, each facet behind its own
+  `oldNode.classIds !== newNode.classIds` / `props` guard. Cost on a
+  keystroke: one reference compare per node **of one page**, zero index
+  writes. Proven by a test asserting the Map's identity is unchanged after two
+  `updateNodeProps` calls — Mutative only mints a new Map when one is actually
+  written to, so identity-stability IS the "no per-keystroke work" assertion.
+- **Consumers now read the index.** `buildSelectorUsageMap` is deleted, not
+  deprecated. `buildClassTokenUsageMap` survives (it is O(rules), not
+  O(pages × nodes)) but `usePropertiesPanelData` only builds it when the ONE
+  selected selector is `kind: 'ambient'` — the only kind that can need a token
+  rollup — and passes `NO_CLASS_TOKEN_USAGE` otherwise. `slotOwners.ts` keeps
+  its two lookups and lost its builder and its cache.
+- **`formSettingsAnalysis.ts`** was the mildest case and got a proportionate
+  fix, not an index: `inferLabelTarget`'s `Object.values(page.nodes).find(...)`
+  now takes the O(1) `page.nodes[explicit]` hit first (the shape every
+  UI-picked target has) and only falls back to comparing authored HTML `id`
+  props. That fallback is bounded by ONE page, fires only for
+  `targetMode: 'explicit'`, and the module is documented as page-scoped by
+  construction — everything in it takes a single `Page`, never a `SiteDocument`.
+- **The gate moved because the rule moved.** `no-full-site-scan-in-selectors.test.ts`
+  now follows **one** value-import hop out of every `useEditorStore(` caller
+  (type-only imports are skipped — they cannot execute a walk). One hop, not
+  transitive: two hops reaches the store slices, where full-site walks are
+  correct because they run inside mutation recipes, and a transitive rule
+  would have to allowlist them all back in. It also stopped flagging quoted
+  loops inside block comments — several modules document the defect they were
+  fixed for by quoting the old loop, and flagging a fix's own tombstone teaches
+  the next author to delete the explanation. A second `it` asserts the machinery
+  itself: that the `SlotFillNotice → slotOwners` edge is actually followed, so
+  the widening cannot silently resolve nothing.
+  Two allowlist entries, both justified in-file: `nodeIndex.ts` (THE sanctioned
+  walk) and `visualComponentsSlice.ts` (`deleteVisualComponent`'s cascade,
+  inside a mutation recipe).
+
+**Slices touched.** `siteSlice` only. Two new `_`-prefixed state fields on
+`SiteSlice` (`site/types.ts`), next to the three existing indexes. No new
+slice, no new action, **no new mutation** — so no coalesce key and no history
+entry: the indexes are derived state that mutations maintain, never state a
+mutation records. They are deliberately excluded from undo patches for the
+same reason `_dirtySave` is; `undo`/`redo` re-patch them from the restored
+site (covered by a test).
+
+**New selectors and their complexity.** `usePropertiesPanelData` and
+`SelectorsPanel` gained `useEditorStore((s) => s._classIdToNodeCount)`, and
+`SlotFillNotice`'s existing selector became
+`lookupSlotOwner(s._slotOwnerBindings, nodeId)`. All three are O(1) and return
+a stable reference: the index Maps are mutated in place and only replaced when
+their contents change, and a binding read out of one is the same object until
+the binding itself changes.
+
+**Cleanup done along the way.** The five-field `NodeIndexes` object literal was
+spelled out at seven call sites; it is now `nodeIndexesOf(state)` /
+`nodeIndexState(indexes)` / `emptyNodeIndexes()`, so the next facet is a
+one-file change instead of a nine-file one. Four test files that hand-rolled
+the literal use the factory now.
+
+**Verification.** `bun run build` (tsc + vite), `bun run lint`, and `bun test`
+all run. Full-suite failure count is **identical to HEAD** (107 fail / 11
+errors, all pre-existing and unrelated — `streamClaudeCli`,
+`tryServeStudioComponentBundle`, `icon-catalog-integrity`, …); the diff is +11
+passing tests. Note: the worktree has no `node_modules`, so `bun run build`'s
+vite half must be invoked with the parent checkout's
+`node_modules/vite/bin/vite.js`.
+
+**Not done / next.** The class tally counts **page** nodes only, matching what
+these panels have always reported — a class used solely inside a Visual
+Component definition still reads "Unused" and is therefore deletable from the
+Selectors panel. That is pre-existing and a product decision, not an index one;
+it is now a one-line change in `indexNode` if someone decides it should count.
+
+---
+
 ### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
 
 **What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the
