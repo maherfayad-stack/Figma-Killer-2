@@ -49,8 +49,38 @@ export async function executeAiTool(
   // Defence in depth: `selectStudioTools` should never have offered a
   // tool the caller can't use, but re-check before dispatching to either
   // the server handler or the browser bridge anyway.
-  if (!toolAllowedForCapabilities(aiTool, toolContextBase.capabilities)) {
-    return { ok: false, error: `Tool ${aiTool.name} is not permitted for this user.` }
+  //
+  // An UNRESOLVED capability set is treated as an EMPTY one — deny-by-default
+  // for anything gated, unchanged for anything that is not.
+  //
+  // Not paranoia about a type the compiler already checks. `ToolContextBase` is
+  // also built from DATA rather than from a typed local — `server/ai/mcp/
+  // server.ts` mints one per MCP request from the connector's stored grant — and
+  // a grant that never materialised produced a genuinely misleading failure:
+  // `toolAllowedForCapabilities` reaches `capabilities.includes` only for a
+  // MUTATING or capability-gated tool, so an ungated read worked fine and a
+  // gated one threw `TypeError: undefined is not an object`. That throw escapes
+  // this function entirely (the capability check sits outside the try above),
+  // and `toolLoop.executeOneCall` catches every throw as a TRANSPORT failure —
+  // terminating the turn with "Browser tool transport failed: …", i.e. a
+  // permission problem reported as a dead browser bridge, sending whoever reads
+  // it to check a browser tab that was never involved.
+  //
+  // Normalising to `[]` keeps the ungated path behaving exactly as it did and
+  // turns the gated path into an ordinary, recoverable `{ ok: false }` naming
+  // the real cause. `capabilitiesResolved` only changes the WORDING: "you lack
+  // this permission" and "no permissions were resolved at all" are different
+  // problems with different fixes, and reporting the first for the second sends
+  // the reader to re-grant a capability the connector already has.
+  const capabilitiesResolved = Array.isArray(toolContextBase.capabilities)
+  const capabilities = capabilitiesResolved ? toolContextBase.capabilities : []
+  if (!toolAllowedForCapabilities(aiTool, capabilities)) {
+    return {
+      ok: false,
+      error: capabilitiesResolved
+        ? `Tool ${aiTool.name} is not permitted for this user.`
+        : `Tool ${aiTool.name} was refused: this caller has no resolved capability set, so no permission could be verified. That is a Studio-side configuration problem — the connector or session granted nothing — not a failed tool call and not a disconnected browser. Re-authorise the connector.`,
+    }
   }
 
   if (aiTool.execution === 'server') {

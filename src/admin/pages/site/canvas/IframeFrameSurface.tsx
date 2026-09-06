@@ -74,6 +74,7 @@ import { UserStylesheetInjector } from './UserStylesheetInjector'
 import { ProjectCssInjector } from './ProjectCssInjector'
 import { AuthoredCssInjector } from './AuthoredCssInjector'
 import { CanvasAnimationInjector } from './CanvasAnimationInjector'
+import { CanvasDiagnosticsInjector } from './CanvasDiagnosticsInjector'
 import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
 import { CanvasSelectionOverlayInjector } from './CanvasSelectionOverlayInjector'
 import { EditorChromeInjector } from './EditorChromeInjector'
@@ -659,6 +660,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
             <CanvasFrameContexts frameElement={iframeRef.current} frameDocument={iframeDoc} axes={frameAxes}>
               {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
               <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
+              {/* Runtime diagnostics: window errors, unhandled rejections,
+                  console.error, failed assets/modules and failed fetches from
+                  THIS frame, buffered for studio_page_diagnostics. Mounted
+                  first so a failure during the rest of this subtree's own mount
+                  is still collected. Inserts no DOM — see its docblock. */}
+              <CanvasDiagnosticsInjector targetDocument={iframeDoc} />
               {/* Design frames only: selection/hover rings + the node-name badge
                   render INSIDE this document (WS-5.1) so they track the element
                   with zero zoom/pan conversion. See its own docblock. */}

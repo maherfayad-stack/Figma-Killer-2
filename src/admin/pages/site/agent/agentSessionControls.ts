@@ -11,13 +11,20 @@
  */
 import type { AiChatRequestBody, AiUserContentBlock } from '@core/ai'
 import type { AgentSlice, EditorStoreSet } from './agentSliceTypes'
+import type { AgentRoutedTurn } from './types'
 
-export type AgentSessionControlsState = Pick<AgentSlice, 'agentEffort' | 'agentPermissionMode'>
+export type AgentSessionControlsState = Pick<
+  AgentSlice,
+  'agentEffort' | 'agentPermissionMode' | 'agentRoutedTurn'
+>
 export type AgentSessionControlsActions = Pick<AgentSlice, 'setAgentEffort' | 'setAgentPermissionMode'>
 
 export function agentSessionControlsInitialState(): AgentSessionControlsState {
   return {
     agentEffort: null,
+    // Read-only, server-reported, and null until a routing-capable driver
+    // reports one — see `AgentSlice.agentRoutedTurn`.
+    agentRoutedTurn: null,
     // Bypass is the working default. Studio's entire purpose is the agent
     // editing the user's source; every prompt on that path asks a question
     // whose answer is always yes, and 'acceptEdits' only silenced the FILE-edit
@@ -82,4 +89,27 @@ export function buildChatRequestBody(params: {
     ...(agentEffort ? { effort: agentEffort } : {}),
     ...(agentPermissionMode ? { permissionMode: agentPermissionMode } : {}),
   }
+}
+
+/**
+ * The read-only chip's text for a routed turn: what this turn's effort was and
+ * whether the user or the router chose it.
+ *
+ * A chip, not a control. The user's way to change the value is the effort
+ * submenu (`setAgentEffort`), which is the same control that existed before
+ * routing — this only reports what happened, and reporting it is what makes the
+ * router's decision reviewable instead of silent. `null` renders nothing:
+ * fabricating "Default" for a turn nobody routed would claim a decision that
+ * was never made, the same reason `ModelEffortPicker` already withholds its
+ * effort label until the value is explicit.
+ */
+export function routedTurnLabel(routed: AgentRoutedTurn | null): string | null {
+  if (!routed) return null
+  return routed.mode === 'pinned' ? routed.effort : `auto · ${routed.effort}`
+}
+
+/** The chip's tooltip: the router's own one-sentence reason, with the classified shape when there is one. */
+export function routedTurnTitle(routed: AgentRoutedTurn | null): string | null {
+  if (!routed) return null
+  return routed.shape ? `${routed.shape}: ${routed.reason}` : routed.reason
 }

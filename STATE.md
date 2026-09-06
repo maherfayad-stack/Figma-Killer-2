@@ -12,6 +12,148 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### mcp-18 — the agent learned a page threw only as a blank rectangle in a PNG, and every turn paid frontier price
+
+- **Agent:** mcp-tooling
+- **Stage:** done (needs human dogfood — routing feel, and the routed-effort chip is unrendered; see "Human action needed")
+- **Updated:** 2026-09-06
+- **Branch:** `feat/agent-diagnostics-and-routing`, based on `fix/ai-loop-latency` (mcp-17), **not** `main`.
+- **Goal:** close two audited gaps — runtime diagnostics the agent can read, and per-turn effort routing — plus the `executeAiTool` landmine `mcp-17` left behind.
+- **Scope:** `server/ai/mcp/tools/studio/pageDiagnostics.ts` (new) + test,
+  `server/ai/routing/turnRouting.ts` (new) + test,
+  `server/ai/drivers/http/execTool.ts` + new test, `server/ai/drivers/claudeCli.ts`,
+  `server/ai/runtime/types.ts`, `server/ai/mcp/tools/studio/index.ts`,
+  `server/ai/tools/studio/{agentToolNames,systemPrompt}.ts`,
+  `src/core/ai/{pageDiagnostics.ts (new),toolSchemas.ts,index.ts}`,
+  `src/admin/pages/site/canvas/{CanvasDiagnosticsInjector.tsx,canvasDiagnosticsBuffer.ts}` (both new) + test,
+  `src/admin/pages/site/canvas/IframeFrameSurface.tsx` (one injector registration),
+  `src/admin/pages/site/agent/{studioPageDiagnostics.ts (new) + test,executor.ts,streamEvents.ts,types.ts,agentSliceTypes.ts,agentSessionControls.ts,index.ts}`,
+  `docs/features/{mcp-connectors,agent}.md`.
+
+**Tool added — the handoff table this role owes:**
+
+| | |
+|---|---|
+| **Name** | `studio_page_diagnostics` |
+| **Execution class** | server-resolved, relayed (same split as `studio_screenshot`: the server half resolves screen NAMES to page ids and owns the precondition message; the read itself runs in the browser) |
+| **Required capabilities** | none — a pure read, no `mutates`. Two deliberate consequences: an `ai.chat`-only connector sees it, and `mcp-17`'s parallel dispatch may batch it with other reads |
+| **Input schema** | `{ dir?: string, pages?: string[] (≤20, by NAME — "Checkout" / "Checkout.tsx" / a page id), limit?: 1..100 (distinct findings PER page, default 25) }`, `additionalProperties: false`. No caller-supplied write target of any kind |
+| **Missing-precondition message** | *"No Studio board is connected. Runtime diagnostics are collected inside the live canvas frames, so this needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once."* Per page, `status: 'no-frame'` carries *"…nothing was watched — this is NOT a clean result…"* and `status: 'no-collector'` says the frame is still mounting. Neither is ever collapsed into "no findings" |
+
+- **Done so far:**
+  - **Collector:** `CanvasDiagnosticsInjector` mounts in every canvas iframe from
+    `IframeFrameSurface` (registered first, so a failure during the rest of that
+    subtree's mount is still caught). Five channels: capture-phase `error` on the
+    frame window (covers BOTH the `ErrorEvent` and the non-bubbling resource
+    error — capture is mandatory for the second), `unhandledrejection`, a
+    pass-through `console.error` tap, a `fetch` wrapper that records only
+    failures, and message-matched module-resolution failures. It inserts **no
+    DOM** into the frame — not even a `<style>`.
+  - **Buffer:** `canvasDiagnosticsBuffer.ts`, a `WeakMap<Window, …>`, NOT a
+    page-keyed module registry. The injector never learns a page id, and keying
+    on the window means a re-mount / `srcDoc` swap / closed board drops its
+    buffer with no eviction pass to get wrong. Identical occurrences aggregate
+    onto ONE finding with a `count` (a React render loop emits the same error
+    hundreds of times; a ring buffer would evict the first error, which is
+    usually the cause). Cap is 100 DISTINCT problems, overflow reported as a
+    number.
+  - **Findings are actionable, not descriptive:** a stable kebab-case code from
+    `@core/ai`'s `PAGE_DIAGNOSTIC_CODES` (one vocabulary, shared by producer and
+    reporter because neither side may import the other), that code's documented
+    `fix`, a `count`, and — when the failure happened on an element carrying a
+    `data-node-id` — the `file`/`line`/`col` `decodeSourceNodeId` yields, so a
+    404'd asset comes back as a source line. Six codes, doc-parity gated against
+    `docs/features/mcp-connectors.md` the way `fidelityCodes.test.ts` is.
+  - **Prompt:** step 4 (LOOK) of the Studio system prompt now says a blank /
+    half-empty / unchanged frame is a RUNTIME question, and to call this before
+    touching a stylesheet.
+  - **Routing:** `server/ai/routing/turnRouting.ts` — pure, table-tested.
+    `question` → `low`; `smallEdit` / `build` → the same `medium` that was
+    previously unconditional. Signals: prompt text, attachment count, and the
+    PREVIOUS turn's write count (`readTurnWriteLog`, read in `claudeCli.ts`
+    before `resetTurnWriteLog` clears it). The decision rides a new `routing`
+    stream event → `agentRoutedTurn` on the agent slice.
+  - **Guard (`mcp-17`'s landmine, fixed):** `executeAiTool` normalises an
+    unresolved `capabilities` to `[]` and reports the unresolved case in its own
+    words. It no longer throws into `executeOneCall`, which used to surface a
+    permission problem as "Browser tool transport failed".
+- **Next step:** the routed-effort chip is computed but not rendered — see
+  "Human action needed". The BONUS `studio_since_last_turn` was deliberately not
+  built: see Decisions.
+- **Decisions:**
+  - **Effort is routed; the MODEL is not.** `req.effort` is `undefined` until the
+    user picks one, which is exactly what makes "pinned vs default" knowable.
+    `req.modelId` has no such tell — the session always carries a concrete id and
+    nothing distinguishes "the user chose Opus" from "Opus is what the credential
+    defaulted to". Routing on that would silently demote a deliberate choice.
+    Model routing needs the conversation to record WHY a model id is set; that is
+    a schema change, not a heuristic.
+  - **Nothing routes ABOVE the old default.** `question` → `low` is the only
+    move. Raising a build turn to `high` would be a latency/rate-limit regression
+    nobody asked for, and an unreviewable one — there is no measurement here
+    saying `high` builds a better screen.
+  - **A pinned effort is never classified**, not even to agree with the user. The
+    routing result carries no `shape` in that mode, so the chip cannot claim a
+    classification that never happened.
+  - **`studio_page_diagnostics` deliberately does NOT sync board frames from
+    disk** the way `studio_screenshot` does. Placing a frame is a mutation, and
+    "this page has no frame" is a real answer worth reporting.
+  - **BONUS `studio_since_last_turn` not built.** `liveDigest.ts` already injects
+    the write log + verification status into EVERY turn's dynamic prompt suffix
+    (`computePageWriteVerification`, `describePageForDigest`). A tool that
+    re-answers what the prompt already states costs a tool definition on every
+    turn — the exact cost `agentToolNames.ts`'s own doc warns about — for no new
+    information. The genuinely missing half is comment deltas, and there is no
+    per-turn comment snapshot to diff against; building one is the real work,
+    not exposing the two pieces that already exist.
+- **Landmines:**
+  - **Do not "fail closed" on a missing capability set in `executeAiTool`.** My
+    first version refused every tool and broke 7 driver tests, because
+    `toolAllowedForCapabilities` only reaches `.includes` for a MUTATING or
+    capability-gated tool — an ungated read with `capabilities: undefined` worked
+    fine before and must keep working. Normalise to `[]` instead.
+  - **`server/ai/drivers/claudeCli.test.ts` is 53/77 red on this base** (the same
+    set `mcp-17` recorded). The routing WIRING in `claudeCli.ts` is therefore
+    unverified by that suite; the classifier itself is fully unit-tested. Whoever
+    repairs that harness should add one argv assertion for `--effort`.
+  - **`studio_computed_styles` looks broken and is NOT mine.**
+    `studioComputedStyles.ts` runs `frame.querySelectorAll('[data-node-id]')` on
+    the frame HOST element and reads `frame.ownerDocument` — but every board
+    frame renders its page inside an `<iframe>`, so in a real canvas those nodes
+    live in `contentDocument` and this returns zero rows. Its test mounts a fake
+    iframe-less shape, so it passes. `studioPageDiagnostics.ts` deliberately goes
+    through `frame.querySelector('iframe')?.contentWindow` instead. Left alone to
+    avoid colliding with a parallel owner — worth a real fix.
+  - `bun test` on this tree: 111 failures. 53 are `claudeCli*`, 17 are
+    icon-catalog-integrity, and 9 canvas ones are the known batch-isolation
+    flake — that last set is byte-identical with and without my
+    `IframeFrameSurface` change (672 pass / 9 fail / 4 errors either way) and
+    each passes in isolation.
+- **Verification:**
+  - `bunx tsc -b` — pass. `bun run build`'s vite half cannot run in a worktree
+    (`scripts/lib/bunCommand.ts` hardcodes `../../node_modules/vite/bin/vite.js`
+    and a worktree's `node_modules` is empty); the type-checking half, which is
+    what catches this diff, passes clean.
+  - `bun test server/ai/mcp` — 342 pass / 0 fail.
+  - `bun test src/__tests__/architecture/{agent-tool-surface,ai-tools-typebox-only,ai-tool-schema-ssot,ai-tool-input-object,ai-handlers-capability-gated,ai-mcp-connectors-never-leak,studio-tool-project-dir}.test.ts` — 28 pass.
+  - `bun test src/__tests__/ai src/__tests__/agent` — 488 pass / 0 fail.
+  - `bun test src/admin/pages/site/agent src/admin/pages/site/canvas/__tests__` — 77 pass.
+  - `bun run lint` — clean.
+- **Human action needed:**
+  1. **Dogfood the routing feel.** No amount of unit testing says whether "change
+     the button colour to coral" *should* be a `medium`. Watch a few real turns:
+     the failure to look for is a genuine build turn classified `question`, which
+     shows up as a shallow answer rather than as an error.
+  2. **Render the chip — one line, blocked on file ownership.** `agentRoutedTurn`
+     is on the agent slice and `routedTurnLabel` / `routedTurnTitle` are exported
+     from `@site/agent`, but `panels/**` belonged to another agent this pass, so
+     nothing renders them. The wiring is `ModelEffortPicker.tsx`'s
+     `trailingLabel={agentEffort ? currentEffortLabel : routedTurnLabel(agentRoutedTurn)}`
+     with `routedTurnTitle` as the tooltip. Until then the router is invisible —
+     exactly the state its own doc argues against.
+
+---
+
 ### canvas-15 — the viewport and keyboard staples: clickable zoom, selection traversal, frame nudge, a visible shortcuts door
 - **Agent:** canvas-engineer
 - **Stage:** built and gated. `bun run build`, `bun run lint` clean; `bun test` — see "Verification" below. **Needs human dogfood for feel.**
