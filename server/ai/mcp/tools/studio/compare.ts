@@ -29,12 +29,12 @@
  * Takes `pages`, not `page` — the same name-resolved, optional, capped array
  * `studio_screenshot` established first (`resolveRequestedPages`,
  * `MAX_BATCH_PAGES` in `pageNameMatch.ts`). Per-page work (resolve the
- * reference, pick the dpr, capture, diff) happens in a loop; per-batch work
- * (board sync, page load, the live-reload wait) happens ONCE ahead of it, the
- * same split `screenshot.ts` uses for its own `canonicalProject`. One page
- * failing to resolve or having no armed reference never fails the batch — it
- * becomes a `results[]` entry with `ok:false` while every other page still
- * gets measured.
+ * reference, pick the dpr, diff) happens in a loop; per-batch work (board sync,
+ * page load, the live-reload wait, and — see `captureMissedPages` — the CAPTURE
+ * itself) happens ONCE ahead of it, the same split `screenshot.ts` uses for its
+ * own `canonicalProject`. One page failing to resolve or having no armed
+ * reference never fails the batch — it becomes a `results[]` entry with
+ * `ok:false` while every other page still gets measured.
  *
  * `includeImages` defaults to `true` for a single-page call (unchanged
  * behaviour) and to `false` the moment a call resolves to MORE than one page —
@@ -73,8 +73,9 @@
  *   3. Pick the capture dpr that lands on the reference's own pixel width, so
  *      the common case is an EXACT-size comparison rather than a resampled
  *      one (the same computation `studio_recommend_export_dpr` exposes).
- *   4. Await the canvas re-read, then capture through the live editor bridge —
- *      skipped entirely for a page the verdict cache already answers.
+ *   4. Await the canvas re-read, then capture every cache-miss page through the
+ *      live editor bridge in ONE call per dpr (`captureMissedPages`) — skipped
+ *      entirely for a page the verdict cache already answers.
  *   5. Diff against the reference bytes and score it.
  *
  * ## What `pass` means, and what it does not
@@ -103,7 +104,7 @@ import { createWorkspaceProject, parsePageFile } from '@core/page-parser'
 import { collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { Page } from '@core/page-tree'
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk, type AiToolImage } from '@core/ai'
+import { aiToolError, aiToolOk, type AiToolImage, type AiToolOutput } from '@core/ai'
 import type { AiBrowserBridge, AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
@@ -198,6 +199,65 @@ interface CapturedFrame {
   /** See `compare.ts`'s previous single-page revision / `computeFrameDiff`'s `nodeRects.imageScale` doc for why this has no default. */
   imageScale?: number
   error?: string
+}
+
+/** One page's capture, or the reason there is none. Keyed by page id below. */
+type PageCapture =
+  | { ok: true; frame: CapturedFrame; images: AiToolOutput['images'] }
+  | { ok: false; error: string }
+
+/**
+ * Capture every cache-miss page, in as few browser round trips as possible.
+ *
+ * `studio_export_frames` has always taken `pageIds[]` and captured the batch
+ * behind one bridge call; this tool was still asking for one page at a time
+ * inside its per-page loop, so a five-screen verification paid five sequential
+ * bridge round trips — each one a canvas pan, a frame mount, a settle wait and
+ * a rasterise — when it could have paid one. That was the difference between
+ * roughly a minute and roughly fifteen seconds on the loop the system prompt
+ * tells the agent to run after every fix pass.
+ *
+ * Grouped by dpr rather than sent as a single call because the dpr is exactly
+ * what makes a diff EXACT rather than resampled (`captureDprFor`), and one
+ * `studio_export_frames` call applies one dpr to its whole batch. In the
+ * ordinary case — screens of one size measured against references of one size —
+ * every page shares a dpr and this is a single call.
+ */
+async function captureMissedPages(
+  bridge: AiBrowserBridge,
+  targets: readonly { pageId: string; dpr: number | null }[],
+): Promise<Map<string, PageCapture>> {
+  const byDpr = new Map<number | null, string[]>()
+  for (const target of targets) {
+    const group = byDpr.get(target.dpr)
+    if (group) group.push(target.pageId)
+    else byDpr.set(target.dpr, [target.pageId])
+  }
+
+  const captures = new Map<string, PageCapture>()
+  for (const [dpr, pageIds] of byDpr) {
+    const captured = await bridge.callBrowser('studio_export_frames', {
+      pageIds,
+      ...(dpr === null ? {} : { dpr }),
+      // This capture is measured server-side with pixelmatch, not shown to
+      // the model by default — the vision-safe ~1568px edge clamp exists for
+      // a reason that does not apply here (A2). Model visibility is decided
+      // separately by `includeImages`.
+      purpose: 'measurement',
+    })
+    if (!captured.ok) {
+      // A transport-level failure is the whole group's failure, but never the
+      // whole call's: pages in another dpr group, and every cache hit, stand.
+      const error = captured.error ?? 'The capture request failed.'
+      for (const pageId of pageIds) captures.set(pageId, { ok: false, error })
+      continue
+    }
+    const frames = (captured.data as { frames?: CapturedFrame[] } | null)?.frames ?? []
+    for (const frame of frames) {
+      captures.set(frame.pageId, { ok: true, frame, images: captured.images })
+    }
+  }
+  return captures
 }
 
 interface PageCompareSuccess {
@@ -337,17 +397,26 @@ export const studioCompareTool: AiTool = {
       }
     })
 
-    const needsCapture = plan.some((p) => !p.referenceError && !p.cached)
-    let bridge: AiBrowserBridge | null = null
-    if (needsCapture) {
-      bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
+    // 3 + 4. Every cache-miss page is captured up front, batched — see
+    // `captureMissedPages`. The per-page loop below only reads the results.
+    const captureTargets = plan
+      .filter((p) => !p.referenceError && !p.cached)
+      .map((p) => ({ pageId: p.pageId, dpr: captureDprFor(dir, p.pageId, p.reference!.width) }))
+    const dprByPageId = new Map(captureTargets.map((t) => [t.pageId, t.dpr]))
+    let captures = new Map<string, PageCapture>()
+    if (captureTargets.length > 0) {
+      const bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
       if (!bridge) {
         return aiToolError('No Studio board is connected. Measuring captures the live canvas, so it needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once.')
       }
-      // 4. Awaited once for every page that actually needs a fresh capture —
+      // Awaited once for every page that actually needs a fresh capture —
       // a page served from cache never re-reads the board at all.
-      const missPageIds = plan.filter((p) => !p.referenceError && !p.cached).map((p) => p.pageId)
-      await awaitStudioLiveReload(ctx.userId, { dir, pageIds: missPageIds, boardsChanged: true })
+      await awaitStudioLiveReload(ctx.userId, {
+        dir,
+        pageIds: captureTargets.map((t) => t.pageId),
+        boardsChanged: true,
+      })
+      captures = await captureMissedPages(bridge, captureTargets)
     }
 
     // Built lazily, ONCE for the whole batch, and only if some page's cache
@@ -397,7 +466,7 @@ export const studioCompareTool: AiTool = {
         continue
       }
 
-      // MISS. 3 + 4. Capture at the dpr that makes the comparison exact.
+      // MISS. The capture already happened, batched, above.
       const referenceBytes = readDesignReferenceBytes(dir, ref)
       if (!referenceBytes) {
         results.push({
@@ -408,28 +477,22 @@ export const studioCompareTool: AiTool = {
         continue
       }
 
-      const dpr = captureDprFor(dir, entry.pageId, ref.width)
-      const captured = await bridge!.callBrowser('studio_export_frames', {
-        pageIds: [entry.pageId],
-        ...(dpr === null ? {} : { dpr }),
-        // This capture is measured server-side with pixelmatch, not shown to
-        // the model by default — the vision-safe ~1568px edge clamp exists for
-        // a reason that does not apply here (A2). Model visibility is decided
-        // separately, below, by `includeImages`.
-        purpose: 'measurement',
-      })
-      if (!captured.ok) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: captured.error ?? `Could not capture "${title}".` })
+      const dpr = dprByPageId.get(entry.pageId) ?? null
+      const capture = captures.get(entry.pageId)
+      if (!capture) {
+        results.push({ ok: false, page: { id: entry.pageId, title }, error: `Could not capture "${title}": the board returned no frame for it.` })
         continue
       }
-
-      const frames = ((captured.data as { frames?: CapturedFrame[] } | null)?.frames ?? [])
-      const frame = frames[0]
-      if (!frame || !frame.ok || frame.imageIndex === undefined) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: `Could not capture "${title}": ${frame?.error ?? 'the frame did not render.'}` })
+      if (!capture.ok) {
+        results.push({ ok: false, page: { id: entry.pageId, title }, error: capture.error })
         continue
       }
-      const capturedImage = captured.images?.[frame.imageIndex]
+      const frame = capture.frame
+      if (!frame.ok || frame.imageIndex === undefined) {
+        results.push({ ok: false, page: { id: entry.pageId, title }, error: `Could not capture "${title}": ${frame.error ?? 'the frame did not render.'}` })
+        continue
+      }
+      const capturedImage = capture.images?.[frame.imageIndex]
       if (!capturedImage) {
         results.push({ ok: false, page: { id: entry.pageId, title }, error: `The capture of "${title}" returned no image data.` })
         continue

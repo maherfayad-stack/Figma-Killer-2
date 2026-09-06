@@ -18,10 +18,10 @@ export function getPanelsCommands(): Command[] {
     {
       id: 'panels.toggleExplorer',
       title: 'Toggle Explorer panel',
-      subtitle: 'Show or hide the Explorer (Layers / Pages / Media) panel',
+      subtitle: 'Show or hide the Explorer (boards + layers) panel',
       group: 'editor',
       iconName: 'files-stack-2-solid',
-      keywords: ['panel', 'explorer', 'layers', 'pages', 'site', 'media', 'sidebar', 'toggle'],
+      keywords: ['panel', 'explorer', 'layers', 'boards', 'pages', 'sidebar', 'toggle'],
       workspaces: ['site'],
       capability: PANEL_CAPABILITY,
       run: async (ctx) => {
@@ -35,11 +35,11 @@ export function getPanelsCommands(): Command[] {
       },
     },
 
-    // ── Explorer → Layers tab ────────────────────────────────────────────────
+    // ── Explorer, forced open ────────────────────────────────────────────────
     {
       id: 'panels.showLayers',
       title: 'Show Layers',
-      subtitle: 'Open the Explorer panel on the Layers (DOM tree) tab',
+      subtitle: 'Open the Explorer panel (boards + the all-pages layers tree)',
       group: 'editor',
       iconName: 'list-box-solid',
       keywords: ['panel', 'layers', 'dom', 'tree', 'explorer', 'show'],
@@ -49,57 +49,9 @@ export function getPanelsCommands(): Command[] {
         ctx.closeSpotlight()
         try {
           const { useEditorStore } = await import('@site/store/store')
-          const store = useEditorStore.getState()
-          store.setExplorerPanelTab('layers')
-          store.setExplorerPanelOpen(true)
+          useEditorStore.getState().setLeftSidebarPanel('explorer')
         } catch (err) {
           console.error('[spotlight] show layers failed:', err)
-        }
-      },
-    },
-
-    // ── Explorer → Site tab ──────────────────────────────────────────────────
-    {
-      id: 'panels.showSite',
-      title: 'Show Site',
-      subtitle: 'Open the Explorer panel on the Site (pages / templates / components) tab',
-      group: 'editor',
-      iconName: 'layout-solid',
-      keywords: ['panel', 'site', 'pages', 'templates', 'components', 'explorer', 'sidebar', 'show'],
-      workspaces: ['site'],
-      capability: PANEL_CAPABILITY,
-      run: async (ctx) => {
-        ctx.closeSpotlight()
-        try {
-          const { useEditorStore } = await import('@site/store/store')
-          const store = useEditorStore.getState()
-          store.setExplorerPanelTab('site')
-          store.setExplorerPanelOpen(true)
-        } catch (err) {
-          console.error('[spotlight] show site failed:', err)
-        }
-      },
-    },
-
-    // ── Explorer → Code tab ──────────────────────────────────────────────────
-    {
-      id: 'panels.showCode',
-      title: 'Show Code',
-      subtitle: 'Open the Explorer panel on the Code (stylesheets / scripts) tab',
-      group: 'editor',
-      iconName: 'code',
-      keywords: ['panel', 'code', 'styles', 'stylesheet', 'css', 'scripts', 'js', 'files', 'explorer', 'show'],
-      workspaces: ['site'],
-      capability: PANEL_CAPABILITY,
-      run: async (ctx) => {
-        ctx.closeSpotlight()
-        try {
-          const { useEditorStore } = await import('@site/store/store')
-          const store = useEditorStore.getState()
-          store.setExplorerPanelTab('code')
-          store.setExplorerPanelOpen(true)
-        } catch (err) {
-          console.error('[spotlight] show code failed:', err)
         }
       },
     },
@@ -142,29 +94,6 @@ export function getPanelsCommands(): Command[] {
           useEditorStore.getState().toggleLeftSidebarPanel('framework')
         } catch (err) {
           console.error('[spotlight] toggleLeftSidebarPanel framework failed:', err)
-        }
-      },
-    },
-
-    // ── Explorer → Media tab ─────────────────────────────────────────────────
-    {
-      id: 'panels.showMedia',
-      title: 'Show Media',
-      subtitle: 'Open the Explorer panel on the Media (asset library) tab',
-      group: 'editor',
-      iconName: 'image-solid',
-      keywords: ['panel', 'media', 'assets', 'images', 'files', 'explorer', 'show'],
-      workspaces: ['site'],
-      capability: PANEL_CAPABILITY,
-      run: async (ctx) => {
-        ctx.closeSpotlight()
-        try {
-          const { useEditorStore } = await import('@site/store/store')
-          const store = useEditorStore.getState()
-          store.setExplorerPanelTab('media')
-          store.setExplorerPanelOpen(true)
-        } catch (err) {
-          console.error('[spotlight] show media failed:', err)
         }
       },
     },

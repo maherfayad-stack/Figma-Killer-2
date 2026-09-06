@@ -77,8 +77,8 @@ export function TokenImportStatus() {
             ? primaryWarning.message
             : "No design tokens were found in this project's CSS yet."}
       </span>
-      <Button variant="secondary" size="xs" onClick={handleRescan} disabled={rescanning} aria-busy={rescanning}>
-        {rescanning ? 'Scanning…' : 'Re-scan'}
+      <Button variant="secondary" size="xs" onClick={handleRescan} loading={rescanning}>
+        Re-scan
       </Button>
     </div>
   )

@@ -25,7 +25,7 @@
  * to write it first.
  */
 import type { Page, PageNode } from '@core/page-tree'
-import { styleValueKey } from '@core/page-tree'
+import { isStyleWritableToSource, STYLE_VALUE_PREFIX, styleValueKey } from '@core/page-tree'
 
 export type LoadedNodeValues = Record<string, string | number | boolean>
 
@@ -169,15 +169,27 @@ export function collectClassIdsDrift(pages: readonly Page[]): ClassIdsDrift[] {
 }
 
 /**
- * Advances the `classIds` baseline to the CURRENT document — called
- * unconditionally on every `saveSite` (unlike `commitNodeValuesBaseline`,
- * there is no "did the write land" gate here, because there is nothing to
- * write: Studio has no `class` edit kind. This purely records "last
- * observed," so an already-toasted drift doesn't re-toast on the next 2s
- * tick if nothing has changed since.
+ * Advances the `classIds` baseline to the CURRENT document, EXCEPT for the
+ * nodes named in `refusedNodeIds`, whose previous entry is kept.
+ *
+ * `style-02`/`style-02` — Studio does have a real `class` edit kind now
+ * (`setJsxClassName`), so "last observed" is no longer the whole story: a
+ * drift whose token could not be resolved honestly, or whose write the server
+ * refused, never reached disk. Advancing past one of those was the same
+ * silent-loss shape `commitBaseline`'s `refusedRuleIds` fixes on the CSS
+ * side — the assignment was reported once and then became permanently
+ * invisible, because the very next diff saw "no change". Everything else
+ * still advances unconditionally, so an already-reported, genuinely
+ * unwritable drift (a `.map` row) does not re-toast every tick.
  */
-export function commitClassIdsBaseline(pages: readonly Page[]): void {
+export function commitClassIdsBaseline(pages: readonly Page[], refusedNodeIds: readonly string[] = []): void {
+  const previous = loadedClassIds
   loadedClassIds = snapshotClassIds(pages)
+  for (const nodeId of refusedNodeIds) {
+    const before = previous.get(nodeId)
+    if (before) loadedClassIds.set(nodeId, before)
+    else loadedClassIds.delete(nodeId)
+  }
 }
 
 /** One `(nodeId, key)` -> value pair whose write is known to have landed on disk — see `commitNodeValuesBaseline`. */
@@ -220,4 +232,68 @@ export function commitNodeValuesBaseline(bumps: readonly NodeValueBump[]): void 
       loadedValues.set(nodeId, { [key]: value })
     }
   }
+}
+
+/** One `(nodeId, key)` pair whose value was REMOVED from source — see `dropNodeValuesBaseline`. */
+export interface NodeValueDrop {
+  nodeId: string
+  key: string
+}
+
+/**
+ * Deletes the baseline entry for exactly the `(nodeId, key)` pairs a
+ * just-completed save actually REMOVED from source — `style-03`'s counterpart
+ * of `commitNodeValuesBaseline`.
+ *
+ * A removal has no value to record, and the two are not interchangeable:
+ * writing `undefined` would leave the key present, so `!(property in style)`
+ * would keep reporting the same removal on every later autosave tick, and
+ * `Object.keys(baseline)` (which is how a removed inline style is even
+ * DETECTED — the current bag no longer mentions it) would keep listing it.
+ * Called under the same `unexplainedSkips === 0` gate, for the same reason.
+ */
+export function dropNodeValuesBaseline(drops: readonly NodeValueDrop[]): void {
+  for (const { nodeId, key } of drops) {
+    const existing = loadedValues.get(nodeId)
+    if (existing) delete existing[key]
+  }
+}
+
+/** One node's inline-style diff against the baseline — see `diffInlineStyles`. */
+export interface InlineStyleDiff {
+  /** camelCase property → new value, for the properties that changed. */
+  changed: Record<string, string | number>
+  /** camelCase properties present in the baseline and gone now. */
+  removed: string[]
+}
+
+/**
+ * Which of a node's inline styles a save should write, and which it should
+ * DELETE.
+ *
+ * The removal half is `style-03`. The diff only ever iterated the properties a
+ * node has NOW, and `setJsxStyle` only ever merged, so clearing an inline
+ * style produced no edit at all: the canvas updated, the save reported
+ * success, the `style={{…}}` attribute on disk kept its old declaration, and
+ * it came straight back on the next reload. A removed property leaves no trace
+ * on the node — the only record it ever existed is its `style:` key in the
+ * baseline, which is why this reads that map's KEYS rather than the node's.
+ *
+ * Both halves ask `isStyleWritableToSource`, the one predicate every edit
+ * surface consults: a property whose source is an expression is no more
+ * deletable than it is settable.
+ */
+export function diffInlineStyles(node: PageNode, baseline: LoadedNodeValues | undefined): InlineStyleDiff {
+  const style = literalInlineStyles(node.inlineStyles)
+  const changed: Record<string, string | number> = {}
+  for (const [property, value] of Object.entries(style)) {
+    if (!isStyleWritableToSource(node, property)) continue
+    if (baseline && Object.is(baseline[styleValueKey(property)], value)) continue
+    changed[property] = value
+  }
+  const removed = Object.keys(baseline ?? {})
+    .filter((key) => key.startsWith(STYLE_VALUE_PREFIX))
+    .map((key) => key.slice(STYLE_VALUE_PREFIX.length))
+    .filter((property) => !(property in style) && isStyleWritableToSource(node, property))
+  return { changed, removed }
 }

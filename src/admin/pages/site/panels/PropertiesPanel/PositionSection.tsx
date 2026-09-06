@@ -1,29 +1,76 @@
 /**
  * PositionSection — visual editor for the `position` CSS section.
  *
- * Replaces the long stack of generic ClassPropertyRow widgets for
- * position / top / right / bottom / left / zIndex with task-shaped
- * controls:
+ * G10 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md) — Figma's F1/F2/F29 shape,
+ * tightened to three rows (WS-6 §6 — this section was running at roughly
+ * double its row budget):
  *
- *   • PositionSwitcher  — connected `[Relative | Absolute | ▼]` segmented
- *                         control with a dropdown trail. `fixed | sticky |
- *                         static` (and any custom value) fall through to a
- *                         full-width chip + close-button layout, mirroring
- *                         DisplaySwitcher's three-state shape.
- *   • DirectionInput    — compact icon-as-label cell for one offset
- *                         (top/right/bottom/left). Four cells render in
- *                         a 2-column TRBL grid that's only revealed when
- *                         the position value actually honors offsets
- *                         (relative / absolute / fixed / sticky — i.e. not
- *                         static, not unset).
- *   • zIndex row        — always rendered as a generic ClassPropertyRow at
- *                         the bottom of the section. Stays visible even
- *                         when position is unset/static so users can
- *                         still poke at stacking context the rare cases
- *                         it matters outside positioning.
+ *   Row 1 — AlignBar        the 7-button align/distribute/tidy row (F1, F2),
+ *                           mounted here for the single selected node. Align
+ *                           writes either the node's own `alignSelf`/
+ *                           `justifySelf` or, when this is the parent's only
+ *                           child, the PARENT's `justifyContent` as an inline
+ *                           style (never a shared class — no blast radius).
+ *                           Every edge with no single honest CSS write
+ *                           renders disabled with the reason as its tooltip
+ *                           — see `resolveAlignWrite`.
+ *   Row 2 — PositionSwitcher  connected `[Relative | Absolute | ▼]` segmented
+ *                           control with a dropdown trail. `fixed | sticky |
+ *                           static` (and any custom value) render as a
+ *                           SYNTHETIC trailing segment in that SAME track
+ *                           rather than swapping to a different, full-width
+ *                           chip shape — see `DropdownSwitcher`'s doc for why
+ *                           the old two-shape design is gone. Mirrors
+ *                           DisplaySwitcher's now-unified shape exactly (they
+ *                           share the one `DropdownSwitcher` component).
+ *   Row 2b (conditional) — DirectionInput / ConstraintAxisField  offsets,
+ *                           only rendered once `position` actually honors
+ *                           them (never for `static`), so a plain block
+ *                           element pays nothing for this row. DirectionInput
+ *                           is the plain TRBL grid used for `relative`/
+ *                           `sticky` (no "constraints" metaphor — F29 is
+ *                           absolute-only per Law 5). ConstraintAxisField is
+ *                           F29's `absolute`/`fixed` shape: an X row and a Y
+ *                           row, each a `Left ▾`/`Right ▾` (or `Top ▾`/
+ *                           `Bottom ▾`) side picker plus one value field.
+ *                           Switching the side MOVES the value (clears the
+ *                           old property, writes the new one) rather than
+ *                           leaving both set.
+ *   Row 3 — RotationRow + ZIndexSettingsRow, PAIRED onto one row (F1's third
+ *                           row pairs rotation with flip; flip is skipped —
+ *                           see `RotationRow`'s doc — so the z-index settings
+ *                           trigger takes that seat instead of sitting alone
+ *                           on its own row). Rotation reads/writes the
+ *                           STANDALONE `rotate` CSS property, never
+ *                           `transform` — both the publisher and the canvas
+ *                           emit any syntactically valid property name via
+ *                           the same permissive `isEmittableProperty` gate
+ *                           (`classCss.ts`), so `rotate` needs no allowlist
+ *                           entry, and `rotate` composes with an existing
+ *                           `transform` instead of being one of its
+ *                           functions — nothing to parse, nothing to clobber.
+ *                           The one case this can't stay honest for:
+ *                           `transform` ALREADY contains a `rotate()`/
+ *                           `rotateX/Y/Z()`/`rotate3d()` function. Two
+ *                           independent rotations would both apply and
+ *                           silently compound, so that case refuses the
+ *                           field and falls back to a raw `transform` row
+ *                           with a reason — same standing rule the plan
+ *                           applies to gradients (§4 G6.3) and box-shadow
+ *                           (§4 G8.3). zIndex itself stays behind its own
+ *                           small sliders-icon trigger (Law 2) — see
+ *                           `ZIndexSettingsRow`.
  *
  * Reuses chip / track styles from LayoutSection.module.css so the visual
- * vocabulary stays in one place — `displayRow`, `displayChipGroup`, etc.
+ * vocabulary stays in one place — `displayRow`, etc. New, section-specific
+ * styles (align row spacing, constraint cells, the rotation+settings row)
+ * live in this component's own `PositionSection.module.css` rather than
+ * growing LayoutSection's.
+ *
+ * `SingleNodeAlignRow`, `PositionConstraints` (+ `ConstraintAxisField`),
+ * `RotationRow`, and `ZIndexSettingsRow` live in their own sibling files —
+ * split out purely to keep this module under the repo's line-count ceiling
+ * (`module-size-budgets.test.ts`); still this file's exclusive territory.
  */
 
 import type { IconComponent } from 'pixel-art-icons/types'
@@ -34,13 +81,16 @@ import { ArrowBarUpIcon } from 'pixel-art-icons/icons/arrow-bar-up'
 import { ArrowBarRightIcon } from 'pixel-art-icons/icons/arrow-bar-right'
 import { ArrowBarDownIcon } from 'pixel-art-icons/icons/arrow-bar-down'
 import { ArrowBarLeftIcon } from 'pixel-art-icons/icons/arrow-bar-left'
-import { ClassPropertyRow } from './ClassPropertyRow'
 import { DropdownSwitcher } from './DropdownSwitcher'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import { useSpacingTokens, type Token } from '@site/property-controls/tokenUtils'
-import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { hasStyleValue, readString } from './styleValueUtils'
+import { SingleNodeAlignRow } from './SingleNodeAlignRow'
+import { PositionConstraints } from './PositionConstraints'
+import { RotationRow } from './RotationRow'
+import { ZIndexSettingsRow } from './ZIndexSettingsRow'
 import styles from './LayoutSection.module.css'
+import posStyles from './PositionSection.module.css'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -69,6 +119,12 @@ interface PositionSectionProps {
  *  elements ignore those offsets. */
 const POSITIONED_VALUES = new Set(['relative', 'absolute', 'fixed', 'sticky'])
 
+/** Position values that get F29's constraint-side pickers instead of the
+ *  plain TRBL grid. `relative`/`sticky` offsets have no "which side anchors
+ *  me" metaphor — an element can't be un-anchored from its own flow
+ *  position — so they keep the classic four-cell grid. */
+const CONSTRAINT_VALUES = new Set(['absolute', 'fixed'])
+
 // ---------------------------------------------------------------------------
 // PositionSection
 // ---------------------------------------------------------------------------
@@ -85,6 +141,7 @@ export function PositionSection({
 }: PositionSectionProps) {
   const position = readString(currentStyles, 'position')
   const positionIsActive = position != null && POSITIONED_VALUES.has(position)
+  const usesConstraints = position != null && CONSTRAINT_VALUES.has(position)
 
   // Per-property adapter over the patch-shaped preview channel, used by the
   // offset token inputs and the z-index row (each owns a single property).
@@ -93,13 +150,6 @@ export function PositionSection({
         onPreview({ [property]: value ?? null } as Partial<CSSPropertyBag>)
     : undefined
 
-  const zIndexStored = storedStyles.zIndex
-  const zIndexIsSet = hasStyleValue(zIndexStored)
-  const zIndexCurrent = currentStyles.zIndex
-  const zIndexFallback = hasStyleValue(zIndexCurrent)
-    ? zIndexCurrent
-    : getCSSPropertyDefaultValue('zIndex')
-
   // Spacing tokens drive the autocomplete dropdown on each offset input —
   // same vocabulary the SpacingBoxControl side inputs use, surfaced via
   // the shared TokenAwareInput primitive.
@@ -107,6 +157,7 @@ export function PositionSection({
 
   return (
     <>
+      <SingleNodeAlignRow onChange={onChange} />
       <DropdownSwitcher
         property="position"
         value={position}
@@ -117,7 +168,7 @@ export function PositionSection({
         onPreview={onPreview ? (v) => onPreview({ position: v } as Partial<CSSPropertyBag>) : undefined}
         onClearPreview={onClearPreview}
       />
-      {positionIsActive && (
+      {positionIsActive && !usesConstraints && (
         <div className={styles.positionDirectionsGrid}>
           <DirectionInput
             property="top"
@@ -169,21 +220,42 @@ export function PositionSection({
           />
         </div>
       )}
-      {/* z-index row — always visible inside the section. Stacking context
-          can matter even on otherwise non-positioned elements (e.g. flex
-          items, grid items) so the row stays available regardless of the
-          current position keyword. */}
-      <ClassPropertyRow
-        key={`${activeTab}-zIndex`}
-        property="zIndex"
-        value={zIndexIsSet ? (zIndexStored as string | number) : undefined}
-        placeholder={!zIndexIsSet ? zIndexFallback : undefined}
-        isSet={zIndexIsSet}
-        onChange={onChange}
-        onRemove={onRemove}
-        onPreview={previewProperty}
-        onClearPreview={onClearPreview}
-      />
+      {usesConstraints && (
+        <PositionConstraints
+          key={activeTab}
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          tokens={spacingTokens}
+          onChange={onChange}
+          onClear={onClearProperty}
+          onPreview={previewProperty}
+          onClearPreview={onClearPreview}
+        />
+      )}
+      {/* F1's third row — rotation paired with the z-index settings trigger
+          rather than either sitting alone on its own row (flip is skipped,
+          see the module doc, so rotation has no other companion control to
+          share a row with). */}
+      <div className={posStyles.rotationSettingsRow}>
+        <RotationRow
+          key={`${activeTab}-rotation`}
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          onChange={onChange}
+          onClearProperty={onClearProperty}
+          onPreview={previewProperty}
+          onClearPreview={onClearPreview}
+        />
+        <ZIndexSettingsRow
+          key={`${activeTab}-zIndex`}
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          onChange={onChange}
+          onRemove={onRemove}
+          onPreview={previewProperty}
+          onClearPreview={onClearPreview}
+        />
+      </div>
     </>
   )
 }
@@ -282,4 +354,3 @@ function DirectionInput({
     </div>
   )
 }
-

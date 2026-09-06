@@ -35,6 +35,7 @@ import {
   isPropPatchWritableToSource,
   isPropWritableToSource,
   isStylePatchWritableToSource,
+  describeStructuralRefusal,
 } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
@@ -126,7 +127,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     if (!tree) return false
     const plan = planSourceInsert(tree, parentId)
     if (plan.ok) return false
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.refusal)
+    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
     return true
   }
 
@@ -147,7 +148,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     if (!tree) return false
     const plan = planSourceInsert(tree, parentId, index)
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.refusal)
+      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
@@ -182,10 +183,16 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     // Everything else is an editor construct with no spelling in a user's repo;
     // the picker hides those in studio mode, so this is the programmatic path.
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, {
-      reason: 'insert',
-      message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
-    })
+    toastStructuralRefusal(
+      STRUCTURAL_REFUSAL_TITLE.insert,
+      describeStructuralRefusal({
+        refusal: {
+          reason: 'insert',
+          message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
+        },
+      }),
+      get,
+    )
     return true
   }
 
@@ -194,7 +201,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     if (!tree) return false
     const plan = planSourceCopy(tree, kind, nodeIds)
     if (plan.ok) return false
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE[kind], plan.refusal)
+    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE[kind], plan.constraint, get)
     return true
   }
 
@@ -354,7 +361,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // take never removes the element from the canvas either.
       const plan = planSourceDelete([readTree()?.nodes[nodeId]])
       if (!plan.ok) {
-        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.refusal)
+        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, get)
         return
       }
       const deleted = mutateActiveTree((tree) => {
@@ -529,7 +536,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       const tree = readTree()
       const plan = tree ? planSourceMove(tree, nodeIds, newParentId, newIndex) : null
       if (plan && !plan.ok) {
-        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.refusal)
+        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, get)
         return
       }
       mutateActiveTree((draft) => {

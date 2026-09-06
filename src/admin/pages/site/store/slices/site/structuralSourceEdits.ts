@@ -34,14 +34,18 @@
  * itself an ordinary element in the same file.
  */
 import {
+  describeStructuralRefusal,
   isSourceDerivedNodeId,
   isStudioPageRootId,
   refuseStructuralEdit,
+  type EditConstraint,
   type NodeTree,
   type PageNode,
   type StructuralRefusal,
 } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
+import { constraintPrimaryAction, constraintToastBody } from '../../constraintActions'
+import { openSourceFile, type SourceFileOpener } from '../../openSourceFile'
 
 /** Where a reordered element is written: next to which sibling, on which side. */
 export interface SourceMoveCommit {
@@ -54,10 +58,16 @@ export interface SourceMoveCommit {
  * A gesture that may proceed. `commit` is the source write to issue AFTER the
  * tree mutation lands, or `null` when there is nothing to write (an ordinary
  * CMS tree, or a move that turned out to change no order).
+ *
+ * A refusal is carried as the full `EditConstraint`, not the bare
+ * `{reason, message}` the rule returns: only the planner still has the NODE in
+ * hand, and the node is where `origin` (the `rel:line:col` a "show me" button
+ * needs) comes from. Deriving it later, at the toast, would mean re-finding a
+ * node the plan already had.
  */
 export type StructuralPlan<TCommit> =
   | { ok: true; commit: TCommit | null }
-  | { ok: false; refusal: StructuralRefusal }
+  | { ok: false; constraint: EditConstraint }
 
 /**
  * Whether a move of `nodeIds` into `newParentId` at `newIndex` can be written
@@ -93,7 +103,7 @@ export function planSourceMove(
       // and re-reads it — this node already exists only on the canvas, so there
       // is no markup to relocate and no way to mint any.
       refuseCanvasOnlyNodeIntoSource(tree, newParent)
-    return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+    return refusal ? { ok: false, constraint: describeStructuralRefusal({ refusal, node }) } : { ok: true, commit: null }
   }
 
   const multi = nodeIds.length > 1
@@ -120,7 +130,7 @@ export function planSourceMove(
   }
 
   const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null, multi })
-  return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+  return refusal ? { ok: false, constraint: describeStructuralRefusal({ refusal, node }) } : { ok: true, commit: null }
 }
 
 /**
@@ -138,7 +148,7 @@ export function planSourceDelete(
   for (const node of nodes) {
     if (!node) continue
     const refusal = refuseStructuralEdit({ kind: 'delete', node })
-    if (refusal) return { ok: false, refusal }
+    if (refusal) return { ok: false, constraint: describeStructuralRefusal({ refusal, node }) }
     if (isSourceDerivedNodeId(node.id)) commit.push(node.id)
   }
   return { ok: true, commit: commit.length > 0 ? commit : null }
@@ -185,7 +195,7 @@ export function planSourceInsert(
   if (!isSourceDerivedNodeId(node.id)) return { ok: true, commit: null }
 
   const refusal = refuseStructuralEdit({ kind: 'insert', node })
-  if (refusal) return { ok: false, refusal }
+  if (refusal) return { ok: false, constraint: describeStructuralRefusal({ refusal, node }) }
 
   return { ok: true, commit: { parentNodeId: node.id, ...resolveInsertAnchor(tree, node, index) } }
 }
@@ -194,15 +204,18 @@ export function planSourceInsert(
 function resolveInsertContainer(
   tree: NodeTree<PageNode>,
   parentId: string,
-): { ok: true; node: PageNode } | { ok: false; refusal: StructuralRefusal } {
+): { ok: true; node: PageNode } | { ok: false; constraint: EditConstraint } {
   const parent = tree.nodes[parentId]
   if (!parent) {
+    // No node to point at: the whole refusal is that there ISN'T one any more.
     return {
       ok: false,
-      refusal: {
-        reason: 'insert',
-        message: 'The element this would be added to is no longer on the board. Reload the project and try again.',
-      },
+      constraint: describeStructuralRefusal({
+        refusal: {
+          reason: 'insert',
+          message: 'The element this would be added to is no longer on the board. Reload the project and try again.',
+        },
+      }),
     }
   }
   if (parentId !== tree.rootNodeId || !isStudioPageRootId(tree.rootNodeId)) return { ok: true, node: parent }
@@ -210,15 +223,19 @@ function resolveInsertContainer(
   const sourceChildren = parent.children.filter((id) => isSourceDerivedNodeId(id))
   const only = sourceChildren.length === 1 ? tree.nodes[sourceChildren[0]!] : undefined
   if (!only) {
+    // Same "no single node to point at" case: the page root is synthetic, and
+    // the several real candidates are exactly what makes this ambiguous.
     return {
       ok: false,
-      refusal: {
-        reason: 'insert',
-        message:
-          sourceChildren.length === 0
-            ? 'This page has no element in its code to add anything inside. Add a root element to the file first.'
-            : 'This page has several top-level elements, so Studio cannot tell which one to add this inside. Select the container you want it in, then add it.',
-      },
+      constraint: describeStructuralRefusal({
+        refusal: {
+          reason: 'insert',
+          message:
+            sourceChildren.length === 0
+              ? 'This page has no element in its code to add anything inside. Add a root element to the file first.'
+              : 'This page has several top-level elements, so Studio cannot tell which one to add this inside. Select the container you want it in, then add it.',
+        },
+      }),
     }
   }
   return { ok: true, node: only }
@@ -255,7 +272,7 @@ export function planSourceCopy(
     const node = tree.nodes[id]
     if (!node) continue
     const refusal = refuseStructuralEdit({ kind, node })
-    if (refusal) return { ok: false, refusal }
+    if (refusal) return { ok: false, constraint: describeStructuralRefusal({ refusal, node }) }
   }
   return { ok: true, commit: null }
 }
@@ -269,12 +286,52 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   wrap: 'Wrap refused',
 } as const
 
-/** Surface a refused structural gesture. Every path into the store shares this, so the wording cannot drift per surface. */
+/**
+ * Surface a refused structural gesture. Every path into the store shares this,
+ * so the wording cannot drift per surface.
+ *
+ * Three properties this toast has that an ordinary one does not, all of them
+ * because a refusal is not a notification — it is the answer to something the
+ * user just tried to do:
+ *
+ *  - **It does not expire** (`durationMs: null`). A refusal explains why the
+ *    canvas did not change; a 6-second window to read a two-clause sentence
+ *    about `.map` rows meant most of them were never read at all.
+ *  - **It collapses repeats** (`dedupeKey`). Dragging the same locked element
+ *    four times is one fact, not four cards; the provider counts the attempts
+ *    on the card that is already showing.
+ *  - **It carries the way forward** — the constraint's first runnable action,
+ *    or failing that a jump to the source position it names. That is the whole
+ *    point of `EditConstraint.actions`/`origin`, which nothing rendered until
+ *    now.
+ */
 export function toastStructuralRefusal(
   title: (typeof STRUCTURAL_REFUSAL_TITLE)[keyof typeof STRUCTURAL_REFUSAL_TITLE],
-  refusal: StructuralRefusal,
+  constraint: EditConstraint,
+  /**
+   * The store's own `get`. Supplied by every real call site; what makes the
+   * toast's jump-to-source button possible from inside a store action without
+   * importing the composed store (see `openSourceFile`'s doc). Omitted only in
+   * tests that assert the sentence rather than the jump.
+   */
+  getState?: () => SourceFileOpener,
 ): void {
-  pushToast({ kind: 'warning', title, body: refusal.message, location: 'site-editor' })
+  const context = getState
+    ? { openSource: (origin: Parameters<typeof openSourceFile>[1]) => openSourceFile(getState(), origin) }
+    : {}
+  const action = constraintPrimaryAction(constraint, context)
+  pushToast({
+    kind: 'warning',
+    title,
+    body: constraintToastBody(constraint, context),
+    location: 'site-editor',
+    durationMs: null,
+    // Same gesture + same reason + same sentence = the same refusal. The
+    // sentence is in the key because one reason (`insert`) covers several
+    // genuinely different explanations.
+    dedupeKey: `structural-refusal:${title}:${constraint.reason}:${constraint.explanation}`,
+    ...(action ? { action } : {}),
+  })
 }
 
 /**

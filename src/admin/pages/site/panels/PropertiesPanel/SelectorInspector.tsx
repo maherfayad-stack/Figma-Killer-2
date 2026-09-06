@@ -17,11 +17,7 @@ import { StyleRuleComposer } from './StyleRuleComposer'
 import { StyleCategoryRail } from './StyleCategoryRail'
 import { GeneratedUtilityLockedState } from './StyleSurface'
 import { useScrollSpy } from './useScrollSpy'
-import {
-  CLASS_STYLE_SECTIONS,
-  getClassStyleSectionSetCounts,
-  getActiveStyleTab,
-} from './cssControlTypes'
+import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
 import styles from './PropertiesPanel.module.css'
 
 const FIRST_STYLE_SECTION_ID = CLASS_STYLE_SECTIONS[0].id

@@ -53,15 +53,27 @@
  * `getCSSPropertyDefaultValue`'s hand-written table. `null` (no canvas frame
  * mounted — every existing panel test, or a not-yet-rendered node) degrades
  * to exactly the pre-F1 behaviour.
+ *
+ * ## Pre-flight writability — a control must not accept an edit it cannot save
+ *
+ * `resolveClassCssEditability` (now `classCssWritability.ts`) fed exactly one
+ * consumer: the target chip's tooltip. That EXPLAINED the outcome without
+ * acting on it — every property row of a compiled/unmapped class stayed fully
+ * editable, and the user learned the truth from a toast ~2 s after autosave
+ * ran, by which point the value was on the canvas and nowhere else.
+ *
+ * The same verdict now also produces `classWriteLockReason`, provided through
+ * `StyleWriteLockContext` around the CLASS block only. `ClassPropertyRow`
+ * reads it and renders disabled; `ClassCssLockedNotice` states the reason at
+ * the top of the block and offers the Element target — the remedy the chip's
+ * tooltip and the save toast both recommend and neither ever offered.
  */
 
 import { useState, useRef, type ReactNode } from 'react'
-import { useEditorStore } from '@site/store/store'
+import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
-import { canWriteInlineStyleForModule, isGeneratedClassLocked, styleRuleSelector, styleRuleDisplayName } from '@core/page-tree'
-import { classifyStylesheetEditability } from '@core/css-codemods'
-import { getStudioStyleRuleSources, resolveCssInsertDestination } from '@site/studio/styleRuleWriteback'
+import { canWriteInlineStyleForModule, isGeneratedClassLocked, isStudioPageRootId, styleRuleSelector, styleRuleDisplayName } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { SearchBar } from '@ui/components/SearchBar'
 import { Section } from '@ui/components/Section'
@@ -70,14 +82,12 @@ import { InlineStyleComposer } from './InlineStyleComposer'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { StyleCategoryRail, MODULE_CATEGORY_ID } from './StyleCategoryRail'
 import { StyleTargetChip, type ClassCssEditability } from './StyleTargetChip'
+import { ClassCssLockedNotice } from './ClassCssLockedNotice'
+import { classCssWriteLockReason, resolveClassCssEditability } from './classCssWritability'
+import { StyleWriteLockContext } from './StyleWriteLockContext'
 import { useScrollSpy } from './useScrollSpy'
-import {
-  ALL_CURATED_CSS_PROPERTIES,
-  CLASS_STYLE_SECTIONS,
-  getCSSPropertyDefaultValue,
-  getClassStyleSectionSetCounts,
-  getActiveStyleTab,
-} from './cssControlTypes'
+import { ALL_CURATED_CSS_PROPERTIES, getCSSPropertyDefaultValue } from './cssControlTypes'
+import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
 import {
   buildClassChain,
   buildStableProvenanceMap,
@@ -295,6 +305,17 @@ export function StyleSurface({
     ? resolveClassCssEditability(activeClass)
     : undefined
 
+  // Pre-flight write lock. Outside Studio there is no `.css` file on disk for
+  // a class to fail to reach — every class resolves `unmapped` there and
+  // saves normally — so the lock is gated on the active page actually being a
+  // parsed Studio page. See `classCssWritability.ts`'s "Why the lock is gated
+  // on a Studio session".
+  const studioSession = useEditorStore((s) => {
+    const page = selectActiveCanvasPage(s)
+    return page != null && isStudioPageRootId(page.rootNodeId)
+  })
+  const classWriteLockReason = classCssWriteLockReason(classCssEditability, { studioSession })
+
   // Rail dot badges reflect the UNION of what's actually set across every
   // block currently visible — a property set via the class OR via inline
   // both count as "this section has content".
@@ -364,15 +385,36 @@ export function StyleSurface({
         <GeneratedUtilityLockedState cls={activeClass!} />
       </div>
     ) : (
-      <StyleRuleComposer
-        key={`${activeClassId}-${activeTab}`}
-        classId={activeClassId!}
-        cls={activeClass!}
-        styleQuery={styleQuery}
-        computedValues={computedValues}
-        provenanceByProperty={provenanceByProperty}
-        styleTarget={styleTarget}
-      />
+      // The lock is provided around the CLASS composer only — the Element
+      // block below has its own, unrelated per-property `codeProps` story and
+      // must not inherit a class's verdict. Every `ClassPropertyRow` beneath
+      // this reads it through `useStyleWriteLock()` and renders disabled.
+      //
+      // Known, deliberate gap (the same one `InlineStyleComposer`'s doc
+      // records for its own per-property locks): the bespoke visual controls
+      // the Layout/Size/Spacing/Fill sections own do not route through
+      // `ClassPropertyRow` and stay live. The banner above them states the
+      // fact for the whole class; disabling each of those widgets is the
+      // full typed-constraint model (Track F / `editConstraint.ts`), not a
+      // second copy of this predicate scattered across seven sections.
+      <StyleWriteLockContext.Provider value={classWriteLockReason}>
+        {classWriteLockReason && (
+          <ClassCssLockedNotice
+            selector={styleRuleSelector(activeClass!)}
+            reason={classWriteLockReason}
+            onStyleElement={canToggleElement ? () => setInlineStyleEditing(true) : undefined}
+          />
+        )}
+        <StyleRuleComposer
+          key={`${activeClassId}-${activeTab}`}
+          classId={activeClassId!}
+          cls={activeClass!}
+          styleQuery={styleQuery}
+          computedValues={computedValues}
+          provenanceByProperty={provenanceByProperty}
+          styleTarget={styleTarget}
+        />
+      </StyleWriteLockContext.Provider>
     )
   }
 
@@ -399,7 +441,11 @@ export function StyleSurface({
           </div>
         )}
         {classBlock && (
-          <div className={styles.targetBlock} data-testid="style-target-block-class">
+          <div
+            className={styles.targetBlock}
+            data-testid="style-target-block-class"
+            data-write-locked={classWriteLockReason ? 'true' : 'false'}
+          >
             <div className={styles.targetBlockLabel}>{styleRuleSelector(activeClass!)}</div>
             {classBlock}
           </div>
@@ -613,44 +659,3 @@ function moduleMatchesQuery(query: string, definition: AnyModuleDefinition): boo
 }
 
 function noop() {}
-
-/**
- * Track B1/B1b's `resolveCssInsertDestination` gates a brand-new rule's
- * insert destination on the rule having been AUTHORED in the editor
- * (`createClass`/`applyCssRules`, `nanoid()` ids) rather than parsed from an
- * import (`sc-`-prefixed, deterministic ids — `studioCss.ts`'s "Stable
- * ids"). That gate function (`isEditorAuthoredRuleId`) is intentionally
- * private to `styleRuleWriteback.ts` (not part of its public surface); this
- * mirrors the exact same one-line invariant so the chip's "will create" claim
- * can never diverge from what `collectStyleRuleEdits` actually attempts —
- * see that module's own doc for why the distinction matters (an unmapped
- * IMPORTED rule — Tailwind/Sass/PostCSS output — has a real reason to stay
- * unmapped and must never appear to gain a fabricated write target).
- */
-function isEditorAuthoredClassId(classId: string): boolean {
-  return !classId.startsWith('sc-')
-}
-
-/**
- * Track F1 — the `StyleTargetChip`'s per-class write-back tier, resolved
- * from the current project's `styleRuleSources` map (§6.3's `StyleRule.id ->
- * (file, selector)`) plus `classifyStylesheetEditability` (`@core/css-
- * codemods`) and, when no source exists yet, `resolveCssInsertDestination`
- * (Track B1/B1b) — shared verbatim with the server-side write dispatcher so
- * the chip's claim and the actual save outcome can never diverge.
- */
-function resolveClassCssEditability(cls: StyleRule): ClassCssEditability {
-  const source = getStudioStyleRuleSources()[cls.id]
-  if (source) {
-    const editability = classifyStylesheetEditability(source.file)
-    return editability.kind === 'plain-css'
-      ? { kind: 'plain-css', file: source.file }
-      : { kind: 'compiled', reason: editability.reason }
-  }
-  if (!isEditorAuthoredClassId(cls.id)) return { kind: 'unmapped' }
-  const destination = resolveCssInsertDestination(cls)
-  if (!destination.ok) return { kind: 'unmapped', reason: destination.message }
-  return destination.kind === 'existing'
-    ? { kind: 'will-create-existing', file: destination.file }
-    : { kind: 'will-create-new-stylesheet', pageFile: destination.pageFile }
-}

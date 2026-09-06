@@ -13,6 +13,12 @@ for everything else.
 GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
    └─ loadStudioPages()                          studioPageLoad.ts
         1. discoverPageFiles(pagesDir)           studioProjects.ts
+        1b. discoverStories + buildStoryRouteEntries
+                                                 studio/story{Discovery,Pages}.ts
+            W5-3 — Storybook CSF becomes extra route entries. Gated on a
+            filename glob, so a project with no `*.stories.*` pays nothing.
+            Accepted subset + the named refusals + measured acceptance
+            rates: studio-import.md §"Storybook stories as pages".
         2. parsePageFile() per file              page-parser/parsePageFile.ts
         3. resolveComponentSources()             componentSources.ts   local | package
         4. inlineLocalComponents()               inlineLocalComponents.ts
@@ -201,6 +207,26 @@ The AST adds the refusals only it can answer: `not-siblings`,
 `expression-child` (the element comes out of `{cond && <X/>}`, so its position
 is decided at runtime), `mixed-indentation`, `no-jsx-parent` (it is what the
 component returns), `stale-source`.
+
+**A refusal reaches the user as an `EditConstraint`, never a bare string.**
+`describeStructuralRefusal` (`src/core/page-tree/editConstraint.ts`) dresses
+the rule's `{reason, message}` with the two things a person needs next: the
+`origin` (`rel:line:col`) the refusal traces to, and its `actions` — zero or
+more named ways forward. Every surface renders that one object:
+
+| Surface | What it shows |
+|---|---|
+| Refusal toast (`toastStructuralRefusal`) | Persistent (`durationMs: null`), deduped by gesture + reason + sentence, with the first runnable action — or the jump to `origin` — as its button |
+| Layers context menu | Disabled item + tooltip, plus a `ConstraintNotice` footer carrying `origin` and `actions` |
+| Canvas drag | The explanation as a chip beside the refused drop rect, while the pointer is still down (`explainGestureConstraint` → `canvasDnd.ts`'s `invalid.constraint`) |
+
+`ConstraintNotice` (`src/admin/pages/site/ui/ConstraintNotice/`) is the shared
+renderer; `resolveConstraintAction` (`@site/store/constraintActions` — beside
+the store, because the toast is fired from inside a store action) is the one
+kind → handler table. **An action with no honest handler renders as plain
+text, not a disabled button** — "Drag them one by one" is advice, not a command
+the editor can run. Copy is rendered as the engine authored it; no surface
+rewrites it.
 
 A delete is NOT refused for orphaning an import. `pruneOrphanedImports` retires
 any binding the removed markup alone was using, once per file after the whole

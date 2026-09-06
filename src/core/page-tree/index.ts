@@ -33,6 +33,7 @@ export {
   isPropPatchWritableToSource,
   isStyleWritableToSource,
   isStylePatchWritableToSource,
+  STYLE_VALUE_PREFIX,
   styleValueKey,
   canWriteInlineStyleForModule,
 } from './sourceWritability'
@@ -58,6 +59,7 @@ export type {
 // surface renders: reason + human explanation + a way forward. See the
 // module's own doc for why this stays a read-only translation layer.
 export {
+  describeStructuralRefusal,
   explainClassNameConstraint,
   explainCssRuleConstraint,
   explainDetachConstraint,

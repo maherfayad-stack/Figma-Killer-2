@@ -186,10 +186,10 @@ export function DesignImportDialog({ onClose }: DesignImportDialogProps) {
               size="sm"
               type="button"
               onClick={() => void handleApply()}
-              disabled={busy || totalSelected === 0}
-              aria-busy={busy}
+              disabled={totalSelected === 0}
+              loading={busy}
             >
-              {busy ? 'Applying…' : `Apply ${totalSelected} of ${totalCandidates}`}
+              {`Apply ${totalSelected} of ${totalCandidates}`}
             </Button>
           </>
         ) : (
@@ -202,10 +202,10 @@ export function DesignImportDialog({ onClose }: DesignImportDialogProps) {
               size="sm"
               type="submit"
               form={FORM_ID}
-              disabled={!canFetch || busy}
-              aria-busy={busy}
+              disabled={!canFetch}
+              loading={busy}
             >
-              {busy ? 'Fetching…' : 'Fetch'}
+              Fetch
             </Button>
           </>
         )

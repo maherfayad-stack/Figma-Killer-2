@@ -71,6 +71,30 @@ function loadSiteWithNode(): { nodeId: string } {
   return { nodeId }
 }
 
+/**
+ * The same single-node page, but with a STUDIO node id — a `rel:line:col`
+ * source location, the only kind `decodeSourceNodeId` can name a file from.
+ */
+function loadSiteWithStudioNode(): { nodeId: string } {
+  const rootId = 'page-studio:body'
+  const nodeId = 'src/pages/Home.tsx:12:4'
+  const rootNode = makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] })
+  const textNode = makeNode({
+    id: nodeId,
+    moduleId: 'base.text',
+    props: { text: 'Hello', tag: 'h2' },
+    children: [],
+  })
+  const page = makePage({
+    id: 'page-studio',
+    rootNodeId: rootId,
+    nodes: { [rootId]: rootNode, [nodeId]: textNode },
+  })
+  const site = makeSite({ pages: [page] })
+  useEditorStore.setState({ site, activePageId: 'page-studio' } as Parameters<typeof useEditorStore.setState>[0])
+  return { nodeId }
+}
+
 function selectClass(nodeId: string, name: string) {
   const state = useEditorStore.getState()
   const cls = state.createClass(name)
@@ -175,6 +199,49 @@ describe('ClassPicker — search + create', () => {
     const node = state.site!.pages[0].nodes[nodeId]
     const classNames = node.classIds.map((id) => state.site!.styleRules[id]?.name)
     expect(classNames).toContain('brand-new')
+  })
+
+  /**
+   * A class created here is created FOR a selected element, and
+   * `styleRuleWriteback.ts`'s `resolveCssInsertDestination` reads exactly
+   * `scope.nodeId` to decide which page's stylesheet the class's first
+   * declarations belong in. Without the scope, a project whose pages each own
+   * a `*.module.css` refuses every new class as "N candidate stylesheets".
+   */
+  it('scopes a class created on a Studio node to that node, so its CSS has a destination', async () => {
+    const user = userEvent.setup()
+    const { nodeId } = loadSiteWithStudioNode()
+    render(<ClassPicker nodeId={nodeId} />)
+
+    const input = screen.getByPlaceholderText('Add or create selector…')
+    await user.click(input)
+    await user.type(input, 'hero-card')
+    await user.keyboard('{Enter}')
+
+    const state = useEditorStore.getState()
+    const created = Object.values(state.site!.styleRules).find((rule) => rule.name === 'hero-card')
+    expect(created?.scope).toEqual({ type: 'node', nodeId, role: 'module-style' })
+  })
+
+  /**
+   * A CMS nanoid node id decodes to no file, so a scope built from one buys
+   * the destination resolver nothing — while still making the class clone
+   * rather than share when its node is duplicated. Deliberately not set.
+   */
+  it('leaves a class created on a non-source node unscoped', async () => {
+    const user = userEvent.setup()
+    const { nodeId } = loadSiteWithNode()
+    render(<ClassPicker nodeId={nodeId} />)
+
+    const input = screen.getByPlaceholderText('Add or create selector…')
+    await user.click(input)
+    await user.type(input, 'plain-card')
+    await user.keyboard('{Enter}')
+
+    const state = useEditorStore.getState()
+    const created = Object.values(state.site!.styleRules).find((rule) => rule.name === 'plain-card')
+    expect(created).toBeTruthy()
+    expect(created?.scope).toBeUndefined()
   })
 
   it('disables the submit button when query is empty', () => {

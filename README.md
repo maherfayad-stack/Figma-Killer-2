@@ -64,14 +64,16 @@ bun install
 bun run dev            # http://localhost:5173
 ```
 
-Then open the editor with Studio mode on:
+Then open the editor:
 
 ```
-/admin/site?studio
+/admin/site
 ```
 
 Projects live in `studio-workspace/<project>/`. Create one from the Overview
-launcher, or import a repo from GitHub. A project can carry a `.studio/meta.json`
+launcher, or import a repo from GitHub. The launcher sets which project is
+open; it is sticky across reloads, and with no selection the server falls back
+to the first project on disk. A project can carry a `.studio/meta.json`
 sidecar pointing at its real screens directory:
 
 ```jsonc

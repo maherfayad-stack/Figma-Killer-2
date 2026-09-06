@@ -69,4 +69,37 @@ describe('computeZoomToFitTransform', () => {
     const withPadding = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 100)
     expect(withPadding!.zoom).toBeLessThan(withoutPadding!.zoom)
   })
+
+  // ── viewport-01: `cover` mode, behind the toolbar zoom menu's "Fill" ──────
+
+  it("cover takes the LARGER axis ratio, so the content fills rather than letterboxes", () => {
+    const rects = [{ left: 0, top: 0, width: 4000, height: 2000 }]
+    const contain = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 0, 'contain')
+    const cover = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 0, 'cover')
+    // width ratio 0.25, height ratio 0.4 → contain picks 0.25, cover picks 0.4.
+    expect(contain!.zoom).toBeCloseTo(0.25, 5)
+    expect(cover!.zoom).toBeCloseTo(0.4, 5)
+  })
+
+  it('cover still centers the union', () => {
+    const rects = [{ left: 0, top: 0, width: 4000, height: 2000 }]
+    const cover = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 0, 'cover')!
+    expect(cover.panX).toBeCloseTo(500 - 2000 * cover.zoom, 5)
+    expect(cover.panY).toBeCloseTo(400 - 1000 * cover.zoom, 5)
+  })
+
+  it('cover ignores the Infinity sentinel of a one-axis-degenerate rect', () => {
+    // A 0-height frame yields heightRatio === Infinity. A plain Math.max would
+    // pick it and clamp straight to MAX_ZOOM — the opposite of "fill".
+    const rects = [{ left: 0, top: 0, width: 4000, height: 0 }]
+    const cover = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 0, 'cover')
+    expect(cover!.zoom).toBeCloseTo(0.25, 5)
+  })
+
+  it('defaults to contain when no mode is passed', () => {
+    const rects = [{ left: 0, top: 0, width: 4000, height: 2000 }]
+    const implicit = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 0)
+    const explicit = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 0, 'contain')
+    expect(implicit).toEqual(explicit)
+  })
 })

@@ -2,8 +2,8 @@
  * createConfirmContext — shared machinery for "preview impact, then either
  * fast-commit or show a confirmation dialog" providers.
  *
- * Both <FrameworkChangeConfirmProvider/> and <VCDeletionConfirmProvider/>
- * follow the same lifecycle:
+ * <FrameworkChangeConfirmProvider/> — currently the only provider built on it —
+ * follows this lifecycle:
  *   1. A caller requests a destructive change through the consumer hook.
  *   2. The provider resolves the request — computing the impact and deciding
  *      whether it can be handled immediately (no impact, or routed to another

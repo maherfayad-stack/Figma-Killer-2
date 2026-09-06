@@ -502,6 +502,29 @@ export const StudioComputedStylesInputSchema = Type.Object({
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 300, description: 'Cap on reported nodes. Default 80, with an honest truncated count.' })),
 })
 
+/**
+ * `studio_page_diagnostics` — the BROWSER leg's input shape (page ids already
+ * resolved). The model-facing tool takes screen NAMES and resolves them
+ * server-side, exactly as `studio_screenshot` does for
+ * `StudioExportFramesInputSchema`.
+ *
+ * Batch by construction: a build turn wants "did anything throw on any of the
+ * screens I just wrote", and asking that one page at a time is N round trips
+ * for one question.
+ */
+export const StudioPageDiagnosticsInputSchema = Type.Object({
+  pageIds: Type.Array(Type.String({ minLength: 1 }), {
+    minItems: 1,
+    maxItems: 20,
+    description: 'Studio page ids whose live board frames are read. Each must be a frame on the currently open board.',
+  }),
+  limit: Type.Optional(Type.Integer({
+    minimum: 1,
+    maximum: 100,
+    description: 'Cap on distinct findings reported PER PAGE. Default 25, with an honest truncated count.',
+  })),
+})
+
 export const StudioDuplicateFrameAsVariantInputSchema = Type.Object({
   pageId: Type.String({ minLength: 1, description: 'Studio page id whose board frame is duplicated as a new, independently-addressable variant frame.' }),
   frameId: Type.Optional(Type.String({ description: 'Duplicate a SPECIFIC frame when the page already has more than one — omit to duplicate the first frame found for pageId.' })),

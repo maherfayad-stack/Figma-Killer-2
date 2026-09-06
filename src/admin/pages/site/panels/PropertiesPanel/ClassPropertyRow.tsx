@@ -10,6 +10,23 @@
  * control itself is visually unchanged from a module property row.
  *
  * Phase 3 / Task #464 / Spec #671.
+ *
+ * ## Pre-flight write lock
+ *
+ * A row reads `useStyleWriteLock()` — the reason, if any, that declarations
+ * typed into the ENCLOSING style target cannot reach the user's source
+ * (`classCssWritability.ts`, provided by `StyleSurface` around the class
+ * block). When one is present the row renders every control `disabled`, drops
+ * its remove button, and carries the reason as its `title`.
+ *
+ * This is deliberately a *pre-flight* gate, not a post-hoc report: the same
+ * fact used to be discovered only by the save, ~2 s later, as a toast listing
+ * selectors whose values never left the browser. `handleControlChange` /
+ * `handleTokenCommit` / `handleControlPreview` short-circuit as well as
+ * disabling the widgets, for the same belt-and-braces reason
+ * `InlineStyleComposer` refuses its locked properties client-side: a value the
+ * user can watch "stick" on the canvas and then lose on reload is worse than
+ * one that was never accepted.
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -44,6 +61,7 @@ import {
 import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { getFontWeightOptions } from './fontWeightOptions'
 import type { PropertyProvenance } from './stylePropertyProvenance'
+import { useStyleWriteLock } from './StyleWriteLockContext'
 import styles from './ClassPropertyRow.module.css'
 
 // ---------------------------------------------------------------------------
@@ -110,14 +128,15 @@ interface ClassPropertyRowProps {
    * value the control itself shows or edits — `value`/`placeholder`/`isSet`
    * above, driven by the caller's own target-specific bag, are unchanged.
    *
-   * F2 seam: a locked/refused WRITE reason for this specific row (e.g. this
-   * property resolved from a code expression) is a SEPARATE fact from
-   * provenance and is not modeled here yet — `InlineStyleComposer`'s
-   * `lockedPropertySet` currently short-circuits `onChange`/`onRemove`
-   * before this component ever sees the row. When F2's `EditConstraint`
-   * lands (`editConstraint.ts`, `scope: 'style-property'`), the natural next
-   * step is a `constraint?: EditConstraint` prop here, rendered as a
-   * lock glyph next to (not replacing) this provenance strip.
+   * A locked/refused WRITE reason is a SEPARATE fact from provenance and is
+   * not carried here. The TARGET-wide one (this whole class has no editable
+   * CSS source) arrives through `useStyleWriteLock()` — see this file's
+   * "Pre-flight write lock". The remaining PER-PROPERTY one (this single
+   * property resolved from a code expression) is still short-circuited by
+   * `InlineStyleComposer`'s `lockedPropertySet` before this component sees
+   * the row; when F2's `EditConstraint` lands (`editConstraint.ts`,
+   * `scope: 'style-property'`) the natural next step is for it to travel
+   * through the same context, per property.
    */
   provenance?: PropertyProvenance
 }
@@ -135,6 +154,10 @@ export function ClassPropertyRow({
   onClearPreview,
   provenance,
 }: ClassPropertyRowProps) {
+  // Pre-flight: why an edit to the enclosing style target can't reach the
+  // user's source, or `null` when it can. See this file's doc.
+  const writeLockReason = useStyleWriteLock()
+  const writeLocked = writeLockReason !== null
   const type = getCSSPropertyControlType(property)
   const tokenSource = getCSSPropertyTokenSource(property)
   const label = cssPropertyLabel(String(property))
@@ -195,7 +218,13 @@ export function ClassPropertyRow({
 
   // Translate a control's (propKey, val) onChange signature into a typed
   // CSSPropertyBag value, coercing to number when the property expects one.
+  const handleRemove = () => {
+    if (writeLocked) return
+    onRemove(property)
+  }
+
   const handleControlChange = (_key: string, val: unknown) => {
+    if (writeLocked) return
     const nextValue = String(val ?? '')
     if (NUMBER_TYPED_PROPS.has(property)) {
       const parsed = Number(nextValue)
@@ -209,6 +238,7 @@ export function ClassPropertyRow({
   // It already returns undefined for empty input (clears the value), so
   // the only translation we do here is the number-typed coercion.
   const handleTokenCommit = (resolved: string | undefined) => {
+    if (writeLocked) return
     if (NUMBER_TYPED_PROPS.has(property)) {
       if (resolved == null || resolved === '') {
         onChange(property, undefined)
@@ -225,7 +255,7 @@ export function ClassPropertyRow({
   // routed to `onPreview` so the value lands on the canvas transiently
   // (no history entry). No-op when the parent didn't wire a preview channel.
   const handleControlPreview = (_key: string, val: unknown) => {
-    if (!onPreview) return
+    if (!onPreview || writeLocked) return
     const nextValue = String(val ?? '')
     if (NUMBER_TYPED_PROPS.has(property)) {
       const parsed = Number(nextValue)
@@ -236,7 +266,7 @@ export function ClassPropertyRow({
   }
 
   const handleTokenPreview = (resolved: string | undefined) => {
-    if (!onPreview) return
+    if (!onPreview || writeLocked) return
     if (NUMBER_TYPED_PROPS.has(property)) {
       if (resolved == null || resolved === '') {
         onPreview(property, undefined)
@@ -265,6 +295,7 @@ export function ClassPropertyRow({
         onChange={handleControlChange}
         label={label}
         layout={resolvedLayout}
+        disabled={writeLocked}
         onPreview={onPreview ? (v) => handleControlPreview(String(property), v) : undefined}
         onClearPreview={onClearPreview}
       />
@@ -275,6 +306,7 @@ export function ClassPropertyRow({
         propKey={String(property)}
         label={label}
         layout={resolvedLayout}
+        disabled={writeLocked}
       >
         <TokenAwareInput
           aria-label={label}
@@ -282,6 +314,7 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           prefix={glyphPrefix}
           tokens={tokens}
+          disabled={writeLocked}
           onCommit={handleTokenCommit}
           onPreview={onPreview ? handleTokenPreview : undefined}
           onClearPreview={onClearPreview}
@@ -295,8 +328,9 @@ export function ClassPropertyRow({
     // Clicking the active segment clears the property, which is the only way
     // back to "unset" once a toggle group has no empty option.
     control = (
-      <ControlRow propKey={String(property)} label={label} layout={resolvedLayout}>
+      <ControlRow propKey={String(property)} label={label} layout={resolvedLayout} disabled={writeLocked}>
         <SegmentedControl
+          disabled={writeLocked}
           value={value !== undefined && value !== '' ? String(value) : undefined}
           options={iconEnumOptions.map((option) => ({
             value: option.value,
@@ -306,7 +340,7 @@ export function ClassPropertyRow({
             tooltip: option.tooltip,
           }))}
           onChange={(next) => handleControlChange(String(property), next)}
-          onClear={() => onRemove(property)}
+          onClear={handleRemove}
           fullWidth={iconEnumOptions.some((option) => option.label != null)}
           aria-label={label}
         />
@@ -325,6 +359,7 @@ export function ClassPropertyRow({
         value={String(value ?? '')}
         onChange={handleControlChange}
         label={label}
+        disabled={writeLocked}
       />
     )
   } else switch (type) {
@@ -338,6 +373,7 @@ export function ClassPropertyRow({
           onChange={handleControlChange}
           label={label}
           layout={resolvedLayout}
+          disabled={writeLocked}
           onPreview={onPreview ? (v) => handleControlPreview(String(property), v) : undefined}
           onClearPreview={onClearPreview}
         />
@@ -357,6 +393,7 @@ export function ClassPropertyRow({
           onChange={handleControlChange}
           label={label}
           layout={resolvedLayout}
+          disabled={writeLocked}
           options={[
             { label: '—', value: '' },
             ...opts.map((o) => ({ label: o, value: o })),
@@ -384,6 +421,7 @@ export function ClassPropertyRow({
           onChange={handleControlChange}
           label={label}
           layout={resolvedLayout}
+          disabled={writeLocked}
           prefix={glyphPrefix}
           nudgeEmptyUnit={nudgeEmptyUnit}
         />
@@ -413,20 +451,25 @@ export function ClassPropertyRow({
         layout === 'stacked' && styles.propertyRowWrapStacked,
         resolvedLayout === 'bare' && styles.propertyRowWrapBare,
         !isSet && styles.propertyRowUnset,
+        writeLocked && styles.propertyRowLocked,
       )}
       data-state={isSet ? 'set' : 'unset'}
+      data-write-locked={writeLocked ? 'true' : undefined}
+      title={writeLockReason ?? undefined}
       data-testid={`css-property-row-${String(property)}`}
     >
       {/* Control renders with its own .controlWrapper — identical to module rows (PP-18) */}
       {control}
 
-      {/* Remove button: overlaid on the label column; revealed on hover/focus-within */}
-      {isSet && (
+      {/* Remove button: overlaid on the label column; revealed on hover/focus-within.
+          A locked row has no remove affordance — removing a declaration is a
+          write too, and it would fail the same way setting one does. */}
+      {isSet && !writeLocked && (
         <Button
           variant="ghost"
           size="micro"
           iconOnly
-          onClick={() => onRemove(property)}
+          onClick={handleRemove}
           aria-label={`Remove ${label} property`}
           tooltip={`Remove ${label}`}
           className={styles.removeBtn}

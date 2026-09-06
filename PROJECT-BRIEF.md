@@ -62,16 +62,20 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
   Board canvas                        src/admin/pages/site/canvas/
   one <iframe> per frame              IframeFrameSurface.tsx
         │
-        │  user edits a prop / text / style / tag, or reorders / deletes
-        │  an element
+        │  user edits a prop / text / style / class / tag, or inserts,
+        │  reorders or deletes an element
         ▼
   Typed StudioEdit batch              POST /admin/api/studio/save
         │
-        ▼
-  AST codemods                        src/core/ast-codemods/
-  rewrite the user's .tsx             (setJsxProp, setJsxText, setJsxStyle,
-                                       setStringLiteral, setJsxTagName,
-                                       moveJsxElement, deleteJsxElement)
+        ├──▶ AST codemods             src/core/ast-codemods/
+        │    rewrite the user's .tsx  (setJsxProp, setJsxText, setJsxStyle,
+        │                              setJsxClassName, setStringLiteral,
+        │                              setJsxTagName, insertJsxElement,
+        │                              moveJsxElement, deleteJsxElement)
+        │
+        └──▶ postcss CST codemods     src/core/css-codemods/
+             rewrite the user's .css  (setDeclaration, insertRule — routed by
+                                       server/handlers/studioCssWriteback.ts)
 ```
 
 A structural gesture that CANNOT be written (a `.map` row, a shared component,
@@ -84,8 +88,14 @@ never silently no-ops.
 1. **Parse, never execute.** No component is rendered server-side, no hook is
    called. Every value on the canvas was read out of the AST. This is why there
    is a hand-written bounded evaluator with explicit tiers instead of "just run
-   it". *(The V2 roadmap proposes relaxing this behind an explicit trust tier —
-   see §4. Until that ships, the invariant holds absolutely.)*
+   it". *The trust-tier relaxation has now shipped, and it is narrow:* at Tier 0
+   (`static`, the default) nothing of the user's ever runs. Promoting to Tier 1
+   (`render-packages`) buys exactly two things — the workspace's own style
+   toolchain compiles in a capped subprocess (`styleCompileTier1.ts`) and its
+   package components are bundled and rendered in the canvas
+   (`componentBundle.ts`). **The parse itself never executes anything at any
+   tier**, and Tier 2 (`run-project`) is a defined value that no gate yet
+   distinguishes from Tier 1 — both read as `trust !== 'static'`.
 2. **A write must have exactly one honest target.** Every lock, every
    `codeProps` entry, every refusal exists because writing an edit there would
    destroy a binding, change N places at once, or write to a file that does not
@@ -98,11 +108,11 @@ never silently no-ops.
 
 | | |
 |---|---|
-| Branch | `feat/alm-figma-killer-studio-shell` |
-| Base branch for PRs | `main` (protected — never push to it) |
-| Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the plan for everything not yet built |
+| Base branch for PRs | `main` (protected — never push to it). Branch per change, `<type>/<kebab>` |
+| Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the feature plan (WS-1…WS-9) |
+| Defect + parity plan | [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) — **§0a is the granular per-track status ledger.** When you need finer detail than the two lists below, read it there, not here |
 | Live coordination | [`STATE.md`](STATE.md) — **read at the start of every task, write at the end** |
-| Entry point in the app | `/admin/site?studio` (`src/admin/pages/site/studio/studioMode.ts` — sticky in localStorage) |
+| Entry point in the app | `/admin/site` — `src/admin/router.tsx` renders the studio editor there unconditionally; there is no mode flag and no `?studio` param. Which project is open comes from `src/admin/pages/site/studio/studioWorkspaceDir.ts` (localStorage-sticky, set by the Overview launcher; the server falls back to the first project on disk) |
 | Test projects on disk | `studio-workspace/` — `test`, `esim-journey`, `my-workspace`, `untitled*` |
 
 ### What works today (do not rebuild)
@@ -125,46 +135,96 @@ never silently no-ops.
   `node_modules` and injected into the canvas iframe as a read-only
   `@layer vendor` bucket (`ProjectCssInjector`), ordered below the editable
   `@layer user-authored` class registry — Tier 0 safe, no trust gate
-- npm package components (`pkg-01`/`pkg-02`): manifest → bundle → register →
-  render is wired end to end for **any** installed package, not just the
-  hardcoded `@alm-design/design-system` — `server/handlers/studio/
-  componentBundle.ts` (`tryServeStudioComponentBundle`),
+- **Trust tiers.** `.studio/meta.json`'s `trust` field has three values —
+  `static` (Tier 0, the never-auto-promoted default), `render-packages`
+  (Tier 1), `run-project` (Tier 2) — read/written by
+  `server/handlers/studio/trustTier.ts` and driven from the client by
+  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion is an
+  explicit user click, never a side effect of loading a page.
+- npm package components (`pkg-01`/`pkg-02`/E4): manifest → bundle → register
+  → render is wired end to end for **any** installed package, not just
+  `@alm-design/design-system` — `server/handlers/studio/componentBundle.ts`
+  (`tryServeStudioComponentBundle`),
   `src/admin/pages/site/studio/registerProjectModules.ts`
-  (`useRegisterProjectModules`). Gated on trust tier ≥ 1
-  (`promoteProjectToTier1`, `studioProjectTrust.ts`) — Tier 0 shows
-  `NodeRenderer`'s "promote this project" placeholder instead, no fetch, no
-  execution. The remaining edge is the **insert picker**, not rendering: it
-  only ever lists `@alm-design/design-system` (registered unconditionally at
-  import, `src/modules/alm/register.tsx`) plus whichever `pkg.*` components the
-  loaded board *already* calls — a package with zero existing call sites in
-  the imported source has no picker row to drag until something else (hand
-  JSX, an agent write) seeds the first instance.
+  (`useRegisterProjectModules`). Registration fires on every project-dir /
+  trust-tier transition and is **not** gated on the board already containing a
+  `pkg.*` node, so a package with zero call sites in the imported source is
+  still draggable from the picker. Rendering stays gated on trust tier ≥ 1 —
+  Tier 0 gets `PackageComponentPlaceholder`'s "promote this project" surface
+  and the picker's own "N components need this project promoted" notice, never
+  a silent empty palette, and never a fetch or an execution.
+- **Dependency install** (E3): the Dependencies panel's Add/Remove run a real
+  `bun add`/`bun remove` (or the project's own detected package manager)
+  against the on-disk project, as a polled job —
+  `server/handlers/studio/installDeps.ts` (`POST /admin/api/studio/install`,
+  mirrored to `.studio/install-job.json` so a `bun --watch` restart mid-install
+  doesn't strand the poller), `panels/DependenciesPanel/`
+  (`DepsSection.tsx`, `useDependencyInstallJob.ts`). A successful install
+  resyncs the package modules without a page refresh.
+- **Project-wide component catalog** (E1): `GET /admin/api/studio/components`
+  (`server/handlers/studio/components.ts`) answers "what components does this
+  project have, and what props do they take" off the same ts-morph `Project`
+  the page parse already builds. Client half + per-dir cache:
+  `studio/componentCatalog.ts`. Live consumers: the instance **swap** picker
+  and the call-site **prop rows** (`InstanceCallSiteView.tsx`), and the
+  slot-fill picker (`property-controls/SlotPicker.tsx`). Local components
+  only; package components are not in it, and neither is the insert picker.
 - Component instances, swap, detach (WS-4.2 / `parser-05` / `instance-ui-01`):
   every local-component call site is a `studio.instance` node with an
   editable call-site prop surface (`InstanceCallSiteView.tsx`, routed from
   `renderModuleTabContent.tsx`), not spliced away. Detach (inline the
-  component's own JSX at the call site) and swap (retarget to another local
-  component) both write real codemods and are wired to the panel — proven
-  end to end by `tests/e2e/instance-selection-ui.e2e.ts` and
-  `instance-fragment-node.e2e.ts` against the real eSIM board. Remaining
-  edges: detach refuses honestly wherever the call site captures a hook or
-  has no writable source location (~42% clean-detach rate measured on the
-  real corpus — the rest are correct refusals, not bugs); swap candidates are
-  only local components already used elsewhere on the loaded board, no
-  project-wide catalog yet; a package-sourced instance cannot be detached yet.
+  component's own JSX at the call site), swap (retarget to another local
+  component, candidates from the catalog above) and extract-a-copy
+  (`extractComponentCopy.ts`, offered as the remedy when detach refuses) all
+  write real codemods and are wired to the panel — proven end to end by
+  `tests/e2e/instance-selection-ui.e2e.ts` and `instance-fragment-node.e2e.ts`
+  against the real eSIM board. Detach refuses honestly wherever the call site
+  captures a hook or has no writable source location (~42% clean-detach rate
+  measured on the real corpus — the rest are correct refusals, not bugs).
+- Extract-to-component and slots (E2): `extractSubtreeToComponent.ts`,
+  `addSlotPropToComponent.ts`, `insertJsxIntoSlotProp.ts` in
+  `src/core/ast-codemods/`; the parser captures fragment-valued slots as
+  `studio.slot` nodes.
+- **Scroll unrolling** — a frame renders a page's full height instead of a
+  clipped scroll region: `canvas/canvasScrollUnroll.ts` (pure classification)
+  + `canvas/CanvasScrollUnrollInjector.tsx` (the per-iframe injector).
+- **Frame multi-select and bulk actions** — Shift-click, ⌘/Ctrl+A, marquee,
+  and bulk align/distribute/tidy:
+  `store/slices/boardFrameSelectionActions.ts`,
+  `canvas/BoardFramesLayer/useMarqueeSelection.ts`, and the multi-frame
+  inspector `panels/PropertiesPanel/FrameBulkInspector.tsx`.
 - Board frames with per-frame x/y/w/h, sticky notes, doc cards, frame virtualization
 - iframe-per-frame canvas with cascade-layered CSS injection, each board frame
   wrapped in `BreakpointFrame.tsx` (`BoardFramesLayer.tsx`) — the same
   design-mode viewport component Live mode uses, load-bearing in both, not
   CMS residue
-- CSS animations freeze (play once, hold last keyframe)
-- CSS write-back to an EXISTING declaration (WS-6.3, `panel-02`): changing a
-  property's value on a rule the parser mapped to a real hand-authored `.css`
-  file round-trips through a real postcss CST edit (`setDeclaration` in
-  `@core/css-codemods`, `server/handlers/studioCssWriteback.ts`) and lands on
-  disk. This is narrower than it sounds — see "What does NOT work today" for
-  the boundary (creating anything new, or writing under a real breakpoint,
-  does not reach disk)
+- CSS animations, transitions, smooth scroll and media autoplay all freeze on
+  the canvas (`canvas/CanvasAnimationInjector.tsx`) — an animation plays once
+  at its authored speed and holds
+- **CSS write-back, three ops, all reaching disk** (WS-6.3 / `panel-02` /
+  Track B1). One server entry, `server/handlers/studioCssWriteback.ts`, one
+  codemod pair in `@core/css-codemods`, one client planner
+  (`studio/styleRuleWriteback.ts`'s `collectStyleRuleEdits`):
+  - `op: 'set'` — change a value on a rule the parser mapped to a real
+    hand-authored `.css` file (`setDeclaration`).
+  - `op: 'insert'` — a rule the user created in the editor that has no source
+    yet, written into the project's one editable stylesheet (`insertRule`).
+    `resolveCssInsertDestination` refuses by name when the destination is
+    ambiguous rather than guessing.
+  - `op: 'create'` — no editable stylesheet exists at all: the server invents
+    one co-located with the page, wires the page's `import`
+    (`ensureStylesheetImport`, a ts-morph edit — which is why it cannot happen
+    client-side), and writes the rule into it.
+
+  All three are formatting-preserving postcss CST edits, and inserting a
+  selector that already exists **merges** rather than adding a second
+  cascade-shadowing block. A rule stays writable through the ordinary `set`
+  path on its next edit with no reload (`commitBaseline` /
+  `recordCreatedStylesheet`). What still does not write is a change scoped to
+  a real `@media` breakpoint — see "What does NOT work today"
+- **Class assignment writes to source** (Track B2): `setJsxClassName.ts` plus
+  the `{ kind: 'class', add, remove }` edit kind (`studio/studioEditPayload.ts`),
+  which is what makes editing a Tailwind element on the canvas possible at all
 - Image upload/replace (WS-8.3) — `<img src={heroImg}>` where `heroImg` is a
   local import is now editable: `ParsedNode.assetOrigin` names the import's
   own specifier literal, `setImportSpecifier` rewrites it, `POST
@@ -182,36 +242,84 @@ never silently no-ops.
   templates in `pageTemplates.ts`, the shared vocabulary in
   `@core/studio-board`'s `pageKinds.ts`. A kind is a creation-time choice only:
   nothing persists it, because the `.tsx` on disk IS the answer
-- MCP server with a live editor bridge + `studio_import_project`
+- Storybook CSF import (`W5-3`): a project's `*.stories.{tsx,ts,jsx}` become
+  board frames — one per accepted story — on a board of their OWN named
+  "Stories", never mixed into the board the author curated. Two accepted
+  shapes, read statically and never executed: an args-only CSF3 object
+  (synthesized into a real call site and run through `inlineLocalComponents`)
+  and a jsx-only function body (the ordinary page pipeline, real writable ids
+  in the `.stories.tsx`). Everything else refuses by name — `render-logic`,
+  `play-function`, `decorators`, `loaders`, `csf2-storiesof`, … — reported by
+  `GET /admin/api/studio/stories`. Measured: **97.8 %** accepted on
+  Shopify Polaris, **67.2 %** on Primer React.
+  `server/handlers/studio/story{Discovery,Pages}.ts`
+- MCP server with a live editor bridge, and ~46 `studio_*` tools in
+  `server/ai/mcp/tools/studio/` — including the **visual-audit loop**
+  (`studio_export_frames`, `studio_screenshot`, `studio_diff_frames`,
+  `studio_compare`, `studio_fidelity_report`, `studio_quality_check`,
+  `studio_measure_reference`, `studio_render_reference`), the catalog reads
+  (`studio_list_components`, `studio_find_component`), `studio_typecheck`,
+  `studio_install_deps` and `studio_create_page`
 
-### What does NOT work today (the roadmap)
+### What does NOT work today
 
-CSS Modules (`.module.css` only — Sass/Less module variants are undetected),
-Tailwind v3/v4 and Sass/PostCSS compilation (WS-2.1 built the pipeline, but it
-requires the project promoted past Tier 0 trust — a fresh import never
-auto-runs it), CSS-in-JS ·
-**creating any new CSS** (a new rule, a new selector, a new stylesheet,
-`@font-face`, a new design token, `@keyframes`) — never reaches disk, reported
-through `collectStyleRuleEdits`'s `unmapped` list and toasted rather than
-silently dropped ·
-**writing a style change under a real `@media`/breakpoint condition** —
-also never reaches disk, reported through `unwritableContexts` rather than
-dropped silently (only a value change to an existing declaration in an
-existing rule, in the board's own synthetic viewport context, writes — see
-"What works today") ·
-scroll unrolling · frame multi-select and bulk actions · Figma-grade
-inspector interactions · visual-audit MCP tools · **reparent / duplicate /
-wrap** (all still refuse) · a project-wide component catalog for the insert
-picker or the swap picker (both list only what the loaded board already
-uses) · detaching a package-sourced instance · adding a component whose
-package the project does not depend on yet (the `import` is written,
-`package.json` is not, and — despite its own "Add package" control — the
-Dependencies panel's CMS half cannot install it either, `DepsSection.tsx`'s
-add/remove are both stubbed with `// TODO(Phase G)`; nothing reaches disk or
-`bun install` from either path today).
+This list is deliberately short and is the *orientation* set. The granular,
+per-track ledger is
+[`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) **§0a** — it
+tracks partially-landed tracks (D2's structural drag work, Track G density,
+A7) at a resolution this file should not try to carry.
 
-All of it is specced in [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md).
-**Read the relevant workstream section before designing anything.**
+One update from the style-compile consent work (2026-09-06): a fresh
+Tailwind/Sass/PostCSS import no longer sits silently unstyled at Tier 0 —
+the board asks once, on load, via `StyleCompileConsentBanner`
+(`src/admin/pages/site/canvas/StyleCompileConsentBanner/`); promotion to
+Tier 1 remains an explicit user action through the existing trust-tier route.
+
+- **A style change scoped to a real `@media` breakpoint does not reach disk.**
+  The codemod and the wire both support it — `insertRule`/`setDeclaration`
+  take an `atMedia` query, and the `insert`/`create` payload schemas carry the
+  field — but **nothing in the editor ever sets it.** A change made in a real
+  user breakpoint context is reported through `collectStyleRuleEdits`'s
+  `unwritableContexts` and toasted, never dropped silently. Only the board's
+  own synthetic `studio` viewport context writes. Wiring a producer for
+  `atMedia` is the whole remaining gap.
+- **A style edit on a rule with no honest destination still refuses.** An
+  imported rule the parser could not map back to a hand-authored `.css` file
+  (Tailwind/Sass/PostCSS output, a non-`.css` module) goes to `unmapped` and is
+  toasted. This is correct behaviour, not a bug — but it is why a Tailwind
+  project's styles are edited through the `class` path, not the style path.
+- **Tailwind v3/v4, Sass and PostCSS compilation requires Tier-1 promotion.**
+  WS-2.1 built the pipeline and it runs in a capped subprocess
+  (`styleCompileTier1.ts`), but a fresh import sits at Tier 0 and never
+  auto-runs it, so a newly imported Tailwind/Sass project renders **unstyled**
+  until a human clicks promote. The refusal is explicit
+  (`style-toolchain-requires-trust-promotion`), not silent.
+- `.module.scss` / `.module.sass` / `.module.less` are **detected and warned
+  about** (`css-module-sass-not-supported`) but not compiled — only plain
+  `.module.css` is.
+- **CSS-in-JS is detection-only.** `styleToolchainDetect.ts` recognises
+  styled-components / emotion / stitches as a dependency and reports it in the
+  project profile. Nothing reads or writes those styles.
+- **reparent / duplicate / wrap all still refuse** —
+  `refuseStructuralEdit` in `src/core/page-tree/sourceStructure.ts`. The copy
+  or the wrapper would have no source location of its own, so it could never be
+  written back. Reorder, delete and insert do write.
+- **JS-driven animation does not freeze.** `CanvasAnimationInjector` handles
+  CSS animations/transitions, smooth scroll and media; it makes no attempt to
+  intercept `requestAnimationFrame`, so framer-motion and GSAP keep running on
+  the canvas.
+- **The insert picker is not seeded from the component catalog.**
+  `ModuleInserterDialog.tsx` / `ModulePicker.tsx` list `registry.list()` — the
+  module registry, i.e. first-party modules plus registered package
+  components. The project's own local components (which E1's catalog knows
+  about, and which the *swap* picker already uses) have no picker rows.
+- **A package-sourced instance cannot be detached** —
+  `detachComponent.ts` refuses with `package-component` and points at the
+  extract-a-copy action instead.
+
+Features not yet built are specced in
+[`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md). **Read the relevant
+workstream section before designing anything.**
 
 ---
 
@@ -293,18 +401,18 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     every store change. The two original offenders are fixed — `PropertiesPanelBody.tsx`'s
     shared-text-origin count and `findNodeById.ts` (`src/admin/pages/site/canvas/
     InPlaceInspector/`) both now read an O(1) index (`_textOriginKeyToCount`/
-    `_nodeIdToPageIds`, WS-5.2) instead of scanning. A worse one exists in the
-    same class and is NOT yet fixed: `selectCanvasPageFor` (`store.ts:300-310`)
-    does an uncached `Array.find` over pages (and over frames, when `frameId` is
-    set), called from a **per-node** selector — `NodeRenderer.tsx` calls it
-    twice per mounted node (`node`, `mcClassName`), and every board frame
-    supplies both `pageId` and `frameId`, so it fires for every live node on
-    every store commit. Cheap on the current 15-page corpus (~30-60
-    comparisons); projects to ~64,000 comparisons per commit on the docs'
-    40-page/800-live-node stress board — the same order of magnitude as the
-    scan WS-5.2 was written to kill. Fix: give it the same sweep-scoped
-    single-slot memo `selectActivePage` already has, seven lines above it in
-    the same file.
+    `_nodeIdToPageIds`, WS-5.2) instead of scanning. `selectCanvasPageFor`
+    (`store.ts`) was the third, and is now fixed on **both** of its lookups:
+    the `pageId → Page` scan is memoised per `(site, pageId)`
+    (`lookupCanvasPageById`, `parity-01` C1) and the `frameId → axes.locale`
+    scan is skipped entirely unless a locale-variant page has actually been
+    fetched, then memoised per `(frames, frameId)` (`perf-03`). It is called
+    from a **per-node** selector — `NodeRenderer.tsx` calls it twice per
+    mounted node (`node`, `mcClassName`) — so on a 40-page/804-live-node board
+    that was 36,180 array comparisons per store commit, now 0. **When you add
+    a branch to a selector on this path, memoise it in the same change**;
+    that is exactly how the `frameId` branch slipped past the first fix.
+    `src/__tests__/store/selectCanvasPageFor.test.ts` is the gate.
 12. **`studio-workspace/*` is user data.** Never `rm -rf` a project directory, and
     never write outside a workspace root without a containment guard.
 13. **Do not run browser/e2e tests to validate UI changes.** The human dogfoods

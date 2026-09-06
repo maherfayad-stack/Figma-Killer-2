@@ -7,3 +7,16 @@
 .row + .row {
     margin-top: var(--space-2xs);
 }
+
+/* Overflow menu item label (Tidy up / Distribute …) — grows to fill the row
+ * so the trailing `ShortcutKeys` (F2) always lands flush against the menu's
+ * right edge regardless of label length. */
+.itemLabel {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.itemShortcut {
+    flex-shrink: 0;
+    color: var(--text-muted);
+}

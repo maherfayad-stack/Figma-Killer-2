@@ -1,44 +1,24 @@
 /**
  * jumpToSource — R8 (`docs/audits/2026-08-06/09-refusal-states.md`): every
- * refusal surface states a `file:line`, and until now none of it was
+ * refusal surface states a `file:line`, and until this landed none of it was
  * clickable — plain text in `SourceConstraintNotice`/`BranchChoiceNotice`.
  *
- * Studio's code surface (`CodeEditorPanel`) opens a `SiteFile` by ID
- * (`openInEditor`), not by workspace-relative path — this resolves an
- * `EditConstraint`/`textOrigin`/`BranchAlternative` origin's `rel` against
- * `site.files` to find that id. `CodeMirrorEditor` has no line-scroll API
- * today, so this opens the FILE, not the exact line — a real, working step
- * forward (R8's "S if a code surface exists and just needs a click handler"),
- * not the full jump. Missing the file (not tracked as a `SiteFile` — an
- * asset outside the workspace scan, a stale path) surfaces through the
- * global toast bus rather than failing silently, per this repo's error
- * handling rules.
+ * The resolution itself (`origin.rel` → `SiteFile` id → `openInEditor`) lives
+ * in `@site/store/openSourceFile`, which takes the state it needs as an
+ * argument so the editor STORE can call it too — a store slice must not import
+ * the composed store back. This is the component-side convenience wrapper:
+ * it supplies `useEditorStore.getState()` so a call site can hand the function
+ * straight to a click handler.
  *
- * A plain function, not a hook — it reads `useEditorStore.getState()`
- * directly (same pattern `LayerNodeContextMenu.tsx`'s dispatch helpers use),
- * so it can be handed straight to a click handler with no extra render-time
- * subscription.
+ * A plain function, not a hook — same pattern `LayerNodeContextMenu.tsx`'s
+ * dispatch helpers use, so it takes no extra render-time subscription.
  */
 import { useEditorStore } from '@site/store/store'
-import { pushToast } from '@ui/components/Toast'
+import { openSourceFile, type SourceOrigin } from '@site/store/openSourceFile'
 
-export interface SourceOrigin {
-  rel: string
-  line: number
-  col: number
-}
+export type { SourceOrigin }
 
 /** Opens `origin.rel` in the CodeEditor panel, or toasts why it couldn't. */
 export function jumpToSource(origin: SourceOrigin): void {
-  const { site, openInEditor } = useEditorStore.getState()
-  const file = site?.files.find((f) => f.path === origin.rel)
-  if (!file) {
-    pushToast({
-      kind: 'error',
-      title: 'Could not open source',
-      body: `${origin.rel} isn't tracked as a project file.`,
-    })
-    return
-  }
-  openInEditor(file.id)
+  openSourceFile(useEditorStore.getState(), origin)
 }

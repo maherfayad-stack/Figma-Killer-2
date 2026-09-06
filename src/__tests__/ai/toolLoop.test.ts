@@ -1,7 +1,13 @@
 import { describe, test, expect, afterEach } from 'bun:test'
 import { Type } from '@core/utils/typeboxHelpers'
 import { anthropicDriver } from '../../../server/ai/drivers/anthropic'
-import { PROVIDER_RETRY_IMAGE_OMITTED } from '../../../server/ai/drivers/http/toolLoop'
+import {
+  PROVIDER_RETRY_IMAGE_OMITTED,
+  messageCacheBreakpoints,
+  projectHeavyElision,
+  type ProviderAdapter,
+  type TurnToolResult,
+} from '../../../server/ai/drivers/http/toolLoop'
 import type { AiStreamRequest } from '../../../server/ai/drivers/types'
 import type { AiBrowserBridge, AiStreamEvent, AiTool, AiToolOutput } from '../../../server/ai/runtime/types'
 
@@ -56,7 +62,34 @@ const TURN2 = sse(
   { type: 'message_stop' },
 )
 
-function makeRequest(bridge: AiBrowserBridge, serverCalls: unknown[]): AiStreamRequest {
+/** An SSE turn that issues `calls` as tool_use blocks and stops on `tool_use`. */
+function toolUseTurn(calls: Array<{ id: string; name: string }>): string {
+  const events: unknown[] = [{ type: 'message_start', message: { usage: { input_tokens: 10 } } }]
+  calls.forEach((call, index) => {
+    events.push({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: call.id, name: call.name, input: {} } })
+    events.push({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: '{}' } })
+    events.push({ type: 'content_block_stop', index })
+  })
+  events.push({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } })
+  events.push({ type: 'message_stop' })
+  return sse(...events)
+}
+
+/** Serves each SSE body in order, recording every request body it was sent. */
+function scriptedFetch(bodies: string[]): Array<Record<string, unknown>> {
+  const requestBodies: Array<Record<string, unknown>> = []
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    requestBodies.push(JSON.parse(init.body as string))
+    return sseResponse(bodies[requestBodies.length - 1] ?? TURN2)
+  }) as typeof fetch
+  return requestBodies
+}
+
+function makeRequest(
+  bridge: AiBrowserBridge,
+  serverCalls: unknown[],
+  overrides: Partial<Pick<AiStreamRequest, 'tools' | 'systemPrompt'>> = {},
+): AiStreamRequest {
   const echoTool: AiTool = {
     name: 'echo',
     description: 'echoes its input',
@@ -76,9 +109,9 @@ function makeRequest(bridge: AiBrowserBridge, serverCalls: unknown[]): AiStreamR
     inputSchema: Type.Object({}),
   }
   return {
-    systemPrompt: ['You are a test.'],
+    systemPrompt: overrides.systemPrompt ?? ['You are a test.'],
     messages: [{ role: 'user', content: [{ kind: 'text', text: 'go' }] }],
-    tools: [echoTool, paintTool],
+    tools: overrides.tools ?? [echoTool, paintTool],
     modelId: 'claude-sonnet-4-6',
     modelCapabilities: { toolCalling: true, visionInput: true, toolResultImages: true, promptCache: true, streaming: true },
     credentials: { id: 'cr', providerId: 'anthropic', authMode: 'apiKey', apiKey: 'sk-test', baseUrl: null },
@@ -89,6 +122,9 @@ function makeRequest(bridge: AiBrowserBridge, serverCalls: unknown[]): AiStreamR
       userId: 'u1',
       conversationId: 'c1',
       snapshot: {},
+      // `executeAiTool` re-checks every call against these; a `mutates` tool
+      // needs `ai.tools.write` or it is refused before its handler runs.
+      capabilities: ['ai.chat', 'ai.tools.write'],
     },
   }
 }
@@ -300,5 +336,209 @@ describe('runToolLoop via anthropicDriver', () => {
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: 'error' })
     expect((events[0] as { message: string }).message).toContain('Your history is still saved')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Heavy-evidence elision — a per-request projection, never an edit
+// ---------------------------------------------------------------------------
+
+describe('projectHeavyElision', () => {
+  /** A minimal adapter: a "message" is just the array of results it carries. */
+  const adapter = {
+    buildToolResultMessage: (results: TurnToolResult[]) => results.map((r) => `${r.name}:${JSON.stringify(r.output.data)}`).join('|'),
+  } as unknown as ProviderAdapter<string>
+
+  const heavy = (name: string, data: unknown): TurnToolResult => ({
+    id: `id_${name}_${JSON.stringify(data)}`,
+    name,
+    output: { ok: true, data },
+  })
+
+  test('stubs every superseded heavy result and leaves the newest at full fidelity', () => {
+    const history = ['user', 'A', 'B', 'C']
+    const heavyMessages = [
+      { index: 1, results: [heavy('site_read_document', { html: 'first' })] },
+      { index: 2, results: [heavy('site_get_node_html', { html: 'other-tool' })] },
+      { index: 3, results: [heavy('site_read_document', { html: 'newest' })] },
+    ]
+
+    const projected = projectHeavyElision(history, heavyMessages, adapter)
+
+    expect(projected[1]).toContain('Earlier site_read_document output removed')
+    // A DIFFERENT heavy tool is not superseded by this one — elision is per name.
+    expect(projected[2]).toBe('B')
+    expect(projected[3]).toBe('C')
+    // The canonical history is untouched: this is what keeps the cached prefix
+    // the next round appends to byte-identical.
+    expect(history).toEqual(['user', 'A', 'B', 'C'])
+  })
+
+  test('leaves an un-superseded history alone, including its object identities', () => {
+    const history = ['user', 'A']
+    const heavyMessages = [{ index: 1, results: [heavy('site_read_document', { html: 'only' })] }]
+    expect(projectHeavyElision(history, heavyMessages, adapter)).toEqual(['user', 'A'])
+  })
+
+  test('elides the replayed heavy result on a later round but not on the round it arrived', async () => {
+    const readTool: AiTool = {
+      name: 'site_read_document',
+      description: 'a heavy read',
+      scope: 'site',
+      execution: 'server',
+      inputSchema: Type.Object({}),
+      async handler() {
+        return { html: 'FULL-DOCUMENT-PAYLOAD' }
+      },
+    }
+    const requestBodies = scriptedFetch([
+      toolUseTurn([{ id: 'r1', name: 'site_read_document' }]),
+      toolUseTurn([{ id: 'r2', name: 'site_read_document' }]),
+      TURN2,
+    ])
+    const req = makeRequest({ async callBrowser() { return { ok: true } } }, [], { tools: [readTool] })
+
+    for await (const _event of anthropicDriver.stream(req)) { /* drain */ }
+
+    expect(requestBodies).toHaveLength(3)
+    // Round 2 replays r1 in full — nothing has superseded it yet.
+    expect(JSON.stringify(requestBodies[1])).toContain('FULL-DOCUMENT-PAYLOAD')
+    // Round 3 carries r2 at full fidelity and r1 as a breadcrumb.
+    const third = JSON.stringify(requestBodies[2])
+    expect(third.match(/FULL-DOCUMENT-PAYLOAD/g)).toHaveLength(1)
+    expect(third).toContain('Earlier site_read_document output removed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Prompt-cache breakpoints
+// ---------------------------------------------------------------------------
+
+describe('messageCacheBreakpoints', () => {
+  test('collapses to one anchor on the first round and spreads to two once the loop appends', () => {
+    expect(messageCacheBreakpoints(3, 3)).toEqual([2])
+    expect(messageCacheBreakpoints(3, 6)).toEqual([2, 5])
+    expect(messageCacheBreakpoints(0, 2)).toEqual([1])
+    expect(messageCacheBreakpoints(3, 0)).toEqual([])
+  })
+})
+
+describe('Anthropic prompt caching on the wire', () => {
+  test('spends all four breakpoints and never exceeds the API limit', async () => {
+    const requestBodies = scriptedFetch([TURN1, TURN2])
+    const req = makeRequest({ async callBrowser() { return { ok: true, data: { painted: true } } } }, [], {
+      systemPrompt: ['STATIC', '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', 'DYNAMIC'],
+    })
+
+    for await (const _event of anthropicDriver.stream(req)) { /* drain */ }
+
+    for (const body of requestBodies) {
+      const system = body.system as Array<{ cache_control?: unknown }>
+      const tools = body.tools as Array<{ cache_control?: unknown }>
+      const messages = body.messages as Array<{ content: Array<{ cache_control?: unknown }> }>
+
+      // 1. the static system prefix, 2. the LAST tool definition.
+      expect(system[0]!.cache_control).toEqual({ type: 'ephemeral' })
+      expect(system[1]!.cache_control).toBeUndefined()
+      expect(tools.at(-1)!.cache_control).toEqual({ type: 'ephemeral' })
+      expect(tools.slice(0, -1).every((t) => t.cache_control === undefined)).toBe(true)
+
+      // 3 + 4. The message anchors — always on a LAST content block, and the
+      // final message of the request is always one of them.
+      const markedMessages = messages.filter((m) => m.content.some((b) => b.cache_control !== undefined))
+      expect(markedMessages.length).toBeGreaterThanOrEqual(1)
+      expect(messages.at(-1)!.content.at(-1)!.cache_control).toEqual({ type: 'ephemeral' })
+
+      const total = JSON.stringify(body).match(/"cache_control"/g)?.length ?? 0
+      expect(total).toBeLessThanOrEqual(4)
+    }
+
+    // Round 2 keeps the round-1 anchor (the persisted user turn) AND adds one
+    // at its own tail, so the growing conversation caches across rounds.
+    const secondMessages = requestBodies[1]!.messages as Array<{ content: Array<{ cache_control?: unknown }> }>
+    expect(secondMessages.filter((m) => m.content.some((b) => b.cache_control !== undefined))).toHaveLength(2)
+    expect(secondMessages[0]!.content.at(-1)!.cache_control).toEqual({ type: 'ephemeral' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Concurrent tool dispatch
+// ---------------------------------------------------------------------------
+
+describe('tool dispatch concurrency', () => {
+  /** Records enter/exit so a sequential run and a concurrent one look different. */
+  function tracingTool(name: string, log: string[], mutates: boolean): AiTool {
+    return {
+      name,
+      description: `${name} tool`,
+      scope: 'site',
+      execution: 'server',
+      mutates,
+      inputSchema: Type.Object({}),
+      async handler() {
+        log.push(`enter:${name}`)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        log.push(`exit:${name}`)
+        return { name }
+      },
+    }
+  }
+
+  test('runs a batch of read tools concurrently and still emits results in call order', async () => {
+    const log: string[] = []
+    const requestBodies = scriptedFetch([
+      toolUseTurn([{ id: 'a', name: 'readA' }, { id: 'b', name: 'readB' }, { id: 'c', name: 'readC' }]),
+      TURN2,
+    ])
+    const req = makeRequest({ async callBrowser() { return { ok: true } } }, [], {
+      tools: [
+        tracingTool('readA', log, false),
+        tracingTool('readB', log, false),
+        tracingTool('readC', log, false),
+      ],
+    })
+
+    const events: AiStreamEvent[] = []
+    for await (const event of anthropicDriver.stream(req)) events.push(event)
+
+    expect(requestBodies).toHaveLength(2)
+    // All three entered before any exited — the batch overlapped.
+    expect(log.slice(0, 3).sort()).toEqual(['enter:readA', 'enter:readB', 'enter:readC'])
+    // Emission order is the model's call order, not completion order.
+    expect(events.filter((e) => e.type === 'toolResult').map((e) => (e as { toolName: string }).toolName))
+      .toEqual(['readA', 'readB', 'readC'])
+    const toolResultTurn = (requestBodies[1]!.messages as Array<{ role: string; content: Array<{ type: string; tool_use_id?: string }> }>)
+      .find((m) => m.content.some((b) => b.type === 'tool_result'))!
+    expect(toolResultTurn.content.map((b) => b.tool_use_id)).toEqual(['a', 'b', 'c'])
+  })
+
+  test('never overlaps a mutating tool with anything — it splits the batch', async () => {
+    const log: string[] = []
+    scriptedFetch([
+      toolUseTurn([
+        { id: 'a', name: 'readA' },
+        { id: 'b', name: 'readB' },
+        { id: 'w', name: 'writeIt' },
+        { id: 'c', name: 'readC' },
+      ]),
+      TURN2,
+    ])
+    const req = makeRequest({ async callBrowser() { return { ok: true } } }, [], {
+      tools: [
+        tracingTool('readA', log, false),
+        tracingTool('readB', log, false),
+        tracingTool('writeIt', log, true),
+        tracingTool('readC', log, false),
+      ],
+    })
+
+    for await (const _event of anthropicDriver.stream(req)) { /* drain */ }
+
+    // The two leading reads overlap; the write waits for both and runs alone;
+    // the read AFTER the write waits for the write.
+    expect(log.slice(0, 2).sort()).toEqual(['enter:readA', 'enter:readB'])
+    expect(log.indexOf('enter:writeIt')).toBeGreaterThan(log.indexOf('exit:readA'))
+    expect(log.indexOf('enter:writeIt')).toBeGreaterThan(log.indexOf('exit:readB'))
+    expect(log.indexOf('enter:readC')).toBeGreaterThan(log.indexOf('exit:writeIt'))
   })
 })

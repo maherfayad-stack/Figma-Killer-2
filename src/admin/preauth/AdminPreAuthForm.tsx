@@ -3,7 +3,6 @@ import type { FormEvent } from 'react'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { AlmLogo } from '@ui/components/AlmLogo'
-import { LoaderIcon } from 'pixel-art-icons/icons/loader'
 import {
   getCurrentCmsUser,
   loginCms,
@@ -35,10 +34,12 @@ interface PhaseCopy {
   submitPending: string
 }
 
+// First-contact copy. This is the first screen anyone sees, so it names the
+// product — Studio — not the dormant CMS half this repo was forked from.
 const PHASE_COPY: Record<PreAuthPhase, PhaseCopy> = {
-  setup: { title: 'Set Up CMS', submit: 'Create Admin', submitPending: 'Setting up' },
-  login: { title: 'Admin Login', submit: 'Sign In', submitPending: 'Signing in' },
-  mfa: { title: 'Two-Factor Authentication', submit: 'Verify', submitPending: 'Verifying' },
+  setup: { title: 'Set up Studio', submit: 'Create account', submitPending: 'Setting up' },
+  login: { title: 'Sign in to Studio', submit: 'Sign in', submitPending: 'Signing in' },
+  mfa: { title: 'Two-factor authentication', submit: 'Verify', submitPending: 'Verifying' },
 }
 
 const MIN_PASSWORD_LENGTH = 12
@@ -120,10 +121,10 @@ export function AdminPreAuthForm({
   const submitLabel = submitting ? copy.submitPending : copy.submit
 
   // Pre-auth brand row: when the install has picked a favicon, render it
-  // in place of the default mark AND swap the "ALM Figma Killer" label for
-  // the operator-configured site name. When neither is set, keep the
-  // default mark + product name so a fresh clone still looks like itself.
-  const brandLabel = publicSite.name ?? 'ALM Figma Killer'
+  // in place of the default mark AND swap the "Studio" label for the
+  // operator-configured site name. When neither is set, keep the default
+  // mark + product name so a fresh clone still looks like itself.
+  const brandLabel = publicSite.name ?? 'Studio'
 
   const onSubmit =
     phase === 'setup' ? handleSetup :
@@ -219,12 +220,8 @@ export function AdminPreAuthForm({
             size="md"
             type="submit"
             fullWidth
-            disabled={submitting}
-            aria-busy={submitting}
+            loading={submitting}
           >
-            {submitting && (
-              <LoaderIcon size={14} className={styles.spinIcon} aria-hidden="true" />
-            )}
             <span>{submitLabel}</span>
           </Button>
         </form>

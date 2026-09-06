@@ -34,7 +34,7 @@ import { registry } from '@core/module-engine'
 import { isPropWritableToSource } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
-import { getActiveTree } from './selectionSlice'
+import { getActiveTree } from './selectionResolve'
 import { selectActiveBoard } from './boardSelectors'
 import { localizedPageKey } from './localizedPageSlice'
 

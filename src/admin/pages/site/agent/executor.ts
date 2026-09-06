@@ -91,6 +91,7 @@ import { runRenderSnapshotAtBreakpoint } from './renderSnapshotAtBreakpoint'
 import { runStudioExportFrames } from './studioExportFrames'
 import { runSetFrameAxes, runDuplicateFrameAsVariant, runUploadAsset } from './studioBrowserBridgeTools'
 import { runStudioComputedStyles } from './studioComputedStyles'
+import { runStudioPageDiagnostics } from './studioPageDiagnostics'
 import { runStudioLiveReload, StudioLiveReloadInputSchema } from './studioLiveReload'
 import { parseImportedStyleCss, runApplyCss } from './cssTools'
 import {
@@ -666,6 +667,8 @@ export async function executeAgentTool(
         return runSetFrameAxes(rawInput)
       case 'studio_computed_styles':
         return runStudioComputedStyles(rawInput)
+      case 'studio_page_diagnostics':
+        return runStudioPageDiagnostics(rawInput)
       case 'studio_duplicate_frame_as_variant':
         return runDuplicateFrameAsVariant(rawInput)
       case 'studio_upload_asset':

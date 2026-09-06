@@ -99,7 +99,6 @@ function resetStore() {
     leftSidebarWidth: 320,
     focusedPanel: 'canvas',
     explorerPanelOpen: true,
-    explorerPanelTab: 'layers',
     selectorsPanelOpen: false,
     frameworkPanelOpen: false,
     codeEditorPanelOpen: false,
@@ -350,7 +349,6 @@ describe('AdminCanvasLayout — persisted panel layout', () => {
             rightOpen: true,
             propertiesPanelMode: 'floating',
             activeLeftPanel: 'explorer',
-            explorerPanelTab: 'code',
             codeEditorPanelOpen: true,
             activeEditorFileId: 'file-1',
           },
@@ -364,7 +362,6 @@ describe('AdminCanvasLayout — persisted panel layout', () => {
     await waitFor(() => {
       const state = useEditorStore.getState()
       expect(state.explorerPanelOpen).toBe(true)
-      expect(state.explorerPanelTab).toBe('code')
       expect(state.propertiesPanel.collapsed).toBe(false)
       expect(state.propertiesPanelMode).toBe('floating')
       expect(state.propertiesPanel.width).toBe(390)
@@ -472,13 +469,18 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'eye-solid',
       'globe-solid',
     ])
+    // Rail colour is semantic, not a hash: each button's accent names the JOB
+    // it does (`RailAccentGroup` in `@ui/railAccent`). Framework and Classes
+    // are both `style`, so they deliberately SHARE a tint — a distinct-colour
+    // assertion here would be re-asserting the rainbow this replaced.
     const primaryAccents = primaryButtons.map((button) => button.getAttribute('data-accent'))
-    expect(primaryAccents.every(Boolean)).toBe(true)
-    expect(new Set(primaryAccents).size).toBe(primaryAccents.length)
-    // Explorer keeps the 'gold' accent the standalone Layers rail button
-    // used to resolve to — consolidating into one rail button shouldn't
-    // change its established color.
-    expect(primaryAccents[0]).toBe('gold')
+    expect(primaryAccents).toEqual([
+      'gold', // explorer  — navigate
+      'mint', // framework — style
+      'mint', // selectors — style
+      'sky', //  inspect   — inspect
+      'lilac', // content  — content
+    ])
     // Comments joins the AI assistant in the global group rather than the
     // primary one: both open a surface that is NOT the left sidebar (comments
     // opens the right sidebar's pane), so neither can ride
@@ -491,7 +493,11 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'comment-bubble',
       'ai-settings-solid',
     ])
-    expect(globalButtons.every((button) => button.getAttribute('data-accent'))).toBe(true)
+    // Comments is `content` (the words on the page), the assistant is `assist`.
+    expect(globalButtons.map((button) => button.getAttribute('data-accent'))).toEqual([
+      'lilac',
+      'violet',
+    ])
     expect(rail.lastElementChild).toBe(screen.getByTestId('panel-rail-global'))
 
     const railCss = readFileSync(

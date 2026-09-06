@@ -176,10 +176,11 @@ export const PREFERENCE_CATALOG = [
     type: 'select',
     category: 'editor',
     label: 'Theme',
-    description: 'Choose whether the admin interface uses the default dark chrome or a light theme.',
+    description: 'Dark or light chrome for the admin interface, or System to follow this device’s appearance setting.',
     options: [
-      { value: 'dark',  label: 'Dark' },
-      { value: 'light', label: 'Light' },
+      { value: 'dark',   label: 'Dark' },
+      { value: 'light',  label: 'Light' },
+      { value: 'system', label: 'System' },
     ],
     default: 'dark',
   },
@@ -285,7 +286,7 @@ export const PREFERENCE_CATALOG = [
     type: 'boolean',
     category: 'properties',
     label: 'Expand style sections by default',
-    description: 'Open every property section (Module, Layout, Typography, …) when an element is selected. Turn off to start with all sections collapsed.',
+    description: 'Open every property section that has controls to show (Module, Position, Size, Layout, Spacing, …) when an element is selected. Turn off to start with all sections collapsed. Sections that carry nothing — Background, Border, Effects, Interaction, Typography with no value set anywhere — stay a single “+” header line either way; this preference does not expand an empty section.',
     default: true,
   },
 

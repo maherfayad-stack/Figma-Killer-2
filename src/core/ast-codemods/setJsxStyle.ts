@@ -1,6 +1,14 @@
 /**
- * Sets or merges a `style={{ ... }}` object-literal attribute on the JSX
- * element found at a source location, then writes the change back to disk.
+ * Sets, merges, or REMOVES entries in a `style={{ ... }}` object-literal
+ * attribute on the JSX element found at a source location, then writes the
+ * change back to disk.
+ *
+ * `remove` (`style-03`) is the half that was missing. The caller's diff only
+ * ever sent CHANGED keys and this codemod only ever merged, so clearing an
+ * inline style produced no edit at all: the canvas updated, the save reported
+ * success, the `style={{…}}` on disk kept the old declaration, and it came
+ * straight back on the next reload. Removing the last property removes the
+ * whole attribute — an empty `style={{}}` says nothing.
  *
  * FAILS CLOSED when the existing `style` attribute isn't a plain object
  * literal (an identifier, spread, call expression, or a literal containing a
@@ -19,6 +27,8 @@ export interface SetJsxStyleParams {
   col: number
   /** camelCase CSS property names → values (values may be `var(--token)` strings). */
   style: Record<string, string | number>
+  /** camelCase CSS property names to DELETE from the object literal. */
+  remove?: readonly string[]
   /** Optional pre-existing project to reuse (e.g. across multiple edits). */
   project?: Project
 }
@@ -61,6 +71,7 @@ function buildStyleInitializerText(style: Record<string, string | number>): stri
 
 export function setJsxStyle(params: SetJsxStyleParams): void {
   const { file, line, col, style } = params
+  const remove = params.remove ?? []
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
   const element = findJsxElementAtLocationOrThrow(sourceFile, file, line, col)
@@ -69,6 +80,10 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
   const existingAttribute = element.getAttribute('style')
 
   if (!existingAttribute) {
+    // Nothing to remove from an attribute that does not exist, and nothing to
+    // set either — a removal-only request on a bare element is a no-op, not a
+    // reason to mint an empty `style={{}}`.
+    if (Object.keys(style).length === 0) return
     element.addAttribute({ name: 'style', initializer: buildStyleInitializerText(style) })
     sourceFile.saveSync()
     return
@@ -111,6 +126,21 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
     )
   }
 
+  for (const key of remove) {
+    const existingProp = expression.getProperty(key)
+    if (existingProp === undefined) continue // already absent — idempotent re-send
+    if (!Node.isPropertyAssignment(existingProp)) {
+      // A shorthand (`{ color }`) or a computed key: deleting it would drop a
+      // binding whose value this codemod never read. Same fail-closed posture
+      // as the overwrite path below.
+      throw new JsxStyleTargetError(
+        `style key "${key}" is not a plain "key: value" property — refusing to remove it`,
+        path,
+      )
+    }
+    existingProp.remove()
+  }
+
   for (const [key, value] of Object.entries(style)) {
     const valueText = buildPropertyValueText(value)
     const existingProp = expression.getProperty(key)
@@ -127,6 +157,10 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
       )
     }
   }
+
+  // Every property gone: an empty `style={{}}` is noise the user did not
+  // write, so the attribute goes with the last declaration in it.
+  if (expression.getProperties().length === 0) existingAttribute.remove()
 
   sourceFile.saveSync()
 }

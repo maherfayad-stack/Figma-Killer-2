@@ -43,13 +43,14 @@ const SCAN_ROOT = join(SRC_ROOT, 'admin')
 // ─── Allowlists ──────────────────────────────────────────────────────────────
 
 /**
- * Files permitted to import from `@dnd-kit/core`. Two surfaces, both
- * pre-existing: the layer tree (DOM panel) and the site explorer tree.
- * D2's proposed fix removes `@dnd-kit/core` entirely (it cannot cross the
- * iframe boundary, which is exactly why the canvas's OWN pointer-based
- * reorder drag was hand-rolled in the first place) — deferred out of this
- * pass; see this task's own handoff (`scratchpad/phase0/handoff-d2-d3-dnd.md`)
- * for the precise remaining work.
+ * Files permitted to import from `@dnd-kit/core`. One surface, pre-existing:
+ * the layer tree (DOM panel). The site explorer tree was the other one, and
+ * it is gone — `SiteExplorerPanel` was unreachable CMS chrome and has been
+ * deleted. D2's proposed fix removes `@dnd-kit/core` entirely (it cannot
+ * cross the iframe boundary, which is exactly why the canvas's OWN
+ * pointer-based reorder drag was hand-rolled in the first place) — deferred
+ * out of this pass; see this task's own handoff
+ * (`scratchpad/phase0/handoff-d2-d3-dnd.md`) for the precise remaining work.
  */
 const DND_KIT_ALLOWLIST: ReadonlySet<string> = new Set([
   // Outer `<DndContext>` mount point for the whole editor body.
@@ -58,11 +59,6 @@ const DND_KIT_ALLOWLIST: ReadonlySet<string> = new Set([
   'admin/pages/site/panels/DomPanel/DomPanel.tsx',
   'admin/pages/site/panels/DomPanel/TreeNode.tsx',
   'admin/pages/site/panels/DomPanel/useDomPanelDnd.ts',
-  // Site Explorer (pages/folders) reorder drag.
-  'admin/pages/site/panels/SiteExplorerPanel/useSiteExplorerDnd.ts',
-  'admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeRows.tsx',
-  'admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeSection.tsx',
-  'admin/pages/site/panels/SiteExplorerPanel/SiteExplorerDndScope.tsx',
   // Pointer-math helper shared by the dnd-kit hooks above (type-only import
   // of `DragMoveEvent`/`DragEndEvent` — reconstructs a live pointer position
   // from dnd-kit's activator-event + delta shape).

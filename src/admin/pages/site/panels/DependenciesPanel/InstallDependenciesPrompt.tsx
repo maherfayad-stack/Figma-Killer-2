@@ -185,11 +185,10 @@ export function InstallDependenciesPrompt() {
           variant="primary"
           size="xs"
           onClick={handleInstall}
-          disabled={starting}
-          aria-busy={starting}
+          loading={starting}
           data-testid="install-deps-button"
         >
-          {starting ? 'Starting…' : 'Install dependencies'}
+          Install dependencies
         </Button>
       }
       data-testid="install-deps-empty-state"

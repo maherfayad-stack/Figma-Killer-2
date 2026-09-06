@@ -137,6 +137,26 @@ interface ReasoningEvent {
   text: string
 }
 
+/**
+ * How this turn's reasoning effort was chosen. Emitted once, before the
+ * provider runs, by any driver that routes (today: `claudeCli`). Display only
+ * — never persisted, never fed back to a model. See
+ * `server/ai/routing/turnRouting.ts` for the policy.
+ */
+export interface AgentRoutedTurn {
+  /** `'pinned'` — the user's explicit effort choice, used verbatim. `'auto'` — classified server-side from the prompt. */
+  mode: 'pinned' | 'auto'
+  effort: string
+  /** Only in `'auto'` mode: `question` / `smallEdit` / `build`. */
+  shape?: string
+  /** One sentence explaining the choice — the tooltip behind the chip. */
+  reason: string
+}
+
+interface RoutingEvent extends AgentRoutedTurn {
+  type: 'routing'
+}
+
 export type ServerStreamEvent =
   | TextEvent
   | BridgeReadyEvent
@@ -146,6 +166,7 @@ export type ServerStreamEvent =
   | UsageEvent
   | ContextEvent
   | ReasoningEvent
+  | RoutingEvent
   | DoneEvent
   | ErrorEvent
 

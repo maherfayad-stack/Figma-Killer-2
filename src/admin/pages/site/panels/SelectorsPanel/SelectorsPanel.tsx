@@ -24,7 +24,6 @@ import { DeleteSelectorDialog, SelectorNameDialog } from '../SelectorDialogs'
 import { SelectorContextMenu } from './SelectorContextMenu'
 import {
   buildClassTokenUsageMap,
-  buildSelectorUsageMap,
   getReusableClasses,
   getSelectorStyleSummary,
   normalizeSelectorQuery,
@@ -105,6 +104,12 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
   const selectedNode = useEditorStore(selectSelectedNode)
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const activeClassId = useEditorStore((s) => s.activeClassId)
+  // `classId → nodes carrying it`, maintained incrementally on the site slice
+  // (`nodeIndex.ts`). This replaced `buildSelectorUsageMap(site)` — one pass
+  // over every node of every page, run from this render body and therefore on
+  // every keystroke anywhere in the editor, because Mutative replaces `site`
+  // on every mutation and the React Compiler's memo keyed off it (store-01b).
+  const usageMap = useEditorStore((s) => s._classIdToNodeCount)
 
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SelectorFilter>('all')
@@ -123,9 +128,6 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   const reusableClasses = getReusableClasses(site?.styleRules ?? {})
-  // One pass over the whole tree, memoized against `site` by the React Compiler.
-  // Replaces a per-row scan that scaled with selector count × node count.
-  const usageMap = buildSelectorUsageMap(site)
   // Class-token → applied-count rollup, so ambient rows can report "Unused"
   // only when provably dead (anchored on a class nothing uses) instead of the
   // blanket "Unused" the per-id tally produced for every ambient rule.

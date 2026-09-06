@@ -214,6 +214,17 @@ export type AiStreamEvent =
    * renders a reasoning block.
    */
   | { type: 'reasoning'; text: string }
+  /**
+   * How this turn's reasoning effort was chosen — emitted once, before the
+   * provider is called, by any driver that routes (today: `claudeCli`).
+   *
+   * Display only, like `context` and `reasoning`: never persisted to history
+   * and never fed back to a model. It exists so the routed choice is VISIBLE —
+   * a router that silently spends less is indistinguishable from a model having
+   * a bad day, and the user has no way to pin the value back if they cannot see
+   * that it moved.
+   */
+  | { type: 'routing'; mode: 'pinned' | 'auto'; effort: string; shape?: string; reason: string }
   /** Terminal error — stream is about to end abnormally. */
   | { type: 'error'; message: string }
   /** Stream ended cleanly. */

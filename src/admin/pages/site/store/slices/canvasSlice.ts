@@ -7,6 +7,9 @@ import {
   nearestZoomStep,
 } from '@site/canvas/math'
 import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
+// Type-only: the store carries the canvas's published gesture contract but
+// never imports canvas DOM code at runtime.
+import type { CanvasViewportCommands } from '@site/canvas/canvasViewportCommands'
 
 type CanvasMode = 'select' | 'pan' | 'insert'
 
@@ -93,8 +96,29 @@ interface CanvasSlice {
    * writes through on every toggle.
    */
   previewAxes: PreviewAxes
+  /**
+   * viewport-01 — the imperative viewport gestures the MOUNTED canvas
+   * publishes (`CanvasRoot`, design mode only), or `null` when no canvas is
+   * mounted / the canvas is in live mode.
+   *
+   * Zoom-to-fit / fill / selection all need two things this slice cannot
+   * have: DOM measurement of the laid-out frames and selection rings, and the
+   * LIVE canvas transform, which leads these very fields by up to 100 ms
+   * during a gesture (`useCanvas.ts`'s `CanvasTransform` doc). So the canvas
+   * keeps the implementations and publishes them here, and chrome that
+   * renders outside `CanvasRoot`'s provider — `ZoomControls`, in the eagerly
+   * painted toolbar above the lazy editor body — calls them the same way it
+   * already calls `zoomIn`/`zoomOut`/`resetView`. See
+   * `canvas/canvasViewportCommands.ts` for the full rationale.
+   *
+   * Read it to gate UI too: `null` means "no canvas to act on", which is what
+   * disables the toolbar's Fit control instead of letting it silently no-op.
+   */
+  canvasViewportCommands: CanvasViewportCommands | null
 
   setZoom: (zoom: number) => void
+  /** Publish (or, with `null`, retract) the mounted canvas's viewport gestures. */
+  setCanvasViewportCommands: (commands: CanvasViewportCommands | null) => void
   setPan: (x: number, y: number) => void
   setCanvasTransform: (zoom: number, x: number, y: number) => void
   setActiveBreakpoint: (id: string) => void
@@ -150,8 +174,14 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   collapsedBreakpointIds: [],
   agentSnapshotCaptureRequest: null,
   previewAxes: DEFAULT_PREVIEW_AXES,
+  canvasViewportCommands: null,
 
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+
+  // `set({ ... })` (replace), not a draft mutation: the value is a bag of
+  // functions owned by the canvas, and Mutative must hand it back by identity
+  // rather than try to draft it.
+  setCanvasViewportCommands: (commands) => set({ canvasViewportCommands: commands }),
 
   setPan: (panX, panY) => set({ panX: clampPan(panX), panY: clampPan(panY) }),
 

@@ -149,6 +149,12 @@
  *       `.git` — otherwise git's discovery walk would find Studio's OWN
  *       repository and commit into it. No force push, no reset, no arbitrary
  *       argument passthrough: the route surface IS the allowed command set.
+ *   GET/POST /admin/api/studio/style-compile-consent → `studio/styleCompileConsent.ts`
+ *       WS-2.1's missing front door: whether THIS project needs its own
+ *       Sass/PostCSS/Tailwind compiler run (and is still at Tier 0, so it
+ *       isn't happening), plus the per-project "not now" the board's consent
+ *       banner persists. Reports only — promoting still goes through
+ *       `trust-tier` above, the one promotion path.
  *
  *   POST /admin/api/studio/extract-component   → `studio/extractComponent.ts`
  *       instance-ui-01 — the detach-refusal escape hatch (`extractComponentCopy`)
@@ -244,6 +250,7 @@ import { tryServeStudioReferenceUpload } from './studio/referenceUpload'
 import { tryServeStudioComponentBundle } from './studio/componentBundle'
 import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
+import { tryServeStudioStyleCompileConsent } from './studio/styleCompileConsent'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 import { tryServeStudioLocalizedPage } from './studio/localizedPage'
@@ -256,6 +263,8 @@ import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
+import { tryServeStudioStories } from './studio/storiesRoutes'
+import { syncStoryBoardFrames } from './studio/boardFrames'
 import type { DbClient } from '../db/client'
 
 /**
@@ -277,6 +286,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,
+  tryServeStudioStyleCompileConsent,
   tryServeStudioTokens,
   tryServeStudioExtractComponent,
   tryServeStudioPreviewAxes,
@@ -289,6 +299,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
+  tryServeStudioStories,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
@@ -382,6 +393,13 @@ export async function tryServeStudio(
       if (pageIdsParam === null) return badRequest('invalid pageIds query param')
       const loaded = await loadStudioPages(dir) // always full — meta is project-wide, filtered below
       const { componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss } = loaded
+      // W5-3 — a story that parsed into a page but has no frame is invisible.
+      // Placed here rather than inside `loadStudioPages` so the parse pipeline
+      // stays a pure read: opening the board is the moment the board may be
+      // written, and this is the route that means it. One-time and idempotent
+      // — see `syncStoryBoardFrames`. No-ops instantly when there are no
+      // stories, which is every project that does not use Storybook.
+      syncStoryBoardFrames(dir, loaded.stories)
       const { pages, missingPageIds } = filterStudioLoadPages(loaded.pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)

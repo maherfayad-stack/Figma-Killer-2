@@ -90,10 +90,9 @@ export function AdminCanvasEditorBody({
         position: relative makes this the containing block for absolutely
         positioned panels (Guideline #356 / Task #358 / Architect #504).
         flex is kept so CanvasRoot's flex:1 fills the full width.
-        DndContext wraps the full editor body so SiteExplorerPanel rows can be
-        reordered across sections and folders.
-        DomPanel has its own nested DndContext for tree-node reordering — that
-        context is isolated; nested DndContexts are fully supported by dnd-kit.
+        DndContext wraps the full editor body. DomPanel has its own nested
+        DndContext for tree-node reordering — that context is isolated; nested
+        DndContexts are fully supported by dnd-kit.
       */}
       <DndContext sensors={canvasDndSensors} collisionDetection={pointerWithin}>
         {/* `ConfirmDeleteProvider` wraps the editor body so the canvas
@@ -168,7 +167,7 @@ function ImportHtmlModalLoading() {
       open={true}
       onClose={closeModal}
       title="Import HTML"
-      eyebrow="ALM Figma Killer"
+      eyebrow="Studio"
       size="lg"
       className={styles.importHtmlLoadingDialog}
       bodyClassName={styles.importHtmlLoadingBody}
@@ -209,10 +208,17 @@ function ImportHtmlModalLoading() {
   )
 }
 
+/**
+ * Full-canvas failure state. What failed to load is the user's own React
+ * project — a directory of `.tsx` files under `studio-workspace/` — so the
+ * heading names that, not the CMS document model this fork inherited. The
+ * `message` under it is the real reason (a parse failure, a missing
+ * directory, a refused read), and it is the only part worth reading.
+ */
 function SiteEditorLoadError({ message }: { message: string }) {
   return (
     <section className={styles.canvasBootstrapError} role="alert">
-      <h1>Could not load CMS site</h1>
+      <h1>Could not open this project</h1>
       <p>{message}</p>
     </section>
   )
