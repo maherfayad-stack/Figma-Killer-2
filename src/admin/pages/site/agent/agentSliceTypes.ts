@@ -1,7 +1,7 @@
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import type { AiToolOutput, AiUserContentBlock } from '@core/ai'
 import type { ConversationView } from '@admin/ai/api'
-import type { AgentMessage } from './types'
+import type { AgentMessage, AgentRoutedTurn } from './types'
 import type { AgentPermissionRequest, PermissionBehavior } from './permissionPrompt'
 
 export interface AgentSliceConfig {
@@ -78,6 +78,19 @@ export interface AgentSlice {
   agentQueuedMessage: AiUserContentBlock[] | null
   queueAgentMessage(content: AiUserContentBlock[]): void
   cancelQueuedAgentMessage(): void
+
+  /**
+   * What the LAST turn was routed to, and why — the read-only half of the
+   * effort control. Null until a routing-capable driver reports one (today
+   * only `claudeCli`; every other driver ignores effort entirely, so claiming
+   * a routed value for them would be a fabrication).
+   *
+   * `mode: 'pinned'` means `agentEffort` below was set and used verbatim;
+   * `'auto'` means the server classified the prompt. Never written by the UI —
+   * pinning is done through `setAgentEffort`, which is what makes this
+   * read-only rather than a second, competing control.
+   */
+  agentRoutedTurn: AgentRoutedTurn | null
 
   /** WS-12 §5.1 session controls — `claudeCli`-only, every other driver ignores both. Initial values + the "never persists" reasoning live in `agentSessionControls.ts`. */
   agentEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null

@@ -356,14 +356,14 @@ export function getLayersCommands(): Command[] {
       keepOpenAfterRun: false,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
         try {
-          const { store, page } = await getActiveLayerTree()
-          if (!page) return
-          const parent = getParent(page, nodeId)
-          if (!parent) return
-          store.selectNode(parent.id)
+          // viewport-01 — the tree walk lives in the store
+          // (`selectionTraversalActions.ts`), shared with ⇧Enter. The old
+          // inline `getParent(selectActiveCanvasPage(...), id)` here resolved
+          // against the single ACTIVE page, so it silently no-opped for every
+          // studio-board frame but one.
+          const { useEditorStore } = await import('@site/store/store')
+          useEditorStore.getState().selectParentNode()
         } catch (err) {
           console.error('[spotlight] selectParent failed:', err)
         }
@@ -384,15 +384,12 @@ export function getLayersCommands(): Command[] {
       keepOpenAfterRun: false,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
         try {
-          const { store, page } = await getActiveLayerTree()
-          if (!page) return
-          const node = page.nodes[nodeId]
-          const firstChild = node?.children?.[0]
-          if (!firstChild) return
-          store.selectNode(firstChild)
+          // viewport-01 — see `layers.selectParent` above: one shared,
+          // board-aware walk in the store, called from both the palette and
+          // the Enter keybinding.
+          const { useEditorStore } = await import('@site/store/store')
+          useEditorStore.getState().selectFirstChildNode()
         } catch (err) {
           console.error('[spotlight] selectFirstChild failed:', err)
         }

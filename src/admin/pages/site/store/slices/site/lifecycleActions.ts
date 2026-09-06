@@ -20,7 +20,7 @@ import { createDefaultSiteDocument } from './defaults'
 import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
-import { applyNodeIndexPatch, clearNodeIndexes, rebuildNodeIndexes } from './nodeIndex'
+import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type LifecycleActions = Pick<
@@ -75,11 +75,7 @@ export function createLifecycleActions({
         // `site` (the local, pre-spread var) has the same `pages` as
         // `state.site` — the spread above only overrides `runtime`.
         rebuildNodeIndexes(
-          {
-            nodeIdToPageIds: state._nodeIdToPageIds,
-            textOriginKeyToCount: state._textOriginKeyToCount,
-            inlineTailToCount: state._inlineTailToCount,
-          },
+          nodeIndexesOf(state),
           site,
         )
       })
@@ -158,11 +154,7 @@ export function createLifecycleActions({
         // new baseline), so a full rebuild is not just simplest but correct.
         // `site` (the param, pre-spread) has the same `pages` as `state.site`.
         rebuildNodeIndexes(
-          {
-            nodeIdToPageIds: state._nodeIdToPageIds,
-            textOriginKeyToCount: state._textOriginKeyToCount,
-            inlineTailToCount: state._inlineTailToCount,
-          },
+          nodeIndexesOf(state),
           site,
         )
       })
@@ -183,11 +175,7 @@ export function createLifecycleActions({
         state.canUndo = false
         state.canRedo = false
         state._dirtySave = emptyDirtyMarks()
-        clearNodeIndexes({
-          nodeIdToPageIds: state._nodeIdToPageIds,
-          textOriginKeyToCount: state._textOriginKeyToCount,
-          inlineTailToCount: state._inlineTailToCount,
-        })
+        clearNodeIndexes(nodeIndexesOf(state))
       })
     },
 
@@ -316,11 +304,7 @@ export function createLifecycleActions({
 
         state.site = nextSite
         applyNodeIndexPatch(
-          {
-            nodeIdToPageIds: state._nodeIdToPageIds,
-            textOriginKeyToCount: state._textOriginKeyToCount,
-            inlineTailToCount: state._inlineTailToCount,
-          },
+          nodeIndexesOf(state),
           site,
           nextSite,
           marks,

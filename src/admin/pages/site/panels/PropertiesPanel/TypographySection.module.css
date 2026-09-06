@@ -1,0 +1,25 @@
+/* TypographySection — G9 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md). Row 4 (text
+   align + vertical align + the settings ⚙) is bespoke — two SegmentedControl
+   groups plus a trailing icon button, which is a shape StackedPropertyGrid's
+   full-width/paired layout can't express. Everything else in this file is
+   just vertical rhythm between StackedPropertyGrid mounts and this row. */
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-group-gap);
+}
+
+.alignRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--inspector-field-gap);
+}
+
+.alignGroups {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    min-width: 0;
+}

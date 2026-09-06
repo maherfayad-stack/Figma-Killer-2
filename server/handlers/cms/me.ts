@@ -185,7 +185,10 @@ export async function handleMeRoutes(
     return jsonResponse({
       secret,
       otpauthUrl: totpProvisioningUri({
-        issuer: 'ALM Figma Killer',
+        // The label the user's authenticator app shows. Provisioning-time
+        // only — the issuer is not an input to TOTP verification, so renaming
+        // it cannot invalidate an already-enrolled secret.
+        issuer: 'Studio',
         accountName: user.email,
         secret,
       }),

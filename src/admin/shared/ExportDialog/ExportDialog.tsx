@@ -384,7 +384,7 @@ export function ExportDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      eyebrow="ALM Figma Killer"
+      eyebrow="Studio"
       title="Export site"
       size="2xl"
       bodyClassName={styles.body}
@@ -402,10 +402,11 @@ export function ExportDialog({
             variant="primary"
             type="button"
             disabled={!canExport}
+            loading={exporting}
             aria-describedby={error ? errorId : undefined}
             onClick={handleDownload}
           >
-            {exporting ? 'Exporting…' : 'Download bundle'}
+            Download bundle
           </Button>
         </>
       }

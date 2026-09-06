@@ -34,7 +34,14 @@ server/handlers/
 ├── studioProjects.ts     — project discovery, `.studio/meta.json` (displayName, pagesDir, previewAxes.locale)
 ├── studioCss.ts          — §6: imported .css → StyleRule registry, deterministic ids, happy-dom CSSOM
 ├── studioAsset.ts        — GET /admin/api/studio/asset, path-containment guards
-└── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe, path containment
+├── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe, path containment
+└── studio/
+    ├── routePageEntry.ts  — the one shape every page SOURCE produces (pages, App Router routes, stories)
+    ├── storyDiscovery.ts  — Storybook CSF read statically: the accepted subset + the named refusals
+    ├── storyLiterals.ts    — the total, non-throwing AST readers that classification is built on
+    ├── storyPages.ts      — an accepted story → a RoutePageEntry, through the existing parse pipeline
+    ├── storiesRoutes.ts   — GET/POST /admin/api/studio/stories (the refusal report + the off switch)
+    └── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
 
 src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
@@ -99,6 +106,7 @@ Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
 | `displayName` | Shown under the brand mark in the toolbar. Decoupled from the folder name so renaming never moves a directory. |
 | `pagesDir` | Project-root-relative POSIX path to the pages directory. Defaults to `<dir>/pages`. Guarded by `isSafePagesDirOverride` — never absolute, never containing a `..` segment on either separator, because this file is hand-editable. |
 | `previewAxes.locale` | The `preferredKey` for the static evaluator's dictionary branch pick (see [Tier B](#tier-b--hook--context-provider)). Unset means "first key in source order". Set from the toolbar's locale control (WS-10 §4.2), populated from `localeProbe.ts`'s detection — no more hand-typing a key into JSON. A pre-WS-10-§4.2 project's legacy top-level `previewLocale` field still parses and is folded into `previewAxes.locale` on read (`readStudioMeta`'s `foldLegacyPreviewLocale`); nothing downstream reads the legacy field any more. |
+| `stories` | W5-3 — Storybook import state. `enabled: false` is the explicit off switch (stories are still globbed, never parsed or placed). `boardId` names the board `syncStoryBoardFrames` created for them; once it no longer resolves, nothing is ever placed again. `placedPageIds` is every story frame ever placed, so a deleted frame stays deleted while a new story still appears. |
 
 Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorted POSIX paths, and skips `EXCLUDED_WORKSPACE_DIR_NAMES` (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`). Both `.tsx` and `.jsx` are page files.
 
@@ -147,6 +155,130 @@ forever (`resolvePersistedJobStatus` in `installDeps.ts`). Both status routes
 completed-then-restarted install is still reported correctly — paired with
 `hasNodeModules`'s live disk check, which settles whether dependencies
 actually landed regardless of what the job record itself could observe.
+
+---
+
+## Storybook stories as pages (W5-3)
+
+Every serious design system ships stories, and a `.stories.tsx` is already a
+component plus its args plus its variants — one board frame per story, written
+down by the team that owns the component. It is also the answer to the insert
+picker's cold-start problem: a package with zero call sites in the imported
+source has no picker row, and every accepted story creates a real call site.
+
+Discovery runs inside the normal load (`loadStudioPages`), as a THIRD producer
+of route entries alongside file-per-page and App Router routes. The gate is a
+filename glob (`storyFilesIn` — `**/*.stories.{tsx,ts,jsx}`, sharing
+`listWorkspaceFiles`'s excluded-dir walk), so a project without stories pays
+nothing: no ts-morph work happens unless it matches.
+
+### The accepted subset — exactly
+
+Storybook composes a story by CALLING things. Studio runs none of it, so a
+story is accepted only when its body can be READ. Two shapes qualify:
+
+| Shape | Source | Becomes |
+|---|---|---|
+| **args-only** | a CSF3 object export with no `render`, whose meta declares `component:` | a SYNTHESIZED one-node call site (`meta.component` + `{...meta.args, ...story.args}`) handed to the real `inlineLocalComponents` — so the component's own subtree, with the args substituted, is what lands on the board |
+| **jsx-only** | a function whose body is nothing but JSX — a concise arrow (`render: args => <Button {...args}/>`), or a block whose ONLY statement is `return <JSX>`. Reached as `render:`, as `export const Default = () => <X/>`, and as `export function Default() { return <X/> }` | the ORDINARY page pipeline (`getReturnedJsxRoots` → `parseJsxTree` → `resolveComponentSources` → `inlineLocalComponents`) against the story file itself |
+
+Meta is read in the three spellings real files use: `export default { … }`,
+`export default { … } satisfies Meta<…>`, and `const meta: Meta<…> = { … };
+export default meta`. `title` groups the board (one row per title); a file
+without one falls back to its own basename. `name`/`storyName` overrides the
+story's label. Frames are titled `<title> / <storyName>`.
+
+Arg VALUES are read as literals only — strings, numbers, booleans, negative
+numbers, arrays and nested objects. A function-valued arg (`onClick: fn()`) is
+DROPPED, never stubbed, the same trade `staticValueToPropValue` makes for a JSX
+prop. One unreadable array item declines the whole array, same as a structured
+JSX prop.
+
+### The refusals, by name
+
+Reported by `GET /admin/api/studio/stories?dir=` — one entry per refused story
+(or whole file), each with a reason and one sentence about what was in the
+source. This is the only surface they appear on: the `/load` envelope is a wire
+contract the client mirrors by hand, and a refusal nobody can read is
+indistinguishable from a parser that silently lost the work.
+
+| Reason | Refuses | Because |
+|---|---|---|
+| `csf2-storiesof` | the file | `storiesOf(...).add(...)` registers stories by executing a builder chain |
+| `no-default-export` | the file | no default-exported meta object literal |
+| `decorators` | the file (meta) or one story | wrapper components applied at render time |
+| `play-function` | one story | an interaction script Storybook runs after mount |
+| `loaders` | one story | `loaders`/`beforeEach` — async data fetched before render |
+| `render-logic` | one story | the body has statements beyond one `return <JSX>` (a hook, a `const`, a conditional). Choosing what it would have produced is a Tier D guess |
+| `no-jsx` | one story | the function returns something other than JSX |
+| `not-a-story` | one story | the export is neither a CSF3 object nor a function |
+| `no-component` | one story | args-only, and the meta names no `component` to invoke |
+| `unresolved-component` | one story | `meta.component`'s identifier is neither imported nor declared in the file |
+| `spread-args` | one story | `args: { ...Default.args, … }` — the resulting keys are unknowable without evaluating it |
+| `args-not-object` | one story | `args` is not an object literal |
+| `unreadable` | the file | ts-morph could not read it at all |
+
+Known non-imports, deliberately: `export { Primary }` (only `export const`/
+`export function` declarations are scanned), MDX stories, and CSF's `.mdx`
+docs pages.
+
+### Measured
+
+| Repo | Story files | Accepted | Refused | Rate | Refusals |
+|---|---|---|---|---|---|
+| `primer/react` (`packages/react`) | 247 | 739 (732 jsx, 7 args) | 360 | **67.2 %** | `render-logic` 338, `decorators` 20, `no-jsx` 1, `not-a-story` 1 |
+| `Shopify/polaris` (`polaris-react`) | 87 | 664 (651 args, 13 jsx) | 15 | **97.8 %** | `play-function` 15 |
+
+The two repos write CSF in almost opposite dialects — Primer is
+render-function-heavy with a lot of stateful bodies, Polaris is
+args-object-heavy — which is why both shapes are supported rather than one.
+
+### Where the frames go, and why not on your board
+
+A design system routinely has more stories than screens (Polaris: 664 stories,
+87 files). Folding those into the project's own board would multiply the frame
+count of a board the author curated, on a load they asked nothing of. So
+`syncStoryBoardFrames` (`studio/boardFrames.ts`) places them on a board of
+their own, named **Stories**, which is already discoverable — it appears in the
+board switcher next to the boards they made — and costs the default board
+nothing. One row per `meta.title`, variants left to right along it.
+
+Placement is ONE-TIME, not reconciled. `.studio/meta.json`'s
+`stories.placedPageIds` records every story frame ever placed, so a frame the
+user deleted never returns while a newly-written story still appears; and once
+`stories.boardId` no longer resolves — they deleted the whole board — nothing
+is placed again. `stories.enabled: false` is the explicit off switch
+(`POST /admin/api/studio/stories`): stories stop being parsed into pages and
+placed, and already-placed frames are left exactly where they are.
+
+### An args-only story's own args are read-only — and what would change that
+
+The synthesized call site's `loc` is a REAL position in a real file (the
+`export const Primary` identifier), because trap #2 forbids inventing one. But
+no JSX element lives there, so `setJsxProp` has nothing to rewrite. Every arg is
+therefore recorded in `codeProps` (and explained in `resolvedProps`, which
+`parsedPageToSitePage` re-keys into the `callSiteProps:` namespace for the
+instance node), and `isPropWritableToSource` refuses it. The panel shows the
+value and says where it came from; it does not pretend to write it.
+
+The honest target EXISTS — `label: 'Click me'` is an ordinary string literal at
+a known `rel:line:col`, exactly the shape `textOrigin`/`setStringLiteral`
+already writes. Recording it as `resolvedProps[arg].origin` would be enough for
+`fsCodemodAdapter.saveSite`'s FLAT prop loop, which emits a `kind: 'literal'`
+edit aimed at the origin. It is **not** enough for a `studio.instance`, and
+that is the concrete blocker: the adapter's `callSiteProps` branch has no
+origin case at all — it asks `isPropWritableToSource` (which an origin makes
+say yes) and then emits `kind: 'prop'` at the call site, which here is the
+`export const`. Setting an origin today would authorise precisely the mis-aimed
+write the rule exists to prevent. Closing it is a one-branch change in
+`fsCodemodAdapter.ts`.
+
+Everything BENEATH the call site is already editable exactly as far as any
+inlined component is: those nodes carry composite ids anchored in the
+component's own file, so a text or style edit lands there and refuses as
+`shared-component` for structure. A **jsx-only** story has no such limit at all
+— its JSX is real, so its nodes are ordinary writable nodes in the
+`.stories.tsx`.
 
 ---
 
@@ -764,20 +896,52 @@ The path, end to end:
 | `duplicate-declaration` | the property is declared twice inside the target rule |
 | `shorthand-override` | a covering shorthand (`padding` over `padding-top`) follows the property |
 | `important-override` | a covering shorthand carries `!important` |
-| `compiled-stylesheet` | `.module.css`, `.min.css`, or a `dist/`-style build path (`classifyStylesheetEditability`) |
+| `duplicate-selector` / `duplicate-declaration` / `shorthand-override` / `important-override` | apply to `unset` exactly as they do to `set` — removing a declaration the cascade was already ignoring changes the file and nothing on screen |
+| `compiled-stylesheet` | a `.min.css` or a `dist/`-style build path (`classifyStylesheetEditability`). A `*.module.css` is **not** in this bucket — what is compiled there is the class NAME, not the file, and `studioCss.ts`'s `cssModuleSource` inverts `moduleClassMaps` so the selector arriving here is the one as written in the file |
+
+**Where a BRAND-NEW class's first declarations go** is the same "exactly one honest target" rule one level up, and it lives in `src/admin/pages/site/studio/cssInsertDestination.ts`. In order: the stylesheet **co-located with the class's own page** (`pages/Home.tsx` → `pages/Home.module.css`); else the single editable `.css` file this project already writes to; else a named refusal (`ambiguous-stylesheet`, listing the candidates); else, with no stylesheet anywhere, a `create` edit naming the page for the server to co-locate a new one with.
+
+`style-02`: that co-location step used to read the page from `rule.scope.nodeId` only, and the sole producer of node-scoped rules (`ensureNodeStyleClass`) has no non-test caller — so it never fired, and **every** new class in a project with two or more stylesheets refused with "Studio found N candidate stylesheets". The page was recoverable the whole time from where the class is *assigned*: `buildClassPageIndex` walks the pages, decodes each node id back to its file, and answers when every node carrying that class is in one file (two files ⇒ still ambiguous, still refused).
+
+**Clearing a declaration writes too (`style-03`).** The diff used to iterate the properties a rule has *now*, and `setDeclaration` only ever sets a value — so removing one produced no edit at all: the canvas updated, the save reported success, the file was untouched, and the property came back on the next reload with nothing said. `op: 'unset'` is the counterpart, dispatching to `removeDeclaration` (`@core/css-codemods`), through the **same** `analyzeDeclarationTarget` gate — removing the first of two duplicate declarations leaves the second in effect, which is the same file-changed/canvas-unchanged outcome the gate exists for. A rule left with no nodes at all is removed with it (`.card {}` is dead text); a rule still holding a comment keeps its block. An already-absent property is `applied: true`, not a skip: the requested state IS the state on disk.
+
+**A breakpoint override writes into its own `@media` block (`style-03`).** `setDeclarationAtMedia` had existed since WS-6.3, unused, because the `css` edit carried no query. `CssSetEditSchema`/`CssUnsetEditSchema` now carry `atMedia`, and the client resolves a `contextStyles` key to one:
+
+| Context | Query |
+|---|---|
+| a viewport context (`site.breakpoints`) | its own `mediaQuery`, or `(max-width: <width>px)` |
+| a `kind: 'media'` condition (`site.conditions`) | its `query`, verbatim |
+| a `container` / `supports` condition | **none** — refused by name |
+
+`analyzeDeclarationTarget` takes the same `atMedia` and scopes its whole analysis to that block, which matters in both directions: a duplicate *inside* the block is caught, and an unrelated top-level duplicate no longer refuses a nested write.
 
 **What still does not reach disk as a rule declaration**, reported to the user rather than dropped silently (`meta-03` decision 3's third tier):
 
-- A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class or a CSS Modules compile. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
-- A **real breakpoint/condition override** (`mobile`, a `@media` condition). Writing one needs `setDeclarationAtMedia` plus the condition's query, which the `css` edit kind does not carry yet.
+- A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
+- A **`@container` / `@supports` context**. `setDeclarationAtMedia` emits `@media` and nothing else, so writing one of those would put the declaration under a condition the user did not ask for.
 
-Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip.
+Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip. Each unmapped class carries its own `reason` (`UnmappedStyleRule`), rendered as the toast BODY — `style-02`: it used to be concatenated into the generic lead, producing the self-contradictory "…has no hand-editable CSS file in this project — Studio found 4 candidate stylesheets…".
+
+**A baseline never advances past a refusal (`style-02`).** `commitBaseline` ran unconditionally after every save, including the ones the server refused. The declaration never reached disk, but the baseline adopted it — so the user's obvious next move, typing the same value again, diffed as "no change", produced no edit, and was never attempted a second time. The refusal was reported once and then became permanent and invisible. `commitBaseline` now takes `refusedRuleIds` (joined from the save response's `refusals` through `StyleRuleEditPlan.ruleIdByNodeId`) and keeps those rules' previous baseline entry; the repeat TOAST is de-duplicated instead, in `refusalToasts.ts`. `commitClassIdsBaseline`'s `refusedNodeIds` is the same fix on the `className` side.
 
 ### `className` write-back (Track B2, `setJsxClassName`)
 
 The previous section rewrites a rule's *declaration* in its `.css` file. This one rewrites the *attribute* — an element's own `className` — and is the write path that makes a Tailwind element editable at all: a fill/spacing change on a Tailwind element is `bg-red-500` → `bg-blue-600`, a class-token swap on the element, not a stylesheet declaration, so it needs no mapped `.css` source and is not subject to the `unmapped` refusal above.
 
-`kind: 'class'` edits (`ClassEditSchema` in `server/handlers/studioEditSchemas.ts`) carry `add`/`remove` as class **names** (`site.styleRules[id].name`), never `sc-<hash>` ids — the codemod edits the literal token text in the user's `className`, and ids are Studio's own bookkeeping with no meaning in source. They dispatch to `setJsxClassName` (`src/core/ast-codemods/setJsxClassName.ts`), which understands:
+`kind: 'class'` edits (`ClassEditSchema` in `server/handlers/studioEditSchemas.ts`) carry `add`/`remove` as **tokens**, never `sc-<hash>` ids — ids are Studio's own bookkeeping with no meaning in source. Two token shapes, because two kinds of class exist in a real repo:
+
+| Token | For | Written as |
+|---|---|---|
+| `{ kind: 'literal', token }` | a class whose NAME is what the DOM carries: a plain `.css` rule, a Tailwind utility, a generated framework class | a plain token in the attribute |
+| `{ kind: 'module', file, local }` | a class declared in a `*.module.css` | the member expression its default import provides — `styles.<local>` |
+
+**Why the module token exists (`style-02`).** The client used to send `site.styleRules[id].name` for every class. For a CSS-Modules rule that name is Studio's **own compiled hash** (`styleCompile.ts`'s `<fileBase>_<local>__<sha1-5>`, computed so the canvas can cascade the module's CSS) — so the write landed, the save reported success, and the resulting `className="SignUp_socialBtn__a1b2c"` matched something only inside Studio's iframe and nothing at all in the user's built app. The local name comes from `StyleRule.displayName` (which `studioCss.ts` sets from the inverse of `moduleClassMaps`), or from the rule's own name for a class the editor authored into that file. A `:global(...)` class inside a module file has no `displayName`, is never renamed by the compiler, and correctly stays a literal.
+
+A class the editor created that has **no source yet** resolves through the same `resolveCssInsertDestination` its declarations will use on this very save, so the pair always agrees. The one case that refuses client-side is a `create` destination: the SERVER picks that file's name and convention (`detectStylesheetConvention`), so the client cannot yet tell whether the class is reachable by name. One save later `recordCreatedStylesheet` has the answer, and — because the node's `classIds` baseline was held back — the assignment is retried and lands.
+
+The `file` on a module token is workspace-relative and arrives from the browser, so `server/handlers/studioEditTargets.ts` puts it through the same containment guard an `asset` edit's path gets (absolute/UNC/drive forms, `..`, `EXCLUDED_WORKSPACE_DIR_NAMES`, real-path containment after resolving symlinks) plus a literal `*.module.css` extension check, and only then converts it to the specifier the importing file would spell. A path that fails is declined, never written.
+
+They dispatch to `setJsxClassName` (`src/core/ast-codemods/setJsxClassName.ts`), which understands:
 
 | `className` shape | Handling |
 |---|---|
@@ -785,21 +949,33 @@ The previous section rewrites a rule's *declaration* in its `.css` file. This on
 | `className="a b"` (plain string literal) | token add/remove in place |
 | `className={"a b"}` / `` className={`a b`} `` (static expression) | same, token add/remove |
 | `` className={`a ${x}`} `` (dynamic template) | ADD appends to the static head only; REMOVE refuses `template-dynamic` — a token might live in the interpolated part, unreadable from source text |
-| `className={cn('a', x)}` / `clsx`/`classNames`/`classnames` | ADD merges into a literal string argument (or appends one); REMOVE strips the token from every literal argument it appears in, best-effort — a token reachable only through a non-literal argument (`isActive && 'active'`) is left alone |
+| `className={cn('a', x)}` / `clsx`/`classNames`/`classnames` | ADD merges a literal into a literal string argument and appends a module token as its own argument; REMOVE strips a literal from every literal argument it appears in, best-effort — a token reachable only through a non-literal argument (`isActive && 'active'`) is left alone — and removes a module token by exact-argument match |
+| `className={styles.card}` | ADD wraps it in a template (`` {`${styles.card} ${styles.row}`} ``); REMOVE of that exact binding, with nothing else on the element, drops the attribute |
+
+Adding a module token promotes a static value to a template literal — the only shape that carries both a name and a binding — and appends a new interpolated span to a dynamic template. Neither ever introduces a newline, which is what keeps this codemod's "never shifts another node's `line:col`" promise.
 
 and refuses, by name, rather than guessing:
 
 | Refusal | When |
 |---|---|
-| `css-module-binding` | `className={styles.card}`, a default import from a `*.module.css` file — the honest edit is the class's own declaration, not this binding |
+| `css-module-import-missing` | a module token whose stylesheet this file does not import at all. Adding the `import` would insert a LINE at the top and move every other pending edit in the batch — the exact hazard `orderStudioEditsForApply` and `pruneOrphanedImports`' post-pass exist to avoid — so it is refused with the import to add spelled out. An existing side-effect `import './x.module.css'` is NOT this case: a default binding is added to it **in place**, costing no line |
+| `css-module-binding` | removing some OTHER token from a `className={styles.card}` — that token comes from the module, so deleting it here would not delete it |
 | `template-dynamic` | removing a token from a dynamic template literal (see table above) |
 | `unsupported-call` | a function call other than `cn`/`clsx`/`classNames`/`classnames` |
 | `spread-attribute` | `className={...spread}` |
 | `unsupported-expression` | a bare identifier, ternary, or any other shape this codemod does not recognize |
 
+The CLIENT refuses one more, before an edit is ever sent (`classNameWriteback.ts`'s `tokenRefusals`): `stylesheet-not-created-yet`, for a class whose stylesheet the server is creating in this same save. It, and every server refusal, holds the node's `classIds` baseline back so the assignment is retried rather than lost.
+
 A request where every `add` token is already present and every `remove` token is already absent is a silent no-op — `{ ok: true }` with the file untouched — so a re-sent, already-applied edit never re-refuses or rewrites. A pure token **reorder** (no add/remove) writes nothing, by design: token order inside a `className` attribute has no effect on CSS cascade order — that is decided by declaration order in the stylesheet — so there is nothing honest to persist.
 
 This replaced Phase 0 item 0.6's honesty-only stopgap. `classAssignmentUnsavedNotice.ts`'s toast is narrower now: it fires only for a node with no writable source location at all (a `.map` row, a synthetic root) — see `src/admin/pages/site/studio/classNameWriteback.ts`'s `collectClassNameEdits`, which is what `saveSite` calls to turn a `classIds` drift into `kind: 'class'` edits.
+
+### Inline-style write-back (`setJsxStyle`)
+
+A `style={{ … }}` edit merges into the element's own object literal, and — `style-03` — `remove` deletes keys from it. That half was missing on both sides: the client's diff sent only the keys that *changed*, and the codemod only merged, so clearing an inline style reached no code path at all and the declaration on disk came back on the next reload. Removing the last property removes the whole attribute; an empty `style={{}}` is noise the user did not write.
+
+`JsxStyleTargetError` (a spread attribute, a non-object initializer, a shorthand key whose value the codemod never read) is now a **named refusal** on the wire (`reason: 'style-target'`, `kind: 'style'` on `StudioEditRefusal`) rather than an unexpected exception. It used to fall into the generic catch and reach the user as an *unexplained skip*, which attaches the wrong sentence entirely — that bucket's message is about a prop binding, and this is a decision the codemod made on purpose.
 
 ## Structural write-back — move and delete (`struct-01`)
 
@@ -866,6 +1042,30 @@ Two trust postures, by toolchain:
 - **CSS Modules is Tier 0 (`static`) safe.** `.module.css` selectors are rewritten to hashed global class names (`Card_card__a1b2`) by a small, self-contained transform this module owns — no workspace code ever runs, so it works unconditionally, even on a freshly-imported project. The resulting `{ localName: globalName }` map per file feeds `import styles from './Card.module.css'` in the evaluator (below).
 - **Sass/Less/PostCSS/Tailwind (v3 and v4) are Tier 1.** Compiling them means running the workspace's own installed `sass`/`postcss` package and, for PostCSS, the workspace's own `postcss.config.*` — a config file is an arbitrary JS module. At Tier 0 (every fresh import's default — `meta-03` decision 1) this returns a `style-toolchain-requires-trust-promotion` warning instead of compiling; it never auto-promotes. **`sec-01`:** the compile itself runs in a SUBPROCESS (`server/handlers/studio/styleCompileWorker.ts`, spawned via `subprocessRunner.ts`'s `runCappedSubprocess` from `styleCompileTier1.ts`), never in the admin server's own process — `cwd` is the workspace directory, `env` is an explicit minimal set (no `STUDIO_SECRET_KEY`/`DATABASE_URL`/AI provider keys forwarded), the process is killed on a timeout, and stdout/stderr are capped. Compilers are resolved from `<dir>/node_modules/<pkg>` by an explicit, symlink-containment-checked path (`workspacePackageResolve.ts`), never the host admin server's own `node_modules`. This is still a blast-radius boundary, not a filesystem/network sandbox — Tier 1 is explicit, informed, revocable consent to run the workspace's own code. Compiled once per distinct input, cached under `.studio/cache/styles-<hash>.{css,json}`.
 
+### The first-run style-compile consent prompt
+
+The Tier 1 gate above was correct and invisible, and that combination is the single most common way a real repository looks broken in Studio: a Tailwind or Sass project imports, renders completely unstyled, and nothing on screen says why. `styleCompile.ts`'s `style-toolchain-requires-trust-promotion` warning had no consumer — `ProbeWarning[]` is not part of the `/load` wire shape — so the board just looked wrong.
+
+`src/admin/pages/site/canvas/StyleCompileConsentBanner/` is the project-level front door for that decision. It is mounted from `StudioCanvasChrome` (untransformed board chrome, so it never scales with pan/zoom) and renders `null` unless all three of these hold, per `shouldOfferStyleCompile` in `src/admin/pages/site/studio/styleCompileConsent.ts`:
+
+1. the project is at Tier 0 (`static`),
+2. the probe found at least one toolchain that can only be compiled by running workspace code (Tailwind, Sass, PostCSS), and
+3. the user has not already dismissed the prompt for this project.
+
+**The copy names the trust boundary rather than softening it.** The click authorises running the project's own compiler on this machine — a `postcss.config.*` is an arbitrary JS module — so the button says that, and the banner also states that promotion to Tier 1 lets the project's npm package components render and is reversible in `.studio/meta.json`. When `node_modules` is missing it says so too, since promoting alone would then change nothing on screen (`styleCompile.ts` would warn `dependencies-not-installed` instead).
+
+Wiring, all through paths that already existed:
+
+| Piece | Where |
+|---|---|
+| Status read + dismissal write | `GET/POST /admin/api/studio/style-compile-consent` (`server/handlers/studio/styleCompileConsent.ts`) |
+| "Is there anything to compile" | `compilableStyleToolchains(profile)` in `styleCompile.ts` — the **same** function `compileProjectStyles` uses to decide whether to warn, so the prompt can never offer a compile the compiler would decline |
+| The promotion | `promoteProjectToTier1(dir)` → `POST /admin/api/studio/trust-tier`. The consent route **cannot** promote; a second path to Tier 1 would be a second place to get that boundary wrong |
+| The compile trigger | `requestCmsSiteReload()`. The compile runs server-side inside `/load`; `compileProjectStyles` re-reads the tier from `.studio/meta.json` and its cache key includes it, so the promoted load cannot serve the Tier 0 cache entry |
+| The dismissal | `.studio/meta.json`'s `styleCompilePromptDismissed` — per project, on disk, never the database. A refusal to be asked, never consent: it is a separate field from `trust` and neither implies the other |
+
+The per-node `PackageComponentPlaceholder` ("promote this project", shown where an unregistered `pkg.*` node would have rendered) is unchanged and stays — it answers a different question, and a project whose styles compile fine can still hit it.
+
 ### CSS Modules through the evaluator (WS-2.2)
 
 `import styles from './Card.module.css'` then `className={styles.card}` — the evaluator already resolved member chains off a resolved object, it just had no value for `styles`. `src/core/page-parser/assetImports.ts`'s `resolveCssModuleImport` teaches `resolveIdentifier` one more "an import with no `SourceFile`" case, sourced from `styleCompile.ts`'s `moduleClassMaps` (threaded through as `StaticEvalOptions.cssModuleClassMaps`). Everything downstream — `classIdsForClassName`, member chains, template literals — works for free. `cn()`/`clsx()`/`classNames()`/`classnames()` are a Tier C built-in (matched by identifier name, not import provenance): a pure string join with clsx's own tiny semantics — truthy strings/numbers kept, falsy scalars dropped, arrays flattened, object keys kept when truthy — implemented directly rather than calling the user's actual function, so it executes no user code and stays inside §7's envelope.
@@ -917,7 +1117,7 @@ here once it is genuinely detectable.
 | `pages-dir-heuristic` / `pages-dir-not-found` | The pages directory was guessed or not found. |
 | `tailwind-config-not-found` / `vite-entry-not-found` / `next-config-no-routes-found` | Project-level config gaps the probe found. |
 | `—` | CSS Modules only compiles `.module.css` (Sass/Less module variants detected, not compiled). |
-| `—` | Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0 (`style-toolchain-requires-trust-promotion`, not yet surfaced through the page-load pipeline). |
+| `—` | Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0. The board asks once, on load, through `StyleCompileConsentBanner` (below); the underlying `style-toolchain-requires-trust-promotion` warning still has no path through `/load` itself. |
 | `—` | CSS-in-JS (`styled-components`/`emotion`/`stitches`) is detected, never compiled. |
 | `—` | Linked package dependencies (a `?raw` import from a symlinked `file:../pkg`) do not resolve. |
 | `—` | A JSX-valued prop that is not an icon is dropped rather than flattened. |
@@ -938,7 +1138,7 @@ here once it is genuinely detectable.
 
   **Deliberately not fixed in this pass, and the scope call is explained rather than half-landed.** `classIds` is BOTH the editable-styling registry AND (via this path) the sole surviving representation of a literal className — conflating "can the editor show a control for this" with "does this class reach the DOM at all" is the exact "structure vs values" trap this codebase names as its single biggest source of past bugs. A correct fix needs to separate the two: keep the literal className string (currently discarded at the point of `delete props.className`) somewhere new on `PageNode`, thread it through `NodeRenderer`/`getCanvasNodeClassName` as a passthrough that renders REGARDLESS of `classIds`, and resolve a real precedence question this pass did not have time to settle safely — if a name IS matched into `classIds` (and so ALSO gets the editor's own generated class for that rule), does the literal name render ADDITIONALLY alongside it (safe, but doubles the declaration and could let the raw vendor rule's specificity/order fight an edited value), or is it excluded once matched (requires exposing the per-name matched/unmatched split `classIdsForClassName` currently collapses into one list)? This touches the page-tree schema, the parser-to-page-tree sync layer, and canvas rendering — real, load-bearing plumbing this parser-surgeon session declined to rush. Flagged for a dedicated pass; `studio-scribe` has this section to hand to whoever picks it up.
 - **CSS Modules only compiles `.module.css`.** `.module.scss`/`.module.sass`/`.module.less` are detected (`css-module-sass-not-supported` warning) but not compiled — that needs Sass/Less compilation (Tier 1) BEFORE the class-name renamer could run, and this slice doesn't wire that chain.
-- **Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0.** A freshly-imported project defaults to Tier 0 (`static`, `meta-03` decision 1) and never auto-promotes; `styleCompile.ts` returns a `style-toolchain-requires-trust-promotion` warning and compiles nothing until the user explicitly promotes the project's trust tier.
+- **Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0.** A freshly-imported project defaults to Tier 0 (`static`, `meta-03` decision 1) and never auto-promotes; `styleCompile.ts` returns a `style-toolchain-requires-trust-promotion` warning and compiles nothing until the user explicitly promotes the project's trust tier. The board now ASKS for that promotion on first load instead of leaving the project silently unstyled — see [The first-run style-compile consent prompt](#the-first-run-style-compile-consent-prompt) — but the promotion itself is still an explicit user action and nothing else.
 - **CSS-in-JS is detected, never compiled.** `ProjectProfile.styleToolchain.cssInJs` names `styled-components`/`emotion`/`stitches` when present; `styleCompile.ts` does nothing with it. A component styled this way renders structurally correct and unstyled.
 - **Linked package dependencies.** A `?raw` import from a symlinked `file:../pkg` (or a pnpm store) does not resolve — containment is checked on the real path ([why](#installed-package-specifiers)). Install the package instead.
 - **A JSX-valued prop that is not an icon, and not a bare element/fragment either.** `iconPropFromJsx` recovers inline SVG markup one level deep, and (WS-3.4/E2.3, `captureSlotProps`) a bare `<Icon/>` or `<><Back/><Title/></>` value is materialized as a real, locked slot child — that half is NOT a limitation any more, and this bullet used to be stale about it. What is still genuinely unrepresented is a JSX element reached through anything OTHER than a direct assignment: nested inside an array/object (`tabs={[<Tab/>, <Tab/>]}`), or behind a ternary/`&&` (`icon={cond ? <A/> : <B/>}` — neither `iconPropFromJsx` nor `captureSlotProps` guesses which branch a runtime condition takes, the same Tier D line `selectJsxBranch` draws for JSX CHILDREN, just not yet extended to a component PROP's own value). As of board-27b these are traced in `codeProps` (see "Every unresolvable prop leaves a trace", above) rather than silently dropped, but the JSX itself still isn't flattened into a node.

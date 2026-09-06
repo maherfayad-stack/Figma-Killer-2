@@ -233,10 +233,30 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // ── Canvas viewport (zoom to fit / selection — D3) ──────────────────────
+  // ── Canvas viewport (zoom reset / fit / selection — D3) ─────────────────
   // Virtual ids: no matching spotlight Command yet (a discrete viewport
   // action, not a palette-run gesture) — `displayName` is the help-screen
   // fallback title, same pattern as `spotlight.open`/`board.selectAllFrames`.
+  //
+  // NOT bound: ⌘1 / ⌘2 as fit/selection aliases. `viewport-01` checked and
+  // they are free in this registry — but Cmd/Ctrl+1…8 is reserved by every
+  // major browser for tab switching and is NOT cancellable from page script
+  // (unlike ⌘0 and ⌘R below, which are). Registering them would put two rows
+  // in the help sheet for keystrokes that never reach the app — the same
+  // "an affordance that silently does nothing" failure the toolbar's
+  // disabled-with-a-reason zoom controls exist to avoid. ⇧1 / ⇧2 stay the
+  // canonical keys (they are also what Figma itself binds), and the toolbar
+  // zoom menu is now the discoverable, clickable path to both.
+  {
+    commandId: 'canvas.zoomReset',
+    displayName: 'Zoom to 100%',
+    shortcut: { mac: '⌘0', win: 'Ctrl+0' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+0' : 'Control+0',
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '0',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
   {
     commandId: 'canvas.zoomToFit',
     displayName: 'Zoom to fit',
@@ -260,14 +280,20 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // ── Layers (keyboard reorder — G12) ──────────────────────────────────────
   // `layers.moveUp`/`layers.moveDown` already exist as spotlight Commands
   // (`spotlight/commands/layers.ts`) but had no keyboard binding — reordering
-  // a node required a mouse. Alt+↑/↓ rather than a plain arrow key: plain
-  // arrows are free today but are the obvious future home for "select
-  // previous/next sibling" (`layers.selectParent`'s siblings, also unbound),
-  // and Alt+↑/↓ doesn't collide with `CanvasTreeLadderOverlay`'s Alt-HOLD
-  // hover-ladder gesture (that overlay only intercepts Arrow keys while its
-  // ladder is actively showing, i.e. Alt held AND hovering a valid node —
-  // see its own `handleKeyDown`; a bare Alt+↑ tap while not hovering falls
-  // through to this binding untouched).
+  // a node required a mouse. Alt+↑/↓ rather than a plain arrow key, for two
+  // reasons that both still hold:
+  //
+  //  1. Plain arrows are no longer free. `viewport-01` gave them to
+  //     `board.nudgeFrames` below — but ONLY while board frames are selected
+  //     (Figma's own "arrows move the selected frame"). With a NODE selected
+  //     the arrows stay unclaimed, so a future "select previous/next sibling"
+  //     can still take them in that context. That is the whole rule: arrows
+  //     are scoped by WHAT IS SELECTED, never globally grabbed.
+  //  2. Alt+↑/↓ doesn't collide with `CanvasTreeLadderOverlay`'s Alt-HOLD
+  //     hover-ladder gesture (that overlay only intercepts Arrow keys while
+  //     its ladder is actively showing, i.e. Alt held AND hovering a valid
+  //     node — see its own `handleKeyDown`; a bare Alt+↑ tap while not
+  //     hovering falls through to this binding untouched).
   {
     // Real spotlight Command (`spotlight/commands/layers.ts`) — no
     // `displayName` needed, the command's own `title` is the help-screen label.
@@ -284,6 +310,72 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: '⌥↓', win: 'Alt+↓' },
     ariaKeyshortcuts: 'Alt+ArrowDown',
     match: (e) => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowDown',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // ── Layers (selection traversal — viewport-01) ───────────────────────────
+  // `layers.selectParent`/`layers.selectFirstChild` have existed as spotlight
+  // Commands since the palette shipped and, like `layers.moveUp/Down` before
+  // G12, had no keys — walking the tree needed a mouse or the palette.
+  //
+  // Enter / ⇧Enter, NOT Escape. Figma's own bindings are Enter = select
+  // child, ⇧Enter = select parent, Esc = deselect, and Escape here is already
+  // the load-bearing "get me back to nothing selected" ladder that
+  // `select-01` shipped to fix a reported "I can't deselect" bug
+  // (`useCanvasSelectionKeyboard.ts` documents it at length). Re-pointing
+  // Escape at "select parent" would turn one press into N presses for a
+  // deeply nested node and re-open exactly that bug, so the traversal takes
+  // the keys Figma actually uses for it and Escape is left alone.
+  //
+  // Both are COMPONENT-OWNED (`shortcutDispatch.ts`): plain Enter has to
+  // interleave with `enterSelectedInstance` (which claims it first, in the
+  // capture phase), and both must fire from ANYWHERE — the generic dispatcher
+  // requires focus to still be inside the canvas / layer tree, which one
+  // click into the Properties panel ends for the session.
+  {
+    commandId: 'layers.selectFirstChild',
+    shortcut: { mac: '↵', win: 'Enter' },
+    ariaKeyshortcuts: 'Enter',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'Enter',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'layers.selectParent',
+    shortcut: { mac: '⇧↵', win: 'Shift+Enter' },
+    ariaKeyshortcuts: 'Shift+Enter',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && e.shiftKey && e.key === 'Enter',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // ── Layers (rename / visibility — viewport-01) ───────────────────────────
+  // ⌘R is Figma's rename key and IS cancellable from page script (unlike
+  // ⌘1…8 — see the canvas-viewport block above), so `preventDefault` keeps
+  // the browser from reloading the editor. Component-owned: `layers.rename`
+  // takes a text arg, so the generic shortcut dispatcher skips it anyway, and
+  // the canvas already owns a rename UI (`useCanvasRenameDialog`) that the
+  // right-click menu opens — this binding opens the same dialog.
+  {
+    commandId: 'layers.rename',
+    shortcut: { mac: '⌘R', win: 'Ctrl+R' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+R' : 'Control+R',
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'r',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // ⌘⇧H, Figma's own hide/show key. NOT component-owned — `layers.toggleVisibility`
+  // is an argument-free, non-destructive spotlight Command, so the generic
+  // dispatcher (`shortcutDispatch.ts`) runs it with no bespoke handler. It
+  // acts on the multi-selection ANCHOR, exactly like the palette entry does.
+  {
+    commandId: 'layers.toggleVisibility',
+    shortcut: { mac: '⌘⇧H', win: 'Ctrl+Shift+H' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+Shift+H' : 'Control+Shift+H',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'h',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -341,7 +433,55 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     scope: 'canvas',
     ignoreInEditableField: true,
   },
+
+  // Arrow-key frame nudge (viewport-01). Virtual id — moving a board frame is
+  // a canvas gesture, not a palette action.
+  //
+  // This is the ONE binding in the registry that claims a bare arrow key, and
+  // it is deliberately scoped by SELECTION rather than by key: `useBoardFrameNudge`
+  // stands down unless `selectedFrameIds` is non-empty, so with a node
+  // selected (or nothing selected) the arrows stay free — see the
+  // `layers.moveUp` note above for why that matters. `ignoreInEditableField`
+  // plus the hook's own text-input / overlay guards keep arrows working
+  // normally in every input, inspector field, and inline text edit.
+  //
+  // Direction and step are decoded by the handler from `event.key` /
+  // `event.shiftKey` (1 board unit, 10 with Shift) — one binding for the
+  // whole gesture, the same shape `layers.delete` uses to match both Delete
+  // and Backspace. Alt is excluded so `layers.moveUp/moveDown` keep ⌥↑/⌥↓.
+  {
+    commandId: 'board.nudgeFrames',
+    displayName: 'Nudge selected frames (Shift for 10)',
+    shortcut: { mac: '← ↑ → ↓', win: '← ↑ → ↓' },
+    match: (e) =>
+      !e.metaKey && !e.ctrlKey && !e.altKey &&
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown'),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
 ]
+
+/** Board units one arrow press moves a selected frame, and the Shift step. */
+export const FRAME_NUDGE_STEP = 1
+export const FRAME_NUDGE_STEP_LARGE = 10
+
+/**
+ * Decode a `board.nudgeFrames` keystroke into a board-space delta.
+ * Returns `null` for any event the binding doesn't cover, so the caller can
+ * fall through. Lives here (not in the handler) so the registry entry above
+ * and its meaning stay in one file — the same reason `layers.redo`'s Ctrl+Y
+ * alias lives in its `match` rather than in `UndoRedoButtons.tsx`.
+ */
+export function frameNudgeDelta(e: KeyEventLike): { dx: number; dy: number } | null {
+  const step = e.shiftKey ? FRAME_NUDGE_STEP_LARGE : FRAME_NUDGE_STEP
+  switch (e.key) {
+    case 'ArrowLeft': return { dx: -step, dy: 0 }
+    case 'ArrowRight': return { dx: step, dy: 0 }
+    case 'ArrowUp': return { dx: 0, dy: -step }
+    case 'ArrowDown': return { dx: 0, dy: step }
+    default: return null
+  }
+}
 
 // ─── Lookup helpers ───────────────────────────────────────────────────────────
 

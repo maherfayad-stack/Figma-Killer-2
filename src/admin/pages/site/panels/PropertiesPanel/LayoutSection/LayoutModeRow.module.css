@@ -1,0 +1,12 @@
+/* LayoutModeRow — the four always-resident layout mode buttons.
+ *
+ * Just a stretch row hosting the SegmentedControl + its trailing ▾ menu
+ * trigger; the inspector skin (`[data-field-skin="inspector"]`, set once on
+ * the properties-panel root) is what pins the row to `--inspector-row-h` and
+ * draws the icon-only segments — see SegmentedControl.module.css.
+ */
+.modeRow {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+}

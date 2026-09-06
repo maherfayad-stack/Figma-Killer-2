@@ -21,7 +21,7 @@ import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule } from '@core/siteImport'
 import { addImportedScriptDependencies, addImportedScripts, addImportedStylesheets } from './importedSiteFiles'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
-import { applyNodeIndexPatch } from './nodeIndex'
+import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import type { EditorStore } from '@site/store/types'
 import { MAX_HISTORY } from './defaults'
 import { reconcileFrameworkClasses } from './framework/reconcile'
@@ -305,11 +305,7 @@ export function buildSiteHelpers(
         // nodeIndex.ts for why reusing DirtyMarks here is correct, not just
         // convenient.
         applyNodeIndexPatch(
-          {
-            nodeIdToPageIds: state._nodeIdToPageIds,
-            textOriginKeyToCount: state._textOriginKeyToCount,
-            inlineTailToCount: state._inlineTailToCount,
-          },
+          nodeIndexesOf(state),
           cur.site!,
           next.site!,
           marks,

@@ -9,8 +9,15 @@ import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
+import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { Button } from '@ui/components/Button'
-import { assignRailAccents, railTintVar, type RailAccent } from '@ui/railAccent'
+import {
+  assignRailAccents,
+  railGroupAccent,
+  railTintVar,
+  type RailAccent,
+  type RailAccentGroup,
+} from '@ui/railAccent'
 import { pluginRuntime } from '@core/plugins/runtime'
 import { resolvePluginPanelIcon } from './pluginPanelIcons'
 import styles from './PanelRail.module.css'
@@ -20,6 +27,8 @@ interface PrimaryRailItem {
   label: string
   icon: IconComponent
   iconName: string
+  /** The job this panel does — decides its accent. See `@ui/railAccent`. */
+  group: RailAccentGroup
 }
 
 interface RailItem {
@@ -36,36 +45,57 @@ interface RailItem {
   shortcutLabel?: string
 }
 
+/**
+ * The rail, in order. Each item's `group` is the whole of its colour rule —
+ * Framework and Classes are both `style`, so they are both mint, and the rail
+ * reads as "navigate / style / inspect / content" instead of a rainbow.
+ */
 const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
   {
     id: 'explorer',
     label: 'Explorer',
     icon: DatabaseSolidIcon,
     iconName: 'database-solid',
+    group: 'navigate',
   },
   {
     id: 'framework',
     label: 'Framework',
     icon: ColorsSwatchSolidIcon,
     iconName: 'colors-swatch',
+    group: 'style',
   },
   {
     id: 'selectors',
     label: 'Classes',
     icon: PaintBucketSolidIcon,
     iconName: 'paint-bucket',
+    group: 'style',
   },
   {
     id: 'inspect',
     label: 'Inspect',
     icon: EyeSolidIcon,
     iconName: 'eye-solid',
+    group: 'inspect',
   },
   {
     id: 'content',
     label: 'Content',
     icon: GlobeSolidIcon,
     iconName: 'globe-solid',
+    group: 'content',
+  },
+  // Version control (W4-3). Sits in the primary group, last: it is where a
+  // session of canvas edits ends up, so it reads as the bottom of the
+  // left-to-right flow rather than as a utility.
+  {
+    id: 'git',
+    label: 'Version control',
+    icon: CloudUploadSolidIcon,
+    iconName: 'cloud-upload',
+    // Project-level surface like the explorer: navigate, not a styling tool.
+    group: 'navigate',
   },
 ]
 
@@ -75,6 +105,7 @@ const GLOBAL_RAIL_ITEMS: PrimaryRailItem[] = [
     label: 'AI assistant',
     icon: AiSettingsSolidIcon,
     iconName: 'ai-settings-solid',
+    group: 'assist',
   },
 ]
 
@@ -101,6 +132,7 @@ export function PanelRail({
   const dependenciesOpen = useEditorStore((s) => s.dependenciesPanelOpen)
   const inspectOpen = useEditorStore((s) => s.inspectPanelOpen)
   const contentOpen = useEditorStore((s) => s.contentPanelOpen)
+  const gitOpen = useEditorStore((s) => s.gitPanelOpen)
   const agentOpen = useEditorStore((s) => s.isAgentOpen)
   const commentsPaneOpen = useEditorStore((s) => s.commentsPaneOpen)
   const setCommentsPaneOpen = useEditorStore((s) => s.setCommentsPaneOpen)
@@ -129,6 +161,7 @@ export function PanelRail({
     dependencies: dependenciesOpen,
     inspect: inspectOpen,
     content: contentOpen,
+    git: gitOpen,
   } satisfies Record<LeftSidebarPanelId, boolean>
 
   // Read-only callers (Viewer / Client) see only the Explorer panel (the
@@ -140,18 +173,6 @@ export function PanelRail({
     ? PRIMARY_RAIL_ITEMS
     : PRIMARY_RAIL_ITEMS.filter((item) => READ_ONLY_RAIL_IDS.has(item.id))
   const visibleGlobalItems = canUseAiChat ? GLOBAL_RAIL_ITEMS : []
-
-  // D3 — `workspace` was a dead prop (`'site' | 'content' | 'media'`; only
-  // `'site'` was ever passed, and the `'content'`/`'media'` workspaces don't
-  // exist on disk). Deleted the prop, but the identity STRING keeps its
-  // literal `'site:'` prefix rather than dropping it outright —
-  // `assignRailAccents` hashes this exact string per item, and several rail
-  // colors (see the `primaryAccents` comment below) are already deliberately
-  // pinned to today's hash output; changing the string would silently
-  // reshuffle colors for users with no functional prop left to explain why.
-  function railIdentity(item: PrimaryRailItem) {
-    return `site:${item.id}:${item.label}`
-  }
 
   function revealBuiltInPanel(panelId: LeftSidebarPanelId) {
     setPropertiesPanel({ collapsed: true })
@@ -178,24 +199,14 @@ export function PanelRail({
     }
   }
 
-  // Explorer keeps the 'gold' accent the standalone Layers rail button used
-  // to resolve to (identity hash of 'site:layers:Layers', first item, no
-  // collision shift) — consolidating Layers/Site/Media into one rail button
-  // shouldn't change its established color.
-  const primaryAccents = assignRailAccents(
-    visiblePrimaryItems,
-    railIdentity,
-    (item) => (item.id === 'explorer' ? 'gold' : null),
-  )
-  const globalAccents = assignRailAccents(
-    visibleGlobalItems,
-    (item) => `global:${item.id}:${item.label}`,
-  )
-  const primaryItems: RailItem[] = visiblePrimaryItems.map((item, index) => (
-    toRailItem(item, primaryAccents[index] ?? 'mint')
+  // Built-in rail colours are declared, not derived: each item's `group` names
+  // the job it does and `railGroupAccent` turns that into a tint. No hashing,
+  // and no repeat-avoidance walk — Framework and Classes SHOULD match.
+  const primaryItems: RailItem[] = visiblePrimaryItems.map((item) => (
+    toRailItem(item, railGroupAccent(item.group))
   ))
-  const globalItems: RailItem[] = visibleGlobalItems.map((item, index) => (
-    toRailItem(item, globalAccents[index] ?? 'mint')
+  const globalItems: RailItem[] = visibleGlobalItems.map((item) => (
+    toRailItem(item, railGroupAccent(item.group))
   ))
 
   /**
@@ -221,15 +232,18 @@ export function PanelRail({
     // `src/ui/` for exactly this.
     icon: CommentBubbleIcon,
     iconName: 'comment-bubble',
-    accent: 'lilac',
+    // Comments is about the words on the page, same as Content.
+    accent: railGroupAccent('content'),
     open: commentsPaneOpen,
     onToggle: () => setCommentsPaneOpen(!commentsPaneOpen),
   }
   const globalStackItems: RailItem[] = [commentsItem, ...globalItems]
 
-  // Plugin panels show up after the primary group when editing. Panels with an
-  // explicit accent keep it; the rest get deterministic identity colors with
-  // repeat avoidance within the plugin rail group.
+  // Plugin panels show up after the primary group when editing. Nothing here
+  // can know what a third-party panel is FOR, so this is the one rail group
+  // that still hashes: panels with an explicit accent keep it, the rest get a
+  // deterministic identity colour with repeat avoidance inside the plugin
+  // group.
   const pluginAccents = assignRailAccents(
     pluginPanels,
     (panel) => `plugin:${panel.id}:${panel.label}`,

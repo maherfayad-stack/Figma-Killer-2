@@ -42,7 +42,13 @@ export { setAgentStoreApi } from './storeRef'
 
 // Session controls — the composer's permission-mode trigger reads the initial
 // state back so its project-switch reset can never drift from the initializer.
-export { agentSessionControlsInitialState } from './agentSessionControls'
+// `routedTurnLabel`/`routedTurnTitle` render the read-only routed-effort chip
+// from `agentRoutedTurn` — the panel reads them, it never computes the label.
+export {
+  agentSessionControlsInitialState,
+  routedTurnLabel,
+  routedTurnTitle,
+} from './agentSessionControls'
 
 
 // Shared message/wire/context types and network path constants.

@@ -295,9 +295,14 @@ The heavy body for that route lives beside the layout at
 route chunk stays small, while the editor runtime graph remains one lazy
 boundary deeper.
 
-### Site Explorer
+### Site Explorer organization
 
-`SiteExplorerPanel` (`src/admin/pages/site/panels/SiteExplorerPanel/`) is the editor's concept browser for pages, templates, Visual Components, stylesheets, and scripts. Every section renders through `SiteExplorerTreeSection`, which uses the shared `Tree*` primitives from `src/admin/pages/site/ui/Tree/` for depth indent, chevrons, selection chrome, and DnD row affordances.
+The **panel** that used to render this — `SiteExplorerPanel` — was CMS-only
+chrome and has been deleted (Studio's Explorer panel is `StudioExplorer`:
+boards above, an all-pages layers tree below). The *organization model* it read
+survives, because the store actions and the reconciler below are still the
+single owner of `site.explorer` and are exercised by the page-tree engine and
+its tests.
 
 Organization is persisted in `site.explorer` on the site shell. Folders are decorative and flat: they group editor rows only, and never change page slugs, public URLs, component identity, or file paths. The homepage is the page whose slug is `index`; it is always pinned as the first Pages row and does not receive organization drag handlers.
 
@@ -313,10 +318,6 @@ Organization is persisted in `site.explorer` on the site shell. Folders are deco
 | `setPageAsHomepage(pageId)` | Promotes a page to `slug='index'`, demotes the previous homepage to a generated slug, pins the new homepage at the section root |
 | `convertPageToTemplate(pageId, payload)` | Sets `page.template` config; moves the row from Pages to Templates section in the explorer |
 | `convertTemplateToPage(pageId)` | Clears `page.template` and strips `dynamicBindings` from all nodes; moves the row back to Pages |
-
-**DnD architecture:** Organization drag-and-drop (`useSiteExplorerDnd`) uses `useDndMonitor` to hook into the outer `DndContext` that lives in `AdminCanvasEditorBody`. The explorer DnD hook only reacts to `siteExplorerItem` / `siteExplorerFolder` drags, which keeps Site Explorer focused on opening and organizing site artifacts rather than inserting components onto the canvas.
-
-**Section model:** `buildSiteExplorerTreeSection` in `siteExplorerModel.ts` converts the flat placement arrays from `site.explorer` into a typed tree model (`SiteExplorerTreeSectionModel`) that `SiteExplorerTreeSection` renders — pinned items come first, then root entries (folders and items) sorted by `order`, with each folder's items sorted within it.
 
 **Reconciliation:** `reconcileSiteExplorerInPlace(site)` is called on load, on item-lifecycle mutations (page/template conversions, file creates/deletes, VC creates/deletes), and before any move operation. It drops stale placements, appends newly-created items, filters out non-ejected generated files, and re-pins the homepage.
 
@@ -549,7 +550,7 @@ Opens the rail-selected panel:
 - `ExplorerPanel` — the consolidated navigation panel. No tab row: renders `StudioExplorer` (`panels/ExplorerPanel/StudioExplorer.tsx`) directly:
   - `StudioBoardsList` — the sole board list (the floating bottom-center `BoardSwitcher` canvas chrome this replaced has been removed). A compact list of `boards.boards` (NOT a full tree — boards have no nested content here). Click activates a board (`setActiveBoard`); double-click renames it inline (`renameBoard`); right-click opens a small context menu with Delete (`removeBoard`, hidden for the last remaining board); a trailing "+" creates a new board (`addBoard`).
   - `StudioPagesTree` — every page in `site.pages` as a top-level expandable row, stacked in normal document flow (its own `.scroll` is the only scroller in that column — an expanded page's subtree sizes to its own content and never stretches to fill leftover space). Double-click renames via `renamePage`. Its header also hosts `AddFramePicker` (icon-only) — the permanent home for curating a page onto the active board as a frame, since `BoardFramesLayer` only renders that picker in its empty state. Expanding a page reveals its node tree: the ACTIVE page renders the full `DomPanel`, content-sized rather than filling a panel (`DomPanel.module.css`'s `.panel`/`.treeArea` — no search/insert row, no own scroller — `StudioPagesTree`'s page list is the single scroll container); every other page renders `PageLayerSubtree` (`panels/DomPanel/PageLayerSubtree.tsx`) — the same rows, lazily mounted only while expanded, resolved against that specific page via `DomTreePageContext`/`selectCanvasPageFor` rather than the active canvas document, and with no live DnD context (dragging is inert there — dnd-kit's `useDraggable` has no activators without a `DndContext` ancestor). Both trees are **flattened and windowed** by `LayerRowList` against that single `.scroll` ancestor, so a page whose subtree has scrolled off screen mounts zero rows and stands in for itself with one spacer block — a many-frame board no longer means a full tree per frame. Every page row activates its page (`openPageInCanvas`) via `onPointerDownCapture`, mirroring `BoardFramesLayer`'s frame activation, so node interactions inside a non-active page's revealed subtree land on the right page's tree.
-  - `SiteExplorerPanel` / `MediaExplorerPanel` (Site/Code/Media tabs, a CMS-only Pages/Templates/Components/Styles/Scripts/Media tree) are no longer mounted from here — Studio is the only editor mode, and those surfaces have no filesystem-truth counterpart. The components themselves are unreachable dead code kept pending a dedicated removal pass; see `TEMPLATES_AND_COMPONENTS_AVAILABLE` in `SiteExplorerPanelSections.tsx`.
+  - `SiteExplorerPanel` / `MediaExplorerPanel` (Site/Code/Media tabs, a CMS-only Pages/Templates/Components/Styles/Scripts/Media tree) are gone — Studio is the only editor mode, and those surfaces have no filesystem-truth counterpart. Both panels, the `explorerPanelTab` store field that selected between them, and their spotlight commands were deleted in the dead-CMS-chrome pass.
 - `FrameworkPanel` — site-level design tokens (the Core Framework) in one panel with **Overview / Colors / Type / Space** tabs. Its "Manage framework" button opens `FrameworkManagerDialog`, a declarative state picker (Full framework / Variables only / None) that reconciles the framework to the chosen target. Sits **above** Selectors in the rail.
 - `SelectorsPanel` — CSS class library
 - `DependenciesPanel` — site package.json / `bun install`
@@ -599,7 +600,7 @@ The sidebar shell expands/collapses by animating `--*-panel-width`. The panel sl
 
 `src/admin/pages/site/toolbar/`:
 
-- `StudioToolbarActions` — bundles `ImportProjectButton`, `PreviewAxesControls`, `DownloadCodeButton` (Studio's export story — no CMS publish pipeline)
+- `StudioToolbarActions` — bundles `ImportProjectButton`, `PreviewAxesControls`, `DownloadCodeButton` (Studio's export story — no CMS publish pipeline). `ImportProjectButton` is one of two mounts of the same dialog: the dashboard launcher offers "Import project" beside "New project", and both render `LazyImportProjectDialog` from `src/admin/shared/dialogs/ImportProjectDialog/`
 - `SettingsButton` — opens the Settings modal (see below)
 - `ZoomControls` — canvas zoom
 - `ModulePickerDropdown` — opens the module inserter modal
@@ -772,17 +773,13 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the plugin S
   - `src/admin/pages/site/panels/PropertiesPanel/ClassRenameDialog.tsx` — rename dialog for class selectors
   - `src/admin/pages/site/panels/PropertiesPanel/selectorPickerModel.ts` — selector picker derivation model (`deriveSelectorPickerModel`)
   - `src/core/page-tree/styleRule.ts` — selector creation classifier (`classifySelectorCreateInput`) shared by the Properties picker and Selectors panel
-  - `src/admin/pages/site/panels/ExplorerPanel/ExplorerPanel.tsx` — consolidated navigation panel; unconditionally mounts `StudioExplorer` (no tab row) — `DomPanel` / `SiteExplorerPanel` / `MediaExplorerPanel`-as-tab are gone from here now that Studio is the only editor mode
+  - `src/admin/pages/site/panels/ExplorerPanel/ExplorerPanel.tsx` — consolidated navigation panel; unconditionally mounts `StudioExplorer` (no tab row) — `DomPanel`-as-tab is gone from here, and the `SiteExplorerPanel` / `MediaExplorerPanel` tab bodies have been deleted outright, now that Studio is the only editor mode
   - `src/admin/pages/site/panels/ExplorerPanel/StudioExplorer.tsx` — studio-mode explorer body: `StudioBoardsList` above `StudioPagesTree`
   - `src/admin/pages/site/panels/ExplorerPanel/StudioBoardsList.tsx` — compact board list (activate / inline rename / right-click delete / add)
   - `src/admin/pages/site/panels/ExplorerPanel/StudioPagesTree.tsx` — all-pages Layers tree; each page row lazily mounts its subtree (`DomPanel` for the active page, `PageLayerSubtree` for the rest) only while expanded
   - `src/admin/pages/site/panels/DomPanel/PageLayerSubtree.tsx` — one page's layer rows resolved via `DomTreePageContext`, for a page that is not necessarily the active one
   - `src/admin/pages/site/panels/DomPanel/LayerRowList.tsx` — the windowed body of both trees. Flattens the tree to a row list (`layerRows.ts`), mounts only the slice inside the shared scroll viewport plus overscan (`rowWindow.ts` / `useRowWindow.ts`), and owns every per-TREE subscription (page, class registry, VC names, selection, layer prefs, live drop state). `TreeNode.tsx` is one presentational row with a single store subscription (its own hover flag); everything else reaches the store through `getState()` in an event handler
   - `src/admin/pages/site/hooks/useInlineRename.ts` — shared double-click-to-rename interaction (board rows, page rows, board-frame header)
-  - `src/admin/pages/site/panels/SiteExplorerPanel/SiteExplorerPanel.tsx` — site explorer panel mount (the Explorer panel's **Pages** tab body)
-  - `src/admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeSection.tsx` — generic tree section renderer used by all explorer categories
-  - `src/admin/pages/site/panels/SiteExplorerPanel/siteExplorerModel.ts` — `buildSiteExplorerTreeSection` (placement arrays → typed tree model)
-  - `src/admin/pages/site/panels/SiteExplorerPanel/useSiteExplorerDnd.ts` — DnD monitor for explorer organization drag-and-drop
   - `src/admin/pages/site/store/slices/site/explorerActions.ts` — 6 explorer store actions wired to `mutateSite`
   - `src/admin/pages/site/hooks/useInsertInserterItem.ts` — shared `onInsertItem` handler for `ModuleInserterDialog` (toolbar `+` and canvas selection toolbar both use it)
   - `src/admin/pages/site/property-controls/SlotPicker.tsx` — the `node`-kind prop picker: package icon FILES, `*Icon` React exports, the project's own components, and SVG upload. Every source leaves as one `SlotJsxNode`; an SVG is written INLINE (`svgToJsxNode.ts`), never as an import

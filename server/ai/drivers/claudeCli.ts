@@ -108,7 +108,8 @@
  */
 
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type AiAuthMode, type AiContentBlock, type AiProviderId, type AiStreamEvent } from '../runtime/types'
-import type { AiProvider, AiProviderCapabilities, AiProviderModel, AiResolvedCredential, AiStreamRequest } from './types'
+import type { AiProvider, AiResolvedCredential, AiStreamRequest } from './types'
+import { claudeCliCapabilities, CLAUDE_CLI_FALLBACK_MODELS } from './claudeCliModels'
 import { minimalSubprocessEnv, type SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 import { assertLooksLikeSetupToken, verifyClaudeCliCredential } from './claudeCliVerify'
 import {
@@ -138,84 +139,21 @@ import { approvedProjectMcpServers, type ProjectMcpServerDefinition } from './pr
 import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { readServerConfig } from '../../config'
 import { generateStudioProjectGuide } from '../../handlers/studio/projectGuide'
-import { resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
+import { readTurnWriteLog, resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
+import { resolveTurnRouting } from '../routing/turnRouting'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
 import { writeMcpConfigFile, cleanupMcpConfigFile, type McpConfigFile } from './claudeCliMcpConfigFile'
 import { clearCliNeedsAuthCache, recallCliSignIns } from '../credentials/cliMcpConnectionProbe'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
-/** `--effort` is a real, user-requested requirement (WS-12 §5.1), request-driven from `req.effort` with this as the fallback — 'medium' matches the CLI's own implied default weighting (mid-scale of the five confirmed levels). */
-const DEFAULT_EFFORT = 'medium'
-
-function resolveEffort(requested: string | undefined): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
-  if (requested === 'low' || requested === 'medium' || requested === 'high' || requested === 'xhigh' || requested === 'max') {
-    return requested
-  }
-  return DEFAULT_EFFORT
-}
-
 /**
- * Conservative aliases the CLI's `--model` flag accepts. Confirmed via
- * `--help`: "Provide an alias for the latest model (e.g. 'sonnet' or 'opus')
- * or a model's full name (e.g. 'claude-sonnet-4-6')" — 'haiku' is the third
- * documented Claude family and follows the same alias convention, but is not
- * independently confirmed. There is no verified "list installed models"
- * command, so this stays a static fallback rather than a live catalogue —
- * `catalogueSource: 'fallback'` is the SAME staleness signal Ollama's driver
- * uses when it has no live catalogue either (the picker/credential-seeding
- * code already treats fallback entries as non-authoritative; see
- * `seedEmptyDefaults` in `handlers/credentials.ts`, which refuses to
- * auto-default a model from a fallback-only list).
+ * `--effort` is a real, user-requested requirement (WS-12 §5.1). It is
+ * request-driven from `req.effort` when the user pinned one, and otherwise
+ * ROUTED per turn by `../routing/turnRouting.ts` — read that module for the two
+ * rules it enforces (an explicit choice is never overridden; unsure routes up)
+ * and for why the MODEL is deliberately not routed alongside the effort.
  */
-const FALLBACK_MODELS: AiProviderModel[] = [
-  {
-    id: 'opus',
-    label: 'Claude Opus',
-    tier: 'smartest',
-    catalogueSource: 'fallback',
-    capabilities: claudeCliCapabilities(),
-  },
-  {
-    id: 'sonnet',
-    label: 'Claude Sonnet',
-    tier: 'balanced',
-    catalogueSource: 'fallback',
-    capabilities: claudeCliCapabilities(),
-  },
-  {
-    id: 'haiku',
-    label: 'Claude Haiku',
-    tier: 'fast',
-    catalogueSource: 'fallback',
-    capabilities: claudeCliCapabilities(),
-  },
-]
-
-function claudeCliCapabilities(): AiProviderCapabilities {
-  return {
-    // Claude models genuinely tool-call; reporting true here is what lets
-    // the chat handler's `tools.length > 0 && !modelCapabilities.toolCalling`
-    // gate pass. Whether a given turn ACTUALLY has tools available depends on
-    // the MCP connector minting below, not this static flag.
-    toolCalling: true,
-    // WS-12 §5.3 — true because this driver stages an attached image to a
-    // file and points the prompt at its path (`claudeCliAttachments.ts`),
-    // not because inline image BYTES through `-p` were ever confirmed
-    // against the binary (they weren't, and still aren't). The CLI's own
-    // built-in file tools do the actual reading.
-    visionInput: true,
-    // Distinct from `visionInput`: this is about a TOOL RESULT carrying an
-    // image (e.g. a render_snapshot screenshot fed back mid-turn), which
-    // this driver has no mechanism for — its tool calls are opaque MCP
-    // round-trips inside the subprocess, not something this driver mediates.
-    toolResultImages: false,
-    // The CLI's own caching (if any) isn't something this driver controls
-    // via `cache_control` — nothing here to report.
-    promptCache: false,
-    streaming: true,
-  }
-}
 
 export const claudeCliDriver: AiProvider = {
   id: 'claudeCli' as AiProviderId,
@@ -227,11 +165,11 @@ export const claudeCliDriver: AiProvider = {
   },
 
   async listModels() {
-    return FALLBACK_MODELS
+    return CLAUDE_CLI_FALLBACK_MODELS
   },
 
   /**
-   * The catalogue above is entirely `'fallback'` by design, so the default
+   * The catalogue (`claudeCliModels.ts`) is entirely `'fallback'` by design, so the default
    * live-model test can never pass here (see `verifyCredential`'s doc on the
    * `AiProvider` interface). The honest check is the smallest possible real
    * turn — see `verifyClaudeCliCredential` below for why `claude auth status`
@@ -330,7 +268,28 @@ export async function* streamClaudeCli(
     yield { type: 'error', message: resolvedMode.message }
     return
   }
-  const effort = resolveEffort(req.effort)
+  // Auto-routing needs to know whether the LAST turn wrote anything, so this
+  // reads the turn-write log BEFORE `resetTurnWriteLog` clears it for this
+  // turn (a few lines below, right before spawn). Zero when no project is open.
+  const previousTurnWriteCount = workspaceCwd ? readTurnWriteLog(workspaceCwd).length : 0
+  const routing = resolveTurnRouting({
+    requestedEffort: req.effort,
+    signals: {
+      prompt: promptText,
+      attachmentCount: attachmentStaging?.files.length ?? 0,
+      previousTurnWriteCount,
+    },
+  })
+  const effort = routing.effort
+  // Emitted before anything is spent, so the composer can show what this turn
+  // was routed to while it is still running — see the event's own doc.
+  yield {
+    type: 'routing',
+    mode: routing.mode,
+    effort: routing.effort,
+    ...(routing.shape ? { shape: routing.shape } : {}),
+    reason: routing.reason,
+  }
 
   let configDir: string
   try {

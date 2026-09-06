@@ -12,11 +12,13 @@
     max-width: 360px;
 }
 
-.state {
-    color: var(--text-disabled);
-    font-size: var(--text-s);
-    padding: var(--space-2xl) 0;
-    text-align: center;
+/* Both launcher CTAs, side by side inside the empty state's action slot. */
+.emptyActions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-s);
+    flex-wrap: wrap;
+    justify-content: center;
 }
 
 .grid {
@@ -54,6 +56,14 @@
 .card:focus-visible {
     outline: 2px solid var(--accent-2);
     outline-offset: 2px;
+}
+
+/* Loading placeholder tile — same surface, radius and padding as `.card`, so
+ * the grid doesn't reflow when the real project tiles replace it. */
+.cardSkeleton {
+    padding: var(--space-l);
+    background: var(--bg-surface-2);
+    border-radius: 16px;
 }
 
 .cardIcon {

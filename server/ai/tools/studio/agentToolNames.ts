@@ -47,6 +47,12 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // the build produced. Without it a type or colour mismatch is only inferable
   // from a screenshot, which is how a wrong font-size survives being "fixed".
   'studio_computed_styles',
+  // What the screen's RUNTIME said, which no picture and no computed style can
+  // report. A frame whose component throws photographs as a blank rectangle,
+  // and every other tool agrees with the photograph: compare says ~100%
+  // different, quality_check reads a stylesheet that never ran. Without this
+  // the answer to a blank frame was more CSS.
+  'studio_page_diagnostics',
   'studio_render_reference',
   // A3 (STUDIO-FIGMA-PARITY-PLAN.md) — the reference-free counterpart to
   // studio_compare/studio_measure_reference above: neither has anything to

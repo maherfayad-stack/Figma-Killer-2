@@ -203,9 +203,9 @@ function ScheduleRow({
             size="sm"
             type="button"
             onClick={onRunNow}
-            disabled={busy}
+            loading={busy}
           >
-            {busy ? 'Working...' : 'Run now'}
+            Run now
           </Button>
           {schedule.paused ? (
             <Button variant="secondary" size="sm" type="button" onClick={onResume} disabled={busy}>

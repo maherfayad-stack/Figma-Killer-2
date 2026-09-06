@@ -47,10 +47,10 @@ import { formatBytes } from '../../utils/formatBytes'
 import styles from './MediaViewerWindow.module.css'
 
 /**
- * Minimal contract the viewer needs. Built once for the Media page (from
- * useMediaWorkspace) and once for the docked MediaExplorerPanel (from a
- * tiny single-asset adapter), so the same viewer renders in every place
- * the user can interact with an asset.
+ * Minimal contract the viewer needs. Built from `useMediaWorkspace` inside
+ * the picker, and from a tiny single-asset adapter
+ * (`useStandaloneMediaEditor`) in `MediaLibraryControl`, so the same viewer
+ * renders in every place the user can interact with an asset.
  */
 export interface MediaAssetEditor {
   asset: CmsMediaAsset

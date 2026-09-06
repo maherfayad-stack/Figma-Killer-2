@@ -13,6 +13,12 @@ for everything else.
 GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
    └─ loadStudioPages()                          studioPageLoad.ts
         1. discoverPageFiles(pagesDir)           studioProjects.ts
+        1b. discoverStories + buildStoryRouteEntries
+                                                 studio/story{Discovery,Pages}.ts
+            W5-3 — Storybook CSF becomes extra route entries. Gated on a
+            filename glob, so a project with no `*.stories.*` pays nothing.
+            Accepted subset + the named refusals + measured acceptance
+            rates: studio-import.md §"Storybook stories as pages".
         2. parsePageFile() per file              page-parser/parsePageFile.ts
         3. resolveComponentSources()             componentSources.ts   local | package
         4. inlineLocalComponents()               inlineLocalComponents.ts

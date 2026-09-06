@@ -24,7 +24,7 @@
 
 export type ToastKind = 'info' | 'success' | 'warning' | 'error'
 
-interface ToastInput {
+export interface ToastInput {
   /** Visual + a11y kind. Errors and warnings render with role="alert". */
   kind: ToastKind
   /** Short headline (one line). */

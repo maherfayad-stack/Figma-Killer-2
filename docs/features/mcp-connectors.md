@@ -238,6 +238,27 @@ callers.
 - `studio_list_design_references({ dir?, pageId?, limit? })` / `studio_read_design_reference({ dir?, referenceId, includeImage? })` / `studio_delete_design_reference({ dir?, referenceId })` — headless reads plus an idempotent delete (removing an unknown id is `{ ok:true, removed:false }`, never an error). `includeImage:true` returns the original bytes as an MCP image block; omitted, only metadata (id, dimensions, content hash, `pageId`/`label`/`source`) comes back.
 - `studio_recommend_export_dpr({ dir?, pageId, referenceId })` — computes the `studio_export_frames` `dpr` that lands its capture on the reference's own pixel WIDTH, using the frame's AUTHORED width from `.studio/boards.json` (before any capture happens). This is the primary path: resampling a registered reference to match a capture is the WORSE option (interpolation artifacts show up as diff noise in exactly the regions being measured, and it degrades a baseline kept lossless on purpose) — matching the export resolution to the reference up front makes an exact, non-resampled `studio_diff_frames` comparison the common case. Height is content-driven (scroll-unroll can make the real capture taller than the frame's nominal height) and is not predicted by this tool.
 
+**Runtime diagnostics — `studio_page_diagnostics({ dir?, pages?, limit? })`.** `execution: 'server'`, relayed to the open board (the same split `studio_screenshot` uses: the server half resolves screen NAMES to page ids and owns the "no board connected" message, the browser half does the read). A pure READ — no `mutates`, no `requiredCapabilities` — and deliberately NOT a board sync: placing a frame would be a mutation, and "this page has no frame" is a real answer this tool reports rather than papers over.
+
+The gap it closes: a frame whose component throws renders as a blank rectangle, `studio_screenshot` returns that rectangle with no error, and every other tool agrees with it — `studio_compare` reports ~100% different, `studio_quality_check` reads a stylesheet that never ran. So the loop after a blank frame was screenshot → edit CSS → screenshot, against a page that never executed, while the one fact that ends it in a step sat unread in the frame's own console.
+
+Collection is a canvas injector (`src/admin/pages/site/canvas/CanvasDiagnosticsInjector.tsx`, mounted by `IframeFrameSurface` in every frame) writing into a per-frame buffer keyed by the iframe's own `Window` (`canvasDiagnosticsBuffer.ts`) — so a re-mount or a closed board drops its buffer automatically and a stale finding can never outlive the document that produced it. The injector inserts **no DOM** into the frame (canvas rule: no wrapper elements), and identical occurrences aggregate onto one finding with a `count` rather than filling a ring buffer — a React render loop emits the same error hundreds of times, and the first error is usually the cause.
+
+Each finding carries a stable `code`, its documented `fix`, a `count`, and — when the failure happened on an element with a `data-node-id` — the `file`/`line`/`col` that node id decodes to (`decodeSourceNodeId`), so a 404'd asset comes back as a source line rather than a symptom. Findings are capped per page (default 25) with the overflow reported as a number. Each requested page comes back with one of three statuses, kept distinct on purpose: `ok`, `no-frame` (nothing was watched — **not** a clean result), `no-collector` (frame still mounting).
+
+The code vocabulary — frozen once shipped, same contract as `fidelityCodes.ts`, defined in `src/core/ai/pageDiagnostics.ts` and gated against this table by `pageDiagnostics.test.ts`:
+
+| Code | Meaning |
+|---|---|
+| `runtime-uncaught-error` | An exception escaped to the frame's `window.onerror`. |
+| `runtime-unhandled-rejection` | A promise rejected with no handler. |
+| `runtime-console-error` | The frame called `console.error` — React's failed-render, invalid-hook and hydration reports arrive here. |
+| `asset-load-failed` | An `<img>`/`<link>`/media element failed to load its `src`/`href`. |
+| `module-resolution-failed` | An ES module specifier failed to resolve or fetch — an uninstalled dependency or a wrong path. |
+| `network-request-failed` | A `fetch()` from inside the frame rejected or answered 4xx/5xx. |
+
+Not covered, stated rather than implied: `XMLHttpRequest` and `WebSocket` are not wrapped, and anything the authored code catches itself is invisible here by definition.
+
 **Browser-relayed (via the live workspace bridge) — require the Site workspace to be open:**
 - Structure editing — `site_insert_html`, `site_replace_node_html`, `site_delete_node`, `site_move_node`, `site_duplicate_node`, `site_rename_node`, `site_update_node_props`.
 - HTML/CSS authoring (`site_apply_css`, `site_assign_class`, `site_remove_class`), page lifecycle (`site_add_page`, …), design tokens (`site_set_color_tokens`, …), code assets, structure reads (`site_read_document`), and live-DOM reads (`site_render_snapshot`, `site_get_node_html`).
@@ -259,6 +280,7 @@ buildMcpServer → getEditorBridgeForUser(userId, 'site')
 
 - Browser side: `useMcpWorkspaceBridge` opens the NDJSON stream, runs each `toolRequest` through the SAME dispatcher as the built-in agent panel, and POSTs the result back. It reconnects with backoff. `SitePage` flushes pending draft changes before reporting a successful tool result, so a follow-up headless read or `site_publish` sees the persisted edit immediately; a failed save makes the MCP tool fail instead of silently publishing stale data.
 - Server side: reuses the chat bridge machinery wholesale — `createBridge` issues the `AiBrowserBridge`, `resolveBridgeToolResult` settles it from the existing `/admin/api/ai/tool-result` endpoint.
+- **Waiting for a reconnect.** A tool that needs the bridge asks `awaitEditorBridgeForUser`, which does not fail the instant the registry is empty: the registry is in-memory and every stream is capped at `STREAM_LEASE_MS` (120s), so a healthy session drops and re-registers on its own schedule. It waits up to two ~4s windows for the browser's 3s reconnect — or **one** window when a bridge for that `(userId, scope)` was live within the last 60s, which is exactly the reconnect case one window already covers. The full patience is reserved for a workspace nothing is known to have opened, where a cold tab genuinely takes longer.
 
 This is why an open editor (yours, or one the agent opens) unlocks the full editing surface without reimplementing any tool.
 
