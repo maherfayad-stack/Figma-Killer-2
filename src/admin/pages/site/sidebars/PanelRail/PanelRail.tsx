@@ -9,6 +9,7 @@ import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
+import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { Button } from '@ui/components/Button'
 import {
   assignRailAccents,
@@ -85,6 +86,17 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     iconName: 'globe-solid',
     group: 'content',
   },
+  // Version control (W4-3). Sits in the primary group, last: it is where a
+  // session of canvas edits ends up, so it reads as the bottom of the
+  // left-to-right flow rather than as a utility.
+  {
+    id: 'git',
+    label: 'Version control',
+    icon: CloudUploadSolidIcon,
+    iconName: 'cloud-upload',
+    // Project-level surface like the explorer: navigate, not a styling tool.
+    group: 'navigate',
+  },
 ]
 
 const GLOBAL_RAIL_ITEMS: PrimaryRailItem[] = [
@@ -120,6 +132,7 @@ export function PanelRail({
   const dependenciesOpen = useEditorStore((s) => s.dependenciesPanelOpen)
   const inspectOpen = useEditorStore((s) => s.inspectPanelOpen)
   const contentOpen = useEditorStore((s) => s.contentPanelOpen)
+  const gitOpen = useEditorStore((s) => s.gitPanelOpen)
   const agentOpen = useEditorStore((s) => s.isAgentOpen)
   const commentsPaneOpen = useEditorStore((s) => s.commentsPaneOpen)
   const setCommentsPaneOpen = useEditorStore((s) => s.setCommentsPaneOpen)
@@ -148,6 +161,7 @@ export function PanelRail({
     dependencies: dependenciesOpen,
     inspect: inspectOpen,
     content: contentOpen,
+    git: gitOpen,
   } satisfies Record<LeftSidebarPanelId, boolean>
 
   // Read-only callers (Viewer / Client) see only the Explorer panel (the

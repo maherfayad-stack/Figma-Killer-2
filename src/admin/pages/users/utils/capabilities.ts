@@ -68,7 +68,7 @@ export const CAPABILITY_GROUPS: CapabilityGroup[] = [
   },
   {
     title: 'Studio',
-    capabilities: ['studio.write', 'studio.run.project'],
+    capabilities: ['studio.write', 'studio.run.project', 'studio.git.write'],
   },
   { title: 'Users & Roles', capabilities: ['users.manage', 'roles.manage'] },
   { title: 'Audit', capabilities: ['audit.read'] },

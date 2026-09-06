@@ -14,6 +14,7 @@ export type LeftSidebarPanelId =
   | 'dependencies'
   | 'inspect'
   | 'content'
+  | 'git'
   | 'agent'
 /** Tabs inside the consolidated Framework panel. */
 export type FrameworkPanelTab = 'home' | 'colors' | 'typography' | 'spacing'
@@ -133,6 +134,12 @@ interface UiSlice {
   inspectPanelOpen: boolean
   /** Bilingual content panel — the project's own locale dictionary as an editable en/ar table. */
   contentPanelOpen: boolean
+  /**
+   * Version control — status/diff/branch/commit/push against the project's own
+   * git repository (W4-3). Studio's document IS the repository, so this is the
+   * publish surface, not a developer utility bolted on beside one.
+   */
+  gitPanelOpen: boolean
 
   /**
    * Plugin-registered editor panel currently open in the left sidebar, or
@@ -184,6 +191,7 @@ interface UiSlice {
   setDependenciesPanelOpen: (open: boolean) => void
   setInspectPanelOpen: (open: boolean) => void
   setContentPanelOpen: (open: boolean) => void
+  setGitPanelOpen: (open: boolean) => void
   setLeftSidebarPanel: (panel: LeftSidebarPanelId | null) => void
   toggleLeftSidebarPanel: (panel: LeftSidebarPanelId) => void
 
@@ -304,6 +312,7 @@ function getActiveLeftSidebarPanel(state: EditorStore): LeftSidebarPanelId | nul
   if (state.dependenciesPanelOpen) return 'dependencies'
   if (state.inspectPanelOpen) return 'inspect'
   if (state.contentPanelOpen) return 'content'
+  if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
   return null
 }
@@ -335,6 +344,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   dependenciesPanelOpen: false,
   inspectPanelOpen: false,
   contentPanelOpen: false,
+  gitPanelOpen: false,
   activePluginPanelId: null,
   codeEditorPanelOpen: false,
   activeEditorFileId: null,
@@ -464,6 +474,8 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   setContentPanelOpen: (open) => set({ contentPanelOpen: open }),
 
+  setGitPanelOpen: (open) => set({ gitPanelOpen: open }),
+
   setLeftSidebarPanel: (panel) =>
     set((state) => {
       state.explorerPanelOpen = panel === 'explorer'
@@ -472,6 +484,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.dependenciesPanelOpen = panel === 'dependencies'
       state.inspectPanelOpen = panel === 'inspect'
       state.contentPanelOpen = panel === 'content'
+      state.gitPanelOpen = panel === 'git'
       state.isAgentOpen = panel === 'agent'
       // Built-in panels are mutually exclusive with plugin panels.
       state.activePluginPanelId = null
@@ -497,6 +510,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.dependenciesPanelOpen = false
       state.inspectPanelOpen = false
       state.contentPanelOpen = false
+      state.gitPanelOpen = false
       state.isAgentOpen = false
       state.activePluginPanelId = panelId
     }),

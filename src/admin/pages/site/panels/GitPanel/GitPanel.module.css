@@ -1,0 +1,353 @@
+/*
+ * GitPanel — tokens only, no hardcoded colours, no var() fallbacks.
+ *
+ * Two colour decisions worth naming:
+ *
+ *   - The diff uses --success-* / --danger-* at low alpha for the row FILL and
+ *     the brighter text token for the marker. Added/removed is the one place
+ *     in this panel where colour carries meaning rather than decoration, so it
+ *     is also the only place colour appears at all.
+ *   - Every other surface is achromatic (--bg-surface-2 / --border / --text-*),
+ *     per the two-layer colour model.
+ */
+
+/* --------------------------------------------------------------------------
+   Branch
+   -------------------------------------------------------------------------- */
+
+.branchBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-s);
+}
+
+.branchName {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  min-width: 0;
+  font-size: var(--text-m);
+  color: var(--text);
+}
+
+.branchName strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branchLabel {
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.divergence {
+  color: var(--text-muted);
+  font-size: var(--text-s);
+  white-space: nowrap;
+}
+
+.branchControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.branchControls > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Messages
+   -------------------------------------------------------------------------- */
+
+.error {
+  margin: 0;
+  padding: var(--space-s);
+  border-radius: var(--radius);
+  background: var(--danger-10);
+  color: var(--danger-text);
+  font-size: var(--text-m);
+}
+
+.warning {
+  margin: 0;
+  padding: var(--space-s);
+  border-radius: var(--radius);
+  background: var(--bg-surface-2);
+  color: var(--text-muted);
+  font-size: var(--text-m);
+}
+
+.hint {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-subtle);
+  font-size: var(--text-s);
+  line-height: 1.4;
+}
+
+.pushOutput {
+  margin: 0;
+  padding: var(--space-s);
+  border-radius: var(--radius);
+  background: var(--bg-surface-2);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-s);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Changed files
+   -------------------------------------------------------------------------- */
+
+.changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.changeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.changeButton {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+}
+
+.changeButtonOpen {
+  background: var(--overlay-10);
+}
+
+.changePath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-s);
+  /* The tail of a path is the part that identifies the file, so when it has to
+     be cut, cut the front. */
+  direction: rtl;
+  text-align: left;
+}
+
+.statusMark {
+  flex: none;
+  width: 1.2em;
+  font-family: var(--font-mono);
+  font-size: var(--text-s);
+  font-weight: 600;
+  text-align: center;
+}
+
+.markAdded {
+  color: var(--success);
+}
+
+.markRemoved {
+  color: var(--danger-light);
+}
+
+.markModified {
+  color: var(--text-muted);
+}
+
+.markConflict {
+  color: var(--danger);
+}
+
+.agentTag {
+  flex: none;
+  padding: 0 var(--space-2xs);
+  border-radius: var(--radius-sm);
+  background: var(--overlay-10);
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* --------------------------------------------------------------------------
+   Diff
+   -------------------------------------------------------------------------- */
+
+.diffWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+  margin-top: var(--space-s);
+}
+
+.diff {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.diffHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2xs) var(--space-s);
+  background: var(--bg-surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.diffLabel {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.diffCounts {
+  display: flex;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-s);
+}
+
+.diffAdded {
+  color: var(--success);
+}
+
+.diffRemoved {
+  color: var(--danger-light);
+}
+
+.diffBody {
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg-surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-s);
+  line-height: 1.5;
+}
+
+.diffRow {
+  display: flex;
+  align-items: flex-start;
+  min-width: max-content;
+  padding-right: var(--space-s);
+}
+
+.gutter {
+  flex: none;
+  width: 3.5ch;
+  padding-right: var(--space-xs);
+  color: var(--text-disabled);
+  text-align: right;
+  user-select: none;
+}
+
+.marker {
+  flex: none;
+  width: 1.5ch;
+  text-align: center;
+  user-select: none;
+}
+
+.rowText {
+  white-space: pre;
+}
+
+.rowAdded {
+  background: var(--success-10);
+  color: var(--success-text);
+}
+
+.rowRemoved {
+  background: var(--danger-10);
+  color: var(--danger-text);
+}
+
+.rowContext {
+  color: var(--text-muted);
+}
+
+.rowMeta,
+.rowHunk {
+  color: var(--text-subtle);
+}
+
+.rowHunk {
+  background: var(--bg-surface-2);
+}
+
+/* --------------------------------------------------------------------------
+   Commit
+   -------------------------------------------------------------------------- */
+
+.commitBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/* --------------------------------------------------------------------------
+   History
+   -------------------------------------------------------------------------- */
+
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.logRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.logMain {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.logSubject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: var(--text-m);
+}
+
+.logMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+}
+
+.sha {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.dialogWarning {
+  color: var(--danger-text);
+}
