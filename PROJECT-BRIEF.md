@@ -380,23 +380,22 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
    `@radix-ui/*`.** All banned and gated.
 10. **Canvas DOM lives inside iframes.** `document.querySelector('[data-node-id]')`
     returns `null` in tests. Use `src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts`.
-11. **Never scan a whole collection inside a Zustand selector on a per-node
-    path.** It runs on every store change, once per mounted node. Three
-    offenders in this class have been fixed — `PropertiesPanelBody.tsx`'s
-    shared-text-origin count and `findNodeById.ts`
-    (`canvas/InPlaceInspector/`) read O(1) indexes (`_textOriginKeyToCount` /
-    `_nodeIdToPageIds`, WS-5.2), and `selectCanvasPageFor`'s `pageId → Page`
-    lookup is now behind `lookupCanvasPageById`'s sweep-scoped `Map` memo
-    (`store.ts`, Track C1).
-    **The frame branch of the same selector is still uncached.** When
-    `frameId` is supplied, `selectCanvasPageFor` (`store.ts` ~342-350) calls
-    `selectActiveBoard(s)?.frames.find(...)` before it reaches the memo —
-    a scan over boards and then over frames. `NodeRenderer.tsx` calls
-    `selectCanvasPageFor` from several per-node selectors and every board frame
-    supplies both `pageId` and `frameId`, so this fires for every live node on
-    every store commit. The fix is the same one `lookupCanvasPageById` got:
-    memoise the `frameId → locale` lookup for the sweep, twelve lines above it
-    in the same file.
+11. **Never scan every node of every page inside a Zustand selector.** It runs on
+    every store change. The two original offenders are fixed — `PropertiesPanelBody.tsx`'s
+    shared-text-origin count and `findNodeById.ts` (`src/admin/pages/site/canvas/
+    InPlaceInspector/`) both now read an O(1) index (`_textOriginKeyToCount`/
+    `_nodeIdToPageIds`, WS-5.2) instead of scanning. `selectCanvasPageFor`
+    (`store.ts`) was the third, and is now fixed on **both** of its lookups:
+    the `pageId → Page` scan is memoised per `(site, pageId)`
+    (`lookupCanvasPageById`, `parity-01` C1) and the `frameId → axes.locale`
+    scan is skipped entirely unless a locale-variant page has actually been
+    fetched, then memoised per `(frames, frameId)` (`perf-03`). It is called
+    from a **per-node** selector — `NodeRenderer.tsx` calls it twice per
+    mounted node (`node`, `mcClassName`) — so on a 40-page/804-live-node board
+    that was 36,180 array comparisons per store commit, now 0. **When you add
+    a branch to a selector on this path, memoise it in the same change**;
+    that is exactly how the `frameId` branch slipped past the first fix.
+    `src/__tests__/store/selectCanvasPageFor.test.ts` is the gate.
 12. **`studio-workspace/*` is user data.** Never `rm -rf` a project directory, and
     never write outside a workspace root without a containment guard.
 13. **Do not run browser/e2e tests to validate UI changes.** The human dogfoods

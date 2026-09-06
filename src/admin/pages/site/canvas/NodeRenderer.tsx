@@ -19,6 +19,7 @@
  */
 
 import { memo, use, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import type { InlineEditBinding } from '@core/module-engine'
 import { readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
 import { useEditorStore, selectCanvasPageFor } from '@site/store/store'
@@ -101,35 +102,35 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       (!s.hoveredBreakpointId || s.hoveredBreakpointId === breakpointId) &&
       (!s.hoveredFrameId || s.hoveredFrameId === frameId),
   )
-  // Inline text edit session — true only in the SESSION'S frame. Gated on
+  // Inline text edit session — matched only in the SESSION'S frame. Gated on
   // `frameId` too, not just `breakpointId` (every board frame shares ONE
   // synthetic breakpoint id, `'studio'`) — without it, a "duplicate as
   // variant" sibling sharing this node id (trap #2) would ALSO show the
   // contentEditable surface. Closes `canvas-08`'s "Known gap" note — Phase 4
   // needs this correct, not just untested.
-  const isInlineEditing = useEditorStore(
-    (s) =>
-      s.activeInlineEdit !== null &&
-      s.activeInlineEdit.nodeId === nodeId &&
-      s.activeInlineEdit.breakpointId === breakpointId &&
-      s.activeInlineEdit.frameId === frameId,
-  )
-  // Session values, read as primitives so per-node memoization stays clean.
-  // Both are constant for the whole session (initialValue seeds the frozen
-  // content; multiline decides Enter's behaviour).
-  const inlineEditInitialValue = useEditorStore((s) =>
-    s.activeInlineEdit?.nodeId === nodeId &&
-    s.activeInlineEdit.breakpointId === breakpointId &&
-    s.activeInlineEdit.frameId === frameId
-      ? s.activeInlineEdit.initialValue
-      : null,
-  )
-  const inlineEditMultiline = useEditorStore((s) =>
-    s.activeInlineEdit?.nodeId === nodeId &&
-    s.activeInlineEdit.breakpointId === breakpointId &&
-    s.activeInlineEdit.frameId === frameId
-      ? s.activeInlineEdit.multiline
-      : false,
+  //
+  // ONE subscription, not three: these were three separate `useEditorStore`
+  // calls running the SAME three-field match, so every mounted node paid for
+  // it three times on every store commit. `useShallow` keeps the per-node
+  // memoization exactly as clean as three primitive selectors did — all three
+  // fields are primitives, so the returned object is referentially stable
+  // whenever they are.
+  const { isInlineEditing, inlineEditInitialValue, inlineEditMultiline } = useEditorStore(
+    useShallow((s) => {
+      const session = s.activeInlineEdit
+      const isThisNode =
+        session !== null &&
+        session.nodeId === nodeId &&
+        session.breakpointId === breakpointId &&
+        session.frameId === frameId
+      return {
+        isInlineEditing: isThisNode,
+        // Both are constant for the whole session (initialValue seeds the
+        // frozen content; multiline decides Enter's behaviour).
+        inlineEditInitialValue: isThisNode ? session.initialValue : null,
+        inlineEditMultiline: isThisNode ? session.multiline : false,
+      }
+    }),
   )
   const applyInlineEditValue = useEditorStore((s) => s.applyInlineEditValue)
   const endInlineEdit = useEditorStore((s) => s.endInlineEdit)
