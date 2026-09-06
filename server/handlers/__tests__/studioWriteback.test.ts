@@ -1239,3 +1239,154 @@ describe('applyStudioEdit — the class kind, module tokens', () => {
     expect(read('src/ui/Card.tsx')).toContain('className="bg-red-500"')
   })
 })
+
+
+/**
+ * `style-03` — the `css` kind's two new capabilities, through the real
+ * dispatcher and onto a real file: clearing a declaration, and writing one
+ * under a breakpoint's `@media` query.
+ */
+describe('applyStudioEdit — css unset + atMedia', () => {
+  it('clears a declaration and leaves the rest of the file alone', () => {
+    write('src/app.css', '.card {\n  color: red;\n  padding: 4px;\n}\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      op: 'unset',
+      nodeId: 'css:src/app.css#.card##color',
+      file: 'src/app.css',
+      selector: '.card',
+      property: 'color',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/app.css')).toBe('.card {\n  padding: 4px;\n}\n')
+  })
+
+  it('reports applied for an already-absent property rather than an unexplained skip', () => {
+    write('src/app.css', '.card {\n  padding: 4px;\n}\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      op: 'unset',
+      nodeId: 'css:src/app.css#.card##color',
+      file: 'src/app.css',
+      selector: '.card',
+      property: 'color',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/app.css')).toBe('.card {\n  padding: 4px;\n}\n')
+  })
+
+  it('refuses an unset the cascade would ignore, exactly as a set would be refused', () => {
+    write('src/app.css', '.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n}\n')
+
+    expect(() =>
+      applyStudioEdit(tmpDir, {
+        kind: 'css',
+        op: 'unset',
+        nodeId: 'css:src/app.css#.card##color',
+        file: 'src/app.css',
+        selector: '.card',
+        property: 'color',
+      }),
+    ).toThrow(/declared more than once/)
+    expect(read('src/app.css')).toBe('.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n}\n')
+  })
+
+  it('writes a set into a new @media block, leaving the unconditional rule untouched', () => {
+    write('src/app.css', '.card {\n  color: red;\n}\n')
+
+    applyStudioEdit(tmpDir, {
+      kind: 'css',
+      op: 'set',
+      nodeId: 'css:src/app.css#.card#(max-width: 768px)#color',
+      file: 'src/app.css',
+      selector: '.card',
+      property: 'color',
+      value: 'blue',
+      atMedia: '(max-width: 768px)',
+    })
+
+    const written = read('src/app.css')
+    expect(written).toContain('.card {\n  color: red;\n}')
+    expect(written).toContain('@media (max-width: 768px)')
+    expect(written).toContain('color: blue')
+  })
+
+  it('merges into an @media block that already exists', () => {
+    write('src/app.css', '@media print {\n  .card {\n    color: red;\n  }\n}\n')
+
+    applyStudioEdit(tmpDir, {
+      kind: 'css',
+      op: 'set',
+      nodeId: 'css:src/app.css#.card#print#color',
+      file: 'src/app.css',
+      selector: '.card',
+      property: 'color',
+      value: 'blue',
+      atMedia: 'print',
+    })
+
+    const written = read('src/app.css')
+    expect(written).toContain('color: blue')
+    expect(written).not.toContain('color: red')
+    expect(written.match(/@media print/g)).toHaveLength(1)
+  })
+
+  it('analyses the media block, not the top level — a top-level duplicate does not refuse a nested write', () => {
+    write('src/app.css', '.card {\n  color: red;\n}\n\n.card {\n  color: green;\n}\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      op: 'set',
+      nodeId: 'css:src/app.css#.card#print#color',
+      file: 'src/app.css',
+      selector: '.card',
+      property: 'color',
+      value: 'blue',
+      atMedia: 'print',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/app.css')).toContain('@media print')
+  })
+})
+
+/**
+ * `style-03` — an inline-style REMOVAL, and `JsxStyleTargetError` reaching the
+ * caller as a named refusal rather than an unexplained skip carrying the wrong
+ * sentence.
+ */
+describe('applyStudioEdit — the style kind, removal + refusal', () => {
+  it('removes a property from the style attribute', () => {
+    write('src/ui/Card.tsx', ['export function Card() {', "  return <div style={{ color: 'red', padding: 4 }}>Hi</div>", '}', ''].join('\n'))
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'style',
+      nodeId: 'src/ui/Card.tsx:2:11',
+      style: {},
+      remove: ['color'],
+    })
+
+    expect(applied.applied).toBe(true)
+    const written = read('src/ui/Card.tsx')
+    expect(written).toContain('padding: 4')
+    expect(written).not.toContain('color')
+  })
+
+  it('turns a JsxStyleTargetError into a NAMED refusal, so it is never an unexplained skip', () => {
+    write('src/ui/Card.tsx', ['export function Card({ s }) {', '  return <div style={s}>Hi</div>', '}', ''].join('\n'))
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'style', nodeId: 'src/ui/Card.tsx:2:11', style: { color: 'red' } },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.skipped).toBe(1)
+    expect(result.unexplainedSkips).toHaveLength(0)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.refusals[0]!.reason).toBe('style-target')
+  })
+})

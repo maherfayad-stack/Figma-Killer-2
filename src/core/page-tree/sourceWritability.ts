@@ -43,9 +43,18 @@ export interface SourceWritableNode {
   resolvedProps?: Record<string, { origin?: { rel: string; line: number; col: number } }>
 }
 
+/**
+ * The prefix every inline-style key carries in `codeProps` and in the save
+ * diff's baseline. Exported so a caller can go the OTHER way — recover the
+ * property names a baseline holds, which is what `style-03`'s inline-style
+ * REMOVAL diff needs (there is no "current" entry to read a removed property
+ * off; the only record it ever existed is the baseline key).
+ */
+export const STYLE_VALUE_PREFIX = 'style:'
+
 /** The `codeProps` entry naming an inline-style property. */
 export function styleValueKey(property: string): string {
-  return `style:${property}`
+  return `${STYLE_VALUE_PREFIX}${property}`
 }
 
 /**
