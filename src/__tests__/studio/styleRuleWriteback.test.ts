@@ -635,3 +635,130 @@ describe('commitBaseline — refusedRuleIds', () => {
     expect(second.edits[0]).toMatchObject({ selector: '.hero-title' })
   })
 })
+
+
+/**
+ * `style-03` — the two halves of the diff that used to produce nothing at all:
+ * a declaration CLEARED, and a declaration written under a real breakpoint.
+ */
+describe('style-03 — removals and per-breakpoint writes', () => {
+  const BREAKPOINTS = [
+    { id: 'mobile', label: 'Mobile', width: 375, mediaQuery: '(max-width: 375px)', icon: 'smartphone' },
+    { id: 'wide', label: 'Wide', width: 1440, icon: 'monitor' },
+  ]
+
+  it('emits an unset edit for a property the user cleared', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    // `fontSize` was in the baseline and is gone now.
+    const cleared = rule({ styles: { width: '120px' } })
+
+    const plan = collectStyleRuleEdits({ [RULE_ID]: cleared })
+
+    expect(plan.edits).toHaveLength(1)
+    expect(plan.edits[0]).toMatchObject({
+      kind: 'css',
+      op: 'unset',
+      file: 'pages/Home.css',
+      selector: '.hero-title',
+      property: 'font-size',
+    })
+  })
+
+  it('emits a set and an unset together when one property changed and another went', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ styles: { width: '200px' } })
+
+    const ops = collectStyleRuleEdits({ [RULE_ID]: edited }).edits.map((edit) => `${edit.op}`)
+    expect(ops.sort()).toEqual(['set', 'unset'])
+  })
+
+  it('does NOT emit an unset for an untouched rule', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    expect(collectStyleRuleEdits({ [RULE_ID]: rule() }).edits).toHaveLength(0)
+  })
+
+  // A brand-new rule has nothing on disk to remove FROM.
+  it('never emits an unset for a rule whose first write is an insert', () => {
+    setStudioStyleRuleSources({ a: { file: 'pages/Home.css', selector: '.a' } }, {})
+    const created = { ...rule(), id: 'newId1', name: 'fresh', selector: '.fresh', styles: { color: 'red' } }
+    const plan = collectStyleRuleEdits({ newId1: created })
+    expect(plan.edits.every((edit) => edit.op === 'insert')).toBe(true)
+  })
+
+  it('writes a breakpoint override into that breakpoint\'s @media query', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { mobile: { width: '90%' } } })
+
+    const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], { breakpoints: BREAKPOINTS })
+
+    expect(plan.unwritableContexts).toHaveLength(0)
+    expect(plan.edits).toHaveLength(1)
+    expect(plan.edits[0]).toMatchObject({ op: 'set', property: 'width', value: '90%', atMedia: '(max-width: 375px)' })
+  })
+
+  it('falls back to the breakpoint width when it carries no explicit mediaQuery', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { wide: { width: '90%' } } })
+    const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], { breakpoints: BREAKPOINTS })
+    expect(plan.edits[0]).toMatchObject({ atMedia: '(max-width: 1440px)' })
+  })
+
+  it('writes a kind:media condition override under its own query', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { 'media:print': { width: '100%' } } })
+
+    const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], {
+      conditions: [{ id: 'media:print', label: 'Print', condition: { kind: 'media', query: 'print' } }],
+    })
+
+    expect(plan.edits[0]).toMatchObject({ atMedia: 'print' })
+  })
+
+  // The refusal that SURVIVES: `setDeclarationAtMedia` writes `@media` and
+  // nothing else, so a container/feature query would land under the wrong
+  // at-rule entirely.
+  it('still refuses a @container context, by name, and writes nothing for it', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { 'container::(min-width: 400px)': { width: '100%' } } })
+
+    const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], {
+      conditions: [
+        {
+          id: 'container::(min-width: 400px)',
+          label: 'Card ≥400',
+          condition: { kind: 'container', query: '(min-width: 400px)' },
+        },
+      ],
+    })
+
+    expect(plan.edits).toHaveLength(0)
+    expect(plan.unwritableContexts).toEqual(['.hero-title'])
+  })
+
+  it('refuses a context the document no longer defines rather than guessing a query', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { 'gone-bp': { width: '100%' } } })
+    const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], { breakpoints: BREAKPOINTS })
+    expect(plan.edits).toHaveLength(0)
+    expect(plan.unwritableContexts).toEqual(['.hero-title'])
+  })
+
+  it('clears a breakpoint override as an unset inside the same @media block', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule({ contextStyles: { mobile: { width: '90%' } } }) })
+    const cleared = rule({ contextStyles: { mobile: {} } })
+
+    const plan = collectStyleRuleEdits({ [RULE_ID]: cleared }, [], { breakpoints: BREAKPOINTS })
+
+    expect(plan.edits[0]).toMatchObject({ op: 'unset', property: 'width', atMedia: '(max-width: 375px)' })
+  })
+
+  it('keeps the base and the breakpoint edits on distinct nodeIds, so one refusal cannot mute the other', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ styles: { width: '200px', fontSize: '24px' }, contextStyles: { mobile: { width: '90%' } } })
+
+    const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], { breakpoints: BREAKPOINTS })
+
+    const nodeIds = plan.edits.map((edit) => edit.nodeId)
+    expect(new Set(nodeIds).size).toBe(nodeIds.length)
+  })
+})

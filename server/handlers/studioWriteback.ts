@@ -55,6 +55,7 @@ import {
   setJsxClassName,
   setJsxProp,
   setJsxStyle,
+  JsxStyleTargetError,
   setJsxTagName,
   setJsxText,
   setStringLiteral,
@@ -357,7 +358,19 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       setJsxText({ ...loc, text: edit.text })
       return { applied: true }
     case 'style':
-      setJsxStyle({ ...loc, style: edit.style })
+      // `style-03` — `JsxStyleTargetError` is a NAMED decision (a spread, a
+      // non-object initializer, a shorthand key), not an unexpected failure.
+      // It used to fall into the generic catch and be reported as an
+      // unexplained skip with the wrong sentence attached; it is a refusal,
+      // and gets the same channel `class`/`css`/`detach`/`swap` use.
+      try {
+        setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}) })
+      } catch (err) {
+        if (err instanceof JsxStyleTargetError) {
+          throw new StudioEditRefusalError('style-target', err.message)
+        }
+        throw err
+      }
       return { applied: true }
     case 'class': {
       // Track B2 — the real write behind Phase 0 item 0.6's honesty-only

@@ -764,16 +764,29 @@ The path, end to end:
 | `duplicate-declaration` | the property is declared twice inside the target rule |
 | `shorthand-override` | a covering shorthand (`padding` over `padding-top`) follows the property |
 | `important-override` | a covering shorthand carries `!important` |
+| `duplicate-selector` / `duplicate-declaration` / `shorthand-override` / `important-override` | apply to `unset` exactly as they do to `set` — removing a declaration the cascade was already ignoring changes the file and nothing on screen |
 | `compiled-stylesheet` | a `.min.css` or a `dist/`-style build path (`classifyStylesheetEditability`). A `*.module.css` is **not** in this bucket — what is compiled there is the class NAME, not the file, and `studioCss.ts`'s `cssModuleSource` inverts `moduleClassMaps` so the selector arriving here is the one as written in the file |
 
 **Where a BRAND-NEW class's first declarations go** is the same "exactly one honest target" rule one level up, and it lives in `src/admin/pages/site/studio/cssInsertDestination.ts`. In order: the stylesheet **co-located with the class's own page** (`pages/Home.tsx` → `pages/Home.module.css`); else the single editable `.css` file this project already writes to; else a named refusal (`ambiguous-stylesheet`, listing the candidates); else, with no stylesheet anywhere, a `create` edit naming the page for the server to co-locate a new one with.
 
 `style-02`: that co-location step used to read the page from `rule.scope.nodeId` only, and the sole producer of node-scoped rules (`ensureNodeStyleClass`) has no non-test caller — so it never fired, and **every** new class in a project with two or more stylesheets refused with "Studio found N candidate stylesheets". The page was recoverable the whole time from where the class is *assigned*: `buildClassPageIndex` walks the pages, decodes each node id back to its file, and answers when every node carrying that class is in one file (two files ⇒ still ambiguous, still refused).
 
+**Clearing a declaration writes too (`style-03`).** The diff used to iterate the properties a rule has *now*, and `setDeclaration` only ever sets a value — so removing one produced no edit at all: the canvas updated, the save reported success, the file was untouched, and the property came back on the next reload with nothing said. `op: 'unset'` is the counterpart, dispatching to `removeDeclaration` (`@core/css-codemods`), through the **same** `analyzeDeclarationTarget` gate — removing the first of two duplicate declarations leaves the second in effect, which is the same file-changed/canvas-unchanged outcome the gate exists for. A rule left with no nodes at all is removed with it (`.card {}` is dead text); a rule still holding a comment keeps its block. An already-absent property is `applied: true`, not a skip: the requested state IS the state on disk.
+
+**A breakpoint override writes into its own `@media` block (`style-03`).** `setDeclarationAtMedia` had existed since WS-6.3, unused, because the `css` edit carried no query. `CssSetEditSchema`/`CssUnsetEditSchema` now carry `atMedia`, and the client resolves a `contextStyles` key to one:
+
+| Context | Query |
+|---|---|
+| a viewport context (`site.breakpoints`) | its own `mediaQuery`, or `(max-width: <width>px)` |
+| a `kind: 'media'` condition (`site.conditions`) | its `query`, verbatim |
+| a `container` / `supports` condition | **none** — refused by name |
+
+`analyzeDeclarationTarget` takes the same `atMedia` and scopes its whole analysis to that block, which matters in both directions: a duplicate *inside* the block is caught, and an unrelated top-level duplicate no longer refuses a nested write.
+
 **What still does not reach disk as a rule declaration**, reported to the user rather than dropped silently (`meta-03` decision 3's third tier):
 
 - A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
-- A **real breakpoint/condition override** (`mobile`, a `@media` condition). Writing one needs `setDeclarationAtMedia` plus the condition's query, which the `css` edit kind does not carry yet.
+- A **`@container` / `@supports` context**. `setDeclarationAtMedia` emits `@media` and nothing else, so writing one of those would put the declaration under a condition the user did not ask for.
 
 Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip. Each unmapped class carries its own `reason` (`UnmappedStyleRule`), rendered as the toast BODY — `style-02`: it used to be concatenated into the generic lead, producing the self-contradictory "…has no hand-editable CSS file in this project — Studio found 4 candidate stylesheets…".
 
@@ -825,6 +838,12 @@ The CLIENT refuses one more, before an edit is ever sent (`classNameWriteback.ts
 A request where every `add` token is already present and every `remove` token is already absent is a silent no-op — `{ ok: true }` with the file untouched — so a re-sent, already-applied edit never re-refuses or rewrites. A pure token **reorder** (no add/remove) writes nothing, by design: token order inside a `className` attribute has no effect on CSS cascade order — that is decided by declaration order in the stylesheet — so there is nothing honest to persist.
 
 This replaced Phase 0 item 0.6's honesty-only stopgap. `classAssignmentUnsavedNotice.ts`'s toast is narrower now: it fires only for a node with no writable source location at all (a `.map` row, a synthetic root) — see `src/admin/pages/site/studio/classNameWriteback.ts`'s `collectClassNameEdits`, which is what `saveSite` calls to turn a `classIds` drift into `kind: 'class'` edits.
+
+### Inline-style write-back (`setJsxStyle`)
+
+A `style={{ … }}` edit merges into the element's own object literal, and — `style-03` — `remove` deletes keys from it. That half was missing on both sides: the client's diff sent only the keys that *changed*, and the codemod only merged, so clearing an inline style reached no code path at all and the declaration on disk came back on the next reload. Removing the last property removes the whole attribute; an empty `style={{}}` is noise the user did not write.
+
+`JsxStyleTargetError` (a spread attribute, a non-object initializer, a shorthand key whose value the codemod never read) is now a **named refusal** on the wire (`reason: 'style-target'`, `kind: 'style'` on `StudioEditRefusal`) rather than an unexpected exception. It used to fall into the generic catch and reach the user as an *unexplained skip*, which attaches the wrong sentence entirely — that bucket's message is about a prop binding, and this is a decision the codemod made on purpose.
 
 ## Structural write-back — move and delete (`struct-01`)
 

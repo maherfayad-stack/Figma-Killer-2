@@ -119,7 +119,7 @@
  * such a rule is REFUSED rather than guessed on this save — see
  * `classNameWriteback.ts`'s `resolveClassToken`.
  */
-import { isGeneratedClass, type Page, type StyleRule } from '@core/page-tree'
+import { isGeneratedClass, type Breakpoint, type ConditionDef, type Page, type StyleRule } from '@core/page-tree'
 import { camelToKebabCssProperty } from '@core/css-codemods'
 import {
   buildClassPageIndex,
@@ -173,6 +173,24 @@ export interface CssSetEditPayload {
   selector: string
   property: string
   value: string
+  /** A breakpoint/condition override's media query — see `mediaQueryForContext`. */
+  atMedia?: string
+}
+
+/**
+ * One EXISTING declaration CLEARED (`style-03`), matching
+ * `studioCssWriteback.ts`'s `CssUnsetEditSchema`. The exact counterpart of
+ * `set`, and the reason the diff below now looks at the BASELINE's keys as
+ * well as the current ones.
+ */
+export interface CssUnsetEditPayload {
+  kind: 'css'
+  op: 'unset'
+  nodeId: string
+  file: string
+  selector: string
+  property: string
+  atMedia?: string
 }
 
 /**
@@ -209,7 +227,7 @@ export interface CssCreateEditPayload {
 }
 
 /** One `kind: 'css'` edit, matching `server/handlers/studioCssWriteback.ts`'s `CssEditSchema` union. */
-export type CssEditPayload = CssSetEditPayload | CssInsertEditPayload | CssCreateEditPayload
+export type CssEditPayload = CssSetEditPayload | CssUnsetEditPayload | CssInsertEditPayload | CssCreateEditPayload
 
 /** `nodeId` prefix an `op: 'create'` edit is synthesized with — see `ruleIdFromCssCreateNodeId`. */
 const CSS_CREATE_NODE_ID_PREFIX = 'css:create:'
@@ -385,19 +403,97 @@ export interface StyleRuleEditPlan {
 }
 
 /**
+ * The editing contexts a document defines, in the shape this module needs:
+ * a viewport breakpoint's `mediaQuery` and a named condition's `condition`.
+ * Passed in rather than read off `SiteDocument` so this module stays a leaf
+ * (and so a test can state exactly one context without a whole document).
+ */
+export interface StyleRuleContexts {
+  breakpoints?: readonly Breakpoint[]
+  conditions?: readonly ConditionDef[]
+}
+
+/**
+ * The `@media` query a `contextStyles` key writes under, or a NAMED refusal.
+ *
+ * `style-03`. Three answers, and the third is the point:
+ *
+ *   - a viewport context (`site.breakpoints`) contributes its own
+ *     `mediaQuery` — that field exists precisely because the frame WIDTH is an
+ *     editor concern and the query is the published condition.
+ *   - a `kind: 'media'` condition contributes its query verbatim.
+ *   - a `container`/`supports` condition contributes NOTHING: those are
+ *     `@container` / `@supports` blocks, not `@media`, and
+ *     `setDeclarationAtMedia` would silently write the wrong at-rule. They
+ *     keep the refusal this whole path used to give every context.
+ */
+function mediaQueryForContext(contextId: string, contexts: StyleRuleContexts): string | null {
+  const breakpoint = contexts.breakpoints?.find((entry) => entry.id === contextId)
+  if (breakpoint) return breakpoint.mediaQuery ?? `(max-width: ${breakpoint.width}px)`
+  const condition = contexts.conditions?.find((entry) => entry.id === contextId)
+  if (condition?.condition.kind === 'media') return condition.condition.query
+  return null
+}
+
+/** One property's diff outcome: a new value to write, or a removal. */
+type PropertyChange = { property: string; value: string } | { property: string; value: null }
+
+/**
+ * Kebab-cased property changes between two declaration bags — including the
+ * ones that DISAPPEARED (`value: null`).
+ *
+ * That second half is `style-03`'s fix. This used to iterate `after` only, so
+ * clearing a declaration in the inspector produced no edit at all: the canvas
+ * updated, the save reported success, and the property came back on the next
+ * reload with nothing said. Both directions now produce an edit, and both go
+ * through the same `analyzeDeclarationTarget` gate server-side.
+ */
+function diffDeclarations(before: Record<string, unknown>, after: Record<string, unknown>): PropertyChange[] {
+  const changes: PropertyChange[] = []
+  for (const [property, value] of Object.entries(after)) {
+    if (typeof value !== 'string' && typeof value !== 'number') continue
+    if (Object.is(before[property], value)) continue
+    // Keys are camelCase (`CSSPropertyBag`'s convention everywhere in this
+    // editor); a real `.css` file only understands kebab-case names.
+    changes.push({ property: camelToKebabCssProperty(property), value: String(value) })
+  }
+  for (const property of Object.keys(before)) {
+    if (property in after) continue
+    changes.push({ property: camelToKebabCssProperty(property), value: null })
+  }
+  return changes
+}
+
+/** Only the changes that SET a value — what an `insert`/`create` edit's full declaration bag is built from. */
+function settableDeclarations(changes: readonly PropertyChange[]): Record<string, string> {
+  const bag: Record<string, string> = {}
+  for (const change of changes) {
+    if (change.value !== null) bag[change.property] = change.value
+  }
+  return bag
+}
+
+/**
  * Diff each rule's EFFECTIVE declarations (see `effectiveStudioStyles`)
  * against the last synced baseline and produce the `kind: 'css'` edits for
- * rules with a real source, plus the two lists of changes that could not be
- * written and must therefore be reported.
+ * rules with a real source, plus the changes that could not be written and
+ * must therefore be reported.
  *
- * A property REMOVED since the last sync (present in the baseline, absent
- * now) is left alone — `setDeclaration` only sets a value, it has no "remove"
- * operation yet, and inventing one that deletes lines from a user's
- * stylesheet is not something to do as a side effect of a diff.
+ * Three things happen per rule:
+ *
+ *   1. its unconditional declarations are diffed, in BOTH directions — a
+ *      property that disappeared becomes an `op: 'unset'` edit (`style-03`;
+ *      it used to become nothing at all, silently);
+ *   2. each REAL context (a breakpoint or a condition, never the synthetic
+ *      `studio` viewport) is diffed the same way and written into its own
+ *      `@media` block, when `mediaQueryForContext` can name one;
+ *   3. a context that is not a media query at all (`@container`, `@supports`)
+ *      keeps the `unwritableContexts` refusal — reported, never dropped.
  */
 export function collectStyleRuleEdits(
   styleRules: Record<string, StyleRule>,
   pages: readonly Page[] = [],
+  contexts: StyleRuleContexts = {},
 ): StyleRuleEditPlan {
   const edits: CssEditPayload[] = []
   const unmapped: UnmappedStyleRule[] = []
@@ -427,30 +523,68 @@ export function collectStyleRuleEdits(
     // so they cannot produce a spurious edit either.
     if (isGeneratedClass(rule)) continue
 
-    const before = baseline.get(ruleId) ?? {}
-    const current = effectiveStudioStyles(rule)
     const label = rule.selector || rule.name
-
-    // A real `@media` context the user touched. Compared against the baseline
-    // the same way, so an untouched imported override never reports.
-    for (const contextId of realContextIds(rule)) {
-      const contextBag = rule.contextStyles?.[contextId] ?? {}
-      const contextBefore = contextBaseline.get(`${ruleId}::${contextId}`) ?? {}
-      const touched = Object.entries(contextBag).some(([property, value]) => !Object.is(contextBefore[property], value))
-      if (touched && !unwritableContexts.includes(label)) unwritableContexts.push(label)
-    }
-
-    const changed: [property: string, value: string][] = []
-    for (const [property, value] of Object.entries(current)) {
-      if (typeof value !== 'string' && typeof value !== 'number') continue
-      if (Object.is(before[property], value)) continue
-      // Keys are camelCase (`CSSPropertyBag`'s convention everywhere in this
-      // editor); a real `.css` file only understands kebab-case names.
-      changed.push([camelToKebabCssProperty(property), String(value)])
-    }
-    if (changed.length === 0) continue
-
     const source = getStudioStyleRuleSources()[ruleId]
+
+    /** One `(scope, property)` write, once a source is known to exist. */
+    const pushScopedEdits = (changes: readonly PropertyChange[], atMedia: string | undefined): void => {
+      if (!source) return
+      for (const change of changes) {
+        const nodeId = `css:${source.file}#${source.selector}#${atMedia ?? ''}#${change.property}`
+        ruleIdByNodeId[nodeId] = ruleId
+        edits.push(
+          change.value === null
+            ? {
+                kind: 'css',
+                op: 'unset',
+                nodeId,
+                file: source.file,
+                selector: source.selector,
+                property: change.property,
+                ...(atMedia ? { atMedia } : {}),
+              }
+            : {
+                kind: 'css',
+                op: 'set',
+                nodeId,
+                file: source.file,
+                selector: source.selector,
+                property: change.property,
+                value: change.value,
+                ...(atMedia ? { atMedia } : {}),
+              },
+        )
+      }
+    }
+
+    // --- real breakpoint/condition overrides (style-03) ----------------------
+    for (const contextId of realContextIds(rule)) {
+      const contextChanges = diffDeclarations(
+        contextBaseline.get(`${ruleId}::${contextId}`) ?? {},
+        rule.contextStyles?.[contextId] ?? {},
+      )
+      if (contextChanges.length === 0) continue
+      const atMedia = mediaQueryForContext(contextId, contexts)
+      // A `@container`/`@supports` context, or one this document no longer
+      // defines: `setDeclarationAtMedia` writes `@media` and nothing else, so
+      // writing it would produce the wrong at-rule. Reported, never guessed.
+      if (!atMedia) {
+        if (!unwritableContexts.includes(label)) unwritableContexts.push(label)
+        continue
+      }
+      if (!source) {
+        // The rule's unconditional declarations have no home yet either; the
+        // `insert`/`create` branch below is what has to run first. Reported
+        // through `unmapped` by that branch, so nothing is said twice here.
+        continue
+      }
+      pushScopedEdits(contextChanges, atMedia)
+    }
+
+    // --- unconditional declarations -----------------------------------------
+    const changes = diffDeclarations(baseline.get(ruleId) ?? {}, effectiveStudioStyles(rule))
+    if (changes.length === 0) continue
+
     if (!source) {
       // Track B1 — an IMPORTED rule with no source has a real reason to stay
       // unmapped (Tailwind/Sass/PostCSS output, a non-.css module); only a
@@ -467,6 +601,10 @@ export function collectStyleRuleEdits(
         unmapped.push({ label, reason: destination.message })
         continue
       }
+      // A brand-new rule has nothing on disk to REMOVE a property from, so
+      // only the set half of the diff reaches an insert/create.
+      const declarations = settableDeclarations(changes)
+      if (Object.keys(declarations).length === 0) continue
       if (destination.kind === 'existing') {
         const nodeId = `css:insert:${destination.file}#${rule.selector}`
         ruleIdByNodeId[nodeId] = ruleId
@@ -476,7 +614,7 @@ export function collectStyleRuleEdits(
           nodeId,
           file: destination.file,
           selector: rule.selector,
-          declarations: Object.fromEntries(changed),
+          declarations,
         })
         continue
       }
@@ -493,23 +631,11 @@ export function collectStyleRuleEdits(
         nodeId: `${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`,
         pageFile: destination.pageFile,
         selector: rule.selector,
-        declarations: Object.fromEntries(changed),
+        declarations,
       })
       continue
     }
-    for (const [property, value] of changed) {
-      const nodeId = `css:${source.file}#${source.selector}#${property}`
-      ruleIdByNodeId[nodeId] = ruleId
-      edits.push({
-        kind: 'css',
-        op: 'set',
-        nodeId,
-        file: source.file,
-        selector: source.selector,
-        property,
-        value,
-      })
-    }
+    pushScopedEdits(changes, undefined)
   }
 
   return { edits, unmapped, unwritableContexts, ruleIdByNodeId }

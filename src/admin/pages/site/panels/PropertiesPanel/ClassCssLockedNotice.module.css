@@ -1,0 +1,45 @@
+/* ClassCssLockedNotice — pre-flight "this class can't be written" banner.
+
+   Warning tone as STATE (docs/design.md's two-layer colour model): a
+   consequence the user has to weigh before typing, not decoration. Same
+   amber pairing `SharedComponentNotice` uses for the other kind of
+   before-you-edit consequence, so the two read as one vocabulary. */
+.notice {
+    display: flex;
+    gap: var(--space-2xs);
+    align-items: flex-start;
+    /* Inset to the panel gutter `.targetBlockLabel` already establishes, so
+       the banner lines up with the selector name it is talking about. */
+    margin: 0 var(--space-l) var(--space-2xs);
+    padding: var(--space-xs) var(--space-s);
+    border-radius: var(--radius);
+    background: var(--warning-10);
+    color: var(--warning-text);
+}
+
+.icon {
+    flex-shrink: 0;
+    color: var(--warning);
+    /* Optical alignment with the first line of text, without a hardcoded offset. */
+    align-self: baseline;
+}
+
+.body {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-2xs);
+    min-width: 0;
+}
+
+.text {
+    margin: 0;
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+}
+
+/* The remedy button sits inside a warning-toned block, so it must not inherit
+   the amber text colour Button's secondary variant would otherwise pick up
+   from `color: inherit` on the surrounding prose. */
+.action {
+    color: var(--text);
+}

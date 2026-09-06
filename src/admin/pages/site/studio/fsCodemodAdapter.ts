@@ -40,7 +40,6 @@ import {
   type SiteDocument,
   hasWritableSourceLocation,
   isPropWritableToSource,
-  isStyleWritableToSource,
   styleValueKey,
 } from '@core/page-tree'
 import { apiRequest, ndjsonRequest } from '@core/http'
@@ -52,7 +51,6 @@ import { registry } from '@core/module-engine'
 import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { useAdminUi } from '@admin/state/adminUi'
-import { pushToast } from '@ui/components/Toast'
 import { notifyUnexplainedSkips } from '@site/panels/unexplainedSkipsNotice'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
@@ -63,16 +61,19 @@ import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadSt
 import {
   commitClassIdsBaseline,
   commitNodeValuesBaseline,
+  diffInlineStyles,
+  dropNodeValuesBaseline,
   getLoadedNodeValues,
-  literalInlineStyles,
   resetLoadedValues,
   type NodeValueBump,
+  type NodeValueDrop,
 } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
 import {
   reportClassTokenRefusals,
   reportEditRefusals,
   reportUnmappedStyleRules,
+  reportUnwritableContexts,
   resetRefusalToasts,
 } from './refusalToasts'
 import type { StudioEditPayload } from './studioEditPayload'
@@ -327,10 +328,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
   },
 
   async saveSite(site: SiteDocument, opts: SaveSiteOptions = {}): Promise<void> {
-    // Collect current literal props + inline styles for every source-backed
-    // node across all pages. Re-writing unchanged values is idempotent, so we
-    // don't need a per-field diff for this first pass. Synthetic nodes (e.g.
-    // `index:body`) don't match the loc pattern and are skipped server-side.
+    // Every source-backed node's literal props + inline styles, DIFFED against
+    // `loadedValues` — an unchanged value must never be re-written, or a
+    // resolved expression gets baked into a literal. Synthetic nodes (e.g.
+    // `index:body`) are skipped server-side.
     const edits: StudioEditPayload[] = []
     // Parallel to `edits` — one `(nodeId, baseline key, value)` entry per
     // node-value edit pushed below, so `loadedValues` can be advanced to
@@ -339,6 +340,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // gated on `unexplainedSkips === 0` below rather than committed
     // unconditionally.
     const bumps: NodeValueBump[] = []
+    // `style-03`'s counterpart: the `(nodeId, key)` pairs this batch REMOVES
+    // from source, which have no value to record — see `dropNodeValuesBaseline`.
+    const drops: NodeValueDrop[] = []
 
     // C4 — this loop used to scan every node of every page on every autosave
     // tick, ignoring `opts.dirty` (fed correctly by every `mutateSite`/
@@ -476,15 +480,16 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // not forward a `style` prop to their root element at all — out of
         // scope for source writeback this slice.
         if (node.moduleId.startsWith('base.')) {
-          const style = literalInlineStyles(node.inlineStyles)
-          const changed = Object.entries(style).filter(
-            ([k, v]) =>
-              isStyleWritableToSource(node, k) &&
-              (!baseline || !Object.is(baseline[styleValueKey(k)], v)),
-          )
-          if (changed.length > 0) {
-            edits.push({ kind: 'style', nodeId: node.id, style: Object.fromEntries(changed) })
-            for (const [k, v] of changed) bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v })
+          const { changed, removed } = diffInlineStyles(node, baseline)
+          if (Object.keys(changed).length > 0 || removed.length > 0) {
+            edits.push({
+              kind: 'style',
+              nodeId: node.id,
+              style: changed,
+              ...(removed.length > 0 ? { remove: removed } : {}),
+            })
+            for (const [k, v] of Object.entries(changed)) bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v })
+            for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property) })
           }
         }
       }
@@ -520,21 +525,20 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // co-located with the page it is actually USED on. Without it, every
     // project whose pages each own a stylesheet refused every new class as
     // "N candidate stylesheets, will not guess".
-    const cssPlan = collectStyleRuleEdits(site.styleRules, site.pages)
+    //
+    // `style-03` — the document's own editing contexts are passed too, so a
+    // breakpoint/condition override resolves to a `@media` query and is
+    // written through `setDeclarationAtMedia` instead of being refused
+    // wholesale. `@container`/`@supports` contexts still refuse, by name.
+    const cssPlan = collectStyleRuleEdits(site.styleRules, site.pages, {
+      breakpoints: site.breakpoints,
+      conditions: site.conditions,
+    })
     edits.push(...cssPlan.edits)
 
     reportUnmappedStyleRules(cssPlan.unmapped)
 
-    if (cssPlan.unwritableContexts.length > 0) {
-      pushToast({
-        kind: 'error',
-        title: 'Breakpoint override not saved to source',
-        body:
-          `${cssPlan.unwritableContexts.join(', ')} changed under a breakpoint or condition. Studio can only write ` +
-          'a class’s default declarations back to CSS today, so this override stays on the canvas only and ' +
-          'will be lost on reload.',
-      })
-    }
+    reportUnwritableContexts(cssPlan.unwritableContexts)
 
     // WS-10 §4.4 (Phase 4) — a locale-variant board frame's text edits.
     // `localizedPages` lives OUTSIDE `site` (a parallel map, not part of
@@ -611,7 +615,13 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // tick, instead of a refused/skipped edit's value being silently
       // adopted as the new baseline and the user never seeing why their
       // change didn't stick.
-      if (unexplainedSkips === 0) commitNodeValuesBaseline(bumps)
+      if (unexplainedSkips === 0) {
+        commitNodeValuesBaseline(bumps)
+        // `style-03` — a REMOVED inline style has no value to record, so its
+        // baseline entry has to be deleted instead; leaving it behind would
+        // re-emit the same removal on every later tick.
+        dropNodeValuesBaseline(drops)
+      }
 
       // A write shifted line numbers, so every `line:col` node id below that
       // point is now stale against disk. Re-parse the workspace to re-derive

@@ -13,7 +13,7 @@ import {
 } from 'react'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
-import { classifySelectorCreateInput, styleRuleSelector } from '@core/page-tree'
+import { classifySelectorCreateInput, isSourceDerivedNodeId, styleRuleSelector, type StyleRule } from '@core/page-tree'
 import { recordClassUsage } from '@site/preferences/classUsage'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import {
@@ -58,6 +58,37 @@ function pickAutoActiveSelectorId(pills: SelectorPillItem[]): string | null {
     return pill.rule.id
   }
   return null
+}
+
+/**
+ * The node association a class created from THIS picker carries, or
+ * `undefined` when there is nothing honest to associate it with.
+ *
+ * A class created here is always created while an element is selected, and
+ * `styleRuleWriteback.ts`'s `resolveCssInsertDestination` reads exactly this
+ * `scope.nodeId` — through `decodeSourceNodeId` — to work out which PAGE the
+ * class belongs to, and therefore which stylesheet its first declarations
+ * should be co-located with. Without it, that resolver falls back to counting
+ * stylesheets across the whole workspace and refuses any project with more
+ * than one ("Studio found N candidate stylesheets ... and will not guess") —
+ * i.e. every real multi-page project, where each page owns its own
+ * `*.module.css`. The rule was created for a specific element on a specific
+ * page the entire time; the scope is simply saying so.
+ *
+ * Restricted to a STUDIO source-derived node id (`rel:line:col`, the only ids
+ * `decodeSourceNodeId` can name a file from) on purpose. A CMS nanoid node id
+ * decodes to nothing, so a scope built from one buys the resolver nothing —
+ * while still costing the two semantics `scope` carries elsewhere: a
+ * node-scoped class is CLONED rather than shared when its node is duplicated
+ * (`duplicateWithScopedClasses.ts`), and is claimed by
+ * `ensureNodeStyleClass` as that node's module-style layer. A reusable
+ * `.card` the user named themselves must not silently acquire either of
+ * those behaviours in exchange for nothing.
+ */
+function nodeScopeForNewClass(nodeId: string): StyleRule['scope'] {
+  return isSourceDerivedNodeId(nodeId)
+    ? { type: 'node', nodeId, role: 'module-style' }
+    : undefined
 }
 
 function keyboardMenuPosition(element: HTMLElement) {
@@ -171,7 +202,7 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
     try {
       if (intent.kind === 'class') {
         setUnmatchedSelectorNotice(null)
-        const newClass = createClass(intent.name)
+        const newClass = createClass(intent.name, undefined, nodeScopeForNewClass(nodeId))
         addNodeClass(nodeId, newClass.id)
         setActiveClass(newClass.id)
         clearPreviewNodeClass(nodeId)
