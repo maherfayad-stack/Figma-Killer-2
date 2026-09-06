@@ -39,7 +39,6 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 | `FormField`        | Label + description shell around a form control                      | `label`, `description`, `layout: 'stacked' \| 'inline-end' \| 'inline-start'`, `htmlFor` |
 | `Select`           | Dropdown selection of fixed options                                  | `options`, `value`, `onChange`                             |
 | `ColorInput`       | Color picker — swatch + hex input                                    | `value`, `onChange`                                        |
-| `DateTimePicker`   | Date / time inputs                                                   | `value`, `onChange`, `mode: 'date' \| 'datetime'`          |
 | `FileUpload`       | Drop-zone + browse                                                   | `onSelect`, `accept`, `multiple`                           |
 | `SearchBar`        | Search input with magnifier icon + clear affordance                  | `value`, `onChange`, `placeholder`                         |
 | `FilterBar`        | Panel filter strip: filter chips + optional search bar + action slots | `items`, `value`, `onValueChange`, `search?`, `searchLeading?`, `searchTrailing?`, `inlineActions?`, `trailing?`, `groupLabel?` |
@@ -407,7 +406,7 @@ const triggerRef = useRef<HTMLButtonElement>(null)
 
 **Exit animation (`animateExit`).** When `true`, a Dismiss (Escape / outside-click) plays a brief `data-closing` fade-out keyframe before `onClose` unmounts the menu. Item-selection always closes instantly regardless. Reopening the menu at a new coordinate cancels any in-flight exit. Default `false` keeps the instant close that anchored dropdowns (Select, combobox) rely on. Use `animateExit` for all point-anchored right-click context menus.
 
-**Position recomputation.** Both hooks (`useAnchorPosition`, `usePointPosition`) attach a `ResizeObserver` to the menu element. When menu content grows after the first measuring frame — e.g. a model picker that lazy-loads its list — the position is recomputed immediately so the expanded panel never overflows the viewport. A menu that auto-flipped to open above its trigger for its initial short height will re-evaluate the flip and reposition correctly once the full content has loaded. The observer also fires on window resize and capture-phase scroll so the menu stays glued to its trigger during scrolling.
+**Position recomputation.** The shared `useAnchoredFloating` hook (`src/ui/lib/useAnchoredFloating.ts`) — which handles both anchor mode and point mode — attaches a `ResizeObserver` to the menu element. When menu content grows after the first measuring frame — e.g. a model picker that lazy-loads its list — the position is recomputed immediately so the expanded panel never overflows the viewport. A menu that auto-flipped to open above its trigger for its initial short height will re-evaluate the flip and reposition correctly once the full content has loaded. The observer also fires on window resize and capture-phase scroll so the menu stays glued to its trigger during scrolling.
 
 **Width constraints.** `minWidth` sets the lower bound, `width` sets the default rendered width, and `maxWidth` caps the rendered width after `matchAnchorWidth`. Use `matchAnchorWidth` for input-attached dropdowns, and add `maxWidth` when the anchor or row labels can be very long, such as selector pickers. Menu rows should still ellipsize their label text inside the capped width.
 
@@ -647,8 +646,7 @@ The primitive must work entirely with existing design tokens. If you need a new 
   - `src/ui/components/Button/Button.module.css` — canonical button (with `!important` exception)
   - `src/ui/lib/sameOriginDocuments.ts` — `collectSameOriginDocuments`, `isNode`
   - `src/ui/components/ContextMenu/useDeferredClose.ts` — exit-animation deferred close hook
-  - `src/ui/components/ContextMenu/useAnchorPosition.ts` — anchor-based auto-flip positioning hook
-  - `src/ui/components/ContextMenu/usePointPosition.ts` — point-anchored viewport-fit positioning hook
+  - `src/ui/lib/useAnchoredFloating.ts` — shared anchor-mode (auto-flip) and point-mode (viewport-fit) positioning hook, also used by `InspectorPopover`
 - Gate tests:
   - `src/__tests__/architecture/button-primitive-usage.test.ts`
   - `src/__tests__/architecture/ui-primitives-location.test.ts`

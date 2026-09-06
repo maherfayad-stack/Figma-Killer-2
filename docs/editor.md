@@ -9,9 +9,9 @@ The frontend is a single React 19 + Vite SPA mounted at `/admin`. Inside it, two
 ## TL;DR
 
 - **Entry:** `src/admin/main.tsx` mounts `<Router><AdminRoutes /></Router><AdminContextMenuGuard />` with React 19 root-level error callbacks. `flushSync` forces the initial render synchronous to cut LCP.
-- **Router:** `src/admin/lib/routing/` — in-house router replacing `react-router-dom`. Ten workspace/page routes are wrapped in a per-route `<ErrorBoundary>` and `<Suspense>`, with root redirects plus a final `path="/admin/*"` catch-all redirecting unknown admin URLs to `/admin/dashboard` (login form when unauthenticated) instead of rendering an empty tree. Public-site 404s are NOT claimed — the publish pipeline's NotFound handling owns those.
+- **Router:** `src/admin/lib/routing/` — in-house router replacing `react-router-dom`. The four workspace/page routes (`dashboard`, `site`, `account`, `pluginPage`) are wrapped in a per-route `<ErrorBoundary>` and `<Suspense>`, with root redirects plus a final `path="/admin/*"` catch-all redirecting unknown admin URLs to `/admin/dashboard` (login form when unauthenticated) instead of rendering an empty tree. Public-site 404s are NOT claimed — the publish pipeline's NotFound handling owns those.
 - **Cold path:** entry chunk is tiny. `AuthenticatedAdmin` is `React.lazy` and only loads post-login. Each workspace page is wrapped in `prewarmedLazy(...)`: the active page fires its import at module evaluation; the remaining pages pre-warm via `requestIdleCallback` after first paint so subsequent nav is synchronous (no Suspense flicker).
-- **Workspaces:** `dashboard`, `site` (the editor), `content`, `data`, `media`, `plugins`, `users`, `ai`, `account`, `pluginPage`. Capability-gated by `canAccessWorkspace`.
+- **Workspaces:** `dashboard`, `site` (the editor), `account`, `pluginPage`. Capability-gated by `canAccessWorkspace`. The standalone Content / Data / Media workspaces were deleted; any other `/admin/*` URL redirects to the dashboard. Plugins, Users, and AI management live in the Settings modal instead of separate routes.
 - **Editor store** lives at `src/admin/pages/site/store/`. Zustand + Mutative (`zustand-mutative`) + `subscribeWithSelector`. 12 slices, one source of truth for the page tree. Undo/redo uses patch-based history (O(change) per step, not O(site)).
 - **Active tree routing:** `mutateActiveTree(fn)` in `src/admin/pages/site/store/slices/site/helpers.ts` is the **only** place that branches on page-mode vs. VC-mode. The 11 named mutation actions are one-liners that delegate to it.
 - **Canvas:** `src/admin/pages/site/canvas/` renders the page tree into per-breakpoint `IframeFrameSurface` iframes. Two views: **design** (multiple breakpoints side-by-side with pan/zoom) and **live** (single real-size editable frame with normal scrolling). Design mode paints iframe shells with detailed skeletons first, mounts the active breakpoint's node tree after the first paint, then fills inactive breakpoint frames on idle time. Three canvas ring tokens: `--canvas-selection-ring` (neon green, selected node), `--canvas-hover-ring` (neon pink, hovered node), `--canvas-selector-ring` (neon orange, selector-panel match sweep).
@@ -85,13 +85,11 @@ The route table (`src/admin/router.tsx`):
 | `/admin` → redirect to `/admin/dashboard` | `<Navigate />`                  |
 | `/admin/dashboard`                      | `<AdminEntry section="dashboard" />` |
 | `/admin/site`                           | `<AdminEntry section="site" />` (the editor) |
-| `/admin/content`                        | `<AdminEntry section="content" />` |
-| `/admin/data`                           | `<AdminEntry section="data" />`  |
-| `/admin/media`                          | `<AdminEntry section="media" />` |
-| `/admin/plugins`                        | `<AdminEntry section="plugins" />` |
-| `/admin/users`                          | `<AdminEntry section="users" />` |
 | `/admin/account`                        | `<AdminEntry section="account" />` |
 | `/admin/plugins/:pluginId/:pageId`      | `<AdminEntry section="pluginPage" />` |
+| any other `/admin/*` URL                | `<Navigate to="/admin/dashboard" />` (catch-all, must stay last) |
+
+The standalone Content / Data / Media workspace pages have been removed — `/admin/content`, `/admin/data`, `/admin/media`, `/admin/plugins`, and `/admin/users` all fall through to the catch-all redirect. The underlying `data_tables`/`data_rows` model still powers the site editor (loops, data pickers, publish), but there is no standalone workspace UI for it anymore. Plugins, Users, and AI management moved into the Settings modal (in-modal panels) instead of separate routes.
 
 Every route is wrapped with `withRouteBoundary(...)` → `<ErrorBoundary location="admin-route" resetKeys={[pathname]}>` and `<Suspense fallback={<AppLoadingScreen />}>`. The error boundary resets when the pathname changes so a broken route never strands the user.
 
@@ -141,10 +139,10 @@ useUrlQuerySync(
 |-----------|----------|-------|
 | **Site editor** | `/admin/site` | Home page (slug `index`); bare URL is canonical — no `?page=` written |
 | **Site editor** | `/admin/site?page=<slug>` | Opens the page with that slug |
-| **Site editor** | `/admin/site?table=pages&row=<rowId>` | Cross-workspace deep link from Data workspace; normalized to `?page=<slug>` after consume |
+| **Site editor** | `/admin/site?table=pages&row=<rowId>` | Legacy deep-link form, originally produced by the now-deleted Data workspace; `useSiteEditorUrlSync` still consumes it once and normalizes to `?page=<slug>` after |
 | **Site editor** | `/admin/site?table=components&row=<rowId>` | Opens the Visual Component with that id; normalized after consume |
-| **Content** | `/admin/content?table=<collectionSlug>&row=<rowId>` | Opens the collection and entry |
-| **Data** | `/admin/data?table=<tableSlug>&row=<rowId>` | Opens the table and row |
+
+The Content and Data workspaces that used to link into the Site editor via `?table=&row=` were deleted along with their routes — nothing in the app produces those links anymore, but the Site editor keeps parsing the form for any link that still points at it.
 
 ### Site editor URL sync — `useSiteEditorUrlSync`
 
@@ -159,7 +157,7 @@ useUrlQuerySync(
 
 ## Auth and access
 
-After login, every route renders `<AuthenticatedAdmin section={...}>`. Before rendering the workspace, it calls `canAccessWorkspace(currentUser, section)`. If the user's capabilities don't include the workspace, it `<Navigate>`s to `firstAccessibleWorkspace(currentUser)` (e.g. a contributor with only `media.read` lands on `/admin/media`).
+After login, every route renders `<AuthenticatedAdmin section={...}>`. Before rendering the workspace, it calls `canAccessWorkspace(currentUser, section)`. If the user's capabilities don't include the workspace, it `<Navigate>`s to `firstAccessibleWorkspace(currentUser)`, which tries `dashboard`, then `site`, then `account` in that order (e.g. a user without `dashboard.read` or `site.read` lands on `/admin/account`, the universal fallback every authenticated user can reach).
 
 `src/admin/access.ts` owns the capability-to-workspace mapping. `src/admin/workspace.ts` owns the `AdminWorkspace` union and the workspace paths.
 
@@ -169,27 +167,26 @@ Sensitive actions (delete user, revoke another device, sign out all devices) req
 
 ## Admin shell layout
 
-### The three layouts
+### The two layouts
 
-Every admin page picks one of three root layouts from `src/admin/layouts/`. Import directly from the per-layout path so rolldown can split them into separate chunks (there is deliberately no barrel).
+Every admin page picks one of two root layouts from `src/admin/layouts/`. Import directly from the per-layout path so rolldown can split them into separate chunks (there is deliberately no barrel).
 
 | Layout | Used by | Bundle contract |
 |---|---|---|
 | `AdminCanvasLayout` | Site editor (`SitePage`) | Site shell — toolbar/chrome, persistence, editor store, and a post-paint lazy boundary for the heavy body. |
-| `AdminWorkspaceCanvasLayout` | Content, Data, Media | Canvas chrome (toolbar, sidebar, full-height canvas) WITHOUT site-only modules (no editor store, PropertiesPanel, DnD, or CodeMirror). |
-| `AdminPageLayout` | Plugins, Users, Account, plugin admin pages | Lightweight — toolbar + centered scrollable page body. **Must not import the editor store.** Site name and favicon come from `useSiteSummary` + the `adminUi` Zustand store. |
+| `AdminPageLayout` | Dashboard, Account, plugin admin pages (`pluginPage`) | Lightweight — toolbar + centered scrollable page body. **Must not import the editor store.** Site name and favicon come from `useSiteSummary` + the `adminUi` Zustand store. |
+
+The Content, Data, and Media workspaces used to share a third layout (`AdminWorkspaceCanvasLayout`) for their canvas chrome; that layout was deleted along with those workspace routes.
 
 `AdminCanvasLayout` keeps the real editor shell mounted while `usePersistence()` loads the draft site document. In production it renders the toolbar/chrome first and lazy-loads `AdminCanvasEditorBody` after paint. The body owns the permanent rail, sidebars, canvas, DnD context, `ConfirmDeleteProvider`, `CodeEditorPanel`, first-party module registration, and loop-source registration. Rare modal surfaces such as `ImportHtmlModal` stay behind their own open-state lazy boundary inside the body. Loading states use the same local skeleton vocabulary: the editor-body lazy fallback and the canvas no-site fallback both render `CanvasFrameSkeletonFrame`, and sidebars use compact skeleton rows or blocks. Once the document is in the store, every breakpoint frame mounts immediately — the tree is already in memory, so there is nothing to stagger.
 
 The `adminUi` store (`src/admin/state/adminUi.ts`) is the small cross-shell state store: settings-modal open flag, site-import modal open flag, site name/favicon for the toolbar brand position, and `activeLivePath` — the public path the "Open live page" toolbar button opens. The toolbar renders a compact skeleton while the site identity is loading, then renders the configured site favicon when present; otherwise it shows the site name with the same compact bold typography as the admin navigation. The site name is exposed through the shared tooltip after identity loads. It lives outside `@site/` so `AdminPageLayout` can subscribe without pulling in the 165 KB editor graph. The editor's `settingsSlice` mirrors its state into `adminUi` via a registered bridge so both are always in sync.
 
-Canvas chrome state for Content, Data, and Media lives in `src/admin/state/workspaceLayout.ts`, with persistence in `src/admin/state/workspaceLayoutStorage.ts` and `src/admin/state/useWorkspaceLayoutPersistence.ts`. That store owns non-site sidebar widths, right-panel collapsed state, and the Data sidebar toggle. Site editor layout remains site-only: `src/admin/pages/site/hooks/useEditorLayoutPersistence.ts` subscribes to the editor store and delegates the storage mapping to `src/admin/pages/site/layout/siteEditorLayoutPersistence.ts`.
+`src/admin/state/workspaceLayout.ts` (with persistence in `src/admin/state/workspaceLayoutStorage.ts` and `src/admin/state/useWorkspaceLayoutPersistence.ts`) was the sidebar-width / right-panel store shared by the now-deleted Content, Data, and Media canvas chrome. It survives only as a dependency of the shared `MediaSidebar` component (`src/admin/shared/media/components/MediaSidebar/`) used by media pickers embedded elsewhere — it is no longer backing a standalone workspace layout. Site editor layout remains site-only: `src/admin/pages/site/hooks/useEditorLayoutPersistence.ts` subscribes to the editor store and delegates the storage mapping to `src/admin/pages/site/layout/siteEditorLayoutPersistence.ts`.
 
-`activeLivePath` is written by the active workspace and cleared on unmount. The Site editor delegates to `useActiveLivePath` (`src/admin/pages/site/hooks/useActiveLivePath.ts`) inside `AdminCanvasEditorBody` — it resolves templates to a routable path rather than their own (non-routable) slug: an everywhere template maps to the previewed page's path; a postTypes template maps to the previewed published row's permalink. Both resolutions follow the same selection as the `TemplateModeControl` preview dropdown so the button always opens what the canvas is showing. The Content workspace writes `activeLivePath` inline inside its own layout; non-editor layouts never write it, so it stays `null` there naturally.
+`activeLivePath` is written by the active workspace and cleared on unmount. The Site editor is the only writer today: it delegates to `useActiveLivePath` (`src/admin/pages/site/hooks/useActiveLivePath.ts`) inside `AdminCanvasEditorBody` — it resolves templates to a routable path rather than their own (non-routable) slug: an everywhere template maps to the previewed page's path; a postTypes template maps to the previewed published row's permalink. Both resolutions follow the same selection as the `TemplateModeControl` preview dropdown so the button always opens what the canvas is showing. `AdminPageLayout` never writes it, so it stays `null` there naturally.
 
-`AdminWorkspaceCanvasLayout` and `AdminPageLayout` both call `useSiteSummary()` — a lightweight hook that fires a single `cmsAdapter.loadSite()` per session and writes the name + favicon into `adminUi`. The Site editor's `usePersistence` writes the same fields when it hydrates the full site, so after navigating to `/admin/site` the toolbar updates without a second fetch.
-
-When a Content or Data workspace has a right-side panel available but the user closes it, `AdminWorkspaceCanvasLayout` renders a compact top-right canvas notch to reopen that panel without changing the selected row or entry. The notch reads and writes `useWorkspaceLayout`; it does not touch the Site editor store.
+`AdminPageLayout` calls `useSiteSummary()` — a lightweight hook that fires a single `cmsAdapter.loadSite()` per session and writes the name + favicon into `adminUi`. The Site editor's `usePersistence` writes the same fields when it hydrates the full site, so after navigating to `/admin/site` the toolbar updates without a second fetch.
 
 ```text
 src/admin/
@@ -205,7 +202,6 @@ src/admin/
 │
 ├── layouts/
 │   ├── AdminCanvasLayout/      ← Site shell + lazy editor body
-│   ├── AdminWorkspaceCanvasLayout/ ← canvas shell for Content/Data/Media
 │   └── AdminPageLayout/        ← lightweight page shell (no editor store)
 │
 ├── state/
@@ -226,17 +222,14 @@ src/admin/
 ├── spotlight/                  ← Cmd+K palette
 │
 └── pages/                      ← workspace implementations
-    ├── dashboard/              ← stats, activity, publish lineup
+    ├── dashboard/              ← the Studio project launcher ("Overview")
     ├── site/                   ← THE VISUAL EDITOR (see below)
-    ├── content/                ← post / page list and editor
-    ├── data/                   ← data_tables management
-    ├── media/                  ← media manager
-    ├── plugins/                ← plugin install / configure
-    ├── users/                  ← user management
-    ├── ai/                     ← AI credentials, defaults, usage audit
     ├── account/                ← own-account settings
-    └── ...
+    ├── plugins/                ← plugin admin-page host + hooks (no standalone route; feeds the Settings modal's Plugins section)
+    └── users/                  ← user-management components (no standalone route; feeds the Settings modal's Users section)
 ```
+
+The Content, Data, Media, and AI page folders that used to live here were deleted. `plugins/` and `users/` still hold components, but they are now consumed by `src/admin/modals/Settings/sections/` (`PluginsSection.tsx`, `UsersSection.tsx`) rather than mounted at their own routes.
 
 ### Cross-page primitives
 
@@ -616,7 +609,7 @@ The sidebar shell expands/collapses by animating `--*-panel-width`. The panel sl
 
 `src/admin/modals/Settings/SettingsModal.tsx`. Shares the visual language of the Spotlight palette and Module Inserter: a direct-token panel shell, `--bg-surface-2` rail with categorical accent icon chips, accent-bar section header, card-group rows (`--bg-surface-2` fills, `--panel-radius` corners, 1px gaps showing the darker panel surface through) for section content, and an Esc keycap affordance. Backdrop click and Esc both close — there is no dedicated close button.
 
-**Sections** (rail nav, four entries):
+**Sections** (rail nav): four base entries, then a "Manage" divider with three more — the full admin surfaces that used to be standalone `/admin/plugins`, `/admin/users`, and AI routes, folded in as in-modal panels instead of separate page navigations, gated by the same capability checks the old routes used.
 
 | Section       | What it contains                                                             |
 |---------------|------------------------------------------------------------------------------|
@@ -624,6 +617,9 @@ The sidebar shell expands/collapses by animating `--*-panel-width`. The panel sl
 | Shortcuts     | Auto-rendered keyboard shortcut reference from the keybindings registry       |
 | Publishing    | Self-hosted runtime info + framework CSS tree-shaking toggle                 |
 | Preferences   | Catalog-driven editor preferences (auto-rendered from `PREFERENCE_CATALOG`)  |
+| Plugins       | Plugin install / configure / lifecycle management (`sections/PluginsSection.tsx`) |
+| Users         | User / role / audit management (`sections/UsersSection.tsx`)                |
+| AI            | Provider credentials, defaults, MCP connectors, and usage audit, as internal tabs (`sections/AiSection.tsx`, incl. `sections/ai/McpTab.tsx` and `sections/McpServersSection.tsx`) |
 
 Site-specific controls that were previously sections of this modal (Pages roster, Breakpoints/Viewports, Conditions) now live in their dedicated surfaces: the Site Explorer panel and `CanvasContextSelector` (unified condition axis).
 
@@ -746,17 +742,15 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the plugin S
   - `src/admin/AuthenticatedAdmin.tsx` — post-login shell + prewarmedLazy scheduler
   - `src/admin/lib/prewarmedLazy.ts` — React.lazy alternative with explicit preload + sync fast-path
   - `src/admin/state/adminUi.ts` — cross-shell Zustand store (settings modal, site-import modal, site name/favicon, activeLivePath)
-  - `src/admin/state/workspaceLayout.ts` — Content/Data/Media canvas chrome layout store
+  - `src/admin/state/workspaceLayout.ts` — sidebar-width / right-panel store originally shared by the deleted Content/Data/Media canvas chrome; now only backs the shared `MediaSidebar` component
   - `src/admin/state/workspaceLayoutStorage.ts` — per-workspace layout persistence and floating panel positions
-  - `src/admin/state/useWorkspaceLayoutPersistence.ts` — non-site workspace layout persistence hook
   - `src/admin/shared/OpenLivePageButton/OpenLivePageButton.tsx` — toolbar "Open live page" icon button
   - `src/admin/pages/site/hooks/useActiveLivePath.ts` — resolves `activeLivePath` for the Site editor (including template → previewed page/post mapping)
-  - `src/admin/modals/Settings/SettingsModal.tsx` — settings modal (4 sections: General, Shortcuts, Publishing, Preferences)
+  - `src/admin/modals/Settings/SettingsModal.tsx` — settings modal (General, Shortcuts, Publishing, Preferences, plus the Manage group: Plugins, Users, AI)
   - `src/admin/modals/Settings/useSiteSettingsController.ts` — uniform site-settings source for General/Publishing (editor draft on the Site editor, `cmsAdapter` everywhere else)
   - `src/admin/pages/site/store/slices/settingsSlice.ts` — settings modal state + adminUi bridge
   - `src/admin/state/useSiteSummary.ts` — lightweight site name/favicon fetch for non-editor layouts
   - `src/admin/layouts/AdminPageLayout/AdminPageLayout.tsx` — lightweight non-editor shell
-  - `src/admin/layouts/AdminWorkspaceCanvasLayout/AdminWorkspaceCanvasLayout.tsx` — canvas shell for Content/Data/Media
   - `src/admin/router.tsx` — route table
   - `src/admin/lib/routing/` — in-house router
   - `src/admin/pages/site/SitePage.tsx` — Site route mount
@@ -792,7 +786,7 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the plugin S
 - Gate tests:
   - `src/__tests__/architecture/admin-router-usage.test.ts`
   - `src/__tests__/architecture/admin-startup-imports.test.ts` — pre-auth code must not import the full `@core/persistence` barrel
-  - `src/__tests__/architecture/bundle-size-budgets.test.ts` — per-chunk byte budgets (AdminPageLayout, AdminWorkspaceCanvasLayout, SitePage, AdminCanvasEditorBody, ContentPage, …)
+  - `src/__tests__/architecture/bundle-size-budgets.test.ts` — per-chunk byte budgets (admin entry, Site editor route chunk, AdminCanvasEditorBody, lazy CodeMirror chunk, …)
   - `src/__tests__/architecture/site-editor-shell-lazy-body.test.ts` — keeps the real Site shell separate from the heavy editor body
   - `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`
   - `src/__tests__/architecture/centralized-site-mutation-history.test.ts`

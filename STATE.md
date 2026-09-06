@@ -641,6 +641,158 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### docs-05 — W6-4: sweep `docs/` to describe the current tree
+
+- **Agent:** studio-scribe (coordinator) + six parallel read-and-correct sweeps
+- **Stage:** done (gates green; PR open as draft)
+- **Updated:** 2026-09-06
+- **Branch:** `docs/docs-directory-sweep` off `origin/main` (W6-4).
+- **Goal:** every page indexed by `docs/README.md` either already describes the
+  current tree or is corrected here; `path-index.md` reflects every file the
+  waves moved/added/deleted; `glossary.md` carries the waves' new vocabulary.
+- **Scope:** 38 files under `docs/` + `PROJECT-BRIEF.md` (one line) +
+  `src/__tests__/architecture/no-core-barrel-deep-imports.test.ts`.
+  **Deliberately NOT touched:** `docs/features/studio-prototype.md`,
+  `STUDIO-PROTOTYPE-PLAN.md`, every prototype/canvas-overlay SOURCE file
+  (a parallel agent owns them), `CLAUDE.md`, root `README.md`,
+  `studio-workspace/`.
+- **Done so far:**
+  - **The gate fix.** `no-core-barrel-deep-imports.test.ts`'s
+    `BARRELLED_MODULES` gained `studio-anchor` and `studio-prototype` (now
+    eleven). **Zero new violations** — verified by grep before and by the gate
+    after: nothing outside those directories deep-imports them today. Its
+    `studio-comments` comment still named `anchorResolve.ts`; rewritten to name
+    `agentGate.ts`, with a new comment explaining why the anchor model and the
+    write gate are deliberately one barrel apart.
+  - **The four named stale pointers, all fixed:** `path-index.md`,
+    `canvas-internals.md:684` and `PROJECT-BRIEF.md` trap 10 all named the dead
+    `src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts` → real path is
+    `src/__tests__/canvas/iframeCanvasQuery.ts`; `path-index.md`'s
+    `studio-comments/anchorResolve.ts` row → split into `studio-comments/`
+    (`agentGate.ts`) and a new `studio-anchor/` row.
+  - **`path-index.md`** also gained: `studio-prototype/` + the three prototype
+    handlers, `studio-capture/captureWire.ts` + `server/ai/mcp/capture/`,
+    `styledStyleRuleSources.ts` + `setStyledDeclaration.ts`, the three warm-CLI
+    modules, `PrototypePanel`/`CommentsPanel` + a catch-all row for the other
+    seventeen panels, a catch-all row for the store slices the table omitted.
+    Corrected: `colorMath.ts` → `src/core/design-tokens/`; the duplicate
+    `ImportProjectDialog` row deleted; the icon-catalog `src/icons/` marked as a
+    `node_modules` package path; gate count 105.
+  - **`path-index.md`'s legend was incomplete** — 🔴 appeared 17 times and 🟠
+    once, neither defined. 🔴 now has a definition (the security/correctness
+    files); the lone 🟠 was folded into it.
+  - **The "Not ours (dormant CMS)" list was wrong in two load-bearing ways**,
+    exactly as `STUDIO-CMS-REMOVAL-PLAN.md`'s Trap 1 predicted: it filed
+    `src/core/publisher/` (Studio's own class-CSS engine) and
+    `src/admin/pages/dashboard/` (the Studio launcher) as dormant. Both
+    corrected in place with the reason, not just removed.
+  - **`glossary.md`:** added **Capture token**, **Code-derived connector**,
+    **Share token**, **Share link**, **Styled-template writeback tier**, **Warm
+    CLI session**, and a full three-value **Trust tiers** entry (0 `static` / 1
+    `render-packages` / 2 `run-project`, with what each buys). Corrected six
+    entries that shipped since they were written: Detach, Instance, Package
+    component, Unroll (all still marked *(planned)*), `StudioEdit`'s kind list,
+    and `.studio/`'s contents. **"Studio mode" is now marked historical** —
+    `studioMode.ts` and `?studio` are gone; the entry says so rather than
+    disappearing, because the phrase is still in circulation.
+  - **`docs/README.md`:** the tree diagram was missing ten pages; the features
+    list is now split Studio-first / inherited, `inspector-disclosure.md` and
+    `mcp-connectors.md` are indexed, `audits/` and `assets/` are indexed **with
+    an explicit warning that `audits/` is a dated historical snapshot whose
+    paths were true then and are not now**, and the source-of-truth table gained
+    Studio's handlers, parser/codemods and trust tier.
+  - **Six parallel sweeps** corrected: `architecture.md` (opening still called
+    the product a CMS; Studio absent from the layer-responsibility table),
+    `server.md` (five real routers missing from the route table), `editor.md`
+    (three dead workspaces in the routing table; `AdminWorkspaceCanvasLayout`
+    does not exist), `design.md`/`design-tokens.md`/`ui-primitives.md` (the
+    `!important` count, a `DateTimePicker` that never existed, two missing
+    z-index tokens, `usePointPosition.ts` → `src/ui/lib/useAnchoredFloating.ts`),
+    `admin-router.md` (six dead routes), `persistence-keys.md`,
+    `editor-history.md` (six `mutate*` helpers → the real seven),
+    `use-async-resource.md`, `error-boundaries.md`, `architecture-tests.md`
+    (**11 gates missing, 2 rows naming deleted gates**, count 95 → 105),
+    `capabilities.md` (**the whole Studio capability family was undocumented**),
+    `module-engine.md`, `typebox-patterns.md`, `studio-comments.md`,
+    `studio-import.md` (no `trust` row in the `.studio/meta.json` table),
+    `inspector-disclosure.md` (three claims that had not actually shipped),
+    `plugin-system.md`, `publisher.md`, `auth-and-access.md`, `site-shell.md`,
+    `modules.md` (`studio.*` namespace absent), `spotlight.md` (three providers
+    deleted), `agent.md` (warm sessions undocumented; toolset 20 → 31),
+    `mcp-connectors.md` (`authProbe.ts` superseded by real OAuth),
+    `site-import.md`, `html-import.md`, `conventions-quickref.md` (stale radius
+    scale + missing token gates), `editor-store.md`, `canvas-internals.md`,
+    `e2e/README.md` (coverage map rebuilt), `e2e/protocol.md`,
+    `e2e/agent-upgrade-dogfood.md`.
+  - **Verified accurate, no diff:** `CONVENTIONS.md`, `react-compiler.md`,
+    `page-tree.md`, `canvas-dnd.md`, `database-dialects.md`,
+    `css-class-registry.md`, `canonical-jsx.md`, `visual-components.md`,
+    `editor-preferences.md`, `studio-git.md`, `studio-deploy.md`,
+    `studio-share.md`, `canvas-iframe-per-frame.md`,
+    `canvas-rulers-and-guides.md`, `board-annotations.md`,
+    `studio-pipeline.md`, `handoff-protocol.md`, `run-log-template.md`, and all
+    eight `deployment/` pages (every env var, compose service, volume and script
+    re-checked against `server/config.ts`, the compose files and `Dockerfile`).
+- **Next step:** none for this entry. The follow-ups it uncovered are listed
+  under Landmines and are each somebody else's PR.
+- **Decisions:**
+  - **No doc page was deleted.** `STUDIO-CMS-REMOVAL-PLAN.md` says nothing has
+    been removed at code level except the workspace routes — Tier 1 is not
+    removed, Tier 2 is blocked on a product decision, Tier 3 is do-not-touch. A
+    page describing still-present dormant code therefore stays, gets a
+    "this is the dormant half" note if it lacked one, and gets corrected
+    wherever it claimed a deleted UI. Inventing a disposition the plan does not
+    state would have been the band-aid.
+  - **`docs/audits/` was left uncorrected on purpose.** 31 files of dated,
+    read-only audit reports naming ~25 paths that have since moved. They are a
+    record of what was found on a date, and rewriting a record is worse than
+    labelling it — `docs/README.md` now carries the label instead.
+  - **Only the two named modules were added to the barrel gate**, though
+    `studio-board`, `studio-capture` and `studio-share` all publish a barrel and
+    would pass today. Widening a gate is a change with its own reason; it
+    belongs in its own PR, not smuggled into a docs sweep.
+- **Landmines / still owed (each needs its own PR — none are docs fixes):**
+  - **The prototype-plan §1/§2/§4 rationale migration that W6-1 deferred to this
+    PR is STILL DEFERRED.** `STUDIO-PROTOTYPE-PLAN.md` and
+    `docs/features/studio-prototype.md` were excluded because a parallel agent
+    was mid-port on the prototype/resize work. Whoever picks that up owns it.
+  - **The e2e suite has real drift, not just doc drift.**
+    `tests/e2e/{admin-navigation,ai,visual-builder}.e2e.ts` still
+    `page.goto('/admin/content')` / `/admin/users`, which now redirect to
+    `/admin/dashboard`. Those specs are very likely failing today.
+  - **`docs/e2e/README.md`'s "Intentionally left agent-run only" section** (~280
+    lines) still contains stale "now automated in `users.e2e.ts`" sub-clauses.
+    It carries a caveat at the top rather than a line-by-line rewrite; the
+    coverage table above it is the accurate source.
+  - **Dead source left by the workspace deletion**, found while verifying docs:
+    `src/admin/state/useWorkspaceLayoutPersistence.ts` has zero call sites;
+    `src/admin/state/workspaceLayout.ts` still branches on `workspace === 'data'`
+    and carries a `dataSidebarCollapsed` field; `src/admin/workspace.ts`'s own
+    doc still describes `'dashboard'` as a CMS widget grid; stale comments in
+    `useSiteEditorUrlSync.ts`, `OpenLivePageButton.tsx`, `useAsyncResource.ts`
+    (cites a `BindingPickerPopover` that does not exist) and
+    `src/core/data/schemas.ts` (cites a deleted gate test).
+  - **`agent.md`'s 31-tool Studio surface is only partly explained.** Six tools
+    (`studio_computed_styles`, `studio_page_diagnostics`, `studio_quality_check`,
+    `studio_typecheck`, `studio_fidelity_report`, the board-comments trio) have
+    real behaviour and no prose. Each needs a section, not a line fix.
+  - `docs/e2e/` references four files that were never committed
+    (`feature-matrix.md`, `feature-validation.tsv`, `capabilities.md`,
+    `.agents/skills/studio-user-e2e/`). Flagged in place, not fabricated.
+- **Verification:** `bun run build` ✅ (`tsc -b` + vite, exit 0 — needed
+  `bun install` first, this worktree had none). `npx eslint` ✅ on the one
+  `.ts` touched. `bun test src/__tests__/architecture` → **509 pass / 1 fail**
+  (the `icon-catalog-integrity` `chevron-left` sample — `standing-01`-class).
+  `bun test` → **11373 pass / 28 fail / 10 errors**; every named failure is in
+  one of the three pre-existing clusters — icon-catalog, the canvas
+  batch-isolation cluster (selection-leak, B3 NodeRenderer lock-down,
+  breakpoint activation, body context menu, VC-ref inline body, scroll-unroll
+  pin, inline-edit key forwarding, canvas form controls, panel rail), and the
+  browser-dependent headless-capture suite (`captureFramesHeadless`, W4-2A
+  `studio_compare`). Nothing docs- or gate-related fails.
+- **Human action needed:** none. This PR ships no runtime behaviour — the only
+  non-`.md` change is a gate widening that already passes.
+
 ### docs-04 — W6-1: retire the shipped plan files
 
 - **Agent:** studio-scribe

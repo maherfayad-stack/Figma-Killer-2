@@ -112,7 +112,6 @@ Pattern: hand-rolled `useState + useEffect` with `let cancelled = false`, where 
 Examples in the codebase:
 
 - `MediaLibraryControl` (`src/admin/pages/site/property-controls/MediaLibraryControl.tsx`) — assets list is mutated by `handlePickFromModal` (prepends) and `viewerEditor` (`onAssetChanged` / `onAssetRemoved`). The tag-autocomplete palette derives from the live list.
-- `useContentMediaPicker` (`src/admin/pages/content/`) — same mutable-list pattern.
 
 ### Multi-fetch orchestrators with shared error channels
 
@@ -123,13 +122,13 @@ Several independent loads gated by different flags, or a load that must NOT re-r
 Examples:
 
 - `useUsersPageData` (`src/admin/pages/users/hooks/useUsersPageData.ts`) — loads users, roles, and audit events in parallel; `loading` flips false only after the first round-trip and never re-raises on `refresh()`. Also shares a single `error` channel for both load and mutation failures.
-- `useContentWorkspace`, `useDataWorkspace`, `useMediaWorkspace`, `usePluginsWorkspace` — workspace orchestrators with per-fetch granular state.
+- `useMediaWorkspace` (`src/admin/shared/media/hooks/useMediaWorkspace.ts`), `usePluginsWorkspace` (`src/admin/pages/plugins/hooks/usePluginsWorkspace.ts`) — orchestrators with per-fetch granular state.
 
 ### Module-level cached loads
 
 A fetch that dedupes across component mounts and publishes into a shared store or cache should live at module scope, not inside a component lifecycle.
 
-Examples: `useSiteSummary`, `BindingPickerPopover`.
+Example: `useSiteSummary` (`src/admin/state/useSiteSummary.ts`).
 
 ### Event-driven and subscription effects
 

@@ -6,7 +6,7 @@ Catalog of every test in `src/__tests__/architecture/`. These are structural gat
 
 ## TL;DR
 
-- 95 gate files across structural domains: SQL, JSON columns, migrations, CSS, icons, primitives, page tree, sandbox, agent, router, content storage, boundary validation, module size, AI, auth, error handling, etc.
+- 105 gate files across structural domains: SQL, JSON columns, migrations, CSS, icons, primitives, page tree, sandbox, agent, Studio agent/MCP tools, router, content storage, boundary validation, module size, AI, auth, error handling, canvas/store performance, etc.
 - Naming convention: `<topic>.test.ts` (kebab-case) or `<group>-<topic>.test.ts`. A few legacy `task<N>-*` ids remain for live invariants; new gates should use topic names.
 - Run them all: `bun test src/__tests__/architecture/`.
 - Most are **import / source scans** — they parse the files in scope and assert / reject patterns. Some are unit-style (a small in-test database, a synthesized page tree).
@@ -19,7 +19,7 @@ Catalog of every test in `src/__tests__/architecture/`. These are structural gat
 
 | Test                                          | What it enforces                                                                 |
 |-----------------------------------------------|----------------------------------------------------------------------------------|
-| `no-core-barrel-deep-imports.test.ts`         | External callers import through the barrel, never through a concrete internal path (`@core/<module>/<file>`). Files inside a module are exempt — they use relative paths. Enforced for: `@core/page-tree`, `@core/module-engine`, `@core/visualComponents`, `@core/publisher`, `@core/framework`, `@core/framework-schema`, `@core/fonts`. |
+| `no-core-barrel-deep-imports.test.ts`         | External callers import through the barrel, never through a concrete internal path (`@core/<module>/<file>`). Files inside a module are exempt — they use relative paths. Enforced for: `@core/page-tree`, `@core/module-engine`, `@core/visualComponents`, `@core/publisher`, `@core/framework`, `@core/framework-schema`, `@core/fonts`, `@core/design-tokens`, `@core/studio-comments`, `@core/studio-anchor`, `@core/studio-prototype`. |
 
 See [CLAUDE.md → Barrel imports](../../CLAUDE.md) and [docs/reference/page-tree.md](page-tree.md).
 
@@ -60,7 +60,6 @@ See [docs/reference/page-tree.md](page-tree.md), [docs/features/visual-component
 | Test                                          | What it enforces                                                                 |
 |-----------------------------------------------|----------------------------------------------------------------------------------|
 | `boundary-validation.test.ts`                 | Five HTTP / JSON-parse boundary rules: (1) no `res.json() as` in persistence or admin — use `apiRequest` or `readEnvelope`; (2) no `JSON.parse(...) as` in `src/core/persistence/`; (3) no raw `fetch(` in `src/admin/` outside the allowlist (streaming NDJSON, SVG bytes, and FormData multipart uploads are listed with `§3.x` justifications); (4) no `req.json(` in server handlers outside `server/http.ts`; (5) no `body.field as DeepType` after `readEnvelope`/`parseJsonResponse` in `src/core/persistence/` — reference the field's real TypeBox schema in the envelope so the parsed value is already typed; interface-only deep types are allowlisted with `§5.x` justifications. |
-| `binding-compatibility-coverage.test.ts`      | All endpoint bindings have client-side schemas defined.                          |
 
 See [docs/reference/typebox-patterns.md](typebox-patterns.md).
 
@@ -93,6 +92,7 @@ See [docs/features/auth-and-access.md](../features/auth-and-access.md), [docs/re
 | `noTailwindUtilities.test.ts`                 | No Tailwind utility class strings in `className=` in `src/admin/`, `src/modules/`, `src/ui/`. |
 | `no-tailwind-deps.test.ts`                    | No imports of `clsx`, `tailwind-merge`, `class-variance-authority`, `@radix-ui/*`, `tailwindcss`. No `@tailwind` / `@apply` directives. |
 | `scrollbar-chrome.test.ts`                    | Scrollbar tokens declared in `globals.css`; both Firefox (`scrollbar-color`) and WebKit/Blink (`::-webkit-scrollbar`) styled with those tokens; `StyleSurface.module.css` uses `scrollbar-gutter: stable` to keep the properties rail clear of overlaying scrollbars. |
+| `token-offered-is-reachable.test.ts`          | Every colour-token variable name the Framework token picker offers for an EXTRACTED (project-CSS-derived) token is a name actually declared in the project's own source CSS — runs the real `classifyCssText` → `buildFrameworkSettings` → `generateFrameworkColorVariableSets` pipeline end to end. Catches a regression that re-enables shade/tint/transparent variant generation for extracted tokens, which mints picker entries that exist only in Studio's injected `:root` and render as nothing in the real project. |
 
 See [docs/design.md](../design.md), [docs/reference/design-tokens.md](design-tokens.md).
 
@@ -126,7 +126,12 @@ See [docs/reference/ui-primitives.md](ui-primitives.md).
 | `task414-wrap-to-container.test.ts`           | Wrap-to-container action creates defaulted wrappers and preserves tree structure. |
 | `task427-preview-class-css.test.ts`           | Preview-class CSS injection matches publisher output.                            |
 | `error-boundary-coverage.test.ts`             | Every workspace page / major surface is wrapped in an `ErrorBoundary` with a unique `location` tag. |
-| `non-site-workspaces-no-editor-store.test.ts` | Content, Data, Media, and their shared canvas layout do not import the Site editor store. |
+| `canvas-overlay-pointerdown.test.ts`          | No canvas overlay (comment popover, etc.) calls `event.stopPropagation()` in `onPointerDown`. `@use-gesture`'s `filterTaps` suppresses the following `click` for anything it classifies as a drag, at the React root — an overlay that swallows `pointerdown` first leaves use-gesture's tap state stale and it then eats every subsequent click in the canvas. Guard by target instead. |
+| `single-drag-mechanism.test.ts`               | `@dnd-kit/core` and native HTML5 `dataTransfer` DnD are each pinned to an explicit allowlist of the files that already use them (D2, `STUDIO-FIGMA-PARITY-PLAN.md`) — a new surface reaching for either fails the gate. Not yet a "one mechanism" assertion; see [docs/reference/canvas-dnd.md](canvas-dnd.md). |
+| `comment-selector-stability.test.ts`          | Every exported `select*` in `commentSelectors.ts` returns a stored reference or primitive, never a value built in the selector body (source scan for array-builder calls, plus a behavioural `===` re-invocation check) — a selector that mints a new array every read loops Zustand/React into "Maximum update depth exceeded". |
+| `no-full-site-scan-in-selectors.test.ts`      | No file that subscribes via `useEditorStore(` (reactive form, not `.getState()`) contains — or imports a module containing — a `for (const page of X.pages)` loop. Zustand re-runs every subscribed selector on every `set()`, so an O(all-pages) walk inside one is O(pages×nodes) per keystroke. |
+| `per-node-selector-budget.test.ts`            | `NodeRenderer` (mounted once per live canvas node) stays within a fixed budget of direct `useEditorStore(` subscriptions — currently 11. A new per-node subscription must ride an existing one or the budget is raised deliberately, in the same commit, with a note in the test file. |
+| `no-case-only-filename-collisions.test.ts`    | No two files under `src/` or `server/` share a directory and a name differing only by case (or case + extension) — a cross-platform trap: two distinct files on Linux, one silently-wrong resolution on case-insensitive Windows/macOS. |
 
 See [docs/editor.md](../editor.md).
 
@@ -136,6 +141,7 @@ See [docs/editor.md](../editor.md).
 |-----------------------------------------------|----------------------------------------------------------------------------------|
 | `spotlight-no-direct-store-mutation.test.ts`  | Providers / scopes don't mutate the editor store. Mutations live in commands.    |
 | `keybindings-registry-single-source.test.ts`  | Every global keyboard shortcut goes through the keybinding registry.             |
+| `tool-shortcuts-registered.test.ts`           | The three bare-letter tool keys (`T`, `F`, `C` — text/frame/comment tools) are registered bindings in the keybinding registry and each rejects every modifier. `keybindings-registry-single-source.test.ts` only greps for combos carrying a meta/ctrl modifier, so a hand-rolled bare-letter listener (the comment tool shipped one, stealing ⌘C) slips past it — this is the missing half. |
 
 See [docs/features/spotlight.md](../features/spotlight.md).
 
@@ -165,6 +171,16 @@ See [docs/features/plugin-system.md](../features/plugin-system.md).
 | `agent-no-raw-html-in-reply-rule.test.ts`     | The agent system prompt contains the narrate-only rule (1–2 sentence replies, no raw HTML/CSS/JSON in the reply body). Prevents accidental removal during prompt refactors. |
 | `agent-system-prompt-no-module-enumeration.test.ts` | The system prompt does not enumerate module ids — they're discovered via `site_list_modules` / `site_read_document` at runtime. Also asserts the HTML-native style markers (`site_insert_html`, "Structure as HTML, styling as CSS"). |
 | `agent-tool-surface.test.ts`                  | Legacy node-construction tools (`insertNode`, `insertTree`) and retired class-patch tools (`createClass`, `updateClassStyles`) are absent from the site write-tool list; HTML-native replacements (`site_insert_html`, `site_get_node_html`, `site_replace_node_html`) and the unified CSS-authoring tool (`site_apply_css`) are present; document reads, code assets, design-system token tools, template tools, and snapshot capture are present; total count is exactly 29. |
+
+### Studio agent / MCP tools
+
+Studio's own in-canvas agent (`server/ai/tools/studio/`) and the `studio_*` MCP tool family — distinct from the CMS site agent above.
+
+| Test                                          | What it enforces                                                                 |
+|-----------------------------------------------|----------------------------------------------------------------------------------|
+| `studio-agent-can-measure.test.ts`            | The Studio agent is offered `studio_compare` (server-side screenshot diffing) and is NOT offered the base64-input measurement tools it cannot actually satisfy (an MCP image block can't be transcribed back to base64 text by the model); the system prompt states a passing measurement as the definition of done. Closes a gap where the fidelity workflow existed on paper but had no reachable call sequence, so the agent judged its own work by eye. |
+| `studio-agent-subagent-contract.test.ts`      | The Studio agent's subagent delegation is safe in the one shape that can't silently fabricate: the system prompt names only `'general-purpose'` (the CLI's own built-in, which can't itself fall back to something else) and forbids inventing other `subagent_type` values; the granted native tool surface never includes `Bash` (the one tool the project-directory sandbox doesn't bound), for any workspace/attachment combination. |
+| `studio-tool-project-dir.test.ts`             | Every Studio MCP tool module resolves its optional `dir` input through `resolveToolProjectDir(dirInput, ctx)`, never the bare `resolveProjectDir` (which defaults to the alphabetically-first project on disk — silently wrong the moment a workspace holds more than one project). |
 
 ### AI infrastructure
 
@@ -235,7 +251,9 @@ The following test lives in `src/__tests__/server/` (not `architecture/`) but en
 |-----------------------------------------------|----------------------------------------------------------------------------------|
 | `importPathTraversal.test.ts`                 | `assertPathWithin` blocks `..` traversal and absolute escapes; `MediaAssetExportSchema.storagePath` pattern rejects traversal at the schema boundary (ISS-009). |
 
-See docs/features/site-transfer.md.
+See [`docs/features/site-import.md`](../features/site-import.md). (This used to
+point at a `docs/features/site-transfer.md` that was never written; the CMS
+bundle transfer path is described in the import page instead.)
 
 ### Loop sources
 

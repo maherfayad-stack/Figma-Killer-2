@@ -5,7 +5,7 @@ The documentation tree for Studio. This index tells you what to read, in what or
 If you're an agent: start at [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) for orientation and `CLAUDE.md` for the rules, then use [`agent-refs/`](agent-refs/) — compressed, agent-facing versions of everything below. Come here when you need the long form.
 If you're a human contributor: start with [`architecture.md`](architecture.md), then read whichever feature or reference page is closest to what you're changing.
 
-> **Note:** this tree still contains documentation for the dormant CMS half of the fork (auth, plugins, publisher, site shell). Studio's own docs are [`features/studio-import.md`](features/studio-import.md) and [`features/canvas-iframe-per-frame.md`](features/canvas-iframe-per-frame.md). Where a CMS doc conflicts with `PROJECT-BRIEF.md`, the brief wins.
+> **Note:** this tree still contains documentation for the dormant CMS half of the fork (auth, plugins, the server-side publisher, site shell). Studio's own docs are the `features/studio-*.md` and `features/canvas-*.md` pages plus [`features/inspector-disclosure.md`](features/inspector-disclosure.md). Where a CMS doc conflicts with `PROJECT-BRIEF.md`, the brief wins. Nothing in that half has been deleted — see [`STUDIO-CMS-REMOVAL-PLAN.md`](../STUDIO-CMS-REMOVAL-PLAN.md) for what is dead, what is load-bearing under a CMS-shaped name (`src/core/publisher/`, `server/auth/`, `src/core/page-tree/`), and what is blocked on a product decision.
 
 ## Agent references
 
@@ -34,6 +34,18 @@ docs/
 ├── editor.md                   ← admin + visual editor deep dive
 │
 ├── features/                   ← "what X is and how it works" (per-feature)
+│   │  Studio's own:
+│   ├── studio-import.md            ← the parser contract: repo → board
+│   ├── studio-comments.md          ← review threads pinned to the board
+│   ├── studio-git.md               ← version control as Studio's publish verb
+│   ├── studio-deploy.md            ← preview deploys via the project's own CLI
+│   ├── studio-share.md             ← read-only board snapshot at /share/<token>
+│   ├── studio-prototype.md         ← authored links + the derived code-flow map
+│   ├── canvas-iframe-per-frame.md  ← per-frame iframe rendering
+│   ├── canvas-rulers-and-guides.md ← rulers, persisted guides, useCanvas()
+│   ├── board-annotations.md        ← sticky notes + rich-text doc cards
+│   ├── inspector-disclosure.md     ← the properties panel's progressive disclosure
+│   │  Inherited (dormant CMS) + shared:
 │   ├── plugin-system.md            ← plugin SDK, sandbox, lifecycle, permissions
 │   ├── publisher.md                ← page tree → static HTML/CSS pipeline
 │   ├── visual-components.md        ← VCs, slots, params, instantiation
@@ -42,10 +54,10 @@ docs/
 │   ├── modules.md                  ← module engine + first-party blocks
 │   ├── spotlight.md                ← Cmd+K command palette
 │   ├── agent.md                    ← AI agent integration
+│   ├── mcp-connectors.md           ← Studio as an MCP server
 │   ├── site-import.md              ← Super Import (static sites → CMS)
 │   ├── html-import.md              ← paste / import HTML into the page tree
-│   ├── editor-preferences.md       ← catalog-driven editor prefs
-│   └── canvas-iframe-per-frame.md  ← per-breakpoint iframe rendering
+│   └── editor-preferences.md       ← catalog-driven editor prefs
 │
 ├── reference/                  ← short cookbook pages for primitives + patterns
 │   ├── page-tree.md                ← NodeTree<TNode> primitive
@@ -63,11 +75,20 @@ docs/
 │   ├── architecture-tests.md       ← catalog of every architecture gate
 │   ├── editor-history.md           ← patch-based undo/redo history
 │   ├── react-compiler.md           ← memoization rule, three exceptions, gates
-│   └── use-async-resource.md       ← canonical async load hook; when to use vs. not
+│   ├── use-async-resource.md       ← canonical async load hook; when to use vs. not
+│   └── canonical-jsx.md            ← the authoring subset + checkCanonicalJsx
 │
 ├── deployment/                 ← operator docs (running the thing)
-└── e2e/                        ← browser test protocols (agent-run + Playwright automation)
+├── e2e/                        ← browser test protocols (agent-run + Playwright automation)
+├── audits/                     ← dated read-only audit reports; historical, NOT maintained
+├── state-archive/              ← STATE.md overflow, verbatim, one file per quarter
+└── assets/                     ← images referenced by the pages above
 ```
+
+**`audits/` is a historical record, not a reference.** Each report is a snapshot
+of what four read-only agents found on the date in its folder name. Its file
+paths were true then and many are not now — never use an audit page as the
+source of truth for where something lives; use `agent-refs/path-index.md`.
 
 Three categories, three voices:
 
@@ -116,7 +137,13 @@ Three categories, three voices:
 2. `examples/plugins/template/` — working example.
 3. `src/core/plugin-sdk/capabilities.ts` — permission catalog (source of truth).
 
-### "I want to deploy / operate the CMS"
+### "I want to open a React repo as a board"
+
+1. [`features/studio-import.md`](features/studio-import.md) — the parser contract: what is read, what is refused, and why nothing executes.
+2. [`agent-refs/studio-pipeline.md`](agent-refs/studio-pipeline.md) — the compressed version: parse → inline → resolve → convert → write back.
+3. [`agent-refs/glossary.md`](agent-refs/glossary.md) → **Trust tiers**, before you touch anything that runs a subprocess.
+
+### "I want to deploy / operate the server"
 
 1. `README.md` (repo root) — install, run, basic commands.
 2. [`deployment/README.md`](deployment/README.md) — platform and generic deployment targets.
@@ -154,6 +181,7 @@ Three categories, three voices:
 | [features/studio-import.md](features/studio-import.md)           | Studio opens a real React repo as a board — parse, inline, resolve values, import CSS |
 | [features/editor-preferences.md](features/editor-preferences.md) | Catalog-driven local UI preferences for the editor                   |
 | [features/canvas-iframe-per-frame.md](features/canvas-iframe-per-frame.md) | Per-breakpoint iframe rendering in the visual editor canvas |
+| [features/inspector-disclosure.md](features/inspector-disclosure.md) | The properties panel's progressive disclosure — which controls sit on a section's face, which live behind it |
 | [features/canvas-rulers-and-guides.md](features/canvas-rulers-and-guides.md) | Design-canvas rulers + persisted draggable guides (D1), and the shared `useCanvas()` `transformRef` API |
 | [features/board-annotations.md](features/board-annotations.md) | Sticky notes + rich-text doc cards on the Studio board: selection, resize, stacking, clipboard, the doc editor |
 | [features/studio-comments.md](features/studio-comments.md) | Review threads pinned to the board (`.studio/comments.json`): the anchor-confidence model, the op-based HTTP route, and the agent loop that reads, replies and resolves |
@@ -192,6 +220,8 @@ Three categories, three voices:
 | [deployment/](deployment/)          | Platform deploys, VPS/Docker installs, TLS, backup, releases      |
 | [e2e/](e2e/)                        | Browser E2E protocols: agent-run audits and Playwright automation docs |
 | [state-archive/](state-archive/)    | Overflow from `STATE.md`, verbatim, one file per quarter — the historical handoff record |
+| [audits/](audits/)                  | Dated read-only audit reports. **Historical snapshots, not maintained** — their file paths were true on the date in the folder name |
+| [assets/](assets/)                  | Images the pages above reference                                  |
 
 ---
 
@@ -213,7 +243,10 @@ Quick map from "where do I look for X?" to the canonical file:
 | Page tree shape                  | `src/core/page-tree/treeSchema.ts`                       |
 | Editor store                     | `src/admin/pages/site/store/`                            |
 | Server router                    | `server/router.ts`                                       |
-| CMS API handlers                 | `server/handlers/cms/`                                   |
+| Studio API handlers              | `server/handlers/studio/` + `server/handlers/studio*.ts`  |
+| Studio parser + codemods         | `src/core/page-parser/`, `src/core/ast-codemods/`, `src/core/css-codemods/` |
+| Per-project trust tier           | `.studio/meta.json` → `server/handlers/studio/trustTier.ts` |
+| CMS API handlers (dormant)       | `server/handlers/cms/`                                   |
 | Repositories                     | `server/repositories/`                                   |
 | DB adapter interface             | `server/db/client.ts`                                    |
 | DB adapters                      | `server/db/postgres.ts`, `server/db/sqlite.ts`            |

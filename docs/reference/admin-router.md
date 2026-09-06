@@ -51,18 +51,15 @@ Don't import from `react-router-dom`. It's removed from `package.json`.
 <Routes>
   <Route path="/"                                element={<Navigate to="/admin/dashboard" replace />} />
   <Route path="/admin"                           element={<Navigate to="/admin/dashboard" replace />} />
-  <Route path="/admin/dashboard"                 element={<AdminEntry section="dashboard" />} />
-  <Route path="/admin/site"                      element={<AdminEntry section="site" />} />
-  <Route path="/admin/content"                   element={<AdminEntry section="content" />} />
-  <Route path="/admin/data"                      element={<AdminEntry section="data" />} />
-  <Route path="/admin/media"                     element={<AdminEntry section="media" />} />
-  <Route path="/admin/plugins"                   element={<AdminEntry section="plugins" />} />
-  <Route path="/admin/users"                     element={<AdminEntry section="users" />} />
-  <Route path="/admin/account"                   element={<AdminEntry section="account" />} />
-  <Route path="/admin/plugins/:pluginId/:pageId" element={<AdminEntry section="pluginPage" />} />
+  <Route path="/admin/dashboard"                 element={withRouteBoundary(<AdminEntry section="dashboard" />)} />
+  <Route path="/admin/site"                      element={withRouteBoundary(<AdminEntry section="site" />)} />
+  <Route path="/admin/account"                   element={withRouteBoundary(<AdminEntry section="account" />)} />
+  <Route path="/admin/plugins/:pluginId/:pageId" element={withRouteBoundary(<AdminEntry section="pluginPage" />)} />
   <Route path="/admin/*"                         element={<Navigate to="/admin/dashboard" replace />} />
 </Routes>
 ```
+
+That is the complete route table — four real sections (`dashboard`, `site`, `account`, `pluginPage`) plus the index and catch-all redirects. The Content, Data, and Media workspace routes were removed: any `/admin/content`, `/admin/data`, or `/admin/media` URL falls through to the `/admin/*` catch-all and redirects to the dashboard. Plugins, Users, and AI provider management moved into the Settings modal (`src/admin/modals/Settings/sections/`) instead of having their own routes, so `/admin/plugins`, `/admin/users`, and `/admin/ai` fall through the same way — only the parameterized `/admin/plugins/:pluginId/:pageId` (a plugin's own admin page) is still a real route. `withRouteBoundary` wraps each element in `<Suspense>` plus the per-route `RouteBoundary` described below.
 
 Patterns:
 
@@ -123,7 +120,7 @@ Used for index redirects (`/` → `/admin/dashboard`) and access-denied redirect
 ## `<Link>`
 
 ```tsx
-<Link to="/admin/media" className={styles.navLink}>Media</Link>
+<Link to="/admin/account" className={styles.navLink}>Account</Link>
 ```
 
 Renders an `<a href={to}>` that intercepts the click and navigates via the router (no page reload). Falls back to native navigation on:
@@ -263,8 +260,8 @@ window.addEventListener('studio:locationchange', () => {
 ### Add a new workspace route
 
 1. Add the section to `AdminWorkspace` in `src/admin/workspace.ts`.
-2. Add `<Route path="/admin/<section>" element={<AdminEntry section="<section>" />} />` in `src/admin/router.tsx`.
-3. Add a `lazy(...)` + pre-warm import in `src/admin/AuthenticatedAdmin.tsx`.
+2. Add `<Route path="/admin/<section>" element={withRouteBoundary(<AdminEntry section="<section>" />)} />` in `src/admin/router.tsx`.
+3. Add a `prewarmedLazy(...)` import for the new page component in `src/admin/AuthenticatedAdmin.tsx` (see `DashboardPage`/`SitePage`/`AccountPage` there for the pattern) and a matching branch in its `section === '<section>'` render switch.
 4. Create `src/admin/pages/<section>/<Section>Page.tsx`.
 
 See [docs/editor.md](../editor.md) → "Adding a new workspace".
@@ -276,7 +273,7 @@ function MyComponent() {
   const navigate = useAdminNavigate()
   const handleSave = async () => {
     await saveSomething()
-    navigate('/admin/content')
+    navigate('/admin/dashboard')
   }
   return <Button onClick={handleSave}>Save</Button>
 }
@@ -297,16 +294,16 @@ Spotlight commands receive `ctx.navigate` in `CommandContext`. They use it direc
 
 ```ts
 run: (ctx) => {
-  ctx.navigate('/admin/media')
+  ctx.navigate('/admin/account')
 }
 ```
 
-Don't call `window.location.href = '/admin/media'` — that triggers a full page reload.
+Don't call `window.location.href = '/admin/account'` — that triggers a full page reload.
 
 ### Link with query string
 
 ```tsx
-<Link to={`/admin/data?table=${tableId}`}>Edit table</Link>
+<Link to={`/admin/site?page=${pageSlug}`}>Edit page</Link>
 ```
 
 `useLocation()` returns `{ pathname, search, hash }` — read `search` for query strings. There's no `useSearchParams` helper today; parse with `new URLSearchParams(search)` directly.
@@ -358,7 +355,7 @@ import { useInitialQueryParams, useUrlQuerySync } from '@admin/lib/urlState'
 | `useInitialQueryParams()` | Returns the query params present at first mount (stable, read-once). |
 | `useUrlQuerySync(params, opts?)` | Mirrors the given key→value map into the URL via `replaceState`. `null` values remove the key; unspecified keys are untouched. |
 
-These hooks operate on `window.history.replaceState` directly and deliberately do **not** dispatch `studio:locationchange` — query-string updates for selection state must never trigger a route re-match. Three workspaces use them: the site editor (`useSiteEditorUrlSync`), the Content workspace, and the Data workspace.
+These hooks operate on `window.history.replaceState` directly and deliberately do **not** dispatch `studio:locationchange` — query-string updates for selection state must never trigger a route re-match. The site editor (`src/admin/pages/site/hooks/useSiteEditorUrlSync.ts`) is the current consumer.
 
 Full contract and URL shapes are documented in [docs/editor.md](../editor.md) → "URL state and workspace deep links".
 

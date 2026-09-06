@@ -417,7 +417,7 @@ export async function handleSubscribersRoutes(req: Request, db: DbClient): Promi
 2. If it belongs to the Owner / Admin / Client default sets, add it to the matching entry in `SYSTEM_ROLES` inside `server/auth/capabilities.ts`. Owner + Admin force-sync on next boot.
 3. Use `requireCapability(req, db, 'your.new.capability')` in the handler that needs it.
 4. Add a `CAPABILITY_META` entry + `CAPABILITY_GROUPS` section in `src/admin/pages/users/utils/capabilities.ts` so the role-edit dialog renders a checkbox. The `capability-picker-coverage.test.ts` gate fails until you do.
-5. Existing custom roles will NOT have the new capability until users grant it through the Roles admin page.
+5. Existing custom roles will NOT have the new capability until users grant it through the Roles tab in Settings → Users.
 
 ### Gate a sensitive action
 
@@ -490,6 +490,5 @@ if (userHasAnyCapability(user, SITE_WRITE_CAPABILITIES)) { /* … */ }
   - `src/__tests__/architecture/ai-handlers-capability-gated.test.ts`
   - `src/__tests__/architecture/cms-handlers-capability-gated.test.ts`
   - `src/__tests__/architecture/capability-picker-coverage.test.ts`
-  - `src/__tests__/architecture/binding-compatibility-coverage.test.ts`
 - Regression tests:
   - `src/__tests__/server/requestScopedAuth.test.ts` — verifies the session is hydrated exactly once per request (step-up-gated write: one hydrate, not two) and that `last_seen_at` is debounced to at most one write per session per 30s window.

@@ -4,6 +4,8 @@ The publisher — the page-tree-to-HTML/CSS renderer. Takes a `Page` (a `NodeTre
 
 The published output has **no framework runtime**, **no client-side hydration of layout**, and **no decorative markup** the browser doesn't need. Plugins can inject frontend assets at four anchor points (`head`, `head-end`, `body-start`, `body-end`), but the page structure itself is static.
 
+> `src/core/publisher/` is load-bearing for Studio itself — Studio's AI executor, canvas preview, and base image/video modules all import from it, not just the CMS publish flow. `server/publish/**`, the server-side wrapper described below, is CMS-only and is a candidate for future removal (see `STUDIO-CMS-REMOVAL-PLAN.md`, Tier 2) pending a product decision on external MCP publish access — but `src/core/publisher/` itself never is.
+
 ---
 
 ## TL;DR

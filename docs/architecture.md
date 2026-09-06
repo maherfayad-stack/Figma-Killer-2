@@ -2,7 +2,7 @@
 
 System-level overview of Studio — what runs, what depends on what, and where to look first.
 
-Studio is a self-hosted CMS with a built-in visual editor. One Bun process serves the public website, the admin editor, the CMS API, published pages, and uploaded media, backed by either Postgres or SQLite. The visual editor's output is plain semantic HTML and hand-clean CSS — no framework runtime is injected into published pages.
+Studio is a Figma-grade visual design tool whose source of truth is a real React repository on disk (see [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md)) — a project's document is the `.tsx`/`.css` files under `studio-workspace/<project>/`, edited by precise AST/CSS-CST writeback, not a database row. It runs on top of a self-hosted-CMS substrate this repo was forked from: one Bun process serves the admin editor, the CMS API, published pages, and uploaded media, backed by either Postgres or SQLite. The visual editor's output stays clean at every layer — writeback preserves the user's own file formatting, and published pages get plain semantic HTML and hand-clean CSS with no framework runtime injected.
 
 ---
 
@@ -63,10 +63,12 @@ There is no message queue, no managed service surface. Scaling out is a horizont
 ## Folders, at a glance
 
 ```text
+studio-workspace/   USER DATA — the real React repos Studio edits. Never rm -rf.
 server/         Bun server: router, handlers, repositories, plugin runtime, DB
+server/handlers/studio/   Studio's own server half (parse, writeback, git, trust tiers, capture) — ~120 files
 src/admin/      Admin app shell (auth, navigation, workspaces, plugin host UI)
 src/admin/pages/site/   Visual editor (canvas, panels, toolbar, store)
-src/core/       Engine: page tree, publisher, plugin SDK + runtime, persistence
+src/core/       Engine: page parser, AST + CSS codemods, page tree, publisher, plugin SDK + runtime, persistence
 src/modules/    First-party block modules (container, text, image, button, …)
 src/ui/         Shared UI primitives (Button, Input, Tree, icons, cn helper)
 src/styles/     Global tokens (globals.css)
@@ -87,6 +89,9 @@ The repo is organized by responsibility, not by feature. Every file has one reas
 | Layer                        | Lives in                              | Owns                                                                 |
 |------------------------------|---------------------------------------|----------------------------------------------------------------------|
 | HTTP & routing               | `server/router.ts`, `server/http.ts`  | Request dispatch, body parsing, error envelopes                      |
+| Studio parser                | `src/core/page-parser/*`              | Static, bounded AST read of the user's `.tsx` — never executes it   |
+| Studio writeback             | `src/core/ast-codemods/*`, `src/core/css-codemods/*` | Formatting-preserving AST/CSS-CST edits that write canvas changes back into the user's own source files |
+| Studio server half           | `server/handlers/studio/*`, `server/handlers/studio*.ts` | Parse/write endpoints, git, trust-tier read/write, headless capture (~120 files) |
 | CMS endpoints                | `server/handlers/cms/*.ts`            | Per-resource handlers (pages, posts, components, media, plugins, …)  |
 | Auth & sessions              | `server/auth/*`                       | Session validation, capability checks, login flow                    |
 | Repositories                 | `server/repositories/*.ts`            | Database access; dialect-naive ANSI SQL only                         |
@@ -296,7 +301,7 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the full fea
 
 The browser bundle is a single Vite-built React 19 SPA, mounted at `/admin`. Inside it:
 
-- `src/admin/` — the **admin shell**: routing, sessions, top-level navigation, the workspaces for content / media / plugins / users / dashboard, and the plugin host UI.
+- `src/admin/` — the **admin shell**: routing, sessions, top-level navigation, the `dashboard` / `account` / `pluginPage` workspaces, the Settings modal (Plugins, Users, AI), and the plugin host UI.
 - `src/admin/pages/site/` — the **visual editor**: the canvas, panels, toolbar, picker, property controls, and the editor store (Zustand + Mutative). This is the editor itself.
 
 The split exists because the editor is a self-contained app with its own state and lifecycle, but it shares the admin's auth, routing, and theming.
@@ -387,7 +392,7 @@ Architectural rules live as tests in `src/__tests__/architecture/*.test.ts` and 
 | All provider SDKs banned repo-wide (no exceptions); drivers talk directly to each provider's REST API  | `ai-driver-isolation.test.ts`                                   |
 | UI primitives live in `src/ui/components/`                                                            | `ui-primitives-location.test.ts`                                |
 
-See [docs/reference/architecture-tests.md](reference/architecture-tests.md) for the complete catalog (81 gate files).
+See [docs/reference/architecture-tests.md](reference/architecture-tests.md) for the complete catalog (105 gate files as of this writing — check `src/__tests__/architecture/` for the current count).
 
 ---
 

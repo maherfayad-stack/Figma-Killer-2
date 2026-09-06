@@ -18,8 +18,10 @@ Cookbook for adding a new first-party module — the building block used on the 
 
 ## Minimal module
 
+Illustrative — `base.heading` isn't a real module (`src/modules/base/text/index.ts` handles h1–h6 via its `tag` control instead); this shows the shape a new module registration takes.
+
 ```ts
-// src/modules/base/heading/index.ts
+// src/modules/base/heading/index.ts (illustrative path)
 import type { ModuleDefinition } from '@core/module-engine'
 import { registry } from '@core/module-engine'
 import { Type, Value, type Static } from '@core/utils/typeboxHelpers'
@@ -142,12 +144,14 @@ The `schema` field maps prop keys to `PropertyControl` descriptors. Full union i
 | `number`    | `<Input type="number">`                           | `number`                 |
 | `toggle`    | `<Switch>`                                        | `boolean`                |
 | `select`    | `<Select>` or `<ContextMenu>` for long lists      | option value string      |
+| `collection-index` | `<Select>` whose options are a sibling collection prop's own entries (resolved from the node at render time), writing back the chosen index | `number` (index into the sibling `collection` prop) |
 | `color`     | `<ColorInput>`                                    | hex string               |
 | `url`       | URL text input                                    | `string`                 |
 | `dataTable` | Data table picker                                 | table id string          |
 | `image`     | Media picker (images)                             | media id or URL string   |
 | `media`     | Media picker (image or video)                     | media id string          |
 | `svg`       | Inline SVG editor                                 | SVG markup string        |
+| `slot`      | "Edit contents" affordance that selects a materialized child node (Studio's `studio-slot:<nodeId>` sentinel) — nothing to type into | — (points at a child node id) |
 | `group`     | Collapsible section (visual grouping, no data)    | — (children record)      |
 
 ### Conditional controls
@@ -212,7 +216,7 @@ A prop that needs URL/richtext/SVG handling **must** declare the matching `type`
 Provide a React `component` when the module needs DOM interaction at edit time (e.g. a live preview that differs from static HTML, or DOM measurements).
 
 ```tsx
-// src/modules/base/heading/HeadingEditor.tsx
+// src/modules/base/heading/HeadingEditor.tsx (illustrative path — see the note above)
 import React from 'react'
 import type { ModuleComponentProps } from '@core/module-engine'
 
@@ -372,7 +376,7 @@ publishBehavior: 'transparent'  // the node renders nothing on its own
 - **`'special'`**: the walker hands the node to a publisher-side specialised renderer keyed by module id (e.g. `renderLoop`, `renderVisualComponentRef`). These renderers replace the entire standard flow because the node's semantics need a different shape (a loop iterates a data source; a vc-ref inlines a Visual Component tree). The renderer **implementations** stay in the publisher (`SPECIAL_RENDERER_IMPLS` — they take `renderNode` as a callback and bypass the pure-render boundary); the module **declares** the contract via `publishBehavior: 'special'`. The contract is not magically derived — it is **declared, guarded, and gated**: a `'special'` declaration with no matching publisher implementation throws at dispatch (a forgotten renderer fails loudly instead of silently falling through to the wrong standard path), and a bidirectional test gate keeps `getSpecialRendererModuleIds()` and the set of modules declaring `'special'` from drifting apart.
 - **`'transparent'`**: the node contributes nothing on its own — its `render()` **must** return empty HTML (and empty/absent CSS). This is **validated at registration**: registering a transparent module whose `render()` returns non-empty output throws. Its content reaches the page by another mechanism — e.g. a `base.slot-instance`'s children are emitted at the matching `base.slot-outlet` position by the vc-ref renderer.
 
-First-party assignments: `base.loop` and `base.visual-component-ref` are `'special'`; `base.slot-instance` and `base.slot-outlet` are `'transparent'`; everything else is `'standard'`.
+First-party assignments: `base.loop` and `base.visual-component-ref` are `'special'`; `base.slot-instance`, `base.slot-outlet`, and `studio.instance` are `'transparent'`; everything else is `'standard'`. `studio.instance` (`src/modules/base/instance/`) is a further edge case even within `'transparent'`: it's the Studio board fragment node for an expanded local-component call site, and since Studio boards are never published, its `render()` is a safety net that is never actually reached — the registration-time non-empty check still applies to it like any other transparent module.
 
 ---
 
