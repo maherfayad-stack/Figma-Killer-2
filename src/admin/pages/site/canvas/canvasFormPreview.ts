@@ -26,6 +26,7 @@ const DEFAULT_FORM_SUCCESS_MESSAGE = 'Thanks. Your submission was received.'
  * node is a form (or a form-message inside one) with an active preview.
  */
 export function resolveEditorFormPreviewState(state: EditorStore, nodeId: string): FormPreviewState {
+  if (!hasAnyPreview(state)) return 'default'
   const formNode = previewedFormNode(state, nodeId)
   if (!formNode) return 'default'
   return state.formPreviewStates[formNode.id] ?? 'default'
@@ -33,10 +34,31 @@ export function resolveEditorFormPreviewState(state: EditorStore, nodeId: string
 
 /** Resolve the success message the form preview should display for `nodeId`. */
 export function resolveEditorFormPreviewSuccessMessage(state: EditorStore, nodeId: string): string {
+  if (!hasAnyPreview(state)) return DEFAULT_FORM_SUCCESS_MESSAGE
   const formNode = previewedFormNode(state, nodeId)
   return formNode
     ? stringNodeProp(formNode, 'successMessage', DEFAULT_FORM_SUCCESS_MESSAGE)
     : DEFAULT_FORM_SUCCESS_MESSAGE
+}
+
+/**
+ * No form is being previewed anywhere — the overwhelmingly common state, since
+ * a preview only exists while someone is holding the Properties panel's
+ * form-state control.
+ *
+ * Both resolvers above short-circuit on this BEFORE `previewedFormNode`, which
+ * resolves the active canvas page and indexes into its node map for every
+ * mounted node on every store commit. With no preview active the answer is
+ * fixed (`'default'` / the default message — and `addEditorFormPreviewProps`
+ * ignores the message entirely at `'default'`), so that work was pure waste on
+ * every board that has no form at all.
+ *
+ * `for…in` rather than `Object.keys(...).length`: this is a per-node selector
+ * path, and the key array would be allocated once per node per commit.
+ */
+function hasAnyPreview(state: EditorStore): boolean {
+  for (const _key in state.formPreviewStates) return true
+  return false
 }
 
 /**

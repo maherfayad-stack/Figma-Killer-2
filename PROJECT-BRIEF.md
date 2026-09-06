@@ -293,18 +293,18 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     every store change. The two original offenders are fixed — `PropertiesPanelBody.tsx`'s
     shared-text-origin count and `findNodeById.ts` (`src/admin/pages/site/canvas/
     InPlaceInspector/`) both now read an O(1) index (`_textOriginKeyToCount`/
-    `_nodeIdToPageIds`, WS-5.2) instead of scanning. A worse one exists in the
-    same class and is NOT yet fixed: `selectCanvasPageFor` (`store.ts:300-310`)
-    does an uncached `Array.find` over pages (and over frames, when `frameId` is
-    set), called from a **per-node** selector — `NodeRenderer.tsx` calls it
-    twice per mounted node (`node`, `mcClassName`), and every board frame
-    supplies both `pageId` and `frameId`, so it fires for every live node on
-    every store commit. Cheap on the current 15-page corpus (~30-60
-    comparisons); projects to ~64,000 comparisons per commit on the docs'
-    40-page/800-live-node stress board — the same order of magnitude as the
-    scan WS-5.2 was written to kill. Fix: give it the same sweep-scoped
-    single-slot memo `selectActivePage` already has, seven lines above it in
-    the same file.
+    `_nodeIdToPageIds`, WS-5.2) instead of scanning. `selectCanvasPageFor`
+    (`store.ts`) was the third, and is now fixed on **both** of its lookups:
+    the `pageId → Page` scan is memoised per `(site, pageId)`
+    (`lookupCanvasPageById`, `parity-01` C1) and the `frameId → axes.locale`
+    scan is skipped entirely unless a locale-variant page has actually been
+    fetched, then memoised per `(frames, frameId)` (`perf-03`). It is called
+    from a **per-node** selector — `NodeRenderer.tsx` calls it twice per
+    mounted node (`node`, `mcClassName`) — so on a 40-page/804-live-node board
+    that was 36,180 array comparisons per store commit, now 0. **When you add
+    a branch to a selector on this path, memoise it in the same change**;
+    that is exactly how the `frameId` branch slipped past the first fix.
+    `src/__tests__/store/selectCanvasPageFor.test.ts` is the gate.
 12. **`studio-workspace/*` is user data.** Never `rm -rf` a project directory, and
     never write outside a workspace root without a containment guard.
 13. **Do not run browser/e2e tests to validate UI changes.** The human dogfoods

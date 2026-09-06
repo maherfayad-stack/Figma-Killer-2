@@ -4,9 +4,13 @@
  * Responsibilities:
  *  1. LOAD on mount  — loads the single CMS draft site document; falls back to
  *     creating a fresh blank draft when the CMS has no draft yet.
- *  2. AUTO-SAVE      — when enabled in preferences, debounced after the
- *     `hasUnsavedChanges` flag transitions to true. Timer is properly reset on
- *     each new change so that rapid edits collapse into a single save. The
+ *  2. AUTO-SAVE      — when enabled in preferences, TRAILING-debounced: the
+ *     timer is (re)armed on the `hasUnsavedChanges` false→true transition AND
+ *     on every subsequent document mutation, so a typing burst collapses into
+ *     a single save at the END of the burst rather than firing `delay` ms
+ *     after its first keystroke. `nextAutoSaveDelayMs` caps how long one burst
+ *     may defer (see `AUTOSAVE_MAX_DEFERRAL_MULTIPLE`) so continuous editing
+ *     cannot starve the save forever. The
  *     delay is the user-configurable CMS preference (default 30 s, see
  *     `readAutoSaveDelayMs`) UNLESS the caller passes `options.autoSaveDelayMs`
  *     — the Site editor shell does this for Studio mode, which has no exposed
@@ -28,13 +32,19 @@
  *   subscribing EditorLayout to store changes from within this hook, which would
  *   cause spurious re-renders.
  *
- *   The auto-save subscription uses a primitive boolean selector
+ *   The auto-save STATUS subscription uses a primitive boolean selector
  *   `(s) => s.hasUnsavedChanges` so that `Object.is` comparisons work correctly
  *   and the listener fires ONLY when the flag actually changes — not on every
  *   single store update.  Using an inline object selector like
  *   `(s) => ({ site: s.site, dirty: s.hasUnsavedChanges })` would create
  *   a brand-new object on every evaluation, causing the listener to fire on
- *   every store mutation and leaking unbounded setTimeout instances.
+ *   every store mutation.
+ *
+ *   The separate `(s) => s.site` subscription is DELIBERATELY per-mutation —
+ *   that is the trailing debounce's reschedule signal. It is still a stable
+ *   reference selector (Mutative only mints a new document when something
+ *   actually changed), and it cannot leak timers: `scheduleAutoSave` clears
+ *   the previous timer before arming the next, so at most one is ever live.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -124,6 +134,35 @@ function applyDefaultBreakpointPreference(
  */
 export function resolveAutoSaveDelayMs(overrideMs?: number): number {
   return overrideMs ?? readAutoSaveDelayMs()
+}
+
+/**
+ * How long a continuous edit burst may keep deferring the autosave, as a
+ * multiple of the idle delay.
+ *
+ * A pure trailing debounce never fires while the user keeps typing, which for
+ * Studio means the `.tsx` on disk can lag the canvas indefinitely — the exact
+ * failure mode the fixed, snappy `STUDIO_AUTOSAVE_DELAY_MS` exists to avoid.
+ * The cap converts "never" into "at worst every 4 × the idle delay" (8 s in
+ * Studio, the user's own configured multiple in the CMS), which is still a
+ * long burst but is bounded. 4 was chosen so that a save mid-burst is rare
+ * enough not to feel like the editor is writing over your typing, and near
+ * enough that no realistic burst outruns it.
+ */
+export const AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4
+
+/**
+ * The delay the NEXT autosave tick should use: the full idle delay, unless
+ * the burst has already deferred long enough to exhaust its budget, in which
+ * case whatever is left of it (never negative — an exhausted budget fires on
+ * the next tick).
+ *
+ * Pure so the cap is unit-testable without mounting the hook or waiting on
+ * real timers, exactly like `resolveAutoSaveDelayMs` above.
+ */
+export function nextAutoSaveDelayMs(idleDelayMs: number, deferredForMs: number): number {
+  const remainingBudget = idleDelayMs * AUTOSAVE_MAX_DEFERRAL_MULTIPLE - deferredForMs
+  return Math.max(0, Math.min(idleDelayMs, remainingBudget))
 }
 
 export function usePersistence(
@@ -397,6 +436,8 @@ export function usePersistence(
     // This avoids creating a new object on every selector evaluation (which
     // would cause the listener to run on every store mutation — timer leak).
     let timer: ReturnType<typeof setTimeout> | undefined
+    /** When the current dirty burst started deferring — the `nextAutoSaveDelayMs` budget clock. `null` between bursts. */
+    let burstStartedAt: number | null = null
 
     function scheduleAutoSave() {
       clearTimeout(timer)
@@ -408,11 +449,14 @@ export function usePersistence(
       // preference re-fires `subscribeToEditorPrefsChanged` which calls back
       // into this scheduler, so the next scheduled tick uses the fresh value.
       // `autoSaveDelayMsOverride` (Studio) always wins over the preference.
+      const idleDelayMs = resolveAutoSaveDelayMs(autoSaveDelayMsOverride)
+      if (burstStartedAt === null) burstStartedAt = Date.now()
       timer = setTimeout(() => {
+        burstStartedAt = null
         void saveCurrentSite().catch((err) => {
           console.error('[persistence] Auto-save failed:', err)
         })
-      }, resolveAutoSaveDelayMs(autoSaveDelayMsOverride))
+      }, nextAutoSaveDelayMs(idleDelayMs, Date.now() - burstStartedAt))
     }
 
     const unsub = useEditorStore.subscribe(
@@ -420,6 +464,7 @@ export function usePersistence(
       (dirty) => {
         if (!dirty) {
           clearTimeout(timer)
+          burstStartedAt = null
           setSaveStatus((status) =>
             status.state === 'saving' ? status : { state: 'saved', lastSavedAt: status.lastSavedAt }
           )
@@ -429,6 +474,16 @@ export function usePersistence(
         scheduleAutoSave()
       },
     )
+    // The dirty subscription above only fires on the false→true TRANSITION, so
+    // on its own it made this a LEADING debounce: the save landed `delay` ms
+    // after the FIRST keystroke of a burst, mid-typing — the opposite of the
+    // "rapid edits collapse into a single save" behaviour the timer reset was
+    // written for. `site` is the honest per-edit signal (Mutative mints a new
+    // document object on every mutation that actually changes something, and
+    // ONLY then), so rescheduling from it makes this a real trailing debounce.
+    // `scheduleAutoSave` re-checks `hasUnsavedChanges` itself, so a `site`
+    // write that isn't a user edit (a load, a post-save reload) is a no-op.
+    const editUnsub = useEditorStore.subscribe((s) => s.site, scheduleAutoSave)
     const prefsUnsub = subscribeToEditorPrefsChanged(scheduleAutoSave)
 
     // beforeunload flush — tab close / hard reload. Fire-and-forget: the
@@ -451,6 +506,7 @@ export function usePersistence(
 
     return () => {
       unsub()
+      editUnsub()
       prefsUnsub()
       clearTimeout(timer)
       window.removeEventListener('beforeunload', flushBeforeUnload)

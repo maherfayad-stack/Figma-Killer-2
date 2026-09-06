@@ -2144,6 +2144,63 @@ Verified directly against the live iframe DOM (`class` attribute literally empty
 
 ## Recently landed
 
+### perf-03 — five measured hot-path fixes: the `frameId` branch nobody cached, per-frame CSS work that was frame-invariant, a frame memo that stopped one boundary too high, and an autosave that fired mid-word
+- **Agent:** perf-hunter
+- **Stage:** done (static gates green; **needs human dogfood** — see below)
+- **Updated:** 2026-09-06
+- **Goal:** remove per-node and per-frame work that repeats identical results, with a before/after number for each and a gate that fails if it comes back.
+- **Scope:** `src/admin/pages/site/store/store.ts` · `canvas/canvasVendorCss.ts` (new) · `canvas/ProjectCssInjector.tsx` · `canvas/canvasUserStylesheetCss.ts` (new) · `canvas/UserStylesheetInjector.tsx` · `canvas/BreakpointFrame.tsx` · `canvas/BoardFramesLayer/BoardFrameView.tsx` · `canvas/NodeRenderer.tsx` · `canvas/canvasFormPreview.ts` · `hooks/usePersistence.ts` · `scripts/bench/benches/agent-turn.ts`. **Deliberately untouched:** `panels/PropertiesPanel/**`, `property-controls/**`, `panels/selectorUsage.ts`, `studio/fsCodemodAdapter.ts`, `studio/styleRuleWriteback.ts`, `server/ai/**`.
+
+**Before / after — every number from a harness run against this branch, not a guess.**
+
+| What | Workload | Before | After |
+|---|---|---|---|
+| `selectCanvasPageFor` array comparisons per store commit | synthetic 40 pages / 40 frames / 6 on-screen / 804 live nodes (1,608 selector calls) | **36,180** | **0** |
+| …same, wall time per commit | " | **0.271 ms** | **0.043 ms** |
+| …same, with a locale-variant page actually fetched | " | 36,180 | **1,608** (the 1-element `boards.find` only) |
+| `UserStylesheetInjector` chain per recompute | real 178 KB project CSS corpus (`studio-workspace/test-3`), 6 frames at 3 widths | **71.97 ms** | **37.98 ms** |
+| `rewritePrefersColorScheme` on vendor CSS | real 121,756-byte `@alm-design/design-system` bundle, 6 frame mounts | **2.56 ms** (0.43 ms × 6) | **0.43 ms** (once) |
+| Form-preview resolvers per commit | 804 nodes, formless board, 1,608 resolver calls | **0.037 ms** | **0.010 ms** |
+| `NodeRenderer` store subscriptions per node | — | **13** | **11** |
+| `BreakpointFrame` body executions when its `BoardFrameView` re-renders | frame drag | **1 per re-render** | **0** |
+| Autosave during a 4-keystroke burst at 0.66 × delay | 60 ms delay | **fires mid-burst** | **1 save, after the burst** |
+| `bun run bench --only=agent-turn` | — | **crashes** (imports a deleted module) | runs (guide cold 27.95 ms / warm p50 545 µs) |
+
+**Mechanisms changed.**
+1. **`selectCanvasPageFor`'s `frameId` branch** (`store.ts`). The `pageId` lookup was memoised in `parity-01` C1; the later-added locale branch was not — `selectActiveBoard(s)?.frames.find(...)` is two uncached `Array.find`s, run twice per node per commit. Two changes: a `hasAnyKey(s.localizedPages)` guard that skips the branch entirely when no locale-variant page has been fetched (true on every board until someone duplicates a frame as a variant), and a `frames`-array-keyed `Map` memo for the frame → `axes.locale` lookup when it hasn't. Keyed on `frames`, not the board — `boardsModel.ts` reuses the `frames` reference for writes that don't touch a frame.
+2. **Vendor CSS** (`canvasVendorCss.ts`, new). The join + `rewritePrefersColorScheme` produce identical bytes in every iframe; now a single-slot memo on `projectVendorCss`. Its own module, not `ProjectCssInjector.tsx`, because a file that exports a component plus a plain function breaks Fast Refresh (`canvasFastRefreshBoundaries.test.ts` — found by lint, not by guessing).
+3. **User stylesheets** (`canvasUserStylesheetCss.ts`, new). The chain was `collect → resolveViewportUnits → rewritePrefersColorScheme`, which makes the scheme rewrite depend on the viewport and therefore uncacheable across frames. **Reordered** so the two frame-invariant steps run first (memoised once per `(site, scopeId, scopeTemplate)`), then the viewport resolution runs once per DISTINCT viewport, not per frame. The scope is keyed on its FIELDS, not the object — each injector instance has its own `useShallow` identity for the same two values.
+4. **`memo(BreakpointFrame)`** + `buildStudioBreakpoint` interned per width + `activatePageHandler` interned per page id (`BoardFrameView.tsx`). React Compiler exception #2, justified in a comment on each.
+5. **`NodeRenderer`**: three `activeInlineEdit` selectors → one `useShallow` subscription; both form-preview resolvers short-circuit when `formPreviewStates` is empty.
+6. **Autosave** (`usePersistence.ts`) is a real TRAILING debounce: the timer re-arms on `(s) => s.site` (Mutative mints a new document only when something actually changed), not just on the dirty false→true transition. Capped by `nextAutoSaveDelayMs` / `AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4`, so a continuous burst defers at most 4 × the idle delay (8 s in Studio) rather than forever.
+
+**Budgets added (all fail if the fix regresses — each was verified to fail against the pre-fix code):**
+- `src/__tests__/store/selectCanvasPageFor.test.ts` — "never touches board frames when no locale-variant page has been fetched" (`findCalls() === 0`), plus at-most-once-per-`(frames, frameId)`.
+- `src/__tests__/canvas/canvasUserStylesheetCss.test.ts` — collect/rewrite exactly 1× per board, viewport resolution 1× per distinct viewport; **plus a commute suite** proving the reorder is output-preserving on the shapes where it could plausibly not be.
+- `src/__tests__/canvas/projectCssInjector.test.tsx` — vendor rewrite runs once across 6 frame mounts.
+- `src/__tests__/canvas/breakpointFrameMemoBailout.test.tsx` — `useResolvedFrameAxes` call count unchanged across three frame drags. **Verified it fails without `memo()`** (5 vs 7).
+- `src/__tests__/canvas/canvasFormPreview.test.ts` — zero active-page resolutions across 100 nodes with no preview.
+- `src/__tests__/persistence/autoSaveTrailingDebounce.test.tsx` — no save mid-burst, one save after; starvation cap forces one through. **Verified it fails with the reschedule removed.**
+- `src/__tests__/architecture/per-node-selector-budget.test.ts` — `NodeRenderer`'s subscription count pinned at 11, from both sides.
+
+**Decisions.**
+- The `localizedPages`-empty guard runs BEFORE `selectActiveBoard`, not after — that ordering is the whole win, since the branch can only ever return something once a variant page exists.
+- `activatePageHandler` is interned at module level rather than left to the React Compiler. The compiler does not run under `bun test`, and the bailout it feeds is a documented compiler EXCEPTION; a memo whose key prop depends on the compiler is not a memo you can test.
+- Emptiness checks on the two hot records use `for…in` + early return, not `Object.keys(...).length` — the key array would be allocated once per node per commit.
+- `AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4` rather than a fixed millisecond cap, so the CMS's user-configured delay scales with it.
+- **`tests/e2e/studio-board-perf.e2e.ts` was NOT touched.** Its `BUDGET_ZOOM_WORST_FRAME_MS = 600` ratchet records the ~100-140 ms-per-frame-mount defect. Items 2 and 3 above shave real work off that path, but I cannot run Playwright here, so tightening a budget I did not measure would be exactly the unverifiable "optimization" this role is supposed to refuse. Re-measure it in a browser before lowering it.
+
+**Landmines.**
+- **`git stash` is NOT safe in this repo.** Worktrees share one stash stack. Mid-task, a concurrent worktree's `git stash pop` raced mine: my entire working tree was swapped for another agent's `server/ai/**` changes, and my stash entry was dropped from the list. Recovered via `git fsck --no-reflogs` → the dangling stash commit `3982af8` ("WIP on fix/canvas-hot-path-perf") → `git diff HEAD <sha> | git apply` + `git show <sha>^3:<path>` for untracked files. **Use `cp` to a `.tmp/` scratch file to A/B a change, never `git stash`.** The other agent's content was saved at `.tmp/perf/foreign-server-ai.patch` in this worktree and their dropped stash is recoverable the same way.
+- **The reorder in item 3, on its own, buys nothing.** Measured first: `rewritePrefersColorScheme` is 0.83 ms/call against `resolveViewportUnitsForCanvas`'s 10.95 ms on the same 178 KB input, so swapping the order changed 75.27 ms → 75.22 ms. The win is entirely from what the reorder makes CACHEABLE (collect + rewrite once per board, viewport once per distinct WIDTH). Do not repeat the reorder elsewhere expecting the reorder itself to be the fix.
+- `rewritePrefersColorScheme`'s cheap `/prefers-color-scheme/` short-circuit does NOT protect the vendor path: the real `@alm-design/design-system` bundle contains exactly one such query, so all 121 KB got walked, every mount.
+- Order-equivalence of the two CSS transforms was verified empirically over all **351** `.css` files in `studio-workspace/` at two viewports (0 mismatches) before the reorder landed — the argument alone was not treated as sufficient.
+- `inlineTextEditingWiring.test.ts` is a SOURCE-TEXT gate on `NodeRenderer.tsx`. Collapsing the three inline-edit selectors changed the spelling it matched (`s.activeInlineEdit.breakpointId` → `session.breakpointId`); the gate was updated to assert the same scoping in the new shape, in this commit.
+- The remaining `boards.find` in the locale-variant path (1,608 comparisons/commit over a 1-element array) was left alone on purpose: memoising `selectActiveBoard` would touch every board consumer for a negligible win.
+
+- **Verification:** `bun run build` → passes. `bun run lint` → **0 errors** (after moving `createVendorCssMemo` out of the component module). `bun test src/__tests__/{canvas,store,persistence,editor-store,architecture}` → **1784 pass / 11 fail**; all 11 match the pre-existing baseline measured on this same branch with the changes stashed out (5 × B3 NodeRenderer lock-down, `visual-component-ref inline base.body root`, `canvas body context menu`, `pin ⇄ unroll`, 2 × `selection does not leak between two board frames`, plus the `pixel-art-icons chevron-left` catalog gate). `bun run bench --only=agent-turn` → runs (it could not even import before).
+- **Human action needed: dogfood the canvas.** Open a board with **6+ frames at mixed widths** (`studio-workspace/test-3` has the 178 KB CSS corpus these numbers came from) at **~50% zoom**, then: (a) type into a text node and watch that the save status goes `unsaved` and stays there until you STOP typing — it should not flip to `saving` mid-word; (b) drag a frame by its header and watch that the other frames' content does not flicker/re-render; (c) zoom out past the virtualization boundary so 6 → 15 frames mount and see whether the stall is visibly shorter than the 290 ms `perf-01` recorded. (c) is the one number I could not measure here.
+
 ### parity-01 — Phase 0 + Band 1/2 of `STUDIO-FIGMA-PARITY-PLAN.md` executed by 13 parallel agents. **Uncommitted, in the working tree, awaiting human review.**
 - **Agent:** coordinator (13 specialist agents, 4 waves, disjoint file sets)
 - **Stage:** implementation complete for the dispatched scope; gates green except one in-flight lint fix. **NOTHING IS COMMITTED** — the human asked for a single review at the end.
