@@ -1,0 +1,23 @@
+.body {
+  margin: 0 0 var(--space-s);
+  color: var(--text-muted);
+  font-size: var(--text-s);
+  line-height: 1.5;
+}
+
+.body:last-child {
+  margin-bottom: 0;
+}
+
+/*
+  The path is the actionable half of this dialog — it is where the user goes to
+  undo the deletion themselves — so it reads as a path rather than as prose.
+*/
+.path {
+  padding: var(--space-px) var(--space-3xs);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-3);
+  color: var(--text-bright);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}

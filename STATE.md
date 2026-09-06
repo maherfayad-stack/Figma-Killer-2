@@ -21,6 +21,29 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-11 — the launcher could open a project but never remove one; now it can, recoverably
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** restore the delete-a-project control the user built on the unmerged `feat/prototype-mode` branch (`801db45`). Every tile carries a delete control behind a confirmation that names the project; nothing is erased.
+- **Scope:** `server/handlers/studio/projectTrash.ts` (+ `__tests__/projectTrash.test.ts`), `server/handlers/studio/projectRoutes.ts`, `server/handlers/studio.ts`, `server/handlers/studioProjects.ts`, `src/admin/pages/dashboard/{DashboardPage.tsx,DashboardPage.module.css,DashboardPage.test.tsx,DeleteProjectDialog.tsx,DeleteProjectDialog.module.css,hooks/useStudioProjects.ts}`, `docs/agent-refs/path-index.md`.
+- **Done so far:**
+  - `POST /admin/api/studio/delete` moves `studio-workspace/<project>/` into `studio-workspace/.trash/<folder>-<timestamp>/` with an atomic `renameSync` (same filesystem by construction), and returns the refreshed `{ projects }` so the launcher redraws from the server's answer.
+  - `listStudioProjects` skips `.trash`. Without it the trash lists itself as a project, and opening that points Studio at a directory of deleted projects.
+  - The dialog states where the files GO rather than promising an undo the dashboard does not have — the recovery is a `mv` the user can perform themselves.
+- **Next step:** none for this entry. The branch also carried a per-PAGE trash (`pageTrash.ts` + a Trash list in the explorer) that replaced `pageDelete.ts`; that is a bigger, separate change and is NOT ported here — `main`'s `DELETE /admin/api/studio/page` is untouched.
+- **Decisions:**
+  - **Move, never `rmSync`.** `studio-workspace/<project>/` is the user's own repository with no other copy, and there is no undo anywhere in this stack to reach for. A trash is a PLACE the files go, not a flag on a record.
+  - **No manifest, unlike `pageTrash`.** A project is one directory moved whole, and its `.studio/meta.json` travels inside it, so the moved folder is already self-describing. A manifest would record only what the folder name says and be a second thing to keep in step.
+  - **`dir` is REQUIRED and never goes through `resolveProjectDir`**, whose no-dir fallback resolves to the first project on disk — on a delete that turns a client bug into deleting a project nobody named.
+  - **Validation compares the resolved PARENT to the projects root**, which rejects `..`, a nested path like `<project>/pages`, and the workspace root itself in one check, and cannot be fooled by a sibling root whose name merely shares a prefix (a `startsWith` test can).
+  - **Capability-gated (`studio.write`), which makes it the odd one out.** `/admin/api/studio/*` is otherwise unauthenticated. Shipping an ungated delete was not defensible; the gate here is NOT evidence the neighbours have one, and gating them is its own change.
+  - **The delete control is a SIBLING of the project card**, not a child: the card is itself a `<button>` (§8.11 of the button-primitive allowlist), and a button inside a button is invalid HTML browsers silently un-nest.
+- **Landmines:**
+  - `tryServeStudioProjectRoutes` now takes a `runtime` and is called OUTSIDE the `STUDIO_SUB_ROUTERS` loop, next to `tryServeStudioComments` — the loop's `(req, url, pathname)` shape carries no `DbClient`, and a capability needs a session to hang off. Adding a route to this file that needs neither is still fine; adding it back to the loop is not.
+  - `PROJECTS_TRASH_DIR_NAME` is deliberately NOT in `EXCLUDED_WORKSPACE_DIR_NAMES`: that set names directories to skip INSIDE a project (`node_modules`, `dist`), and this one is a sibling OF projects. Same word, different level.
+- **Verification:** `bun run build` ✅. `bun run lint` ✅. `bun test server/handlers/studio/__tests__/projectTrash.test.ts` → 11 pass. `bun test src/admin/pages/dashboard/DashboardPage.test.tsx` → 4 pass. `bun test src/__tests__/architecture` → 509 pass / 1 fail (`icon-catalog-integrity`'s `chevron-left` sample, `standing-01`-class pre-existing). `bun test server/handlers/studio` → 546 pass / 1 fail in batch (`remoteAssetFetch`, which passes on its own — the known server batch flake).
+- **Human action needed:** **dogfood.** Open `/admin/dashboard`, hover a project tile, press its delete control, confirm the dialog names the project and its page count, delete it, and check that `studio-workspace/.trash/<folder>-<timestamp>/` holds the folder intact and the launcher no longer lists it. Then move the folder back and reload to confirm it returns.
 ### canvas-12 — three features the user built were stranded on an unmerged branch; they are back on main
 - **Agent:** studio-implementer
 - **Stage:** done
