@@ -96,6 +96,14 @@ export const ServerStreamEventSchema = Type.Union([
     contextTokens: Type.Number(),
   }),
   Type.Object({ type: Type.Literal('reasoning'), text: Type.String() }),
+  Type.Object({
+    // How this turn's effort was chosen — see `RoutingEvent` in ./types.
+    type: Type.Literal('routing'),
+    mode: Type.Union([Type.Literal('pinned'), Type.Literal('auto')]),
+    effort: Type.String(),
+    shape: Type.Optional(Type.String()),
+    reason: Type.String(),
+  }),
   Type.Object({ type: Type.Literal('done') }),
   Type.Object({ type: Type.Literal('error'), message: Type.String() }),
 ])
@@ -285,6 +293,21 @@ export async function processStreamEvent(
         state.agentUsage.costUsd = Number(
           (state.agentUsage.costUsd + event.costUsd).toFixed(6),
         )
+      })
+      break
+    }
+
+    case 'routing': {
+      // Display only. Stored on the session (not on the message) because it
+      // describes the TURN, and the composer chip that shows it has to be
+      // readable before the first token arrives.
+      set((state) => {
+        state.agentRoutedTurn = {
+          mode: event.mode,
+          effort: event.effort,
+          ...(event.shape ? { shape: event.shape } : {}),
+          reason: event.reason,
+        }
       })
       break
     }

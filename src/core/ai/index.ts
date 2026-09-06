@@ -7,6 +7,8 @@ export {
   aiToolOk,
 } from './toolOutput'
 export type { AiToolImage, AiToolOutput } from './toolOutput'
+export { PAGE_DIAGNOSTIC_CODES, PAGE_DIAGNOSTIC_CODE_LIST } from './pageDiagnostics'
+export type { PageDiagnosticCode, PageDiagnosticCodeDef } from './pageDiagnostics'
 export {
   AiContentBlockSchema,
   AiContentViewBlockSchema,
@@ -95,6 +97,7 @@ export {
   StudioExportFramesInputSchema,
   StudioSetFrameAxesInputSchema,
   StudioComputedStylesInputSchema,
+  StudioPageDiagnosticsInputSchema,
   StudioDuplicateFrameAsVariantInputSchema,
   StudioUploadAssetInputSchema,
   StudioListComponentsInputSchema,

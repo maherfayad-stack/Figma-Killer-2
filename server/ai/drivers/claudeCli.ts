@@ -138,22 +138,21 @@ import { approvedProjectMcpServers, type ProjectMcpServerDefinition } from './pr
 import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { readServerConfig } from '../../config'
 import { generateStudioProjectGuide } from '../../handlers/studio/projectGuide'
-import { resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
+import { readTurnWriteLog, resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
+import { resolveTurnRouting } from '../routing/turnRouting'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
 import { writeMcpConfigFile, cleanupMcpConfigFile, type McpConfigFile } from './claudeCliMcpConfigFile'
 import { clearCliNeedsAuthCache, recallCliSignIns } from '../credentials/cliMcpConnectionProbe'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
-/** `--effort` is a real, user-requested requirement (WS-12 §5.1), request-driven from `req.effort` with this as the fallback — 'medium' matches the CLI's own implied default weighting (mid-scale of the five confirmed levels). */
-const DEFAULT_EFFORT = 'medium'
-
-function resolveEffort(requested: string | undefined): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
-  if (requested === 'low' || requested === 'medium' || requested === 'high' || requested === 'xhigh' || requested === 'max') {
-    return requested
-  }
-  return DEFAULT_EFFORT
-}
+/**
+ * `--effort` is a real, user-requested requirement (WS-12 §5.1). It is
+ * request-driven from `req.effort` when the user pinned one, and otherwise
+ * ROUTED per turn by `../routing/turnRouting.ts` — read that module for the two
+ * rules it enforces (an explicit choice is never overridden; unsure routes up)
+ * and for why the MODEL is deliberately not routed alongside the effort.
+ */
 
 /**
  * Conservative aliases the CLI's `--model` flag accepts. Confirmed via
@@ -330,7 +329,28 @@ export async function* streamClaudeCli(
     yield { type: 'error', message: resolvedMode.message }
     return
   }
-  const effort = resolveEffort(req.effort)
+  // Auto-routing needs to know whether the LAST turn wrote anything, so this
+  // reads the turn-write log BEFORE `resetTurnWriteLog` clears it for this
+  // turn (a few lines below, right before spawn). Zero when no project is open.
+  const previousTurnWriteCount = workspaceCwd ? readTurnWriteLog(workspaceCwd).length : 0
+  const routing = resolveTurnRouting({
+    requestedEffort: req.effort,
+    signals: {
+      prompt: promptText,
+      attachmentCount: attachmentStaging?.files.length ?? 0,
+      previousTurnWriteCount,
+    },
+  })
+  const effort = routing.effort
+  // Emitted before anything is spent, so the composer can show what this turn
+  // was routed to while it is still running — see the event's own doc.
+  yield {
+    type: 'routing',
+    mode: routing.mode,
+    effort: routing.effort,
+    ...(routing.shape ? { shape: routing.shape } : {}),
+    reason: routing.reason,
+  }
 
   let configDir: string
   try {
