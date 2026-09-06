@@ -599,7 +599,7 @@ The sidebar shell expands/collapses by animating `--*-panel-width`. The panel sl
 
 `src/admin/pages/site/toolbar/`:
 
-- `StudioToolbarActions` — bundles `ImportProjectButton`, `PreviewAxesControls`, `DownloadCodeButton` (Studio's export story — no CMS publish pipeline)
+- `StudioToolbarActions` — bundles `ImportProjectButton`, `PreviewAxesControls`, `DownloadCodeButton` (Studio's export story — no CMS publish pipeline). `ImportProjectButton` is one of two mounts of the same dialog: the dashboard launcher offers "Import project" beside "New project", and both render `LazyImportProjectDialog` from `src/admin/shared/dialogs/ImportProjectDialog/`
 - `SettingsButton` — opens the Settings modal (see below)
 - `ZoomControls` — canvas zoom
 - `ModulePickerDropdown` — opens the module inserter modal

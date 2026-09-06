@@ -14,6 +14,16 @@
  * `Untitled`, `Untitled 2`, … and renamed later from the toolbar) is still one
  * Enter away.
  *
+ * "Import project" is its peer, not a Studio-toolbar-only action. Opening an
+ * existing React repository — from GitHub, a `.zip`, or a local folder — is
+ * the product's core entry path, and it used to be reachable only from inside
+ * the Studio toolbar, which meant scaffolding a throwaway project first just
+ * to get at it. Both buttons sit in the launcher toolbar and in the empty
+ * state, so a fresh install has two honest ways to start. The dialog itself
+ * (`LazyImportProjectDialog`) is shared with the toolbar, not duplicated; it
+ * already points Studio at the imported directory, so this page's `onImported`
+ * only has to navigate.
+ *
  * `requestCmsSiteReload()` is called before every `openProject` (new or
  * existing) so `usePersistence`'s mount effect doesn't short-circuit on a
  * still-mounted, previous project's `existingSite` — without it, switching
@@ -25,12 +35,16 @@
  */
 import { useState } from 'react'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
+import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
 import { AdminPageLayout } from '@admin/layouts/AdminPageLayout'
 import { useAuthenticatedAdminUser } from '@admin/sessionContext'
 import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
+import { LazyImportProjectDialog } from '@admin/shared/dialogs/ImportProjectDialog'
 import { Button } from '@ui/components/Button'
+import { EmptyState } from '@ui/components/EmptyState'
 import { SearchBar } from '@ui/components/SearchBar'
+import { SkeletonBlock } from '@ui/components/Skeleton'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
@@ -43,6 +57,11 @@ import {
 } from './hooks/useStudioProjects'
 import { NewProjectDialog } from './NewProjectDialog'
 import styles from './DashboardPage.module.css'
+
+// Placeholder tiles shown while the project list is in flight — enough to
+// read as "a grid of project cards is about to appear", not so many that the
+// page reflows dramatically once the real (usually shorter) list lands.
+const SKELETON_TILE_KEYS = ['a', 'b', 'c', 'd', 'e', 'f'] as const
 
 function greetingFor(displayName: string | null | undefined): string {
   const hour = new Date().getHours()
@@ -59,6 +78,7 @@ export function DashboardPage() {
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   // Projects created this session, layered over the fetched list so a new
   // project shows up immediately without waiting for a refetch.
   const [created, setCreated] = useState<StudioProject[]>([])
@@ -104,11 +124,22 @@ export function DashboardPage() {
     }
   }
 
+  const newProjectButton = (
+    <Button variant="primary" onClick={() => setCreateOpen(true)} disabled={busy}>
+      <PlusIcon size={12} aria-hidden="true" /> New project
+    </Button>
+  )
+  const importProjectButton = (
+    <Button variant="secondary" onClick={() => setImportOpen(true)} disabled={busy}>
+      <CodeIcon size={12} aria-hidden="true" /> Import project
+    </Button>
+  )
+
   return (
     <AdminPageLayout
       workspace="dashboard"
       title={greetingFor(currentUser.displayName)}
-      description="Your studio projects — open one to keep editing, or start a new one."
+      description="Your studio projects — open one to keep editing, start a new one, or import an existing React repository."
     >
       <div className={styles.toolbar}>
         <SearchBar
@@ -118,19 +149,41 @@ export function DashboardPage() {
           aria-label="Search projects"
           className={styles.search}
         />
-        <Button variant="primary" onClick={() => setCreateOpen(true)} disabled={busy}>
-          <PlusIcon size={12} aria-hidden="true" /> New project
-        </Button>
+        {importProjectButton}
+        {newProjectButton}
       </div>
 
       {isLoading ? (
-        <p className={styles.state}>Loading projects…</p>
+        <ul className={styles.grid} aria-busy="true" aria-label="Loading projects">
+          {SKELETON_TILE_KEYS.map((key) => (
+            <li key={key} className={styles.cardSkeleton}>
+              <SkeletonBlock />
+            </li>
+          ))}
+        </ul>
       ) : filtered.length === 0 ? (
-        <p className={styles.state}>
-          {needle
-            ? `No projects match “${query.trim()}”.`
-            : 'No projects yet — create one to get started.'}
-        </p>
+        needle ? (
+          <EmptyState
+            variant="centered"
+            size="large"
+            title={`No projects match “${query.trim()}”.`}
+            description="Try a different search, or clear it to see every project."
+          />
+        ) : (
+          <EmptyState
+            variant="centered"
+            size="large"
+            icon={<FolderGlyphIcon size={22} aria-hidden="true" />}
+            title="No projects yet."
+            description="Start a blank project, or import a React repository from GitHub, a .zip, or a folder on this machine."
+            action={
+              <span className={styles.emptyActions}>
+                {newProjectButton}
+                {importProjectButton}
+              </span>
+            }
+          />
+        )
       ) : (
         <ul className={styles.grid}>
           {filtered.map((project) => (
@@ -158,6 +211,15 @@ export function DashboardPage() {
         busy={busy}
         onClose={() => setCreateOpen(false)}
         onCreate={(options) => void handleCreate(options)}
+      />
+
+      {/* The dialog has already pointed Studio at the imported directory and
+          requested a reload by the time `onImported` fires — all that's left
+          from the launcher is to go there. */}
+      <LazyImportProjectDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => navigate('/admin/site')}
       />
     </AdminPageLayout>
   )

@@ -2094,6 +2094,28 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-10 — the repo importer was unreachable from the launcher; it is now a peer of "New project"
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** a user landing on `/admin/dashboard` can import an existing React repository (GitHub / `.zip` / local folder) without first scaffolding a throwaway project to reach the Studio toolbar.
+- **Scope:** `src/admin/pages/dashboard/DashboardPage.{tsx,module.css}`, `src/admin/pages/site/toolbar/ImportProjectButton.tsx`, moved `src/admin/pages/site/studio/ImportProjectDialog.{tsx,module.css}` → `src/admin/shared/dialogs/ImportProjectDialog/` (+ new `LazyImportProjectDialog.tsx`, `index.ts`), `docs/agent-refs/path-index.md`, `docs/editor.md`.
+- **Done so far:**
+  - `ImportProjectDialog` **moved** (not copied) to `src/admin/shared/dialogs/ImportProjectDialog/`. It imports its wire clients from `@site/studio/{importGithubProject,importUploadProject,studioWorkspaceDir}` — those stay put; only the dialog changed home. `src/admin/shared/` already imports from `@site/*` in nine other places, so this is the established direction.
+  - New `LazyImportProjectDialog.tsx` is the ONE `lazy()` boundary, exported through `index.ts` (which deliberately does NOT re-export `ImportProjectDialog` itself — that would pull its chunk back into both callers' eager graphs). Same pattern as `LazyModuleInserterDialog`.
+  - `DashboardPage.tsx:127-136` builds both CTAs once and renders them in two places: the toolbar row (`:152-153`) and the empty state's `action` slot (`:181-182`). `DashboardPage.tsx:219-223` mounts the dialog with `onImported={() => navigate('/admin/site')}`.
+  - `ImportProjectDialog`'s new optional `onImported` fires after `setStudioWorkspaceDir` + `requestCmsSiteReload`, before `onClose`. The toolbar omits it (already in the editor); the launcher passes the navigation.
+  - Loading state: a `.grid` of six `.cardSkeleton` tiles wrapping `<SkeletonBlock>` (was a bare `<p>Loading projects…</p>`). Empty state: `<EmptyState variant="centered" size="large">` with both CTAs, and a separate no-search-match variant (was a bare `<p>`). `.state` deleted from the CSS module.
+- **Next step:** none for this entry. If someone wants the launcher to also accept a drag-and-dropped `.zip`, `docs/audits/2026-08-06/07-drag-and-drop.md:404` already specs it against `importUploadProject.ts`.
+- **Decisions:**
+  - **`shared/dialogs/`, not `site/studio/`** — importing a repository is how a user *reaches* Studio, so the dialog cannot live inside the surface it is the entry to. `pages/dashboard/` would have been equally wrong in the other direction (the toolbar would then import from the dashboard).
+  - **`onImported` is optional, not required** — the toolbar has genuinely nothing to do after the dialog's own workspace switch. Passing it a no-op would be the shim, not the honest shape.
+  - **Kept the launcher's own toolbar row** rather than moving the CTAs into `AdminPageLayout`'s `actions` slot: the search field belongs beside them, and `actions` sits in the page header away from it.
+- **Landmines:**
+  - `AdminPageLayout`'s `loading` prop renders `SkeletonCards` *in place of children*, which would take the search field and both CTAs off screen during the fetch. The skeleton here is inline on purpose so the header stays stable.
+  - The project tiles are a bare `<button>` by design — `button-primitive-usage.test.ts`'s §8.11 allowlist entry covers `DashboardPage.tsx`. Do not "fix" it into a `Button`.
+- **Verification:** `bun run build` ✅ (tsc -b + vite, exit 0). `bun run lint` ✅ (exit 0). `bun test` → 10204 pass / 80 fail; all 80 are `standing-01`-class pre-existing (claudeCli driver suite, canvas/NodeRenderer/VC suites, `icon-catalog-integrity`'s `chevron-left` sample — the vendored `dist/icons` only carries the 244 synced icons). Confirmed pre-existing by re-running `icon-catalog-integrity` with my diff stashed: identical failure. `bun test src/__tests__/architecture` → 496 pass / 1 fail (that same icon gate). `bun test src/__tests__/architecture/bundle-size-budgets.test.ts` after a real build → 14 pass.
+- **Human action needed:** **dogfood.** Open `/admin/dashboard` and check: (1) both "Import project" and "New project" sit beside the search field; (2) with zero projects, the empty state shows both CTAs; (3) hard-reload and confirm the skeleton grid appears (throttle the network if the fetch is instant) with the header stable; (4) import a small GitHub repo from the launcher and confirm it lands you in `/admin/site` with that project open; (5) open a project, then import from the Studio toolbar and confirm it still swaps the workspace in place without navigating.
 ### meta-07 — the first three screens a new user sees still spoke in the CMS's voice
 - **Agent:** studio-implementer
 - **Stage:** done

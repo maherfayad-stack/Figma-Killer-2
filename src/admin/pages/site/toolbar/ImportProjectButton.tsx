@@ -1,5 +1,5 @@
 /**
- * ImportProjectButton — Studio's "Import project" entry point (WS-1.1).
+ * ImportProjectButton — Studio's in-editor "Import project" entry point (WS-1.1).
  * Opens `ImportProjectDialog` on click; the dialog owns the three import
  * paths (GitHub / Upload / Local folder) and the request itself. Mounted
  * only in Studio mode — see `AdminCanvasLayout`'s `rightSlot`, alongside
@@ -8,19 +8,21 @@
  * Formerly `ImportGithubButton` (GitHub-only). Renamed alongside
  * `ImportGithubDialog` → `ImportProjectDialog`.
  *
- * `ImportProjectDialog` is lazy-loaded: it pulls in the `Dialog`/`Tabs`
- * primitives + both import clients, and is closed 99% of the time. Same
- * pattern as `SettingsModal`/`PreviewOverlay` in `AdminCanvasLayout` — keeps
- * it out of the eager Site route shell (see `bundle-size-budgets.test.ts`'s
- * SitePage budget) until the user actually opens it.
+ * This is no longer the only way in: the dashboard launcher offers the same
+ * import beside "New project", so a user does not have to create a throwaway
+ * project to reach it. Both surfaces render the same dialog through
+ * `LazyImportProjectDialog` (`@admin/shared/dialogs/ImportProjectDialog`),
+ * which owns the one lazy boundary that keeps the dialog's chunk out of the
+ * eager Site route shell (see `bundle-size-budgets.test.ts`'s SitePage budget).
+ *
+ * No `onImported` here: the toolbar is already showing the editor, so the
+ * dialog's own `setStudioWorkspaceDir` + `requestCmsSiteReload` is the whole
+ * job. The dashboard is the caller that also has to navigate.
  */
-import { lazy, Suspense, useState } from 'react'
+import { useState } from 'react'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { Button } from '@ui/components/Button'
-
-const ImportProjectDialog = lazy(() =>
-  import('@site/studio/ImportProjectDialog').then((m) => ({ default: m.ImportProjectDialog })),
-)
+import { LazyImportProjectDialog } from '@admin/shared/dialogs/ImportProjectDialog'
 
 export function ImportProjectButton() {
   const [open, setOpen] = useState(false)
@@ -38,11 +40,7 @@ export function ImportProjectButton() {
         <CodeIcon size={14} aria-hidden="true" />
         <span>Import project</span>
       </Button>
-      {open && (
-        <Suspense fallback={null}>
-          <ImportProjectDialog onClose={() => setOpen(false)} />
-        </Suspense>
-      )}
+      <LazyImportProjectDialog open={open} onClose={() => setOpen(false)} />
     </>
   )
 }
