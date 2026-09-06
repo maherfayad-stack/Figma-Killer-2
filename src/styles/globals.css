@@ -355,6 +355,14 @@
     --canvas-flow-code: #8e9bb0;
     --canvas-flow-code-chip: #1c2129;
     --canvas-flow-code-chip-text: #d7dee9;
+    /* Authored prototype connector: the link the USER drew, so it takes a
+       saturated identity colour where the derived one above stays neutral —
+       loud for "you did this", quiet for "your code does this". A sixth neon
+       distinct from selection (green), hover (pink), selector (orange), snap
+       (cyan) and ruler (violet). Fixed rather than theme-derived for the same
+       reason as its neighbours: it floats over the user's rendered page. */
+    --canvas-flow-design: #00d1a0;
+    --canvas-flow-design-text: #04211a;
     /* Persisted ruler guide (D1): a user-placed guide line dragged out from
        a ruler, saved to `boards.json` — a DIFFERENT concept from the
        transient snap guide above (see `RulerGuidesLayer`'s doc for the name

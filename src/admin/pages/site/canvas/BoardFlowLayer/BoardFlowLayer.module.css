@@ -32,18 +32,45 @@
     pointer-events: none;
 }
 
+/*
+ * TWO VOICES, AND THE DIFFERENCE IS THE FEATURE.
+ *
+ *  - `code`   — quiet, achromatic, DASHED. Studio read this out of the user's
+ *               source; it is a report, not an edit, and it is not part of
+ *               their layout. It cannot be deleted from the board.
+ *  - `design` — saturated, SOLID, heavier. The user drew this, and it is theirs
+ *               to change.
+ *
+ * Loud for "you did this", quiet for "your code does this" — the same two-layer
+ * reading the colour tokens themselves are defined around in globals.css.
+ */
 .curve path {
     fill: none;
     stroke: var(--canvas-flow-code);
     stroke-width: calc(1.5px / var(--canvas-zoom));
     stroke-linecap: round;
-    /*
-     * Dashed, and that is the honest reading: this line is not part of the
-     * user's layout, it is Studio annotating it. Dash geometry counter-scales
-     * with everything else so the rhythm is constant on screen.
-     */
+    /* Dash geometry counter-scales with everything else so the rhythm is
+       constant on screen. */
     stroke-dasharray: calc(7px / var(--canvas-zoom)) calc(5px / var(--canvas-zoom));
     opacity: 0.85;
+}
+
+.curve[data-kind='design'] path {
+    stroke: var(--canvas-flow-design);
+    stroke-width: calc(2px / var(--canvas-zoom));
+    stroke-dasharray: none;
+    opacity: 1;
+}
+
+/*
+ * An authored link whose source element no longer resolves. Drawn, never
+ * hidden — the user has to be able to see what their edit cost, which is the
+ * whole reason `@core/studio-anchor` reports `detached` instead of dropping.
+ * Back to a dash, because the claim is no longer whole.
+ */
+.curve[data-broken='true'] path {
+    stroke: var(--danger);
+    stroke-dasharray: calc(3px / var(--canvas-zoom)) calc(4px / var(--canvas-zoom));
 }
 
 /*
@@ -71,6 +98,14 @@
     transform: scale(calc(1 / var(--canvas-zoom))) rotate(var(--flow-arrow-angle)) translate(-100%, -50%);
     transform-origin: 0 0;
     pointer-events: none;
+}
+
+.arrow[data-kind='design'] {
+    background: var(--canvas-flow-design);
+}
+
+.arrow[data-broken='true'] {
+    background: var(--danger);
 }
 
 /*
@@ -108,6 +143,17 @@
     transform-origin: 0 0;
     pointer-events: auto;
     cursor: default;
+}
+
+.chip[data-kind='design'] {
+    background: var(--canvas-flow-design);
+    color: var(--canvas-flow-design-text);
+    font-family: inherit;
+}
+
+.chip[data-broken='true'] {
+    background: var(--danger);
+    color: var(--danger-text);
 }
 
 .evidence {

@@ -8,9 +8,11 @@
  */
 import { describe, expect, it } from 'bun:test'
 import type { BoardFrame } from '@core/studio-board'
-import { codeFlowEdgeId, type CodeFlowEdge } from '@core/studio-prototype'
+import type { BaseNode, NodeTree } from '@core/page-tree'
+import { captureNodeHint } from '@core/studio-anchor'
+import { codeFlowEdgeId, type CodeFlowEdge, type PrototypeLink } from '@core/studio-prototype'
 import { flowConnector } from '../flowGeometry'
-import { routeCodeFlow } from '../flowRouting'
+import { routeCodeFlow, routePrototypeLinks } from '../flowRouting'
 
 function frame(id: string, pageId: string, x: number, y: number): BoardFrame {
   return { id, pageId, x, y, width: 400, height: 300 }
@@ -19,6 +21,27 @@ function frame(id: string, pageId: string, x: number, y: number): BoardFrame {
 function edge(sourcePageId: string, targetPageId: string, sourceNodeId = 'pages/Home.tsx:1:1'): CodeFlowEdge {
   const base = { sourcePageId, targetPageId, sourceNodeId, via: 'href' as const, evidence: 'href="/x"' }
   return { id: codeFlowEdgeId(base), ...base }
+}
+
+function node(id: string, children: string[] = []): BaseNode {
+  return { id, moduleId: 'base.button', props: { text: 'Go' }, children }
+}
+
+/** A one-button page, so a link's source can genuinely be resolved or not. */
+function tree(): NodeTree {
+  return { nodes: { root: { ...node('root', ['cta']), moduleId: 'base.body' }, cta: node('cta') }, rootNodeId: 'root' }
+}
+
+function link(overrides: Partial<PrototypeLink> = {}): PrototypeLink {
+  return {
+    id: 'link-1',
+    source: { pageId: 'home', node: captureNodeHint(tree(), 'cta')! },
+    trigger: 'click',
+    action: 'navigate',
+    targetPageId: 'details',
+    transition: 'slide-left',
+    ...overrides,
+  }
 }
 
 describe('flowConnector', () => {
@@ -75,7 +98,9 @@ describe('routeCodeFlow', () => {
       frames,
     )
     expect(lines).toHaveLength(1)
-    expect(lines[0]!.edges).toHaveLength(2)
+    expect(lines[0]!.details).toHaveLength(2)
+    expect(lines[0]!.kind).toBe('code')
+    expect(lines[0]!.chip).toBe('2 links')
   })
 
   it('draws nothing when either end has no frame on this board', () => {
@@ -91,7 +116,7 @@ describe('routeCodeFlow', () => {
       frame('home', 'home', 0, 0),
     ]
     const lines = routeCodeFlow([edge('home', 'details')], frames)
-    expect(lines.map((l) => l.key)).toEqual(['home->near'])
+    expect(lines.map((l) => l.key)).toEqual(['code:home->near'])
   })
 
   it('draws one line per SOURCE variant, so a duplicated frame still shows its flow', () => {
@@ -105,5 +130,46 @@ describe('routeCodeFlow', () => {
 
   it('draws nothing for a page that navigates to itself with one frame on the board', () => {
     expect(routeCodeFlow([edge('home', 'home')], [frame('f1', 'home', 0, 0)])).toEqual([])
+  })
+})
+
+describe('routePrototypeLinks', () => {
+  const frames = [frame('home', 'home', 0, 0), frame('details', 'details', 600, 0)]
+  const trees = new Map([['home', tree()]])
+
+  it('draws an authored link in its own voice', () => {
+    const lines = routePrototypeLinks([link()], frames, trees)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.kind).toBe('design')
+    expect(lines[0]!.chip).toBe('slide-left')
+    expect(lines[0]!.broken).toBe(false)
+  })
+
+  it('never collides its key with the code line between the same two frames', () => {
+    const design = routePrototypeLinks([link()], frames, trees)[0]!
+    const code = routeCodeFlow([edge('home', 'details')], frames)[0]!
+    expect(design.key).not.toBe(code.key)
+  })
+
+  it('draws a link whose source element is gone as BROKEN, never hides it', () => {
+    // The tree the link resolves against no longer has the button it was drawn
+    // on — the exact cost of an edit the user has to be able to see.
+    const emptied = new Map([['home', { nodes: { root: { ...node('root'), moduleId: 'base.body' } }, rootNodeId: 'root' }]])
+    const lines = routePrototypeLinks([link()], frames, emptied)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.broken).toBe(true)
+    expect(lines[0]!.details[0]!.secondary).toContain('gone')
+  })
+
+  it('draws no line for back/close, which have no target frame to point at', () => {
+    const back = link({ action: 'back', targetPageId: null, transition: undefined })
+    expect(routePrototypeLinks([back], frames, trees)).toEqual([])
+  })
+
+  it('collapses several authored links between one frame pair into one line', () => {
+    const lines = routePrototypeLinks([link(), link({ id: 'link-2' })], frames, trees)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.chip).toBe('2 links')
+    expect(lines[0]!.details).toHaveLength(2)
   })
 })

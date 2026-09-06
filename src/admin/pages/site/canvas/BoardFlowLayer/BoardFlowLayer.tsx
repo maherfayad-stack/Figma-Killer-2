@@ -1,20 +1,27 @@
 /**
  * BoardFlowLayer — the flow map, drawn over the board.
  *
- * `STUDIO-PROTOTYPE-PLAN.md` §1's differentiator: these connectors were not
- * drawn by anybody. Studio read the project's own navigation code and is
- * reporting what it found (`server/handlers/studio/prototypeCodeFlow.ts`), so
- * the board shows flows that are already true on a repository nobody has
- * prototyped yet — the part a shape-database design tool structurally cannot do.
+ * Two kinds of line, drawn in two voices:
  *
- * READ-ONLY, AND IT HAS TO LOOK IT
- * ────────────────────────────────
+ *   - CODE — `STUDIO-PROTOTYPE-PLAN.md` §1's differentiator. Nobody drew these.
+ *     Studio read the project's own navigation code and is reporting what it
+ *     found (`server/handlers/studio/prototypeCodeFlow.ts`), so the board shows
+ *     flows that are already true on a repository nobody has prototyped yet —
+ *     the part a shape-database design tool structurally cannot do.
+ *   - DESIGN — the links the user authored in the inspector, from
+ *     `.studio/prototype.json`. A link whose source element no longer resolves
+ *     is drawn BROKEN rather than hidden, so an edit that cost a flow is
+ *     visible.
+ *
+ * READ-ONLY, AND THE CODE HALF HAS TO LOOK IT
+ * ───────────────────────────────────────────
  * There is no delete affordance, no drag handle, no context menu, and no click
  * handler anywhere in the layer — the chip opts back into pointer events for
- * HOVER only, so its tooltip can open. The only way to change one of these
- * lines is to change the code it came from. It carries the source snippet it
- * was read out of, because a line the user cannot edit has to be able to answer
- * "why do you think that", and the answer is a piece of their own file.
+ * HOVER only, so its tooltip can open. Authored links are edited in the
+ * inspector; a code line cannot be edited at all, because the only way to
+ * change it is to change the code it came from. Each carries the source snippet
+ * it was read out of, because a line the user cannot edit has to be able to
+ * answer "why do you think that", and the answer is a piece of their own file.
  *
  * WHY IT LIVES IN THE PARENT DOCUMENT
  * ───────────────────────────────────
@@ -46,20 +53,28 @@
 import type { CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoardFrames } from '@site/store/slices/boardSelectors'
+import type { NodeTree } from '@core/page-tree'
 import { Tooltip } from '@ui/components/Tooltip'
-import { routeCodeFlow, type FlowLine } from './flowRouting'
+import { routeCodeFlow, routePrototypeLinks, type FlowLine } from './flowRouting'
 import styles from './BoardFlowLayer.module.css'
 
 export function BoardFlowLayer() {
   const boardMode = useEditorStore((s) => s.boardMode)
   const frames = useEditorStore(selectActiveBoardFrames)
   const edges = useEditorStore((s) => s.codeFlow.edges)
+  const links = useEditorStore((s) => s.prototype.links)
+  // The pages array by reference, never a scan inside the selector — an
+  // authored link's source has to be re-resolved against its page's tree, and
+  // walking every page's nodes inside a `useEditorStore` selector would re-run
+  // that walk on every store commit in the editor.
+  const pages = useEditorStore((s) => s.site?.pages)
 
   // Design mode never shows connectors — the plan's §1 condition for the design
   // layer being honest is that it is invisible while you are editing the design.
-  if (boardMode !== 'prototype' || frames.length === 0 || edges.length === 0) return null
+  if (boardMode !== 'prototype' || frames.length === 0) return null
 
-  const lines = routeCodeFlow(edges, frames)
+  const trees = new Map<string, NodeTree>((pages ?? []).map((page) => [page.id, page]))
+  const lines = [...routeCodeFlow(edges, frames), ...routePrototypeLinks(links, frames, trees)]
   if (lines.length === 0) return null
 
   return (
@@ -72,7 +87,7 @@ export function BoardFlowLayer() {
 }
 
 function FlowLineView({ line }: { line: FlowLine }) {
-  const { connector, edges } = line
+  const { connector, details } = line
   const box: CSSProperties = {
     left: `${connector.left}px`,
     top: `${connector.top}px`,
@@ -86,6 +101,8 @@ function FlowLineView({ line }: { line: FlowLine }) {
         className={styles.curve}
         style={box}
         viewBox={`0 0 ${connector.width} ${connector.height}`}
+        data-kind={line.kind}
+        data-broken={line.broken ? 'true' : undefined}
         aria-hidden="true"
       >
         <path d={connector.path} />
@@ -94,6 +111,8 @@ function FlowLineView({ line }: { line: FlowLine }) {
       <div
         aria-hidden="true"
         className={styles.arrow}
+        data-kind={line.kind}
+        data-broken={line.broken ? 'true' : undefined}
         style={
           {
             left: `${connector.tipX}px`,
@@ -104,9 +123,14 @@ function FlowLineView({ line }: { line: FlowLine }) {
       />
 
       <div className={styles.chipAnchor} style={{ left: `${connector.labelX}px`, top: `${connector.labelY}px` }}>
-        <Tooltip content={<FlowEvidence edges={edges} />}>
-          <span className={styles.chip} data-testid="board-flow-chip">
-            {edges.length > 1 ? `${edges.length} links` : edges[0]!.evidence}
+        <Tooltip content={<FlowDetails details={details} />}>
+          <span
+            className={styles.chip}
+            data-kind={line.kind}
+            data-broken={line.broken ? 'true' : undefined}
+            data-testid="board-flow-chip"
+          >
+            {line.chip}
           </span>
         </Tooltip>
       </div>
@@ -115,17 +139,20 @@ function FlowLineView({ line }: { line: FlowLine }) {
 }
 
 /**
- * The tooltip body: every piece of source that produced this line, with where
- * it is written. This is the whole justification for a connector the user
- * cannot edit — it cites their code rather than asserting a flow.
+ * The tooltip body: every flow this line stands for, and where each came from.
+ *
+ * For a code line that is the source snippet and its file position — the whole
+ * justification for a connector the user cannot edit is that it cites their own
+ * code rather than asserting a flow. For an authored line it is the action and
+ * transition, or the sentence saying the element it was drawn on is gone.
  */
-function FlowEvidence({ edges }: { edges: FlowLine['edges'] }) {
+function FlowDetails({ details }: { details: FlowLine['details'] }) {
   return (
     <span className={styles.evidence}>
-      {edges.map((edge) => (
-        <span key={edge.id} className={styles.evidenceRow}>
-          <code className={styles.evidenceCode}>{edge.evidence}</code>
-          <span className={styles.evidenceWhere}>{edge.sourceNodeId}</span>
+      {details.map((detail) => (
+        <span key={detail.key} className={styles.evidenceRow}>
+          <code className={styles.evidenceCode}>{detail.primary}</code>
+          <span className={styles.evidenceWhere}>{detail.secondary}</span>
         </span>
       ))}
     </span>
