@@ -209,13 +209,16 @@ describe('PropertyControlRenderer — type dispatch', () => {
     )
 
     const wrapper = screen.getByTestId('property-control-bgColor')
-    const colorInput = wrapper.querySelector('input[type="color"]')
+    // G6.2 (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`): the swatch is a `Button`
+    // that opens `ColorPickerPopover` — there is no native
+    // `<input type="color">` in this component's DOM any more (see
+    // `ColorPickerPopover.test.tsx` for the picker itself).
+    const swatch = screen.getByRole('button', { name: 'Background colour swatch' })
     const textInput = screen.getByLabelText('Background')
     const field = wrapper.querySelector('[data-color-field="true"]')
 
-    expect(colorInput).not.toBeNull()
     expect(field).not.toBeNull()
-    expect(field?.contains(colorInput)).toBe(true)
+    expect(field?.contains(swatch)).toBe(true)
     expect(field?.contains(textInput)).toBe(true)
   })
 

@@ -6,6 +6,13 @@
  * into Plugins / Users / Account page bundles. The editor's settings slice
  * mirrors openSettings/closeSettings calls into adminUi (see the editor's
  * `settingsSlice.ts` + `uiSlice.ts`), so both stores stay in sync.
+ *
+ * It opens on **Preferences**, not 'general'. 'general' is the CMS site's
+ * meta tags — site name, description, favicon — which is a property of the
+ * dormant half of this fork and not what anyone reaches for when they click a
+ * gear in a design tool. Preferences (theme, density, text size, canvas
+ * behaviour) is the section that actually belongs to the person clicking.
+ * The 'general' section is still one click away in the modal's own nav.
  */
 import { useAdminUi } from '@admin/state/adminUi'
 import { SettingsCogSolidIcon } from 'pixel-art-icons/icons/settings-cog-solid'
@@ -21,7 +28,7 @@ export function SettingsButton() {
       iconOnly
       aria-label="Open settings"
       tooltip="Settings"
-      onClick={() => openSettings('general')}
+      onClick={() => openSettings('preferences')}
       data-testid="toolbar-settings-btn"
     >
       <SettingsCogSolidIcon size={16} aria-hidden="true" />

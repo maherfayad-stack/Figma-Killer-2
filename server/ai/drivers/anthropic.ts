@@ -7,8 +7,10 @@
  * mapping — request body, `AiMessage[] → messages[]`, and the SSE→AiStreamEvent
  * translator.
  *
- * Prompt caching is GA (no beta header): the static system prefix carries
- * `cache_control: { type: 'ephemeral' }` so follow-up turns hit the cache.
+ * Prompt caching is GA (no beta header) and this driver spends all four
+ * breakpoints the API allows: the static system prefix here, then the tool
+ * block and two rolling message anchors in `anthropicWire.ts` — read that
+ * module's doc for the budget and why each one is where it is.
  *
  * Tools are sent with their canonical TypeBox `inputSchema` as `input_schema`
  * directly — TypeBox schemas ARE JSON Schema, so there is no Zod bridge.
@@ -33,6 +35,15 @@ import type {
 import { runToolLoop, type ProviderAdapter, type TurnResult, type TurnToolCall, type TurnToolResult, type TurnTranslator, type TurnUsage } from './http/toolLoop'
 import type { SseFrame } from './http/sse'
 import { parseToolArguments } from './http/toolArgs'
+import {
+  buildToolDefinitions,
+  withMessageCacheBreakpoints,
+  type AnthropicContentBlock,
+  type AnthropicImageBlock,
+  type AnthropicMessage,
+  type AnthropicTextBlock,
+  type AnthropicToolResultBlock,
+} from './anthropicWire'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
@@ -212,45 +223,6 @@ function deriveTier(modelId: string, opusAlreadySeen: boolean): { tier: string |
 }
 
 // ---------------------------------------------------------------------------
-// Provider-native message shapes (request side — we construct, never parse)
-// ---------------------------------------------------------------------------
-
-interface AnthropicTextBlock {
-  type: 'text'
-  text: string
-  cache_control?: { type: 'ephemeral' }
-}
-interface AnthropicImageBlock {
-  type: 'image'
-  source: { type: 'base64'; media_type: string; data: string }
-}
-interface AnthropicToolUseBlock {
-  type: 'tool_use'
-  id: string
-  name: string
-  input: unknown
-}
-interface AnthropicToolResultBlock {
-  type: 'tool_result'
-  tool_use_id: string
-  // Anthropic tool_result content accepts either a plain string or an array of
-  // text/image blocks — the latter lets a tool return a screenshot as a NATIVE
-  // image (≈1.5K tokens) instead of base64-as-JSON-text (hundreds of KB → 1M+).
-  content: string | (AnthropicTextBlock | AnthropicImageBlock)[]
-  is_error?: boolean
-}
-type AnthropicContentBlock =
-  | AnthropicTextBlock
-  | AnthropicImageBlock
-  | AnthropicToolUseBlock
-  | AnthropicToolResultBlock
-
-export interface AnthropicMessage {
-  role: 'user' | 'assistant'
-  content: AnthropicContentBlock[]
-}
-
-// ---------------------------------------------------------------------------
 // Adapter
 // ---------------------------------------------------------------------------
 
@@ -270,22 +242,17 @@ const anthropicAdapter: ProviderAdapter<AnthropicMessage> = {
     return mapHistory(req.messages)
   },
 
-  buildRequestBody(messages, req) {
+  buildRequestBody(messages, req, cacheBreakpoints) {
+    // Three of the four cache breakpoints are placed here; see
+    // `anthropicWire.ts`'s module doc for the budget and the order.
     const body: Record<string, unknown> = {
       model: req.modelId,
       max_tokens: MAX_OUTPUT_TOKENS,
       system: buildSystemBlocks(req.systemPrompt),
-      messages,
+      messages: withMessageCacheBreakpoints(messages, cacheBreakpoints),
       stream: true,
     }
-    if (req.tools.length > 0) {
-      body.tools = req.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        // The TypeBox schema IS JSON Schema — pass it straight through.
-        input_schema: t.inputSchema,
-      }))
-    }
+    if (req.tools.length > 0) body.tools = buildToolDefinitions(req.tools)
     return body
   },
 

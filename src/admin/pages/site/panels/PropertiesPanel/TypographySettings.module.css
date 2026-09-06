@@ -1,0 +1,9 @@
+/* TypographySettings — Basics / Details / Variable tab bodies (F25–F27).
+   InspectorPopover's own `.body` already carries the popover's outer
+   padding; this only sets the vertical rhythm between rows within a tab. */
+
+.tabBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+}

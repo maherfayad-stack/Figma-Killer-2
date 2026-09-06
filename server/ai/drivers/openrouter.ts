@@ -11,6 +11,10 @@
  *   - native per-call USD cost: the shared translator passes `usage.cost`
  *     through as `costUsd`, so OpenRouter turns never need a `pricing.ts` entry.
  *
+ * Everything else, including the `prompt_cache_key` that partitions prefix
+ * caching, comes from `createResponsesAdapter` — this driver deliberately adds
+ * no per-driver caching knobs of its own.
+ *
  * Tools are sent with their canonical TypeBox `inputSchema` as the JSON Schema
  * `parameters` directly — no Zod bridge.
  */

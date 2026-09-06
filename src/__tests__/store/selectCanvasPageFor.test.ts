@@ -30,15 +30,46 @@ function makePages(ids: string[]): CountingPages {
   return { pages, findCalls: () => findCalls }
 }
 
-function makeState(pages: unknown[]): EditorStore {
+interface CountingFrames {
+  frames: unknown[]
+  findCalls: () => number
+}
+
+function makeFrames(specs: { id: string; locale?: string }[]): CountingFrames {
+  let findCalls = 0
+  const raw = specs.map((spec) => ({
+    id: spec.id,
+    pageId: spec.id,
+    axes: spec.locale ? { locale: spec.locale } : undefined,
+  }))
+  const frames = new Proxy(raw, {
+    get(target, prop, receiver) {
+      if (prop === 'find') findCalls++
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+  return { frames, findCalls: () => findCalls }
+}
+
+function makeState(
+  pages: unknown[],
+  overrides: {
+    frames?: unknown[]
+    localizedPages?: Record<string, unknown>
+    previewLocale?: string | null
+  } = {},
+): EditorStore {
   return {
     site: { pages },
     activePageId: null,
     activeDocument: null,
-    previewAxes: { locale: null },
-    localizedPages: {},
-    boards: { version: 1, boards: [] },
-    activeBoardId: null,
+    previewAxes: { locale: overrides.previewLocale ?? null },
+    localizedPages: overrides.localizedPages ?? {},
+    boards: {
+      version: 1,
+      boards: overrides.frames ? [{ id: 'board-1', frames: overrides.frames }] : [],
+    },
+    activeBoardId: overrides.frames ? 'board-1' : null,
   } as unknown as EditorStore
 }
 
@@ -103,5 +134,83 @@ describe('selectCanvasPageFor', () => {
   it('returns null without scanning when there is no site', () => {
     const state = { site: null, activeDocument: null } as unknown as EditorStore
     expect(selectCanvasPageFor(state, 'a')).toBeNull()
+  })
+})
+
+/**
+ * The `frameId` branch — added after the `pageId` memo above and, until this
+ * suite, uncached: `selectActiveBoard(s)?.frames.find(...)` is TWO `Array.find`s
+ * per call, and `NodeRenderer` makes that call twice per mounted node on every
+ * store commit. On a board with no locale variants (every board, unless
+ * someone duplicates a frame as one) that work can be skipped entirely.
+ */
+describe('selectCanvasPageFor — frameId / locale branch', () => {
+  it('never touches board frames when no locale-variant page has been fetched', () => {
+    const { pages } = makePages(['a', 'b'])
+    const { frames, findCalls } = makeFrames([{ id: 'f-a', locale: 'ar' }, { id: 'f-b' }])
+    const state = makeState(pages, { frames })
+
+    for (let i = 0; i < 50; i++) selectCanvasPageFor(state, 'a', 'f-a')
+
+    // `localizedPages` is empty, so the branch cannot return anything — the
+    // frames array must never be scanned at all.
+    expect(findCalls()).toBe(0)
+  })
+
+  it('scans board frames at most once per (frames, frameId) pair', () => {
+    const { pages } = makePages(['a', 'b'])
+    const { frames, findCalls } = makeFrames([{ id: 'f-a', locale: 'ar' }, { id: 'f-b' }])
+    const localized = { id: 'a', title: 'a-ar', slug: 'a', nodes: {}, rootNodeId: 'root' }
+    const state = makeState(pages, { frames, localizedPages: { 'a::ar': localized } })
+
+    expect(selectCanvasPageFor(state, 'a', 'f-a')).toBe(localized)
+    expect(findCalls()).toBe(1)
+
+    // Every other node in the same frame, plus the second `mcClassName` call
+    // each of them makes, must hit the cache.
+    for (let i = 0; i < 50; i++) expect(selectCanvasPageFor(state, 'a', 'f-a')).toBe(localized)
+    expect(findCalls()).toBe(1)
+
+    // A DIFFERENT frame in the same sweep gets its own slot without evicting
+    // the first — the same non-thrash requirement the pageId cache has.
+    selectCanvasPageFor(state, 'b', 'f-b')
+    expect(findCalls()).toBe(2)
+    expect(selectCanvasPageFor(state, 'a', 'f-a')).toBe(localized)
+    expect(findCalls()).toBe(2)
+  })
+
+  it('re-scans when the frames array identity changes (a frame moved / its axes changed)', () => {
+    const { pages } = makePages(['a'])
+    const first = makeFrames([{ id: 'f-a', locale: 'ar' }])
+    const localizedAr = { id: 'a', title: 'a-ar', slug: 'a', nodes: {}, rootNodeId: 'root' }
+    const localizedFr = { id: 'a', title: 'a-fr', slug: 'a', nodes: {}, rootNodeId: 'root' }
+    const localizedPages = { 'a::ar': localizedAr, 'a::fr': localizedFr }
+
+    expect(selectCanvasPageFor(makeState(pages, { frames: first.frames, localizedPages }), 'a', 'f-a')).toBe(localizedAr)
+
+    const second = makeFrames([{ id: 'f-a', locale: 'fr' }])
+    expect(selectCanvasPageFor(makeState(pages, { frames: second.frames, localizedPages }), 'a', 'f-a')).toBe(localizedFr)
+    expect(second.findCalls()).toBe(1)
+  })
+
+  it('falls back to the default tree when the frame locale matches the board locale', () => {
+    const { pages } = makePages(['a'])
+    const { frames } = makeFrames([{ id: 'f-a', locale: 'ar' }])
+    const localized = { id: 'a', title: 'a-ar', slug: 'a', nodes: {}, rootNodeId: 'root' }
+    const state = makeState(pages, { frames, localizedPages: { 'a::ar': localized }, previewLocale: 'ar' })
+
+    expect((selectCanvasPageFor(state, 'a', 'f-a') as { title: string }).title).toBe('a')
+  })
+
+  it('falls back to the default tree when the variant page has not been fetched yet', () => {
+    const { pages } = makePages(['a', 'b'])
+    const { frames } = makeFrames([{ id: 'f-a', locale: 'ar' }, { id: 'f-b', locale: 'fr' }])
+    // Non-empty (so the branch runs) but missing THIS frame's variant.
+    const state = makeState(pages, {
+      frames,
+      localizedPages: { 'b::fr': { id: 'b', title: 'b-fr', slug: 'b', nodes: {}, rootNodeId: 'root' } },
+    })
+
+    expect((selectCanvasPageFor(state, 'a', 'f-a') as { title: string }).title).toBe('a')
   })
 })

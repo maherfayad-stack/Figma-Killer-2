@@ -136,6 +136,26 @@ describe('awaitEditorBridgeForUser (mcp-tooling CHANGE C — internal retry)', (
     expect(performance.now() - start).toBeLessThan(2000)
   })
 
+  it('gives up after ONE window once this workspace has been live — the second window is pure latency on a reconnect', async () => {
+    const userId = `u_${Math.floor(performance.now())}_recent`
+    const ctrl = new AbortController()
+    const reader = createEditorBridgeStream(userId, 'site', ctrl.signal).getReader()
+    await readUntil(reader, (e) => e.type === 'bridgeReady')
+
+    // The tab goes away — a torn-down stream, exactly what STREAM_LEASE_MS does
+    // to a healthy session every 120s.
+    await reader.cancel()
+    expect(hasEditorBridge(userId, 'site')).toBe(false)
+
+    const start = performance.now()
+    expect(await awaitEditorBridgeForUser(userId, 'site')).toBeNull()
+    const elapsed = performance.now() - start
+    // One ~4s window, not two. Still a real window — this is a reconnect wait,
+    // not a hard fail.
+    expect(elapsed).toBeGreaterThan(3_000)
+    expect(elapsed).toBeLessThan(6_500)
+  }, 15_000)
+
   it('finds a bridge that connects during the SECOND wait window — the retry the system prompt used to spend a whole extra tool call on', async () => {
     const userId = `u_${Math.floor(performance.now())}_second_window`
     let stream: ReturnType<typeof createEditorBridgeStream> | null = null

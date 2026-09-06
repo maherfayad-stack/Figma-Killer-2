@@ -2,15 +2,15 @@
  * Agent-turn benchmark (perf-06) — the server-side cost paid before every
  * real Studio chat turn's `claude` subprocess even spawns.
  *
- * `server/ai/drivers/claudeCli.ts` calls `generateStudioAgentRoster(dir)`
+ * `server/ai/drivers/claudeCli.ts` calls `generateStudioProjectGuide(dir)`
  * synchronously, on the critical path, on every real turn against an open
  * project. This bench measures that cost in isolation from the rest of the
  * chat pipeline (no subprocess, no HTTP, no database):
  *
- *   - `generateStudioAgentRoster` COLD — first-ever call for a project: no
+ *   - `generateStudioProjectGuide` COLD — first-ever call for a project: no
  *     `.claude/` roster, no design-system digest cache, no persisted
  *     `ProjectProfile` in `.studio/meta.json`.
- *   - `generateStudioAgentRoster` WARM — every call after the first, with
+ *   - `generateStudioProjectGuide` WARM — every call after the first, with
  *     NOTHING changed. This is the case that matters: it is what every turn
  *     after the first pays, forever, for a project the user never stops
  *     chatting about.
@@ -59,8 +59,10 @@ function freshFixtureCopy(source: string, dest: string): void {
   })
 }
 
+/** Every artefact `generateStudioProjectGuide` owns — `CLAUDE.md` at the root included, or a cold run would find the guide already written (and, with the manifest gone, decline to overwrite it as a hand edit) and measure the wrong thing. */
 function wipeGenerated(dir: string): void {
   rmSync(join(dir, '.claude'), { recursive: true, force: true })
+  rmSync(join(dir, 'CLAUDE.md'), { force: true })
   rmSync(join(dir, '.studio', 'cache'), { recursive: true, force: true })
 }
 
@@ -79,8 +81,8 @@ function stripPersistedProfile(dir: string): void {
   }
 }
 
-async function loadAgentRoster() {
-  return import('../../../server/handlers/studio/agentRoster')
+async function loadProjectGuide() {
+  return import('../../../server/handlers/studio/projectGuide')
 }
 async function loadProjectProbe() {
   return import('../../../server/handlers/studio/projectProbe')
@@ -106,8 +108,8 @@ function summaryRow(label: string, samples: number[]): BenchRow {
 
 export const agentTurnBench: BenchModule = {
   name: 'agent-turn',
-  title: 'Agent-turn latency (subagent roster generation)',
-  description: 'generateStudioAgentRoster cold/warm, resolveProjectProfile, and the design-system digest — the server-side cost paid before every real chat turn spawns.',
+  title: 'Agent-turn latency (project guide generation)',
+  description: 'generateStudioProjectGuide cold/warm, resolveProjectProfile, and the design-system digest — the server-side cost paid before every real chat turn spawns.',
 
   async run(ctx: BenchContext): Promise<BenchResult> {
     const source = findFixtureSource()
@@ -134,29 +136,29 @@ export const agentTurnBench: BenchModule = {
     log.step(`Copying fixture from ${source.slice(REPO_ROOT.length + 1)}`)
     freshFixtureCopy(source, dir)
 
-    const { generateStudioAgentRoster } = await loadAgentRoster()
+    const { generateStudioProjectGuide } = await loadProjectGuide()
     const { resolveProjectProfile, reprobeProjectProfile } = await loadProjectProbe()
     const { getOrBuildDesignSystemDigest } = await loadDesignSystemDigest()
 
-    // ── generateStudioAgentRoster COLD ──────────────────────────────────────
+    // ── generateStudioProjectGuide COLD ──────────────────────────────────────
     const coldIters = ctx.quick ? 3 : 5
-    log.step(`generateStudioAgentRoster cold x${coldIters}`)
+    log.step(`generateStudioProjectGuide cold x${coldIters}`)
     const coldSamples: number[] = []
     for (let i = 0; i < coldIters; i++) {
       wipeGenerated(dir)
       stripPersistedProfile(dir)
-      coldSamples.push(timeMs(() => generateStudioAgentRoster(dir)))
+      coldSamples.push(timeMs(() => generateStudioProjectGuide(dir)))
     }
 
-    // ── generateStudioAgentRoster WARM (nothing changed) — the case that matters ──
+    // ── generateStudioProjectGuide WARM (nothing changed) — the case that matters ──
     const warmIters = ctx.quick ? 10 : 30
-    log.step(`generateStudioAgentRoster warm x${warmIters}`)
+    log.step(`generateStudioProjectGuide warm x${warmIters}`)
     wipeGenerated(dir)
     stripPersistedProfile(dir)
-    generateStudioAgentRoster(dir) // establish — first call, not timed
+    generateStudioProjectGuide(dir) // establish — first call, not timed
     const warmSamples: number[] = []
     for (let i = 0; i < warmIters; i++) {
-      warmSamples.push(timeMs(() => generateStudioAgentRoster(dir)))
+      warmSamples.push(timeMs(() => generateStudioProjectGuide(dir)))
     }
 
     // ── resolveProjectProfile — uncached vs. persisted-cached ──────────────
@@ -193,19 +195,19 @@ export const agentTurnBench: BenchModule = {
       name: this.name,
       title: this.title,
       headline: {
-        'roster cold (mean)': fmtMs(coldSummary.mean),
-        'roster warm (p50)': fmtMs(warmSummary.p50),
-        'roster warm (p95)': fmtMs(warmSummary.p95),
+        'guide cold (mean)': fmtMs(coldSummary.mean),
+        'guide warm (p50)': fmtMs(warmSummary.p50),
+        'guide warm (p95)': fmtMs(warmSummary.p95),
       },
       sections: [
         {
-          title: 'generateStudioAgentRoster',
+          title: 'generateStudioProjectGuide',
           intro: `Fixture: ${source.slice(REPO_ROOT.length + 1)}. Cold = no .claude/, no digest cache, no persisted profile. Warm = everything already written, nothing changed since — the case every turn after the first pays.`,
           rows: [summaryRow('cold (first-ever call)', coldSamples), summaryRow('warm (nothing changed)', warmSamples)],
         },
         {
           title: 'resolveProjectProfile',
-          intro: 'Uncached = no persisted profile in .studio/meta.json (a project with no package.json/node_modules never gets one healed automatically). Cached = after something has persisted one (reprobeProjectProfile, or agentRoster.ts\'s own resolveProjectProfilePersisting on its first call).',
+          intro: 'Uncached = no persisted profile in .studio/meta.json (a project with no package.json/node_modules never gets one healed automatically). Cached = after something has persisted one (reprobeProjectProfile, or projectGuide.ts\'s own resolveProjectProfilePersisting on its first call).',
           rows: [summaryRow('uncached (fresh probe every call)', profileUncachedSamples), summaryRow('cached (persisted profile)', profileCachedSamples)],
         },
         {

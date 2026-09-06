@@ -341,8 +341,14 @@ export function lookupCanvasPageById(site: SiteDocument, pageId: string): Page |
  */
 export const selectCanvasPageFor = (s: EditorStore, pageId: string | null, frameId?: string | null): Page | null => {
   if (!pageId) return selectActiveCanvasPage(s)
-  if (frameId) {
-    const locale = selectActiveBoard(s)?.frames.find((f) => f.id === frameId)?.axes?.locale
+  // `hasAnyKey` FIRST, before `selectActiveBoard`: the locale branch can only
+  // ever return something when a locale-variant page has actually been
+  // fetched, and on a single-locale board (every board, until someone
+  // duplicates a frame as a variant) that map is empty forever. Skipping
+  // straight past it here is what keeps the two `Array.find`s below off the
+  // per-node path entirely in the overwhelmingly common case.
+  if (frameId && hasAnyKey(s.localizedPages)) {
+    const locale = lookupFrameLocale(s, frameId)
     if (locale && locale !== s.previewAxes.locale) {
       const localized = s.localizedPages[localizedPageKey(pageId, locale)]
       if (localized) return localized
@@ -350,6 +356,43 @@ export const selectCanvasPageFor = (s: EditorStore, pageId: string | null, frame
   }
   if (!s.site) return null
   return lookupCanvasPageById(s.site, pageId)
+}
+
+/** `Object.keys(o).length > 0` without allocating the key array — this runs on the per-node selector path. */
+function hasAnyKey(record: Record<string, unknown>): boolean {
+  for (const _key in record) return true
+  return false
+}
+
+/**
+ * Sweep-scoped `Map` memo for `selectCanvasPageFor`'s frame → `axes.locale`
+ * lookup, the same shape (and for the same reason) as `_canvasPageForCache`
+ * above: `selectActiveBoard(s)?.frames.find(...)` is TWO uncached `Array.find`s
+ * — one over `boards`, one over `frames` — and `NodeRenderer` runs the
+ * selector twice per mounted node on every store commit, so the cost is
+ * O(nodes × frames) per commit with no cache.
+ *
+ * Keyed on the `frames` ARRAY identity, not the board's: `boardsModel.ts`'s
+ * per-collection transforms reuse the same `frames` reference for every write
+ * that doesn't touch a frame (see `boardSelectors.ts`'s note on exactly this),
+ * so a sticky-note drag doesn't needlessly drop the map. A frame move/resize/
+ * axes change DOES mint a new `frames` array, which is precisely when the
+ * cached locale can be stale.
+ */
+let _frameLocaleCache: { frames: object; byFrameId: Map<string, string | null> } | null = null
+
+/** This frame's own `axes.locale` override (`null` when it has none), memoised per `(frames, frameId)` — see `_frameLocaleCache`'s doc. */
+function lookupFrameLocale(s: EditorStore, frameId: string): string | null {
+  const frames = selectActiveBoard(s)?.frames
+  if (!frames) return null
+  if (!_frameLocaleCache || _frameLocaleCache.frames !== frames) {
+    _frameLocaleCache = { frames, byFrameId: new Map() }
+  }
+  const cached = _frameLocaleCache.byFrameId.get(frameId)
+  if (cached !== undefined) return cached
+  const locale = frames.find((f) => f.id === frameId)?.axes?.locale ?? null
+  _frameLocaleCache.byFrameId.set(frameId, locale)
+  return locale
 }
 
 /**

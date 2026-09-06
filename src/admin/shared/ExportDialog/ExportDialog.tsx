@@ -384,7 +384,7 @@ export function ExportDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      eyebrow="ALM Figma Killer"
+      eyebrow="Studio"
       title="Export site"
       size="2xl"
       bodyClassName={styles.body}
