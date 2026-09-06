@@ -368,6 +368,18 @@ export interface ClassStyleSectionDefinition {
   title: string
   icon: IconComponent
   defaultOpen?: boolean
+  /**
+   * Figma's Fill/Stroke/Effects list law (STUDIO-INSPECTOR-DISCLOSURE-PLAN
+   * §1 Law 1 / §4 G1): when nothing in this section is set — on the active
+   * tab OR any other breakpoint/condition — it renders as a single header
+   * line with a "+", not its full property grid. `StyleSectionGroup` in
+   * `StyleSectionsEditor.tsx` is what reads this flag.
+   *
+   * Left unset on `position`, `size`, `layout` and `spacing` — Figma's
+   * always-present blocks (F1, F3) — which keep their controls resident
+   * even at rest.
+   */
+  collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
 }
 
@@ -458,6 +470,7 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     id: 'background',
     title: 'Background',
     icon: PaintBucketSolidIcon,
+    collapsedWhenEmpty: true,
     properties: [
       'backgroundColor',
       'background',
@@ -473,6 +486,7 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     id: 'border',
     title: 'Border',
     icon: BoxSolidIcon,
+    collapsedWhenEmpty: true,
     // Drives the section "N set" dot + search filtering. The visual
     // BorderControl edits the per-side longhands + per-corner radius +
     // outline; the shorthand props (border / borderTop / …) live in the
@@ -509,6 +523,7 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     id: 'effects',
     title: 'Effects',
     icon: SparklesSolidIcon,
+    collapsedWhenEmpty: true,
     properties: [
       'opacity',
       'boxShadow',
@@ -524,6 +539,7 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     id: 'typography',
     title: 'Typography',
     icon: TextStartTIcon,
+    collapsedWhenEmpty: true,
     properties: [
       'fontFamily',
       'fontSize',
@@ -543,6 +559,7 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     id: 'interaction',
     title: 'Interaction',
     icon: PointerSolidIcon,
+    collapsedWhenEmpty: true,
     properties: [
       'cursor',
       'pointerEvents',

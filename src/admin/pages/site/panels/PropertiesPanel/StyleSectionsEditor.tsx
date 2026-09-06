@@ -12,9 +12,12 @@
  * in which controls they expose.
  */
 
+import { useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { Section } from '@ui/components/Section'
+import { Button } from '@ui/components/Button'
+import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { SpacingBoxControl } from './SpacingBoxControl/SpacingBoxControl'
 import { BorderControl } from './BorderControl/BorderControl'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
@@ -57,6 +60,17 @@ interface StyleSectionsEditorProps {
   storedStyles: Record<string, unknown>
   /** Base-merged bag used for placeholder / inherited values. */
   currentStyles: Record<string, unknown>
+  /**
+   * Every style bag for this rule across every context — base plus each
+   * breakpoint/condition override — independent of which tab is active.
+   * `StyleSectionGroup` reads this ONLY to decide whether a
+   * `collapsedWhenEmpty` section (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G1)
+   * may collapse to its one-line "+" state: a property set on an inactive
+   * tab is still the user's own work and must never disappear behind it.
+   * `undefined` for inline styles, which have no context axis — `storedStyles`
+   * alone is already authoritative there.
+   */
+  crossContextStyles?: ReadonlyArray<Record<string, unknown>>
   /** Re-key controls on editing-context change (base / breakpoint / condition). */
   sectionKey: string
   /** Search query — filters visible properties across all categories. */
@@ -98,6 +112,7 @@ interface StyleSectionsEditorProps {
 export function StyleSectionsEditor({
   storedStyles,
   currentStyles,
+  crossContextStyles,
   sectionKey,
   styleQuery,
   onChange,
@@ -110,9 +125,35 @@ export function StyleSectionsEditor({
   styleTarget,
 }: StyleSectionsEditorProps) {
   const visibleStyleSections = getVisibleStyleSections(styleQuery)
+  const hasActiveQuery = styleQuery.trim().length > 0
 
   // Default open/closed state for every section, from the user preference.
+  // NOTE: this no longer decides whether a `collapsedWhenEmpty` section
+  // shows its body — an empty collapsible section is one line regardless of
+  // this preference (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G1). It still
+  // decides the resting open/closed state of the always-present sections
+  // (Position/Size/Layout/Spacing) and of any collapsible section once it
+  // has real content.
   const sectionsExpanded = useEditorPreference('propertiesSectionsExpanded')
+
+  // Law 1's "+" reveal is per-selection, local UI state: which otherwise-
+  // empty `collapsedWhenEmpty` sections has the user explicitly opened for
+  // THIS node/class. Both callers (`StyleRuleComposer`, `InlineStyleComposer`)
+  // key their instance of this component by node/class identity (and, for
+  // class rules, by the active breakpoint/condition tab too), so React
+  // remounts this component — and resets this state — whenever the
+  // selection changes. Nothing further to track here.
+  const [revealedSectionIds, setRevealedSectionIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const revealSection = (sectionId: string) => {
+    setRevealedSectionIds((prev) => {
+      if (prev.has(sectionId)) return prev
+      const next = new Set(prev)
+      next.add(sectionId)
+      return next
+    })
+  }
 
   return (
     <div className={styles.styleSections}>
@@ -122,8 +163,12 @@ export function StyleSectionsEditor({
             section={section}
             currentStyles={currentStyles}
             storedStyles={storedStyles}
+            crossContextStyles={crossContextStyles}
             activeTab={sectionKey}
             defaultOpen={sectionsExpanded}
+            hasActiveQuery={hasActiveQuery}
+            revealed={revealedSectionIds.has(section.id)}
+            onReveal={revealSection}
             onChange={onChange}
             onRemove={onRemove}
             onClearProperty={onClearProperty}
@@ -163,9 +208,16 @@ interface StyleSectionGroupProps {
   section: ClassStyleSectionDefinition
   currentStyles: Record<string, unknown>
   storedStyles: Record<string, unknown>
+  /** See `StyleSectionsEditorProps.crossContextStyles`. */
+  crossContextStyles?: ReadonlyArray<Record<string, unknown>>
   activeTab: string
   /** Initial open/closed state, from the `propertiesSectionsExpanded` preference. */
   defaultOpen: boolean
+  /** An active style search — forces the section open regardless of empty state. */
+  hasActiveQuery: boolean
+  /** Whether the user has clicked "+" to reveal this otherwise-empty section. */
+  revealed: boolean
+  onReveal: (sectionId: string) => void
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onRemove: (property: keyof CSSPropertyBag) => void
   onClearProperty: (property: keyof CSSPropertyBag) => void
@@ -180,8 +232,12 @@ function StyleSectionGroup({
   section,
   currentStyles,
   storedStyles,
+  crossContextStyles,
   activeTab,
   defaultOpen,
+  hasActiveQuery,
+  revealed,
+  onReveal,
   onChange,
   onRemove,
   onClearProperty,
@@ -192,6 +248,69 @@ function StyleSectionGroup({
   styleTarget,
 }: StyleSectionGroupProps) {
   const setCount = section.properties.filter((prop) => hasStyleValue(storedStyles[prop])).length
+
+  // Law 1 (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G1): whether this section has
+  // ANYTHING set, on the active tab OR any other breakpoint/condition. A
+  // property set only on an inactive tab is still the user's own work, so
+  // this — not `setCount` above — is what a `collapsedWhenEmpty` section
+  // checks before collapsing to its one-line "+" state.
+  const setCountEverywhere = crossContextStyles
+    ? section.properties.filter(
+        (prop) =>
+          hasStyleValue(storedStyles[prop]) ||
+          crossContextStyles.some((bag) => hasStyleValue(bag[prop])),
+      ).length
+    : setCount
+
+  const isCollapsible = section.collapsedWhenEmpty === true
+  // The count driven into the indicator dot / "N set" meta — cross-context
+  // for a collapsible section (so a value living on another tab isn't
+  // silently unmarked once the body is showing for some other reason, e.g.
+  // an active search), unchanged (active-tab-only) for the always-present
+  // sections, whose behaviour this work order does not touch.
+  const displaySetCount = isCollapsible ? setCountEverywhere : setCount
+
+  const stylesMenu = styleTarget && (
+    <SectionStylesMenu
+      sectionId={section.id}
+      nodeId={styleTarget.nodeId}
+      assignedClassIds={styleTarget.assignedClassIds}
+    />
+  )
+
+  // Law 1's empty state: nothing set anywhere, no active search, and the
+  // user hasn't clicked "+" yet for this selection — one header line, no
+  // body. This is independent of the `propertiesSectionsExpanded`
+  // preference: an empty collapsible section stays one line either way.
+  const showsAsEmptyHeader =
+    isCollapsible && setCountEverywhere === 0 && !hasActiveQuery && !revealed
+
+  if (showsAsEmptyHeader) {
+    return (
+      <Section
+        title={section.title}
+        icon={section.icon}
+        defaultOpen={false}
+        flush
+        children={null}
+        actions={
+          <>
+            {stylesMenu}
+            <Button
+              variant="ghost"
+              size="xs"
+              iconOnly
+              aria-label={`Add ${section.title.toLowerCase()}`}
+              onClick={() => onReveal(section.id)}
+              data-testid={`class-style-section-add-${section.id}`}
+            >
+              <PlusIcon size={12} />
+            </Button>
+          </>
+        }
+      />
+    )
+  }
 
   // Per-property adapter over the patch-shaped section preview channel.
   const previewProperty = (
@@ -204,19 +323,15 @@ function StyleSectionGroup({
       title={section.title}
       icon={section.icon}
       defaultOpen={defaultOpen}
+      // An active search must always show what it found (Law 1's collapse
+      // would otherwise make search silently useless); a just-revealed
+      // empty section must show the body it was revealed for.
+      forceOpen={hasActiveQuery || (isCollapsible && revealed)}
       flush
-      indicator={setCount > 0}
+      indicator={displaySetCount > 0}
       indicatorTestId={`class-style-section-dot-${section.id}`}
-      meta={setCount > 0 ? `${setCount} set` : undefined}
-      actions={
-        styleTarget && (
-          <SectionStylesMenu
-            sectionId={section.id}
-            nodeId={styleTarget.nodeId}
-            assignedClassIds={styleTarget.assignedClassIds}
-          />
-        )
-      }
+      meta={displaySetCount > 0 ? `${displaySetCount} set` : undefined}
+      actions={stylesMenu}
     >
       <div className={sectionStyles.sectionBody}>
         {section.id === SPACING_SECTION_ID ? (
