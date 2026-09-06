@@ -12,6 +12,125 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### panel-11 — the unreachable CMS explorer panels are gone; Button has a `loading` state; rail colour means something
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** delete the dead CMS chrome the Explorer panel's own header comment
+  already declared unreachable, and land two design-system fixes that were
+  blocking consistent async UI.
+- **Scope:** `panels/SiteExplorerPanel/**` + `panels/MediaExplorerPanel/**`
+  (deleted) · `shared/dialogs/{SiteCreateDialog,TemplateSettingsDialog,VCDeletionConfirmDialog}`
+  (deleted, except `SiteCreateDialog.module.css`) · `store/slices/uiSlice.ts` ·
+  `layout/siteEditorLayoutPersistence.ts` · `state/workspaceLayoutStorage.ts` ·
+  `spotlight/commands/panels.ts` · `sidebars/LeftSidebar` + `sidebars/PanelRail` ·
+  `src/ui/components/Button/**` · `src/ui/railAccent.ts` · fourteen async-button
+  call sites · `docs/{design,editor}.md`, `docs/reference/{canvas-dnd,page-tree,persistence-keys,design-tokens}.md`.
+  Three commits on `refactor/dead-cms-chrome-and-ui-polish`, one draft PR.
+- **Done so far:**
+  - **Deleted** `SiteExplorerPanel/` (15 files) and `MediaExplorerPanel/` (8),
+    their four test files, and the three dialogs only they mounted. Every
+    importer was traced first: the sole survivors were their own tests, two
+    architecture allowlists, and docs.
+  - `VCDeletionConfirmProvider` was still wrapped around the whole left sidebar
+    (`LeftSidebar.tsx:136`) with zero consumers of `useVCDeletionConfirm` once
+    `SiteExplorerPanel` went — deleted with it.
+  - Killed the dead three-tab state end to end: `ExplorerPanelTab` /
+    `explorerPanelTab` / `setExplorerPanelTab` (`uiSlice.ts`), its
+    `SiteLayoutSelection` slot and `explorerTab()` reader
+    (`siteEditorLayoutPersistence.ts`), its storage-schema field
+    (`workspaceLayoutStorage.ts:82`), and the three spotlight commands that set
+    it (`panels.showSite` / `showCode` / `showMedia`).
+  - **`Button` now has `loading`** (`src/ui/components/Button/Button.tsx:47`):
+    native `disabled` + `aria-busy` + a spinner absolutely centred over the
+    resting label, which stays in flow under `visibility: hidden` inside a
+    wrapper that inherits the button's own `gap`/`justify-content`. The width
+    does not move. `.loading` also resets the `:disabled` 38% opacity.
+    Fourteen hand-rolled busy states migrated.
+  - **Rail accents are semantic** (`src/ui/railAccent.ts`): `RailAccentGroup` —
+    `navigate` gold · `style` mint · `inspect` sky · `content` lilac · `assist`
+    violet — declared per item in `PanelRail.tsx`'s `PRIMARY_RAIL_ITEMS`. The
+    FNV hash survives only for plugin panels and the import/export dialogs'
+    open-ended category lists.
+- **Next step:** none for this entry. Two follow-ups are listed in the PR body:
+  (1) rename `shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css` to
+  something honest once the in-flight `ImportProjectDialog` move lands — the
+  component is deleted, the stylesheet has ten live importers, and one of them
+  is a file this task was told not to touch; (2) ~18 remaining ternary-label
+  busy buttons that live in files this task could not touch
+  (`toolbar/DownloadCodeButton`, `studio/ImportProjectDialog`,
+  `PropertiesPanel/{ImageSourceSection,FormSettingsPanel,InstanceCallSiteView}`,
+  `canvas/PackageComponentPlaceholder`) plus a handful it could
+  (`ContentPanel`, `MfaSettingsCards`, `McpServersSection`,
+  `MediaStoragePanel`, `FrameworkManagerDialog`, the two font dialogs).
+- **Decisions:**
+  - **`src/admin/shared/media/` is kept in full** — the audit flagged its folder
+    panel / canvas / viewer window / picker modal as deletion candidates. They
+    are not dead: `MediaPickerModal` transitively owns `MediaSidebar` →
+    `MediaFolderPanel` + `MediaStoragePanel`, `MediaCanvas`, `useMediaWorkspace`,
+    `useMediaDnd`, and it is opened by Settings → General (favicon), `SvgControl`,
+    and `MediaLibraryControl`. `MediaViewerWindow` (→ `TagEditor`,
+    `ReplaceFileDialog`) is opened by `MediaLibraryControl`.
+  - **`SiteCreateDialog.module.css` is kept where it is** — see Landmines.
+  - **`assignRailAccents` no longer de-duplicates explicit accents** — two
+    surfaces in the same `RailAccentGroup` are *supposed* to match. Repeat
+    avoidance now applies only to the hashed fallback.
+  - **`SplitButton.busy` was deliberately not folded into `Button.loading`** —
+    it spins the caller's own leading icon and does NOT disable. Different
+    contract, left alone.
+- **Landmines:**
+  - `SiteCreateDialog/` looked like a clean leaf delete. Its `.module.css` is
+    imported as `dialogStyles` by **ten** live surfaces (`ImportProjectDialog`,
+    `DesignImportDialog`, `SelectorDialogs`, `CreateColorDialog`,
+    `ClassRenameDialog`, `ExplorerRenameDialog`, `UserDialog`, `RoleDialog`,
+    `McpServersSection`, `McpTab`). Deleting the folder wholesale breaks the
+    build. The `.tsx` / `index.ts` / `siteItemNames.ts` are gone; the stylesheet
+    stays with a header comment saying why the folder name is now historical.
+  - `single-drag-mechanism.test.ts` has a **stale-entry** assertion — deleting
+    an allowlisted file fails the gate until you also delete its allowlist line.
+    Same shape in `component-system-placement.test.ts` (its G2 gate read a file
+    that no longer exists). Both fixed in the same commit.
+  - **`git stash` is shared across all worktrees.** Using it to A/B a `fallow`
+    baseline raced another agent and popped *their* canvas/perf WIP into this
+    worktree (13 tracked + 5 untracked files). Recovered by re-stashing exactly
+    those paths with `git stash push -u -m "RECOVERED: …"` — it is back on the
+    stack under that label, at `stash@{0}` as of this entry. **Do not use
+    `git stash` for baseline comparisons here.** Use a throwaway worktree or
+    `git checkout HEAD~n` instead.
+  - `fallow dead-code`'s headline counts are useless as a before/after signal:
+    95% of "unused files" are `studio-workspace/` fixture projects, and the
+    number went *up* (409 → 411 src+workspace files, 1026 → 1041 issues) because
+    deleting `SiteExplorerPanel` orphaned ~8 `@core/page-tree` barrel
+    re-exports. Diff the JSON file list, not the summary line.
+- **Verification:** rebased twice while verifying (`main` moved three times);
+  final base is `da2c862`, and build/lint were re-run there.
+  - `bun run build` — exit 0.
+  - `bun run lint` — exit 0.
+  - `bun test` (full, at base `42712cd`) — 10774 pass / 74 fail. Triaged: 55
+    `claudeCli` + 1 `icon-catalog-integrity` (the known set); 3 batch-only
+    timeouts (`moduleInserterFavorites`, `publicSdkExports`,
+    `stepUpSecondaryActions`) that pass 12/12 in isolation; 15
+    canvas-iframe/happy-dom. `src/__tests__/canvas` was A/B'd at base and HEAD
+    — base 10 failures, HEAD 11, the single difference being one arm of
+    `canvasScrollUnrollPinInteraction.test.tsx`. That suite was then run four
+    times per side: base 0/2/1/1, HEAD 1/2. A 5000 ms-timeout flake; this PR
+    touches no file under `canvas/`.
+  - `bun test src/__tests__/{architecture,ui,layout,panels,site-explorer,media,toolbar}`
+    at the final base — 1373 pass / 2 fail, both pre-existing on `origin/main`
+    itself (`icon-catalog-integrity`, and `module-size-budgets` naming
+    `IframeFrameSurface.tsx` 707 + `claudeCli.ts` 716, both from upstream).
+- **Human action needed:** **dogfood the left rail at `/admin/site?studio`.**
+  This is a deliberate visual-identity change. Expect: Explorer gold
+  (unchanged), **Framework and Classes both mint** (they used to be two
+  different colours — the shared tint is the point), Inspect sky, Content lilac,
+  Comments lilac (unchanged), AI assistant violet. Also worth a look: click any
+  migrated async button (Account → Save profile, Settings → plugin dialogs,
+  Export → Download bundle) and confirm the spinner appears **without the button
+  changing width**.
+
+---
+
 ### server-17 — Storybook CSF stories import as board frames, on a board of their own
 
 - **Agent:** studio-implementer
