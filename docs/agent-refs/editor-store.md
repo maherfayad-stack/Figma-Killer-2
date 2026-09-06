@@ -12,10 +12,46 @@ Zustand + Mutative, composed from slices. Source:
    warning. `immer` is banned.
 2. **All tree mutations go through `mutateActiveTree`.** Never mutate
    `page.nodes` directly from a component or another slice.
-3. **Never scan every node of every page inside a selector.** Selectors run on
-   every store change. Precompute an index in the slice instead.
+3. **Never scan every node of every page inside a selector** — *or in anything
+   a selector or render body calls.* Selectors run on every store change.
+   Precompute an index in the slice instead.
 4. **Selectors must return stable references** or a primitive. Returning a fresh
    object/array literal re-renders on every store change.
+
+---
+
+## The node indexes (WS-5.2, extended in `store-01b`)
+
+`store/slices/site/nodeIndex.ts` holds five Maps on the site slice, built whole
+by `loadSite`/`createSite` and patched incrementally by every mutation,
+`undo`, and `redo` from the SAME `DirtyMarks` autosave uses:
+
+| Field | Answers |
+|---|---|
+| `_nodeIdToPageIds` | which page(s) a node id is on — **many-valued** (`meta-05`) |
+| `_textOriginKeyToCount` | how many nodes share one source literal |
+| `_inlineTailToCount` | how many nodes came from one inlined call site |
+| `_classIdToNodeCount` | how many nodes carry a style-rule id ("Used N times") |
+| `_slotOwnerBindings` | which node + prop fills its slot with a given node id |
+
+Adding a facet: extend `NodeIndexes` and the `indexNode`/`unindexNode` pair,
+and use `nodeIndexesOf(state)` / `emptyNodeIndexes()` rather than hand-rolling
+the object literal.
+
+**Know which kind of facet you are adding.** A facet derived from a node's
+**id** (or from parse-time-only metadata like `textOrigin`) is fully covered by
+`applyNodeIndexPatch`'s per-page id-set diff. A facet derived from mutable node
+state (`classIds`, `props`) is **not** — the node keeps its id, so the id-set
+diff sees nothing. Those are handled by the surviving-id pass in the same
+function, guarded by a reference compare; put your facet there too.
+
+**A cache keyed on `site` object identity is not an index.** Mutative replaces
+`site` on every mutation, so such a cache rebuilds on every keystroke. Two
+shipped defects (`buildSelectorUsageMap`, `buildSlotOwners`) were exactly this.
+
+**Gate:** `no-full-site-scan-in-selectors.test.ts` — checks every file that
+calls `useEditorStore(` **and every module it value-imports, one hop out**,
+for a `for (const page of X.pages)` loop.
 
 ---
 

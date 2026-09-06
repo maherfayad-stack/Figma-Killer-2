@@ -12,7 +12,7 @@ import userEvent from '@testing-library/user-event'
 import { SlotControl } from '@site/property-controls/SlotControl'
 import { studioSlotValue } from '@core/utils/studioSlotSentinel'
 import { useEditorStore } from '@site/store/store'
-import { rebuildNodeIndexes, type NodeIndexes } from '@site/store/slices/site/nodeIndex'
+import { emptyNodeIndexes, nodeIndexState, rebuildNodeIndexes } from '@site/store/slices/site/nodeIndex'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
 import { makeNode, makePage, makeSite } from '../fixtures'
 
@@ -32,13 +32,11 @@ function seedSiteWithOwner(ownerId: string) {
   const root = makeNode({ id: 'root', moduleId: 'base.body', children: [owner.id] })
   const page = makePage({ nodes: { root, [owner.id]: owner } })
   const site = makeSite({ pages: [page] })
-  const indexes: NodeIndexes = { nodeIdToPageIds: new Map(), textOriginKeyToCount: new Map(), inlineTailToCount: new Map() }
+  const indexes = emptyNodeIndexes()
   rebuildNodeIndexes(indexes, site)
   useEditorStore.setState({
     site,
-    _nodeIdToPageIds: indexes.nodeIdToPageIds,
-    _textOriginKeyToCount: indexes.textOriginKeyToCount,
-    _inlineTailToCount: indexes.inlineTailToCount,
+    ...nodeIndexState(indexes),
   } as Parameters<typeof useEditorStore.setState>[0])
   return owner
 }
@@ -46,9 +44,7 @@ function seedSiteWithOwner(ownerId: string) {
 beforeEach(() => {
   useEditorStore.setState({
     site: null,
-    _nodeIdToPageIds: new Map(),
-    _textOriginKeyToCount: new Map(),
-    _inlineTailToCount: new Map(),
+    ...nodeIndexState(emptyNodeIndexes()),
     selectedNodeId: null,
   } as Parameters<typeof useEditorStore.setState>[0])
   // The catalog fetch is cached at module scope (deliberately — see

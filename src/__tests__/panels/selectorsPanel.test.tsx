@@ -7,7 +7,6 @@ import { SelectorsPanel } from '@site/panels/SelectorsPanel'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel/PropertiesPanel'
 import {
   buildClassTokenUsageMap,
-  buildSelectorUsageMap,
   formatSelectorUsage,
   getReusableClasses,
   getSelectorStyleSummary,
@@ -82,8 +81,7 @@ function loadSiteWithSelectors() {
     },
   })
 
-  useEditorStore.setState({
-    site: makeSite({
+  const site = makeSite({
       pages: [page],
       styleRules: {
         'hero-title': makeClass('hero-title', 'hero-title', { fontSize: '48px', color: '#111' }, {
@@ -107,7 +105,13 @@ function loadSiteWithSelectors() {
           tags: ['module-instance'],
         }),
       },
-    }),
+  })
+
+  // The usage badge reads the store's `_classIdToNodeCount` index, which is
+  // built by `loadSite` and patched by every mutation — so this fixture has to
+  // go through `loadSite`, not a raw `setState` that leaves the index empty.
+  useEditorStore.getState().loadSite(site)
+  useEditorStore.setState({
     activePageId: 'page-1',
     selectorsPanelOpen: true,
   } as Parameters<typeof useEditorStore.setState>[0])
@@ -126,7 +130,9 @@ describe('selectorUsage helpers', () => {
       'unused-card',
       'text-m',
     ])
-    const usage = buildSelectorUsageMap(state.site)
+    // The usage tally is the store's incrementally-maintained index, not a
+    // scan of the site — see `nodeIndex.ts` / `store-01b`.
+    const usage = state._classIdToNodeCount
     expect(usage.get('hero-title') ?? 0).toBe(2)
     expect(usage.get('unused-card') ?? 0).toBe(0)
     expect(formatSelectorUsage(0)).toBe('Unused')
@@ -139,7 +145,7 @@ describe('selectorUsage helpers', () => {
   it('reports ambient selector usage only when provably dead', () => {
     loadSiteWithSelectors()
     const site = useEditorStore.getState().site
-    const usageById = buildSelectorUsageMap(site)
+    const usageById = useEditorStore.getState()._classIdToNodeCount
     const tokenUsage = buildClassTokenUsageMap(site!.styleRules, usageById)
 
     // Rollup keys by the escaped `.name` selector and excludes ambient rules.

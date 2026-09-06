@@ -30,6 +30,7 @@ import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
+import type { SlotOwnerEntry } from './nodeIndex'
 
 
 // ---------------------------------------------------------------------------
@@ -458,6 +459,20 @@ export interface SiteSlice {
   _textOriginKeyToCount: Map<string, number>
   /** How many nodes across the site were inlined from the same local-component call site. */
   _inlineTailToCount: Map<string, number>
+  /**
+   * How many nodes across the site carry each style-rule id (`store-01b`) —
+   * the Selectors panel's "Used N times" tally and the Unused filter, without
+   * the full-site walk both used to run inside a render body on every
+   * keystroke. Counts page nodes only, matching what the panels have always
+   * reported (a class used solely inside a Visual Component definition still
+   * reads as unused; changing that is a product decision, not an index one).
+   */
+  _classIdToNodeCount: Map<string, number>
+  /**
+   * Which node/prop fills its slot with a given node id — the reverse of the
+   * `studio-slot:<id>` sentinel, many-valued by page. See `nodeIndex.ts`.
+   */
+  _slotOwnerBindings: Map<string, SlotOwnerEntry[]>
 }
 
 // ---------------------------------------------------------------------------
