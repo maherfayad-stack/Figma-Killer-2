@@ -102,6 +102,31 @@ const PersistedPreviewAxesSchema = Type.Object({
   locale: Type.Optional(Type.String({ minLength: 1 })),
 })
 
+/**
+ * W5-3 — where the project's Storybook stories live on the board, and whether
+ * they are placed at all.
+ *
+ * All three fields exist to make story placement a ONE-TIME, reversible event
+ * rather than a reconciliation that fights the user:
+ *
+ *   - `enabled: false` is the explicit off switch. Story files are still
+ *     globbed (it is one directory walk the load already does) but nothing is
+ *     parsed and no frame is placed. Absent means on.
+ *   - `boardId` names the board `syncStoryBoardFrames` created for stories.
+ *     Once it no longer resolves — the user deleted that board — nothing is
+ *     ever placed again: deleting the Stories board is a decision, not a
+ *     desync to repair.
+ *   - `placedPageIds` records every story frame that has EVER been placed, so
+ *     removing one frame does not bring it back on the next load while a
+ *     newly-written story still appears.
+ */
+const StoriesMetaSchema = Type.Object({
+  enabled: Type.Optional(Type.Boolean()),
+  boardId: Type.Optional(Type.String({ minLength: 1 })),
+  placedPageIds: Type.Optional(Type.Array(Type.String())),
+})
+export type StoriesMeta = Static<typeof StoriesMetaSchema>
+
 export const StudioMetaSchema = Type.Object({
   /** Decouples the user-facing project name from the folder slug. See `projectDisplayName`. */
   displayName: Type.Optional(Type.String({ minLength: 1 })),
@@ -173,6 +198,8 @@ export const StudioMetaSchema = Type.Object({
   paletteHiddenModuleIds: Type.Optional(Type.Array(Type.String())),
   /** WS-10 Phase 1 — see `PersistedPreviewAxesSchema` above. */
   previewAxes: Type.Optional(PersistedPreviewAxesSchema),
+  /** W5-3 — see `StoriesMetaSchema` above. */
+  stories: Type.Optional(StoriesMetaSchema),
   /** WS-12 §5.1 — see `AgentSessionSchema` above. */
   agentSession: Type.Optional(AgentSessionSchema),
   /**

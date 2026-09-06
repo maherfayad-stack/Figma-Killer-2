@@ -34,7 +34,14 @@ server/handlers/
 ├── studioProjects.ts     — project discovery, `.studio/meta.json` (displayName, pagesDir, previewAxes.locale)
 ├── studioCss.ts          — §6: imported .css → StyleRule registry, deterministic ids, happy-dom CSSOM
 ├── studioAsset.ts        — GET /admin/api/studio/asset, path-containment guards
-└── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe, path containment
+├── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe, path containment
+└── studio/
+    ├── routePageEntry.ts  — the one shape every page SOURCE produces (pages, App Router routes, stories)
+    ├── storyDiscovery.ts  — Storybook CSF read statically: the accepted subset + the named refusals
+    ├── storyLiterals.ts    — the total, non-throwing AST readers that classification is built on
+    ├── storyPages.ts      — an accepted story → a RoutePageEntry, through the existing parse pipeline
+    ├── storiesRoutes.ts   — GET/POST /admin/api/studio/stories (the refusal report + the off switch)
+    └── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
 
 src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
@@ -99,6 +106,7 @@ Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
 | `displayName` | Shown under the brand mark in the toolbar. Decoupled from the folder name so renaming never moves a directory. |
 | `pagesDir` | Project-root-relative POSIX path to the pages directory. Defaults to `<dir>/pages`. Guarded by `isSafePagesDirOverride` — never absolute, never containing a `..` segment on either separator, because this file is hand-editable. |
 | `previewAxes.locale` | The `preferredKey` for the static evaluator's dictionary branch pick (see [Tier B](#tier-b--hook--context-provider)). Unset means "first key in source order". Set from the toolbar's locale control (WS-10 §4.2), populated from `localeProbe.ts`'s detection — no more hand-typing a key into JSON. A pre-WS-10-§4.2 project's legacy top-level `previewLocale` field still parses and is folded into `previewAxes.locale` on read (`readStudioMeta`'s `foldLegacyPreviewLocale`); nothing downstream reads the legacy field any more. |
+| `stories` | W5-3 — Storybook import state. `enabled: false` is the explicit off switch (stories are still globbed, never parsed or placed). `boardId` names the board `syncStoryBoardFrames` created for them; once it no longer resolves, nothing is ever placed again. `placedPageIds` is every story frame ever placed, so a deleted frame stays deleted while a new story still appears. |
 
 Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorted POSIX paths, and skips `EXCLUDED_WORKSPACE_DIR_NAMES` (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`). Both `.tsx` and `.jsx` are page files.
 
@@ -147,6 +155,130 @@ forever (`resolvePersistedJobStatus` in `installDeps.ts`). Both status routes
 completed-then-restarted install is still reported correctly — paired with
 `hasNodeModules`'s live disk check, which settles whether dependencies
 actually landed regardless of what the job record itself could observe.
+
+---
+
+## Storybook stories as pages (W5-3)
+
+Every serious design system ships stories, and a `.stories.tsx` is already a
+component plus its args plus its variants — one board frame per story, written
+down by the team that owns the component. It is also the answer to the insert
+picker's cold-start problem: a package with zero call sites in the imported
+source has no picker row, and every accepted story creates a real call site.
+
+Discovery runs inside the normal load (`loadStudioPages`), as a THIRD producer
+of route entries alongside file-per-page and App Router routes. The gate is a
+filename glob (`storyFilesIn` — `**/*.stories.{tsx,ts,jsx}`, sharing
+`listWorkspaceFiles`'s excluded-dir walk), so a project without stories pays
+nothing: no ts-morph work happens unless it matches.
+
+### The accepted subset — exactly
+
+Storybook composes a story by CALLING things. Studio runs none of it, so a
+story is accepted only when its body can be READ. Two shapes qualify:
+
+| Shape | Source | Becomes |
+|---|---|---|
+| **args-only** | a CSF3 object export with no `render`, whose meta declares `component:` | a SYNTHESIZED one-node call site (`meta.component` + `{...meta.args, ...story.args}`) handed to the real `inlineLocalComponents` — so the component's own subtree, with the args substituted, is what lands on the board |
+| **jsx-only** | a function whose body is nothing but JSX — a concise arrow (`render: args => <Button {...args}/>`), or a block whose ONLY statement is `return <JSX>`. Reached as `render:`, as `export const Default = () => <X/>`, and as `export function Default() { return <X/> }` | the ORDINARY page pipeline (`getReturnedJsxRoots` → `parseJsxTree` → `resolveComponentSources` → `inlineLocalComponents`) against the story file itself |
+
+Meta is read in the three spellings real files use: `export default { … }`,
+`export default { … } satisfies Meta<…>`, and `const meta: Meta<…> = { … };
+export default meta`. `title` groups the board (one row per title); a file
+without one falls back to its own basename. `name`/`storyName` overrides the
+story's label. Frames are titled `<title> / <storyName>`.
+
+Arg VALUES are read as literals only — strings, numbers, booleans, negative
+numbers, arrays and nested objects. A function-valued arg (`onClick: fn()`) is
+DROPPED, never stubbed, the same trade `staticValueToPropValue` makes for a JSX
+prop. One unreadable array item declines the whole array, same as a structured
+JSX prop.
+
+### The refusals, by name
+
+Reported by `GET /admin/api/studio/stories?dir=` — one entry per refused story
+(or whole file), each with a reason and one sentence about what was in the
+source. This is the only surface they appear on: the `/load` envelope is a wire
+contract the client mirrors by hand, and a refusal nobody can read is
+indistinguishable from a parser that silently lost the work.
+
+| Reason | Refuses | Because |
+|---|---|---|
+| `csf2-storiesof` | the file | `storiesOf(...).add(...)` registers stories by executing a builder chain |
+| `no-default-export` | the file | no default-exported meta object literal |
+| `decorators` | the file (meta) or one story | wrapper components applied at render time |
+| `play-function` | one story | an interaction script Storybook runs after mount |
+| `loaders` | one story | `loaders`/`beforeEach` — async data fetched before render |
+| `render-logic` | one story | the body has statements beyond one `return <JSX>` (a hook, a `const`, a conditional). Choosing what it would have produced is a Tier D guess |
+| `no-jsx` | one story | the function returns something other than JSX |
+| `not-a-story` | one story | the export is neither a CSF3 object nor a function |
+| `no-component` | one story | args-only, and the meta names no `component` to invoke |
+| `unresolved-component` | one story | `meta.component`'s identifier is neither imported nor declared in the file |
+| `spread-args` | one story | `args: { ...Default.args, … }` — the resulting keys are unknowable without evaluating it |
+| `args-not-object` | one story | `args` is not an object literal |
+| `unreadable` | the file | ts-morph could not read it at all |
+
+Known non-imports, deliberately: `export { Primary }` (only `export const`/
+`export function` declarations are scanned), MDX stories, and CSF's `.mdx`
+docs pages.
+
+### Measured
+
+| Repo | Story files | Accepted | Refused | Rate | Refusals |
+|---|---|---|---|---|---|
+| `primer/react` (`packages/react`) | 247 | 739 (732 jsx, 7 args) | 360 | **67.2 %** | `render-logic` 338, `decorators` 20, `no-jsx` 1, `not-a-story` 1 |
+| `Shopify/polaris` (`polaris-react`) | 87 | 664 (651 args, 13 jsx) | 15 | **97.8 %** | `play-function` 15 |
+
+The two repos write CSF in almost opposite dialects — Primer is
+render-function-heavy with a lot of stateful bodies, Polaris is
+args-object-heavy — which is why both shapes are supported rather than one.
+
+### Where the frames go, and why not on your board
+
+A design system routinely has more stories than screens (Polaris: 664 stories,
+87 files). Folding those into the project's own board would multiply the frame
+count of a board the author curated, on a load they asked nothing of. So
+`syncStoryBoardFrames` (`studio/boardFrames.ts`) places them on a board of
+their own, named **Stories**, which is already discoverable — it appears in the
+board switcher next to the boards they made — and costs the default board
+nothing. One row per `meta.title`, variants left to right along it.
+
+Placement is ONE-TIME, not reconciled. `.studio/meta.json`'s
+`stories.placedPageIds` records every story frame ever placed, so a frame the
+user deleted never returns while a newly-written story still appears; and once
+`stories.boardId` no longer resolves — they deleted the whole board — nothing
+is placed again. `stories.enabled: false` is the explicit off switch
+(`POST /admin/api/studio/stories`): stories stop being parsed into pages and
+placed, and already-placed frames are left exactly where they are.
+
+### An args-only story's own args are read-only — and what would change that
+
+The synthesized call site's `loc` is a REAL position in a real file (the
+`export const Primary` identifier), because trap #2 forbids inventing one. But
+no JSX element lives there, so `setJsxProp` has nothing to rewrite. Every arg is
+therefore recorded in `codeProps` (and explained in `resolvedProps`, which
+`parsedPageToSitePage` re-keys into the `callSiteProps:` namespace for the
+instance node), and `isPropWritableToSource` refuses it. The panel shows the
+value and says where it came from; it does not pretend to write it.
+
+The honest target EXISTS — `label: 'Click me'` is an ordinary string literal at
+a known `rel:line:col`, exactly the shape `textOrigin`/`setStringLiteral`
+already writes. Recording it as `resolvedProps[arg].origin` would be enough for
+`fsCodemodAdapter.saveSite`'s FLAT prop loop, which emits a `kind: 'literal'`
+edit aimed at the origin. It is **not** enough for a `studio.instance`, and
+that is the concrete blocker: the adapter's `callSiteProps` branch has no
+origin case at all — it asks `isPropWritableToSource` (which an origin makes
+say yes) and then emits `kind: 'prop'` at the call site, which here is the
+`export const`. Setting an origin today would authorise precisely the mis-aimed
+write the rule exists to prevent. Closing it is a one-branch change in
+`fsCodemodAdapter.ts`.
+
+Everything BENEATH the call site is already editable exactly as far as any
+inlined component is: those nodes carry composite ids anchored in the
+component's own file, so a text or style edit lands there and refuses as
+`shared-component` for structure. A **jsx-only** story has no such limit at all
+— its JSX is real, so its nodes are ordinary writable nodes in the
+`.stories.tsx`.
 
 ---
 

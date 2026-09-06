@@ -128,9 +128,16 @@ export function filterStudioLoadPages(
  * `StudioLoadStreamLineSchema`, which MUST stay in sync with this shape.
  * `missingPageIds` rides in `meta` (`undefined`, hence dropped by
  * `JSON.stringify`, on every unfiltered call — see this module's own doc).
+ *
+ * `StudioLoadResult['stories']` (W5-3) is `Omit`ted deliberately: it is a
+ * byproduct the `/load` ROUTE consumes to place board frames, not part of the
+ * wire envelope. Every accepted story is already in `pages` like any other
+ * page, and this generator spreads whatever it is handed into the `meta` line
+ * — so leaving it in the type would quietly widen a contract the client
+ * mirrors by hand (`fsCodemodAdapter.ts`'s `StudioLoadStreamLineSchema`).
  */
 export async function* studioLoadStreamLines(
-  result: StudioLoadResult & {
+  result: Omit<StudioLoadResult, 'stories'> & {
     dir: string
     projectName: string
     trust: unknown

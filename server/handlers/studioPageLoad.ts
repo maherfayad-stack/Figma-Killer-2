@@ -40,6 +40,15 @@
  * call but is never parsed/merged into `styleRules` — returned verbatim as
  * `StudioLoadResult.vendorCss`.
  *
+ * W5-3 — Storybook is a THIRD producer of route entries, alongside
+ * file-per-page and App Router routes. `buildStoryRouteEntries`
+ * (`studio/storyPages.ts`) appends one entry per accepted story from the
+ * project's `*.stories.*` files, deduped against the page ids already handed
+ * out. It costs nothing when a project has no story files — the gate is a
+ * filename glob (`storyFilesIn`), and no ts-morph work happens unless it
+ * matches something. See `studio/storyDiscovery.ts` for the accepted subset
+ * and the named refusals.
+ *
  * WS-10 §4.2/§4.4 (Phase 4) — `loadStudioPageInLocale` (bottom of this file)
  * is the single-route sibling: same parse logic, one route, an explicit
  * `preferredKey` override — see its own doc.
@@ -69,6 +78,9 @@ import { getCachedRouteParse, hashWorkspaceConfig, setCachedRouteParse } from '.
 import { ALM_DESIGN_PACKAGE_SPECIFIER } from './studio/designSystemDetect'
 import { compileProjectStyles } from './studio/styleCompile'
 import { readStudioMeta } from './studio/studioMeta'
+import type { RoutePageEntry } from './studio/routePageEntry'
+import { discoverStories, storyFilesIn, type DiscoveredStory, type StorySummary } from './studio/storyDiscovery'
+import { buildStoryRouteEntries } from './studio/storyPages'
 import {
   collectAppRouterLayoutChain,
   discoverAppRouterRoutes,
@@ -278,17 +290,16 @@ export interface StudioLoadResult {
    * `studioCss.ts`'s "CSSOM in Bun" doc.
    */
   authoredCss: string
-}
-
-/** One route's worth of parsed content, whatever framework produced it — the common shape `loadStudioPages`'s style-collection + convert tail operates over. */
-interface RoutePageEntry {
-  expanded: ParsedPage
-  pageId: string
-  slug: string
-  title: string
-  /** The route's OWN file, workspace-relative POSIX — `collectPageStylesheets`'s "page first" anchor. A composed route's layout files still contribute their own CSS, discovered from their nodes' own `loc.file` (see that module's doc). */
-  relFile: string
-  componentSources: Record<string, ComponentSource>
+  /**
+   * W5-3 — one entry per accepted Storybook story that became a page above,
+   * in the order they were discovered. Empty for a project with no
+   * `*.stories.*` files, which is the zero-cost path. The `/load` route hands
+   * this to `boardFrames.ts`'s `syncStoryBoardFrames` so the stories get a
+   * board of their own; nothing else reads it, and it is deliberately NOT
+   * part of the HTTP load envelope (the client's page list already carries
+   * every story as an ordinary page).
+   */
+  stories: StorySummary[]
 }
 
 /** Absolute file paths of every `kind: 'local'` entry in `sources`, deduplicated — see `pageParseCache.ts`'s "one level deep" limitation. */
@@ -462,6 +473,52 @@ function buildAppRouterPageEntries(
 }
 
 /**
+ * W5-3 — every accepted Storybook story in the project, with its page id
+ * guaranteed not to collide with an already-assigned PAGE id.
+ *
+ * The glob gate comes first and is the whole zero-cost story: a project with
+ * no `*.stories.*` file never constructs a scan context, never touches
+ * ts-morph, and never allocates. Refusals are dropped here on purpose — the
+ * load path has nowhere to show them, and `GET /admin/api/studio/stories`
+ * (`studio/storiesRoutes.ts`) is the surface that reports them.
+ *
+ * `enabled` is `.studio/meta.json`'s `stories.enabled` (absent means on) —
+ * the project's explicit off switch, written by
+ * `POST /admin/api/studio/stories`.
+ *
+ * Story ids are derived by `storyDiscovery.ts` (file path + export name) and
+ * pages' by `studioPageIds.ts` (file path alone), so the two rules can
+ * genuinely produce the same string — `pages/Card.tsx` and
+ * `pages/Card.stories.tsx`'s `Stories` export both slug near `card-stories`.
+ * The suffix rule is `assignPageIds`': first one wins, later ones get `-2`,
+ * `-3`, …, with the PAGE always winning because it was assigned first.
+ */
+function discoverProjectStories(
+  dir: string,
+  project: ReturnType<typeof createWorkspaceProject>,
+  pageEntries: readonly RoutePageEntry[],
+  enabled: boolean,
+): DiscoveredStory[] {
+  if (!enabled) return []
+  const storyFiles = storyFilesIn(dir)
+  if (storyFiles.length === 0) return []
+
+  const taken = new Set(pageEntries.map((entry) => entry.pageId))
+  return discoverStories(dir, project, storyFiles).stories.map((story) => {
+    if (!taken.has(story.summary.pageId)) {
+      taken.add(story.summary.pageId)
+      return story
+    }
+    for (let n = 2; ; n++) {
+      const candidate = `${story.summary.pageId}-${n}`
+      if (taken.has(candidate)) continue
+      taken.add(candidate)
+      return { ...story, summary: { ...story.summary, pageId: candidate } }
+    }
+  })
+}
+
+/**
  * Recursively discovers every page/route under `dir`'s pages directory
  * (`projectPagesDir` — `<dir>/pages` by default, or the `.studio/meta.json`
  * `pagesDir` override) and parses EACH into an Studio `Page`. Returns empty
@@ -484,7 +541,7 @@ function buildAppRouterPageEntries(
 export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
-    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '' }
+    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [] }
   }
 
   // One shared, workspace-wide ts-morph Project so a page's local
@@ -515,9 +572,18 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   // Parse + inline EVERY route first, then resolve CSS, then convert. The CSS
   // registry is site-wide (pages routinely share a stylesheet), so it has to be
   // complete before any page can turn a `className` into `classIds`.
-  const routeEntries = framework === 'next-app'
+  const pageEntries = framework === 'next-app'
     ? buildAppRouterPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps, configHash)
     : buildStandardPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps, configHash)
+
+  // W5-3 — Storybook stories, appended as ordinary route entries. Guarded by
+  // the filename glob FIRST (`storyFilesIn`), so a project without stories
+  // pays one directory walk it was already paying and nothing else. Story
+  // page ids are deduped against the page ids already in hand — the two
+  // producers derive ids from different rules and could otherwise collide.
+  const stories = discoverProjectStories(dir, project, pageEntries, meta.stories?.enabled !== false)
+  const storyEntries = buildStoryRouteEntries(dir, project, stories, preferredKey, compiledStyles.moduleClassMaps)
+  const routeEntries = [...pageEntries, ...storyEntries]
 
   const componentSources: Record<string, ComponentSource> = {}
   for (const entry of routeEntries) Object.assign(componentSources, entry.componentSources)
@@ -555,7 +621,15 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
     return page
   })
 
-  return { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss: compiledStyles.vendorCss, authoredCss }
+  // Only the stories that actually BECAME a page are reported — a story whose
+  // materialization degraded to nothing (`buildStoryRouteEntries` skips it)
+  // must not get a board frame pointing at a page that does not exist.
+  const builtStoryPageIds = new Set(storyEntries.map((entry) => entry.pageId))
+  const storySummaries = stories
+    .filter((story) => builtStoryPageIds.has(story.summary.pageId))
+    .map((story) => story.summary)
+
+  return { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss: compiledStyles.vendorCss, authoredCss, stories: storySummaries }
 }
 
 /**
