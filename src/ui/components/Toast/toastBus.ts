@@ -17,6 +17,9 @@
  *     dismiss imperatively (e.g. when the boundary resets).
  *   - The provider is the single source of truth for visibility and timing —
  *     this module only stores the canonical list.
+ *   - Identity is the caller's choice: an optional `dedupeKey` collapses a
+ *     repeat onto the toast already showing it (see `pushToast`), which is
+ *     what keeps a repeated refusal one persistent card instead of a stack.
  */
 
 export type ToastKind = 'info' | 'success' | 'warning' | 'error'
@@ -44,6 +47,17 @@ export interface ToastInput {
    * to the close affordance.
    */
   action?: ToastAction
+  /**
+   * Collapse key. A push whose `dedupeKey` matches a toast already on the bus
+   * REPLACES that toast in place — same id, same stack position, refreshed
+   * content, `repeatCount` incremented — instead of stacking a second copy.
+   *
+   * Written for refusals: a user who drags the same locked element three times
+   * gets one persistent explanation that counts the attempts, not three
+   * identical cards pushing the rest of the stack off screen. Ordinary
+   * one-shot toasts leave this unset and stack as they always did.
+   */
+  dedupeKey?: string
 }
 
 interface ToastAction {
@@ -60,6 +74,12 @@ export interface Toast extends ToastInput {
   id: string
   /** ms-since-epoch the toast was published — used for stable ordering. */
   createdAt: number
+  /**
+   * How many times this toast has been pushed, counting the first. Only ever
+   * above 1 for a `dedupeKey`ed toast that collapsed a repeat; the provider
+   * renders it so a repeated refusal still reads as new feedback.
+   */
+  repeatCount: number
 }
 
 type Listener = (toasts: ReadonlyArray<Toast>) => void
@@ -80,11 +100,26 @@ function notify(): void {
 
 /**
  * Push a new toast onto the queue. Returns the assigned id so the caller can
- * dismiss it imperatively if needed.
+ * dismiss it imperatively if needed — for a `dedupeKey` push that collapsed
+ * onto an existing toast, that is the EXISTING id.
  */
 export function pushToast(input: ToastInput): string {
+  const existing = input.dedupeKey === undefined
+    ? -1
+    : toasts.findIndex((t) => t.dedupeKey === input.dedupeKey)
+  if (existing !== -1) {
+    const previous = toasts[existing]!
+    toasts[existing] = {
+      ...input,
+      id: previous.id,
+      createdAt: Date.now(),
+      repeatCount: previous.repeatCount + 1,
+    }
+    notify()
+    return previous.id
+  }
   const id = nextId()
-  toasts.push({ ...input, id, createdAt: Date.now() })
+  toasts.push({ ...input, id, createdAt: Date.now(), repeatCount: 1 })
   notify()
   return id
 }

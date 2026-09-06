@@ -17,7 +17,7 @@
  * "Run scripts" toggle is on — see `runtimeScripts`.
  */
 
-import { useRef, useState, type CSSProperties } from 'react'
+import { memo, useRef, useState, type CSSProperties } from 'react'
 import type { Page, Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import type { PreviewAxes } from '@core/studio-board'
@@ -75,7 +75,15 @@ interface BreakpointFrameProps {
   showBreakpointChrome?: boolean
 }
 
-export function BreakpointFrame({
+// React Compiler exception #2: `memo()` re-render bailout on a hot,
+// list-rendered component. `BoardFramesLayer` renders one of these per board
+// frame, and the compiler's within-component memoization cannot stop a parent
+// re-render from walking the whole frame subtree (iframe portal, every
+// injector, the selection overlay). `memo` is a different mechanism and is the
+// only one that can — which is why `buildStudioBreakpoint` in
+// `BoardFrameView.tsx` interns its `Breakpoint` per width: a fresh object
+// literal there would defeat this bailout on every render.
+export const BreakpointFrame = memo(function BreakpointFrame({
   page,
   breakpoint,
   isActive,
@@ -312,4 +320,4 @@ export function BreakpointFrame({
       )}
     </div>
   )
-}
+})

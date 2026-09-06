@@ -150,15 +150,16 @@ const ALLOWLIST = new Set([
   // fit this exact-typography disclosure — same pattern class as §8.2.
   'admin/pages/site/panels/ExplorerPanel/StudioBoardsList.tsx',
 
-  // ── §8.11 BorderControl side / corner picker hit areas ──────────────────
+  // ── §8.11 BorderControl side picker hit areas ───────────────────────────
   // The visual border editor's side picker renders four absolutely-positioned
-  // thin edge bars (6px wide/tall) inside a 72×72 box, and the radius corner
-  // picker renders four 14×14 corner dots. Each is a clickable hit area whose
-  // geometry IS the affordance (which edge / corner you're editing). Button's
-  // token-driven size system (micro = 18px, sm = 26px) cannot represent a 6px
-  // edge bar or a corner-anchored dot — same pattern class as §8.6 (custom
-  // ARIA role + bespoke structural layout). These are the only bare
-  // <button>s in the file.
+  // thin edge bars (6px wide/tall) inside a 72×72 box. Each is a clickable
+  // hit area whose geometry IS the affordance (which edge you're editing).
+  // Button's token-driven size system (micro = 18px, sm = 26px) cannot
+  // represent a 6px edge bar — same pattern class as §8.6 (custom ARIA role +
+  // bespoke structural layout). These are the only bare <button>s in the
+  // file — the corner-radius picker that used to sit beside this one moved to
+  // `AppearanceSection` (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5) and was
+  // deleted from here, not reimplemented.
   'admin/pages/site/panels/PropertiesPanel/BorderControl/BorderControl.tsx',
 
   // ── §8.12 Super Import "Review" category navigator ──────────────────────

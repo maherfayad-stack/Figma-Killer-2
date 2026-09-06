@@ -14,7 +14,7 @@
 import { Button } from '@ui/components/Button'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule } from '@core/page-tree'
-import { CLASS_STYLE_SECTIONS } from './cssControlTypes'
+import { CLASS_STYLE_SECTIONS } from './classStyleSections'
 import styles from './StyleCategoryRail.module.css'
 
 // ---------------------------------------------------------------------------

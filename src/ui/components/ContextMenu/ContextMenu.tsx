@@ -12,12 +12,10 @@ import { cn } from '@ui/cn'
 import {
   type FloatingAlign,
   type FloatingSide,
-  type ResolvedFloatingSide,
 } from '@ui/lib/floatingPosition'
+import { useAnchoredFloating } from '@ui/lib/useAnchoredFloating'
 import { useOutsidePointerDismiss } from '@ui/lib/useOutsidePointerDismiss'
 import { useDeferredClose } from './useDeferredClose'
-import { useAnchorPosition } from './useAnchorPosition'
-import { usePointPosition } from './usePointPosition'
 import styles from './ContextMenu.module.css'
 
 interface ContextMenuProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
@@ -173,15 +171,15 @@ export function ContextMenu({
   // Reopening at a new point/anchor cancels a mid-flight exit.
   const { closing, beginClose } = useDeferredClose(onClose, animateExit, [pointX, pointY, anchorRef])
 
-  // Positioning is delegated to two mutually-exclusive hooks: anchor mode
-  // (auto-flip relative to a trigger) and point mode (right-click viewport-fit).
-  // `effectiveWidth` flows out of the anchor hook because `matchAnchorWidth`
-  // can widen the menu to its trigger; point mode never widens, so the hook
-  // returns the plain `width` there.
-  const { position: autoPosition, effectiveWidth } = useAnchorPosition({
+  // Positioning is delegated to the shared anchored/point floating hook —
+  // anchor mode (auto-flip relative to a trigger) and point mode (right-click
+  // viewport-fit) are mutually exclusive, selected by which props are set.
+  const { position, effectiveWidth } = useAnchoredFloating({
     anchorRef,
-    menuRef,
+    floatingRef: menuRef,
     getAnchorRect,
+    pointX,
+    pointY,
     side,
     align,
     offset,
@@ -191,30 +189,16 @@ export function ContextMenu({
     maxHeight,
     matchAnchorWidth,
   })
-  const { position: pointPosition } = usePointPosition({
-    anchorRef,
-    menuRef,
-    pointX,
-    pointY,
-    effectiveWidth,
-    maxHeight,
-  })
 
-  // Resolve the effective x/y the menu renders at:
-  //   - anchor mode: use the auto-flipped position (or hide until measured)
-  //   - point mode:  use the viewport-clamped position (or hide until measured)
-  const resolvedX = anchorRef ? autoPosition?.x : pointPosition?.x
-  const resolvedY = anchorRef ? autoPosition?.y : pointPosition?.y
-  const resolvedSide: ResolvedFloatingSide | undefined = anchorRef
-    ? autoPosition?.side
-    : undefined
+  const resolvedX = position?.x
+  const resolvedY = position?.y
+  const resolvedSide = position?.side
 
   // While we measure the menu (either mode), render it off-screen with
   // visibility:hidden so it doesn't flash at (0, 0) before the layout
   // effect runs.
-  const measuring = anchorRef
-    ? autoPosition === null
-    : pointX != null && pointY != null && pointPosition === null
+  const measuring = (anchorRef != null || (pointX != null && pointY != null))
+    && position === null
 
   const style = {
     '--context-menu-x': `${resolvedX ?? 0}px`,

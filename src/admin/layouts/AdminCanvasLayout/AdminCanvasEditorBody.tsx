@@ -168,7 +168,7 @@ function ImportHtmlModalLoading() {
       open={true}
       onClose={closeModal}
       title="Import HTML"
-      eyebrow="ALM Figma Killer"
+      eyebrow="Studio"
       size="lg"
       className={styles.importHtmlLoadingDialog}
       bodyClassName={styles.importHtmlLoadingBody}
@@ -209,10 +209,17 @@ function ImportHtmlModalLoading() {
   )
 }
 
+/**
+ * Full-canvas failure state. What failed to load is the user's own React
+ * project — a directory of `.tsx` files under `studio-workspace/` — so the
+ * heading names that, not the CMS document model this fork inherited. The
+ * `message` under it is the real reason (a parse failure, a missing
+ * directory, a refused read), and it is the only part worth reading.
+ */
 function SiteEditorLoadError({ message }: { message: string }) {
   return (
     <section className={styles.canvasBootstrapError} role="alert">
-      <h1>Could not load CMS site</h1>
+      <h1>Could not open this project</h1>
       <p>{message}</p>
     </section>
   )

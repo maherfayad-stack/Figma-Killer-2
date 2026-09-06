@@ -52,10 +52,6 @@ const openaiAdapter = createResponsesAdapter({
       'content-type': 'application/json',
     }
   },
-  promptCacheKey(req) {
-    const toolNames = req.tools.map((t) => t.name).sort().join(',')
-    return `studio:${stableHash(toolNames)}`
-  },
 })
 
 export const openaiDriver: AiProvider = {
@@ -116,15 +112,6 @@ const OpenAiModelsResponseSchema = Type.Object(
 
 // Tier badge → sort rank (lower = shown first). Mirrors the picker's ordering.
 const TIER_RANK: Record<string, number> = { smartest: 0, smart: 1, balanced: 2, fast: 3, cheap: 4 }
-
-function stableHash(value: string): string {
-  let hash = 2166136261
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i)
-    hash = Math.imul(hash, 16777619)
-  }
-  return (hash >>> 0).toString(36)
-}
 
 /**
  * Fetch the live model catalogue from `GET /v1/models`. This is the only

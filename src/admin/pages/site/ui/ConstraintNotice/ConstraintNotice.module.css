@@ -1,0 +1,76 @@
+/* Warning tone as STATE (docs/design.md's two-layer colour model): the user's
+   gesture was refused and they have to decide what to do instead. Same amber
+   family the Properties panel's structural notice uses, so the two read as one
+   vocabulary. */
+.notice {
+    display: flex;
+    gap: var(--space-2xs);
+    align-items: flex-start;
+    padding: var(--space-xs) var(--space-s);
+    border-radius: var(--radius);
+    background: var(--warning-10);
+    color: var(--warning-text);
+}
+
+/* Hosted inside a surface that already has its own padding and type scale —
+   the layers context menu's footer. */
+.compact {
+    padding: var(--space-2xs) var(--space-s);
+    border-radius: 0;
+    background: transparent;
+}
+
+.icon {
+    flex-shrink: 0;
+    color: var(--warning);
+    /* Optical alignment with the first line of text, without a hardcoded offset. */
+    align-self: baseline;
+}
+
+.body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    min-width: 0;
+}
+
+.explanation {
+    margin: 0;
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+}
+
+/* Ways forward read as inline links inside the notice's own prose rather than
+   as chrome buttons: they are part of the sentence, not a toolbar. Mirrors
+   `SharedComponentNotice.module.css`'s `jumpToSourceButton`. */
+.action {
+    height: auto;
+    min-height: 0;
+    padding: 0;
+    gap: var(--space-3xs);
+    background: transparent;
+    color: inherit;
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.action:hover {
+    background: transparent;
+    color: var(--text-bright);
+}
+
+/* An action the editor cannot run for the user — advice, so no affordance. */
+.hint {
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+    color: var(--text-muted);
+}

@@ -41,7 +41,10 @@
  *
  * WS-10 Phase 1 — a package's own `prefers-color-scheme` media query (many
  * design systems ship one) is rewritten the same way `UserStylesheetInjector`
- * rewrites the project's own CSS — see `darkSchemeCssTransform.ts`.
+ * rewrites the project's own CSS — see `darkSchemeCssTransform.ts`. That
+ * rewrite, and the concatenation feeding it, live in `canvasVendorCss.ts` and
+ * are memoised across frames: the bytes are identical in every iframe, so
+ * paying for them per mount was pure waste.
  *
  * This injector does NOT set a theme attribute on the frame root. It used to
  * pin `data-theme="light"` (the design system's tokens default to DARK via
@@ -53,13 +56,8 @@
  * this pin existed. See `VENDOR_THEME_ATTR` there.
  */
 import { useEffect, useSyncExternalStore } from 'react'
-// Vite `?inline` yields the processed CSS as a default string export. This is
-// STUDIO's OWN dependency, bundled at Studio's own build time — see source 1
-// in this module's doc.
-import almDesignSystemCss from '@alm-design/design-system/dist/index.css?inline'
 import { getStudioVendorCss, subscribeStudioVendorCss } from '@site/studio/fsCodemodAdapter'
-import { CANVAS_CSS_LAYER_ORDER, VENDOR_LAYER } from './canvasCssLayers'
-import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
+import { buildVendorCss } from './canvasVendorCss'
 
 const STYLE_TAG_ID = 'mc-vendor'
 
@@ -80,12 +78,7 @@ export function ProjectCssInjector({ targetDocument }: { targetDocument?: Docume
       // repeats the declaration regardless.
       doc.head.insertBefore(styleEl, doc.head.firstChild)
     }
-    const vendorCss = rewritePrefersColorScheme(
-      [almDesignSystemCss as string, projectVendorCss].filter(Boolean).join('\n\n'),
-    )
-    styleEl.textContent = vendorCss
-      ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${VENDOR_LAYER} {\n${vendorCss}\n}`
-      : `${CANVAS_CSS_LAYER_ORDER}\n/* no vendor css */`
+    styleEl.textContent = buildVendorCss(projectVendorCss)
 
     return () => {
       doc.getElementById(STYLE_TAG_ID)?.remove()

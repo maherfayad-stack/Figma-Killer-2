@@ -54,4 +54,61 @@ describe('toastBus', () => {
     expect(capturedToasts[0]?.title).toBe('After reset')
     unsubscribe()
   })
+
+  describe('dedupeKey', () => {
+    function snapshot(): ReadonlyArray<Toast> {
+      let captured: ReadonlyArray<Toast> = []
+      const unsubscribe = subscribeToasts((next) => {
+        captured = next
+      })
+      unsubscribe()
+      return captured
+    }
+
+    it('collapses a repeat onto the toast already showing it, keeping its id', () => {
+      const first = pushToast({
+        kind: 'warning',
+        title: 'Move refused',
+        body: 'One piece of source renders every row of this list.',
+        dedupeKey: 'structural-refusal:move:list-row',
+        durationMs: null,
+      })
+      const second = pushToast({
+        kind: 'warning',
+        title: 'Move refused',
+        body: 'One piece of source renders every row of this list.',
+        dedupeKey: 'structural-refusal:move:list-row',
+        durationMs: null,
+      })
+
+      expect(second).toBe(first)
+      const toasts = snapshot()
+      expect(toasts).toHaveLength(1)
+      expect(toasts[0]?.repeatCount).toBe(2)
+    })
+
+    it('keeps the collapsed toast in its original stack position', () => {
+      pushToast({ kind: 'warning', title: 'Refused', dedupeKey: 'refusal', durationMs: null })
+      pushToast({ kind: 'success', title: 'Saved', durationMs: null })
+      pushToast({ kind: 'warning', title: 'Refused', dedupeKey: 'refusal', durationMs: null })
+
+      expect(snapshot().map((t) => t.title)).toEqual(['Refused', 'Saved'])
+    })
+
+    it('leaves toasts without a key stacking as they always did', () => {
+      pushToast({ kind: 'error', title: 'Save failed', durationMs: null })
+      pushToast({ kind: 'error', title: 'Save failed', durationMs: null })
+
+      const toasts = snapshot()
+      expect(toasts).toHaveLength(2)
+      expect(toasts.every((t) => t.repeatCount === 1)).toBe(true)
+    })
+
+    it('does not collapse two different refusals', () => {
+      pushToast({ kind: 'warning', title: 'Move refused', dedupeKey: 'a', durationMs: null })
+      pushToast({ kind: 'warning', title: 'Delete refused', dedupeKey: 'b', durationMs: null })
+
+      expect(snapshot()).toHaveLength(2)
+    })
+  })
 })

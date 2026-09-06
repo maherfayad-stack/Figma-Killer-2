@@ -31,6 +31,21 @@ const STREAM_LEASE_MS = 120_000
 
 const byUser = new Map<string, Map<EditorBridgeScope, EditorBridgeEntry>>()
 
+/**
+ * When a bridge for `(userId, scope)` was last known to be live, whether it
+ * still is or not. Read by {@link awaitEditorBridgeForUser} to tell a browser
+ * mid-reconnect apart from a board that was never open — see
+ * {@link RECENT_BRIDGE_MS}.
+ */
+const lastLiveAtByKey = new Map<string, number>()
+
+/** NUL separates the two parts — it can occur in neither a user id nor a scope. */
+const bridgeKey = (userId: string, scope: EditorBridgeScope): string => `${userId}\u0000${scope}`
+
+function markBridgeLive(userId: string, scope: EditorBridgeScope): void {
+  lastLiveAtByKey.set(bridgeKey(userId, scope), Date.now())
+}
+
 /** The live workspace bridge for a user and scope, or null when disconnected. */
 export function getEditorBridgeForUser(
   userId: string,
@@ -79,6 +94,20 @@ const BRIDGE_POLL_MS = 250
  */
 const BRIDGE_MAX_ATTEMPTS = 2
 
+/**
+ * How recently a bridge for this `(userId, scope)` must have been live for its
+ * absence to read as a RECONNECT rather than a closed board.
+ *
+ * Inside that window ONE wait window is enough, and the second is pure latency
+ * on every tool call that lands in the gap. `STREAM_LEASE_MS` bounds every
+ * stream at 120s, so a long agent session tears the bridge down and rebuilds it
+ * repeatedly by design; `useMcpWorkspaceBridge` reconnects on a 3s timer, which
+ * one `BRIDGE_WAIT_MS` window already covers with room to spare. Outside the
+ * window nothing is known to be reconnecting — a tab could still be booting
+ * cold, which is slower — so the full `BRIDGE_MAX_ATTEMPTS` patience stands.
+ */
+const RECENT_BRIDGE_MS = 60_000
+
 /** One `BRIDGE_WAIT_MS`-bounded wait for the bridge to appear, polling every `BRIDGE_POLL_MS`. `null` on timeout OR abort. */
 async function waitForEditorBridgeOnce(
   userId: string,
@@ -96,10 +125,14 @@ async function waitForEditorBridgeOnce(
 }
 
 /**
- * The live workspace bridge, waiting up to `BRIDGE_MAX_ATTEMPTS *
- * BRIDGE_WAIT_MS` (two ~4s windows, back to back) for a reconnecting browser
- * before answering null. Use this from any tool whose failure message would
- * otherwise tell the user to open a tab they already have open.
+ * The live workspace bridge, waiting for a reconnecting browser before
+ * answering null. Use this from any tool whose failure message would otherwise
+ * tell the user to open a tab they already have open.
+ *
+ * The wait is up to `BRIDGE_MAX_ATTEMPTS * BRIDGE_WAIT_MS` (two ~4s windows,
+ * back to back), or ONE window when a bridge for this workspace was live within
+ * `RECENT_BRIDGE_MS` — see that constant for why the second window is wasted
+ * time in exactly that case.
  */
 export async function awaitEditorBridgeForUser(
   userId: string,
@@ -109,7 +142,10 @@ export async function awaitEditorBridgeForUser(
   const immediate = getEditorBridgeForUser(userId, scope)
   if (immediate) return immediate
 
-  for (let attempt = 0; attempt < BRIDGE_MAX_ATTEMPTS; attempt++) {
+  const lastLiveAt = lastLiveAtByKey.get(bridgeKey(userId, scope)) ?? 0
+  const attempts = Date.now() - lastLiveAt < RECENT_BRIDGE_MS ? 1 : BRIDGE_MAX_ATTEMPTS
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (signal?.aborted) return null
     const bridge = await waitForEditorBridgeOnce(userId, scope, signal)
     if (bridge) return bridge
@@ -150,6 +186,9 @@ export function createEditorBridgeStream(
         // Only evict if we're still the current bridge for this scope.
         const liveUserBridges = byUser.get(userId)
         if (liveUserBridges?.get(scope)?.bridgeId === bridgeId) {
+          // Stamp the moment it stopped being live, so a tool call landing in
+          // the reconnect gap knows this workspace WAS open a second ago.
+          markBridgeLive(userId, scope)
           liveUserBridges.delete(scope)
           if (liveUserBridges.size === 0) byUser.delete(userId)
         }
@@ -180,6 +219,7 @@ export function createEditorBridgeStream(
       if (previous) previous.destroy()
       userBridges.set(scope, { bridgeId, bridge: created.bridge, destroy: destroyBridge })
       byUser.set(userId, userBridges)
+      markBridgeLive(userId, scope)
 
       emit({ type: 'bridgeReady', bridgeId })
 

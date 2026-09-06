@@ -94,18 +94,53 @@
     gap: var(--inspector-group-gap);
 }
 
-/* Two sub-fields side by side — direction beside wrap, align beside justify.
- * Both halves of each pair are the same shape (a connected icon group), so
- * they read as one decision made twice rather than as two unrelated rows. */
-.flexPair {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+/* Direction control + the wrap toggle button, sharing one row (F6: wrap
+ * sits top-right of the auto-layout block's header, not as a 3rd inline
+ * caption). The direction control grows; the toggle stays its own width. */
+.flexHeaderRow {
+    display: flex;
+    align-items: center;
     gap: var(--inspector-field-gap);
-    align-items: end;
 }
 
-.flexPair > * {
+.flexHeaderRow > *:first-child {
+    flex: 1;
     min-width: 0;
+}
+
+/* Align pad + gap field + the Layout settings ⚙, all on one row (F4/F6/F7:
+ * `[align pad 3×3]  [gap] [⚙]`). The pad is a fixed 48×48px box (see
+ * AlignGrid.module.css); the gap field grows to fill the remaining width;
+ * the gear stays its own fixed width. */
+.alignGapRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.alignGapRow > :nth-child(2) {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Clip content — the promoted `overflow` checkbox row, plus the small
+ * overflow-X/Y settings trigger beside it (see ClipContentRow's doc for why
+ * that trigger is separate from LayoutSettingsButton). */
+.clipContentRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.clipContentLabel {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-2xs);
+    color: var(--text);
+    font-size: var(--text-xs);
+    cursor: pointer;
 }
 
 /* One flex / grid sub-field: an optional small caption stacked above a

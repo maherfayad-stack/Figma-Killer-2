@@ -93,7 +93,7 @@ const SECTION_STYLE_FAMILIES: ReadonlyMap<string, ReadonlyArray<StyleFamily>> = 
       colorUtilities: ['text', 'fill'],
     },
   ]],
-  ['background', [
+  ['fill', [
     {
       key: 'background-color',
       title: 'Background color styles',

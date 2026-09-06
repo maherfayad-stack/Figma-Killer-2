@@ -9,7 +9,12 @@
 
 import { describe, it, expect } from 'bun:test'
 import type { PageNode } from '@core/page-tree'
-import { nearestFormNode } from '@site/canvas/canvasFormPreview'
+import {
+  nearestFormNode,
+  resolveEditorFormPreviewState,
+  resolveEditorFormPreviewSuccessMessage,
+} from '@site/canvas/canvasFormPreview'
+import type { EditorStore } from '@site/store/store'
 
 function node(id: string, moduleId: string, children: string[] = []): PageNode {
   return {
@@ -81,5 +86,57 @@ describe('nearestFormNode', () => {
     const second = countingNodes(makeNodes())
     expect(nearestFormNode({ nodes: second.nodes }, 'message')?.id).toBe('form')
     expect(second.ownKeysCalls()).toBe(firstBuilds)
+  })
+})
+
+/**
+ * The "no preview anywhere" short-circuit. Both resolvers run once per mounted
+ * node per store commit, and on a board with no active form preview — which is
+ * every board, almost all of the time — the answer is fixed. Resolving the
+ * active canvas page and indexing into its node map to arrive at that fixed
+ * answer, 2 × N times per commit, was pure waste.
+ */
+describe('form-preview resolvers with no preview active', () => {
+  function stateWith(formPreviewStates: Record<string, string>, nodes: Record<string, PageNode>) {
+    let pageReads = 0
+    const page = { id: 'p1', title: 'p', slug: 'p', rootNodeId: 'root', nodes }
+    const pages = new Proxy([page], {
+      get(target, prop, receiver) {
+        if (prop === 'find') pageReads++
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const state = {
+      site: { pages },
+      activePageId: 'p1',
+      activeDocument: null,
+      formPreviewStates,
+    } as unknown as EditorStore
+    return { state, pageReads: () => pageReads }
+  }
+
+  it('never resolves the active page when formPreviewStates is empty', () => {
+    const nodes = makeNodes()
+    nodes.form!.props.successMessage = 'Custom thanks'
+    const { state, pageReads } = stateWith({}, nodes)
+
+    for (let i = 0; i < 100; i++) {
+      expect(resolveEditorFormPreviewState(state, 'message')).toBe('default')
+      expect(resolveEditorFormPreviewSuccessMessage(state, 'message')).toBe(
+        'Thanks. Your submission was received.',
+      )
+    }
+    expect(pageReads()).toBe(0)
+  })
+
+  it('still resolves normally once a form IS being previewed', () => {
+    const nodes = makeNodes()
+    nodes.form!.props.successMessage = 'Custom thanks'
+    const { state } = stateWith({ form: 'success' }, nodes)
+
+    expect(resolveEditorFormPreviewState(state, 'message')).toBe('success')
+    expect(resolveEditorFormPreviewSuccessMessage(state, 'message')).toBe('Custom thanks')
+    // A node outside the previewed form is unaffected.
+    expect(resolveEditorFormPreviewState(state, 'orphanMessage')).toBe('default')
   })
 })

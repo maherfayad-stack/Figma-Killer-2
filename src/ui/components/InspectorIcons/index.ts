@@ -25,4 +25,5 @@ export {
   StrokeWeightIcon,
   CornerRadiusIcon,
   CommentBubbleIcon,
+  RotateIcon,
 } from './InspectorIcons'

@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import {
+  describeStructuralRefusal,
   explainClassNameConstraint,
   explainCssRuleConstraint,
   explainDetachConstraint,
@@ -283,6 +284,43 @@ describe('explainMintedInsertConstraint', () => {
 
   it('does not refuse into an ordinary CMS container', () => {
     expect(explainMintedInsertConstraint({ parent: { id: 'nanoid123' }, studioPageRoot: false })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The shared dressing step both of the above go through — and the entry the
+// store's plan objects use, since they reach their refusal by doing real work
+// (simulating a reorder) that must not be repeated here.
+// ---------------------------------------------------------------------------
+
+describe('describeStructuralRefusal', () => {
+  it('carries the node source position through as `origin`, for a jump-to-source', () => {
+    const constraint = describeStructuralRefusal({
+      refusal: { reason: 'shared-component', message: 'This markup lives in a shared component.' },
+      node: { id: 'pages/Home.tsx:77:19' },
+    })
+    assertWellFormed(constraint)
+    expect(constraint.origin).toEqual({ rel: 'pages/Home.tsx', line: 77, col: 19 })
+    expect(constraint.actions[0]?.kind).toBe('detach')
+  })
+
+  it('accepts a refusal with no node at all — the store synthesises those', () => {
+    const constraint = describeStructuralRefusal({
+      refusal: { reason: 'insert', message: 'This page has several top-level elements.' },
+    })
+    assertWellFormed(constraint)
+    expect(constraint.origin).toBeUndefined()
+    expect(constraint.scope).toBe('node')
+  })
+
+  it('is the same answer `explainStructuralConstraint` gives for the same refusal', () => {
+    const node = { id: 'pages/Home.tsx:70:21#2' }
+    const direct = explainStructuralConstraint({ kind: 'delete', node })
+    assertWellFormed(direct)
+    expect(describeStructuralRefusal({
+      refusal: { reason: direct.reason, message: direct.explanation },
+      node,
+    })).toEqual(direct)
   })
 })
 
