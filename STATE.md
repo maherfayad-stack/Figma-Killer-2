@@ -1268,6 +1268,90 @@ Error messages are symmetric and leak nothing: a hostname-triggered block would 
 
 ---
 
+### panel-05 — inspector disclosure wave 2: Layout, Spacing, Size, Appearance, Typography, rotation
+
+Follows [`panel-04`](#panel-04). Plan: `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`.
+Branch `feat/inspector-progressive-disclosure`. **G6 (Fill), G7 (Stroke) and
+G8 (Effects) are NOT started** — they are the three `PropertyList` consumers.
+
+**Landed:** G3+G4 (one agent — they rewrite the same cluster), G2, G5, G9, and
+G10's missing rotation row. Measured/estimated at panel width 300: Layout
+≈440 → ≈176px, Spacing body ≈253 → ≈26px, Size 4 rows → 1 for a width-only
+element, Typography 8 grid entries → 4 rows.
+
+**Three judgement calls that are load-bearing — do not "simplify" them back.**
+
+1. **The layout settings ⚙ is RESIDENT, not inside the flex/grid block.**
+   `alignSelf` / `justifySelf` / `flex` / `gridColumn` / `gridRow` are
+   item-level: governed by the PARENT's display, which a class-style editor
+   cannot observe. The first implementation nested the trigger in the flex/grid
+   block, which made them unreachable on a plain `<div>` inside a flex row —
+   the most common node there is. Only container-level entries (`flexWrap`,
+   `rowGap`/`columnGap`) are mode-filtered. `propertiesPanel-redesign.test.tsx`
+   pins this by opening the trigger with no `display` set.
+2. **`SpacingBoxControl` was not deleted.** It moved behind the Spacing
+   section's "Box model" ⚙. It is the best control in the panel for "which side
+   is which"; it was only the wrong *default* at 253px resident.
+3. **Rotation writes the standalone `rotate` property, never a rewritten
+   `transform`.** Verified first that the publisher's gate is now permissive
+   (`isEmittableProperty`, not the old `ALLOWED_PROPS`) and that the canvas
+   imports the same `bagToCSS`. A `transform` already containing
+   `rotate()`/`rotateX()`/`rotate3d()` would silently compound, so that case
+   refuses and falls back to a raw row — the gradient/box-shadow rule.
+
+**`cssControlTypes.ts` was split.** It held how a property is CONTROLLED and how
+the panel is DIVIDED INTO SECTIONS; curating the typography long tail pushed it
+one line over the 700 budget. The registry is now `classStyleSections.ts`
+(`ClassStyleSectionDefinition`, `CLASS_STYLE_SECTIONS`,
+`getClassStyleSectionSetCounts`, `getActiveStyleTab`); six importers were
+repointed. 701 → 428 + 304.
+
+**A trap worth stating once.** G9 first reached eight typography properties via
+`as keyof CSSPropertyBag`. That cast is never cosmetic here: `keyof
+CSSPropertyBag` types the whole style pipeline, so a property that only reaches
+disk by defeating it is ALSO invisible to the section's search and its "N set"
+count — and after `panel-04`'s Law 1 that count is what decides whether a
+section may collapse and hide the user's own work. All eight are now real
+schema members and the casts are gone. **If a control needs a property the bag
+does not model, add it to the bag.**
+
+**`bun run icons:sync` cannot run in this environment** — `scripts/sync-icons.ts`
+reads sources from a sibling checkout of the PRIVATE upstream icons repo.
+Removing orphans by hand is equivalent to its step 4 (done for the three icons
+`alignmentOptions.tsx` orphaned). ADDING an icon needs someone with that
+checkout. Consequences: `RotateIcon` was hand-authored into
+`src/ui/components/InspectorIcons` (the sanctioned escape hatch), and
+**`AppearanceSection` stands in `ColorsSwatchSolidIcon` for Figma's droplet —
+vendor a real `droplet-solid` and swap it.**
+
+**MERGE HAZARD — a deliberate decision, recorded so it is not lost.**
+`feat/prototype-mode` is **20 commits / 592 files ahead of `main` and unmerged**,
+and already contains a **parent-aware** sizing model this branch cannot see:
+`elementSizing.ts` (172 lines), `useFrameParentLayout` in
+`useInspectComputedStyle.ts`, and a larger `SizeSection.tsx`. This branch was
+cut from `main`, so G2 wrote its own 84-line `elementSizing.ts` mapping Hug →
+`fit-content` and Fill → `100%` **without consulting the parent**. The user chose
+to stay on `main` and reconcile at merge. **At merge: keep prototype-mode's
+parent-aware `currentSizingMode`/`sizingPatch`/`useFrameParentLayout` and layer
+this branch's `AddablePropertyField` disclosure UI on top. Do not take this
+branch's `elementSizing.ts` wholesale — it is the weaker model.**
+
+**Verification:** `bun test src/__tests__/architecture` 511/511; `bun test src/ui
+src/admin src/__tests__/panels src/__tests__/fonts` 1179/1179; `bun run build`
+and `bun run lint` clean.
+
+**Human action needed — still not dogfooded end to end.** Per
+`dogfood-ui-before-gating`. Drive `:5173`: a plain `<div>` with no `display`
+should show the display switcher, a two-field padding row, a Clip content
+checkbox and a resident ⚙ — open it and confirm `alignSelf` is writable. Then
+`display: flex` → the 3×3 pad, gap, and container-only rows appear in the ⚙;
+`display: grid` → the inverse. Check Size shows one row for a width-only
+element and that "Add minimum width" writes nothing until you type. Check
+Typography is four rows and its ⚙ tabs. Check Position's rotation field, and
+that a node with `transform: translateX(20px)` keeps it.
+
+---
+
 ### panel-04 — the inspector's progressive-disclosure pass: wave 1 (four primitives + three orders)
 
 **Branch:** `feat/inspector-progressive-disclosure`, off `main`. Plan:
