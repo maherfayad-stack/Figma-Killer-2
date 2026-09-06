@@ -12,6 +12,8 @@
  *   - `@core/fonts`
  *   - `@core/design-tokens`
  *   - `@core/studio-comments`
+ *   - `@core/studio-anchor`
+ *   - `@core/studio-prototype`
  *
  * Per the barrel convention (CLAUDE.md → "Barrel imports"): everything OUTSIDE
  * a module imports through its barrel; files INSIDE the module import each
@@ -39,11 +41,19 @@ const BARRELLED_MODULES = [
   'framework-schema',
   'fonts',
   'design-tokens',
-  // Studio review comments. Its `anchorResolve.ts` is the one place that
-  // decides whether a comment still points at anything, and the agent's write
-  // gate depends on that single answer — a deep import past the barrel is how
-  // a second, looser copy of that decision gets made.
+  // Studio review comments. `agentGate.ts`'s `isAgentActionable` is the single
+  // predicate deciding whether the agent may act on a thread — a deep import
+  // past the barrel is how a second, looser copy of that decision gets made.
   'studio-comments',
+  // The comment anchor model, split out of `studio-comments/anchorResolve.ts`.
+  // `resolve.ts` is the one place that decides whether a comment still points at
+  // anything; `studio-comments`' write gate is a consumer of that single answer,
+  // so the two must stay one barrel apart rather than reach into each other.
+  'studio-anchor',
+  // Authored prototype links plus the flow map derived from the project's own
+  // navigation code. `codeFlow.ts`'s AST rules are what the connector layer and
+  // the panel both read; neither may reach past the barrel to a looser variant.
+  'studio-prototype',
 ]
 
 // Scan production + test sources in both the app and the server.

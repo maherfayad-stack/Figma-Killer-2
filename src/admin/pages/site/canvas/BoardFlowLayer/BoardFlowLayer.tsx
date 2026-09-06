@@ -1,27 +1,26 @@
 /**
- * BoardFlowLayer — the flow map, drawn over the board.
+ * BoardFlowLayer — the DERIVED flow map, drawn over the board.
  *
- * Two kinds of line, drawn in two voices:
+ * `STUDIO-PROTOTYPE-PLAN.md` §1's differentiator. Nobody drew these lines:
+ * Studio read the project's own navigation code and is reporting what it found
+ * (`server/handlers/studio/prototypeCodeFlow.ts`), so the board shows flows
+ * that are already true on a repository nobody has prototyped yet — the part a
+ * shape-database design tool structurally cannot do.
  *
- *   - CODE — `STUDIO-PROTOTYPE-PLAN.md` §1's differentiator. Nobody drew these.
- *     Studio read the project's own navigation code and is reporting what it
- *     found (`server/handlers/studio/prototypeCodeFlow.ts`), so the board shows
- *     flows that are already true on a repository nobody has prototyped yet —
- *     the part a shape-database design tool structurally cannot do.
- *   - DESIGN — the links the user authored in the inspector, from
- *     `.studio/prototype.json`. A link whose source element no longer resolves
- *     is drawn BROKEN rather than hidden, so an edit that cost a flow is
- *     visible.
+ * The links the user AUTHORED are drawn by `BoardPrototypeLayer`, which also
+ * owns the `+` handle that creates them. One store, one mode, one inspector —
+ * two layers, because an authored link is anchored to the ELEMENT it was drawn
+ * on and a derived edge is a claim about two pages. See that file's docblock.
  *
- * READ-ONLY, AND THE CODE HALF HAS TO LOOK IT
- * ───────────────────────────────────────────
+ * READ-ONLY, AND IT HAS TO LOOK IT
+ * ────────────────────────────────
  * There is no delete affordance, no drag handle, no context menu, and no click
  * handler anywhere in the layer — the chip opts back into pointer events for
- * HOVER only, so its tooltip can open. Authored links are edited in the
- * inspector; a code line cannot be edited at all, because the only way to
- * change it is to change the code it came from. Each carries the source snippet
- * it was read out of, because a line the user cannot edit has to be able to
- * answer "why do you think that", and the answer is a piece of their own file.
+ * HOVER only, so its tooltip can open. A code line cannot be edited at all,
+ * because the only way to change it is to change the code it came from. Each
+ * carries the source snippet it was read out of, because a line the user cannot
+ * edit has to be able to answer "why do you think that", and the answer is a
+ * piece of their own file.
  *
  * WHY IT LIVES IN THE PARENT DOCUMENT
  * ───────────────────────────────────
@@ -41,8 +40,10 @@
  * "stutter machine" the plan's §6 warns about. It is also the wrong granularity
  * for this particular claim: the fact is "Home navigates to Details", and the
  * element that does it is named in the chip's tooltip, where it does not have to
- * be measured to be true. Element-level anchoring is a follow-up for AUTHORED
- * links, which the user places deliberately and one at a time.
+ * be measured to be true. Element-level anchoring is right for AUTHORED links,
+ * which the user places deliberately, one at a time, on a specific thing — and
+ * `BoardPrototypeLayer` does exactly that, measuring only the handful of
+ * elements those links actually start from.
  *
  * SIZE: the stroke, the arrowhead and the chip all counter-scale by
  * `1 / var(--canvas-zoom)` in pure CSS — the `CommentPin` pattern, and for the
@@ -53,28 +54,20 @@
 import type { CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoardFrames } from '@site/store/slices/boardSelectors'
-import type { NodeTree } from '@core/page-tree'
 import { Tooltip } from '@ui/components/Tooltip'
-import { routeCodeFlow, routePrototypeLinks, type FlowLine } from './flowRouting'
+import { routeCodeFlow, type FlowLine } from './flowRouting'
 import styles from './BoardFlowLayer.module.css'
 
 export function BoardFlowLayer() {
   const boardMode = useEditorStore((s) => s.boardMode)
   const frames = useEditorStore(selectActiveBoardFrames)
   const edges = useEditorStore((s) => s.codeFlow.edges)
-  const links = useEditorStore((s) => s.prototype.links)
-  // The pages array by reference, never a scan inside the selector — an
-  // authored link's source has to be re-resolved against its page's tree, and
-  // walking every page's nodes inside a `useEditorStore` selector would re-run
-  // that walk on every store commit in the editor.
-  const pages = useEditorStore((s) => s.site?.pages)
 
-  // Design mode never shows connectors — the plan's §1 condition for the design
-  // layer being honest is that it is invisible while you are editing the design.
+  // Design mode never shows connectors — the condition for the design layer
+  // being honest is that it is invisible while you are editing the design.
   if (boardMode !== 'prototype' || frames.length === 0) return null
 
-  const trees = new Map<string, NodeTree>((pages ?? []).map((page) => [page.id, page]))
-  const lines = [...routeCodeFlow(edges, frames), ...routePrototypeLinks(links, frames, trees)]
+  const lines = routeCodeFlow(edges, frames)
   if (lines.length === 0) return null
 
   return (
@@ -101,8 +94,6 @@ function FlowLineView({ line }: { line: FlowLine }) {
         className={styles.curve}
         style={box}
         viewBox={`0 0 ${connector.width} ${connector.height}`}
-        data-kind={line.kind}
-        data-broken={line.broken ? 'true' : undefined}
         aria-hidden="true"
       >
         <path d={connector.path} />
@@ -111,8 +102,6 @@ function FlowLineView({ line }: { line: FlowLine }) {
       <div
         aria-hidden="true"
         className={styles.arrow}
-        data-kind={line.kind}
-        data-broken={line.broken ? 'true' : undefined}
         style={
           {
             left: `${connector.tipX}px`,
@@ -124,12 +113,7 @@ function FlowLineView({ line }: { line: FlowLine }) {
 
       <div className={styles.chipAnchor} style={{ left: `${connector.labelX}px`, top: `${connector.labelY}px` }}>
         <Tooltip content={<FlowDetails details={details} />}>
-          <span
-            className={styles.chip}
-            data-kind={line.kind}
-            data-broken={line.broken ? 'true' : undefined}
-            data-testid="board-flow-chip"
-          >
+          <span className={styles.chip} data-testid="board-flow-chip">
             {line.chip}
           </span>
         </Tooltip>

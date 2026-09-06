@@ -383,18 +383,21 @@ Cards are filled and borderless; inputs are unfilled and bordered. That's the lo
 
 ## Z-index layers
 
-Four global tokens cover the layered surfaces that float above the editor:
+Six global tokens cover the layered surfaces that float above the editor:
 
 ```css
---z-dropdown:           20;
---spotlight-z-index:  9000;
---toast-z-index:     10000;
---tooltip-z-index:   10001;
+--z-canvas-floating-toolbar: 15;
+--z-dropdown:                20;
+--spotlight-z-index:       9000;
+--dialog-z-index:          9500;
+--menu-z-index:            9800;
+--toast-z-index:          10000;
+--tooltip-z-index:        10001;
 ```
 
-Token names: `--z-dropdown`, `--spotlight-z-index`, `--toast-z-index`, `--tooltip-z-index`.
+Token names: `--z-canvas-floating-toolbar`, `--z-dropdown`, `--spotlight-z-index`, `--dialog-z-index`, `--menu-z-index`, `--toast-z-index`, `--tooltip-z-index`.
 
-`--tooltip-z-index` is deliberately the highest token so tooltips are never occluded by the surface their trigger lives on. `--toast-z-index` sits above modal layers and below tooltips. `--spotlight-z-index` is reused by several modal-level surfaces that need to sit above the editor chrome.
+`--tooltip-z-index` is deliberately the highest token so tooltips are never occluded by the surface their trigger lives on. `--toast-z-index` sits above modal layers and below tooltips. `--spotlight-z-index` is reused by several modal-level surfaces that need to sit above the editor chrome. `--dialog-z-index` sits above `--spotlight-z-index` because the shared `Dialog` primitive is routinely opened *from inside* a modal shell (e.g. Settings sections opening a role editor or credential form) and must paint over the surface that launched it. `--menu-z-index` sits above `--dialog-z-index` because `ContextMenu` (and `InspectorPopover`, which shares its z-index) is portaled to `<body>` and can be opened from any layer below, including a `Dialog` stacked on top of a modal shell.
 
 **Global modal layer** (all raw values in the shared admin stacking context):
 
@@ -403,10 +406,12 @@ Token names: `--z-dropdown`, `--spotlight-z-index`, `--toast-z-index`, `--toolti
 | 9000  | Spotlight backdrop (`--spotlight-z-index`); Settings modal backdrop; ModuleInserterDialog backdrop |
 | 9001  | Settings dialog wrapper (`--spotlight-z-index + 1`) |
 | 9050  | MediaPickerModal backdrop (`calc(--spotlight-z-index + 50)`) — sits above Settings because the picker can be opened from inside Settings (e.g. Settings → General → Favicon → Browse library…) |
+| 9500  | `Dialog` primitive backdrop (`--dialog-z-index`) — above every modal shell it can be opened from |
+| 9800  | `ContextMenu` / `InspectorPopover` (`--menu-z-index`) — above `Dialog`, since a menu can be opened from inside one |
 | 10000 | BodySlashMenu — predates tokenisation; see inline comment in `BodySlashMenu.module.css` |
 | 10001 | Tooltips (`--tooltip-z-index`); `AdminContextMenuGuard` |
 
-The gap between 9001 (Settings dialog) and 9050 (MediaPickerModal) is intentional headroom for any future sub-dialogs inside Settings. The gap between 9050 and 10000 (BodySlashMenu) keeps the slash menu above all modal layers. Do not add new raw values into these ranges without updating this table.
+The gap between 9001 (Settings dialog) and 9050 (MediaPickerModal) is intentional headroom for any future sub-dialogs inside Settings. The gaps between 9050/9500/9800 and up to 10000 (BodySlashMenu) keep each later-opened surface above the ones that can launch it. Do not add new raw values into these ranges without updating this table.
 
 The visual editor uses additional raw z-index values that are **not** tokenised. They fall into two independent stacking contexts:
 

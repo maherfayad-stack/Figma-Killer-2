@@ -10,6 +10,7 @@ The server is a single `Bun.serve` process that boots the DB, runs migrations, a
 
 - **Entrypoint:** `server/index.ts` (boots DB → migrations → role sync → plugin activation → `Bun.serve`).
 - **Router:** `server/router.ts` — ordered route table, first-match wins. Each route is a `tryServeX(req, runtime, url, pathname)` function returning `Response | null`.
+- **Studio's own server half** lives at `server/handlers/studio/` (~120 files: parse, filesystem writeback, git, trust tiers, capture) plus a handful of top-level `server/handlers/studio*.ts` entries, matched early via `tryServeStudio` (`/studio/*`). It is separate from the inherited CMS handlers below. The MCP server endpoint (`tryServeMcp`, `/_studio/mcp`) and headless agent capture (`tryServeAgentCaptureRoute`, `/admin/agent-capture` + `/admin/api/agent-capture/*`) are also matched early, each with its own non-session auth.
 - **CMS API:** every `/admin/api/cms/*` request goes through `server/handlers/cms/index.ts`, which runs a CSRF origin check and dispatches to per-resource handler groups.
 - **Auth:** session cookie (`SESSION_COOKIE_NAME`) → `findUserBySessionHash` → `requireCapability(req, db, 'site.read')`. Every state-changing handler starts with one of these guards.
 - **DB:** one `DbClient` interface (`server/db/client.ts`) — tagged-template callable returning `{ rows, rowCount }`. Two adapters: `postgres.ts` (via `Bun.sql`) and `sqlite.ts` (via `bun:sqlite`). Selected by `DATABASE_URL`.
@@ -60,6 +61,19 @@ It walks an ordered `routes` array of `RouteHandler` functions. Each handler ret
 ```ts
 const routes: readonly RouteHandler[] = [
   tryServeHealth,                  // /health
+  tryServeStudio,                  // /studio/*  → server/handlers/studio/ — Studio's own
+                                    //   filesystem ⇄ .tsx writeback (parse, write, git, trust
+                                    //   tiers, capture; ~120 files)
+  tryServeDesignImport,             // /admin/api/design-import/*  → server/handlers/designImport.ts
+                                    //   (design-token import from a GitHub repo / npm package)
+  tryServeMcp,                     // MCP_ENDPOINT_PATH ('/_studio/mcp') → server/ai/mcp/ —
+                                    //   external MCP clients (Claude Code, Codex, remote agents),
+                                    //   per-connector bearer-token auth, matched before the
+                                    //   admin-cookie-gated AI routes
+  tryServeAgentCaptureRoute,       // /admin/agent-capture + /admin/api/agent-capture/*
+                                    //   → server/ai/mcp/capture/captureRoute.ts — headless
+                                    //   browser capture, single-purpose grant auth; matched
+                                    //   before tryServeAdminApp so it isn't swallowed by the SPA
   tryServeAi,                      // /admin/api/ai/*         → server/ai/handlers/
   tryServeCmsApi,                  // /admin/api/cms/*        → handlers/cms/index.ts
   tryServeLoopRuntimeAsset,        // /_studio/loop-runtime.js (fixed CMS asset)
@@ -68,6 +82,9 @@ const routes: readonly RouteHandler[] = [
   tryServeHole,                    // /_studio/hole/*       → handlers/cms/hole.ts
   tryServeModuleJsAsset,           // /_studio/module-js/*  → handlers/cms/moduleJs.ts
   tryServePublicForm,              // /_studio/form/*       → forms/handler.ts
+  tryServeSharePublicRoute,        // /share/<token> + its data sub-paths → server/handlers/studio/sharePublic.ts —
+                                    //   the only unauthenticated public Studio surface; token
+                                    //   checked against `.studio/shares.json` on every request
   tryServeRuntimeAsset,            // /_studio/assets/*     → published runtime assets
   tryServeRuntimePackageNamespace, // /_studio/runtime/cache/<hash>/<...> → bun install workspace
   tryServeSiteCssNamespace,        // /_studio/css/*        → hashed CSS bundles
@@ -86,8 +103,10 @@ const routes: readonly RouteHandler[] = [
 ]
 ```
 
-Order matters. Two examples:
+Order matters. A few examples:
 
+- `tryServeMcp` and `tryServeAgentCaptureRoute` are matched early, before both the admin-cookie-gated CMS/AI routes and `tryServeAdminApp`, because they authenticate with their own bearer-token / capture-grant schemes rather than the admin session — the SPA fallback would otherwise answer their URLs with the ordinary admin app.
+- `tryServeSharePublicRoute` sits among the other unauthenticated `/_studio/*`-adjacent namespaces, before the static-asset and public-page routes, so a share URL is never answered by a later fallback.
 - `tryServeAi` is matched **before** `tryServeCmsApi` so the AI endpoints (`/admin/api/ai/*`) aren't swallowed by the broader CMS dispatcher (`/admin/api/cms/*`).
 - `tryServeUpload` is matched **before** `tryServeAdminApp` because `/uploads/...` is a sub-tree the SPA fallback would otherwise consume.
 
@@ -617,6 +636,10 @@ See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for boun
 - Source-of-truth files:
   - `server/index.ts` — entrypoint and boot
   - `server/router.ts` — request dispatch
+  - `server/handlers/studio/` — Studio's own server half (parse, writeback, git, trust tiers, capture)
+  - `server/handlers/studio/trustTier.ts` — reads/writes `.studio/meta.json`'s `trust` field (`static` | `render-packages` | `run-project`)
+  - `server/ai/mcp/capture/captureRoute.ts` — headless agent capture (`/admin/agent-capture`, `/admin/api/agent-capture/*`)
+  - `server/ai/mcp/` — the `/_studio/mcp` MCP server endpoint for external AI clients
   - `server/http.ts` — JSON / error HTTP helpers
   - `server/binary.ts` — binary response helpers (`toArrayBuffer`, `binaryResponse`)
   - `src/core/utils/errorMessage.ts` — `getErrorMessage(err, fallback)` canonical catch-block extractor

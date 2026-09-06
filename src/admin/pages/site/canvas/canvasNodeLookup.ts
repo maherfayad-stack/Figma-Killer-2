@@ -58,6 +58,61 @@ export function escapeCssAttributeValue(value: string): string {
 }
 
 /**
+ * The element a node renders AS, or `null` when it has none of its own.
+ *
+ * The distinction `RenderedCanvasNodeCache.resolve` deliberately blurs: that
+ * one falls back to a fragment's rendered DESCENDANTS so a zero-DOM node
+ * (`studio.instance` — a component call site, rendered as a bare Fragment) can
+ * still be measured for a ring. That fallback is right for drawing a box
+ * around something, and wrong for anything that has to WRITE to the element,
+ * because there is no element to write to.
+ *
+ * Resize handles are the second kind. Offering them on a call site produced a
+ * dead affordance — eight handles, drawn around the union of the component's
+ * children, that no drag could ever move.
+ */
+export function ownElementForNode(doc: Document, nodeId: string): HTMLElement | null {
+  return doc.querySelector<HTMLElement>(`[data-node-id="${escapeCssAttributeValue(nodeId)}"]`)
+}
+
+/**
+ * The element a node is actually SEEN as — `ownElementForNode`, then down
+ * through any layout-transparent host it renders.
+ *
+ * A module is allowed to carry the node id on a wrapper that produces no box:
+ * `src/modules/alm/register.tsx` puts the editor's `data-node-id` and event
+ * handlers on a `display: contents` div and renders the design-system
+ * component inside it, deliberately, so the wrapper cannot disturb the
+ * component's own layout (a real box there would break percentage-height
+ * chains and every sibling combinator crossing it).
+ *
+ * That host is the right thing to SELECT and the wrong thing to size: `width`
+ * on `display: contents` does nothing. The element the user is pointing at is
+ * one level down. Descent stops at anything carrying its own `data-node-id` —
+ * that box belongs to a different node, and resizing it here would write to
+ * the wrong place — and at anything with more than one element child, where
+ * there is no single "the" element to mean.
+ */
+export function presentedElementForNode(doc: Document, nodeId: string): HTMLElement | null {
+  const own = ownElementForNode(doc, nodeId)
+  const view = doc.defaultView
+  if (!own || !view) return own
+
+  let element = own
+  // Bounded rather than `while (true)`: a cycle is impossible in a tree, but a
+  // deep chain of transparent wrappers is not worth walking, and a fixed
+  // ceiling keeps this safe to call from a render.
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (view.getComputedStyle(element).display !== 'contents') return element
+    const children = Array.from(element.children)
+    const only = children.length === 1 ? (children[0] as HTMLElement) : null
+    if (!only || only.hasAttribute('data-node-id')) return element
+    element = only
+  }
+  return element
+}
+
+/**
  * Per-overlay cache of nodeId → rendered element inside one breakpoint
  * iframe.
  *
@@ -216,6 +271,29 @@ export function findRenderedCanvasNodes(
 ): RenderedCanvasNode[] {
   const selector = `[data-node-id="${escapeCssAttributeValue(nodeId)}"]`
   const nodes: RenderedCanvasNode[] = []
+  for (const { doc, frame } of canvasFrameDocuments(root)) {
+    const element = doc.querySelector<HTMLElement>(selector)
+    if (element) nodes.push({ element, frame })
+  }
+  return nodes
+}
+
+/** A canvas frame's document, paired with the iframe hosting it. */
+export interface CanvasFrameDocument {
+  doc: Document
+  frame: HTMLIFrameElement
+}
+
+/**
+ * Every mounted canvas frame document, in frame order.
+ *
+ * The `data-breakpoint-id` check on `<body>` is what distinguishes a canvas
+ * frame from any other iframe in the admin shell (a plugin surface, a preview,
+ * a dev tool). Shared so every lookup here agrees on what counts as a canvas
+ * frame instead of re-deciding it.
+ */
+export function canvasFrameDocuments(root: Document = document): CanvasFrameDocument[] {
+  const docs: CanvasFrameDocument[] = []
   for (const frame of root.querySelectorAll('iframe')) {
     let frameDoc: Document | null
     try {
@@ -226,10 +304,42 @@ export function findRenderedCanvasNodes(
       frameDoc = null
     }
     if (!frameDoc?.body?.hasAttribute('data-breakpoint-id')) continue
-    const element = frameDoc.querySelector<HTMLElement>(selector)
-    if (element) nodes.push({ element, frame })
+    docs.push({ doc: frameDoc, frame })
   }
-  return nodes
+  return docs
+}
+
+/** A measurable rect source for a node, with the frame it was found in. */
+export interface CanvasNodeRectSource {
+  source: CanvasRectSource
+  frame: HTMLIFrameElement
+  doc: Document
+}
+
+/**
+ * The measurable box source for `nodeId` in the first canvas frame that has
+ * it — its own element, or, when it rendered none, the span of its shallowest
+ * rendered descendants.
+ *
+ * `findRenderedCanvasNodes` answers "which element", which is `null` for a
+ * node that renders no element at all (a `studio.instance` fragment — see this
+ * module's docblock). Anything that needs to know WHERE A NODE IS, rather than
+ * which element it is, wants this instead: pass `tree` and a fragment node
+ * still reports the box the user can see and point at.
+ */
+export function findCanvasNodeRectSource(
+  nodeId: string,
+  tree?: NodeTree<PageNode> | null,
+  root: Document = document,
+): CanvasNodeRectSource | null {
+  const selector = `[data-node-id="${escapeCssAttributeValue(nodeId)}"]`
+  for (const { doc, frame } of canvasFrameDocuments(root)) {
+    const element = doc.querySelector<HTMLElement>(selector)
+    if (element) return { source: element, frame, doc }
+    const fragment = tree ? fragmentNodeRectSource(doc, tree, nodeId) : null
+    if (fragment) return { source: fragment, frame, doc }
+  }
+  return null
 }
 
 /**

@@ -1,13 +1,14 @@
 /**
- * flowRouting — turning flows plus a board's frames into the lines to draw.
+ * flowRouting — turning the DERIVED flows plus a board's frames into the lines
+ * to draw.
  *
- * Both halves of the feature route through here and come out the same shape,
- * because they are the same geometry: `routeCodeFlow` for the edges Studio
- * derived from the user's source, `routePrototypeLinks` for the ones the user
- * drew. Only `kind` and the text differ, and the layer renders them with
- * different voices off that field alone.
+ * Authored links are not routed here. They are anchored to the ELEMENT the user
+ * drew them on and are drawn by `BoardPrototypeLayer`, which also owns the
+ * gesture that creates them; this module is frame-to-frame, which is the right
+ * granularity for a claim about the repository rather than about one button.
+ * See `BoardPrototypeLayer`'s docblock for the split.
  *
- * Three decisions live here, and they are all about not drawing N lines where
+ * Two decisions live here, and they are both about not drawing N lines where
  * the user has one thought:
  *
  * ONE LINE PER FRAME PAIR, NOT PER FLOW
@@ -27,22 +28,10 @@
  * to the nearest frame of the target page instead: every variant still shows
  * its outgoing flow, and the line goes to the copy the user is most likely
  * looking at.
- *
- * A `back`/`close` LINK DRAWS NO LINE
- * ───────────────────────────────────
- * It has no target page by construction — it reverses whatever brought you
- * here, which is a fact about the history stack rather than about two frames.
- * The inspector is where it is visible; there is no honest arrow for it.
- */
+ * */
 import type { BoardFrame } from '@core/studio-board'
 import { FRAME_HEIGHT, FRAME_WIDTH } from '@core/studio-board'
-import type { NodeTree } from '@core/page-tree'
-import {
-  groupCodeFlowByPagePair,
-  resolveLinkSource,
-  type CodeFlowEdge,
-  type PrototypeLink,
-} from '@core/studio-prototype'
+import { groupCodeFlowByPagePair, type CodeFlowEdge } from '@core/studio-prototype'
 import { flowConnector, type FlowConnector, type FlowRect } from './flowGeometry'
 
 /** One row of a line's tooltip: what the flow is, and where that came from. */
@@ -54,16 +43,12 @@ export interface FlowDetail {
 
 /** A drawn connector, with everything the layer needs to render and justify it. */
 export interface FlowLine {
-  /** Stable across re-derives: the two frames it runs between, plus which half drew it. */
+  /** Stable across re-derives: the two frames it runs between. */
   key: string
-  /** `code` — Studio read it out of the source, read-only. `design` — the user drew it. */
-  kind: 'code' | 'design'
   connector: FlowConnector
   /** The chip's text: short enough to read at a glance over a frame. */
   chip: string
   details: FlowDetail[]
-  /** An authored link whose source element no longer resolves. Drawn broken, never hidden. */
-  broken: boolean
 }
 
 /** A frame's board box, with `width`/`height` defaulted the same way the renderer defaults them. */
@@ -141,7 +126,6 @@ export function routeCodeFlow(edges: readonly CodeFlowEdge[], frames: readonly B
     for (const { key, connector } of connectorsForPagePair(pair.sourcePageId, pair.targetPageId, byPage)) {
       lines.push({
         key: `code:${key}`,
-        kind: 'code',
         connector,
         chip: pair.edges.length > 1 ? `${pair.edges.length} links` : (pair.edges[0]?.evidence ?? ''),
         details: pair.edges.map((edge) => ({
@@ -149,67 +133,6 @@ export function routeCodeFlow(edges: readonly CodeFlowEdge[], frames: readonly B
           primary: edge.evidence,
           secondary: edge.sourceNodeId,
         })),
-        broken: false,
-      })
-    }
-  }
-
-  return lines
-}
-
-/** How each action reads on a connector chip. `back`/`close` never reach one. */
-const ACTION_CHIP: Readonly<Record<PrototypeLink['action'], string>> = {
-  navigate: 'Navigate',
-  overlay: 'Overlay',
-  back: 'Back',
-  close: 'Close',
-}
-
-/**
- * The authored lines: links the user drew.
- *
- * `trees` supplies each page's node tree so a link's source can be re-resolved
- * — a stored `nodeId` is a source position and rots (`@core/studio-anchor`). A
- * link whose element is GONE is still drawn, marked broken: the user needs to
- * see what their edit cost, and silently dropping the line is exactly the
- * failure the anchor module exists to prevent.
- */
-export function routePrototypeLinks(
-  links: readonly PrototypeLink[],
-  frames: readonly BoardFrame[],
-  trees: ReadonlyMap<string, NodeTree>,
-): FlowLine[] {
-  const byPage = framesByPage(frames)
-  const byPair = new Map<string, PrototypeLink[]>()
-
-  for (const link of links) {
-    if (link.targetPageId === null) continue
-    const pairKey = `${link.source.pageId} ${link.targetPageId}`
-    const existing = byPair.get(pairKey)
-    if (existing) existing.push(link)
-    else byPair.set(pairKey, [link])
-  }
-
-  const lines: FlowLine[] = []
-  for (const group of byPair.values()) {
-    const first = group[0]!
-    const resolved = group.map((link) => resolveLinkSource(link.source.node, trees.get(link.source.pageId)))
-    for (const { key, connector } of connectorsForPagePair(first.source.pageId, first.targetPageId!, byPage)) {
-      lines.push({
-        key: `design:${key}`,
-        kind: 'design',
-        connector,
-        chip: group.length > 1 ? `${group.length} links` : (first.transition ?? ACTION_CHIP[first.action]),
-        details: group.map((link, index) => ({
-          key: link.id,
-          primary: `${ACTION_CHIP[link.action]}${link.transition ? ` · ${link.transition}` : ''}`,
-          secondary: resolved[index]!.live
-            ? (resolved[index]!.nodeId ?? '')
-            : 'The element this link was drawn on is gone',
-        })),
-        // One dead source is enough to mark the line: the user has to be able
-        // to see that something under this arrow no longer exists.
-        broken: resolved.some((source) => !source.live),
       })
     }
   }

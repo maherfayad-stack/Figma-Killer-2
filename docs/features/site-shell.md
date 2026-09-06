@@ -329,6 +329,8 @@ type SiteRuntimeConfig = {
 
 ## Loading the site
 
+The `SiteShell` / `SiteDocument` shape below is the shared in-memory contract the editor store works with regardless of source. The flow in this section is the CMS installation's own path (`CmsAdapter`, `data_rows`). **Studio's own editor at `/admin/site` does not take this path** — it loads and saves through `fsCodemodAdapter` (`src/admin/pages/site/studio/fsCodemodAdapter.ts`) against `GET /admin/api/studio/load` and `POST /admin/api/studio/save`, assembling the same `SiteDocument` shape from the parsed project on disk instead of from `data_rows`. See [docs/features/studio-import.md](studio-import.md) for that path.
+
 ```text
 GET /admin/api/cms/site + /admin/api/cms/pages + /admin/api/cms/components  (parallel)
     │
@@ -372,6 +374,8 @@ Pages and VCs follow the same principle: `validateVisualComponents` silently dro
 ---
 
 ## Saving the site
+
+This section, like "Loading the site" above, describes the CMS installation's own save path. Studio saves through `fsCodemodAdapter`'s `POST /admin/api/studio/save` instead — see [docs/features/studio-import.md](studio-import.md).
 
 The whole document saves through ONE endpoint, in ONE server transaction:
 

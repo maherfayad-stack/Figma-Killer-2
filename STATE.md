@@ -44,6 +44,30 @@ are the remaining WS-2 items, not yet dispatched. See
   - `PROJECTS_TRASH_DIR_NAME` is deliberately NOT in `EXCLUDED_WORKSPACE_DIR_NAMES`: that set names directories to skip INSIDE a project (`node_modules`, `dist`), and this one is a sibling OF projects. Same word, different level.
 - **Verification:** `bun run build` ✅. `bun run lint` ✅. `bun test server/handlers/studio/__tests__/projectTrash.test.ts` → 11 pass. `bun test src/admin/pages/dashboard/DashboardPage.test.tsx` → 4 pass. `bun test src/__tests__/architecture` → 509 pass / 1 fail (`icon-catalog-integrity`'s `chevron-left` sample, `standing-01`-class pre-existing). `bun test server/handlers/studio` → 546 pass / 1 fail in batch (`remoteAssetFetch`, which passes on its own — the known server batch flake).
 - **Human action needed:** **dogfood.** Open `/admin/dashboard`, hover a project tile, press its delete control, confirm the dialog names the project and its page count, delete it, and check that `studio-workspace/.trash/<folder>-<timestamp>/` holds the folder intact and the launcher no longer lists it. Then move the folder back and reload to confirm it returns.
+### canvas-12 — three features the user built were stranded on an unmerged branch; they are back on main
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** restore element resize, authored prototype links + playback, and design-frame interaction suppression from the local `feat/prototype-mode` branch (19 commits, never merged), reconciled with the code-derived flow map PR #25 landed on main in the meantime.
+- **Scope:** `src/admin/pages/site/canvas/{CanvasResizeHandles.tsx,resizeOffer.ts,elementResize.ts,useElementResizeDrag.ts,canvasGesture.ts,hoverSuppression.ts,CanvasHoverSuppressionInjector.tsx,useCanvasNodeInteraction.ts,usePrototypePlayback.ts,usePrototypeLinkKeyboard.ts,playbackMotion.ts,PrototypeOverlay.tsx,PrototypeScreenStack.tsx,BoardPrototypeLayer/}`, edits to `{BreakpointSelectionOverlay,CanvasSelectionOverlayInjector,CanvasContexts,CanvasFrameContexts,IframeFrameSurface,NodeRenderer,CanvasRoot,CanvasLiveSurface,CanvasModeToggle,SelectionToolbar,StudioBoardLayers,canvasNodeLookup,useIframeFrameAutoHeight,BoardFlowLayer/}`, `store/slices/{prototypeSlice,prototypeSelectors,canvasSlice}`, `studio/{prototypeActions,playNavigation,fsCodemodAdapter}`, `panels/PrototypePanel/`, `@core/{studio-prototype/playback.ts,page-tree/sourceWritability.ts}`, `src/styles/globals.css`, docs.
+- **Done so far:**
+  - **Element resize.** Eight handles portalled into the iframe overlay root, positioned by `BreakpointSelectionOverlay`'s RAF tick off the SAME measured rect as the selection ring. `canOfferResize` gates them on three independent refusals; `useElementResizeDrag` previews onto the element's own `style` and commits through `setNodeInlineStyles` (main's current write path, which already runs the per-property writability pre-flight). `canvasGesture` freezes the overlay anchor session and the frame auto-height refit for the length of a drag.
+  - **`canWriteInlineStyleForModule` widened to `alm.*`**, and `fsCodemodAdapter` now shares it as its single gate instead of an inline `startsWith('base.')`. `src/modules/alm/register.tsx` already passes the node's inline styles to the design-system component for the CANVAS, so refusing the WRITE was the two halves disagreeing about the same node. Without this, resize is offered on almost nothing in a real (design-system-based) project.
+  - **Interaction suppression.** `CanvasHoverSuppressionInjector` rewrites `:hover` to an unworn class token in the four page-content stylesheets, design frames only. `CanvasInteractionContext` gives `NodeRenderer` the frame's mode so live frames stop blurring their own fields. The activation latch is armed by the press and cleared by the click, so one press is one activation.
+  - **Prototype authoring + playback.** `BoardPrototypeLayer` (element-anchored connectors, `+` handle, drag/pick, `back`/`close` chips), `usePrototypeLinkKeyboard`, the link inspector + outgoing-link list in `PrototypePanel`, `playback.ts`'s stack machine, `PrototypeScreenStack`/`PrototypeOverlay`/`playbackMotion`, and `setCanvasView` arming/disarming the player.
+- **Next step:** the launcher's delete-a-project-into-a-workspace-trash (branch commits `801db45`/`30a968f`) is still unported — it is a dashboard/server concern, not a canvas one, so it wants its own PR. Everything it needs is readable at `git show feat/prototype-mode:<path>` for `server/handlers/studio/{projectTrash,pageTrash,trashRoutes}.ts`, `src/admin/pages/dashboard/DeleteProjectDialog.tsx`, `src/admin/pages/site/panels/ExplorerPanel/StudioTrashList.tsx`, `src/admin/pages/site/studio/studioTrashRequests.ts`.
+- **Decisions:**
+  - **Two board layers, one feature.** `BoardFlowLayer` keeps the DERIVED edges frame-to-frame (a claim about two pages, covering every page at once — measuring an element per edge is the stutter machine its own doc warns about); `BoardPrototypeLayer` draws the AUTHORED links element-anchored, because the user placed each one on a specific thing and the `+` handle has to sit beside it. One store slice, one mode, one inspector, one file on disk — this is not two prototype systems.
+  - **Main's link MODEL wins over the branch's.** No `origin` discriminator on `PrototypeLink`: a derived edge has no anchor, no chosen transition and nowhere to put `evidence`, so it stays a separate `CodeFlowEdge`. The branch's `codeLinks.ts` is dropped rather than merged — main's `prototypeNavScan` + `prototypeRouteIndex` is the better answer to the same question.
+  - **`createTargetlessLink` deleted rather than ported.** Main's `saveLink` already authors a `back`/`close` link when the action select says so; a second entry point for it would be two ways to do one thing.
+  - **`CanvasRoot` hit the 700-line ceiling**, so the four node-interaction handlers it already bundled into one context value moved to `useCanvasNodeInteraction`.
+- **Landmines:**
+  - `CanvasHoverSuppressionInjector` MUST take its `requestAnimationFrame` / `MutationObserver` from the frame's window **defensively** (`view?.requestAnimationFrame?.bind(view) ?? requestAnimationFrame`, the `CanvasScrollUnrollInjector` shape). An unguarded `view.requestAnimationFrame(...)` throws in the test realm and takes every SIBLING injector's mount down with it — the symptom was `canvasScrollUnrollPinInteraction` failing on a completely unrelated assertion.
+  - `applyPlayAction` must not hand back pieces of its argument: the store passes it a Mutative DRAFT, and an object assigned into a draft while still referencing that draft does not survive finalization. The symptom is precise and awful — scalars stick, the stack silently does not, and the player shows a sheet that will not close.
+  - Two source-assertion gates in `inlineTextEditingWiring.test.ts` pointed at files that no longer hold the rule. One was mine (`CanvasRoot` → `useCanvasNodeInteraction`); the other (`IframeFrameSurface` → `useIframeEventForwarding`) was already stale on `main` from the perf wave's own extraction, and is fixed here because it is the same file.
+  - `defaultViewportApplied` / `projectDefaultViewport.ts` from branch commit `be5c7ee` ("a mobile project opened on desktop") is deliberately NOT ported — it is an editor-preferences change with its own reason, and belongs in its own PR.
+- **Verification:** `bun run build` ✅ (tsc -b + vite, exit 0). `bun run lint` ✅. `bun test src/__tests__/architecture` → 509 pass / 1 fail (`icon-catalog-integrity`'s `chevron-left` sample, `standing-01`-class pre-existing — the vendored `dist/icons` only carries the synced icons). `bun test src/__tests__/canvas` → 731 pass / 15 fail in BATCH; every failing file passes on its own (the known batch-isolation flake), verified file by file. `bun test src/core/studio-prototype src/__tests__/studio` → 228 pass / 0 fail.
+- **Human action needed:** **dogfood.** Open a Studio board and check: (1) select an element, drag a corner and an edge, confirm the size lands in the `.tsx` and survives a reload; (2) confirm no handles appear on a `pkg.*` component or a component call site; (3) move the pointer across the board and confirm buttons/cards no longer light up; (4) switch to prototype mode, drag the `+` from a button onto another frame, confirm the connector; (5) click the connector, change its animation, press Delete; (6) switch to live, confirm Play is armed, click the button and confirm ONE navigation with the right motion, then Back; (7) switch back to the board and confirm clicks select again without a reload.
 
 ### panel-10 — the repo importer was unreachable from the launcher; it is now a peer of "New project"
 - **Agent:** studio-implementer
@@ -664,6 +688,158 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### docs-05 — W6-4: sweep `docs/` to describe the current tree
+
+- **Agent:** studio-scribe (coordinator) + six parallel read-and-correct sweeps
+- **Stage:** done (gates green; PR open as draft)
+- **Updated:** 2026-09-06
+- **Branch:** `docs/docs-directory-sweep` off `origin/main` (W6-4).
+- **Goal:** every page indexed by `docs/README.md` either already describes the
+  current tree or is corrected here; `path-index.md` reflects every file the
+  waves moved/added/deleted; `glossary.md` carries the waves' new vocabulary.
+- **Scope:** 38 files under `docs/` + `PROJECT-BRIEF.md` (one line) +
+  `src/__tests__/architecture/no-core-barrel-deep-imports.test.ts`.
+  **Deliberately NOT touched:** `docs/features/studio-prototype.md`,
+  `STUDIO-PROTOTYPE-PLAN.md`, every prototype/canvas-overlay SOURCE file
+  (a parallel agent owns them), `CLAUDE.md`, root `README.md`,
+  `studio-workspace/`.
+- **Done so far:**
+  - **The gate fix.** `no-core-barrel-deep-imports.test.ts`'s
+    `BARRELLED_MODULES` gained `studio-anchor` and `studio-prototype` (now
+    eleven). **Zero new violations** — verified by grep before and by the gate
+    after: nothing outside those directories deep-imports them today. Its
+    `studio-comments` comment still named `anchorResolve.ts`; rewritten to name
+    `agentGate.ts`, with a new comment explaining why the anchor model and the
+    write gate are deliberately one barrel apart.
+  - **The four named stale pointers, all fixed:** `path-index.md`,
+    `canvas-internals.md:684` and `PROJECT-BRIEF.md` trap 10 all named the dead
+    `src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts` → real path is
+    `src/__tests__/canvas/iframeCanvasQuery.ts`; `path-index.md`'s
+    `studio-comments/anchorResolve.ts` row → split into `studio-comments/`
+    (`agentGate.ts`) and a new `studio-anchor/` row.
+  - **`path-index.md`** also gained: `studio-prototype/` + the three prototype
+    handlers, `studio-capture/captureWire.ts` + `server/ai/mcp/capture/`,
+    `styledStyleRuleSources.ts` + `setStyledDeclaration.ts`, the three warm-CLI
+    modules, `PrototypePanel`/`CommentsPanel` + a catch-all row for the other
+    seventeen panels, a catch-all row for the store slices the table omitted.
+    Corrected: `colorMath.ts` → `src/core/design-tokens/`; the duplicate
+    `ImportProjectDialog` row deleted; the icon-catalog `src/icons/` marked as a
+    `node_modules` package path; gate count 105.
+  - **`path-index.md`'s legend was incomplete** — 🔴 appeared 17 times and 🟠
+    once, neither defined. 🔴 now has a definition (the security/correctness
+    files); the lone 🟠 was folded into it.
+  - **The "Not ours (dormant CMS)" list was wrong in two load-bearing ways**,
+    exactly as `STUDIO-CMS-REMOVAL-PLAN.md`'s Trap 1 predicted: it filed
+    `src/core/publisher/` (Studio's own class-CSS engine) and
+    `src/admin/pages/dashboard/` (the Studio launcher) as dormant. Both
+    corrected in place with the reason, not just removed.
+  - **`glossary.md`:** added **Capture token**, **Code-derived connector**,
+    **Share token**, **Share link**, **Styled-template writeback tier**, **Warm
+    CLI session**, and a full three-value **Trust tiers** entry (0 `static` / 1
+    `render-packages` / 2 `run-project`, with what each buys). Corrected six
+    entries that shipped since they were written: Detach, Instance, Package
+    component, Unroll (all still marked *(planned)*), `StudioEdit`'s kind list,
+    and `.studio/`'s contents. **"Studio mode" is now marked historical** —
+    `studioMode.ts` and `?studio` are gone; the entry says so rather than
+    disappearing, because the phrase is still in circulation.
+  - **`docs/README.md`:** the tree diagram was missing ten pages; the features
+    list is now split Studio-first / inherited, `inspector-disclosure.md` and
+    `mcp-connectors.md` are indexed, `audits/` and `assets/` are indexed **with
+    an explicit warning that `audits/` is a dated historical snapshot whose
+    paths were true then and are not now**, and the source-of-truth table gained
+    Studio's handlers, parser/codemods and trust tier.
+  - **Six parallel sweeps** corrected: `architecture.md` (opening still called
+    the product a CMS; Studio absent from the layer-responsibility table),
+    `server.md` (five real routers missing from the route table), `editor.md`
+    (three dead workspaces in the routing table; `AdminWorkspaceCanvasLayout`
+    does not exist), `design.md`/`design-tokens.md`/`ui-primitives.md` (the
+    `!important` count, a `DateTimePicker` that never existed, two missing
+    z-index tokens, `usePointPosition.ts` → `src/ui/lib/useAnchoredFloating.ts`),
+    `admin-router.md` (six dead routes), `persistence-keys.md`,
+    `editor-history.md` (six `mutate*` helpers → the real seven),
+    `use-async-resource.md`, `error-boundaries.md`, `architecture-tests.md`
+    (**11 gates missing, 2 rows naming deleted gates**, count 95 → 105),
+    `capabilities.md` (**the whole Studio capability family was undocumented**),
+    `module-engine.md`, `typebox-patterns.md`, `studio-comments.md`,
+    `studio-import.md` (no `trust` row in the `.studio/meta.json` table),
+    `inspector-disclosure.md` (three claims that had not actually shipped),
+    `plugin-system.md`, `publisher.md`, `auth-and-access.md`, `site-shell.md`,
+    `modules.md` (`studio.*` namespace absent), `spotlight.md` (three providers
+    deleted), `agent.md` (warm sessions undocumented; toolset 20 → 31),
+    `mcp-connectors.md` (`authProbe.ts` superseded by real OAuth),
+    `site-import.md`, `html-import.md`, `conventions-quickref.md` (stale radius
+    scale + missing token gates), `editor-store.md`, `canvas-internals.md`,
+    `e2e/README.md` (coverage map rebuilt), `e2e/protocol.md`,
+    `e2e/agent-upgrade-dogfood.md`.
+  - **Verified accurate, no diff:** `CONVENTIONS.md`, `react-compiler.md`,
+    `page-tree.md`, `canvas-dnd.md`, `database-dialects.md`,
+    `css-class-registry.md`, `canonical-jsx.md`, `visual-components.md`,
+    `editor-preferences.md`, `studio-git.md`, `studio-deploy.md`,
+    `studio-share.md`, `canvas-iframe-per-frame.md`,
+    `canvas-rulers-and-guides.md`, `board-annotations.md`,
+    `studio-pipeline.md`, `handoff-protocol.md`, `run-log-template.md`, and all
+    eight `deployment/` pages (every env var, compose service, volume and script
+    re-checked against `server/config.ts`, the compose files and `Dockerfile`).
+- **Next step:** none for this entry. The follow-ups it uncovered are listed
+  under Landmines and are each somebody else's PR.
+- **Decisions:**
+  - **No doc page was deleted.** `STUDIO-CMS-REMOVAL-PLAN.md` says nothing has
+    been removed at code level except the workspace routes — Tier 1 is not
+    removed, Tier 2 is blocked on a product decision, Tier 3 is do-not-touch. A
+    page describing still-present dormant code therefore stays, gets a
+    "this is the dormant half" note if it lacked one, and gets corrected
+    wherever it claimed a deleted UI. Inventing a disposition the plan does not
+    state would have been the band-aid.
+  - **`docs/audits/` was left uncorrected on purpose.** 31 files of dated,
+    read-only audit reports naming ~25 paths that have since moved. They are a
+    record of what was found on a date, and rewriting a record is worse than
+    labelling it — `docs/README.md` now carries the label instead.
+  - **Only the two named modules were added to the barrel gate**, though
+    `studio-board`, `studio-capture` and `studio-share` all publish a barrel and
+    would pass today. Widening a gate is a change with its own reason; it
+    belongs in its own PR, not smuggled into a docs sweep.
+- **Landmines / still owed (each needs its own PR — none are docs fixes):**
+  - **The prototype-plan §1/§2/§4 rationale migration that W6-1 deferred to this
+    PR is STILL DEFERRED.** `STUDIO-PROTOTYPE-PLAN.md` and
+    `docs/features/studio-prototype.md` were excluded because a parallel agent
+    was mid-port on the prototype/resize work. Whoever picks that up owns it.
+  - **The e2e suite has real drift, not just doc drift.**
+    `tests/e2e/{admin-navigation,ai,visual-builder}.e2e.ts` still
+    `page.goto('/admin/content')` / `/admin/users`, which now redirect to
+    `/admin/dashboard`. Those specs are very likely failing today.
+  - **`docs/e2e/README.md`'s "Intentionally left agent-run only" section** (~280
+    lines) still contains stale "now automated in `users.e2e.ts`" sub-clauses.
+    It carries a caveat at the top rather than a line-by-line rewrite; the
+    coverage table above it is the accurate source.
+  - **Dead source left by the workspace deletion**, found while verifying docs:
+    `src/admin/state/useWorkspaceLayoutPersistence.ts` has zero call sites;
+    `src/admin/state/workspaceLayout.ts` still branches on `workspace === 'data'`
+    and carries a `dataSidebarCollapsed` field; `src/admin/workspace.ts`'s own
+    doc still describes `'dashboard'` as a CMS widget grid; stale comments in
+    `useSiteEditorUrlSync.ts`, `OpenLivePageButton.tsx`, `useAsyncResource.ts`
+    (cites a `BindingPickerPopover` that does not exist) and
+    `src/core/data/schemas.ts` (cites a deleted gate test).
+  - **`agent.md`'s 31-tool Studio surface is only partly explained.** Six tools
+    (`studio_computed_styles`, `studio_page_diagnostics`, `studio_quality_check`,
+    `studio_typecheck`, `studio_fidelity_report`, the board-comments trio) have
+    real behaviour and no prose. Each needs a section, not a line fix.
+  - `docs/e2e/` references four files that were never committed
+    (`feature-matrix.md`, `feature-validation.tsv`, `capabilities.md`,
+    `.agents/skills/studio-user-e2e/`). Flagged in place, not fabricated.
+- **Verification:** `bun run build` ✅ (`tsc -b` + vite, exit 0 — needed
+  `bun install` first, this worktree had none). `npx eslint` ✅ on the one
+  `.ts` touched. `bun test src/__tests__/architecture` → **509 pass / 1 fail**
+  (the `icon-catalog-integrity` `chevron-left` sample — `standing-01`-class).
+  `bun test` → **11373 pass / 28 fail / 10 errors**; every named failure is in
+  one of the three pre-existing clusters — icon-catalog, the canvas
+  batch-isolation cluster (selection-leak, B3 NodeRenderer lock-down,
+  breakpoint activation, body context menu, VC-ref inline body, scroll-unroll
+  pin, inline-edit key forwarding, canvas form controls, panel rail), and the
+  browser-dependent headless-capture suite (`captureFramesHeadless`, W4-2A
+  `studio_compare`). Nothing docs- or gate-related fails.
+- **Human action needed:** none. This PR ships no runtime behaviour — the only
+  non-`.md` change is a gate widening that already passes.
 
 ### docs-04 — W6-1: retire the shipped plan files
 

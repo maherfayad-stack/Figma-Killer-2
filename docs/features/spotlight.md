@@ -11,7 +11,7 @@ Spotlight is mounted by `<SpotlightRoot>` inside `AuthenticatedAdmin` (post-logi
 - Mount point: `<SpotlightRoot>` in `AuthenticatedAdmin.tsx`. Wraps the whole post-login app.
 - Trigger: ⌘K / Ctrl+K (global keydown). Esc closes (or clears query if non-empty).
 - Built-in commands: `src/admin/spotlight/builtinCommands.ts`. Returns the static `Command[]`.
-- Async providers: `src/admin/spotlight/providers/*.ts` (pages, media, content, data, plugin pages, site files). Run in parallel as the query changes.
+- Async providers: `src/admin/spotlight/providers/*.ts` (pages, plugin pages, site files). Run in parallel as the query changes. `serverProvider.ts`'s `makeServerProvider` factory is general-purpose scaffolding for a server-backed provider — the concrete media/content/data providers that once used it were removed with the standalone Content/Data/Media workspaces.
 - Plugin commands: register via the SDK at activation. `PluginCommand` uses the SDK shape (`label`, optional `subtitle`, `args`, `workspaces`, etc.) and is synthesized into internal `Command` rows under the `plugins` group.
 - State: `useReducer` in `SpotlightRoot`. Recent commands persisted in `localStorage` via `recentStore`.
 - Scopes: a scope narrows the palette to a single domain (e.g. "Find page", "Run command on selected node").
@@ -34,13 +34,10 @@ src/admin/spotlight/
 ├── commandRegistry.ts             — getScope, filterCommands, getPluginPaletteSpotlightProviders
 ├── providerRunner.ts              — async provider scheduler (cache + abort)
 ├── providers/                     — per-domain providers
-│   ├── serverProvider.ts          — shared factory for server-backed providers
+│   ├── serverProvider.ts          — shared factory + fetch primitive for server-backed providers
 │   ├── schemas.ts                 — TypeBox response schemas (one per endpoint)
 │   ├── pagesProvider.ts           — page search (local, reads editor store)
 │   ├── siteFilesProvider.ts       — site file search (local, reads editor store)
-│   ├── mediaProvider.ts           — media search (server)
-│   ├── contentProvider.ts         — data row search (server)
-│   ├── dataProvider.ts            — data table search (server)
 │   └── pluginPagesProvider.ts     — plugin admin page search (server)
 ├── __tests__/
 │   └── serverProvider.test.ts     — unit tests for the shared server provider factory
@@ -154,11 +151,10 @@ The subscription is **dropped on close** to avoid spurious re-renders.
 |--------------------|----------------------------------------------------------------------|
 | `editor`           | Save, Undo, Redo, Wrap in container, Toggle preview                  |
 | `pages`            | Add page, Open page settings                                         |
-| `content`          | New post, Edit post                                                  |
-| `navigation`       | Go to dashboard, Go to site, Go to media, Go to plugins, …           |
-| `settings`         | Open framework scale, Open site settings                             |
+| `navigation`       | Go to Site editor, Go to Account, Open Settings → Plugins/Users/AI   |
+| `settings`         | Open Settings, Open Framework panel, Open Settings → Publishing/Preferences |
 | `ai`               | Open / focus AI assistant                                            |
-| `account` / `users`| Account security, session revocation, user management                |
+| `account` / `users`| Account profile / sign out, invite user, new role                    |
 
 Each command's `when(ctx)` / `workspaces` / `capability` fields filter by user capability + workspace context. `filterCommands(commands, ctx)` runs once per palette open.
 
@@ -196,28 +192,28 @@ There are two kinds of provider:
 
 **Local providers** (`pagesProvider`, `siteFilesProvider`) read data from the editor store synchronously. No HTTP call, `debounceMs: 0`.
 
-**Server providers** (`mediaProvider`, `contentProvider`, `dataProvider`, `pluginPagesProvider`) fetch via `/admin/api/cms/...`. They are built with shared scaffolding in `serverProvider.ts` (see below).
+**Server providers** fetch via `/admin/api/cms/...`. `pluginPagesProvider` is the one remaining example; both fetch primitives it can build on live in `serverProvider.ts` (see below).
 
 ### Server provider scaffolding (`serverProvider.ts`)
 
 `serverProvider.ts` exports two primitives that all server-backed providers use:
 
-**`makeServerProvider(config)`** — the common case factory. Builds a `SpotlightProvider` from a TypeBox schema, an array selector, and a `Command` mapper. Handles the empty-query guard, `?query=&limit=` URL construction, `apiRequest` fetch, abort handling, and result mapping:
+**`makeServerProvider(config)`** — the common case factory. Builds a `SpotlightProvider` from a TypeBox schema, an array selector, and a `Command` mapper. Handles the empty-query guard, `?query=&limit=` URL construction, `apiRequest` fetch, abort handling, and result mapping. No shipped provider uses it today — `pluginPagesProvider` needs `fetchOnAbortEmpty` instead (see below) — but it remains the factory to reach for when adding a new query-driven server provider:
 
 ```ts
-export const dataProvider = makeServerProvider({
-  id: 'data',
-  label: 'Data',
+export const myThingsProvider = makeServerProvider({
+  id: 'myThings',
+  label: 'Things',
   debounceMs: 150,
-  endpoint: '/admin/api/cms/data/tables',
-  schema: DataTablesListResponseSchema,
-  select: (body) => body.tables,
-  toCommand: (table): Command => ({
-    id: `data:${table.id}`,
-    title: table.name,
-    group: 'data',
-    iconName: 'table-solid',
-    run: (ctx) => { ctx.closeSpotlight(); ctx.navigate(`/admin/data?table=${table.id}`) },
+  endpoint: '/admin/api/cms/things',
+  schema: MyThingsResponseSchema,
+  select: (body) => body.things,
+  toCommand: (thing): Command => ({
+    id: `thing:${thing.id}`,
+    title: thing.name,
+    group: 'results',
+    iconName: 'star-solid',
+    run: (ctx) => { ctx.closeSpotlight(); ctx.navigate(`/admin/things/${thing.id}`) },
   }),
 })
 ```

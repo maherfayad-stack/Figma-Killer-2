@@ -4,6 +4,8 @@
 
 The static-site pipeline has two parts: a pure analysis function (`buildImportPlan`) that produces an `ImportPlan` preview, and an async commit function (`commitImportPlan`) that uploads assets and writes to the store. CMS bundle imports keep their native semantics: validate the `SiteBundle`, preview against `/admin/api/cms/import/preview`, resolve any row slug conflicts in the shared Conflicts step, then apply through `/admin/api/cms/import` or `/admin/api/cms/import/archive`. The modal uses the same Review category navigator and Import progress surface for CMS bundles, so tables, media, folders, redirects, conflict resolution, and completion all live in the same picker pattern as HTML/CSS/media imports.
 
+> This one modal mixes two things with different futures: the static-site import path (this doc's main subject — `DropStep`, `AnalyzeStep`, `ConflictsStep`, `@core/siteImport`) is a live feature. The CMS-bundle branch (`CmsBundleAnalyzeStep`, `CmsBundleConflictsStep`, `cmsBundleFlow.ts`, `useCmsBundleImport.ts`, and the `SiteExportModal`/`ExportDialog` counterpart) is present and functional but blocked on a product decision about whether portable full-site export/import between installations is still required — see `STUDIO-CMS-REMOVAL-PLAN.md` (Tier 2).
+
 ---
 
 ## TL;DR
@@ -67,6 +69,8 @@ src/admin/modals/SiteImport/
     ├── createSiteImportAdapter.ts  — wires adapter to editor store + media API
     ├── useCmsBundleImport.ts       — CMS bundle parse/preview/import flow
     ├── cmsBundleFlow.ts            — CMS bundle selection counts + conflict-resolution helpers
+    ├── importPlanning.ts           — plan-orchestration helpers: selection defaults/filtering, conflict-resolution merging, ingest-error formatting, and the `cmsAdapter.loadSite`/`saveSite` load/save bookends for a static import launched outside `/admin/site`
+    ├── importCategoryAccent.ts     — rail-accent/tint assignment for the Review navigator's category list
     ├── ConflictRow.tsx             — single slug / class-name / token-variable conflict row with resolution picker
     ├── ImportStepper.tsx           — shared four-stage progress rail (Review + Import)
     └── importProgress.ts           — RunProgress model used by ImportStep
@@ -300,7 +304,7 @@ The conflict wizard renders bulk controls in each of the three conflict categori
 
 `SiteImportModal.tsx` drives four user-visible stages — **Drop → Review → Conflicts → Import** — shown in the shared `ImportStepper` rail. Completion lives inside the Import stage (the stepper has no separate "Done" stage). Internally the `run` step renders `ImportStep`, whose `RunProgress.phase` switches it between the running, complete, and failed surfaces.
 
-The modal is mounted once at the authenticated admin shell (`AuthenticatedAdmin.tsx`) behind `useAdminUi().siteImportOpen`. It is not owned by the Site editor route. The Site editor, Data workspace, and Spotlight command all open the same shell-level modal state, so importing works from any admin workspace with the required capability.
+The modal is mounted once at the authenticated admin shell (`AuthenticatedAdmin.tsx`) behind `useAdminUi().siteImportOpen`. It is not owned by the Site editor route — `openSiteImport()` is called from the Spotlight "Import" command (`src/admin/spotlight/commands/siteImport.ts`), so importing is reachable from anywhere in the admin shell with the required capability, not only from inside the Site editor.
 
 **Drop** — full-modal drop zone. Accepts loose files, a folder, a static `.zip`, or a CMS-exported `.zip` bundle. A single ZIP is classified before analysis: an Studio transfer archive has `.studio/site-bundle.json` as its first stored entry and routes to the CMS bundle review path; any other ZIP is treated as a static-site import and normalized through `ingestInput` to `FileMap`. JSON `SiteBundle` files are still accepted by the internal parser for tests and direct API work, but the exported user-facing artifact is ZIP. Static import analysis needs a `currentSite`; when the modal opens outside the Site editor, it loads the CMS draft through `cmsAdapter.loadSite('default')` before calling `buildImportPlan`. Size guards: 1 GB aggregate, 10 k files, 5 GB uncompressed (zip-bomb guard).
 
@@ -354,7 +358,7 @@ On success the same step switches to its **complete** state — a success mark, 
 ## Related
 
 - [docs/features/html-import.md](html-import.md) — `@core/htmlImport` is used by `htmlPagePlan.ts` to parse each HTML file's body into a `PageNode` fragment
-- docs/features/site-transfer.md — CMS bundle export/import archive format and server endpoints used by the CMS branch of this modal
+- CMS bundle export/import archive format and server endpoints used by the CMS branch of this modal: `server/handlers/cms/{export,import,importArchive,importPreview}.ts`, `src/admin/modals/SiteExport/SiteExportModal.tsx`, `src/admin/shared/ExportDialog/`. No standalone feature doc exists for this path yet.
 - [docs/reference/page-tree.md](../reference/page-tree.md) — `NodeTree<PageNode>`, `ImportFragment` shape
 - [docs/reference/typebox-patterns.md](../reference/typebox-patterns.md) — boundary validation
 - Source-of-truth files:

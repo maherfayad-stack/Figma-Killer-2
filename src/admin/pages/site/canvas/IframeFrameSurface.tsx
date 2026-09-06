@@ -69,6 +69,7 @@ import { UserStylesheetInjector } from './UserStylesheetInjector'
 import { ProjectCssInjector } from './ProjectCssInjector'
 import { AuthoredCssInjector } from './AuthoredCssInjector'
 import { CanvasAnimationInjector } from './CanvasAnimationInjector'
+import { CanvasHoverSuppressionInjector } from './CanvasHoverSuppressionInjector'
 import { CanvasDiagnosticsInjector } from './CanvasDiagnosticsInjector'
 import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
 import { CanvasSelectionOverlayInjector } from './CanvasSelectionOverlayInjector'
@@ -394,7 +395,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         />
         {iframeDoc &&
           createPortal(
-            <CanvasFrameContexts frameElement={iframeRef.current} frameDocument={iframeDoc} axes={frameAxes}>
+            <CanvasFrameContexts
+              frameElement={iframeRef.current}
+              frameDocument={iframeDoc}
+              axes={frameAxes}
+              interaction={interaction}
+            >
               {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
               <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
               {/* Runtime diagnostics: window errors, unhandled rejections,
@@ -427,6 +433,15 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   screen is visible instead of a scrollable box. Live mode
                   scrolls natively and keeps the app's own clipping. */}
               {!isLive && <CanvasScrollUnrollInjector targetDocument={iframeDoc} />}
+              {/* Design frames only: the page's own `:hover` rules are rewritten
+                  so they cannot match. Moving the pointer across a board to
+                  reach a node should not repaint every button and card it
+                  crosses — and a hover state that changes LAYOUT moves the box
+                  the selection ring and the resize handles are measuring. Live
+                  mode is a visitor preview, so it keeps real hover, exactly as
+                  it keeps real motion above. Mounted AFTER the CSS injectors it
+                  rewrites so its first pass has sheets to walk. */}
+              {!isLive && <CanvasHoverSuppressionInjector targetDocument={iframeDoc} />}
               {/* Author CSS — @layer user-authored (board-27's raw AuthoredCssInjector always precedes mc-classes; see its own doc) */}
               <AuthoredCssInjector targetDocument={iframeDoc} viewport={viewport} />
               <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />

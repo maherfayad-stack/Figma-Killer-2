@@ -31,6 +31,7 @@ G1–G10 shipped. Two pieces did not, and are tracked as open workstreams in
 |---|---|
 | **G6.4 — Selection colours** | Listing every distinct colour across a multi-node selection and rewriting all of them from one edit. Deferred at `FillSection.tsx` — it needs store-side multi-select style editing that does not exist yet. |
 | **§6 — The measurement gate** | No `scrollHeight <= clientHeight` test exists, and no height baseline was ever recorded in `docs/audits/`. The budgets in §6 are therefore unenforced. |
+| **G9 — `color`/`textShadow` relocation** | Still resident on Typography's own rows rather than moved into Fill/Effects — see G9's own note below. Not tracked in `STUDIO-NEXT-WORKSTREAMS.md` yet. |
 
 One goal was superseded rather than shipped as written: **G8.4** moved
 `transform`/`transition`/`animation` out of Effects, but into a full
@@ -164,10 +165,14 @@ unset companion property, then any project-token apply action.
 
 A section marked `collapsedWhenEmpty` with nothing set renders as `▸ Title [+]`
 and nothing more; `+` reveals the body for that selection only. The flag is set
-on `background`, `border`, `effects`, `interaction`, `typography` — and **not**
-on `position`, `size`, `layout`, `spacing`, which are Figma's always-present
-Position/Layout block (F1, F3) and keep their controls. (`appearance` later
-joined the never-collapse set.)
+on `spacing`, `fill`, `border`, `effects`, `animations`, `interaction`,
+`typography` — and **not** on `position`, `size`, `layout`, `appearance`, which
+keep their controls always present (`position`/`size`/`layout` are Figma's
+always-present Position/Layout block, F1/F3; `appearance` joined the
+never-collapse set when G5 introduced it — see `classStyleSections.ts`).
+Margin (the only property left in `spacing` once G4 moved padding into
+`layout`) *does* collapse: an element with no margin costs one line, same as
+any other empty section.
 
 A section with a value set at a *non-active* breakpoint is **not** empty for the
 purpose of this rule — hiding it would hide the user's own work. Such a section
@@ -286,8 +291,12 @@ An 8-entry grid becomes **four rows** — family / weight+size /
 line-height+letter-spacing / align+valign+`⚙` — with *more* capability than
 before, because the popover's Details and Variable tabs expose properties
 previously reachable only by typing a property name into the custom-properties
-editor. `color` moves to **Fill** for text nodes; `textShadow` moves to
-**Effects** as a shadow layer.
+editor. The target design moves `color` to **Fill** for text nodes and
+`textShadow` to **Effects** as a shadow layer; **not shipped yet** —
+`TypographySection.tsx` keeps both resident on its own four rows, because G6
+(Fill) and G8 (Effects) had not yet run when this section shipped and moving
+them first would have deleted the only way to reach them. That is the one way
+this section is not literally four rows today.
 
 - **G9.2** — vertical align: the honest CSS mapping is `alignItems` on the text
   node's own box, which only applies in flex context. Where it cannot be written
@@ -309,8 +318,12 @@ with a 7th overflow button carrying *Tidy up* / *Distribute vertical spacing* /
 *Distribute horizontal spacing*. F29's constraint dropdowns appear in absolute
 mode — they choose *which* of left/right and top/bottom the offsets are written
 to, a real and frequently-wanted choice previously expressible only by which of
-four fields the user typed in. `zIndex` and `rotate` move into the Position `⚙`
-(`RotationRow.tsx` refuses when `transform` already rotates).
+four fields the user typed in. `rotate` is now **resident** on the section's
+third row (`RotationRow.tsx`, paired with `ZIndexSettingsRow` on the same row)
+rather than tucked behind a popover — it writes the standalone `rotate`
+property and refuses, with a reason, when `transform` already contains a
+rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
+(`ZIndexSettingsRow`).
 
 ---
 

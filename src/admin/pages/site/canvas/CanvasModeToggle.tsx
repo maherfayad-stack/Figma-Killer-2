@@ -18,9 +18,16 @@
  * PROTOTYPE is a THIRD, orthogonal axis, and deliberately not a third tab in
  * the Design/Live tablist. Those two are mutually exclusive canvas SURFACES;
  * prototype mode is an overlay on the design board that draws the project's
- * flows (`BoardFlowLayer`), so it is a pressed-state toggle, not a tab. It only
- * appears where it means anything — a Studio board in design view — because on
- * a CMS page or in live mode there is no board to draw a flow across.
+ * flows (`BoardFlowLayer`, `BoardPrototypeLayer`) and lets the author draw
+ * their own, so it is a pressed-state toggle, not a tab. It only appears where
+ * it means anything — a Studio board in design view — because on a CMS page or
+ * in live mode there is no board to draw a flow across.
+ *
+ * PLAY is the FOURTH, and it is prototype mode's other half: live view with
+ * clicks routed to the player instead of to selection. It appears only in live
+ * view for the same "only where it means something" reason, and `setCanvasView`
+ * disarms it on the way out — a flag that can be set where no control exists to
+ * clear it is a trap, and this one was, until a reload was the only cure.
  */
 import type { SyntheticEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -30,7 +37,8 @@ import type { RuntimeScriptStatus } from './useRuntimeScriptBuild'
 import { CursorMinimalSolidIcon } from 'pixel-art-icons/icons/cursor-minimal-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
-import { ArrowRightIcon } from 'pixel-art-icons/icons/arrow-right'
+import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
+import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import { SmartphoneSolidIcon } from 'pixel-art-icons/icons/smartphone-solid'
 import { TabletSolidIcon } from 'pixel-art-icons/icons/tablet-solid'
@@ -68,6 +76,8 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
   const hasBoard = useEditorStore(selectHasActiveBoard)
   const boardMode = useEditorStore((s) => s.boardMode)
   const setBoardMode = useEditorStore((s) => s.setBoardMode)
+  const playMode = useEditorStore((s) => s.playMode)
+  const setPlayMode = useEditorStore((s) => s.setPlayMode)
 
   // The toggle lives inside the canvas surface, which has its own click /
   // keyboard handlers (deselect, shortcuts, etc.). Stop propagation so the
@@ -121,7 +131,7 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
       {hasBoard && view === 'design' && (
         <>
           <span className={styles.divider} aria-hidden="true" />
-          <Tooltip content="Prototype mode (show the project's flows on the board)">
+          <Tooltip content="Prototype mode (draw links between screens, and see the ones your code already makes)">
             <button
               type="button"
               aria-pressed={boardMode === 'prototype'}
@@ -130,7 +140,30 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
               className={cn(styles.tab, boardMode === 'prototype' && styles.tabActive)}
               onClick={() => setBoardMode(boardMode === 'prototype' ? 'design' : 'prototype')}
             >
-              <ArrowRightIcon size={14} aria-hidden="true" />
+              <LinkIcon size={14} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </>
+      )}
+
+      {/* Play — ARMS the player in live view. Without this a click in live mode
+          would mean both "select this node" and "follow this link", which is
+          not resolvable. Live only: the board shows every screen at once, and
+          `setCanvasView` disarms the player on the way out so the flag can
+          never be set where no control exists to clear it. */}
+      {view === 'live' && (
+        <>
+          <span className={styles.divider} aria-hidden="true" />
+          <Tooltip content="Play (clicks follow prototype links instead of selecting)">
+            <button
+              type="button"
+              aria-pressed={playMode}
+              aria-label="Play"
+              data-testid="canvas-play-toggle"
+              className={cn(styles.tab, playMode && styles.tabActive)}
+              onClick={() => setPlayMode(!playMode)}
+            >
+              <CursorClickSolidIcon size={14} aria-hidden="true" />
             </button>
           </Tooltip>
         </>

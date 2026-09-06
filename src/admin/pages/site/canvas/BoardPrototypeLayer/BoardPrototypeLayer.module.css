@@ -1,0 +1,202 @@
+/*
+ * Prototype connectors and the `+` handle.
+ *
+ * CHROME IS SIZED IN SCREEN PIXELS, POSITIONS IN BOARD UNITS
+ * ─────────────────────────────────────────────────────────
+ * Every coordinate here is a board unit, which is right for POSITIONS — the
+ * ancestor transform then handles pan/zoom for free. It is wrong for THICKNESS.
+ * A 2px stroke in board units is 1px at 50% zoom and 0.5px at 25%, so the
+ * connectors faded out at exactly the zoom levels where a whole flow fits on
+ * screen and you most want to see them. Chrome must not shrink with the
+ * content it annotates.
+ *
+ * `--canvas-zoom` (published on `CanvasTransformLayer` every rAF, the same
+ * variable comment pins counter-scale by) undoes the transform for anything
+ * whose SIZE is chrome: `vector-effect: non-scaling-stroke` for strokes,
+ * `calc(<px> / var(--canvas-zoom))` for everything else.
+ *
+ * Absolutely positioned at the transform layer's origin, same as
+ * BoardGuidesLayer/BoardNotesLayer, so every coordinate below is a plain board
+ * unit and pan/zoom is handled by the ancestor transform for free.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* The layer itself is not a target — only the connectors and the handle
+       are, and they opt back in below. Without this, an invisible box over the
+       board would swallow clicks meant for frames. */
+    pointer-events: none;
+}
+
+/*
+ * One SVG for every connector, sized and offset to the bounding box of the
+ * curves (`routesBounds`). The viewBox is set to the same board rect in the
+ * component, so path coordinates are board units with no translation.
+ */
+.canvas {
+    /* Defaults for the JS-driven properties, so no `var()` here needs a
+       fallback and a missing one is visible rather than silently absorbed. */
+    --connector-x: 0px;
+    --connector-y: 0px;
+    --connector-w: 0px;
+    --connector-h: 0px;
+    position: absolute;
+    left: var(--connector-x);
+    top: var(--connector-y);
+    width: var(--connector-w);
+    height: var(--connector-h);
+    overflow: visible;
+    pointer-events: none;
+}
+
+.line {
+    fill: none;
+    stroke: var(--canvas-prototype-link);
+    stroke-width: 2;
+    stroke-linecap: round;
+    /* Constant 2px on screen at every zoom — see this file's header. */
+    vector-effect: non-scaling-stroke;
+}
+
+/* A 2px curve is a 2px hit target. This invisible fat stroke is what makes a
+   connector clickable without making it look thick. */
+.hitArea {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 14;
+    /* A hit target that shrank with zoom would be 3px wide on a fitted board. */
+    vector-effect: non-scaling-stroke;
+    pointer-events: stroke;
+    cursor: pointer;
+}
+
+/*
+ * The two ends. Hollow at the source, filled at the target: which end the flow
+ * leaves and which it arrives at has to be readable from the drawing alone,
+ * and a rotated arrowhead cannot be sized in CSS without also knowing which
+ * edge it leaves from.
+ */
+.endpoint {
+    fill: var(--canvas-prototype-link);
+    stroke: none;
+    r: calc(4px / var(--canvas-zoom));
+    pointer-events: none;
+}
+
+.origin {
+    fill: var(--bg-surface);
+    stroke: var(--canvas-prototype-link);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+    r: calc(3px / var(--canvas-zoom));
+    pointer-events: none;
+}
+
+.connector[data-selected='true'] .line {
+    stroke-width: 3;
+}
+
+.connector[data-selected='true'] .endpoint {
+    r: calc(6px / var(--canvas-zoom));
+}
+
+.draftLine {
+    fill: none;
+    stroke: var(--canvas-prototype-link-draft);
+    stroke-width: 2;
+    stroke-dasharray: 5 5;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
+/*
+ * The `+` beside the selected element. Sized in board units so it scales with
+ * the canvas like everything else on the board — a handle that stayed 20px on
+ * screen would drift away from its element at every zoom level.
+ */
+.handle {
+    --handle-x: 0px;
+    --handle-y: 0px;
+    position: absolute;
+    /* `handlePoint` returns the middle of the element's RIGHT EDGE, with no
+       gap: the offset is applied here, in screen pixels, so the handle sits
+       the same distance from its element at every zoom. */
+    left: calc(var(--handle-x) + 14px / var(--canvas-zoom));
+    top: var(--handle-y);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    /* Centre on the board point with a transform rather than a negative
+       margin: half of 20px is not a spacing-scale value and never will be —
+       it is geometry tied to the handle's own size, not rhythm. The scale
+       undoes the canvas transform so the handle stays a 20px target instead
+       of the 10px speck it was at a typical board zoom. */
+    transform: translate(-50%, -50%) scale(calc(1 / var(--canvas-zoom)));
+    border: 1px solid var(--canvas-comment-pin-ring);
+    border-radius: 50%;
+    background: var(--canvas-prototype-link);
+    color: var(--canvas-comment-pin-text);
+    font-size: var(--text-s);
+    line-height: 1;
+    cursor: crosshair;
+    pointer-events: auto;
+}
+
+.handle:hover {
+    background: var(--canvas-prototype-link-draft);
+}
+
+/*
+ * The frame under the cursor mid-drag. Board units, like everything else in
+ * this layer, so it lands exactly on the frame at any zoom without measuring
+ * anything: a frame's board rect is store data, not a DOM read.
+ */
+.dropTarget {
+    --drop-x: 0px;
+    --drop-y: 0px;
+    --drop-w: 0px;
+    --drop-h: 0px;
+    position: absolute;
+    left: var(--drop-x);
+    top: var(--drop-y);
+    width: var(--drop-w);
+    height: var(--drop-h);
+    border: calc(2px / var(--canvas-zoom)) solid var(--canvas-prototype-link);
+    border-radius: calc(var(--radius) / var(--canvas-zoom));
+    background: var(--canvas-prototype-drop-wash);
+    pointer-events: none;
+}
+
+/*
+ * A `back` or `close` interaction, which names no screen and so has no
+ * connector. Sized in screen pixels like the handle — it is chrome, and chrome
+ * that shrinks with the board is chrome nobody can read.
+ */
+.badge {
+    --badge-x: 0px;
+    --badge-y: 0px;
+    position: absolute;
+    left: calc(var(--badge-x) + 14px / var(--canvas-zoom));
+    top: var(--badge-y);
+    padding: var(--space-3xs) var(--space-xs);
+    transform: translate(-50%, -50%) scale(calc(1 / var(--canvas-zoom)));
+    border: 1px solid var(--canvas-prototype-link);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--canvas-prototype-link);
+    font-size: var(--text-xs);
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.badge[data-selected='true'] {
+    background: var(--canvas-prototype-link);
+    color: var(--canvas-comment-pin-text);
+}

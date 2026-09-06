@@ -201,7 +201,28 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
 
   setCanvasMode: (mode) => set({ canvasMode: mode }),
 
-  setCanvasView: (view) => set({ canvasView: view }),
+  /**
+   * Switch canvas view — and arm or disarm the prototype player with it.
+   *
+   * THE PLAYER BELONGS TO LIVE VIEW. Live mode is one real-size frame of the
+   * app, which is where following a prototype link means anything; the board
+   * shows every screen at once, and a click there is a selection. Leaving live
+   * with `playMode` still set was a trap with no way out: `CanvasModeToggle`
+   * only draws the Play button in live view, so the board silently routed every
+   * click to the player — no selection, no ring, no visible control to turn it
+   * off, and only a page reload cleared it.
+   *
+   * Arriving in live view arms BOTH the player and the site's runtime scripts,
+   * because that is what live mode is for: seeing the thing run. Either can be
+   * switched off from the toggle without leaving the view.
+   */
+  setCanvasView: (view) => {
+    if (Object.is(get().canvasView, view)) return
+    set({ canvasView: view, ...(view === 'live' ? { runScripts: true } : {}) })
+    // Through the player's own action rather than a second copy of it here:
+    // disarming also has to reset the screen stack, and that is its job.
+    get().setPlayMode(view === 'live')
+  },
 
   setRunScripts: (run) => set({ runScripts: run }),
 

@@ -100,6 +100,7 @@ Callers splice the fragment into the page tree via `insertImportedNodes(parentId
 | `h1`–`h6`, `p`, `span`, `small`, `strong`, `em` | `base.text` | `text` = `el.textContent`, `tag` = tag name | No |
 | `a` with class `btn` | `base.button` | `label` = `el.textContent`, `href`, `target` | No |
 | `a` (no `btn` class) | `base.link` | `text` = `el.textContent`, `href`, `target` | No |
+| `svg` | `base.svg` | `svg` = the element's own `outerHTML` (verbatim, sanitised by the publisher's SVG DOMPurify profile), `title` from `aria-label` | **No** — children are part of the captured markup, not separate nodes |
 | `img` | `base.image` | `src` = `src` attribute only | No |
 | `form` | `base.form` | `mode`, `formId`, CMS data attrs, custom `action` / `method` | Yes |
 | `label` | `base.label` unless wrapping elements, then `base.container` | `text`, `targetMode`, `targetId` | No for plain labels; yes for wrapper labels |
@@ -112,6 +113,9 @@ Callers splice the fragment into the page tree via `insertImportedNodes(parentId
 | `ul`, `ol` | `base.container` | `tag` = tag name | Yes |
 | `div`, `section`, `article`, `main`, `header`, `footer`, `nav`, `aside` | `base.container` | `tag` = tag name | Yes |
 | `area`, `base`, `br`, `col`, `embed`, `hr`, `link`, `meta`, `param`, `source`, `track`, `wbr` (void elements) | `base.container` | `tag: 'custom'`, `customTag` = tag name | **No** |
+| `iframe` (YouTube `src`) | `base.video` | `videoUrl` = `src`, optional `title`, `noRelatedVideos` (from `?rel=0`), `playsinline` (from `?playsinline=1`) | No |
+| `iframe` (non-YouTube — Vimeo, maps, arbitrary embeds) | `base.container` | `tag: 'custom'`, `customTag: 'iframe'` (attributes preserved via `htmlAttributes`) | No |
+| `video` | `base.video` | `videoUrl` = `src` attribute, or the first `<source src>` child if `src` is absent; `autoplay`, `loop`, `muted`, `controls`, `playsinline` from the matching boolean attributes | No — any `<source>` children are consumed by this rule, not emitted as separate nodes |
 | `*` (catch-all) | `base.container` | `tag: 'custom'`, `customTag` = tag name | Yes |
 
 **Key details:**
@@ -247,4 +251,4 @@ The importer preserves CSS across two layers, both gated by `isEmittableProperty
   - `src/admin/modals/ImportHtml/ImportHtmlModal.tsx` — paste-HTML modal
   - `src/admin/spotlight/commands/importHtml.ts` — Spotlight command
 - Gate tests:
-  - `src/__tests__/htmlImport/mapping.test.ts` — 95 per-rule mapping tests
+  - `src/__tests__/htmlImport/mapping.test.ts` — 137 per-rule mapping tests

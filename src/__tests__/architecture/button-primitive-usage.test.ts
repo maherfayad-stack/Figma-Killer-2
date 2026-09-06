@@ -106,6 +106,20 @@ const ALLOWLIST = new Set([
   // all still provided explicitly (see CommentPin.tsx).
   'admin/pages/site/canvas/BoardCommentsLayer/CommentPin.tsx',
 
+  // §8.5 — the prototype `+` handle and the `back`/`close` badges. Same family
+  // as CommentPin above, for the same two reasons:
+  //   * they are positioned at exact BOARD coordinates and counter-scale
+  //     against the live canvas zoom on their own root element, which Button's
+  //     token-driven sizing cannot express without fighting rules whose
+  //     CSS-Modules order is not guaranteed;
+  //   * their surface is a canvas-affordance token (--canvas-prototype-link),
+  //     which is not a Button variant and should not become one — it belongs
+  //     with the selection and hover rings, not with editor chrome.
+  // The `+` is also a drag SOURCE, not a click target: its entire behaviour is
+  // a raw pointerdown that never resolves into a click. Accessible names and
+  // keyboard reachability are still provided explicitly.
+  'admin/pages/site/canvas/BoardPrototypeLayer/BoardPrototypeLayer.tsx',
+
   // ── §8.6 ARIA tablist tabs ──────────────────────────────────────────────
   // role="tab" buttons inside role="tablist" need a custom tab layout
   // (icon + label, aria-selected, no border, mode-specific active state).

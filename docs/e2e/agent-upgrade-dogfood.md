@@ -160,30 +160,53 @@ house style.
 
 ## Group D — Figma MCP (needs a Figma MCP server connected)
 
-**D1 — a Figma-capable subagent exists at all.**
-With an approved Figma server, start a turn.
-*Expect:* `.claude/agents/figma-asset-scout.md` and `.claude/figma.md` are
-generated in the project.
-*Failure:* neither appears — the server name/summary did not match the detection
-heuristic (it looks for "figma").
+**Superseded since this plan was written.** The eleven-agent subagent roster
+(including a project-conditional `figma-asset-scout` subagent and its
+`.claude/figma.md` reference file) was replaced by a generated per-project
+`CLAUDE.md` — `server/handlers/studio/projectGuide.ts`, gated by
+`server/handlers/studio/projectGuideManifest.ts`'s `GUIDE_DEFINITION_VERSION`
+(currently `8`; bump `4`'s note is the removal record). Every file the old
+roster wrote is now swept once per project as a legacy artefact
+(`LEGACY_GUIDE_ARTEFACTS` in `projectGuideManifest.ts`) precisely because a
+stale `.claude/figma.md`/`.claude/agents/figma-asset-scout.md` describing a
+removed subsystem kept competing with — and winning against — current
+instructions. `assertKnownAgentTools` (`server/handlers/studio/
+projectMcpApprovals.ts`) is dead code now: "with no subagent definitions left
+to validate, the gate had nothing to gate." D1–D3 below as originally written
+no longer apply; what to check instead:
 
-**D2 — the roster still generates.** *Check this even if you skip the rest.*
-*Expect:* `.claude/agents/` holds the full roster.
-*Failure:* it is empty or short. `assertKnownAgentTools` throwing degrades the
-turn to **no subagents at all**, silently. That was the structural blocker this
-workstream removed, and a regression would be invisible without this check.
+**D1 (revised) — Figma capability is surfaced to the MAIN agent, not a
+subagent.** With an approved Figma server, start a turn and ask about a
+Figma-sourced design. *Expect:* the turn's system prompt (built by
+`server/ai/tools/studio/systemPrompt.ts`) carries a "Figma MCP connector:
+configured" line, and the agent calls the connector's own design-context /
+variable-definitions tools directly — described generically ("its
+VARIABLE-DEFINITIONS tool", "the DESIGN-CONTEXT tool") rather than by a
+hardcoded literal tool name, because `systemPrompt.ts` deliberately does not
+assume or invent one. *Failure:* the agent invents an `mcp__figma__…` tool
+name or retries with a different one after a "No such tool available" result —
+`systemPrompt.ts`'s own guidance says explicitly not to.
 
-**D3 — tool names.** `figma-asset-scout` is granted
-`mcp__<server>__get_metadata` and `mcp__<server>__get_image` — Figma's
-documented Dev Mode names, **never verified against a live connection**. If your
-server exposes different names, correct the two literals in
-`server/handlers/studio/agentRosterFigma.ts`. This is roster content, not
-architecture.
+**D2 (revised) — subagent delegation, when it happens, never invents a name.**
+`Task` was pulled from the tool surface after exactly this failure (delegating
+to an invented `subagent_type`, silently falling back to the CLI's own
+`general-purpose` agent, and reporting fabricated success) and was later
+restored — `server/ai/drivers/claudeCliToolSurface.ts`'s "`Task` — withheld
+once, and why it is back". *Expect:* any delegated turn always passes
+`subagent_type: 'general-purpose'`, never a made-up name — there is no
+`.claude/agents/` roster to delegate to any more.
+
+**D3 (removed).** There is no `server/handlers/studio/agentRosterFigma.ts` and
+no hardcoded `get_metadata`/`get_image` literal to correct — that file never
+existed under that name in this codebase; the closest predecessor concept
+(vetting an agent's `tools:` frontmatter against approved MCP servers) lived in
+`projectMcpApprovals.ts` and is now unused, per D1's note above.
 
 **D4 — an asset lands without transiting the model.**
 Ask for a component's icon to be pulled into the project.
-*Expect:* `studio_fetch_remote_asset` fetches server-side and returns a
-`relPath`. No base64 blob in the conversation.
+*Expect:* `studio_fetch_remote_asset` (`server/ai/mcp/tools/studio/
+remoteAssetTools.ts`) fetches server-side and returns a `relPath`. No base64
+blob in the conversation.
 *Failure:* the agent hand-carries base64 between two tools — which blows the
 context window on any real asset.
 

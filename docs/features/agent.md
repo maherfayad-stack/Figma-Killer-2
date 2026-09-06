@@ -114,7 +114,7 @@ src/admin/pages/site/panels/AgentPanel/
 ├── designReferenceHeader.ts — bounded-prefix PNG/JPEG/WebP header sniff (no decode) for the lossless reference path
 ├── useDesignReferenceAttachment.ts — attach/upload/remove state for the ONE project design reference
 ├── DesignReferenceAttachment.tsx — composer control: attach button, or filename/dimensions/size chip with progress
-├── ModelPicker.tsx         — credential + model selector used in the input bar
+├── AgentSessionControls.tsx — effort/permission-mode controls + restart-session button, above the composer
 ├── ConversationHistory.tsx — history popover (browse, restore, delete past threads)
 ├── ContextMeter.tsx        — compact five-segment context + conversation-usage tooltip
 ├── ContextMeter.module.css
@@ -135,6 +135,8 @@ src/admin/modals/Settings/sections/
 
 Shared AI number and spend formatting lives in `src/admin/ai/usageFormat.ts`, so
 the Audit tab and compact composer usage detail use identical labels.
+
+`ModelPicker.tsx`, referenced throughout this doc, lives at `src/admin/ai/ModelPicker/ModelPicker.tsx` — outside both trees above, shared by the composer and any other credential/model selector.
 
 The Agent Panel owns the credential list load for its header, lock-state empty states, and model picker. The header always contains a `ConversationHistory` popover (browse and restore past threads), a "New chat" button (`startNewAgentConversation`), a conditional "Clear conversation" button (visible when `agentMessages.length > 0`), a streaming badge, and an "AI settings" shortcut that opens the Settings modal's AI section (`useAdminUi.getState().openSettings('ai')` — AI credentials/defaults/MCP are no longer a standalone route). The AI settings button is always visible in the header, independent of credential state.
 
@@ -203,6 +205,8 @@ Each entry in **Settings → AI → Providers** stores one credential. The provi
 ## Claude CLI provider (WS-11) — a subprocess, not an HTTP driver
 
 `server/ai/drivers/claudeCli.ts` is the exception to "every driver talks directly to its provider's REST API": it drives the local `claude` binary the user already has installed and logged in — the same mechanism the Claude Code VS Code extension uses. Studio never holds an API key, never reads `~/.claude/.credentials.json`, and never sends an `Authorization` header to Anthropic itself for this provider. See `src/__tests__/architecture/ai-driver-isolation.test.ts`'s doc comment for the exact rule this carves out (no provider SDK, ever; HTTP/SSE or a local user-installed binary).
+
+**A conversation now keeps one warm `claude` subprocess alive across its turns, with the cold spawn-per-turn model described below as the crash-recovery fallback, not the primary path.** Every turn used to cold-spawn `claude` and re-handshake every MCP server attached to it — the largest fixed cost in a turn, paid identically for a one-line edit and a full screen rebuild. `claudeCliSessionPool.ts` (which conversation gets which process, and how long it lives) and `claudeCliWarmSession.ts` (how to talk to one process over `--input-format stream-json`, per `claudeCliStdinProtocol.ts`'s verified wire shape) implement this. A pooled process is reused only when the turn's `fingerprint` — model, effort, permission mode, cwd, config dir, native tool allowlist, and the MCP config's content hash — matches exactly; anything else kills the old process and spawns fresh, i.e. runs the cold path. Idle processes are killed after 10 minutes, every process is killed after 1 hour regardless of use, and at most 8 live processes are held across all users/conversations (least-recently-used idle one evicted first). A turn that cannot use a warm process (none compatible, spawn failed, or the process died before producing output) runs the cold path unchanged — everything below about `--session-id`/`--resume`, the filesystem transcript probe, and per-turn MCP connector minting/revocation describes that cold path, which both paths still fall back to and which remains fully live code, not a legacy shim.
 
 **Two login paths, both landing in the same per-user `CLAUDE_CONFIG_DIR` — only one of which stores anything.** WS-11 §3 P2's finding still holds: *"L1 needs no row, and no default either. A terminal login leaves nothing for Studio to store; the credential lives in the user's config dir."* This section's earlier draft had L1 auto-create a keyless credential row to give the model picker something to select; that shipped a real DB `CHECK` violation (`ai_creds_apikey_shape_check` requires `ciphertext`/`iv` non-null for every `apiKey`-mode row) and, on reflection, the wrong shape entirely — a row that represents "there is no secret here" is exactly what that constraint exists to forbid. It was reverted; no migration ships for this.
 
@@ -342,7 +346,7 @@ The dynamic suffix carries the project profile, trust tier, the live board/selec
 
 ### The Studio toolset (`server/ai/tools/studio/index.ts`)
 
-`studioAgentTools` is an explicit **subset** of the MCP registry — 20 tools, not the registry's 35 plus the entire CMS `site_*` set. Two things were wrong with serving everything: most of it is now dead weight (every tool that existed only because the agent had no filesystem is strictly slower than the native equivalent), and a large toolset is itself a latency and accuracy cost — definitions are re-sent every turn, and a model choosing among ~60 tools explores instead of acting.
+`studioAgentTools` is an explicit **subset** of the MCP registry — `STUDIO_AGENT_TOOL_NAMES` (`agentToolNames.ts`) currently names 31 tools, not the full registry plus the entire CMS `site_*` set. The list has grown since it was first curated (screenshot/compare/measure, computed-styles and page-diagnostics readbacks, typecheck, a fidelity report, design-reference and design-variable ingestion, board/frame geometry, board comments, project/component orientation, and asset/dependency tools — see `agentToolNames.ts`'s own inline comments for why each one is there and what it replaced). Two things were wrong with serving everything: most of what stayed excluded is dead weight (every tool that existed only because the agent had no filesystem is strictly slower than the native equivalent), and a large toolset is itself a latency and accuracy cost — definitions are re-sent every turn, and a model choosing among too many tools explores instead of acting.
 
 What survives is what the filesystem cannot do: see the canvas (`studio_screenshot`), measure the output against the design (`studio_compare`) and the design itself (`studio_measure_reference`), change board geometry and per-frame axes, read the project's tokens and component catalog, install dependencies behind the trust-tier gate, and pull assets in — including cutting them out of the supplied design (`studio_extract_reference_asset`). The list is written out by name in `agentToolNames.ts` so adding a tool to the registry does not silently widen the agent's surface; `index.ts` throws at module load if a name no longer resolves.
 

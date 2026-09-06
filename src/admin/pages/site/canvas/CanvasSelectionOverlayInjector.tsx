@@ -67,6 +67,7 @@ const SELECTION_CHROME_TOKENS = [
   '--canvas-selector-ring',
   '--canvas-selection-ring-color',
   '--canvas-node-badge-text',
+  '--canvas-resize-handle-fill',
 ] as const
 
 /**
@@ -142,6 +143,82 @@ const SELECTION_CHROME_RULES = `
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* Resize handles (elements, not frames). The FRAME tracks the element's box
+   exactly like a ring does and stays click-through; only the handles inside
+   it take pointer events, so selecting and dragging content underneath the
+   element is unaffected everywhere except within a few px of its edges.
+
+   The cursor declarations carry !important - the ONLY ones here that do.
+   iframeBodyReset.ts injects a universal "cursor: default !important" to
+   neutralize the USER'S page affordances inside a design frame, and an
+   !important on the universal selector cannot be beaten by specificity alone.
+   These handles are editor chrome, not the user's page, and a handle that does
+   not say which way it drags is the difference between an affordance and a
+   guess. Same carve-out [contenteditable] already gets there for the text
+   caret, and for the same reason. Everything else in this block stays
+   unprefixed.
+
+   (No backticks anywhere in this comment: the whole block is a template
+   literal, and one would end the string.) */
+[data-canvas-resize-frame] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+[data-canvas-resize-handle] {
+  position: absolute;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  border: 1px solid var(--canvas-selection-ring-color);
+  border-radius: 2px;
+  background: var(--canvas-resize-handle-fill);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+[data-canvas-resize-handle="nw"] { top: 0;    left: 0;    cursor: nwse-resize !important; }
+[data-canvas-resize-handle="ne"] { top: 0;    left: 100%; cursor: nesw-resize !important; }
+[data-canvas-resize-handle="se"] { top: 100%; left: 100%; cursor: nwse-resize !important; }
+[data-canvas-resize-handle="sw"] { top: 100%; left: 0;    cursor: nesw-resize !important; }
+
+/* Edges are invisible STRIPS along the whole side, not dots at its midpoint:
+   the ask was "drag the sides", and a 9px target in the middle of a 300px
+   edge is a worse version of the same gesture. The corner squares above are
+   the only visible handles, which also keeps a small element from being
+   buried under its own chrome. */
+[data-canvas-resize-handle="n"],
+[data-canvas-resize-handle="s"] {
+  left: 0;
+  width: 100%;
+  height: 7px;
+  margin: -4px 0 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: ns-resize !important;
+}
+[data-canvas-resize-handle="n"] { top: 0; }
+[data-canvas-resize-handle="s"] { top: 100%; }
+
+[data-canvas-resize-handle="e"],
+[data-canvas-resize-handle="w"] {
+  top: 0;
+  width: 7px;
+  height: 100%;
+  margin: 0 0 0 -4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: ew-resize !important;
+}
+[data-canvas-resize-handle="w"] { left: 0; }
+[data-canvas-resize-handle="e"] { left: 100%; }
 `.trim()
 
 interface CanvasSelectionOverlayInjectorProps {

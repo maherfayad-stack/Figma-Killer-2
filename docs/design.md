@@ -276,11 +276,13 @@ If a size recurs across three or more primitives, promote it to a token.
 ```text
 --z-dropdown:           20
 --spotlight-z-index:  9000
+--dialog-z-index:     9500
+--menu-z-index:       9800
 --toast-z-index:     10000
 --tooltip-z-index:   10001
 ```
 
-Use these for all dropdowns, tooltips, and the command palette. The visual editor has additional raw z-index values for the layout chrome (sidebars, floating panels) and a separate internal ladder inside the canvas's isolating stacking context — those are intentional exceptions documented in [`docs/reference/design-tokens.md`](reference/design-tokens.md) → "Z-index layers".
+Use these for dropdowns, the `Dialog` primitive, `ContextMenu`/`InspectorPopover`, toasts, tooltips, and the command palette. The visual editor has additional raw z-index values for the layout chrome (sidebars, floating panels) and a separate internal ladder inside the canvas's isolating stacking context — those are intentional exceptions documented in [`docs/reference/design-tokens.md`](reference/design-tokens.md) → "Z-index layers".
 
 ### Spotlight
 
@@ -570,7 +572,6 @@ Every interactive control in the admin and editor goes through a primitive from 
 | `SearchBar`          | Search input with magnifier icon and clear affordance.                      |
 | `ColorInput`         | Color picker with swatch + hex.                                             |
 | `FileUpload`         | Drop-zone + browse for file inputs.                                         |
-| `DateTimePicker`     | Date / time inputs.                                                         |
 | `RangeTabs`          | Tabbed numeric range selectors (e.g. spacing scales).                       |
 | `SegmentedControl`   | A few mutually exclusive options shown inline.                              |
 | `Tabs`               | Top-level tab navigation within a workspace.                                |
@@ -695,10 +696,7 @@ Inline `style` is banned. The only legitimate use is **dynamic CSS custom proper
 
 ### No `!important`
 
-Banned in component CSS modules. The only legitimate exceptions are:
-
-- `globals.css` for the `prefers-reduced-motion` override
-- `Button.module.css` for specificity reset on variant overrides
+Banned in component CSS modules. The only legitimate exception left in the tree is `globals.css`'s `prefers-reduced-motion` override. Out-specifying a rule is done with a descendant selector instead — see the comments in `CommentsPanel.module.css` and `StickyNoteView.module.css` for the pattern.
 
 If you find yourself reaching for `!important`, the cascade is wrong — fix the selector.
 
