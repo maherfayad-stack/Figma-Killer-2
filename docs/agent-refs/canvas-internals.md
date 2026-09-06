@@ -146,8 +146,50 @@ as **chrome-namespaced** aliases (`--chrome-font-sans`, `--chrome-text-*`,
 | Pointer | forwarded for space-pan / drags | not forwarded |
 | Keyboard | cloned onto parent `document`; `Tab` blocked | not forwarded |
 | Chrome CSS | applied | not applied |
+| Authored form controls | suppressed (a press selects the node) | left alone (focus, type, pick) |
+| The page's own `:hover` | rewritten so it cannot match | real |
+| Scrollbars | n/a (frames grow to content) | hidden inside a device mockup |
 
 Both modes are **fully editable**. Neither is a read-only preview.
+
+The frame publishes its own mode as **`CanvasInteractionContext`**, which is how
+`NodeRenderer` knows which column of that table it is rendering into. Before it
+existed only the DOCUMENT-level suppression (`useCanvasFormControlSuppression`)
+was live-aware; the node-level handlers applied the design rule to both, so a
+live frame blurred every field the moment it was focused and nothing in it could
+be typed into.
+
+**One press is one activation.** A suppressed control activates its node on
+`pointerdown` — the press has to be cancelled before the browser focuses a field
+or opens a picker — so the `click` ending that same gesture must not activate it
+again. `NodeRenderer`'s latch is armed by the press and cleared by the click,
+and any press it does NOT suppress clears it too (a gesture that never became a
+click must not swallow the next one). This looked harmless for as long as
+activation only meant "select this node"; it became a visible bug the moment the
+prototype player made a click mean "follow this link", because every link
+authored on a button pushed its target twice.
+
+**Hover is a MATCH, not a property**, which is why suppressing it is a selector
+rewrite (`hoverSuppression.ts`, applied by `CanvasHoverSuppressionInjector`) and
+not an injected rule: `.btn:hover { background: X }` names an arbitrary
+declaration block, and no blanket override can undo an arbitrary declaration.
+`:hover` is swapped for a class token nothing wears — a CLASS specifically, so
+specificity is preserved and `:not(:hover)` stays honest. An ALLOWLIST of the
+four page-content stylesheets, never a denylist, so the editor's own chrome
+keeps its real hover affordances. The forced-state preview
+(`mc-classes-force-state`) is untouched and is still how you see a hover state:
+it paints a `:hover` rule's declarations onto the selected node keyed by node
+id, with no `:hover` in the selector at all.
+
+**Arriving in live view arms the prototype player and the site's runtime
+scripts; leaving disarms the player.** Live mode is one real-size frame of the
+app, which is where following a prototype link means anything — the board shows
+every screen at once and a click there is a selection. `playMode` left set when
+you leave was a trap with no way out: `CanvasModeToggle` only draws the Play
+button in live view, so the board silently routed every click to the player,
+with no ring, no selection and no visible control to turn it back off, and a
+page reload was the only cure. `runScripts` stays where it is on the way out —
+it is orthogonal by design and applies to both views.
 
 ---
 
@@ -604,6 +646,32 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
 - `canvasSelectionOverlayPositioning.ts` — places rings/toolbar/inspector.
   Keeps an `appliedOverlayPlacements` WeakMap so the write phase no-ops when
   nothing moved (same-value style writes are not free).
+- `canvasNodeLookup.ts` — `ownElementForNode` / `presentedElementForNode` are
+  the "which element IS this node" answers, as opposed to
+  `RenderedCanvasNodeCache.resolve`'s "where is this node" (which falls back to
+  a fragment node's rendered descendants, right for drawing a box and wrong for
+  writing to one). `presentedElementForNode` also descends through a
+  layout-transparent (`display: contents`) host, because a module may carry the
+  node id on a wrapper that produces no box — right to SELECT, wrong to SIZE.
+- **Element resize** — `CanvasResizeHandles` portals eight handles into the
+  iframe overlay root and `BreakpointSelectionOverlay` positions them off the
+  SAME measured rect as the selection ring, so they cannot drift off the box
+  they belong to. `resizeOffer.ts` decides whether they exist at all; the three
+  refusals (no element of its own, a `display` CSS ignores a size on, a module
+  that does not own its own `style=""`) exist because handles that track the
+  cursor for a whole drag and then snap back are worse than no handles.
+  `elementResize.ts` returns a SIZE and never a position: an element's position
+  is produced by layout, and writing an `x` would mean writing
+  `position: absolute`, a much larger edit than the one a user asks for by
+  grabbing an edge.
+- **`canvasGesture.ts`** — a module-level "a pointer gesture is continuously
+  mutating the page; hold every derived geometry until it ends" flag. Two
+  subsystems recompute expensive geometry on layout change and are right to:
+  the overlay's parent-document anchor session and `useIframeFrameAutoHeight`'s
+  refit. An element resize changes layout on EVERY frame of a drag, which turns
+  both "rare, expensive" paths into per-frame paths and makes the frame grow
+  under the cursor. One settle pass runs when the gesture ends, because the
+  layout finished changing while the observers were being ignored.
 - Overlay chrome currently lives in the **parent document**, positioned from
   measurements of elements inside a **transformed iframe**. Its position is
   `elementRect × zoom + iframeOffset + panOffset` — so any stale term shows as
