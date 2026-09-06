@@ -158,6 +158,7 @@ Three categories, three voices:
 | [features/board-annotations.md](features/board-annotations.md) | Sticky notes + rich-text doc cards on the Studio board: selection, resize, stacking, clipboard, the doc editor |
 | [features/studio-comments.md](features/studio-comments.md) | Review threads pinned to the board (`.studio/comments.json`): the anchor-confidence model, the op-based HTTP route, and the agent loop that reads, replies and resolves |
 | [features/studio-git.md](features/studio-git.md) | Version control as Studio's publish verb — status/diff/branch/commit/push against the project's own repository, the guard that stops git finding Studio's OWN repo, and the `studio.git.write`-gated agent commit tool |
+| [features/studio-prototype.md](features/studio-prototype.md) | Prototype mode: authored links (`.studio/prototype.json`) plus the flow map Studio DERIVES from the project's own navigation code — the four AST rules, what they refuse, and the board-space connector layer |
 
 ### Reference
 
