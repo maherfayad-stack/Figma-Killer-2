@@ -6,7 +6,9 @@
  * rewritten from a parent-document overlay to editing the REAL node element in
  * place via `contentEditable`, so these gates assert the in-place wiring:
  *
- *   - double-click → startInlineEdit, gated to design mode (CanvasRoot);
+ *   - double-click → startInlineEdit, gated to design mode
+ *     (`useCanvasNodeInteraction`, extracted from `CanvasRoot` when that file
+ *     hit the 700-line ceiling — the RULE is unchanged, only its address);
  *   - NodeRenderer builds an `InlineEditBinding`, passes `inlineEdit` to the
  *     component, and focuses the element via `useLayoutEffect`;
  *   - the canvas keyboard handler bails on `activeInlineEdit` so Delete/Cmd+D
@@ -17,18 +19,21 @@
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 
-const CANVAS_ROOT = new URL('../../admin/pages/site/canvas/CanvasRoot.tsx', import.meta.url)
+const NODE_INTERACTION = new URL('../../admin/pages/site/canvas/useCanvasNodeInteraction.ts', import.meta.url)
 const NODE_RENDERER = new URL('../../admin/pages/site/canvas/NodeRenderer.tsx', import.meta.url)
 const KEYBOARD_SHORTCUTS = new URL('../../admin/pages/site/canvas/useCanvasKeyboardShortcuts.ts', import.meta.url)
-const IFRAME_FRAME_SURFACE = new URL('../../admin/pages/site/canvas/IframeFrameSurface.tsx', import.meta.url)
+const IFRAME_EVENT_FORWARDING = new URL('../../admin/pages/site/canvas/useIframeEventForwarding.ts', import.meta.url)
 const BREAKPOINT_FRAME = new URL('../../admin/pages/site/canvas/BreakpointFrame.tsx', import.meta.url)
 const CONTEXTS = new URL('../../admin/pages/site/canvas/CanvasContexts.ts', import.meta.url)
 
 describe('inline text editing wiring (in-place contentEditable)', () => {
-  it('CanvasRoot starts a session on node double-click, gated to design mode', () => {
-    const src = readFileSync(CANVAS_ROOT, 'utf-8')
+  it('the node-interaction hook starts a session on double-click, gated to design mode', () => {
+    const src = readFileSync(NODE_INTERACTION, 'utf-8')
     expect(src).toContain('startInlineEdit')
-    expect(src).toContain('permissions.canEditContent')
+    // The permission arrives as an option now (`CanvasRoot` reads it from the
+    // permissions context and passes it in) rather than being read here.
+    expect(src).toContain('options.canEditContent')
+    expect(src).toContain('options.isLive')
   })
 
   it('the double-click context channel carries the originating breakpoint', () => {
@@ -80,7 +85,11 @@ describe('inline text editing wiring (in-place contentEditable)', () => {
     // clone — the worst being Cmd+Z reverting the whole session in the store
     // while the DOM keeps the text. The forward layer must bail during a session
     // so the spacebar types a space and Cmd+Z is the element's own text undo.
-    const src = readFileSync(IFRAME_FRAME_SURFACE, 'utf-8')
+    //
+    // The three relays moved out of `IframeFrameSurface` into
+    // `useIframeEventForwarding` — the RULE is unchanged, only its address, so
+    // this gate reads the new home rather than a file that no longer forwards.
+    const src = readFileSync(IFRAME_EVENT_FORWARDING, 'utf-8')
     expect(src).toContain('if (useEditorStore.getState().activeInlineEdit) return')
   })
 

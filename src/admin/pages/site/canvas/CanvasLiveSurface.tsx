@@ -29,20 +29,30 @@
  */
 
 import {
+  use,
   useCallback,
   useEffect,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react'
 import type { Breakpoint, Page } from '@core/page-tree'
+import type { PrototypeTransition } from '@core/studio-prototype'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
-import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts'
+import {
+  CanvasBreakpointContext,
+  CanvasDocumentContext,
+  CanvasPageContext,
+  CanvasTemplateContext,
+} from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
 import { DeviceMockup } from './DeviceMockup'
+import { PrototypeOverlay } from './PrototypeOverlay'
+import { PrototypeScreenStack } from './PrototypeScreenStack'
 import { DeviceScrollbarInjector } from './DeviceScrollbarInjector'
 import { DEVICE_BEZEL_PX, resolveDeviceKind, type DeviceKind } from './deviceKind'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -62,6 +72,23 @@ interface LiveWidthOverride {
 
 interface CanvasLiveSurfaceProps {
   page: Page | null
+  /**
+   * The prototype overlay presented on top of `page`, or null. Only ever set
+   * while the player is armed — an overlay is a PLAYER concept, not an editing
+   * one, and the editing surface has no equivalent.
+   */
+  overlayPage?: Page | null
+  /** How the overlay arrived, for its entrance animation. */
+  overlayTransition?: PrototypeTransition | null
+  /** How the overlay that just left was presented, for its exit animation. */
+  overlayLeaveTransition?: PrototypeTransition | null
+  /** How the current screen arrived, when no overlay is on top of it. */
+  screenTransition?: PrototypeTransition | null
+  /**
+   * The player is armed. Mounts the two-slot screen stack: a navigation has an
+   * outgoing screen to animate, which editing never does.
+   */
+  playMode?: boolean
   activeBreakpoint: Breakpoint | null
   templateContext?: TemplateRenderDataContext
   runtimeScripts?: InjectableRuntimeScript[]
@@ -81,6 +108,11 @@ interface ResizeDragState {
 
 export function CanvasLiveSurface({
   page,
+  overlayPage = null,
+  overlayTransition = null,
+  overlayLeaveTransition = null,
+  screenTransition = null,
+  playMode = false,
   activeBreakpoint,
   templateContext,
   runtimeScripts,
@@ -92,10 +124,6 @@ export function CanvasLiveSurface({
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
-  // The iframe's own document, tracked so the device chrome can reach inside
-  // it (scrollbar hiding). Published by the handle, so it updates when the
-  // iframe finishes loading rather than staying null from the first render.
-  const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
   // Always `null` here in practice — `CanvasSelectionOverlayInjector` is
   // design-mode only (WS-5.1), so a live-interaction `IframeFrameSurface`
   // never creates one. Tracked (rather than passing a literal `null`) so this
@@ -160,8 +188,48 @@ export function CanvasLiveSurface({
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     setIframeEl(handle?.iframeElement ?? null)
     setOverlayRoot(handle?.contentOverlayRoot ?? null)
-    setIframeDoc(handle?.contentDocument ?? null)
   }
+
+  /**
+   * One screen's frame. Shared by the single editing slot and both player slots
+   * so a screen cannot render differently depending on which one holds it.
+   * `iframeRef` is only passed by the editing slot — the selection overlay
+   * measures against that iframe, and the player has no selection.
+   */
+  const renderScreen = (screenPage: Page, iframeRef?: typeof handleIframeRef): ReactNode => (
+    <IframeFrameSurface
+      ref={iframeRef}
+      interaction="live"
+      breakpointId={activeBreakpoint?.id ?? ''}
+      width={activeBreakpoint?.width ?? 0}
+      runtimeScripts={runtimeScripts}
+    >
+      {/*
+        Inside the frame, not beside it. A phone draws no scrollbar, and the
+        surface used to hide them through a ref only the EDITING slot published
+        — so the player's two screen slots and the presented overlay, the three
+        frames a prototype is actually made of, each kept theirs. Mounted here,
+        every frame this surface builds is covered by construction.
+      */}
+      <FrameScrollbars hidden={deviceKind !== null} />
+      {/*
+        `NodeRenderer` resolves every node id against the page named by
+        `CanvasPageContext`, falling back to the ACTIVE document when there is
+        none — which is why the live frame worked for as long as it only ever
+        showed the page being edited. The player shows a different one, and
+        without this provider every id it asked for was looked up in the wrong
+        tree, found nothing, and rendered an empty device. Each board frame
+        provides its own id for exactly this reason.
+      */}
+      <CanvasPageContext.Provider value={screenPage.id}>
+        <CanvasTemplateContext.Provider value={templateContext}>
+          <CanvasBreakpointContext.Provider value={activeBreakpoint?.id ?? ''}>
+            <CanvasComposedTree page={screenPage} />
+          </CanvasBreakpointContext.Provider>
+        </CanvasTemplateContext.Provider>
+      </CanvasPageContext.Provider>
+    </IframeFrameSurface>
+  )
 
   return (
     <div ref={surfaceRef} className={styles.surface} data-testid="canvas-live-surface">
@@ -170,13 +238,22 @@ export function CanvasLiveSurface({
           className={styles.frame}
           style={{ '--live-width': `${effectiveWidth}px` } as CSSProperties}
         >
-          <LiveResizeHandle
-            side="left"
-            onPointerDown={handlePointerDown('left')}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishDrag}
-            onPointerCancel={finishDrag}
-          />
+          {/*
+            Editing chrome, so the player stands it down with everything else.
+            The grip is a 2px bar at the screen's edge — while a prototype is
+            running it reads as a scrollbar on a phone that should not have one,
+            and resizing the frame is not a gesture anyone is reaching for
+            mid-flow. It comes back the moment Play is off.
+          */}
+          {!playMode && (
+            <LiveResizeHandle
+              side="left"
+              onPointerDown={handlePointerDown('left')}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishDrag}
+              onPointerCancel={finishDrag}
+            />
+          )}
 
           <DeviceMockup kind={deviceKind}>
             <div
@@ -184,19 +261,26 @@ export function CanvasLiveSurface({
               data-breakpoint-id={activeBreakpoint.id}
               className={styles.iframeViewport}
             >
-            <IframeFrameSurface
-              ref={handleIframeRef}
-              interaction="live"
-              breakpointId={activeBreakpoint.id}
-              width={activeBreakpoint.width}
-              runtimeScripts={runtimeScripts}
-            >
-              <CanvasTemplateContext.Provider value={templateContext}>
-                <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
-                  <CanvasComposedTree page={page} />
-                </CanvasBreakpointContext.Provider>
-              </CanvasTemplateContext.Provider>
-            </IframeFrameSurface>
+            {/*
+              In the player, two screen slots so a `push` can move the screen it
+              is leaving as well as the one arriving. Outside it, one slot,
+              exactly as before — editing never navigates, so it never needs a
+              second frame, and mounting one would cost an iframe for nothing.
+
+              DELIBERATELY NOT KEYED on the page id in either case. Keying is
+              the obvious way to replay a CSS entrance animation and it remounts
+              the `<iframe>` with it; the portal that renders the page into the
+              frame's body does not survive that, so every navigation landed on
+              an empty device. `playbackMotion` replays the entrance against a
+              frame that stays put.
+            */}
+            {playMode ? (
+              <PrototypeScreenStack page={page} transition={screenTransition} renderScreen={renderScreen} />
+            ) : (
+              <div className={styles.prototypeScreen} data-slot-state="front">
+                {renderScreen(page, handleIframeRef)}
+              </div>
+            )}
 
               <BreakpointSelectionOverlay
                 breakpointId={activeBreakpoint.id}
@@ -204,18 +288,33 @@ export function CanvasLiveSurface({
                 iframeElement={iframeEl}
                 overlayRoot={overlayRoot}
               />
+
+              {/*
+                The prototype overlay: a second frame over the first, with a
+                scrim, exactly as a popup or a bottom sheet presents over the
+                screen it was opened from. The screen underneath stays MOUNTED
+                — that is the whole difference between `overlay` and `navigate`,
+                and it is why closing one returns instantly with its scroll
+                position intact.
+              */}
+              <PrototypeOverlay
+                page={overlayPage}
+                enterTransition={overlayTransition}
+                leaveTransition={overlayLeaveTransition}
+                renderScreen={renderScreen}
+              />
             </div>
           </DeviceMockup>
 
-          <DeviceScrollbarInjector targetDocument={iframeDoc} hidden={deviceKind !== null} />
-
-          <LiveResizeHandle
-            side="right"
-            onPointerDown={handlePointerDown('right')}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishDrag}
-            onPointerCancel={finishDrag}
-          />
+          {!playMode && (
+            <LiveResizeHandle
+              side="right"
+              onPointerDown={handlePointerDown('right')}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishDrag}
+              onPointerCancel={finishDrag}
+            />
+          )}
 
           <div className={styles.widthBadge} aria-hidden="true">
             {Math.round(effectiveWidth)}px
@@ -240,6 +339,17 @@ export function CanvasLiveSurface({
       )}
     </div>
   )
+}
+
+/**
+ * Hides the scrollbars of the frame this renders INSIDE, reading that frame's
+ * own document from the context `IframeFrameSurface` publishes. A component
+ * rather than a prop because the document is only knowable from within the
+ * portal, which is the whole reason the old ref-based wiring reached one frame
+ * and missed three.
+ */
+function FrameScrollbars({ hidden }: { hidden: boolean }) {
+  return <DeviceScrollbarInjector targetDocument={use(CanvasDocumentContext)} hidden={hidden} />
 }
 
 /**

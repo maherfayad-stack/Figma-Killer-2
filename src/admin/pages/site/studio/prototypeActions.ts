@@ -18,8 +18,10 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { captureNodeHint } from '@core/studio-anchor'
 import type { NodeTree } from '@core/page-tree'
+import { DEFAULT_PAGE_KIND, type PageKind } from '@core/studio-board'
 import {
   actionTakesTarget,
+  defaultLinkPresentation,
   transitionsForAction,
   type PrototypeAction,
   type PrototypeLink,
@@ -125,7 +127,85 @@ export async function saveLink(draft: LinkDraft, tree: NodeTree): Promise<boolea
   return run({ kind: 'upsert', link }, 'Failed to save the prototype link')
 }
 
+/**
+ * Commit the connector currently being dragged as a real link.
+ *
+ * The hint is captured HERE, at the drop, against the tree as it stands — not
+ * when the drag started. Between the two the user cannot have edited anything
+ * (a drag is modal), but capturing at the drop is the rule that stays true when
+ * that stops being so.
+ *
+ * The action and transition come from what the TARGET IS: dragging onto a
+ * popup or a sheet means "present this over the current screen", dragging onto
+ * a screen means "navigate to it". Asking the user to say so twice — once by
+ * aiming, once in a dropdown — is a question the drop already answered.
+ *
+ * Returns the new link's id so the caller can select it, or `null` when the
+ * drop produced nothing storable.
+ */
+export async function commitLinkDraft(
+  targetPageId: string,
+  targetKind: PageKind = DEFAULT_PAGE_KIND,
+): Promise<string | null> {
+  const state = useEditorStore.getState()
+  const draft = state.linkDraft
+  if (!draft) return null
+
+  const page = state.site?.pages.find((candidate) => candidate.id === draft.sourcePageId)
+  const hint = page ? captureNodeHint(page, draft.sourceNodeId) : null
+  if (!hint) {
+    // The source element vanished mid-gesture (a re-parse landed under the
+    // drag). Say so rather than storing a link to nothing.
+    state.cancelLinkDraft()
+    pushToast({
+      kind: 'error',
+      title: 'Could not create the link',
+      body: 'The element it would start from is no longer on the page.',
+    })
+    return null
+  }
+
+  const { action, transition } = defaultLinkPresentation(targetKind)
+  const link: PrototypeLink = {
+    id: crypto.randomUUID(),
+    source: { pageId: draft.sourcePageId, node: hint },
+    trigger: 'click',
+    action,
+    targetPageId,
+    transition,
+  }
+
+  state.cancelLinkDraft()
+  const ok = await run({ kind: 'upsert', link }, 'Could not create the link')
+  if (!ok) return null
+  useEditorStore.getState().setSelectedLink(link.id)
+  return link.id
+}
+
+/**
+ * Change an existing link WHOLE — the link inspector's every control routes
+ * here.
+ *
+ * Distinct from `saveLink`, which is keyed on an ELEMENT and re-anchors the
+ * source: this one already has the link, hint and all, because the user reached
+ * it by clicking the connector rather than by selecting the element it starts
+ * from. Re-capturing the hint there would silently re-anchor a link to whatever
+ * happened to be selected on the canvas.
+ *
+ * A targetless interaction (`back`, `close`) is authored through `saveLink`
+ * like any other — pick the action, and the target question stops being asked.
+ * There is deliberately no second entry point for it: "go back" names no
+ * screen, so the drag gesture cannot express it, but the inspector already can.
+ */
+export async function updateLink(link: PrototypeLink): Promise<boolean> {
+  return run({ kind: 'upsert', link }, 'Could not update the link')
+}
+
 /** Delete one authored link. */
 export async function deleteLink(linkId: string): Promise<boolean> {
-  return run({ kind: 'remove', linkId }, 'Failed to delete the prototype link')
+  const ok = await run({ kind: 'remove', linkId }, 'Failed to delete the prototype link')
+  if (ok && useEditorStore.getState().selectedLinkId === linkId) {
+    useEditorStore.getState().setSelectedLink(null)
+  }
+  return ok
 }

@@ -106,3 +106,99 @@
     pointer-events: none;
     user-select: none;
 }
+
+/*
+ * ── Prototype playback ──────────────────────────────────────────────────────
+ *
+ * The MOTION lives in `playbackMotion.ts`, not here: a CSS entrance only
+ * replays on a remount, and remounting a screen means remounting its
+ * `<iframe>` — which drops the React portal that renders the page into it. This
+ * sheet owns only the boxes the animations move, and their stacking.
+ *
+ * `prefers-reduced-motion` is therefore honoured in that module too; the global
+ * rule in globals.css that clamps `animation-duration` cannot see a
+ * script-driven animation.
+ */
+
+/*
+ * A screen slot. A real box, always, filling the positioned `.iframeViewport`
+ * exactly — the element is animated by script, so it has to be able to host a
+ * transform at any moment. The viewport already clips (`overflow: hidden`),
+ * which is what makes a slide slide.
+ *
+ * The player mounts TWO of these and moves pages between them, so a push can
+ * animate the screen it is leaving as well as the one arriving. The one in
+ * back is not rendered at all until a navigation needs it on screen.
+ */
+.prototypeScreen {
+    position: absolute;
+    inset: 0;
+}
+
+.prototypeScreen[data-slot-state='back'] {
+    display: none;
+}
+
+/* The arriving screen travels over the departing one, never under it. */
+.prototypeScreen[data-slot-state='front'] {
+    z-index: 1;
+}
+
+/*
+ * The dim over a DEPARTING screen. UIKit darkens the outgoing view rather than
+ * fading it — a fade would read as a cross-dissolve, and the screen is meant to
+ * still be there, a third of the way back. Opacity is animated from 0 by
+ * `playbackMotion`; at rest it contributes nothing.
+ */
+.screenDim {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: var(--scrim-solid);
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* The overlay sits over the screen it was opened from, which stays mounted. */
+.prototypeOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+}
+
+.prototypeScrim {
+    position: absolute;
+    inset: 0;
+    background: var(--scrim-40);
+}
+
+/*
+ * THE OVERLAY PAGE IS THE WHOLE PRESENTATION, so the frame it renders in is a
+ * screen-sized frame and this crops nothing.
+ *
+ * `pageKinds.ts` already states the invariant this rule has to match: a sheet
+ * or a popup page is scaffolded at SCREEN size, drawing its own scrim, its own
+ * panel and the gap it leaves above that panel, because "how much of the screen
+ * it leaves showing" is the whole difference between a small sheet and a full
+ * one. Anything cropping that page here is deciding a second time — with a
+ * number the design never agreed to.
+ *
+ * That is exactly what a fixed `inset: 40% 0 0 0` did: a full-screen sheet lost
+ * its top 40% and the screen it was presented over showed through the gap.
+ */
+.prototypeOverlayFrame {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+/*
+ * The overlay frame paints no paper of its own. A canvas iframe carries
+ * `--canvas-frame-paper` so a short page has something to sit on, but here that
+ * background is what the presenting screen would have to show through: a sheet
+ * that dims the screen behind it would dim this instead, and the screen it was
+ * opened from would be invisible under an opaque sheet of white.
+ */
+.prototypeOverlayFrame iframe {
+    background: transparent;
+}

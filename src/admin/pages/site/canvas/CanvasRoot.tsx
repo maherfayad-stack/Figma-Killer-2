@@ -56,10 +56,12 @@ import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
 import { useCanvasKeyboardShortcuts } from './useCanvasKeyboardShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
+import { usePrototypeLinkKeyboard } from './usePrototypeLinkKeyboard'
+import { usePrototypePlayback } from './usePrototypePlayback'
+import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
-import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
 import { useTemplatePreviewContext } from '@site/hooks/useTemplatePreviewContext'
@@ -92,7 +94,18 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const spotlight = useContext(SpotlightContext)
 
   // Store subscriptions
-  const canvasPage = useEditorStore(selectActiveCanvasPage)
+  const editingPage = useEditorStore(selectActiveCanvasPage)
+  // Arming the player changes what is BEING LOOKED AT, never what is being
+  // edited: selection, the properties panel and the page tree all keep pointing
+  // at `editingPage`, so disarming puts the editor back where it was.
+  const {
+    canvasPage,
+    overlayPage,
+    screenTransition: playScreenTransition,
+    overlayTransition: playOverlayTransition,
+    overlayLeaveTransition: playOverlayLeaveTransition,
+    playMode,
+  } = usePrototypePlayback(editingPage)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   const canvasView = useEditorStore((s) => s.canvasView)
@@ -104,8 +117,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // hoveredNodeId is NOT subscribed here — NodeRenderer handles its own hover state
   // via per-node selectors to avoid O(N) re-renders on every hover event (#495).
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
-  const selectNode = useEditorStore((s) => s.selectNode)
-  const hoverNode = useEditorStore((s) => s.hoverNode)
   const clearSelection = useEditorStore((s) => s.clearSelection)
   const deleteNode = useEditorStore((s) => s.deleteNode)
   // Multi-select: keyboard shortcuts dispatch the *Nodes batch actions when a
@@ -122,7 +133,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const cutNodes = useEditorStore((s) => s.cutNodes)
   const pasteNode = useEditorStore((s) => s.pasteNode)
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
-  const startInlineEdit = useEditorStore((s) => s.startInlineEdit)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const activeDocument = useEditorStore((s) => s.activeDocument)
   const {
@@ -294,86 +304,22 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   }
 
   // ─── Selection context value ───────────────────────────────────────────────
-
-  const onNodeClick = (nodeId: string, e: React.MouseEvent, breakpointId?: string, frameId?: string | null) => {
-    e.stopPropagation()
-    if (breakpointId && breakpointId !== activeBreakpointId) {
-      setActiveBreakpoint(breakpointId)
-      if (preserveSelectionWhenActivatingBreakpoint) {
-        setFocusedPanel('canvas')
-        return
-      }
-    }
-    // Modifier-aware selection (multi-select): Cmd/Ctrl-click toggles, Shift-
-    // click extends a range from the anchor. Plain clicks replace the
-    // selection (default mode in `selectNode`).
-    const mode = e.shiftKey
-      ? 'range'
-      : e.metaKey || e.ctrlKey
-        ? 'toggle'
-        : 'replace'
-    // WS-10 Phase 2 — `frameId` scopes this selection to the originating
-    // BoardFrame so a sibling "duplicate as variant" frame of the same page
-    // doesn't also light up. See `selectedNodeFrameId`'s doc.
-    selectNode(nodeId, mode, { frameId })
-    setFocusedPanel('canvas')
-  }
-
-  const onNodeHover = (nodeId: string | null, breakpointId?: string, frameId?: string | null) => {
-    hoverNode(nodeId, breakpointId, frameId)
-  }
-
-  const onNodeContextMenu = (nodeId: string, e: React.MouseEvent, breakpointId?: string, frameId?: string | null) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!editable) return
-    if (breakpointId && breakpointId !== activeBreakpointId) {
-      setActiveBreakpoint(breakpointId)
-    }
-    // If the right-clicked node is part of an existing multi-selection,
-    // KEEP the selection (the menu acts on the whole set). Otherwise replace
-    // the selection with just this node — matches Figma / VS Code behavior.
-    const currentIds = useEditorStore.getState().selectedNodeIds
-    if (!currentIds.includes(nodeId)) {
-      selectNode(nodeId, 'replace', { frameId })
-    }
-    setFocusedPanel('canvas')
-    // The right-click event originates inside the per-breakpoint iframe, so
-    // `e.clientX` / `e.clientY` are relative to the iframe's own viewport.
-    // The context menu is portaled into the editor's `document.body` with
-    // `position: fixed` — it needs editor-document coordinates, which
-    // `clientPointToEditorDoc` produces by adding the iframe's outer rect
-    // (scaled by the canvas zoom).
-    const point = clientPointToEditorDoc(e.nativeEvent ?? e)
-    contextMenu.open({ x: point.x, y: point.y, nodeId })
-  }
-
-  /**
-   * Double-click on a canvas node → start an inline text-edit session when
-   * the node's module declares `inlineTextEdit` (base.text, base.button,
-   * childless base.link — `startInlineEdit` resolves the contract and
-   * no-ops for everything else, so other modules keep the old no-op).
-   *
-   * Design-canvas only: the editing element lives inside a breakpoint iframe,
-   * so a live-mode double-click must not open a session. Entering VC canvas
-   * mode on double-click stays removed — VC entry works from the Site panel
-   * and Spotlight (see `docs/features/canvas-iframe-per-frame.md`).
-   */
-  const onNodeDoubleClick = (nodeId: string, e: React.MouseEvent, breakpointId?: string, frameId?: string | null) => {
-    e.stopPropagation()
-    if (isLive || !editable || !permissions.canEditContent) return
-    // WS-10 §4.4 (Phase 4) — `frameId` lets the session resolve/mutate the
-    // RIGHT tree when it belongs to a locale-variant board frame (a
-    // "duplicate as variant" sibling shares this node id — trap #2). See
-    // `inlineEditSlice.ts`'s `startInlineEdit` doc.
-    startInlineEdit(nodeId, breakpointId ?? activeBreakpointId, frameId ?? null)
-  }
-
-  // Context carries only stable callbacks — selectedNodeId/hoveredNodeId are
-  // intentionally excluded (Perf fix — Contribution #495). Each NodeRenderer
-  // subscribes to its own boolean directly, so only the 2 affected nodes
-  // re-render per selection/hover event rather than the entire canvas tree.
-  const selectionContextValue = { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick }
+  // What a click / hover / right-click / double-click on a canvas node does
+  // lives in its own module — see `useCanvasNodeInteraction`. Context carries
+  // only these stable callbacks; selectedNodeId/hoveredNodeId are intentionally
+  // excluded (Perf fix — Contribution #495), so each NodeRenderer subscribes to
+  // its own boolean and only the 2 affected nodes re-render per event.
+  const selectionContextValue = useCanvasNodeInteraction({
+    editable,
+    isLive,
+    canEditContent: permissions.canEditContent,
+    playMode,
+    canvasPage,
+    overlayPage,
+    activeBreakpointId,
+    preserveSelectionWhenActivatingBreakpoint,
+    openContextMenu: contextMenu.open,
+  })
 
   const viewportActionsContextValue = { canvasRootRef: canvasRef, panBy, transformRef }
 
@@ -456,6 +402,10 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   // Sticky notes + doc cards: delete / duplicate / copy-paste / nudge.
   useBoardAnnotationKeyboard(editable, isLive)
+
+  // Prototype mode: Delete removes the selected connector, Escape deselects it.
+  // Board-only — a link is a thing on the board, and live mode is the player.
+  usePrototypeLinkKeyboard(editable && !isLive)
 
   // Board frames: arrow-key nudge. Mounted AFTER the annotation hook on
   // purpose — see `useBoardFrameNudge`'s doc for the mixed-selection rule.
@@ -616,6 +566,11 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
             {isLive ? (
               <CanvasLiveSurface
                 page={canvasPage}
+                overlayPage={overlayPage}
+                overlayTransition={playOverlayTransition}
+                overlayLeaveTransition={playOverlayLeaveTransition}
+                screenTransition={playScreenTransition}
+                playMode={playMode}
                 activeBreakpoint={activeBreakpoint}
                 templateContext={templatePreviewContext}
                 runtimeScripts={runtimeScripts}

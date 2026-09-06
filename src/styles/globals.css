@@ -112,6 +112,9 @@
     --scrim-20: rgba(0, 0, 0, 0.2);
     --scrim-30: rgba(0, 0, 0, 0.3);
     --scrim-40: rgba(0, 0, 0, 0.4);
+    /* Opaque black, for a scrim whose opacity is animated rather than fixed —
+       the dim over a screen the prototype player is navigating away from. */
+    --scrim-solid: rgb(0, 0, 0);
     --scrim-50: rgba(0, 0, 0, 0.5);
     --scrim-60: rgba(0, 0, 0, 0.6);
     --scrim-70: rgba(0, 0, 0, 0.7);
@@ -328,6 +331,27 @@
     /* The dot on a pin whose anchored element no longer resolves. Shares
        --warning's meaning: not broken, but do not trust it. */
     --canvas-comment-pin-stale: #ff5c5c;
+    /* AUTHORED prototype connectors — the links the user drew, and the `+`
+       handle that draws them (prototype mode only; design mode never draws one,
+       and the publisher never sees one). Deliberately distinct from the green
+       selection ring, magenta hover ring, amber comment pin and orange selector
+       ring: a board can be wearing all of them at once, and a flow line has to
+       stay readable across arbitrary page content at any zoom. Electric blue is
+       the remaining slot that reads as "connection" rather than "attention".
+       Fixed rather than theme-derived for the same reason
+       --canvas-comment-pin-ring is: it floats over the USER'S rendered page.
+       The DERIVED connectors — read out of the project's own navigation code —
+       stay achromatic in --canvas-flow-code below, because they mark something
+       the repository has always said rather than something the user just did. */
+    --canvas-prototype-link: #38bdf8;
+    /* The rubber band mid-drag. Same hue as a committed link, dimmer, because
+       it is not a link yet and abandoning the drag must leave nothing behind. */
+    --canvas-prototype-link-draft: #7dd3fc;
+    /* The frame under the cursor mid-drag. A wash rather than a ring alone:
+       at board zoom a 2px outline on a 1440px frame is easy to miss, and the
+       whole point of the state is that you can tell WITHOUT aiming carefully
+       that releasing here will land the link on this page. */
+    --canvas-prototype-drop-wash: rgba(56, 189, 248, 0.12);
     --tree-drop-line: #5eead4;
     --tree-drop-line-shadow: rgba(94, 234, 212, 0.18);
     --tree-drop-inside-bg: rgba(94, 234, 212, 0.08);

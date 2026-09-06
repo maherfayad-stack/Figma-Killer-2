@@ -102,23 +102,35 @@ export function CanvasHoverSuppressionInjector({ targetDocument }: CanvasHoverSu
     const doc = targetDocument
     if (!doc) return
 
+    const head = doc.head
+    if (!head) return
+
+    // Bound to the FRAME's window when it has one, falling back to this
+    // document's — the same defensive shape `CanvasScrollUnrollInjector` uses,
+    // and for the same reason: an iframe realm that is still coming up may not
+    // expose either, and an injector that throws in its effect takes every
+    // sibling injector's mount down with it.
+    const view = doc.defaultView
+    const raf = view?.requestAnimationFrame?.bind(view) ?? requestAnimationFrame
+    const cancelRaf = view?.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame
+    const MutationObserverCtor = view?.MutationObserver ?? MutationObserver
+
     let pending: number | null = null
-    const view = doc.defaultView ?? window
     const run = () => {
       pending = null
       suppressHover(doc)
     }
     const schedule = () => {
-      pending ??= view.requestAnimationFrame(run)
+      pending ??= raf(run)
     }
 
     run()
-    const observer = new (view.MutationObserver ?? MutationObserver)(schedule)
-    observer.observe(doc.head, { childList: true, subtree: true, characterData: true })
+    const observer = new MutationObserverCtor(schedule)
+    observer.observe(head, { childList: true, subtree: true, characterData: true })
 
     return () => {
       observer.disconnect()
-      if (pending !== null) view.cancelAnimationFrame(pending)
+      if (pending !== null) cancelRaf(pending)
     }
   }, [targetDocument])
 
