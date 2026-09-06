@@ -12,6 +12,149 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### server-17 — Storybook CSF stories import as board frames, on a board of their own
+
+- **Agent:** studio-implementer
+- **Stage:** done (needs human dogfood — see "Human action needed")
+- **Updated:** 2026-09-06
+- **Branch:** `feat/storybook-import`, rebased on `main`.
+- **Goal:** W5-3. A project's `*.stories.{tsx,ts,jsx}` become board frames — one
+  per accepted story — parsed statically through the EXISTING pipeline, with
+  every refusal named. Done means: zero cost for a project without stories,
+  measured acceptance on real OSS Storybook repos, no parser internals touched.
+- **Scope:** NEW `server/handlers/studio/{storyDiscovery,storyLiterals,storyPages,routePageEntry,storiesRoutes}.ts`
+  + their two test files. EDITED `server/handlers/studioPageLoad.ts` (a third
+  route-entry producer), `studio/boardFrames.ts` (`syncStoryBoardFrames`),
+  `studio/studioMeta.ts` (`stories` field), `studio/studioLoadResponse.ts` (one
+  `Omit`), `studio.ts` (sub-router + one call), `docs/features/studio-import.md`,
+  `docs/agent-refs/{path-index,studio-pipeline}.md`, `PROJECT-BRIEF.md`.
+  **`src/core/page-parser/**` was NOT touched** — stories flow through
+  `parseJsxTree` / `getReturnedJsxRoots` / `resolveComponentSources` /
+  `inlineLocalComponents` exactly as they are.
+- **Done so far:**
+  - `storyDiscovery.ts:1` states the accepted subset in the module header. Two
+    shapes: **args-only** (CSF3 object + `meta.component`) and **jsx-only** (a
+    function body that is nothing but JSX — as `render:`, as
+    `export const X = () => <Y/>`, and as `export function X()`).
+  - `storyPages.ts:157` builds the args-only shape as a synthesized ONE-NODE
+    `ParsedPage` whose `kind:'component'` call site is handed to the real
+    `inlineLocalComponents`. That resolves the identifier through the story
+    file's own imports, parses the component's file, substitutes the args, and
+    yields a `studio.instance` with the component's real subtree — every
+    descendant carrying a composite id anchored in the COMPONENT's file, as
+    editable as any inlined component's.
+  - `storyPages.ts:118` builds the jsx-only shape through the ordinary page
+    path, so those nodes get real, WRITABLE `relFile:line:col` ids in the
+    `.stories.tsx` itself.
+  - 13 named refusal reasons (`StoryRefusalReason`), reported by
+    `GET /admin/api/studio/stories` (`storiesRoutes.ts`). Nothing is ever
+    half-rendered and nothing is silently dropped.
+  - `boardFrames.ts:171` (`syncStoryBoardFrames`) places frames on a board of
+    their OWN named "Stories", one row per `meta.title`. Called from the
+    `/load` route (`studio.ts`), never from `loadStudioPages` — the parse
+    pipeline stays a pure read.
+  - Zero-cost gate: `storyFilesIn` is a filename filter over the directory walk
+    the load already does. No ts-morph work happens unless it matches.
+  - `studioPageLoad.ts` extracted its private `RoutePageEntry` into
+    `studio/routePageEntry.ts` (a pure type leaf) so `storyPages.ts` can produce
+    them without an import cycle.
+  - Docs: a full "Storybook stories as pages (W5-3)" section in
+    `docs/features/studio-import.md` — accepted subset, refusal table, measured
+    rates, the board rule, and the writeback blocker below.
+- **Next step:** none for this PR. Two follow-ups, both in files this wave's
+  other agents own: (1) lift the args writeback blocker in `fsCodemodAdapter.ts`
+  (below); (2) a "Stories" affordance in the UI if the board-switcher entry
+  proves too quiet in dogfood.
+- **Decisions:**
+  - **Stories get their own board, not the project's** — because a design
+    system routinely has more stories than screens (Polaris: 664 stories, 87
+    files), and folding those in would multiply the frame count of a board the
+    author curated on a load they asked nothing of. The board switcher already
+    makes it discoverable. This is the "toggle or section" the task asked for,
+    expressed as the section the board model already has. I could not build a
+    panel toggle — `panels/**` is owned by another agent this wave.
+  - **Placement is ONE-TIME, never reconciled.** `.studio/meta.json`'s
+    `stories.placedPageIds` is a ledger of every story frame ever placed, so a
+    frame the user deleted never returns while a NEW story still appears; and
+    once `stories.boardId` no longer resolves (they deleted the board),
+    nothing is placed again. `stories.enabled: false` is the explicit off
+    switch (`POST /admin/api/studio/stories`).
+  - **An args-only story's synthesized call site is `locked` and every arg is
+    in `codeProps`** — see Landmines.
+  - **Refusals do NOT ride the `/load` envelope.** That is an NDJSON contract
+    the client mirrors by hand (`fsCodemodAdapter.ts`'s
+    `StudioLoadStreamLineSchema`); `GET /admin/api/studio/stories` is the
+    surface instead. `StudioLoadResult.stories` is `Omit`ted from
+    `studioLoadStreamLines`' parameter type for exactly this reason.
+- **Landmines:**
+  - **Args writeback does NOT fall out naturally, and forcing it would corrupt
+    files.** An arg IS an ordinary string literal at a known `rel:line:col` —
+    exactly the `textOrigin`/`setStringLiteral` shape — so recording
+    `resolvedProps[arg].origin` is enough for `fsCodemodAdapter.saveSite`'s
+    FLAT prop loop (`fsCodemodAdapter.ts:417`, which emits `kind:'literal'`
+    aimed at the origin). It is **not** enough for a `studio.instance`: the
+    adapter's `callSiteProps` branch (`fsCodemodAdapter.ts:450`) has NO origin
+    case — it asks `isPropWritableToSource` (which an origin makes say YES) and
+    then emits `kind:'prop'` at the call site, which here is the
+    `export const Primary` identifier. So an origin today would authorise
+    precisely the mis-aimed write the rule exists to prevent. This module
+    therefore records `source` and no `origin`. Fixing it is one branch in
+    `fsCodemodAdapter.ts` (mirror the flat loop's origin case). Phase B.
+  - The synthesized call site's `loc` is a REAL position (the `export const`
+    identifier) because trap #2 forbids inventing one — but no JSX lives there,
+    which is why the node also carries `locked: true` +
+    `STORY_CALL_SITE_LOCK_REASON` so `refuseStructuralEdit` answers
+    `code-placed` rather than letting a delete/move reach a codemod.
+  - `resolveComponentSources` classifies a same-file `declare const X` as a
+    LOCAL component, so `meta.component: X` on an ambient declaration is
+    accepted (and then renders "Unknown module" when inlining declines) rather
+    than refused. Same behaviour a page's call site already has — not a story
+    bug.
+  - Two repos, two nearly-opposite CSF dialects. Primer is render-function-heavy
+    (732 jsx / 7 args), Polaris is args-object-heavy (651 args / 13 jsx). Do not
+    tune the subset against one repo.
+  - **`git clone`ing an OSS repo into `.tmp/` breaks `bun run lint`** —
+    ESLint 10 walks into the clone and tries to load ITS `eslint.config.mjs`
+    (`Cannot find package '@eslint/compat'`). Clone measurement corpora
+    OUTSIDE the worktree.
+- **Verification:**
+  - `bun run build` (tsc -b && vite build) — pass, before and after the rebase.
+  - `bun run lint` — clean.
+  - `bun test server/handlers/studio/__tests__/story{Discovery,BoardFrames}.test.ts`
+    — 25 pass / 0 fail.
+  - `bun test server/handlers` — 1280 pass / 1 fail. The failure is
+    `projectMcpApprovals.test.ts` (`Cannot find module './agentRosterMcpTools'`),
+    pre-existing and outside this diff.
+  - `bun test src/__tests__/architecture` — 512 pass / 1 fail after rebasing on
+    `main`. The failure is `module-size-budgets` naming
+    `src/admin/pages/site/canvas/IframeFrameSurface.tsx` (707) and
+    `server/ai/drivers/claudeCli.ts` (716) — **both arrived from upstream
+    `main`, neither is in this diff.** It passed 511/0 on the pre-rebase base,
+    and my own `storyDiscovery.ts` was split (`storyLiterals.ts`) to get under
+    the same ceiling when it tripped at 722.
+  - **Measured acceptance on real OSS Storybook repos** (cloned to a scratch
+    dir outside the repo, never `studio-workspace/`):
+
+    | Repo | Story files | Accepted | Refused | Rate | Refusals |
+    |---|---|---|---|---|---|
+    | `primer/react` (`packages/react`) | 247 | 739 (732 jsx, 7 args) | 360 | **67.2 %** | `render-logic` 338, `decorators` 20, `no-jsx` 1, `not-a-story` 1 |
+    | `Shopify/polaris` (`polaris-react`) | 87 | 664 (651 args, 13 jsx) | 15 | **97.8 %** | `play-function` 15 |
+
+    Discovery cost: ~5.4 s for 87 files, ~7.7 s for 247 (one-off per load, and
+    only for a project that HAS stories).
+- **Human action needed:** dogfood. Put a project with `*.stories.tsx` in
+  `studio-workspace/` (or point `pagesDir` at one), open `/admin/site`, and:
+  (1) confirm a second board named **Stories** appears in the board switcher and
+  the project's own board's frame count is UNCHANGED; (2) open it and confirm
+  one row per `meta.title` with the variants laid out left to right; (3) select
+  a node INSIDE a story frame and confirm its text/style edits still write back
+  (they land in the component's own file, warned as shared); (4) confirm the
+  story frame's own args show in the panel as read-only rather than as
+  live-looking inputs that eat keystrokes; (5) delete a story frame, reload, and
+  confirm it stays deleted.
+
+---
+
 ### mcp-18 — the agent learned a page threw only as a blank rectangle in a PNG, and every turn paid frontier price
 
 - **Agent:** mcp-tooling
