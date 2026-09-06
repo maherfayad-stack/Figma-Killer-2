@@ -12,6 +12,112 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### panel-10 — the inspector told you an edit could not be saved two seconds AFTER you made it
+- **Agent:** claude (`panel-designer`, single pass, stacked on `feat/inspector-progressive-disclosure` / PR #5)
+- **Stage:** done, **needs human dogfood**. `bun run build` clean, `bun run lint` exit 0, `bun test src/__tests__/{panels,editor-store,architecture}` = 1501 pass / 1 fail (the known `icon-catalog-integrity` failure from the missing vendored `pixel-art-icons/dist`).
+- **Updated:** 2026-09-06
+
+**The shape of the bug.** Studio already knew, at selection time, whether a class
+had a hand-editable `.css` block behind it — `resolveClassCssEditability` computed
+it and `StyleTargetChip` put it in a tooltip. Nothing acted on it. Every property
+row of a compiled Tailwind/CSS-Modules class, or of a rule the parser never mapped,
+stayed fully editable: you typed, the canvas updated, autosave ran ~2 s later, and
+only then did `collectStyleRuleEdits`'s `unmapped` list produce a toast naming a
+selector whose value now existed nowhere but your browser. **A control that accepts
+an edit it knows cannot land is this panel's version of the `[object Object]`
+input.** Three changes, plus one deletion.
+
+**1. `rule.scope` on a class created from the picker.** `handleCreateAndAdd` called
+`createClass(name)` with no scope, so `resolveCssInsertDestination` had no page to
+co-locate the new class's first declarations with. It then fell back to counting
+stylesheets across the whole workspace and refused every project with more than
+one — *"Studio found 4 candidate stylesheets … and will not guess"* — which is every
+real multi-page project, since each page owns its own `*.module.css`. The answer was
+in the rule the entire time. `createClass` grew an optional third `scope` param
+(`crudActions.ts` + `types.ts`); `ClassPicker` passes
+`{ type: 'node', nodeId, role: 'module-style' }`.
+
+  **The judgement worth keeping:** the scope is only set when `nodeId` is a STUDIO
+  source-derived id (`rel:line:col`) — `nodeScopeForNewClass` in `ClassPicker.tsx`.
+  A CMS nanoid id decodes to no file, so the scope buys the resolver nothing, while
+  still costing the two *other* semantics `scope` carries: a node-scoped class is
+  **cloned rather than shared** when its node is duplicated
+  (`duplicateWithScopedClasses.ts`), and is claimed by `ensureNodeStyleClass` as
+  that node's module-style layer. A reusable `.card` the user named themselves must
+  not silently acquire either in exchange for nothing. **Symptom if someone drops
+  the gate: duplicating a CMS node stops sharing its classes and starts making
+  `.card copy`.**
+
+**2. Pre-flight lock on class property rows.** `classCssWritability.ts` (new) owns
+`resolveClassCssEditability` — moved out of `StyleSurface` — and adds
+`classCssWriteLockReason`. `StyleSurface` provides the reason through
+`StyleWriteLockContext` (new) around the **class block only**; every
+`ClassPropertyRow` under it renders `disabled`, drops its remove button, keeps
+showing its value, and carries the reason as its `title`.
+`ClassCssLockedNotice` (new) states it at the top of the block and offers
+**"Style the element instead"** — the same `setInlineStyleEditing(true)` the Element
+chip calls. That remedy is what the chip tooltip and the save toast have both
+recommended for months without ever offering a way to take it.
+
+  **Why a context and not a prop:** the path is `StyleSurface` →
+  `StyleRuleComposer` → `StyleSectionsEditor` → section → row. Threading a prop
+  through four links means any section that forgets to forward it silently renders
+  an editable row for an unwritable class — the exact failure being removed. Same
+  shape, same solution as `TokenCatalogContext`, read by the same component.
+
+  **Why the lock is gated on a Studio session** (`isStudioPageRootId` on the active
+  page): outside Studio `getStudioStyleRuleSources()` is `{}`, so EVERY class
+  resolves `unmapped`. That is the right answer to "which file does this write to"
+  (none — it writes to the site document) and the wrong basis for disabling a
+  control. **Ungated, this disables the entire properties panel in the DB-backed
+  editor.** `compiled` needs no gate: it is only reachable through a
+  `styleRuleSources` entry, which only a Studio load produces.
+
+  **Deliberate, documented gap:** the bespoke visual controls the Layout / Size /
+  Spacing / Fill / Stroke sections own do not route through `ClassPropertyRow` and
+  stay live. The banner above them states the fact for the whole class. Disabling
+  each of those widgets is the full typed-constraint model (Track F,
+  `editConstraint.ts`) — not a second copy of this predicate scattered across seven
+  sections. Same posture `InlineStyleComposer`'s doc already records for its own
+  per-property locks.
+
+**3. Deleted the duplicated writability rule.** `StyleSurface`'s
+`isEditorAuthoredClassId` reimplemented `isImportedStyleRuleId` as
+`!id.startsWith('sc-')`, with a doc comment admitting the duplication. A duplicated
+invariant with a comment apologising for itself is still a duplicated invariant, and
+this one guarded a claim about writing to a user's repository. It now imports the
+real function from `@core/page-tree`.
+
+**Bonus item 4 (breakpoint targets that don't render on a board) needs no work** —
+`CanvasRoot.tsx:573` already hides `CanvasContextSelector` entirely when
+`activeBoardId` is set (finding D3), and `canvasContextSelectorBoardMode.test.tsx`
+pins it.
+
+**Pre-existing failures, not mine.** `src/__tests__/canvas` + `src/__tests__/modules`
+run as one batch produce ~10–11 order-dependent failures **on the untouched base
+commit too** — measured both ways; my branch's set is a strict SUBSET of the clean
+tree's (9 vs 11 in the paired run). Every one of those files passes standalone. Plus
+the known `icon-catalog-integrity` and `projectMcpApprovals` failures.
+
+**Human action needed.** Open a Studio board on a Tailwind or `dist/`-CSS project
+and **select an element whose only class is a compiled/unmapped one**. Expect: an
+amber "read-only here" banner naming the selector at the top of the class block,
+every property row greyed with no × button, and a **"Style the element instead"**
+button that opens the Element block. Then **select an element whose class lives in a
+hand-authored `.css`** and confirm nothing is greyed. Finally, in the DB-backed
+editor (non-Studio page), confirm **no** row is greyed anywhere.
+
+**Files:** `.../PropertiesPanel/classCssWritability.ts`,
+`.../StyleWriteLockContext.ts`, `.../ClassCssLockedNotice.{tsx,module.css}` (all
+new), `.../StyleSurface.tsx`, `.../ClassPropertyRow.{tsx,module.css}`,
+`.../ClassPicker.tsx`, `store/slices/styleRule/{crudActions,types}.ts`,
+`src/__tests__/panels/{classCssWritability,classPropertyRowWriteLock,styleSurfaceWriteLock}.test.tsx`,
+`src/__tests__/panels/classPicker.test.tsx`. **No new tokens** — the notice reuses
+`--warning-10` / `--warning-text` / `--warning`, the same pairing
+`SharedComponentNotice` uses for the other kind of before-you-edit consequence.
+
+---
+
 ### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
 
 **What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the

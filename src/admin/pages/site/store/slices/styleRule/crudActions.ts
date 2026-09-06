@@ -286,7 +286,7 @@ function deletePriorityKeys(priorities: PriorityBag | undefined, keys: readonly 
 
 export function createCrudActions({ get, mutateSite }: SiteSliceHelpers): CrudActions {
   return {
-    createClass(name, styles = {}) {
+    createClass(name, styles = {}, scope) {
       const { site } = get()
       if (!site) throw new Error('[styleRuleSlice] Site document is not initialized')
       assertValidCssClassName(name)
@@ -304,6 +304,9 @@ export function createCrudActions({ get, mutateSite }: SiteSliceHelpers): CrudAc
         order: nextRuleOrder(site.styleRules),
         styles,
         contextStyles: {},
+        // Optional node association — see this action's doc in `types.ts` for
+        // why a Studio caller supplies one and what reads it.
+        ...(scope ? { scope } : {}),
         createdAt: now,
         updatedAt: now,
       }
