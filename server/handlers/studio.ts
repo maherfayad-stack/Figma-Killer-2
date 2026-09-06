@@ -308,7 +308,6 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioIcons,
   tryServeStudioTranslations,
   tryServeStudioI18nSetup,
-  tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
@@ -398,6 +397,9 @@ export async function tryServeStudio(
   // author. See `studio/commentsRoutes.ts`'s module doc.
   const commentsResponse = await tryServeStudioComments(req, runtime, url, pathname)
   if (commentsResponse) return commentsResponse
+
+  const projectResponse = await tryServeStudioProjectRoutes(req, runtime, url, pathname)
+  if (projectResponse) return projectResponse
 
   // Same exception as comments, for the same reason: share management acts on
   // behalf of a signed-in user (creating one publishes designs to anyone with
