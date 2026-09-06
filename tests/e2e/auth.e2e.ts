@@ -55,7 +55,7 @@ test.describe('auth session lifecycle', () => {
       await logout(page)
 
       await stalePage.goto('/admin/site')
-      await expect(stalePage.getByRole('heading', { name: 'Admin Login' })).toBeVisible()
+      await expect(stalePage.getByRole('heading', { name: 'Sign in to Studio' })).toBeVisible()
       await expect(stalePage.getByTestId('account-menu-trigger')).toHaveCount(0)
       expect(staleConsoleErrors).not.toContainEqual(
         expect.stringContaining('[module-inserter] failed to load user preference'),
@@ -77,7 +77,7 @@ test.describe('auth session lifecycle', () => {
     await expectMobileAccountMenuContained(page)
 
     await page.getByTestId('account-menu-sign-out').click()
-    await expect(page.getByRole('heading', { name: 'Admin Login' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Sign in to Studio' })).toBeVisible()
     await expect(page.getByTestId('account-menu-trigger')).toHaveCount(0)
   })
 })

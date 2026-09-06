@@ -4,7 +4,7 @@
  * - Show keyboard shortcuts
  * - Open documentation
  * - Report an issue
- * - About ALM Figma Killer
+ * - About Studio
  * - Copy environment info (for bug reports)
  */
 
@@ -57,7 +57,7 @@ export function getHelpCommands(): Command[] {
 
     {
       id: 'help.about',
-      title: 'About ALM Figma Killer',
+      title: 'About Studio',
       subtitle: 'Version information and license',
       group: 'help',
       iconName: 'book-open-solid',
@@ -81,7 +81,7 @@ export function getHelpCommands(): Command[] {
       run: (ctx) => {
         ctx.closeSpotlight()
         const info = [
-          `ALM Figma Killer`,
+          `Studio`,
           `Browser: ${navigator.userAgent}`,
           `Platform: ${navigator.platform}`,
           `URL: ${window.location.href}`,

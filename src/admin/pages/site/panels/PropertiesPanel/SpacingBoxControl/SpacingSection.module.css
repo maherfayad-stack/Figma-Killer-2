@@ -1,0 +1,20 @@
+/* SpacingSection — the Spacing section's new shape (margin cluster + the
+ * "Box model" diagram behind a ⚙). Same vertical rhythm as
+ * Section.module.css's .sectionBody (8px gap). */
+
+.spacingSection {
+    display: grid;
+    gap: var(--space-s);
+}
+
+/* Margin cluster + the Box model settings trigger, one row. */
+.marginRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.marginRow > :first-child {
+    flex: 1;
+    min-width: 0;
+}

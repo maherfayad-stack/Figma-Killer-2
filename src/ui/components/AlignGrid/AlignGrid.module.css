@@ -1,0 +1,86 @@
+/* AlignGrid — the 3×3 alignment pad.
+ *
+ * Achromatic tokens only. No Tailwind, no inline styles, no !important.
+ * Composes the shared Button primitive (variant="ghost", size="micro",
+ * iconOnly) for every cell. Button's fixed size tokens (18px height on
+ * `size-micro`) are taller than this widget's whole 48px budget across
+ * three rows, so `.cell.cell.cell` is a tripled selector — matching the
+ * specificity trick `SegmentedControl.module.css` already uses to win
+ * over Button's own `.size-micro.iconOnly` (two classes) — to shrink each
+ * cell down to its 1fr grid track instead.
+ *
+ * `.grid` pins its own box at a literal 48×48px (`box-sizing: border-box`)
+ * to hold the ≤48px height budget exactly — that outer size is the one
+ * dimension this component owns and must not drift with viewport width, so
+ * it stays a literal pixel value, not a token. Everything INSIDE that box —
+ * `gap` and `padding` — only trades space between the fixed-size outer box
+ * and the `1fr` cell tracks: a bigger gap shrinks the cells, not the box.
+ * There is no budget risk there, so gap/padding use the normal fluid
+ * `--space-*` scale like any other admin/ui spacing. Color and radius come
+ * from tokens throughout.
+ */
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: var(--space-4xs);
+    box-sizing: border-box;
+    width: 48px;
+    height: 48px;
+    padding: var(--space-4xs);
+    border-radius: var(--radius-sm);
+    background: var(--overlay-5);
+}
+
+/* Row wrapper exists for role="row" semantics only — it must not add a box
+ * to the 3×3 track, so its children participate directly in the grid. */
+.row {
+    display: contents;
+}
+
+.grid .cell.cell.cell {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+}
+
+.grid .cell.cell.cell:hover {
+    background: var(--inspector-field-bg-hover);
+}
+
+.grid .cell.cell.cell[data-cell-state='align-only'],
+.grid .cell.cell.cell[data-cell-state='justify-only'] {
+    background: var(--overlay-10);
+}
+
+.grid .cell.cell.cell[data-cell-state='active'] {
+    background: var(--overlay-30);
+}
+
+.grid .cell.cell.cell[data-cell-state='active']:hover {
+    background: var(--overlay-30);
+}
+
+.mark {
+    display: block;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--radius-sm);
+    background: var(--text-muted);
+}
+
+.grid .cell.cell.cell[data-cell-state='align-only'] .mark,
+.grid .cell.cell.cell[data-cell-state='justify-only'] .mark {
+    background: var(--text);
+}
+
+.grid .cell.cell.cell[data-cell-state='active'] .mark {
+    width: 6px;
+    height: 6px;
+    background: var(--text-bright);
+}
