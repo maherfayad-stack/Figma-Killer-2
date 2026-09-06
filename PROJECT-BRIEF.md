@@ -258,6 +258,12 @@ per-track ledger is
 tracks partially-landed tracks (D2's structural drag work, Track G density,
 A7) at a resolution this file should not try to carry.
 
+One update from the style-compile consent work (2026-09-06): a fresh
+Tailwind/Sass/PostCSS import no longer sits silently unstyled at Tier 0 —
+the board asks once, on load, via `StyleCompileConsentBanner`
+(`src/admin/pages/site/canvas/StyleCompileConsentBanner/`); promotion to
+Tier 1 remains an explicit user action through the existing trust-tier route.
+
 - **A style change scoped to a real `@media` breakpoint does not reach disk.**
   The codemod and the wire both support it — `insertRule`/`setDeclaration`
   take an `atMedia` query, and the `insert`/`create` payload schemas carry the

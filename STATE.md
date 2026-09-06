@@ -12,11 +12,137 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### panel-10 — a Tailwind/Sass project imported unstyled and nothing on screen said why
 ### mcp-17 — the assistant loop paid for its whole context every round, ran its read batch one tool at a time, and captured five screens in five browser round trips
 
 - **Agent:** studio-implementer
 - **Stage:** done
 - **Updated:** 2026-09-06
+- **Goal:** a first-run, per-project consent surface on the board that explains
+  why a Tier 0 Tailwind/Sass/PostCSS project renders unstyled, and offers the
+  promote + compile + reload in one click — or a dismissal that sticks.
+- **Scope:**
+  - new: `server/handlers/studio/styleCompileConsent.ts`,
+    `server/handlers/__tests__/styleCompileConsent.test.ts`,
+    `src/admin/pages/site/studio/styleCompileConsent.ts`,
+    `src/admin/pages/site/studio/__tests__/styleCompileConsent.test.ts`,
+    `src/admin/pages/site/canvas/StyleCompileConsentBanner/{StyleCompileConsentBanner.tsx,.module.css,index.ts}`
+  - modified: `server/handlers/studio.ts` (sub-router + module doc),
+    `server/handlers/studio/studioMeta.ts`,
+    `server/handlers/studio/styleCompile.ts`,
+    `server/handlers/studio/trustTier.ts`,
+    `src/admin/pages/site/canvas/StudioCanvasChrome.tsx`,
+    `PROJECT-BRIEF.md`, `docs/features/studio-import.md`,
+    `docs/agent-refs/path-index.md`
+
+- **Done so far:**
+  - **The audit answer first, because it is the whole reason this shipped:**
+    NOTHING told the user about Tier 0 vs Tier 1 at the project level.
+    `NodeRenderer`'s `PackageComponentPlaceholder` is per NODE and only fires
+    for an unregistered `pkg.*` node — a Tailwind project with zero package
+    components hits it never. `styleCompile.ts` already pushed a
+    `style-toolchain-requires-trust-promotion` warning
+    (`styleCompile.ts:445`) but `ProbeWarning[]` is not in the `/load` wire
+    shape (`studioLoadStreamSchema.ts` carries `trust`, not warnings), so that
+    string has had no consumer since WS-2.1 landed. The board just looked broken.
+  - `server/handlers/studio/styleCompileConsent.ts` — `GET/POST
+    /admin/api/studio/style-compile-consent`. GET reports
+    `{ trust, toolchains, dependenciesInstalled, dismissed }`; POST records the
+    dismissal. Registered in `STUDIO_SUB_ROUTERS` (`studio.ts:266`) and
+    documented in that file's route list. Same containment posture as its
+    siblings (`resolveProjectDir` + `isRealpathContained`).
+  - `compilableStyleToolchains(profile)` is now exported from
+    `styleCompile.ts` and `compileProjectStyles` itself calls it for
+    `needsTier1` — so the prompt and the compiler answer "is there anything to
+    compile" from the same function, not from two copies of
+    `sass || tailwind || postcssConfigPath`.
+  - `.studio/meta.json` gained `styleCompilePromptDismissed`
+    (`studioMeta.ts`). Studio state on disk, per project, never the DB.
+  - Client: `src/admin/pages/site/studio/styleCompileConsent.ts` (schema, two
+    calls, `shouldOfferStyleCompile`, `styleToolchainLabel`) +
+    `StyleCompileConsentBanner`, mounted from `StudioCanvasChrome.tsx:42`
+    (untransformed, lazy, studio-only chrome). Bottom-CENTRE of the board —
+    the one free slot (top-left `CanvasModeToggle`, top-centre `CanvasNotch`,
+    bottom-left `BoardNotesToolbar`), z-index 53 with them.
+  - `studioMeta.ts`'s `TrustTierSchema` is now exported and `trustTier.ts`
+    uses it instead of its own copy of the three literals — one fewer mirror
+    to drift. The browser's copy in `studioProjectTrust.ts` stays (it cannot
+    import a Node-only module).
+
+- **Next step:** none — landed. If you extend this, the natural follow-up is
+  the `dependencies-not-installed` half: today the banner only *says* deps are
+  missing, it does not offer the install. `InstallDependenciesPrompt` already
+  owns that job in the Dependencies panel; wiring a second install trigger
+  here would need the two to share the job-polling state, not duplicate it.
+
+- **Decisions:**
+  - **The consent route cannot promote.** It reports and it dismisses. The
+    promotion goes through `promoteProjectToTier1` → `POST
+    /admin/api/studio/trust-tier`, exactly as the per-node placeholder does. A
+    second path to Tier 1 would be a second place to get that boundary wrong.
+  - **`styleCompilePromptDismissed` is a separate field from `trust`, and
+    neither implies the other.** A dismissal is a refusal to be ASKED. Folding
+    it into the tier would make "I closed a banner" indistinguishable from "I
+    authorised running this repo's code".
+  - **The copy names the trust boundary.** The button is "Run the project's
+    compiler", not "Enable styles", and the description says its config files
+    are code and will execute. This is a real consent boundary; softening the
+    words is how a consent surface becomes a nag bar people click through.
+  - **The banner still shows when `node_modules` is missing** (see
+    `shouldOfferStyleCompile`'s doc). Hiding the explanation until an
+    unrelated install has happened would reproduce the exact silence this
+    exists to break — it says so in its own copy instead.
+  - **Kept `PackageComponentPlaceholder` exactly as-is.** Different question,
+    different scope (one node vs. the project), and a project whose styles
+    compile fine can still hit it.
+
+- **Landmines:**
+  - **The reload IS the compile trigger.** There is no "compile now" route.
+    `compileProjectStyles` runs server-side inside `/load`, re-reads `trust`
+    from `.studio/meta.json`, and folds it into the cache key — so
+    `requestCmsSiteReload()` after the promote both recompiles and cannot
+    serve the Tier 0 cache entry. Do not add a separate compile endpoint
+    thinking one is missing.
+  - `PackageComponentPlaceholder`'s promote deliberately does NOT reload (its
+    effect re-fetches the bundle). The style compile is the opposite case and
+    needs the reload. Two promote call sites, two correct behaviours.
+  - This worktree has **no `node_modules`**, so `bun run build`'s vite half and
+    several suites cannot resolve packages. `tsc -b` resolves upward to the
+    parent repo and is honest; vite had to be run from
+    `../../../node_modules/vite/bin/vite.js` (see Verification).
+
+- **Verification:**
+  - `bunx tsc -b` → clean (the `bun run build` script's vite half needs a
+    worktree-local `node_modules`; ran it as
+    `bun ../../../node_modules/vite/bin/vite.js build` → `✓ built in 11.94s`).
+  - `bun run lint` → clean.
+  - `bun test src/admin/pages/site/studio/__tests__/styleCompileConsent.test.ts`
+    → 12 pass.
+  - `bun test server/handlers/__tests__/styleCompileConsent.test.ts
+    server/handlers/__tests__/trustTier.test.ts` → 14 pass.
+  - `bun test server/handlers/__tests__/styleCompile.test.ts
+    server/handlers/__tests__/styleCompileWorker.test.ts` → 29 pass
+    (the `compilableStyleToolchains` extraction is behaviour-preserving).
+  - `bun test src/__tests__/architecture` → 493 pass, 18 fail — all 18 are
+    `icon-catalog-integrity` (reads `node_modules/pixel-art-icons/dist`, absent
+    in this worktree). The `admin-spacing-token-policy` gate DID catch one of
+    mine (a raw `margin-top: 2px`); fixed to `var(--space-4xs)`.
+  - `bun test` (full) → 10196 pass, 108 fail. Confirmed not mine: the four
+    `tryServeStudioComponentBundle` failures fail identically with my changes
+    stashed, and the rest are the known env cluster (`streamClaudeCli`,
+    happy-dom canvas suites, `icon-catalog-integrity`, `projectMcpApprovals`).
+
+- **Human action needed:** **dogfood** — this is a visual, first-run surface
+  and no static gate can tell you it looks right. Open a Tailwind or Sass
+  project that has never been promoted at `/admin/site?studio`. Expect the
+  banner bottom-centre on the board naming the toolchain. Click **Run the
+  project's compiler**: the board should reload and the frames should come
+  back styled (a project with no `node_modules` will instead stay unstyled —
+  install deps from the Dependencies panel, then reload). On a second project,
+  click **Not now**, reload the page, and confirm it stays gone —
+  `.studio/meta.json` should show `"styleCompilePromptDismissed": true` and
+  NO `"trust"` key. Also confirm the banner never appears on a plain-CSS
+  project or in CMS (non-studio) mode.
 - **Goal:** land the verified latency fixes in `server/ai/**` — prompt caching that
   covers more than the system prefix, tool dispatch that isn't serial, and a
   `studio_compare` that captures a batch as a batch.
