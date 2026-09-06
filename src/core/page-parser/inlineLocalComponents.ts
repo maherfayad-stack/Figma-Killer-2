@@ -96,6 +96,7 @@ import {
 } from './parsePageFile'
 import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
 import { resolveComponentSources, resolveExportedDeclaration, type ComponentSource } from './componentSources'
+import { mergeCssInJs } from './cssInJsExtract'
 import type { ParsedNode, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
 import { studioSlotNodeId, studioSlotValue } from '@core/utils/studioSlotSentinel'
@@ -185,7 +186,11 @@ export function inlineLocalComponents(
       nodeCount: Object.keys(parsed.nodes).length,
     }
 
-    const page: ParsedPage = { rootIds: [...parsed.rootIds], nodes: { ...parsed.nodes } }
+    const page: ParsedPage = {
+      rootIds: [...parsed.rootIds],
+      nodes: { ...parsed.nodes },
+      ...(parsed.cssInJs ? { cssInJs: parsed.cssInJs } : {}),
+    }
     // Iterate a SNAPSHOT of the original node ids — `expandCallSite` mutates
     // `page` (removing the call site, adding its expansion) as it goes, and we
     // only ever want to consider call sites that existed in the page as parsed,
@@ -298,6 +303,13 @@ function expandCallSite(
       if (!node || node.kind !== 'component') continue
       expandCallSite(id, node, source.file, subPage, state, nextCyclePath, depth + 1)
     }
+
+    // W4-4 Phase A — a local component's own `styled.…` templates are just as
+    // much a part of what this page renders as the page file's own, and its
+    // nodes already carry the synthetic classes those templates define. Merged
+    // onto the PAGE (deduplicated by class name), because the same component
+    // file is re-parsed once per call site it is inlined at.
+    page.cssInJs = mergeCssInJs(page.cssInJs, subPage.cssInJs)
 
     // Prefix every id this subtree owns (§2.4) — deterministic and
     // collision-free even though the SAME component may be inlined at many

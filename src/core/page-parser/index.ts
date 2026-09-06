@@ -8,7 +8,21 @@ export {
 export type { ReturnedJsx } from './parsePageFile'
 export { IMAGE_SPECIFIER_RE, STUDIO_ASSET_SENTINEL, unresolvedRawTextImports } from './assetImports'
 export type { ImportSpecifierLocation, UnresolvedAssetImport } from './assetImports'
-export type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
+export type {
+  BranchAlternative,
+  CssInJsBase,
+  CssInJsExtraction,
+  CssInJsFinding,
+  CssInJsLibrary,
+  CssInJsTemplate,
+  FunctionLike,
+  NodeLoc,
+  ParsedNode,
+  ParsedPage,
+  ParsedPropValue,
+} from './types'
+export { cssInJsStylesheet, extractCssInJs, mergeCssInJs } from './cssInJsExtract'
+export type { CssInJsFile, StyledBinding } from './cssInJsExtract'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,
   WORKSPACE_MAX_FILE_BYTES,

@@ -61,6 +61,7 @@ import {
   composeAppRouterRoute,
   createPageEvalBudget,
   createWorkspaceProject,
+  cssInJsStylesheet,
   inlineLocalComponents,
   parsePageFile,
   resolveComponentSources,
@@ -121,6 +122,26 @@ function rewriteStudioAssetSentinels(page: Page, dir: string): void {
       }
     }
   }
+}
+
+/**
+ * W4-4 Phase A — the `extraCss` blob `loadStudioStyles` parses: the compiled
+ * Tailwind/Sass/CSS-Modules output, plus every CSS-in-JS template the parse
+ * extracted across these routes.
+ *
+ * They share one bucket on purpose. An `extraCss` rule gets no
+ * `StyleRuleSources` entry, so the `kind: 'css'` write-back refuses it as
+ * unmapped and `StyleTargetChip` says so — which is exactly the read-only
+ * presentation a styled template needs, inherited rather than re-derived.
+ *
+ * `cssInJsStylesheet` dedupes by class name (content-addressed, so identical
+ * name means identical template): one component file is re-parsed once per
+ * call site it is inlined at, and per route that inlines it, so a shared
+ * `styled.div` legitimately arrives many times.
+ */
+function cssInJsExtraCss(compiledCss: string, entries: readonly RoutePageEntry[]): string {
+  const templates = entries.flatMap((entry) => entry.expanded.cssInJs?.templates ?? [])
+  return [compiledCss, cssInJsStylesheet(templates)].filter(Boolean).join('\n')
 }
 
 /** Result of the load pipeline: every parsed page, the merged component classification (keyed by node id), and the merged imported-CSS registry. */
@@ -509,12 +530,13 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   for (const entry of routeEntries) Object.assign(componentSources, entry.componentSources)
 
   // §6 — read every stylesheet the pages import, in cascade order, plus the
-  // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules).
+  // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules)
+  // and W4-4's CSS-in-JS templates.
   const { styleRules, conditions, classIdsByName, sources: styleRuleSources, authoredCss } = await loadStudioStyles(
     routeEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
     project,
     dir,
-    compiledStyles.css,
+    cssInJsExtraCss(compiledStyles.css, routeEntries),
     // The inverse of this map is what lets a compiled CSS-Modules rule point
     // back at the `.module.css` it was renamed from — without it every such
     // rule is unmapped, which is what produced "Style not saved to source".
@@ -610,7 +632,12 @@ export async function loadStudioPageInLocale(dir: string, pageId: string, locale
   // Scoped (this route only) style resolution — see this function's own doc
   // for why a narrower scan here still produces ids consistent with the
   // client's already-loaded site-wide `site.styleRules`.
-  const { classIdsByName } = await loadStudioStyles([{ parsed: expanded, relFile: entry.relFile }], project, dir, compiledStyles.css)
+  const { classIdsByName } = await loadStudioStyles(
+    [{ parsed: expanded, relFile: entry.relFile }],
+    project,
+    dir,
+    cssInJsExtraCss(compiledStyles.css, [entry]),
+  )
   const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
 
   const page = parsedPageToSitePage(expanded, {

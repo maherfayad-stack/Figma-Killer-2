@@ -43,6 +43,8 @@ import {
   type ParseContext,
 } from './jsxAttributeReaders'
 import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
+import { createCssInJsScope } from './cssInJsExtract'
+import { applyStyledAttachment, resolveStyledAttachment } from './cssInJsAttach'
 import { serializeInlineSvg } from './inlineSvg'
 import { extractRawSvgMarkup } from './iconPropValues'
 import { captureSlotProps } from './slotCapture'
@@ -133,10 +135,16 @@ export function parseJsxTree(
   componentFn?: FunctionLike,
   evalOptions?: StaticEvalOptions,
 ): ParsedPage {
+  // W4-4 Phase A — the `styled.…`/`css` bindings this file can see: its own
+  // (read once, memoized per `SourceFile`) plus, resolved lazily during the
+  // walk, any imported from another file. `processElement` asks it whether a
+  // capitalized tag is really a host element with a class.
+  const cssInJs = createCssInJsScope(sourceFile, relFile, evalOptions)
   const ctx: ParseContext = {
     sourceFile,
     relFile,
     nodes: {},
+    cssInJs,
     ...(evalOptions ? { eval: { scope: createEvalScope(sourceFile, componentFn), options: evalOptions } } : {}),
   }
   // One `ctx` across every return, so ids and the eval budget are shared: two
@@ -177,7 +185,15 @@ export function parseJsxTree(
     }
   }
 
-  return { rootIds, nodes: ctx.nodes }
+  return {
+    rootIds,
+    nodes: ctx.nodes,
+    // Carried on the page even when no node used a styled binding: the CSS is
+    // still real, the fidelity report still needs the per-template counts, and
+    // `inlineLocalComponents` merges an inlined file's templates into the
+    // page's the same way.
+    ...(cssInJs.templates.length > 0 ? { cssInJs: { templates: cssInJs.templates } } : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,8 +357,7 @@ function processElement(
     ? element.getOpeningElement().getTagNameNode()
     : element.getTagNameNode()
 
-  const name = tagNameNode.getText()
-  const kind: ParsedNode['kind'] = /^[A-Z]/.test(name) ? 'component' : 'element'
+  const tagName = tagNameNode.getText()
 
   const pos = tagNameNode.getStart()
   const { line, column } = ctx.sourceFile.getLineAndColumnAtPos(pos)
@@ -355,11 +370,18 @@ function processElement(
     ? element.getOpeningElement().getAttributes()
     : element.getAttributes()
 
+  // W4-4 Phase A — `<Wrapper>` where `Wrapper = styled.div\`…\`` IS a `<div>`
+  // with a class, so the node is that `<div>`, at this same location. No
+  // wrapper element is introduced; see `cssInJsAttach.ts`.
+  const styled = ctx.cssInJs ? resolveStyledAttachment(tagName, attributes, ctx.cssInJs) : undefined
+  const name = styled?.name ?? tagName
+  const kind: ParsedNode['kind'] = styled?.kind ?? (/^[A-Z]/.test(name) ? 'component' : 'element')
+
   const hasSpread = attributes.some((a) => Node.isJsxSpreadAttribute(a))
   const locked = inheritedLocked || hasSpread
   const lockReason = inheritedLocked ? inheritedReason : hasSpread ? SPREAD_LOCK_REASON : undefined
 
-  const propsResult = extractProps(attributes, ctx, kind)
+  const propsResult = applyStyledAttachment(extractProps(attributes, ctx, kind), styled)
   const styleResult = extractInlineStyles(attributes, ctx)
 
   // <svg> is captured as one opaque unit for `base.svg` (raw inline markup) —

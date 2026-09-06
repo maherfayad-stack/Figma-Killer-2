@@ -35,6 +35,7 @@ import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitutio
 import { resolveComponentSources, type ComponentSource } from './componentSources'
 import { inlineLocalComponents } from './inlineLocalComponents'
 import { findComponentDeclaration, getFunctionLikeNode, getReturnedJsxRoots, parseJsxTree } from './parsePageFile'
+import { mergeCssInJs } from './cssInJsExtract'
 import type { FunctionLike, ParsedPage } from './types'
 import type { StaticEvalOptions } from './staticEval'
 
@@ -84,7 +85,7 @@ export function applyAsyncServerComponentFinding(parsed: ParsedPage, fn: Functio
     const node = nodes[rootId]
     if (node && !node.resolution) nodes[rootId] = { ...node, resolution }
   }
-  return { rootIds: parsed.rootIds, nodes }
+  return { ...parsed, rootIds: parsed.rootIds, nodes }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +183,18 @@ function composeOneLayout(
     Object.assign(componentSourcesOut, sources)
     const expanded = inlineLocalComponents(patched, sources, project, workspaceRoot, { evalOptions })
 
-    return { page: { rootIds: expanded.rootIds, nodes: { ...expanded.nodes, ...childPage.nodes } }, relFile }
+    // W4-4 Phase A — a layout's own styled templates and the route's are both
+    // part of what this composed route renders.
+    const cssInJs = mergeCssInJs(expanded.cssInJs, childPage.cssInJs)
+
+    return {
+      page: {
+        rootIds: expanded.rootIds,
+        nodes: { ...expanded.nodes, ...childPage.nodes },
+        ...(cssInJs ? { cssInJs } : {}),
+      },
+      relFile,
+    }
   } catch {
     // Never throw — this ONE layer of composition is declined, exactly like
     // `inlineLocalComponents`'s own per-call-site failure handling.
