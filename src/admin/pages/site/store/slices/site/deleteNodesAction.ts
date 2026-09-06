@@ -59,7 +59,7 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
       nodeIds.map((id) => target.tree.nodes[id] ?? cur.site?.pages.find((page) => page.nodes[id])?.nodes[id]),
     )
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.refusal)
+      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, get)
       return
     }
 

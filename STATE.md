@@ -12,6 +12,107 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### panel-10 — a refusal now shows its reason, its way forward, and where in the source it lives
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** make `EditConstraint`'s `actions` and `origin` reach the screen. The
+  engine has computed both for a while; nothing in `src/` rendered either, so
+  every refusal died as a 6-second warning toast carrying one sentence.
+- **Scope:** `src/core/page-tree/editConstraint.ts` (+ barrel) ·
+  `src/admin/pages/site/ui/ConstraintNotice/` (new) ·
+  `src/admin/pages/site/store/{constraintActions,openSourceFile}.ts` (new) ·
+  `store/slices/site/{structuralSourceEdits,nodeActions,deleteNodesAction}.ts` ·
+  `canvas/{canvasDnd.ts,CanvasDropIndicators.tsx (new),BreakpointSelectionOverlay.tsx+css}` ·
+  `panels/DomPanel/LayerNodeContextMenu.tsx+css` ·
+  `panels/PropertiesPanel/jumpToSource.ts` (import-only rewrite — see Landmines) ·
+  `@ui/components/Toast/{toastBus,ToastProvider,Toast.module.css}`.
+- **Done so far:**
+  - `describeStructuralRefusal` (`editConstraint.ts:379`) is the one place a
+    refusal gets its `origin` + `actions`. `explainStructuralConstraint` and
+    `explainGestureConstraint` now both delegate to it, and the store's plan
+    objects call it directly — they hold the NODE, which is where `origin`
+    comes from, and re-deriving the refusal later would be a second copy of the
+    rule.
+  - `StructuralPlan`'s refusal branch carries `constraint: EditConstraint`
+    instead of `{reason, message}` (`structuralSourceEdits.ts:58`).
+  - `toastStructuralRefusal` (`structuralSourceEdits.ts:308`) is now
+    **persistent** (`durationMs: null`), **deduped** (`dedupeKey`, so a repeat
+    counts up on the card already showing instead of stacking), and carries the
+    constraint's first runnable action — or a jump to its `origin` — as the
+    toast button.
+  - Toast bus: new optional `dedupeKey` + `repeatCount`
+    (`toastBus.ts:60`/`:82`), rendered as a `×N` on the title.
+    `ToastProvider`'s timer effect now keeps per-toast REMAINING time in a ref
+    (`ToastProvider.tsx:86`) — it re-armed every visible toast's full countdown
+    on every push/dismiss/hover before, so a burst kept itself alive and a
+    mouse crossing the stack reset the lot.
+  - `ConstraintNotice` (`ui/ConstraintNotice/ConstraintNotice.tsx`) renders a
+    constraint whole; `constraintActions.ts` is the one `kind` → handler table.
+    Mounted today as the layers context menu's refusal **footer**
+    (`LayerNodeContextMenu.tsx:576`), under the disabled Duplicate/Wrap/Delete
+    items it explains.
+  - Reason-on-drag: `canvasDnd.ts:217` now attaches the whole
+    `explainGestureConstraint` result (the seam that had zero consumers) to the
+    invalid drop target, and `CanvasDropIndicators.tsx` paints the sentence in
+    a chip beside the refused rect while the pointer is still down.
+- **Next step:** none for this entry. The obvious follow-up is
+  `InstanceCallSiteView.tsx`'s hand-rolled detach-refusal card
+  (`PropertiesPanel/InstanceCallSiteView.tsx:234`) — it renders a refusal with
+  its own markup and its own extract button, and is a straight swap for
+  `<ConstraintNotice constraint={explainDetachConstraint(...)} nodeId={nodeId} />`.
+  Left alone because `PropertiesPanel/**` was another agent's this wave.
+- **Decisions:**
+  - **A kind with no honest handler renders as plain text, not a disabled
+    button** — "Drag them one by one" is advice, not a command the editor can
+    run; a greyed-out button would claim it could.
+  - **Copy is rendered as the engine authored it.** The only sentence this
+    change contributes is the "Open `<file>:<line>`" affordance label.
+  - `constraintActions.ts` lives beside the STORE, not beside the component,
+    and takes `openSource` as context instead of importing `jumpToSource` —
+    see Landmines.
+  - The drag chip is opaque `--bg-body` with `--warning-text`, not an amber
+    wash: it floats over the USER's page, which can be any colour.
+- **Landmines:**
+  - **Nothing in the store's import graph may import `@site/store/store`.**
+    `jumpToSource` does, so importing it (even transitively, via a barrel that
+    also exports a component) from a store slice fails
+    `no-circular-dependencies.test.ts`. That is why the jump resolution was
+    split into `store/openSourceFile.ts` (takes the state it needs, so a slice
+    can call it with its own `get`) with `jumpToSource.ts` reduced to the
+    component-side wrapper. If you add a refusal surface, follow that split.
+  - `BreakpointSelectionOverlay.tsx` was 4 lines under the 700-line module
+    ceiling; the chip pushed it over. The drag-time layer is now
+    `CanvasDropIndicators.tsx`. Do not grow that file again without splitting.
+  - `decodeSourceNodeId` on a composite (inlined) id returns the COMPONENT's
+    file, not the call site's — so a shared-component refusal's "open" lands in
+    the component definition. That is correct (it is where the markup is), but
+    it surprised the test that expected the page file.
+- **Verification:**
+  - `bunx tsc -b` — clean. `bun run build` cannot run in a worktree (it hardcodes
+    `./node_modules/vite/bin/vite.js`, which only exists at the repo root);
+    ran `bun ../../../node_modules/vite/bin/vite.js build` instead — built.
+  - `bun test src/__tests__/architecture` — 492 pass, 19 fail, ALL
+    `icon-catalog-integrity` (the vendored `dist/` is unbuilt in a worktree;
+    known pre-existing).
+  - `bun test --parallel=4 src/__tests__/{editor-store,panels,studio,ui,dom-panel}`
+    — 1248 pass, 0 fail. `src/__tests__/canvas` — 679 pass, 2 fail
+    (`canvasScrollUnrollPinInteraction`, `canvasSelectionToolbar`); confirmed
+    pre-existing by re-running them on a `git stash -u` of this branch.
+  - `bun x eslint <every changed .ts/.tsx>` — clean.
+- **Human action needed:** **dogfood** at `/admin/site?studio` on an imported
+  project. (1) Drag a `.map` row or a shared-component element in the canvas —
+  a warning chip should follow the refused drop box with the reason, readable at
+  25% and 200% zoom. (2) Let go: the toast should stay until dismissed, and its
+  button should open the right file; repeat the same drag twice more and the
+  toast should show `×3` rather than stacking. (3) Right-click that element in
+  the Layers panel — the footer under the greyed-out Delete/Duplicate should
+  explain why and offer "Open the array in code". Check the footer does not
+  stretch the menu.
+
+---
+
 ### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
 
 **What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the

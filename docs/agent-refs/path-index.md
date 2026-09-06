@@ -192,6 +192,10 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟡 `src/admin/pages/site/sidebars/` | LeftSidebar, RightSidebar, PanelRail. |
 | 🟡 `src/admin/pages/site/panels/DomPanel/` | Layer tree. |
 | 🟢 `src/admin/pages/site/panels/DependenciesPanel/` | Project dependencies. |
+| 🟢 `src/admin/pages/site/ui/ConstraintNotice/` | The ONE renderer for an `EditConstraint` — explanation + `origin` as a jump-to-source + `actions` as real controls. Mounted today by `LayerNodeContextMenu`'s refusal footer. |
+| 🟢 `src/admin/pages/site/store/constraintActions.ts` | The single `EditConstraintAction['kind']` → handler table (a kind with no honest handler returns `null`, and the caller renders the label as plain text), plus `constraintPrimaryAction`/`constraintToastBody`, the one-button shape the refusal toast uses. Lives beside the store, not beside the component, because a refusal is detected inside a store action — and takes `openSource` as context rather than importing `jumpToSource`, which would put the composed store in its own importers' cycle. |
+| 🟢 `src/admin/pages/site/store/openSourceFile.ts` | `origin.rel` → `SiteFile` id → `openInEditor`, as a function OF the state it needs. `jumpToSource.ts` (PropertiesPanel) is the component-side wrapper that supplies `useEditorStore.getState()`. |
+| 🟢 `src/admin/pages/site/canvas/CanvasDropIndicators.tsx` | What a reorder drag paints: the drop line, the refused-position box, and the refusal REASON chip beside it — in the parent document's overlay layer, never inside a frame's iframe. |
 | 🟡 `src/ui/components/` | **Shared primitives — every interactive control must use these.** |
 | 🟡 `src/styles/globals.css` | **All design tokens.** No hex anywhere else. |
 
