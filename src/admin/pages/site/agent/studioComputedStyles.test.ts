@@ -5,27 +5,58 @@
  * that a node's real font-size is reported as a NUMBER, and that a font family
  * is reported per node so an unexpected entry in `fontFamiliesInUse` names a
  * font that failed to load.
+ *
+ * Every fixture here mounts a REAL iframe and puts the nodes in its
+ * `contentDocument`, because that is where a board frame's nodes actually live
+ * (`IframeFrameSurface`). An iframe-less fixture is not a simplification of the
+ * real shape — it is a different shape, and it let this tool return zero rows
+ * in every real canvas while its suite stayed green.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { runStudioComputedStyles } from './studioComputedStyles'
 
 const PAGE_ID = 'sign-up'
 
-/** Build the frame shape `findAgentRenderFrame` looks for: data-page-id wrapper > data-breakpoint-id viewport > nodes. */
-function mountFrame(nodes: Array<{ id: string; tag?: string; style?: string; text?: string }>): void {
+interface FixtureNode {
+  id: string
+  tag?: string
+  style?: string
+  text?: string
+}
+
+/** The host chrome `findAgentRenderFrame` matches: data-page-id wrapper > data-breakpoint-id viewport. */
+function mountFrameHost(): HTMLElement {
   const wrapper = document.createElement('div')
   wrapper.setAttribute('data-page-id', PAGE_ID)
   const viewport = document.createElement('div')
   viewport.setAttribute('data-breakpoint-id', 'studio')
   wrapper.appendChild(viewport)
+  document.body.appendChild(wrapper)
+  return viewport
+}
+
+function appendNodes(doc: Document, parent: Element, nodes: FixtureNode[]): void {
   for (const n of nodes) {
-    const el = document.createElement(n.tag ?? 'div')
+    const el = doc.createElement(n.tag ?? 'div')
     el.setAttribute('data-node-id', n.id)
     if (n.style) el.setAttribute('style', n.style)
     if (n.text) el.textContent = n.text
-    viewport.appendChild(el)
+    parent.appendChild(el)
   }
-  document.body.appendChild(wrapper)
+}
+
+/**
+ * A board frame as it really renders: the host chrome, an `<iframe>` inside it,
+ * and the page's nodes inside that iframe's own document.
+ */
+function mountFrame(nodes: FixtureNode[]): Document {
+  const viewport = mountFrameHost()
+  const iframe = document.createElement('iframe')
+  viewport.appendChild(iframe)
+  const doc = iframe.contentDocument
+  if (!doc?.body) throw new Error('test environment produced no iframe contentDocument')
+  appendNodes(doc, doc.body, nodes)
+  return doc
 }
 
 afterEach(() => {
@@ -39,6 +70,35 @@ describe('runStudioComputedStyles', () => {
     expect(result.error).toContain('No live frame')
     // Names the cause the caller can act on rather than just failing.
     expect(result.error).toContain('open in a Studio tab')
+  })
+
+  // The frame host commits before the iframe inside it does. Reporting zero
+  // rows there would read as "the page has no styled nodes", which is the one
+  // conclusion the caller must never draw from a frame that is still mounting.
+  it('reports a not-ready frame honestly instead of reporting an empty page', () => {
+    mountFrameHost()
+    const result = runStudioComputedStyles({ pageId: PAGE_ID })
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('not finished mounting')
+    expect(result.error).toContain('studio_screenshot')
+  })
+
+  it('reads the nodes inside the frame iframe, not the host document', () => {
+    const viewport = mountFrameHost()
+    const iframe = document.createElement('iframe')
+    viewport.appendChild(iframe)
+    const doc = iframe.contentDocument
+    if (!doc?.body) throw new Error('test environment produced no iframe contentDocument')
+    // A decoy in the HOST document: canvas chrome (selection overlays, layer
+    // rows) carries `data-node-id` too, so reading the host both misses the
+    // page and reports admin chrome as if it were the user's design.
+    appendNodes(document, viewport, [{ id: 'host-chrome', tag: 'span', style: 'font-size: 11px', text: 'chrome' }])
+    appendNodes(doc, doc.body, [{ id: 'page-node', tag: 'span', style: 'font-size: 14px', text: 'Continue' }])
+
+    const result = runStudioComputedStyles({ pageId: PAGE_ID })
+    expect(result.ok).toBe(true)
+    const data = result.data as { nodes: Array<{ nodeId: string }> }
+    expect(data.nodes.map((n) => n.nodeId)).toEqual(['page-node'])
   })
 
   it('reports font-size as a number, not the raw CSS string', () => {
