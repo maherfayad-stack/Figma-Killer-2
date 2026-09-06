@@ -17,8 +17,7 @@ agents. A chat transcript is not shared; `STATE.md` is.
    complete · blocked. If you stop for any reason — including running out of
    room — the entry you leave behind is the deliverable.
 3. **Never delete another agent's entry.** Append, or update the entry you own
-   (matched by its `id`). Move finished work to the Archive section; do not
-   discard it.
+   (matched by its `id`). Move finished work to the archive; do not discard it.
 
 ---
 
@@ -29,10 +28,30 @@ agents. A chat transcript is not shared; `STATE.md` is.
 
 ## Now                ← at most a handful of entries; work actually in flight
 ## Blocked            ← needs a human decision or an external unblock
+## Pending dogfood    ← landed, gated, never driven in a browser: the human's checklist
 ## Recently landed    ← last ~10 completed entries, newest first
 ## Standing notes     ← durable facts later agents must not rediscover
-## Archive            ← everything older
+## Archive            ← a pointer to the archive file, plus its index
 ```
+
+## Archiving
+
+`STATE.md` is read in full by every agent that starts work, so it stays small.
+Nothing is ever summarised away — the overflow **moves verbatim** to
+`docs/state-archive/<year>-Q<n>.md` (the quarter the entries were written in),
+and `STATE.md`'s `## Archive` section carries a one-line-per-entry index plus the
+link.
+
+When "Recently landed" grows past ~10 entries, archive the overflow:
+
+1. Append the entries, unedited, to the current quarter's archive file.
+2. Add each to the index under `## Archive`.
+3. **Before archiving an entry, check what it still owes.** A `Human action
+   needed: dogfood …` script belongs in `## Pending dogfood` in `STATE.md`,
+   reproduced verbatim, until a human has actually run it. Anything a `Now` or
+   `Blocked` entry references stays too.
+
+Standing notes are never archived — that section is the durable half of the file.
 
 ## Entry format
 
