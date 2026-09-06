@@ -25,7 +25,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { EditorStore } from '@site/store/types'
 import { fetchBoards } from '../studio/boardsApi'
 import { fetchComments } from '../studio/commentsApi'
-import { studioWriteDir } from '../studio/studioSaveRequests'
+import { studioWriteDir } from '../studio/studioWorkspaceDir'
 import { fetchStudioPagesById } from '../studio/studioLiveReloadFetch'
 import { getAgentStoreApi } from './storeRef'
 

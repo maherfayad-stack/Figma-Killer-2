@@ -149,6 +149,8 @@ parsed first" decide whether any copy resolved.
 | **Never write a resolved value back as a literal** | `title={c.sheetTitle}` → writing `"Where to?"` deletes the binding |
 | **Resolved TEXT is the exception** — it writes to `textOrigin` | The dictionary entry is an ordinary string literal at a known `rel:line:col`. Emitted as `kind:'literal'` |
 | **Reload only when `written > 0`** | A reload re-parses and replaces the document. With zero writes it overwrites the user's in-memory edit — the change reverted itself ~2 s after typing |
+| **A reload is NARROW by default** | `shifted`/`sharedComponents` used to mean a full `loadSite()`; on an App Router board, shared layout chrome makes `sharedComponents` the common case, so every save reparsed all forty pages. `resyncBoardAfterWrite` (`studioBoardResync.ts`) asks `/reload-scope` which pages the touched files feed and patches only those. It widens whenever it cannot prove the scope — narrowing may never UNDER-reload |
+| **A save's resync runs LAST** | It rewrites the same diff baselines `saveSite` advances after its POST; running it inline lets the save's own commit overwrite the fresh disk baseline with the pre-reload document |
 | **`skipped > 0` raises a toast** | A refusal the user can't see is indistinguishable from data loss |
 | **`applyStudioEdit` returning `false` counts as `skipped`** | It used to increment neither counter, so the client assumed a write happened |
 | **`tag` has its own edit kind + codemod** | Routing it through `setJsxProp` added a literal `tag="section"` attribute and left the element a `<div>` — 140 fake controls on one corpus |

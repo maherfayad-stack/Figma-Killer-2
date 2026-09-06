@@ -49,14 +49,14 @@ import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
-import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { useAdminUi } from '@admin/state/adminUi'
 import { notifyUnexplainedSkips } from '@site/panels/unexplainedSkipsNotice'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
-import { getStudioWorkspaceDir } from './studioWorkspaceDir'
+import { getStudioWorkspaceDir, setStudioLoadedDir, studioWriteDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
 import { setStudioTrustTier } from './studioProjectTrust'
-import { StudioSaveResponseSchema, notifyCreatedStylesheets, setStudioLoadedDir, studioWriteDir } from './studioSaveRequests'
+import { StudioSaveResponseSchema, notifyCreatedStylesheets } from './studioSaveRequests'
+import { resyncBoardAfterWrite } from './studioBoardResync'
 import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
 import {
   commitClassIdsBaseline,
@@ -268,7 +268,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
     // `pages` feeds `buildClassPageIndex`, which is how a new class gets
     // co-located with the page it is used on (`style-02`).
-    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules, pages)
+    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules, { pages })
     // WS-10 §4.4 (Phase 4) — a fresh project load (or a `requestCmsSiteReload()`
     // re-load) must not carry a locale-variant page, or its writeback
     // baseline, over from whatever project was open before: `pageId` is only
@@ -556,6 +556,12 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     const refusedRuleIds = new Set<string>()
     const refusedClassNodeIds = [...classPlan.refusedNodeIds]
 
+    // The files a landed write touched, deferred to the END of this function:
+    // the resync rewrites the same diff baselines the block below advances, so
+    // running it inline would let those commits overwrite the fresh disk
+    // baseline with the pre-reload document. See `studioBoardResync.ts`.
+    let resyncTouchedFiles: readonly string[] | null = null
+
     if (edits.length > 0) {
       const result = await apiRequest('/admin/api/studio/save', {
         method: 'POST',
@@ -624,17 +630,17 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       }
 
       // A write shifted line numbers, so every `line:col` node id below that
-      // point is now stale against disk. Re-parse the workspace to re-derive
-      // fresh ids (`requestCmsSiteReload` → usePersistence reload → loadSite),
-      // otherwise the NEXT edit on a shifted node would target the wrong source
-      // location and silently fail. The reload also clears the unsaved flag, so
-      // it can't loop into another save (there is no file watcher — a studio
-      // write never re-enters as an external change). Rare in practice: source
-      // formatting stabilizes after the first normalizing write, so `shifted`
-      // is false on subsequent idempotent saves.
-      // A shared-component edit rewrote the component's own file, so every
-      // OTHER instance of it on the board is showing a stale value. Reload for
-      // the same reason as `shifted`: the document no longer matches disk.
+      // point is now stale against disk and must be re-derived by re-reading
+      // the file — otherwise the NEXT edit on a shifted node targets the wrong
+      // source location and silently fails. A shared-component edit rewrote
+      // the component's own file, so every OTHER instance of it on the board
+      // shows a stale value — same remedy, different cause, and on an App
+      // Router board (shared layout chrome) it is the COMMON case, which is
+      // why this must not mean "reparse all forty pages".
+      //
+      // `resyncBoardAfterWrite` narrows that to exactly the pages the touched
+      // files feed, and falls back to the full reload when it cannot prove the
+      // scope. Deferred to the end of this function — see the declaration.
       //
       // Gated on `written > 0`. When nothing reached disk the document still
       // matches the files, so there is nothing to re-sync — and reloading would
@@ -642,7 +648,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // edit visibly revert two seconds after they typed it. That was the whole
       // bug: an unwritable text edit reverted itself on a timer.
       if (result.written > 0 && (result.shifted || result.sharedComponents)) {
-        requestCmsSiteReload()
+        resyncTouchedFiles = result.touchedFiles ?? []
       }
     }
 
@@ -682,5 +688,12 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       })
       lastSyncedFrameworkJson = nextFrameworkJson
     }
+
+    // LAST — every diff baseline above has now advanced, so the resync's own
+    // baseline writes (fresh from disk, for exactly the reloaded pages) are
+    // the ones that stand. `refusedRuleIds` rides along so the reload does not
+    // adopt a value the server refused as the new baseline, which would make
+    // the user's retry diff as "no change" (`style-02`'s bug #3).
+    if (resyncTouchedFiles) await resyncBoardAfterWrite(resyncTouchedFiles, { refusedRuleIds })
   },
 }

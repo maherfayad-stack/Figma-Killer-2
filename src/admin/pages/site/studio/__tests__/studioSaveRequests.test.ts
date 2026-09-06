@@ -15,14 +15,16 @@
  *      unconditionally from a `finally` block. Nothing reaching disk means
  *      there's nothing to resync from; reloading anyway would replace the
  *      canvas's optimistic state with the unchanged, pre-edit source.
- *   3. Track C5 — when a reload IS warranted, `reloadStructuralScope` tries a
+  *   3. Track C5 — when a reload IS warranted, `resyncBoardAfterWrite`
+ *      (`studioBoardResync.ts`, shared with the autosave path) tries a
  *      TARGETED per-page resync first (`POST /reload-scope` then `?pageIds=`)
  *      and only falls back to the full `CMS_SITE_RELOAD_EVENT` reload when
  *      the server says the touched files are not narrow-safe, or when any
  *      step of the narrow path fails for any reason.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { commitStudioDelete, commitStudioInsert, commitStudioMove, setStudioLoadedDir } from '../studioSaveRequests'
+import { commitStudioDelete, commitStudioInsert, commitStudioMove } from '../studioSaveRequests'
+import { setStudioLoadedDir } from '../studioWorkspaceDir'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
 import { CMS_SITE_PAGES_PATCH_EVENT, CMS_SITE_RELOAD_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
 import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
@@ -185,7 +187,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
   // ---------------------------------------------------------------------
   // Track C5 — targeted reload
   // ---------------------------------------------------------------------
-  describe('reloadStructuralScope (Track C5)', () => {
+  describe('resyncBoardAfterWrite (Track C5)', () => {
     it('posts the /save response\'s touchedFiles to /reload-scope', async () => {
       stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: true, touchedFiles: ['pages/Home.tsx'] } })
 
