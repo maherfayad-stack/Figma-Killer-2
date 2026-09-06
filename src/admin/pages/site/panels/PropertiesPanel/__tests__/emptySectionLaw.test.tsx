@@ -49,14 +49,14 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
     expect(screen.getByRole('button', { name: /add typography/i })).toBeDefined()
 
     // Same one-line treatment for the other four collapsible sections.
-    expect(screen.getByRole('button', { name: /add background/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add border/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add effects/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add interaction/i })).toBeDefined()
 
     // The always-present Layout section (F1/F3 — Law 5) is untouched by
-    // this law: its DisplaySwitcher renders even though nothing is set.
-    expect(document.querySelector('[data-testid="css-display-switcher"]')).not.toBeNull()
+    // this law: its LayoutModeRow renders even though nothing is set.
+    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
   })
 
   it('(b) a section with a base value set renders its body', () => {

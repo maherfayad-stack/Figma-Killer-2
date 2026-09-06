@@ -12,7 +12,7 @@
  * uncaptioned row.
  */
 import { describe, it, expect, afterEach } from 'bun:test'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { SizeSection } from '@site/panels/PropertiesPanel/SizeSection'
 
 afterEach(cleanup)
@@ -52,8 +52,14 @@ describe('size section density', () => {
     }
   })
 
-  it('pairs aspect-ratio and box-sizing into one uncaptioned row', () => {
+  it('keeps aspect-ratio and box-sizing reachable, uncaptioned, in the settings popover', () => {
     const { container } = renderSizeSection()
+
+    // Neither is resident any more: W and H own the section's only row, and
+    // these two rare controls moved behind the ⚙ (Law 2). Reachability is the
+    // guarantee, not residency — so open it before asserting they exist.
+    expect(screen.queryByRole('textbox', { name: 'Aspect ratio' })).toBeNull()
+    fireEvent.click(screen.getByTestId('size-settings-trigger'))
 
     // Both controls are still there and still named…
     expect(screen.getByRole('textbox', { name: 'Aspect ratio' })).toBeTruthy()

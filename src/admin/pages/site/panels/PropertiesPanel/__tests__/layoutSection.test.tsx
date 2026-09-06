@@ -2,6 +2,10 @@
  * LayoutSection — G3 + G4 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
  *
  * Covers:
+ *   0. `resolveLayoutMode` / `layoutModePatch` — the (display, flexDirection)
+ *      → mode classifier and mode → CSS writer behind `LayoutModeRow`, plus
+ *      the row's handling of `display` values none of the four buttons can
+ *      represent (see "block chip" defect fix — LayoutModeRow.tsx's doc).
  *   1. The `AlignGrid` pad writes BOTH properties in one click (alignItems +
  *      justifyContent in flex mode, alignItems + justifyItems in grid mode)
  *      and clears both on a re-click of the already-active cell.
@@ -26,6 +30,7 @@ import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { LayoutSection } from '../LayoutSection'
+import { DISPLAY_DEPENDENT_PROPS, layoutModePatch, resolveLayoutMode } from '../LayoutSection/layoutMode'
 
 afterEach(cleanup)
 
@@ -47,6 +52,149 @@ function renderLayout(overrides: Partial<LayoutProps> = {}) {
     />,
   )
 }
+
+// ---------------------------------------------------------------------------
+// 0. resolveLayoutMode / layoutModePatch — pure, exhaustive
+// ---------------------------------------------------------------------------
+
+describe('resolveLayoutMode', () => {
+  it('classifies flex + row (and undefined direction) as horizontal', () => {
+    expect(resolveLayoutMode('flex', 'row')).toBe('horizontal')
+    expect(resolveLayoutMode('flex', undefined)).toBe('horizontal')
+  })
+
+  it('classifies flex + column as vertical', () => {
+    expect(resolveLayoutMode('flex', 'column')).toBe('vertical')
+  })
+
+  it('classifies row-reverse as horizontal and column-reverse as vertical — the reverse lives in the ⚙, not a 5th button', () => {
+    expect(resolveLayoutMode('flex', 'row-reverse')).toBe('horizontal')
+    expect(resolveLayoutMode('flex', 'column-reverse')).toBe('vertical')
+  })
+
+  it('classifies inline-flex the same as flex', () => {
+    expect(resolveLayoutMode('inline-flex', 'row')).toBe('horizontal')
+    expect(resolveLayoutMode('inline-flex', 'column')).toBe('vertical')
+  })
+
+  it('classifies grid as grid regardless of flexDirection', () => {
+    expect(resolveLayoutMode('grid', undefined)).toBe('grid')
+    expect(resolveLayoutMode('grid', 'column')).toBe('grid')
+  })
+
+  it('classifies unset display as none', () => {
+    expect(resolveLayoutMode(undefined, undefined)).toBe('none')
+  })
+
+  it('classifies every non-flex/grid keyword as none', () => {
+    for (const value of ['block', 'inline', 'inline-block', 'none', 'contents', 'table', 'list-item']) {
+      expect(resolveLayoutMode(value, undefined)).toBe('none')
+    }
+  })
+})
+
+describe('layoutModePatch', () => {
+  it('vertical writes display: flex + flex-direction: column, clears nothing', () => {
+    expect(layoutModePatch('vertical')).toEqual({
+      set: { display: 'flex', flexDirection: 'column' },
+      clear: [],
+    })
+  })
+
+  it('horizontal writes display: flex + flex-direction: row, clears nothing', () => {
+    expect(layoutModePatch('horizontal')).toEqual({
+      set: { display: 'flex', flexDirection: 'row' },
+      clear: [],
+    })
+  })
+
+  it('grid writes display: grid, clears nothing', () => {
+    expect(layoutModePatch('grid')).toEqual({ set: { display: 'grid' }, clear: [] })
+  })
+
+  it('none writes nothing and clears display + every flex/grid dependent prop in one step', () => {
+    const patch = layoutModePatch('none')
+    expect(patch.set).toEqual({})
+    expect(patch.clear).toContain('display')
+    for (const prop of DISPLAY_DEPENDENT_PROPS) {
+      expect(patch.clear).toContain(prop)
+    }
+    // Item-level properties governed by the PARENT's display must never be
+    // pruned by a mode change on THIS element.
+    expect(patch.clear).not.toContain('alignSelf')
+    expect(patch.clear).not.toContain('justifySelf')
+    expect(patch.clear).not.toContain('flex')
+    expect(patch.clear).not.toContain('gridColumn')
+    expect(patch.clear).not.toContain('gridRow')
+  })
+})
+
+describe('LayoutSection — LayoutModeRow (integration)', () => {
+  it('an unset display highlights "No auto layout" and nothing else', () => {
+    renderLayout()
+
+    expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /^vertical stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^grid$/i }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('clicking Vertical stack writes display: flex + flex-direction: column', () => {
+    const calls: Array<[string, unknown]> = []
+    renderLayout({ onChange: (p, v) => calls.push([String(p), v]) })
+
+    fireEvent.click(screen.getByRole('button', { name: /^vertical stack$/i }))
+
+    expect(calls).toContainEqual(['display', 'flex'])
+    expect(calls).toContainEqual(['flexDirection', 'column'])
+  })
+
+  it('clicking Grid writes display: grid', () => {
+    const calls: Array<[string, unknown]> = []
+    renderLayout({ onChange: (p, v) => calls.push([String(p), v]) })
+
+    fireEvent.click(screen.getByRole('button', { name: /^grid$/i }))
+
+    expect(calls).toContainEqual(['display', 'grid'])
+  })
+
+  it('a display value none of the four buttons can represent (inline-block) shows no selection and is not rewritten on render', () => {
+    const onChange = mock(() => {})
+    const onClearProperties = mock(() => {})
+    renderLayout({
+      storedStyles: { display: 'inline-block' },
+      currentStyles: { display: 'inline-block' },
+      onChange,
+      onClearProperties,
+    })
+
+    expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^vertical stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^grid$/i }).getAttribute('aria-pressed')).toBe('false')
+
+    // Rendering never normalises the unrepresentable value on its own.
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onClearProperties).not.toHaveBeenCalled()
+
+    // The value stays reachable — named honestly on the trailing menu trigger.
+    expect(screen.getByRole('button', { name: /display: inline-block/i })).toBeTruthy()
+  })
+
+  it('clicking a mode button on an unrepresentable value is an explicit, one-shot write — not a silent normalisation', () => {
+    const calls: Array<[string, unknown]> = []
+    renderLayout({
+      storedStyles: { display: 'none' },
+      currentStyles: { display: 'none' },
+      onChange: (p, v) => calls.push([String(p), v]),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /^horizontal stack$/i }))
+
+    expect(calls).toContainEqual(['display', 'flex'])
+    expect(calls).toContainEqual(['flexDirection', 'row'])
+  })
+})
 
 // ---------------------------------------------------------------------------
 // 1. AlignGrid — one gesture, both properties
@@ -184,8 +332,9 @@ describe('LayoutSection — display clear does not prune item-level properties',
       onClearProperties: (props) => cleared.push(...props.map(String)),
     })
 
-    // Clicking the active Flex segment clears display (+ its container deps).
-    fireEvent.click(screen.getByRole('button', { name: /^flex layout$/i }))
+    // Clicking the active mode segment (display: flex, no flexDirection ⇒
+    // Horizontal stack) clears display (+ its container deps).
+    fireEvent.click(screen.getByRole('button', { name: /^horizontal stack$/i }))
 
     expect(cleared).toContain('display')
     expect(cleared).not.toContain('alignSelf')

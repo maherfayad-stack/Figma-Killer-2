@@ -1,0 +1,98 @@
+/*
+ * FillSection — the Fill list body (F13/F14/F15) plus its popovers.
+ *
+ * `PropertyList` supplies the row chrome; everything here is popover
+ * content (the solid/gradient/image editors, the raw-CSS escape hatch) and
+ * the two small swatch variants used as each row's `leading` glyph.
+ */
+
+.fillSection {
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Swatches — leading glyph for the colour / image entries ────────────── */
+
+.swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    flex-shrink: 0;
+    background-color: var(--fill-swatch-color);
+}
+
+.swatchImage {
+    background-color: transparent;
+    background-image: var(--fill-swatch-image);
+    background-size: cover;
+    background-position: center;
+}
+
+/* ── Popover bodies ───────────────────────────────────────────────────────── */
+
+.popoverBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-group-gap);
+}
+
+.refusalNote {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.refusalText {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+}
+
+.sizingGroup {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+    padding-top: var(--space-xs);
+    border-top: 1px solid var(--border-subtle);
+}
+
+.sizingHeading {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* ── Gradient editor ──────────────────────────────────────────────────────── */
+
+.gradientEditor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-group-gap);
+}
+
+.stopsList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+}
+
+.stopRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.stopRow > :first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.stopPosition {
+    flex: 0 0 auto;
+    width: 64px;
+}

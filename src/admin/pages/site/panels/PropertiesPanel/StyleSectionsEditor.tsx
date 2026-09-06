@@ -19,15 +19,15 @@ import { Section } from '@ui/components/Section'
 import { Button } from '@ui/components/Button'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { SpacingSection } from './SpacingBoxControl/SpacingSection'
-import { BorderControl } from './BorderControl/BorderControl'
+import { StrokeSection } from './StrokeSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { LayoutSection } from './LayoutSection'
 import { PositionSection } from './PositionSection'
 import { SizeSection } from './SizeSection'
 import { TypographySection } from './TypographySection'
 import { AppearanceSection, AppearanceSectionActions } from './AppearanceSection'
-import { BackgroundSection } from './BackgroundSection'
-import { EffectsSection } from './EffectsSection'
+import { FillSection, FillSectionActions } from './FillSection'
+import { EffectsSection, EffectsSectionActions } from './EffectsSection'
 import { InteractionSection } from './InteractionSection'
 import { SectionStylesMenu } from './SectionStylesMenu'
 import { cssPropertyLabel } from './cssControlTypes'
@@ -45,7 +45,7 @@ const POSITION_SECTION_ID = 'position'
 const SIZE_SECTION_ID = 'size'
 const TYPOGRAPHY_SECTION_ID = 'typography'
 const APPEARANCE_SECTION_ID = 'appearance'
-const BACKGROUND_SECTION_ID = 'background'
+const FILL_SECTION_ID = 'fill'
 const INTERACTION_SECTION_ID = 'interaction'
 const EFFECTS_SECTION_ID = 'effects'
 const BORDER_SECTION_ID = 'border'
@@ -282,10 +282,43 @@ function StyleSectionGroup({
   // menu). Both read/write the same `storedStyles`/`onChange` this group
   // already has; see `AppearanceSection.tsx`'s doc for why they live in the
   // header instead of the body.
+  //  Effects' header carries the typed "+" menu (F20 — Drop shadow / Inner
+  //  shadow / Layer blur / Background blur) rather than the generic reveal
+  //  button, because adding an effect here means choosing a KIND, not just
+  //  opening a body. It also carries the ⚙ for transform / transition /
+  //  animation, which are not effects in Figma's sense.
+  const effectsActions = (
+    <EffectsSectionActions
+      storedStyles={storedStyles}
+      currentStyles={currentStyles}
+      activeTab={activeTab}
+      onChange={onChange}
+      onRemove={onRemove}
+      onPreview={onPreview}
+      onClearPreview={onClearPreview}
+    />
+  )
+
+  //  Fill's "+" writes a real fill rather than merely revealing the body:
+  //  `PropertyList` renders nothing when empty (Law 1), so a bare reveal would
+  //  open an empty section. Once a fill exists, `setCountEverywhere > 0` opens
+  //  the section on its own — no `onReveal` needed.
+  const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={onChange} />
+
   const sectionActions =
     section.id === APPEARANCE_SECTION_ID ? (
       <>
         <AppearanceSectionActions storedStyles={storedStyles} onChange={onChange} />
+        {stylesMenu}
+      </>
+    ) : section.id === EFFECTS_SECTION_ID ? (
+      <>
+        {effectsActions}
+        {stylesMenu}
+      </>
+    ) : section.id === FILL_SECTION_ID ? (
+      <>
+        {fillActions}
         {stylesMenu}
       </>
     ) : (
@@ -310,16 +343,22 @@ function StyleSectionGroup({
         actions={
           <>
             {stylesMenu}
-            <Button
-              variant="ghost"
-              size="xs"
-              iconOnly
-              aria-label={`Add ${section.title.toLowerCase()}`}
-              onClick={() => onReveal(section.id)}
-              data-testid={`class-style-section-add-${section.id}`}
-            >
-              <PlusIcon size={12} />
-            </Button>
+            {section.id === EFFECTS_SECTION_ID ? (
+              effectsActions
+            ) : section.id === FILL_SECTION_ID ? (
+              fillActions
+            ) : (
+              <Button
+                variant="ghost"
+                size="xs"
+                iconOnly
+                aria-label={`Add ${section.title.toLowerCase()}`}
+                onClick={() => onReveal(section.id)}
+                data-testid={`class-style-section-add-${section.id}`}
+              >
+                <PlusIcon size={12} />
+              </Button>
+            )}
           </>
         }
       />
@@ -420,8 +459,8 @@ function StyleSectionGroup({
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
           />
-        ) : section.id === BACKGROUND_SECTION_ID ? (
-          <BackgroundSection
+        ) : section.id === FILL_SECTION_ID ? (
+          <FillSection
             key={activeTab}
             storedStyles={storedStyles}
             currentStyles={currentStyles}
@@ -460,28 +499,18 @@ function StyleSectionGroup({
             provenanceByProperty={provenanceByProperty}
           />
         ) : section.id === BORDER_SECTION_ID ? (
-          <>
-            <BorderControl
-              key={activeTab}
-              storedStyles={storedStyles}
-              currentStyles={currentStyles}
-              onChange={onChange}
-              onClearProperty={onClearProperty}
-              onPreview={onPreview}
-              onClearPreview={onClearPreview}
-            />
-            <AdvancedRows
-              activeTab={activeTab}
-              properties={BORDER_ADVANCED_PROPERTIES}
-              storedStyles={storedStyles}
-              currentStyles={currentStyles}
-              onChange={onChange}
-              onRemove={onRemove}
-              onPreview={previewProperty}
-              onClearPreview={onClearPreview}
-              provenanceByProperty={provenanceByProperty}
-            />
-          </>
+          <StrokeSection
+            key={activeTab}
+            activeTab={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            onChange={onChange}
+            onRemove={onRemove}
+            onClearProperty={onClearProperty}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+            provenanceByProperty={provenanceByProperty}
+          />
         ) : (
           section.properties.map((prop) => {
             const storedValue = storedStyles[prop]
@@ -515,86 +544,6 @@ function StyleSectionGroup({
         )}
       </div>
     </Section>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Border advanced rows — raw CSS shorthand props the visual BorderControl
-// deliberately doesn't surface, kept available behind a disclosure.
-// ---------------------------------------------------------------------------
-
-const BORDER_ADVANCED_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
-  'border',
-  'borderTop',
-  'borderRight',
-  'borderBottom',
-  'borderLeft',
-  'borderWidth',
-  'borderStyle',
-  'borderColor',
-  'borderRadius',
-  'appearance',
-]
-
-interface AdvancedRowsProps {
-  activeTab: string
-  properties: ReadonlyArray<keyof CSSPropertyBag>
-  storedStyles: Record<string, unknown>
-  currentStyles: Record<string, unknown>
-  onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
-  onRemove: (property: keyof CSSPropertyBag) => void
-  onPreview?: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
-  onClearPreview?: () => void
-  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
-}
-
-function AdvancedRows({
-  activeTab,
-  properties,
-  storedStyles,
-  currentStyles,
-  onChange,
-  onRemove,
-  onPreview,
-  onClearPreview,
-  provenanceByProperty,
-}: AdvancedRowsProps) {
-  const anySet = properties.some((prop) => hasStyleValue(storedStyles[prop]))
-
-  return (
-    <details className={styles.advanced} open={anySet}>
-      <summary className={styles.advancedSummary}>Advanced</summary>
-      <div className={styles.advancedBody}>
-        {properties.map((prop) => {
-          const storedValue = storedStyles[prop]
-          const isSet = hasStyleValue(storedValue)
-          const provenance = provenanceByProperty?.get(String(prop))
-          return (
-            <ClassPropertyRow
-              key={`${activeTab}-${String(prop)}`}
-              property={prop}
-              value={isSet ? (storedValue as string | number) : undefined}
-              placeholder={
-                isSet
-                  ? undefined
-                  : resolveStylePlaceholder({
-                      property: prop,
-                      provenance,
-                      currentValue: currentStyles[prop],
-                    })
-              }
-              fontFamilyValue={currentStyles.fontFamily}
-              isSet={isSet}
-              onChange={onChange}
-              onRemove={onRemove}
-              onPreview={onPreview}
-              onClearPreview={onClearPreview}
-              provenance={provenance}
-            />
-          )
-        })}
-      </div>
-    </details>
   )
 }
 

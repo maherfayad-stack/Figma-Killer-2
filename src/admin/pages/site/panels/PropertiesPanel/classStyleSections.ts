@@ -163,8 +163,8 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     ],
   },
   {
-    id: 'background',
-    title: 'Background',
+    id: 'fill',
+    title: 'Fill',
     icon: PaintBucketSolidIcon,
     collapsedWhenEmpty: true,
     properties: [

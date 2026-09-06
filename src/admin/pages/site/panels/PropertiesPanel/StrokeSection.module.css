@@ -1,0 +1,74 @@
+/*
+ * StrokeSection — F16's two-row shape: a PropertyList colour entry (present
+ * only when a stroke exists — Law 1), and a resident controls row (position,
+ * weight, settings, sides) that is the section's permanent "one line" once
+ * revealed, matching PropertyList's own empty state exactly.
+ */
+
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+    width: 100%;
+}
+
+/* ── Row 2 — position / weight / settings / sides ────────────────────────── */
+
+.controlsRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    min-height: var(--inspector-row-h);
+}
+
+.position {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.weight {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.trailingActions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+    flex-shrink: 0;
+}
+
+/* ── ⚙ settings popover body ──────────────────────────────────────────────── */
+
+.settingsBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-s);
+}
+
+/* The manual "Style" row (writes all four side longhands at once) uses the
+ * same small-label-above shape as the generic ClassPropertyRow `stacked`
+ * cells it sits beside, so it doesn't look like a foreign control glued onto
+ * the StackedPropertyGrid rows underneath it. */
+.styleField {
+    display: grid;
+    gap: var(--inspector-caption-gap);
+    min-width: 0;
+}
+
+.styleFieldLabel {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+}
+
+/* ── Sides menu ───────────────────────────────────────────────────────────── */
+
+.sidesMenuTitle {
+    padding: var(--space-3xs) var(--space-xs);
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 620;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}

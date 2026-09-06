@@ -218,7 +218,11 @@ describe('StyleRuleComposer inline style filtering', () => {
     })
 
     expect(document.querySelector('[data-testid="css-property-row-color"]')).not.toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-backgroundColor"]')).not.toBeNull()
+    // Fill is a LIST now (G6), so it does not pre-draw an unset backgroundColor
+    // row for a search to match. Searching "color" surfaces the section's own
+    // add action instead — the property is still reachable, which is what this
+    // test is really about.
+    expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeDefined()
     expect(document.querySelector('[data-testid="css-property-row-display"]')).toBeNull()
     expect(screen.queryByRole('menu', { name: /available style properties/i })).toBeNull()
     expect(screen.queryByRole('listbox', { name: /available style properties/i })).toBeNull()
@@ -244,7 +248,7 @@ describe('StyleRuleComposer inline style filtering', () => {
 
     // Layout is one of Figma's always-present blocks — its DisplaySwitcher
     // renders even for an empty class.
-    expect(document.querySelector('[data-testid="css-display-switcher"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
 
     // Typography is `collapsedWhenEmpty` (Law 1 / G1) — for an empty class it
     // starts as a single header line; reveal it via "+" before asserting the
@@ -259,7 +263,7 @@ describe('StyleRuleComposer inline style filtering', () => {
     expect(typographyButton.getAttribute('aria-pressed')).toBe('true')
     expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
     // Scroll-anchor: clicking a section scrolls to it, does NOT hide other sections.
-    expect(document.querySelector('[data-testid="css-display-switcher"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
   })
 
   it('search filters across all categories regardless of which rail button was last clicked', () => {
@@ -272,7 +276,7 @@ describe('StyleRuleComposer inline style filtering', () => {
     fireEvent.click(screen.getByRole('button', { name: /show typography styles/i }))
 
     // All sections still present after clicking a rail button in scroll-anchor mode.
-    expect(document.querySelector('[data-testid="css-display-switcher"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
 
     // Search for 'fontFamily' — only typography rows match. The layout
     // section, which is not specially filtered by query inside LayoutSection,
@@ -618,15 +622,19 @@ describe('StyleRuleComposer unset CSS property placeholders', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    const displaySwitcher = document.querySelector('[data-testid="css-display-switcher"]')
-    expect(displaySwitcher).not.toBeNull()
-    expect(displaySwitcher?.getAttribute('data-display-value')).toBe('')
+    const modeRow = document.querySelector('[data-testid="css-layout-mode-row"]')
+    expect(modeRow).not.toBeNull()
 
-    // No segment is pressed in the unset state.
-    const flexSegment = screen.getByRole('button', { name: /^flex layout$/i })
-    const gridSegment = screen.getByRole('button', { name: /^grid layout$/i })
-    expect(flexSegment.getAttribute('aria-pressed')).toBe('false')
-    expect(gridSegment.getAttribute('aria-pressed')).toBe('false')
+    // Unset display now lights "No auto layout" rather than lighting nothing.
+    // That is the point of Figma's four-mode row (F3/F4/F6/F7): "no auto
+    // layout" is a MODE, not an absence, so the row always states which of the
+    // four you are in. Writing nothing to CSS is still the correct effect —
+    // asserted below.
+    expect(modeRow?.getAttribute('data-mode')).toBe('none')
+    expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /^vertical stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^grid$/i }).getAttribute('aria-pressed')).toBe('false')
 
     expect(useEditorStore.getState().site!.styleRules[useEditorStore.getState().activeClassId!].styles.display).toBeUndefined()
   })
@@ -660,7 +668,7 @@ describe('StyleRuleComposer unset CSS property placeholders', () => {
 
     // The Flex segment of the SegmentedControl is pressed when display: flex
     // is stored on the class.
-    const flexSegment = screen.getByRole('button', { name: /^flex layout$/i })
+    const flexSegment = screen.getByRole('button', { name: /^horizontal stack$/i })
     expect(flexSegment.getAttribute('aria-pressed')).toBe('true')
 
     // Gap renders inside the flex block via the GapInput primitive (token-aware).
@@ -679,14 +687,16 @@ describe('LayoutSection — clear via active segment X', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    const flexSegment = screen.getByRole('button', { name: /^flex layout$/i })
+    const flexSegment = screen.getByRole('button', { name: /^horizontal stack$/i })
     expect(flexSegment.getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(flexSegment)
 
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.display).toBeUndefined()
-    // After clearing, no segment is pressed.
-    expect(screen.getByRole('button', { name: /^flex layout$/i }).getAttribute('aria-pressed')).toBe('false')
+    // After clearing, the row falls back to "No auto layout" — pressed, because
+    // that is now a real mode rather than an empty state.
+    expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('clicking the active grid segment clears display from base styles even when on a breakpoint tab', () => {
@@ -699,7 +709,7 @@ describe('LayoutSection — clear via active segment X', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    const gridSegment = screen.getByRole('button', { name: /^grid layout$/i })
+    const gridSegment = screen.getByRole('button', { name: /^grid$/i })
     expect(gridSegment.getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(gridSegment)
@@ -708,8 +718,9 @@ describe('LayoutSection — clear via active segment X', () => {
     // otherwise the inherited base value would bleed through and the segment
     // would stay pressed (Job #1342 followup).
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.display).toBeUndefined()
-    expect(screen.getByRole('button', { name: /^grid layout$/i }).getAttribute('aria-pressed')).toBe('false')
-    expect(screen.getByRole('button', { name: /^flex layout$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^grid$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('clicking the active flex direction icon clears flexDirection', () => {
@@ -1123,7 +1134,7 @@ describe('StyleRuleComposer set style indicators', () => {
     // Inherited base style (display: flex) is reflected on the SegmentedControl
     // — the Flex segment is pressed because the inherited cascade resolves to
     // flex on this breakpoint, even though nothing is stored at the mobile tab.
-    const flexSegment = screen.getByRole('button', { name: /^flex layout$/i })
+    const flexSegment = screen.getByRole('button', { name: /^horizontal stack$/i })
     expect(flexSegment.getAttribute('aria-pressed')).toBe('true')
   })
 })
@@ -1497,7 +1508,7 @@ describe('PP-21 — Empty class: always-present sections stay resident, collapsi
 
     // Position/Size/Layout/Spacing are Figma's always-present blocks — their
     // rows render even before a property is assigned.
-    expect(document.querySelector('[data-testid="css-display-switcher"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
     expect(document.querySelectorAll('[data-testid^="css-property-row-"]').length).toBeGreaterThan(0)
 
     // Typography is `collapsedWhenEmpty` (Law 1 / G1) — an empty class

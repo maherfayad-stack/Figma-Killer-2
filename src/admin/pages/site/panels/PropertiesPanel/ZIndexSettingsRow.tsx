@@ -1,8 +1,10 @@
 /**
  * ZIndexSettingsRow — z-index moved off the resident rows (Law 2) behind a
- * small sliders-icon trigger. `ContextMenu` stands in for the popover; once
- * `InspectorPopover` (built elsewhere this wave) exists, this trigger should
- * open that instead — same content, real focus trap + Esc/outside dismiss.
+ * small sliders-icon trigger, opening an `InspectorPopover` — the same
+ * presence-mounted, no-`open`-prop shape `LayoutSettingsButton.tsx` and
+ * `SizeSection.tsx`'s settings trigger use, so every ⚙ in the inspector
+ * shares one focus-trap / Esc / outside-dismiss implementation instead of
+ * `ContextMenu` standing in for a settings PANEL it was never built for.
  *
  * Extracted out of `PositionSection.tsx` to keep that file under the repo's
  * module-size ceiling (`module-size-budgets.test.ts`) — same ownership,
@@ -11,7 +13,7 @@
 import { useRef, useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
-import { ContextMenu } from '@ui/components/ContextMenu'
+import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
@@ -50,7 +52,7 @@ export function ZIndexSettingsRow({
         variant="ghost"
         size="xs"
         iconOnly
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="Position settings"
         tooltip="Z-index"
@@ -63,17 +65,12 @@ export function ZIndexSettingsRow({
         <span className={posStyles.settingsBadge}>z {String(zIndexStored)}</span>
       )}
       {open && (
-        <ContextMenu
-          ariaLabel="Position settings"
+        <InspectorPopover
+          id="position-settings"
           anchorRef={triggerRef}
-          triggerRef={triggerRef}
-          align="end"
-          side="bottom"
-          offset={6}
-          width={220}
           onClose={() => setOpen(false)}
+          title="Z-index"
         >
-          <div className={posStyles.settingsMenuTitle}>Z-index</div>
           <ClassPropertyRow
             property="zIndex"
             value={zIndexIsSet ? (zIndexStored as string | number) : undefined}
@@ -84,7 +81,7 @@ export function ZIndexSettingsRow({
             onPreview={onPreview}
             onClearPreview={onClearPreview}
           />
-        </ContextMenu>
+        </InspectorPopover>
       )}
     </div>
   )

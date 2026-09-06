@@ -172,7 +172,7 @@ describe('AppearanceSection — placement in StyleSectionsEditor', () => {
     )
     const spacingIndex = ids.indexOf('spacing')
     const appearanceIndex = ids.indexOf('appearance')
-    const backgroundIndex = ids.indexOf('background')
+    const backgroundIndex = ids.indexOf('fill')
 
     expect(spacingIndex).toBeGreaterThanOrEqual(0)
     expect(appearanceIndex).toBeGreaterThan(spacingIndex)
@@ -186,7 +186,7 @@ describe('AppearanceSection — placement in StyleSectionsEditor', () => {
 
     // Background, right next to it, DOES collapse when empty — the contrast
     // proves this isn't an accidental panel-wide default.
-    expect(screen.getByRole('button', { name: /add background/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeDefined()
   })
 })
 

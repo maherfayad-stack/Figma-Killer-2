@@ -24,13 +24,17 @@
  * (`currentStyles`, the frame's real computed value) as a literal length,
  * rather than resetting it to nothing.
  *
- * `aspectRatio` and `boxSizing` stay exactly where they are — G3
- * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`) moves them into the Layout ⚙
- * popover, which hasn't shipped yet; moving them now would delete the only
- * way to reach them.
+ * `aspectRatio` and `boxSizing` are both rare — G3
+ * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` §6) moves them into a small `⚙`
+ * popover on the Size section itself (the Layout ⚙ is a different
+ * component, `LayoutSection/LayoutSettingsButton.tsx`, scoped to
+ * layout-only properties), reusing `InspectorPopover` — the same
+ * presence-mounted, no-`open`-prop shape `LayoutSettingsButton` already
+ * established. Both fields stay paired into one uncaptioned row exactly as
+ * before; only where that row lives moved.
  */
 
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Mixed } from '@ui/components/MixedValue'
 import {
@@ -39,6 +43,8 @@ import {
   type AddablePropertyFieldAddition,
   type AddablePropertyFieldMode,
 } from '@ui/components/AddablePropertyField'
+import { Button } from '@ui/components/Button'
+import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import {
   MinWidthIcon,
@@ -46,6 +52,7 @@ import {
   MinHeightIcon,
   MaxHeightIcon,
 } from '@ui/components/InspectorIcons'
+import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { hasStyleValue } from './styleValueUtils'
@@ -159,6 +166,13 @@ export function SizeSection({
   const [addedConstraints, setAddedConstraints] = useState<ReadonlySet<keyof CSSPropertyBag>>(
     () => new Set(),
   )
+
+  // G3 — `aspectRatio`/`boxSizing` popover (Law 2: rare options live behind a
+  // settings affordance, not a permanent row). Mirrors
+  // `LayoutSection/LayoutSettingsButton.tsx`'s trigger shape exactly.
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null)
+  const settingsAnySet = hasStyleValue(storedStyles.aspectRatio) || hasStyleValue(storedStyles.boxSizing)
 
   function revealConstraint(prop: keyof CSSPropertyBag) {
     setAddedConstraints((prev) => (prev.has(prop) ? prev : new Set(prev).add(prop)))
@@ -274,38 +288,68 @@ export function SizeSection({
 
   return (
     <>
-      <div className={styles.sizeGrid}>
-        {axisField('width', 'W', 'Width', 'width')}
-        {axisField('height', 'H', 'Height', 'height')}
+      {/* W/H, one row — the settings trigger sits beside the pair rather
+          than under it, so the fixed/hug/fill segmented row (when an axis
+          shows one) grows the FIELD's own column, not a whole extra row. */}
+      <div className={styles.sizeRow}>
+        <div className={styles.sizeGrid}>
+          {axisField('width', 'W', 'Width', 'width')}
+          {axisField('height', 'H', 'Height', 'height')}
+        </div>
+        <Button
+          ref={settingsTriggerRef}
+          variant="ghost"
+          size="xs"
+          iconOnly
+          pressed={settingsAnySet}
+          aria-haspopup="dialog"
+          aria-expanded={settingsOpen}
+          aria-label="Size settings"
+          tooltip="Aspect ratio & box sizing"
+          className={styles.sizeSettingsTrigger}
+          data-testid="size-settings-trigger"
+          onClick={() => setSettingsOpen((open) => !open)}
+        >
+          <SlidersHorizontalIcon size={14} aria-hidden="true" />
+        </Button>
       </div>
       {CONSTRAINTS.filter((c) => isRevealed(c.prop)).map(revealedRow)}
-      {/* aspectRatio (free-form text, carries a frame glyph) and boxSizing
-          (enum whose values name themselves) pair into one uncaptioned row —
-          neither earns the full-width labelled row it used to own. G3 moves
-          both into the Layout ⚙ popover; until that ships this is the only
-          way to reach either. */}
-      <div className={styles.sizeGrid}>
-        <GenericSizeRow
-          activeTab={activeTab}
-          property="aspectRatio"
-          storedStyles={storedStyles}
-          currentStyles={currentStyles}
-          onChange={onChange}
-          onRemove={onRemove}
-          onPreview={previewProperty}
-          onClearPreview={onClearPreview}
-        />
-        <GenericSizeRow
-          activeTab={activeTab}
-          property="boxSizing"
-          storedStyles={storedStyles}
-          currentStyles={currentStyles}
-          onChange={onChange}
-          onRemove={onRemove}
-          onPreview={previewProperty}
-          onClearPreview={onClearPreview}
-        />
-      </div>
+      {settingsOpen && (
+        <InspectorPopover
+          id="size-settings"
+          anchorRef={settingsTriggerRef}
+          onClose={() => setSettingsOpen(false)}
+          title="Size settings"
+        >
+          {/* aspectRatio (free-form text, carries a frame glyph) and
+              boxSizing (enum whose values name themselves) pair into one
+              uncaptioned row — same shape they had resident on the section,
+              just relocated behind this trigger (Law 2: rare options live
+              behind a settings affordance, not a permanent row). */}
+          <div className={styles.sizeGrid}>
+            <GenericSizeRow
+              activeTab={activeTab}
+              property="aspectRatio"
+              storedStyles={storedStyles}
+              currentStyles={currentStyles}
+              onChange={onChange}
+              onRemove={onRemove}
+              onPreview={previewProperty}
+              onClearPreview={onClearPreview}
+            />
+            <GenericSizeRow
+              activeTab={activeTab}
+              property="boxSizing"
+              storedStyles={storedStyles}
+              currentStyles={currentStyles}
+              onChange={onChange}
+              onRemove={onRemove}
+              onPreview={previewProperty}
+              onClearPreview={onClearPreview}
+            />
+          </div>
+        </InspectorPopover>
+      )}
     </>
   )
 }

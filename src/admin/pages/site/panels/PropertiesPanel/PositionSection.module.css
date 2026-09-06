@@ -64,12 +64,30 @@
     color: var(--text);
 }
 
+/* F1's third row — rotation paired with the z-index settings trigger on one
+ * row instead of the gear sitting alone on its own. Rotation grows to fill
+ * the row (it's the field a designer actually reaches for); the trigger
+ * stays its own intrinsic width, mirroring LayoutSection's `alignGapRow`
+ * ([field] [⚙]) shape. */
+.rotationSettingsRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.rotationSettingsRow > .rotationCell,
+.rotationSettingsRow > .rotationFallback {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 /* Z-index settings affordance (Law 2) — a single small trigger row instead
  * of a resident field. The badge keeps the current value legible without
  * opening the menu (Law 4's "state must stay legible" applies here too). */
 .settingsRow {
     display: flex;
     align-items: center;
+    flex-shrink: 0;
     gap: var(--space-2xs);
 }
 
@@ -77,15 +95,6 @@
     color: var(--text-muted);
     font-size: var(--text-xs);
     font-weight: 500;
-}
-
-.settingsMenuTitle {
-    padding: var(--space-3xs) var(--space-m);
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
 }
 
 /* F1's third row — rotation. Same icon-cell shape as `constraintCell` /

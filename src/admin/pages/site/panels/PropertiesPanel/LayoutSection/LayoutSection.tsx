@@ -9,7 +9,11 @@
  * its own box, the same category as display/gap/align (Spacing keeps only
  * margin — a relationship with siblings).
  *
- *   • DropdownSwitcher      — connected segmented control [Flex | Grid | ▼ more].
+ *   • LayoutModeRow         — 4 always-resident mode buttons: no auto layout /
+ *                             vertical / horizontal / grid (see that file's
+ *                             doc for why this replaced `DropdownSwitcher`
+ *                             here — `PositionSection` still uses the latter
+ *                             for `position`, an actual 3-state property).
  *   • FlexDirectionControl  — 4 connected icon buttons (row, column, reverses).
  *   • WrapToggleButton      — `flex-wrap` collapsed to one nowrap↔wrap toggle,
  *                             sitting in the direction row's header per F6
@@ -42,13 +46,11 @@
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
-import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
-import { Grid2x22SolidIcon } from 'pixel-art-icons/icons/grid-2x2-2-solid'
 import { AlignGrid } from '@ui/components/AlignGrid'
-import { DropdownSwitcher } from '../DropdownSwitcher'
-import { getEnumOptions } from '../cssControlTypes'
 import { hasStyleValue, readString } from '../styleValueUtils'
 import { useSpacingTokens } from '@site/property-controls/tokenUtils'
+import { LayoutModeRow } from './LayoutModeRow'
+import { isLayoutModeRepresentable, layoutModePatch, resolveLayoutMode, type LayoutMode } from './layoutMode'
 import { FlexDirectionControl } from './FlexDirectionControl'
 import { WrapToggleButton } from './WrapToggleButton'
 import { GapInput } from './GapInput'
@@ -87,61 +89,12 @@ interface LayoutSectionProps {
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
   /**
    * Patch-shaped hover-preview channel (see StyleRuleComposer.handlePreview).
-   * Forwarded to the display dropdown, the gap token input, and the generic
-   * fallback rows so hovering a suggestion previews on the canvas.
+   * Forwarded to the layout mode row's ▾ menu, the gap token input, and the
+   * generic fallback rows so hovering a suggestion previews on the canvas.
    */
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
 }
-
-/**
- * Container properties whose visual controls only render while `display` is
- * `flex` or `grid`. When `display` is cleared they would otherwise become
- * invisible orphans — still stored, still counted, but with no row to clear
- * them. Clearing `display` prunes these alongside it.
- *
- * `alignSelf` / `justifySelf` / `flex` / `gridColumn` / `gridRow` are
- * DELIBERATELY EXCLUDED from this list and must stay excluded: they depend
- * on the PARENT's display, not this element's own, so clearing THIS
- * element's `display` must never touch them — they live in the resident
- * `LayoutSettingsButton` (mounted in `ClipContentRow`, reachable regardless
- * of `display`), not inside the flex/grid block this pruning governs.
- */
-const DISPLAY_DEPENDENT_PROPS: ReadonlyArray<keyof CSSPropertyBag> = [
-  'flexDirection',
-  'flexWrap',
-  'alignItems',
-  'justifyContent',
-  'justifyItems',
-  'gap',
-  'rowGap',
-  'columnGap',
-  'gridTemplateColumns',
-  'gridTemplateRows',
-]
-
-// ---------------------------------------------------------------------------
-// Display switcher config — Flex | Grid + dropdown of every other value
-// ---------------------------------------------------------------------------
-
-const DISPLAY_OPTIONS = getEnumOptions('display') ?? ['block']
-
-const DISPLAY_PRIMARY_SEGMENTS = [
-  {
-    value: 'flex',
-    label: 'Flex',
-    icon: <LayoutSolidIcon size={14} />,
-    ariaLabel: 'Flex layout',
-    tooltip: 'display: flex',
-  },
-  {
-    value: 'grid',
-    label: 'Grid',
-    icon: <Grid2x22SolidIcon size={14} />,
-    ariaLabel: 'Grid layout',
-    tooltip: 'display: grid',
-  },
-] as const
 
 // ---------------------------------------------------------------------------
 // LayoutSection
@@ -160,27 +113,39 @@ export function LayoutSection({
 }: LayoutSectionProps) {
   const display = readString(currentStyles, 'display')
   const spacingTokens = useSpacingTokens()
-
-  // Clearing display prunes the flex/grid container properties it governed, in
-  // one undo step, so the section never reports phantom "N set" orphans.
-  const clearDisplayAndDeps = () => onClearProperties(['display', ...DISPLAY_DEPENDENT_PROPS])
   const flexDirection = readString(currentStyles, 'flexDirection') ?? 'row'
   const flexWrap = readString(currentStyles, 'flexWrap')
   const alignItems = readString(currentStyles, 'alignItems')
   const justifyContent = readString(currentStyles, 'justifyContent')
   const justifyItems = readString(currentStyles, 'justifyItems')
 
+  // The mode row only ever highlights a segment for a display the four
+  // buttons can actually represent — everything else renders with none
+  // selected rather than guessing (see LayoutModeRow's doc).
+  const layoutMode: LayoutMode | undefined = isLayoutModeRepresentable(display)
+    ? resolveLayoutMode(display, flexDirection)
+    : undefined
+
+  const applyLayoutMode = (mode: LayoutMode) => {
+    const patch = layoutModePatch(mode)
+    for (const [property, value] of Object.entries(patch.set)) {
+      onChange(property as keyof CSSPropertyBag, value)
+    }
+    if (patch.clear.length > 0) onClearProperties(patch.clear)
+  }
+
   return (
     <div className={styles.layoutSection}>
-      {/* Display switcher — unlabeled, full width */}
-      <DropdownSwitcher
-        property="display"
-        value={display}
-        primarySegments={DISPLAY_PRIMARY_SEGMENTS}
-        allOptions={DISPLAY_OPTIONS}
-        onChange={(v) => onChange('display', v)}
-        onClear={clearDisplayAndDeps}
-        onPreview={onPreview ? (v) => onPreview({ display: v } as Partial<CSSPropertyBag>) : undefined}
+      {/* Layout mode — the four always-resident mode buttons, unlabeled,
+          full width. See LayoutModeRow's doc for why this replaced the
+          `display`-keyed DropdownSwitcher here. */}
+      <LayoutModeRow
+        mode={layoutMode}
+        display={display}
+        onSelectMode={applyLayoutMode}
+        onClearMode={() => applyLayoutMode('none')}
+        onSelectDisplayValue={(v) => onChange('display', v)}
+        onPreviewDisplayValue={onPreview ? (v) => onPreview({ display: v } as Partial<CSSPropertyBag>) : undefined}
         onClearPreview={onClearPreview}
       />
 

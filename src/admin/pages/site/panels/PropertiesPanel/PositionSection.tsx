@@ -1,65 +1,71 @@
 /**
  * PositionSection — visual editor for the `position` CSS section.
  *
- * G10 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md) — Figma's F1/F2/F29 shape:
+ * G10 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md) — Figma's F1/F2/F29 shape,
+ * tightened to three rows (WS-6 §6 — this section was running at roughly
+ * double its row budget):
  *
- *   • AlignBar          — the 7-button align/distribute/tidy row (F1, F2),
- *                         mounted here for the single selected node. Align
- *                         writes either the node's own `alignSelf`/
- *                         `justifySelf` or, when this is the parent's only
- *                         child, the PARENT's `justifyContent` as an inline
- *                         style (never a shared class — no blast radius).
- *                         Every edge with no single honest CSS write renders
- *                         disabled with the reason as its tooltip — see
- *                         `resolveAlignWrite`.
- *   • PositionSwitcher  — connected `[Relative | Absolute | ▼]` segmented
- *                         control with a dropdown trail. `fixed | sticky |
- *                         static` (and any custom value) fall through to a
- *                         full-width chip + close-button layout, mirroring
- *                         DisplaySwitcher's three-state shape.
- *   • DirectionInput    — compact icon-as-label cell for one offset
- *                         (top/right/bottom/left), used for `relative` /
- *                         `sticky` — those have no "constraints" metaphor
- *                         (F29 is absolute-only per Law 5), so all four
- *                         TRBL cells render together, as before.
- *   • ConstraintAxisField — F29's `absolute`/`fixed` shape: an X row and a Y
- *                         row, each a `Left ▾`/`Right ▾` (or `Top ▾`/
- *                         `Bottom ▾`) side picker plus one value field.
- *                         Switching the side MOVES the value (clears the
- *                         old property, writes the new one) rather than
- *                         leaving both set.
- *   • RotationField     — F1's third row. Resident (not behind a popover —
- *                         rotation is the control a designer actually
- *                         reaches for). Reads/writes the STANDALONE `rotate`
- *                         CSS property, never `transform` — both the
- *                         publisher and the canvas emit any syntactically
- *                         valid property name via the same permissive
- *                         `isEmittableProperty` gate (`classCss.ts`), so
- *                         `rotate` needs no allowlist entry, and `rotate`
- *                         composes with an existing `transform` instead of
- *                         being one of its functions — nothing to parse,
- *                         nothing to clobber. The one case this can't stay
- *                         honest for: `transform` ALREADY contains a
- *                         `rotate()`/`rotateX/Y/Z()`/`rotate3d()` function.
- *                         Two independent rotations would both apply and
- *                         silently compound, so that case refuses the
- *                         field and falls back to a raw `transform` row
- *                         with a reason — same standing rule the plan
- *                         applies to gradients (§4 G6.3) and box-shadow
- *                         (§4 G8.3). Flip (`scaleX(-1)`/`scaleY(-1)`) is
- *                         skipped — same clobber risk, less value; follow-up.
- *   • zIndex            — moved off the resident rows (Law 2) behind a
- *                         small sliders-icon affordance opening a
- *                         `ContextMenu` with the existing generic row.
- *                         `InspectorPopover` (built elsewhere this wave) is
- *                         the intended long-term home — see the comment
- *                         at its call site below.
+ *   Row 1 — AlignBar        the 7-button align/distribute/tidy row (F1, F2),
+ *                           mounted here for the single selected node. Align
+ *                           writes either the node's own `alignSelf`/
+ *                           `justifySelf` or, when this is the parent's only
+ *                           child, the PARENT's `justifyContent` as an inline
+ *                           style (never a shared class — no blast radius).
+ *                           Every edge with no single honest CSS write
+ *                           renders disabled with the reason as its tooltip
+ *                           — see `resolveAlignWrite`.
+ *   Row 2 — PositionSwitcher  connected `[Relative | Absolute | ▼]` segmented
+ *                           control with a dropdown trail. `fixed | sticky |
+ *                           static` (and any custom value) render as a
+ *                           SYNTHETIC trailing segment in that SAME track
+ *                           rather than swapping to a different, full-width
+ *                           chip shape — see `DropdownSwitcher`'s doc for why
+ *                           the old two-shape design is gone. Mirrors
+ *                           DisplaySwitcher's now-unified shape exactly (they
+ *                           share the one `DropdownSwitcher` component).
+ *   Row 2b (conditional) — DirectionInput / ConstraintAxisField  offsets,
+ *                           only rendered once `position` actually honors
+ *                           them (never for `static`), so a plain block
+ *                           element pays nothing for this row. DirectionInput
+ *                           is the plain TRBL grid used for `relative`/
+ *                           `sticky` (no "constraints" metaphor — F29 is
+ *                           absolute-only per Law 5). ConstraintAxisField is
+ *                           F29's `absolute`/`fixed` shape: an X row and a Y
+ *                           row, each a `Left ▾`/`Right ▾` (or `Top ▾`/
+ *                           `Bottom ▾`) side picker plus one value field.
+ *                           Switching the side MOVES the value (clears the
+ *                           old property, writes the new one) rather than
+ *                           leaving both set.
+ *   Row 3 — RotationRow + ZIndexSettingsRow, PAIRED onto one row (F1's third
+ *                           row pairs rotation with flip; flip is skipped —
+ *                           see `RotationRow`'s doc — so the z-index settings
+ *                           trigger takes that seat instead of sitting alone
+ *                           on its own row). Rotation reads/writes the
+ *                           STANDALONE `rotate` CSS property, never
+ *                           `transform` — both the publisher and the canvas
+ *                           emit any syntactically valid property name via
+ *                           the same permissive `isEmittableProperty` gate
+ *                           (`classCss.ts`), so `rotate` needs no allowlist
+ *                           entry, and `rotate` composes with an existing
+ *                           `transform` instead of being one of its
+ *                           functions — nothing to parse, nothing to clobber.
+ *                           The one case this can't stay honest for:
+ *                           `transform` ALREADY contains a `rotate()`/
+ *                           `rotateX/Y/Z()`/`rotate3d()` function. Two
+ *                           independent rotations would both apply and
+ *                           silently compound, so that case refuses the
+ *                           field and falls back to a raw `transform` row
+ *                           with a reason — same standing rule the plan
+ *                           applies to gradients (§4 G6.3) and box-shadow
+ *                           (§4 G8.3). zIndex itself stays behind its own
+ *                           small sliders-icon trigger (Law 2) — see
+ *                           `ZIndexSettingsRow`.
  *
  * Reuses chip / track styles from LayoutSection.module.css so the visual
- * vocabulary stays in one place — `displayRow`, `displayChipGroup`, etc.
- * New, section-specific styles (align row spacing, constraint cells, the
- * settings trigger) live in this component's own `PositionSection.module.css`
- * rather than growing LayoutSection's.
+ * vocabulary stays in one place — `displayRow`, etc. New, section-specific
+ * styles (align row spacing, constraint cells, the rotation+settings row)
+ * live in this component's own `PositionSection.module.css` rather than
+ * growing LayoutSection's.
  *
  * `SingleNodeAlignRow`, `PositionConstraints` (+ `ConstraintAxisField`),
  * `RotationRow`, and `ZIndexSettingsRow` live in their own sibling files —
@@ -84,6 +90,7 @@ import { PositionConstraints } from './PositionConstraints'
 import { RotationRow } from './RotationRow'
 import { ZIndexSettingsRow } from './ZIndexSettingsRow'
 import styles from './LayoutSection.module.css'
+import posStyles from './PositionSection.module.css'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -225,24 +232,30 @@ export function PositionSection({
           onClearPreview={onClearPreview}
         />
       )}
-      <RotationRow
-        key={`${activeTab}-rotation`}
-        storedStyles={storedStyles}
-        currentStyles={currentStyles}
-        onChange={onChange}
-        onClearProperty={onClearProperty}
-        onPreview={previewProperty}
-        onClearPreview={onClearPreview}
-      />
-      <ZIndexSettingsRow
-        key={`${activeTab}-zIndex`}
-        storedStyles={storedStyles}
-        currentStyles={currentStyles}
-        onChange={onChange}
-        onRemove={onRemove}
-        onPreview={previewProperty}
-        onClearPreview={onClearPreview}
-      />
+      {/* F1's third row — rotation paired with the z-index settings trigger
+          rather than either sitting alone on its own row (flip is skipped,
+          see the module doc, so rotation has no other companion control to
+          share a row with). */}
+      <div className={posStyles.rotationSettingsRow}>
+        <RotationRow
+          key={`${activeTab}-rotation`}
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          onChange={onChange}
+          onClearProperty={onClearProperty}
+          onPreview={previewProperty}
+          onClearPreview={onClearPreview}
+        />
+        <ZIndexSettingsRow
+          key={`${activeTab}-zIndex`}
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          onChange={onChange}
+          onRemove={onRemove}
+          onPreview={previewProperty}
+          onClearPreview={onClearPreview}
+        />
+      </div>
     </>
   )
 }
