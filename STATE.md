@@ -12,6 +12,100 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### mcp-17 — the assistant loop paid for its whole context every round, ran its read batch one tool at a time, and captured five screens in five browser round trips
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** land the verified latency fixes in `server/ai/**` — prompt caching that
+  covers more than the system prefix, tool dispatch that isn't serial, and a
+  `studio_compare` that captures a batch as a batch.
+- **Scope:** `server/ai/drivers/{anthropic,anthropicWire,openai,openrouter,responses-shared}.ts`,
+  `server/ai/drivers/http/toolLoop.ts`, `server/ai/mcp/editorBridge.ts`,
+  `server/ai/mcp/tools/studio/compare.ts` + their tests,
+  `src/__tests__/ai/{toolLoop,anthropicMapping,responsesMapping}.test.ts`,
+  `docs/features/{agent,mcp-connectors}.md`, `docs/agent-refs/path-index.md`.
+  Nothing under `src/admin/` was touched.
+- **Done so far:**
+  - **The history is append-only now.** `applyHeavyElision` rewrote
+    `messages[index]` in place whenever a screenshot/HTML result was superseded,
+    which moved the cached prefix on every capture. It is now
+    `projectHeavyElision` (`http/toolLoop.ts:436`) — a projection computed per
+    POST and thrown away. Same wire output, but the array a later round appends
+    to is never edited, which is what makes the cache anchors below meaningful.
+  - **All four Anthropic `cache_control` breakpoints are spent**, not one:
+    static system prefix (unchanged), the LAST tool definition
+    (`buildToolDefinitions`, `anthropicWire.ts:87`), the end of the persisted
+    history, and the last message of the current request. The two message
+    anchors are chosen provider-agnostically by `messageCacheBreakpoints`
+    (`http/toolLoop.ts:497`) and expressed by `withMessageCacheBreakpoints`
+    (`anthropicWire.ts:110`); `ProviderAdapter.buildRequestBody` gained a third
+    `cacheBreakpoints` argument that the Responses/Ollama adapters ignore.
+  - **Read tools in one batch now run concurrently.** `groupToolCalls`
+    (`http/toolLoop.ts:322`) splits a turn's calls into ordered groups:
+    consecutive `mutates !== true` tools share a group and run under one
+    `Promise.all`; anything that mutates — or a name that resolves to no
+    registered tool — is a group of one. Emission order is still the model's
+    call order, so the transcript and the `tool_result` pairing are unchanged.
+  - **OpenRouter gets a `prompt_cache_key`.** It had none. The key moved out of
+    `openai.ts` into `responses-shared.ts:promptCacheKey` and is now
+    unconditional for both Responses drivers; `openai.ts`'s private
+    `stableHash` and the `promptCacheKey` adapter option are deleted.
+  - **`studio_compare` captures the batch as a batch.** `captureMissedPages`
+    (`compare.ts:226`) collects every cache-miss page and makes ONE
+    `studio_export_frames` call per distinct capture dpr, instead of one call
+    per page inside the result loop.
+  - **`awaitEditorBridgeForUser` drops to one wait window** when a bridge for
+    that `(userId, scope)` was live in the last 60s (`editorBridge.ts:80`) — the
+    `STREAM_LEASE_MS` teardown/reconnect case, where the second 4s window was
+    pure latency. A never-seen workspace keeps the full two-window patience.
+- **Next step:** none — merged behaviour is complete. If someone wants the next
+  increment: `studio_export_frames` takes ONE dpr per call, so a multi-reference
+  batch still splits; teaching the browser handler a per-page dpr would collapse
+  it to a single call.
+- **Decisions:**
+  - Parallelism is gated on `AiTool.mutates`, not on `execution`. A conservative
+    rule that keeps every read/write ordering the model expressed, documented at
+    `groupToolCalls`. Do not widen it to "everything at once" — a write batch is
+    order-dependent by construction.
+  - The two message cache anchors are "end of persisted history" + "end of this
+    request", NOT a sliding pair. The first is the one elision can never
+    disturb; the second is what makes round N+1 cheap.
+  - `anthropicWire.ts` is a new file rather than more mass in `anthropic.ts`
+    (648 lines, `CEILING` is 700) — and the block interfaces had to move with
+    the builders or `no-circular-dependencies` would have fired.
+- **Landmines:**
+  - **Do not `git stash` in this repo.** Worktrees share one stash stack. I
+    stashed to get a pre-change test baseline; between the push and the pop
+    another agent stashed and then popped, so I popped THEIR canvas/perf WIP
+    into this worktree and they popped mine into theirs. Recovered by hand from
+    the stash commit SHA. **`stash@{0}` is now
+    `RECOVERED-perf-canvas-wip-mispopped`** — that is the other agent's
+    canvas/perf work (`BreakpointFrame.tsx`, `NodeRenderer.tsx`,
+    `ProjectCssInjector.tsx`, `usePersistence.ts`, `store.ts`, plus 5 new test
+    files); pop it from the worktree that owns it.
+  - `executeAiTool` reads `toolContextBase.capabilities` and a `mutates` tool
+    needs `ai.tools.write`. A test fixture that omits `capabilities` makes the
+    gate throw, which the loop reports as a dead browser bridge. Cost me a
+    confusing red before I saw it.
+  - Anthropic caps `cache_control` at 4 per request. All four are now in use;
+    adding a fifth anywhere silently 400s the whole turn. The wire test in
+    `toolLoop.test.ts` asserts the count.
+- **Verification:**
+  - `bun run build` — pass (tsc + vite).
+  - `bun test src/__tests__/ai server/ai/mcp/editorBridge.test.ts server/ai/mcp/tools/studio/compare.test.ts` — pass.
+  - `bun run lint` — see the entry's commit; no new findings in the touched files.
+  - Pre-existing and NOT mine: `server/ai/drivers/claudeCli*.test.ts`,
+    `projectMcpServers.test.ts`, `registeredMcpServers.test.ts`,
+    `liveDigest.test.ts` — 53 failures, reproduced identically on a clean tree
+    before any of this landed.
+- **Human action needed:** dogfood one real agent turn. The observable wins are
+  (a) `cache_read_input_tokens` should now dominate `input_tokens` from round 2
+  onward in the context meter, and (b) a multi-screen `studio_compare` should
+  return in roughly a quarter of the time it used to.
+
+---
+
 ### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
 
 **What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the

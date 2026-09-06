@@ -7,7 +7,7 @@
  *      message array (`adapter.mapHistory`).
  *   2. POST `{ ...body, stream: true }` and parse the SSE response into
  *      canonical `AiStreamEvent`s via a per-turn `TurnTranslator`.
- *   3. When the turn ends with tool calls, execute each (server handler or
+ *   3. When the turn ends with tool calls, execute them (server handler or
  *      browser bridge) via `executeAiTool`, append the assistant `tool_use`
  *      turn + the `tool_result` turn to the working message array, and
  *      re-POST.
@@ -17,6 +17,16 @@
  * Each provider supplies the small `ProviderAdapter` of pure functions; the
  * loop, SSE plumbing, tool dispatch, abort handling, and usage aggregation
  * live here once.
+ *
+ * ## The history is append-only
+ *
+ * The provider-native message array this loop builds is only ever appended to.
+ * Nothing rewrites a message a previous round already sent — a mutated prefix
+ * invalidates every prompt-cache entry downstream of it, and the whole point of
+ * the cache breakpoints the adapters place (see `messageCacheBreakpoints`) is
+ * that the prefix stays byte-identical round over round. Heavy-evidence elision
+ * is therefore a per-request PROJECTION (`projectHeavyElision`), computed fresh
+ * for each POST and thrown away, never written back.
  *
  * Abort: `req.signal` is passed straight to `fetch`. On abort (or an
  * `AbortError` mid-stream) the generator returns cleanly with no `error`
@@ -94,8 +104,20 @@ export interface ProviderAdapter<TMessage> {
   buildHeaders(req: AiStreamRequest): Record<string, string>
   /** Canonical `AiMessage[]` history → provider-native message array. */
   mapHistory(req: AiStreamRequest): TMessage[]
-  /** Provider-native messages → the full JSON request body (sets `stream: true`). */
-  buildRequestBody(messages: TMessage[], req: AiStreamRequest): unknown
+  /**
+   * Provider-native messages → the full JSON request body (sets `stream: true`).
+   *
+   * `cacheBreakpoints` are ascending indices into `messages` where the loop
+   * wants a prompt-cache breakpoint placed (see `messageCacheBreakpoints`).
+   * Providers whose cache is implicit — the OpenAI-Responses family, Ollama —
+   * ignore the argument entirely; Anthropic expresses each as a
+   * `cache_control` marker.
+   */
+  buildRequestBody(
+    messages: TMessage[],
+    req: AiStreamRequest,
+    cacheBreakpoints: readonly number[],
+  ): unknown
   /** Build the tool-result turn appended after the assistant turn. */
   buildToolResultMessage(results: TurnToolResult[]): TMessage
   /** Fresh translator for each API call in the loop. */
@@ -111,16 +133,23 @@ export async function* runToolLoop<TMessage>(
   req: AiStreamRequest,
 ): AsyncIterable<AiStreamEvent> {
   const toolsByName = new Map<string, AiTool>(req.tools.map((t) => [t.name, t]))
-  let messages = adapter.mapHistory(req)
+  // Append-only. See the module doc: a rewritten past message would invalidate
+  // the prompt cache from that point on, every single round.
+  let history = adapter.mapHistory(req)
+  // How much of `history` came from the persisted conversation rather than from
+  // this loop's own rounds. Everything below this index is fixed for the whole
+  // turn, which makes it the one cache anchor elision can never disturb.
+  let persistedLength = history.length
   const headers = adapter.buildHeaders(req)
   let initialProviderRound = true
   let replayOverflowRetried = false
 
   // Track tool-result messages that carry heavy evidence (screenshots,
   // full-page HTML/CSS). Once superseded they describe stale page state and are
-  // worthless, so we keep only the LATEST per heavy tool name at full fidelity
-  // and stub the rest — this is what bounds context growth across a long build
-  // loop (a single screenshot inlined as text was blowing past 1M tokens).
+  // worthless, so only the LATEST per heavy tool name is sent at full fidelity
+  // and the rest are stubbed at request-build time — this is what bounds
+  // context growth across a long build loop (a single screenshot inlined as
+  // text was blowing past 1M tokens).
   const heavyMessages: { index: number; results: TurnToolResult[] }[] = []
 
   // Usage is reported per API call; aggregate across the whole loop so the
@@ -144,12 +173,19 @@ export async function* runToolLoop<TMessage>(
   for (;;) {
     if (req.signal.aborted) return
 
+    const requestMessages = projectHeavyElision(history, heavyMessages, adapter)
     let res: Response
     try {
       res = await fetch(adapter.endpoint, {
         method: 'POST',
         headers,
-        body: JSON.stringify(adapter.buildRequestBody(messages, req)),
+        body: JSON.stringify(
+          adapter.buildRequestBody(
+            requestMessages,
+            req,
+            messageCacheBreakpoints(persistedLength, requestMessages.length),
+          ),
+        ),
         signal: req.signal,
       })
     } catch (err) {
@@ -168,7 +204,8 @@ export async function* runToolLoop<TMessage>(
         const projected = elideHistoricalUserImages(req.messages)
         if (projected) {
           replayOverflowRetried = true
-          messages = adapter.mapHistory({ ...req, messages: projected })
+          history = adapter.mapHistory({ ...req, messages: projected })
+          persistedLength = history.length
           continue
         }
       }
@@ -219,60 +256,57 @@ export async function* runToolLoop<TMessage>(
     }
 
     if (turn.assistantMessage !== null) {
-      messages.push(turn.assistantMessage)
+      history.push(turn.assistantMessage)
     }
 
-    // Execute every tool the model requested this turn, then append the
-    // combined tool-result turn before re-POSTing.
+    // Execute every tool the model requested this turn — reads concurrently,
+    // writes one at a time (see `groupToolCalls`) — then append the combined
+    // tool-result turn before re-POSTing.
     const results: TurnToolResult[] = []
-    for (const call of turn.toolCalls) {
-      const tool = toolsByName.get(call.name)
-      const input = prepareToolInput(call, req)
-      let output: AiToolOutput
-      try {
-        output = tool
-          ? await executeAiTool(tool, input, req.bridge, req.signal, req.toolContextBase)
-          : { ok: false, error: `Unknown tool: ${call.name}` }
-      } catch (err) {
-        // Browser tools communicate domain failures by resolving an
-        // `AiToolOutput`. Rejection means the bridge transport disappeared
-        // (timeout, server reload, closed stream). Retrying within this turn
-        // would hit the same dead bridge and can burn repeated provider rounds.
-        if (req.signal.aborted) return
-        const detail = err instanceof Error ? err.message : String(err)
+    for (const group of groupToolCalls(turn.toolCalls, toolsByName)) {
+      const settled = await Promise.all(
+        group.map((call) => executeOneCall(call, toolsByName, req)),
+      )
+      if (req.signal.aborted) return
+
+      // Emission stays in the model's own call order regardless of which tool
+      // finished first, so the transcript reads the way the turn was written.
+      for (const entry of settled) {
+        if (entry.output === null) {
+          // Browser tools communicate domain failures by resolving an
+          // `AiToolOutput`. Rejection means the bridge transport disappeared
+          // (timeout, server reload, closed stream). Retrying within this turn
+          // would hit the same dead bridge and can burn repeated provider rounds.
+          yield {
+            type: 'toolResult',
+            toolCallId: entry.call.id,
+            toolName: entry.call.name,
+            ok: false,
+            error: entry.error,
+          }
+          // The provider already completed and billed this round before the
+          // bridge failed. Persist its accumulated usage before the terminal
+          // error so conversation totals and the failed-turn audit stay honest.
+          yield aggregateUsageEvent()
+          yield {
+            type: 'error',
+            message: `Browser tool transport failed: ${entry.error}`,
+          }
+          return
+        }
         yield {
           type: 'toolResult',
-          toolCallId: call.id,
-          toolName: call.name,
-          ok: false,
-          error: detail,
+          toolCallId: entry.call.id,
+          toolName: entry.call.name,
+          ok: entry.output.ok,
+          error: entry.output.ok ? undefined : entry.output.error ?? 'Tool call failed.',
         }
-        // The provider already completed and billed this round before the
-        // bridge failed. Persist its accumulated usage before the terminal
-        // error so conversation totals and the failed-turn audit stay honest.
-        yield aggregateUsageEvent()
-        yield {
-          type: 'error',
-          message: `Browser tool transport failed: ${detail}`,
-        }
-        return
+        results.push({ id: entry.call.id, name: entry.call.name, output: entry.output })
       }
-      yield {
-        type: 'toolResult',
-        toolCallId: call.id,
-        toolName: call.name,
-        ok: output.ok,
-        error: output.ok ? undefined : output.error ?? 'Tool call failed.',
-      }
-      results.push({ id: call.id, name: call.name, output })
-      if (req.signal.aborted) return
     }
 
-    const msgIndex = messages.push(adapter.buildToolResultMessage(results)) - 1
-    if (results.some(isHeavyResult)) {
-      heavyMessages.push({ index: msgIndex, results })
-      applyHeavyElision(messages, heavyMessages, adapter)
-    }
+    const msgIndex = history.push(adapter.buildToolResultMessage(results)) - 1
+    if (results.some(isHeavyResult)) heavyMessages.push({ index: msgIndex, results })
   }
 
   yield aggregateUsageEvent()
@@ -312,6 +346,77 @@ function elideHistoricalUserImages(messages: readonly AiMessage[]): AiMessage[] 
     return { role: 'user', content }
   })
   return changed ? projected : null
+}
+
+// ---------------------------------------------------------------------------
+// Tool dispatch — concurrent reads, serialised writes
+// ---------------------------------------------------------------------------
+
+/** One executed call. `output === null` means the transport itself failed. */
+interface ExecutedCall {
+  readonly call: TurnToolCall
+  readonly output: AiToolOutput | null
+  readonly error: string
+}
+
+/**
+ * Split one turn's tool calls into ordered execution GROUPS: consecutive
+ * read-only calls form a single group that runs concurrently, and any call
+ * that mutates state gets a group of its own.
+ *
+ * The system prompt asks the model to issue reads as one batch, and running
+ * that batch sequentially made the loop's wall time the SUM of every read
+ * rather than the slowest one — several seconds per round on a five-screen
+ * verification, repeated every round of a fix loop.
+ *
+ * The rule is deliberately conservative, and the conservatism is the point:
+ * two writes to the same file, or a read the model issued *after* a write in
+ * order to observe it, must not be reordered or interleaved. Only
+ * `mutates !== true` tools are ever run together, and a name we cannot resolve
+ * to a registered tool is treated as a write (it becomes an
+ * `Unknown tool: …` result, but it never shares a group).
+ */
+function groupToolCalls(
+  calls: readonly TurnToolCall[],
+  toolsByName: ReadonlyMap<string, AiTool>,
+): TurnToolCall[][] {
+  const groups: TurnToolCall[][] = []
+  let readBatch: TurnToolCall[] | null = null
+  for (const call of calls) {
+    const tool = toolsByName.get(call.name)
+    if (tool !== undefined && tool.mutates !== true) {
+      if (readBatch === null) {
+        readBatch = []
+        groups.push(readBatch)
+      }
+      readBatch.push(call)
+    } else {
+      readBatch = null
+      groups.push([call])
+    }
+  }
+  return groups
+}
+
+/**
+ * Run one tool call to a settled outcome. Never throws: a rejected browser
+ * bridge is returned as `{ output: null, error }` so the caller can emit every
+ * result of the group in the model's own call order before terminating on it.
+ */
+async function executeOneCall(
+  call: TurnToolCall,
+  toolsByName: ReadonlyMap<string, AiTool>,
+  req: AiStreamRequest,
+): Promise<ExecutedCall> {
+  const tool = toolsByName.get(call.name)
+  try {
+    const output = tool
+      ? await executeAiTool(tool, prepareToolInput(call, req), req.bridge, req.signal, req.toolContextBase)
+      : { ok: false, error: `Unknown tool: ${call.name}` }
+    return { call, output, error: '' }
+  } catch (err) {
+    return { call, output: null, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -367,27 +472,71 @@ function stubHeavyResult(r: TurnToolResult): TurnToolResult {
 }
 
 /**
- * Rewrite every tracked heavy tool-result message so that, per heavy tool name,
- * only the most recent message keeps full fidelity; all earlier heavy results
- * are stubbed. Non-heavy results in the same message are left untouched (a turn
- * can mix a heavy `site_read_document` with a cheap `site_update_node_props`). Messages are
- * rebuilt through the adapter so this stays provider-agnostic.
+ * The message array for ONE request: the canonical history with every
+ * superseded heavy tool result swapped for its breadcrumb. Per heavy tool name
+ * only the most recent message keeps full fidelity; non-heavy results in the
+ * same message are left untouched (a turn can mix a heavy `site_read_document`
+ * with a cheap `site_update_node_props`). Messages are rebuilt through the
+ * adapter, so this stays provider-agnostic.
+ *
+ * This is a projection, NOT an edit. `history` is returned untouched — it is
+ * the array the next round appends to, and rewriting an entry of it (which is
+ * what this used to do) invalidated the prompt cache from that position onward
+ * on every single capture.
  */
-function applyHeavyElision<TMessage>(
-  messages: TMessage[],
-  heavyMessages: { index: number; results: TurnToolResult[] }[],
+export function projectHeavyElision<TMessage>(
+  history: readonly TMessage[],
+  heavyMessages: readonly { index: number; results: TurnToolResult[] }[],
   adapter: ProviderAdapter<TMessage>,
-): void {
+): TMessage[] {
+  const projected = history.slice()
+  if (heavyMessages.length === 0) return projected
+
   const lastIndexByTool = new Map<string, number>()
   for (const m of heavyMessages) {
     for (const r of m.results) {
-      if (isHeavyResult(r)) lastIndexByTool.set(r.name, m.index)
+      if (isHeavyResult(r) && m.index > (lastIndexByTool.get(r.name) ?? -1)) {
+        lastIndexByTool.set(r.name, m.index)
+      }
     }
   }
   for (const m of heavyMessages) {
-    const rebuilt = m.results.map((r) =>
-      isHeavyResult(r) && lastIndexByTool.get(r.name) !== m.index ? stubHeavyResult(r) : r,
+    const superseded = (r: TurnToolResult): boolean =>
+      isHeavyResult(r) && lastIndexByTool.get(r.name) !== m.index
+    if (!m.results.some(superseded)) continue
+    projected[m.index] = adapter.buildToolResultMessage(
+      m.results.map((r) => (superseded(r) ? stubHeavyResult(r) : r)),
     )
-    messages[m.index] = adapter.buildToolResultMessage(rebuilt)
   }
+  return projected
+}
+
+// ---------------------------------------------------------------------------
+// Prompt-cache breakpoint policy
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a provider should place message-level prompt-cache breakpoints for ONE
+ * request, as ascending indices into that request's message array. Two anchors,
+ * and the reason for each:
+ *
+ *   - **the end of the persisted history** this run started from. Heavy-evidence
+ *     elision only ever touches messages the LOOP appended, so this prefix is
+ *     byte-identical on every round of the turn. It is the anchor that still
+ *     hits after a fresh screenshot supersedes an earlier one.
+ *   - **the last message of this request.** Nothing after it exists yet, so the
+ *     next round reads everything up to here from the cache and pays full price
+ *     only for its own delta — which is what turns an N-round tool loop from N²
+ *     input tokens into N.
+ *
+ * Two is also the budget: Anthropic allows four `cache_control` markers per
+ * request and its driver spends the other two on the static system prefix and
+ * the tool block. On the first round both anchors collapse to the same index.
+ */
+export function messageCacheBreakpoints(persistedLength: number, length: number): number[] {
+  if (length === 0) return []
+  const anchors = new Set<number>()
+  if (persistedLength > 0) anchors.add(Math.min(persistedLength, length) - 1)
+  anchors.add(length - 1)
+  return [...anchors].sort((a, b) => a - b)
 }
