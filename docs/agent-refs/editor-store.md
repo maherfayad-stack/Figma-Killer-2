@@ -60,19 +60,22 @@ for a `for (const page of X.pages)` loop.
 | Slice | Owns |
 |---|---|
 | `siteSlice.ts` | The site document, `loadSite`, `saveSite`, `patchPages`, the 11 named tree actions |
-| `site/helpers.ts` | `resolveActiveTreeTarget`, `mutateActiveTree` — **the only place that knows which tree is active** |
-| `boardSlice.ts` | Boards, frames, `addFrame`, `setFramePosition`, `setFrameSize`, `seedFramesForActiveBoard`, `selectedFrameIds` (WS-7.1 frame multi-select, implementation in `boardFrameSelectionActions.ts`), `frameDefaults` + bulk frame actions (WS-7.2), `boardsPendingExplicitRemoval` (autosave hazard guard, see below) |
-| `selectionSlice.ts` | `selectedNodeId`, `selectedNodeIds`, multi-select, focus target — WS-7.3: on a studio board, a multi-selection may span any of the board's own curated frames, not just the active page (`resolveSelectableNode`) |
+| `site/helpers.ts` (+ the rest of `site/`: `structuralSourceEdits.ts`, `nodeIndex.ts`, `nodeTreeGrouping.ts`, `undoRedoActions.ts`, `pageActions.ts`, …) | `resolveActiveTreeTarget`, `mutateActiveTree` — **the only place that knows which tree is active** — plus the site slice's own supporting modules, split out to stay under the module-size ceiling |
+| `boardSlice.ts` | Boards, frames, `addFrame`, `setFramePosition`, `setFrameSize`, `seedFramesForActiveBoard`, `selectedFrameIds` (WS-7.1 frame multi-select, implementation in `boardFrameSelectionActions.ts`), `frameDefaults` + bulk frame actions (WS-7.2, `boardBulkFrameActions.ts`/`boardBulkFrameSliceActions.ts`), `boardsPendingExplicitRemoval` (autosave hazard guard, see below). Sibling modules split out of the same slice for the module-size ceiling: `boardAnnotationActions.ts`/`boardAnnotationSliceActions.ts` (sticky notes + doc blocks), `boardGuideActions.ts` (D1 persisted ruler guides), `boardSelectors.ts` (the read side) |
+| `selectionSlice.ts` (+ `selectionResolve.ts`, `selectionTraversalActions.ts`) | `selectedNodeId`, `selectedNodeIds`, multi-select, focus target — WS-7.3: on a studio board, a multi-selection may span any of the board's own curated frames, not just the active page (`resolveSelectableNode`, in `selectionResolve.ts` to avoid an import cycle with `selectionTraversalActions.ts`'s Enter/⇧Enter tree walk) |
 | `canvasSlice.ts` | `canvasView` ('design' \| 'live'), zoom/pan, `activeBreakpointId`, `runScripts` |
-| `inlineEditSlice.ts` | `activeInlineEdit` — one session globally |
-| `styleRuleSlice.ts` | The CSS class registry |
+| `inlineEditSlice.ts` | `activeInlineEdit` — one session globally, now keyed by `frameId` and (for a locale variant) `localeOverride` — see `canvas-internals.md`'s Locale section |
+| `styleRuleSlice.ts` (+ `styleRule/`: `crudActions.ts`, `propertyActions.ts`, `assignmentActions.ts`, `conditionActions.ts`, `registryActions.ts`, `uiStateActions.ts`, `helpers.ts`) | The CSS class registry, split the same way `boardSlice.ts` and `site/` are |
 | `uiSlice.ts` | `activeDocument`, panel open/closed, right sidebar expanded |
 | `sitePanelSlice.ts` | Panel-specific UI state |
 | `clipboardSlice.ts` | Copy/paste of subtrees |
 | `filesSlice.ts` | Site files / code assets |
 | `saveTrackingSlice.ts` | Dirty tracking, autosave cadence |
+| `commentsSlice.ts` (+ `commentSelectors.ts`) | The editor's view of `<workspace>/.studio/comments.json` and the transient UI state around it (armed tool, open thread, uncommitted pin) — no HTTP here, the round trip lives in `@site/studio/commentActions.ts` |
+| `localizedPageSlice.ts` | WS-10 §4.4 (Phase 4): the `(pageId, locale)` parallel map a board frame reads from when its own `axes.locale` differs from the board default — see `canvas-internals.md`'s Locale section |
 | `visualComponentsSlice.ts`, `vcTreeOps.ts`, `vcSlotReconcile.ts` | Visual Components |
 | `layoutsSlice.ts`, `settingsSlice.ts` | Layouts, editor settings |
+| `prototypeSlice.ts` | A project's flows (prototype mode) — out of scope for this page; see `docs/features/studio-prototype.md` |
 
 ---
 

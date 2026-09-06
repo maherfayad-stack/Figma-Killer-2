@@ -50,6 +50,7 @@ src/modules/base/
 ├── visualComponentRef/  — base.visual-component-ref
 ├── slotOutlet/          — base.slot-outlet (VC author side)
 ├── slotInstance/        — base.slot-instance (VC consumer side)
+├── instance/            — studio.instance (Studio-only; see below)
 ├── shared/
 │   └── anchorTarget.ts  — AnchorTargetSchema, ANCHOR_TARGET_OPTIONS, anchorRel() (button + link)
 ├── utils/
@@ -57,7 +58,17 @@ src/modules/base/
 │   ├── htmlTag.ts       — resolveHtmlTag, htmlTagControl, customHtmlTagControl, VOID_HTML_ELEMENTS
 │   └── mediaAttrs.ts    — buildMediaSrcset, pickMediaVariantUrl
 └── index.ts             — side-effect imports; each module self-registers on load
+
+src/modules/studio/
+└── slot/                — studio.slot (Studio-only; imported by base/index.ts)
+
+src/modules/alm/
+├── register.tsx         — registers @alm-design/design-system components as editor modules
+├── manifest.generated.json — build-time-generated component manifest (scripts/gen-alm-manifest.mjs)
+└── curatedDefaults.ts   — curated per-component default props
 ```
+
+Two of these are **Studio-only, publisher-transparent modules** (`publishBehavior: 'transparent'`, no HTML/CSS emitted): `studio.instance` is the addressable call-site node `inlineLocalComponents` leaves in the tree for a component call `src/core/page-parser/inlineLocalComponents.ts` successfully expanded (its call-site props are what `detachComponent`/`swapComponentInstance` in `src/core/ast-codemods/` act on); `studio.slot` is its `{children}`-slot counterpart. Neither has a publisher representation — Studio boards aren't published, the filesystem is the source of truth. `src/modules/alm/` is a first-party module pack wrapping the `@alm-design/design-system` npm package's components as canvas modules for one hardcoded design system; `src/admin/pages/site/studio/registerProjectModules.ts` generalizes the same pattern to register modules dynamically from whichever user project is open.
 
 ---
 

@@ -681,7 +681,7 @@ only the measurement is shared (`canvas/canvasViewportCommands.ts`).
 ## Testing the canvas
 
 - Canvas DOM is inside iframes: `document.querySelector('[data-node-id]')`
-  returns `null`. Use `src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts`.
+  returns `null`. Use `src/__tests__/canvas/iframeCanvasQuery.ts`.
 - `src/__tests__/setup.ts` patches `HTMLIFrameElement.prototype.contentDocument`
   so iframe realms get the parent's built-ins. Test-env only.
 - happy-dom needs `GlobalWindow` (not `Window`) for CSS parsing — only

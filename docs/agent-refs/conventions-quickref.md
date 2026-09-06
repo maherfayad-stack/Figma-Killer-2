@@ -48,14 +48,23 @@ Icons: `import { FooIcon } from 'pixel-art-icons/icons/foo'` then `bun run icons
   **Gate:** `css-token-policy.test.ts`.
 - **No `var(--name, fallback)`.** Bare `var(--name)` only.
   **Gate:** `no-css-var-fallbacks.test.ts`.
+- **Admin font sizes use the fluid `--text-*` scale; admin spacing uses the
+  fluid `--space-*` scale.** **Gates:** `admin-typography-token-policy.test.ts`,
+  `admin-spacing-token-policy.test.ts`.
 - **No `!important`** in component CSS modules. (Injected *iframe* stylesheets
   like `CanvasAnimationInjector` are exempt — they have no cascade position.)
 - **CSS Modules only.** `Component.module.css` next to `Component.tsx`, class
   names `camelCase`.
 - **No inline `style={{}}`** except dynamic custom properties:
   `style={{ '--x': v } as CSSProperties}` read back via `var(--x)`.
-- Radius scale: `--editor-radius-sm` 3px · `--editor-radius` 6px ·
-  `--panel-radius` 12px · 16px tile cards · `--input-radius` 1em pills.
+- Radius scale: `--radius-sm` 3px · `--radius` 6px · `--panel-radius` 12px ·
+  `--card-radius` 16px tile cards · `--input-radius` 1em pills · `--tooltip-radius` 6px.
+- **Deprecated token families are banned**, not just discouraged: `--editor-*`,
+  `--rail-tint-*`, `--tag-pill-tint-*`, `--panel-bg/border/shadow*`,
+  `--input-bg/border/shadow*`, `--tooltip-bg/fg/border/shadow`, `--spotlight-*`,
+  `--code-bg`. Admin chrome uses the global token vocabulary directly
+  (`--bg-*`, `--text-*`, `--border*`, `--accent-*`). **Gate:**
+  `css-token-vocabulary.test.ts`.
 
 ---
 

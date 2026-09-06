@@ -1,5 +1,7 @@
 # Plugin System
 
+> This describes the inherited CMS plugin subsystem. It is present, functional, and load-bearing for anyone who installs a plugin, but Studio itself does not build features on it — see `STUDIO-CMS-REMOVAL-PLAN.md` (Tier 1: removable in principle, not removed).
+
 End-to-end description of the plugin system: what plugins are, how they ship, how they run sandboxed, what they can do, and how to author them.
 
 A plugin is a zip package containing a `plugin.json` manifest and one or more bundled JavaScript entrypoints. The SDK CLI usually authors that zip from `studio-plugin.config.ts`, then the CMS host loads installed plugins at boot. Each server entrypoint runs in its own Bun `Worker`, and that worker hosts a **QuickJS-WASM sandbox** — no Node, no Bun, no host file system, no environment variables, no network unless explicitly granted. Plugins reach the CMS through SDK surfaces scoped to where they run: `api.plugin.*`, `api.cms.*`, `api.editor.*`, and `api.dashboard.*`.
@@ -253,7 +255,7 @@ Each plugin's server entrypoint runs in its own worker. If the worker crashes:
 1. The host logs `[plugin:<id>]` and records a `plugin_crash_events` row.
 2. The worker is terminated. Sibling plugins are unaffected.
 3. The host auto-respawns the worker and re-runs `activate`.
-4. If the same plugin reaches `CRASH_THRESHOLD` (3) crashes within `CRASH_WINDOW_MS` (5 minutes), auto-respawn stops and the plugin is parked in `error`. The owner restarts it manually from the Plugins admin page.
+4. If the same plugin reaches `CRASH_THRESHOLD` (3) crashes within `CRASH_WINDOW_MS` (5 minutes), auto-respawn stops and the plugin is parked in `error`. The owner restarts it manually from Settings → Plugins.
 
 ### Lifecycle events (SSE)
 
@@ -1014,7 +1016,7 @@ STUDIO_UPLOADS_DIR=../studio/uploads bun studio-plugin dev
 bun studio-plugin dev --uploads ../studio/uploads
 ```
 
-First install still goes through the admin UI (`/admin/plugins` → Upload Plugin) so the owner approves permissions. Every `studio-plugin dev` rebuild after that flows in without another upload.
+First install still goes through the admin UI (Settings → Plugins → Upload Plugin) so the owner approves permissions. Every `studio-plugin dev` rebuild after that flows in without another upload.
 
 ---
 
@@ -1036,7 +1038,7 @@ First install still goes through the admin UI (`/admin/plugins` → Upload Plugi
    ```sh
    bun studio-plugin build
    ```
-7. **Install via admin UI** (`/admin/plugins` → Upload Plugin), approve permissions.
+7. **Install via admin UI** (Settings → Plugins → Upload Plugin), approve permissions.
 8. **Iterate** with `bun studio-plugin dev`.
 
 ### Cookbook: a server route + storage collection

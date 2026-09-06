@@ -8,7 +8,7 @@ For the broader auth flow (sessions, MFA, step-up), see [docs/features/auth-and-
 
 ## TL;DR
 
-- Defined as a `const` array in `src/core/capabilities.ts` (`@core/capabilities`); `CoreCapability` is derived via `typeof CORE_CAPABILITIES[number]`. **38 capabilities.**
+- Defined as a `const` array in `src/core/capabilities.ts` (`@core/capabilities`); `CoreCapability` is derived via `typeof CORE_CAPABILITIES[number]`. **41 capabilities.**
 - Handlers gate on capability, not on role: `requireCapability(req, db, 'site.read')`.
 - The **Owner AND Admin** roles get their capability lists force-resynced from `SYSTEM_ROLES` on every server boot. Hand-edits to either built-in role through the admin UI are restored at next boot — they are code-level decisions, not runtime ones.
 - Adding a capability: append the literal to `CORE_CAPABILITIES` in `src/core/capabilities.ts` (one place — server imports it), add it to the relevant `SYSTEM_ROLES` entries, wire `requireCapability(...)` at the gate point, and add picker meta + groups for the role-edit dialog. The two architecture tests (`capability-picker-coverage.test.ts`, `cms-handlers-capability-gated.test.ts`) catch missing pieces.
@@ -16,7 +16,7 @@ For the broader auth flow (sessions, MFA, step-up), see [docs/features/auth-and-
 
 ---
 
-## The 38 core capabilities
+## The 41 core capabilities
 
 ### Read
 
@@ -125,6 +125,16 @@ Was a single `ai.use`. Split so a Client persona can have chat assistance withou
 | `ai.providers.manage`  | Create / update / delete AI provider credentials + per-scope defaults | Owner, Admin |
 | `ai.audit.read`        | Read site-wide AI usage, cost, and error events across all users    | Owner, Admin |
 
+### Studio
+
+Studio is a filesystem workspace (a project on disk), not a DB-backed site document, so its capabilities are a separate family from `site.*`. All three are Tier-aware: see `PROJECT-BRIEF.md`'s trust-tier note and `src/core/capabilities.ts`.
+
+| Capability             | Grants                                                              | Roles         |
+|------------------------|-----------------------------------------------------------------------|---------------|
+| `studio.write`         | Install dependencies, apply source edits, run codemods, and rearrange board frames in a Studio project. Gates the Studio agent's write tools (`studio_create_page`, `studio_apply_edits`, `studio_codemod`, `studio_set_frames`, …). | Owner, Admin |
+| `studio.run.project`   | Boot the open project's own dev server and screenshot it for visual comparison — Tier 2, executes the user's code. **Never granted by default**, including to Admin. | Owner |
+| `studio.git.write`     | Let the AI record a commit in the project's own git repository, under the user's git identity. **Never granted by default**, including to Admin — a human using the Version control panel is gated by `site.structure.edit` instead, not by this capability. Never implies push, branch, or repository creation. | Owner |
+
 ---
 
 ## Roles
@@ -133,12 +143,12 @@ Four built-in `SYSTEM_ROLES`:
 
 | Role     | id        | Capabilities                                                                 | Boot behaviour |
 |----------|-----------|------------------------------------------------------------------------------|----------------|
-| Owner    | `owner`   | All 36 (`CORE_CAPABILITIES`)                                                 | Force-resynced on every boot. Owner-only `roles.manage`. |
-| Admin    | `admin`   | All 36 except `roles.manage`                                                 | **Force-resynced on every boot** (changed from previous "seeded once"). Hand-edits restored at boot. |
+| Owner    | `owner`   | All 41 (`CORE_CAPABILITIES`)                                                 | Force-resynced on every boot. Owner-only `roles.manage`, `studio.run.project`, `studio.git.write`. |
+| Admin    | `admin`   | 38 — all except `roles.manage`, `studio.run.project`, `studio.git.write`     | **Force-resynced on every boot** (changed from previous "seeded once"). Hand-edits restored at boot. |
 | Client   | `client`  | `dashboard.read`, `site.read`, `site.content.edit`, `media.read`, `data.custom.tables.read` | Seeded once; freely editable. Sees custom tables only — never the system tables. |
 | Member   | `member`  | (none)                                                                       | Seeded once; freely editable. |
 
-A new capability added to the codebase appears on Owner AND Admin on the next boot (force-sync). Client and Member don't auto-update — users grant the new capability via the Roles admin page if they want it. Existing **custom** roles also don't auto-update — same reason.
+A new capability appears on Owner automatically on the next boot (Owner force-syncs from `CORE_CAPABILITIES` wholesale). Admin's list is a hand-written literal (`adminCapabilities` in `server/auth/capabilities.ts`), also force-synced — but a new capability only reaches Admin if someone adds it to that literal in the same change; `studio.run.project` and `studio.git.write` are deliberate, permanent exceptions kept off Admin by design, not an oversight to fix. Client and Member don't auto-update — users grant the new capability via the Roles admin page if they want it. Existing **custom** roles also don't auto-update — same reason.
 
 The trade-off for Admin force-sync: an operator who hand-removes a capability from Admin through the UI gets it back at next boot. That's intentional — capability grants for built-in roles are a code-level decision. Operators who need a "limited admin" persona should create a custom role.
 
@@ -256,7 +266,7 @@ For workspace-level gating, `canAccessWorkspace(user, section)` is the single so
    const user = await requireCapability(req, db, 'analytics.read')
    if (user instanceof Response) return user
    ```
-5. Add a `CAPABILITY_META` entry + a `CAPABILITY_GROUPS` section in `src/admin/pages/users/utils/capabilities.ts` so the role-edit dialog renders a checkbox for it. The picker-coverage test fails until you do.
+5. Add a `CAPABILITY_META` entry in `src/admin/shared/CapabilityPicker/capabilityMeta.ts` plus a `CAPABILITY_GROUPS` section in `src/admin/pages/users/utils/capabilities.ts` so the role-edit dialog renders a checkbox for it. The picker-coverage test fails until you do.
 6. Existing **custom roles** will NOT have the new capability until users grant it through the Roles admin page.
 7. Update this doc (table + adjacent docs) so agents and humans can find the new capability.
 
@@ -311,6 +321,7 @@ if (userHasAnyCapability(user, SITE_WRITE_CAPABILITIES)) { /* allow save */ }
   - `server/auth/authz.ts` — `requireCapability`, `requireAnyCapability`, `userHasCapability`, `requireStepUp`
   - `server/repositories/roles.ts` — role persistence + `syncSystemRoles`
   - `src/admin/access.ts` — `canAccessWorkspace`, `firstAccessibleWorkspace`, per-workspace helpers
-  - `src/admin/pages/users/utils/capabilities.ts` — `CAPABILITY_META`, `CAPABILITY_GROUPS`
+  - `src/admin/shared/CapabilityPicker/capabilityMeta.ts` — `CAPABILITY_META`
+  - `src/admin/pages/users/utils/capabilities.ts` — `CAPABILITY_GROUPS`
   - `server/handlers/cms/roles.ts` — `/admin/api/cms/roles` (gated by `roles.manage`)
   - Architecture tests: `src/__tests__/architecture/capability-picker-coverage.test.ts`, `src/__tests__/architecture/cms-handlers-capability-gated.test.ts`

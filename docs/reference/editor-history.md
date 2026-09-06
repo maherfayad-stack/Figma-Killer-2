@@ -10,7 +10,7 @@ Every undoable mutation captures a `HistoryEntry` — a pair of Mutative patch a
 
 - History is `_historyPast: HistoryEntry[]` and `_historyFuture: HistoryEntry[]` on the editor store. Max depth: `MAX_HISTORY` (50).
 - Each `HistoryEntry` holds `{ inverse, forward, coalesceKey }` — patch arrays, not full-site clones.
-- `runHistoricMutation` is the single entry point. All six `mutate*` helpers delegate to it.
+- `runHistoricMutation` is the single entry point. All seven `mutate*` helpers delegate to it.
 - Continuous-input bursts (per-keystroke text/number edits) fold into one entry via `commitHistory` coalescing.
 - Patches are scoped to `site` (`state.site.*`) — editor-local state (selection, zoom, panel visibility) is not undoable.
 - History is in-memory session state — never serialized.
@@ -89,18 +89,19 @@ function runHistoricMutation(recipe, coalesceKey) {
 
 ---
 
-## The six `mutate*` helpers
+## The seven `mutate*` helpers
 
-All six helpers in `SiteSliceHelpers` delegate to `runHistoricMutation`:
+All seven helpers in `SiteSliceHelpers` delegate to `runHistoricMutation`:
 
 | Helper | Recipe receives | Coalescing |
 |---|---|---|
 | `mutateSite(fn, opts?)` | `SiteDocument` draft | `opts.coalesceKey` |
 | `mutateSiteWithExplorerReconcile(fn)` | `SiteDocument` draft; calls `reconcileSiteExplorerInPlace` after | none |
-| `mutatePage(fn)` | Active `Page` draft | none |
+| `mutateSiteState(fn)` | Full `EditorStore` draft + `SiteDocument` draft — for a site mutation that must also update editor-local state (e.g. `activeDocument`, selection) in one undoable transaction | none |
 | `mutateActiveTree(fn, opts?)` | Active `NodeTree<PageNode>` draft; routes page vs. VC | `opts.coalesceKey` |
 | `mutateActiveTreeAndSite(fn)` | Active `NodeTree<PageNode>` + `SiteDocument` drafts | none |
-| `mutateAllPagesAndSite(fn)` | `SiteDocument` + `SuperImportHelpers` | none |
+| `mutateAllPagesAndSite(fn)` | `SiteDocument` + `SiteImportTransaction` | none |
+| `mutateTreesForNodeIds(nodeIds, fn)` | Once per distinct page containing one of `nodeIds`, that page's `NodeTree<PageNode>` + its own matching ids; falls back to `mutateActiveTree` when every id resolves to one page | none |
 
 `mutateActiveTree` is the only place that branches on page-mode vs. VC-mode. Gated by `no-vc-mode-branches-in-mutations.test.ts`.
 

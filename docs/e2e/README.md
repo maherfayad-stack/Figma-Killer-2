@@ -3,18 +3,23 @@
 This folder defines the agent-run browser testing workflow for Studio.
 
 - `protocol.md` explains how an agent should run user-facing E2E audits.
-- `feature-validation.tsv` is the canonical feature, test, and defect
-  spreadsheet for broad quality-loop runs.
-- `feature-matrix.md` lists scenario rows by product area.
-- `capabilities.md` expands the capability/access-control E2E rows.
-- `run-log-template.md` is copied into `runs/` for each audit.
-- `runs/` stores completed run logs.
+- `run-log-template.md` is copied into `runs/` for each audit (created on first
+  use — this repo does not check in past run logs).
 - `agent-upgrade-dogfood.md` is the human test plan for the 2026-08-03
   five-workstream agent upgrade (live canvas reload, component awareness, turn
   latency, visual measurement, Figma MCP). Everything in it passed unit,
   integration, and static gates but was **never driven through a browser** — the
   file names exactly what still needs a human, and which failures are known
   no-ops rather than bugs.
+
+**`feature-validation.tsv`, `feature-matrix.md`, and `capabilities.md`, referenced
+below and by `protocol.md` as the scenario-ID source of truth, are not present in
+this repo.** The scenario IDs used throughout this page (`SETUP-001`, `ADMIN-001`,
+`SPOT-001`, …) still appear as docblock comments inside the `*.e2e.ts` specs
+themselves, which is where the "Automated coverage map" below draws them from —
+but there is currently no standalone matrix to pick an unautomated row from.
+Recreating that matrix (or removing the scenario-ID convention) is a real gap,
+not something this docs pass can safely fabricate.
 
 ## Common Requests
 
@@ -27,7 +32,7 @@ Use these prompts with Codex:
 - "Retest E2E-20260514-01 from the last run."
 - "Promote PUB-001 into automated smoke coverage."
 
-The project-local `studio-user-e2e` skill should load for those requests and keep the agent focused on browser-observed user behavior.
+The project-local `studio-user-e2e` skill should load for those requests and keep the agent focused on browser-observed user behavior. **That skill directory does not currently exist** at `.agents/skills/studio-user-e2e/` — `.gitignore` still force-includes it (alongside `agent-browser` and `skill-creator`, which *are* present), so it is expected to be checked in but is missing from this working tree.
 
 ## Automated Playwright E2E
 
@@ -77,68 +82,101 @@ first retry automatically.
 ### Suite structure
 
 - **`tests/e2e/helpers/`** — small, user-behaviour-shaped helpers (setup/login,
-  open editor, save draft, publish-with-step-up, insert module, create page,
-  visit a public page in a fresh context). No large abstractions.
+  page readiness, module insertion). No large abstractions.
 - **`auth.setup.ts`** — a Playwright *setup project* that runs once. The
   disposable DB is set up once per run, so first-run setup happens here (proving
   SETUP-001) and the owner's authenticated `storageState` is saved. Every spec
-  depends on it.
-- **`dashboard.e2e.ts` preflight** — runs immediately after setup, before any
-  persona/plugin/content mutations, so clean-install onboarding facts stay
-  deterministic. The normal E2E project excludes this file to avoid a second run.
-- **`account-persona.setup.ts`** — the next setup project creates the
-  dedicated Admin used by `account.e2e.ts`. Password changes, MFA changes, and
-  sign-out-everywhere flows revoke other sessions for their target account; the
-  persona keeps those intentional side effects away from the saved owner session.
+  in the `e2e` project depends on it via `playwright.config.ts`'s `projects`.
+- **The former `dashboard-preflight` and `personas` setup projects are gone.**
+  `playwright.config.ts` now runs exactly two projects — `setup` (`auth.setup.ts`)
+  and `e2e` (every `*.e2e.ts`, sharing the saved owner `storageState`). They were
+  removed along with the CMS-only specs they existed for (clean-install dashboard
+  facts, and a throwaway persona for destructive self-management tests). The
+  specs that remain are Studio-relevant — shell navigation, canvas/visual
+  builder, pages, preview, files/deps, perf, a11y, reliability — and each owns
+  whatever fixtures it needs directly rather than depending on a shared persona.
 - **Session rule.** Specs default to the shared owner `storageState` (fast).
-  Specs that run a **step-up-gated action** (publish, profile basics, etc.) or
-  **sign out** rotate the session token server-side, so they opt into
-  `ANONYMOUS_STATE` and log in fresh — otherwise they would invalidate the shared
-  state for later specs. Account-global self-management specs log in as the
-  account persona, never the owner.
+  A spec that rotates the session token server-side (sign-out, a step-up-gated
+  action that revokes other sessions) opts into `ANONYMOUS_STATE` and logs in
+  fresh instead, so it does not invalidate the shared state for later specs.
 - **Selectors.** Durable user-facing selectors first (roles, labels, accessible
   names). `data-testid` only for stable editor/canvas controls where an
-  accessible name is not practical (canvas notch, toolbar publish actions, the
-  step-up dialog).
+  accessible name is not practical (canvas notch, toolbar actions, dialogs).
 - **Isolation.** With `workers: 1` all specs share one database; each spec works
-  on its own uniquely-named page/post (only the core lifecycle spec edits the
-  homepage), clean-install dashboard coverage runs before shared mutations,
-  account-global security changes stay on the account persona, fixture-owned AI
-  defaults are removed, and publish→assert happens within a single test.
+  on its own uniquely-named page/fixture rather than sharing mutable state.
 
 ### Automated coverage map
 
-These feature-matrix rows now have automated regression coverage. Rows list
-Playwright specs unless a focused Bun test path is included:
+**This map was written before PR #18 deleted the standalone Content, Data,
+Media, Plugins, and Users admin workspaces** (see `CLAUDE.md`'s "The dormant
+CMS half") **and `playwright.config.ts` dropped the `dashboard-preflight` and
+`personas` setup projects along with the CMS-only specs that needed them** —
+`core-owner-lifecycle.e2e.ts`, `dashboard.e2e.ts`, `content.e2e.ts`,
+`media.e2e.ts`, `users.e2e.ts`, `capabilities.e2e.ts`, `account.e2e.ts`,
+`account-persona.setup.ts`, and `plugins.e2e.ts` no longer exist in
+`tests/e2e/`. The feature-matrix rows those specs used to cover (AUTH-001,
+SAVE-001, PUB-001–003, PUBLISH-002's page-scheduling half, CAP-001, CAP-002,
+CAP-003, CAP-004, DASH-001–003, MEDIA-001–007, CONTENT-001–007, BUILDER-008,
+USERS-002, USERS-003, most of ACCOUNT-\*/ADMIN-002/ADMIN-003(-as-MFA)/AUTH-002/
+AUTH-004/AUTH-006, and PLUGIN-001–008) currently have **no Playwright
+coverage** — the rows below are what actually still runs. Re-establishing
+that coverage (new specs, or restoring the deleted ones' surviving assertions
+against whatever replaced the workspace UI) is real follow-up work, not
+something this docs pass can invent.
+
+Rows list Playwright specs unless a focused Bun test path is included:
 
 | Row(s) | Spec |
 |---|---|
 | SETUP-001 | `auth.setup.ts` |
-| AUTH-001, EDIT-001, SAVE-001 (desktop core lifecycle + mobile reload), PUB-001, PUB-002, PUB-003 | `core-owner-lifecycle.e2e.ts`, `page-management.e2e.ts` |
-| PUBLISH-002 (active page scheduling + due-row scheduler tick) | `page-management.e2e.ts`, `src/__tests__/server/publishScheduler.test.ts` |
-| AUTH-003 (logout + stale-tab session revocation + stale-route console guard + repeated stale logout + mobile account menu) | `auth.e2e.ts`, `src/__tests__/admin/accountMenuButton.test.tsx`, `src/__tests__/server/authSessionEdgeCases.test.ts`, `src/__tests__/server/cmsHandlers.test.ts`, `src/__tests__/toolbar/moduleInserterPreference.test.tsx` |
-| CAP-003 (publish + user-create desktop/mobile/MFA/expired-window + plugin install/uninstall + destructive import + secondary API step-up) | `core-owner-lifecycle.e2e.ts`, publishing specs, `users.e2e.ts`, `account.e2e.ts`, `capabilities.e2e.ts`, `src/__tests__/server/stepUpSecondaryActions.test.ts` |
-| ADMIN-001 | `admin-navigation.e2e.ts` |
-| DASH-001, DASH-002, DASH-003 | `dashboard.e2e.ts`, `page-management.e2e.ts` |
-| PAGE-001, PAGE-002, PAGE-003, PAGE-004 | `page-management.e2e.ts` |
-| BUILDER-001, BUILDER-002, BUILDER-005, BUILDER-007, EDIT-002, SITE-005 (desktop keyboard + picker drag/drop + 390px picker), SITE-009, SITE-017, SITE-018, SITE-019 | `visual-builder.e2e.ts`, `src/__tests__/toolbar/moduleInserterModel.test.ts`, `src/__tests__/toolbar/moduleInserterFavorites.test.tsx`, `src/__tests__/toolbar/moduleInserterPreference.test.tsx`, `src/__tests__/toolbar/modulePickerDropdown.test.tsx`, `src/__tests__/editor-store/pageActionsSelection.test.ts` |
-| BUILDER-008 (rich-body formatting persistence + public render) | `content.e2e.ts` |
-| MEDIA-001, MEDIA-002, MEDIA-003, MEDIA-004 (viewer metadata + mobile viewer), MEDIA-005 (replace/delete/restore/purge + mobile lifecycle), MEDIA-006 (built-in storage panel + mobile panel), MEDIA-007 (SVG sanitizer/public media) | `media.e2e.ts` |
-| CONTENT-001, CONTENT-002, CONTENT-003, CONTENT-005, CONTENT-006, CONTENT-007 | `content.e2e.ts` |
-| SPOT-001, SPOT-002, SPOT-003, SPOT-004, SPOT-005, SPOT-006, SPOT-007, SPOT-008, SPOT-009, SPOT-010, SPOT-011, SPOT-012, SPOT-013 | `command-palette.e2e.ts` |
-| ADMIN-004, USERS-002 (role lifecycle + mobile layout + API edge semantics), USERS-003 (audit feed, mobile table, and API/UI edge semantics), CAP-001 (desktop isolation + mobile limited navigation) | `users.e2e.ts`, `src/__tests__/server/roleManagementEdges.test.ts`, `src/__tests__/server/auditLogEdges.test.ts`, `src/__tests__/users/auditFormat.test.ts`, `src/__tests__/users/usersAdmin.test.tsx` |
-| CAP-002 | `capabilities.e2e.ts` |
-| CAP-004 (data/media affordance splits) | `capabilities.e2e.ts` |
-| CAP-005 (plugin read/install/configure/lifecycle/schedule/pack + AI chat rail + provider/audit tab gates + AI write-tool filtering) | `capabilities.e2e.ts`, `ai.e2e.ts` |
-| ADMIN-002 (profile basics), ACCOUNT-001 (display name + profile API edges + mobile cancel/no-op), ACCOUNT-002 (avatar upload/removal/invalid upload feedback/API edges/storage error/mobile layout), ADMIN-003 (MFA setup cancel), ACCOUNT-003 (password change + mobile dialog), AUTH-002 (MFA TOTP/mobile challenge/pending-session API edges/unknown-cookie rejection/empty+wrong-code feedback/recovery-code login/reuse rejection), AUTH-004 (active-device sign-out + mobile table + session API edges), ACCOUNT-004 (MFA invalid-code feedback, QR fallback, enable/login/recovery regenerate/disable + mobile setup/login containment), ACCOUNT-005 (step-up window + mobile controls + disabled/invalid API edges), AUTH-006 (failed/successful login activity feed, disposable-account lockout/rate-limit browser flow, and suspicious activity banner) | `account.e2e.ts`, `src/__tests__/admin/accountPage.test.tsx`, `src/__tests__/server/accountSecurity.test.ts`, `src/__tests__/server/authSessions.test.ts`, `src/__tests__/server/authSessionEdgeCases.test.ts` |
-| PLUGIN-001 (ZIP package install via packaged fixtures), PLUGIN-002 (enable/disable/remove lifecycle), PLUGIN-003 (settings/secrets), PLUGIN-004 (packaged admin pages/resources/runtime route), PLUGIN-005 (schedules), PLUGIN-006 (pack install/re-sync), PLUGIN-008 (invalid manifest upload recovery) | `plugins.e2e.ts` |
-| AI-001 (Ollama credential create/delete + offline default guard), AI-002 (Data-scope default save/reload/clear), AI-003 (Site chat history load/new/delete), AI-004 (fixture-backed Site assistant streaming), AI-005 (browser `site_read_document` tool-result bridge), AI-006 (Audit tab rollups from streamed usage) | `ai.e2e.ts` |
-| A11Y-001, A11Y-002, RESP-001, RESP-002 | `accessibility.e2e.ts` |
-| PERF-001, PERF-002 (performance/reliability smokes) | `performance.e2e.ts` |
+| PUBLISH-002 (due-row scheduler tick) | `page-management.e2e.ts`, `src/__tests__/server/publishScheduler.test.ts` |
+| AUTH-003 (logout + stale-tab session revocation + mobile account menu) | `auth.e2e.ts`, `src/__tests__/admin/accountMenuButton.test.tsx`, `src/__tests__/server/authSessionEdgeCases.test.ts`, `src/__tests__/server/cmsHandlers.test.ts`, `src/__tests__/toolbar/moduleInserterPreference.test.tsx` |
+| ADMIN-001 (workspace navigation), ADMIN-003 (global toolbar actions + open-live target), ADMIN-004 (global Settings modal + editor preferences), ADMIN-005 (workspace panel resize/close/reload recovery) | `admin-navigation.e2e.ts` |
+| PAGE-001, PAGE-002, PAGE-003, PAGE-004, SAVE-001 (mobile draft reload) | `page-management.e2e.ts` |
+| BUILDER-001, BUILDER-002, BUILDER-003 (DOM-panel reorder, locked slot layers, mobile notch insert), BUILDER-004 (canvas drag reorder), BUILDER-005 / SITE-009 (undo/redo), BUILDER-006 (spacing/color/typography controls), BUILDER-007, EDIT-002, SITE-005 (search/keyboard insert + drag + mobile), SITE-011 (class/ambient/attribute/pseudo/breakpoint selector authoring), SITE-017, SITE-018, SITE-019 | `visual-builder.e2e.ts`, `src/__tests__/toolbar/moduleInserterModel.test.ts`, `src/__tests__/toolbar/moduleInserterFavorites.test.tsx`, `src/__tests__/toolbar/moduleInserterPreference.test.tsx`, `src/__tests__/toolbar/modulePickerDropdown.test.tsx`, `src/__tests__/editor-store/pageActionsSelection.test.ts` |
+| SITE-013 (Code Editor stylesheet authoring + published user CSS) | `site-files.e2e.ts` |
+| SITE-016 (draft preview vs. last-published open-live) | `preview-live.e2e.ts` |
+| SPOT-001 through SPOT-013 | `command-palette.e2e.ts` |
+| CAP-005 (chat-only Site assistant request omits mutating write tools) | `ai.e2e.ts` |
+| AI-001 (Ollama credential create/delete), AI-002 (default-model save/reload), AI-003 (saved chat load/delete), AI-004 (streamed chat, with AI-006's audit rollups in the same test), AI-005 (browser `site_read_document` tool-result bridge) | `ai.e2e.ts` |
+| A11Y-001 (keyboard login + shell navigation, see `accessibility.e2e.ts`'s own tests), RESP-001, RESP-002 | `accessibility.e2e.ts` |
+| PERF-001, PERF-002 | `performance.e2e.ts` |
 | REL-001 | `reliability.e2e.ts` |
 | REL-002 | `error-handling.e2e.ts` |
+| SITE-014 (runtime-dependency authoring, missing-package add, mobile containment) | `runtime-dependencies.e2e.ts` |
+
+The rows above are the surviving half of the **old CMS-era feature matrix**.
+A second, newer body of coverage exists for Studio-specific canvas/parser/board
+work that was never folded into that matrix at all — each spec below cites the
+`STATE.md` work-item id it proves rather than a feature-matrix row:
+
+| `STATE.md` id | What it proves | Spec |
+|---|---|---|
+| `panel-02` (WS-6.3) | A Figma-inspector value edit lands in the project's real `.css` file, or refuses | `css-writeback.e2e.ts` |
+| WS-2.3 (canvas-03) | `@layer vendor, user-authored;` actually resolves the way `canvasCssLayers.ts` assumes, in a real browser | `vendor-css-cascade.e2e.ts` |
+| design-system insert | Adding a design-system component renders with its own package CSS instead of unstyled text | `design-system-insert.e2e.ts` |
+| board-02 (WS-7.1) | `selectedFrameIds`, marquee selection, `FrameBulkInspector`, `board.selectAllFrames` | `board-frame-bulk-selection.e2e.ts` |
+| canvas-02 → test-01 → canvas-04 | Frame "fit height to content" | `frame-fit-height.e2e.ts` |
+| canvas-06 | Overlay/bottom-sheet screens render as the real app renders them | `canvas-06-sheet-render-fidelity.e2e.ts` |
+| select-01 | Escape always gets you back to nothing selected | `canvas-deselect.e2e.ts` |
+| WS-5.1 (canvas-05) | The selection ring/props panel track the element at non-100% zoom | `canvas-selection-overlay-zoom.e2e.ts` |
+| WS-4.2 | The `studio.instance` fragment node renders zero DOM elements; a `height: 100%` chain crossing it still resolves | `instance-fragment-node.e2e.ts`, `instance-selection-ui.e2e.ts` |
+| parser-06 | A multi-return/ternary/`&&` JSX branch renders only the selected branch, not every branch stacked | `parser-branch-selection.e2e.ts` |
+| `lock-01` | A node whose VALUE the evaluator resolved is no longer locked | `resolved-value-not-locked.e2e.ts` |
+| `struct-01` | A move/delete/insert/duplicate/wrap writes back to the real `.tsx`, or refuses with an `EditConstraint` | `structural-writeback.e2e.ts` |
+| *(no `STATE.md` id — no docblock)* | An authored background-image prop uses optimized media variants in both the editor and the published CSS | `background-image-smoke.e2e.ts` |
+| `perf-01` (WS-5.3/5.4) | Board pan/selection perf against a synthetic 50-frame board and the real eSIM corpus | `studio-board-perf.e2e.ts`; `_perf-diagnostic-studioboard.e2e.ts` is the underlying diagnostic, explicitly not a permanent spec |
 
 ### Intentionally left agent-run only
+
+**Read this section against the caveat above the coverage map, not in
+isolation.** Several bullets below say a row "is now automated in
+`users.e2e.ts`" / `capabilities.e2e.ts` / `media.e2e.ts` / `content.e2e.ts` /
+`account.e2e.ts` / `plugins.e2e.ts` / `dashboard.e2e.ts` / `core-owner-lifecycle.e2e.ts`
+— none of those files exist in `tests/e2e/` any more (removed with the CMS
+admin workspaces, PR #18). Treat every such claim in this section as reverted
+to agent-run-only until a real spec re-covers it; the coverage map above is
+the accurate source for what is genuinely automated today.
 
 Kept in the agent-run protocol because they are subjective, drag/zoom-physics
 dependent, environment-dependent, or need product/role tooling that makes a
@@ -277,12 +315,15 @@ durable assertion brittle:
   `src/__tests__/server/dynamicDetectionLoop.test.ts`,
   `src/__tests__/server/dynamicIslandsPlugin.test.ts`,
   `src/__tests__/architecture/hole-runtime-asset-route.test.ts`, and
-  `src/__tests__/server/publishStaticArtefact.test.ts`. Browser route-query
-  hole hydration is covered in `tests/e2e/public-dynamic-fragments.e2e.ts`,
-  including the baked shell, hole runtime asset, hole fragment response,
-  desktop and 390px mobile query values, and public-page overflow guard;
-  placeholder-backed real-browser IntersectionObserver timing and live external
-  loop-source failures remain operator-run.
+  `src/__tests__/server/publishStaticArtefact.test.ts`. **Browser route-query
+  hole hydration has no Playwright coverage** — `tests/e2e/public-dynamic-fragments.e2e.ts`
+  does not exist in this repo (it may never have been committed, or was
+  removed with the CMS-workspace specs; either way there is nothing under
+  `tests/e2e/` covering the baked shell, hole runtime asset, or hole fragment
+  response today). The baked shell, hole runtime asset, hole fragment
+  response, mobile query values, placeholder-backed real-browser
+  `IntersectionObserver` timing, and live external loop-source failures all
+  remain agent-run/operator-run until such a spec exists.
 - **FORM-001 remaining browser/operator permutations** — form module
   conformance/render contracts, snapshots, settings analysis, compatible field
   binding, setup-panel table creation/missing-field/preview behavior, canvas
@@ -417,7 +458,11 @@ durable assertion brittle:
   error-boundary recovery remains agent-run. REL-002 has a page-slug validation
   smoke in `error-handling.e2e.ts`; broader form/error sweeps remain agent-run.
 
-The first reference spec remains `core-owner-lifecycle.e2e.ts`, the flagship
-owner journey: login/logout, edit homepage text, save/reload, step-up-gated
-publish, visitor-facing public output, and draft/public isolation after a later
-unpublished edit.
+**`core-owner-lifecycle.e2e.ts` no longer exists** — it was the flagship owner
+journey (login/logout, edit homepage text, save/reload, step-up-gated publish,
+visitor-facing public output, draft/public isolation) and was removed with the
+CMS-workspace specs. `page-management.e2e.ts` and `admin-navigation.e2e.ts`
+now carry the closest surviving pieces (page create/rename/delete/switch,
+draft reload, toolbar publish target), but there is no single spec proving the
+whole login-to-public-output journey end to end. Recreating that flagship
+journey against the Studio-only admin shell is real follow-up work.

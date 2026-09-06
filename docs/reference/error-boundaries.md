@@ -131,9 +131,11 @@ Same idea, scoped to plugin-registered editor panels.
 
 ### 7. `plugin-canvas-overlay` — plugin canvas overlay
 
+`src/admin/pages/site/canvas/PluginCanvasOverlayLayer/PluginCanvasOverlayLayer.tsx`:
+
 ```tsx
-<ErrorBoundary location="plugin-canvas-overlay">
-  <PluginOverlay ... />
+<ErrorBoundary location="plugin-canvas-overlay" resetKeys={[overlay.id, overlay.pluginId]}>
+  <PluginContext.Provider value={contextValue}>...</PluginContext.Provider>
 </ErrorBoundary>
 ```
 

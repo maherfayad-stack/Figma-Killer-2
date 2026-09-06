@@ -68,8 +68,9 @@ can rot without moving the first.
 
 ### The five confidences
 
-`resolveCommentAnchor(hint, tree)` recomputes on every load — never persisted, since
-a stored confidence would be a claim about a tree that has since changed.
+`resolveNodeAnchor(hint, tree)`, in the `@core/studio-anchor` leaf module,
+recomputes on every load — never persisted, since a stored confidence would be
+a claim about a tree that has since changed.
 
 | Confidence | Meaning | Agent may act |
 |---|---|---|
@@ -442,7 +443,8 @@ armed the tool stays clickable to disarm it.
 
 | Path | Role |
 |---|---|
-| `src/core/studio-comments/` | schemas, tolerant serializer, pure transforms, **`anchorResolve.ts`** |
+| `src/core/studio-anchor/` | the anchor primitive — `resolveNodeAnchor`, the five confidences, `NodeHint` |
+| `src/core/studio-comments/` | schemas, tolerant serializer, pure transforms, **`agentGate.ts`** |
 | `src/core/studio-comments/location.ts` | ids → a described location, for both agent doors |
 | `server/handlers/studio/commentsStore.ts` | disk IO, the op layer, ownership, `authorFromSession` |
 | `server/handlers/studio/commentsRoutes.ts` | the two HTTP routes |

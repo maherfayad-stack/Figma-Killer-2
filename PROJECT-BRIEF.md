@@ -401,7 +401,7 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
 9. **Do not import `zod`, `lucide-react`, `clsx`, `react-router-dom`, or any
    `@radix-ui/*`.** All banned and gated.
 10. **Canvas DOM lives inside iframes.** `document.querySelector('[data-node-id]')`
-    returns `null` in tests. Use `src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts`.
+    returns `null` in tests. Use `src/__tests__/canvas/iframeCanvasQuery.ts`.
 11. **Never scan every node of every page inside a Zustand selector.** It runs on
     every store change. The two original offenders are fixed — `PropertiesPanelBody.tsx`'s
     shared-text-origin count and `findNodeById.ts` (`src/admin/pages/site/canvas/
