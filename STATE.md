@@ -21,6 +21,85 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-12 — W7-1: the launcher sorts, fails, and redraws honestly
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-06
+- **Branch:** `fix/launcher-polish` off `origin/main` (`8c41a40`).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W7-1 exactly — the launcher's correctness
+  bugs and its look, nothing from W7-2..W7-5. It unblocks the rest of W7, which
+  all edit the same three files.
+- **Scope:** `server/handlers/studioProjects.ts` (+ `server/handlers/__tests__/studio.test.ts`),
+  `src/admin/pages/dashboard/{DashboardPage.tsx,DashboardPage.module.css,DashboardPage.test.tsx,hooks/useStudioProjects.ts}`,
+  `src/styles/globals.css`, `docs/{design.md,reference/design-tokens.md,reference/use-async-resource.md}`.
+- **Done so far:**
+  - **Sort bug.** `listStudioProjects` sorted the *dirents* by folder slug and
+    then mapped them to `displayName`. Rename a project and it sorts under its
+    original slug forever. Now it maps first and sorts the summaries by
+    `name` — the string the launcher actually renders. New test:
+    "sorts by display name, not by folder slug".
+  - **Infinite skeleton.** `useStudioProjects` returned `StudioProject[] | null`
+    with `swallowErrors: true`, so a failed fetch rendered six skeletons
+    forever. It now returns `{ projects, loading, error, refresh }`, errors are
+    not swallowed, and the page renders an `EmptyState role="alert"` naming the
+    failure with a "Try again" button on `refresh`. Skeletons 6 → 3.
+  - **Refetch handle.** `DashboardPage`'s `created[]`/`removed[]` optimistic
+    reconciliation is gone; delete awaits the server and calls `refresh()`.
+    `deleteStudioProject` now resolves `void` (it still validates the
+    `{ projects }` envelope) — the list on screen has exactly one origin.
+  - **Look.** `.cardMeta` `--text-disabled` → `--text-subtle` (the old value is
+    ~2.3:1 on `--bg-surface-2`, and it is the card's only metadata).
+    `.cardName` `--text-m` → `--text-xl` + `--text-bright`. Grid track
+    `minmax(200px → 240px, 1fr)`; tile padding `--space-l` → `--space-3xl`;
+    hardcoded `16px` radii → `--card-radius`. Hover gains a real lift
+    (`translateY(-2px)` + new `--shadow-card-hover` token, both themes) on top
+    of the `-2 → -3` tone step, with `:active` putting it back down.
+  - **a11y.** `aria-live="polite"` + `aria-label="Projects"` on the grid, so a
+    create/import/delete redraw is announced.
+- **Next step:** W7-2 (card data + project verbs). It owns the same launcher
+  files plus `projectRoutes`, so it must not run beside another W7 task.
+- **Decisions:**
+  - **`refresh()` after delete, not the delete response's list.** The endpoint
+    answers with the refreshed listing and that answer is still schema-validated,
+    but handing it back to the caller invites a second, parallel copy of the
+    truth — precisely the shape W7-1 was sent to delete. One extra directory
+    read is cheaper than two lists that can disagree.
+  - **The error state replaces the grid only when there is nothing to show**
+    (`projects === null && error !== null`). A refresh that fails while a list is
+    already on screen keeps the stale list rather than blanking it.
+  - **New `--shadow-card-hover` token rather than a raw shadow.** Module CSS
+    cannot carry rgb/hex, and `--shadow-panel-drop` is tuned for a panel
+    floating far above the surface. Light theme re-tunes it: the `--scrim-*`
+    family stays pure black in both themes, and 0.4-alpha black under a white
+    card is a smudge. Documented in `docs/design.md` §1 and the token catalog.
+- **Landmines:**
+  - `DashboardPage.test.tsx`'s `useStudioProjects` stand-in is now a **real hook**
+    (it holds `useState` for the redraw). A constant-returning mock cannot
+    exercise a page that redraws by refetching — if you replace it with one, the
+    delete test will pass for the wrong reason and then rot.
+  - **The worktree had no `node_modules`.** `bun run build` and the whole
+    `icon-catalog-integrity` gate fail wholesale before `bun install` — the gate
+    resolves `node_modules/pixel-art-icons/dist/icons`, not `vendor/`. 18
+    "failures" evaporated after installing. Do not diagnose that as icon drift.
+- **Verification:** `bun run build` ✅ (after `bun install`). `bun run lint` ✅.
+  `bun test` → **11445 pass / 28 fail**, every failure in the two clusters
+  `STUDIO-WAVE7-PLAN.md`'s global rules name as pre-existing: the
+  headless-capture / canvas batch-isolation group (`captureFramesHeadless`,
+  NodeRenderer VC lock-down, breakpoint activation, pin⇄unroll, `studio_compare`
+  5-page) and `icon-catalog-integrity`'s `chevron-left` sample. Nothing under
+  `dashboard/` or `studioProjects` fails. Targeted:
+  `bun test src/admin/pages/dashboard/DashboardPage.test.tsx` → 6 pass;
+  `bun test server/handlers/__tests__/studio.test.ts` → 81 pass.
+- **Human action needed:** **dogfood — every change here is visual and e2e
+  covers none of it.** At `/admin/dashboard`: (1) confirm the cards are visibly
+  larger and the name reads as a title, not panel chrome; (2) hover a card and
+  check the 2px rise + shadow reads as pickable without feeling springy, in BOTH
+  themes (the light-theme shadow is a separate value); (3) rename a project from
+  the Studio toolbar, return to the launcher, and confirm it now sorts under its
+  new name; (4) stop the server (or block `/admin/api/studio/projects` in
+  devtools) and reload — you should get "Could not load your projects." with a
+  working "Try again", never a shimmering grid; (5) delete a project and confirm
+  the tile leaves after the refetch and a screen reader announces the change.
 ### mcp-18 — W9-1(2): `studio_computed_styles` read the frame HOST, so it returned zero rows in every real canvas
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open)
@@ -512,6 +591,9 @@ here **verbatim**, so archiving buries no dogfood step.
 
 ### Still in "Recently landed" below — the entry carries the full script
 
+- **`panel-12` — W7-1 launcher polish** (in `## Now`, not yet landed to `main`).
+  Card scale + hover lift in both themes, the rename-then-sort fix, the failed-
+  listing retry, and the post-delete refetch. Five-step script in the entry.
 - **`style-04` — Animations section.** Three things first: (1) an edited imported
   `@keyframes` renders from `ClassStyleInjector`'s overlay while
   `AuthoredCssInjector` still holds the on-disk snapshot — for `@keyframes` the

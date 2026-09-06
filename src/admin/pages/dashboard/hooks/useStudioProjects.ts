@@ -10,10 +10,13 @@
  *
  * Validation: the response is checked at the JSON boundary against
  * `StudioProjectsResponseSchema` via the canonical `apiRequest` (`@core/http`).
- * `swallowErrors: true` matches every other dashboard widget hook — on
- * failure the widget just keeps its skeleton rather than flashing an error
- * (the endpoint is a simple directory read, so failures should be rare and
- * transient).
+ *
+ * Errors are NOT swallowed. This is the launcher's only content — a failed
+ * fetch used to leave a grid of skeletons shimmering forever with no way out,
+ * which reads as "still loading" and never stops being wrong. The hook hands
+ * back `error` so the page can say so, and `refresh` so the user can retry
+ * (the same handle the launcher uses to redraw after a delete, instead of
+ * reconciling its own optimistic edits against a list it can only read).
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { apiRequest } from '@core/http'
@@ -50,13 +53,30 @@ const RenameProjectResponseSchema = Type.Object(
   { additionalProperties: true },
 )
 
+export interface StudioProjectsResource {
+  /** The listed projects, or null before the first successful load. */
+  projects: StudioProject[] | null
+  /** True while a load is in flight, including the initial one. */
+  loading: boolean
+  /** Message from the most recent failed load, else null. */
+  error: string | null
+  /** Re-runs the listing. Stable identity. */
+  refresh: () => void
+}
+
 /** Overview launcher. One directory read: every subfolder of `studio-workspace/`. */
-export function useStudioProjects(): StudioProject[] | null {
-  return useAsyncResource(
+export function useStudioProjects(): StudioProjectsResource {
+  const resource = useAsyncResource(
     (signal) => apiRequest('/admin/api/studio/projects', { schema: StudioProjectsResponseSchema, signal }),
     [],
-    { swallowErrors: true },
-  ).data?.projects ?? null
+    { fallbackError: 'Could not load your projects' },
+  )
+  return {
+    projects: resource.data?.projects ?? null,
+    loading: resource.loading,
+    error: resource.error,
+    refresh: resource.refresh,
+  }
 }
 
 /**
@@ -103,15 +123,19 @@ export function renameStudioProject(dir: string, name: string): Promise<StudioPr
  * because a studio project is the user's own repository with no other copy.
  * The wording in the UI says so; this is the function that makes it true.
  *
- * Resolves to the whole remaining list rather than `void` so the launcher can
- * redraw from the server's answer instead of guessing what is left. Throws
- * `ApiError` on failure (403 without `studio.write`, 404 for a project that is
- * already gone) so the caller can surface the message via a toast.
+ * The server answers with the refreshed list and that answer is still validated
+ * here, but the caller gets `void`: the launcher redraws by calling the hook's
+ * `refresh()`, so there is exactly one path by which the list on screen comes
+ * to exist. Handing back a second, parallel copy of it invites the caller to
+ * splice its own version of the truth.
+ *
+ * Throws `ApiError` on failure (403 without `studio.write`, 404 for a project
+ * that is already gone) so the caller can surface the message via a toast.
  */
-export function deleteStudioProject(dir: string): Promise<StudioProject[]> {
-  return apiRequest('/admin/api/studio/delete', {
+export async function deleteStudioProject(dir: string): Promise<void> {
+  await apiRequest('/admin/api/studio/delete', {
     method: 'POST',
     body: { dir },
     schema: DeleteProjectResponseSchema,
-  }).then((res) => res.projects)
+  })
 }

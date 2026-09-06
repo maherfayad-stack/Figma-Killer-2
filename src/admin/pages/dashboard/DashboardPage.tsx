@@ -24,6 +24,11 @@
  * already points Studio at the imported directory, so this page's `onImported`
  * only has to navigate.
  *
+ * The server's listing is the only listing. `useStudioProjects` hands back a
+ * `refresh()`, so a delete redraws by refetching; the page keeps no optimistic
+ * created/removed shadow copy to reconcile against a list it can only read. A
+ * failed load is a state of its own — a retry, not an eternal skeleton.
+ *
  * `requestCmsSiteReload()` is called before every `openProject` (new or
  * existing) so `usePersistence`'s mount effect doesn't short-circuit on a
  * still-mounted, previous project's `existingSite` — without it, switching
@@ -38,6 +43,8 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
+import { ReloadIcon } from 'pixel-art-icons/icons/reload'
+import { CircleAlertSolidIcon } from 'pixel-art-icons/icons/circle-alert-solid'
 import { AdminPageLayout } from '@admin/layouts/AdminPageLayout'
 import { useAuthenticatedAdminUser } from '@admin/sessionContext'
 import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
@@ -63,8 +70,10 @@ import styles from './DashboardPage.module.css'
 
 // Placeholder tiles shown while the project list is in flight — enough to
 // read as "a grid of project cards is about to appear", not so many that the
-// page reflows dramatically once the real (usually shorter) list lands.
-const SKELETON_TILE_KEYS = ['a', 'b', 'c', 'd', 'e', 'f'] as const
+// page reflows dramatically once the real (usually shorter) list lands. Three
+// is the honest number: most installs have a handful of projects, and six
+// placeholders that collapse to two is a bigger lie than a short row.
+const SKELETON_TILE_KEYS = ['a', 'b', 'c'] as const
 
 function greetingFor(displayName: string | null | undefined): string {
   const hour = new Date().getHours()
@@ -76,32 +85,26 @@ function greetingFor(displayName: string | null | undefined): string {
 export function DashboardPage() {
   const currentUser = useAuthenticatedAdminUser()
   const navigate = useAdminNavigate()
-  const projects = useStudioProjects()
+  const { projects, error, refresh } = useStudioProjects()
 
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  // Projects created this session, layered over the fetched list so a new
-  // project shows up immediately without waiting for a refetch.
-  const [created, setCreated] = useState<StudioProject[]>([])
-  // Deleted this session, subtracted from the fetched list for the same reason
-  // `created` is added to it: `useStudioProjects` has no refetch handle, so the
-  // launcher reconciles its own optimistic edits against a list it only reads.
-  const [removed, setRemoved] = useState<string[]>([])
   // The project awaiting confirmation. `null` closes `DeleteProjectDialog`.
   const [pendingDelete, setPendingDelete] = useState<StudioProject | null>(null)
 
-  const isLoading = projects === null
-  // Merge fetched + session-created, de-duped by dir (a refetch may already
-  // include a just-created one).
-  const merged = Array.from(
-    new Map([...(projects ?? []), ...created].map((p) => [p.dir, p])).values(),
-  ).filter((p) => !removed.includes(p.dir))
+  // Before the first successful load there is nothing to draw: either the
+  // request is still out (skeletons) or it failed (the retry state below).
+  // After it, the server's list is the only list — every mutation redraws by
+  // refetching rather than by splicing a local copy.
+  const isLoading = projects === null && error === null
+  const isFailed = projects === null && error !== null
+  const listed = projects ?? []
   const needle = query.trim().toLowerCase()
   const filtered = needle
-    ? merged.filter((p) => p.name.toLowerCase().includes(needle))
-    : merged
+    ? listed.filter((p) => p.name.toLowerCase().includes(needle))
+    : listed
 
   function openProject(project: StudioProject) {
     // Force the next Site-editor mount to reload from disk instead of
@@ -116,7 +119,6 @@ export function DashboardPage() {
     setBusy(true)
     try {
       const project = await createStudioProject(options)
-      setCreated((prev) => [...prev, project])
       setCreateOpen(false)
       openProject(project)
     } catch (err) {
@@ -138,10 +140,7 @@ export function DashboardPage() {
     setBusy(true)
     try {
       await deleteStudioProject(project.dir)
-      setRemoved((prev) => [...prev, project.dir])
-      // A project created this session and then deleted has to leave `created`
-      // too, or it would be re-added by the merge on the next render.
-      setCreated((prev) => prev.filter((p) => p.dir !== project.dir))
+      refresh()
       setPendingDelete(null)
       pushToast({
         kind: 'success',
@@ -199,6 +198,23 @@ export function DashboardPage() {
             </li>
           ))}
         </ul>
+      ) : isFailed ? (
+        // A failed listing used to leave the skeletons shimmering forever,
+        // which reads as "nearly there" rather than "this went wrong". Say
+        // what happened and put the retry where the projects would be.
+        <EmptyState
+          variant="centered"
+          size="large"
+          role="alert"
+          icon={<CircleAlertSolidIcon size={22} aria-hidden="true" />}
+          title="Could not load your projects."
+          description={error ?? undefined}
+          action={
+            <Button variant="secondary" onClick={refresh}>
+              <ReloadIcon size={12} aria-hidden="true" /> Try again
+            </Button>
+          }
+        />
       ) : filtered.length === 0 ? (
         needle ? (
           <EmptyState
@@ -223,7 +239,10 @@ export function DashboardPage() {
           />
         )
       ) : (
-        <ul className={styles.grid}>
+        // `aria-live` so creating, importing or deleting a project — all of
+        // which redraw this list rather than navigating — is announced instead
+        // of changing silently under a screen reader.
+        <ul className={styles.grid} aria-live="polite" aria-label="Projects">
           {filtered.map((project) => (
             <li key={project.dir} className={styles.cell}>
               <button
