@@ -43,17 +43,22 @@ the routing belongs in `resolveActiveTreeTarget`, not in the action.
 
 ## Selectors — the rule that matters most
 
-**A selector runs on every store change.** Two existing selectors scan every node
+**A selector runs on every store change.** Two selectors used to scan every node
 of every page (`PropertiesPanelBody.tsx` `sharedTextOriginCount`,
-`InPlaceInspector.tsx` `findNodeById`) — on a 40-page board that is ~40 000
-iterations per keystroke. This is a known defect, specced in WS-5.2.
+`InPlaceInspector.tsx` `findNodeById`) — on a 40-page board that was ~40 000
+iterations per keystroke. **Both are fixed** (WS-5.2): they read O(1) indexes
+(`_textOriginKeyToCount` / `_nodeIdToPageIds`) built and maintained in
+`store/slices/site/nodeIndex.ts`. `no-full-site-scan-in-selectors.test.ts` is
+the gate — do not reintroduce a scan.
 
 Rules:
 - Return a **primitive** or a **stable reference**. A fresh object or array
   literal re-renders every consumer on every change.
 - If a lookup needs the tree, **precompute an index in the slice** and maintain
-  it incrementally. `nodeIdToPageId` and `textOriginKeyToCount` are the two the
-  roadmap calls for.
+  it incrementally — extend `nodeIndex.ts` rather than scanning.
+- **When you add a branch to a selector on a per-node path, memoise it in the
+  same change.** `selectCanvasPageFor` needed two separate fixes precisely
+  because the second branch slipped past the first.
 - Never `Object.values(...)` a node map inside a selector.
 
 ## Studio-specific behaviour you must preserve

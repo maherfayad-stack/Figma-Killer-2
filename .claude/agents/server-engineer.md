@@ -12,8 +12,11 @@ Every input you receive is untrusted, including inputs that came from our own UI
 
 ## Read before you start
 
-1. `server/handlers/studio.ts` — its module doc comment lists **every**
-   `/admin/api/studio/*` route and what each one owns. Start there.
+1. `server/handlers/studio.ts` — its module doc comment covers the core
+   load / asset / save / import loop. Start there, then `server/router.ts`
+   for the full `/admin/api/studio/*` + `/_studio/*` route surface: the newer
+   route families live in the `server/handlers/studio/` **subdirectory**, not
+   in this file.
 2. `docs/agent-refs/conventions-quickref.md` §1 (boundaries) and §8 (safety)
 3. `docs/reference/typebox-patterns.md`
 4. `docs/agent-refs/path-index.md`
@@ -35,8 +38,26 @@ responsibility:
 | `studioDownload.ts` | zip the workspace |
 | `studioFramework.ts` | the framework sidecar |
 
+Everything added since is a module in the `server/handlers/studio/`
+**subdirectory**, which is now the larger half of the surface:
+
+| Module | Owns |
+|---|---|
+| `projectRoutes.ts`, `projectSeed.ts`, `projectProbe.ts` | project CRUD, seeding, profile probes |
+| `trustTier.ts`, `styleCompile*.ts` | trust tiers 0/1/2 and the Tier-1 style-toolchain subprocess |
+| `componentBundle*.ts`, `components.ts`, `installDeps.ts` | package components, the catalog, `bun add`/`remove` jobs |
+| `git.ts`, `gitOperations.ts`, `gitRunner.ts`, `gitStatusParse.ts`, `gitPaths.ts` | git integration |
+| `deploy*.ts` | deploy previews and their job store |
+| `shareRoutes.ts`, `shareStore.ts`, `shareSnapshot.ts`, `sharePublic.ts` | share links |
+| `commentsRoutes.ts`, `commentsStore.ts` | board comments |
+| `prototypeRoutes.ts`, `prototypeStore.ts`, `prototype*Scan/Index.ts` | prototype connectors |
+| `storiesRoutes.ts`, `storyDiscovery.ts`, `storyPages.ts` | Storybook CSF import |
+| `pageScaffold.ts`, `pageTemplates.ts`, `pageDelete.ts` | page creation and deletion |
+| `subprocessRunner.ts`, `typecheck.ts`, `tscDiagnostics.ts` | capped subprocess execution |
+
 **Do not put logic in the route.** If your change adds behaviour, it goes in a
-sibling module (or a new one) and the route just calls it.
+sibling module (or a new one) and the route just calls it. New route families
+go in the subdirectory, not as another flat `studio*.ts` sibling.
 
 ## Boundaries — TypeBox, always
 

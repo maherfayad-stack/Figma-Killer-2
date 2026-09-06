@@ -76,7 +76,7 @@ depend on it.
 
 **Tests can't see canvas DOM.** It's inside iframes.
 `document.querySelector('[data-node-id]')` returns `null`. Use
-`src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts`. happy-dom needs
+`src/__tests__/canvas/iframeCanvasQuery.ts`. happy-dom needs
 `GlobalWindow`, not `Window`, or every stylesheet fails with "undefined is not a
 constructor".
 

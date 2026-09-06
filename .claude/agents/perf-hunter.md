@@ -20,10 +20,15 @@ instantaneous, panning is 60fps, and nothing moves that the user didn't move.**
 ## Known causes — check these first, in this order
 
 1. **Full-site scans inside store selectors.** A `useEditorStore(selector)`
-   callback runs on **every** store change. Two do a full walk today
+   callback runs on **every** store change. The three original offenders
    (`PropertiesPanelBody.tsx` `sharedTextOriginCount`, `InPlaceInspector.tsx`
-   `findNodeById`) — ~40 000 iterations per keystroke on a 40-page board. Fix:
-   precomputed indexes in the site slice, maintained incrementally.
+   `findNodeById`, and both lookups in `selectCanvasPageFor`) were ~40 000
+   iterations per keystroke on a 40-page board and are **fixed** — they read
+   O(1) indexes from `store/slices/site/nodeIndex.ts`, gated by
+   `no-full-site-scan-in-selectors.test.ts` and
+   `src/__tests__/store/selectCanvasPageFor.test.ts`. Check first that a *new*
+   scan has not been reintroduced; the fix is always a precomputed index in the
+   site slice, maintained incrementally.
 2. **Overlay coordinate conversion.** Selection chrome lives in the parent
    document and is positioned from measurements of elements inside a
    *transformed* iframe: `elementRect × zoom + iframeOffset + panOffset`. Any
@@ -62,10 +67,11 @@ instantaneous, panning is 60fps, and nothing moves that the user didn't move.**
 ```sh
 bun run bench
 bun run bench:editor-store
+bun run bench:studio-board   # scripts/bench/studioBoard.bench.ts
 bun run bench:browser        # needs: bun run bench:browser:install
 ```
 
-Add a studio board benchmark (WS-5.6) with a synthetic large board and assert:
+The studio board benchmark (WS-5.6) has landed. Its budgets:
 
 | Budget | Target |
 |---|---|

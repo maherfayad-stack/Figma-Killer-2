@@ -72,7 +72,9 @@ and has a one-line fix — fix that, then re-run and say you did.
 - **Never** revert another session's work.
 - **Never** report "tests pass" when you ran a subset — say which subset.
 - **Never** run the full `bun test` and report the raw fail count as if it were
-  the change's fault. It is ~200 by default on Windows.
+  the change's fault. A baseline set fails on a clean tree — `standing-01` in
+  `STATE.md` enumerates it and carries the current count. Diff against that set,
+  never against zero.
 - **Do not run Playwright / browser tests to validate UI work.** UI is dogfooded
   by the human (`standing-02`). Verify statically and say what needs a human eye.
 - When piping test output, remember `bun test | tail` masks the exit code and
