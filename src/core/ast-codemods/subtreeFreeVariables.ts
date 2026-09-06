@@ -259,3 +259,39 @@ export function analyzeFreeVariables(root: Node, pageFile: SourceFile, excluded:
 
   return order.map((name) => ({ name, kind: kinds.get(name)!, isComponentTag: isTag.get(name)! }))
 }
+
+/**
+ * The names `subtree` captures that would NOT resolve if the subtree were
+ * written at `destination` instead — the honesty check behind W4-1's
+ * cross-parent move (`moveJsxElement`'s reparent form).
+ *
+ * A reparent moves markup, not the bindings it reads. Within one component
+ * that is free: the subtree keeps every name it had, and moving DEEPER only
+ * adds more (a `.map` callback's parameter is visible to everything inside it).
+ * Two shapes are not free, and this is what catches them:
+ *
+ *   - moving OUT of a nested scope — a row lifted out of `items.map(item => …)`
+ *     leaves `item` behind,
+ *   - moving ACROSS components in the same file — `<Card>`'s `props.title` means
+ *     nothing inside `<Page>`.
+ *
+ * Both would produce a file that no longer compiles, which is worse than a
+ * refusal by every measure. The caller refuses and NAMES the variables, because
+ * "some binding" is not something a person can act on.
+ *
+ * `kind: 'import'` free variables are skipped: they resolve at the page file's
+ * own module scope, which is visible from every position in that file. Only
+ * body-local names (`kind: 'prop'`) can stop resolving.
+ *
+ * This is a STATIC scope walk, deliberately: it asks which declarations enclose
+ * the destination, never what any of them hold. Nothing is evaluated.
+ */
+export function freeVariablesOutOfScopeAt(subtree: Node, destination: Node, pageFile: SourceFile): string[] {
+  const out: string[] = []
+  for (const variable of analyzeFreeVariables(subtree, pageFile)) {
+    if (variable.kind === 'import') continue
+    if (isLocallyBound(destination, variable.name, pageFile)) continue
+    out.push(variable.name)
+  }
+  return out
+}

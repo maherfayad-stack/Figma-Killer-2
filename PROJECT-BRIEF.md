@@ -63,7 +63,7 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
   one <iframe> per frame              IframeFrameSurface.tsx
         │
         │  user edits a prop / text / style / class / tag, or inserts,
-        │  reorders or deletes an element
+        │  reorders, reparents, duplicates, wraps or deletes an element
         ▼
   Typed StudioEdit batch              POST /admin/api/studio/save
         │
@@ -71,7 +71,8 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
         │    rewrite the user's .tsx  (setJsxProp, setJsxText, setJsxStyle,
         │                              setJsxClassName, setStringLiteral,
         │                              setJsxTagName, insertJsxElement,
-        │                              moveJsxElement, deleteJsxElement)
+        │                              moveJsxElement, deleteJsxElement,
+        │                              duplicateJsxElement, wrapJsxElement)
         │
         └──▶ postcss CST codemods     src/core/css-codemods/
              rewrite the user's .css  (setDeclaration, insertRule — routed by
@@ -79,7 +80,7 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
 ```
 
 A structural gesture that CANNOT be written (a `.map` row, a shared component,
-a new node with no source position) is refused before the tree mutates, with a
+a container in another file) is refused before the tree mutates, with a
 reason — `refuseStructuralEdit` in `src/core/page-tree/sourceStructure.ts`. It
 never silently no-ops.
 
@@ -229,11 +230,12 @@ never silently no-ops.
   local import is now editable: `ParsedNode.assetOrigin` names the import's
   own specifier literal, `setImportSpecifier` rewrites it, `POST
   /admin/api/studio/asset-upload` lands the new file in the workspace
-- Structural writeback: a sibling **reorder**, a **delete**, and an **insert**
-  (adding a design-system component from the canvas picker writes the element
-  *and* its `import` into the `.tsx`, then re-reads the board — so the new node
-  is a real parsed node, not a canvas-minted one). Everything else refuses out
-  loud (`refuseStructuralEdit`)
+- Structural writeback: **reorder**, **delete**, **insert**, and (W4-1)
+  **duplicate**, **wrap** and same-file **reparent**. None of them mints a node:
+  each asks the SOURCE to grow the markup — the picker's insert writes the
+  element *and* its `import` — and the board re-reads the file, so what lands is
+  a real parsed node with a real `rel:line:col`. What cannot be written refuses
+  out loud (`refuseStructuralEdit`)
 - Creating a new page, in four shapes: the `+` button (`NewPageButton.tsx`)
   offers **Screen**, **Popup**, **Bottom sheet — small** and **Bottom sheet —
   big** (MCP `studio_create_page` takes the same `kind`). Each writes a
@@ -300,10 +302,13 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
 - **CSS-in-JS is detection-only.** `styleToolchainDetect.ts` recognises
   styled-components / emotion / stitches as a dependency and reports it in the
   project profile. Nothing reads or writes those styles.
-- **reparent / duplicate / wrap all still refuse** —
-  `refuseStructuralEdit` in `src/core/page-tree/sourceStructure.ts`. The copy
-  or the wrapper would have no source location of its own, so it could never be
-  written back. Reorder, delete and insert do write.
+- **Cross-FILE reparent refuses** — `refuseStructuralEdit` in
+  `src/core/page-tree/sourceStructure.ts`. Every structural verb now writes
+  within one file (W4-1: duplicate, wrap and same-file reparent joined reorder,
+  delete and insert), but moving markup into another module would land it where
+  the values it reads do not exist. A same-file move whose subtree captures a
+  binding that is not in scope at the destination refuses too, naming the
+  binding.
 - **JS-driven animation does not freeze.** `CanvasAnimationInjector` handles
   CSS animations/transitions, smooth scroll and media; it makes no attempt to
   intercept `requestAnimationFrame`, so framer-motion and GSAP keep running on

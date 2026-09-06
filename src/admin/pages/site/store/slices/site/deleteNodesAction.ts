@@ -19,7 +19,7 @@
  * canvas showing a tree the files do not describe.
  */
 import { deleteNode, type NodeTree, type PageNode } from '@core/page-tree'
-import { commitStudioDelete } from '@site/studio/studioSaveRequests'
+import { commitStudioDelete } from '@site/studio/studioStructuralCommits'
 import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'

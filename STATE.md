@@ -8,6 +8,49 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### struct-06 — duplicate, wrap and same-file reparent write real code (W4-1)
+- **Agent:** parser-surgeon
+- **Stage:** done (built + gated). **Needs human dogfood** — nothing here was driven in a browser.
+- **Updated:** 2026-09-06
+- **Branch:** `feat/reparent-duplicate-wrap`
+- **Goal:** the last three Figma verbs that refused now land on disk, and the shapes that still refuse say something true.
+- **Scope:**
+  - New codemods: `src/core/ast-codemods/duplicateJsxElement.ts`, `wrapJsxElement.ts`.
+  - Extracted from `insertJsxElement.ts` (both were its private helpers, now shared): `jsxChildPlacement.ts` (WHERE a child goes + the indentation helpers + `reindentBlock`), `jsxImportEdits.ts` (`resolveImportEdits`, `conflictingBinding`).
+  - `moveJsxElement.ts` — gained a destination-parent (reparent) form; `anchorLine/anchorCol/position` are now optional and a reorder without an anchor refuses `no-anchor`.
+  - `subtreeFreeVariables.ts` — `freeVariablesOutOfScopeAt()`, the reparent honesty check.
+  - `locateJsxElement.ts` — `findJsxElementAtLocation` is bounds-checked (see Landmines).
+  - `src/core/page-tree/sourceStructure.ts` — three blanket refusals lifted; `refuseStructuralEdit` takes `destination`; `StructuralMoveCommit` gained `destinationParentNodeId` and a nullable `anchorNodeId`; `resolveSourceContainer` + `resolveContainerAnchor` lifted out of the store; new `refuseMintedNodeCopy`.
+  - `src/core/page-tree/editConstraint.ts` — `explainInstanceDuplicateConstraint` DELETED (see Decisions); `cross-file` gained a jump-to-source action.
+  - `src/core/page-tree/treeOperations.ts` — duplicate/wrap/cross-parent-move now gate on `refuseMintedNodeCopy`.
+  - Server: `server/handlers/studioStructuralWriteback.ts` (three new schemas + dispatch, `applyStructuralEdit` takes a `destination`), `studioWriteback.ts` (decodes `parentNodeId` through the same path guard; `duplicate`/`wrap` exempt from dedupe).
+  - Store: `structuralSourceEdits.ts` (`planSourceCopy` → `planSourceDuplicate`/`planSourceWrap`; `planSourceMove` is now a wrapper over `previewStructuralMove`), new `studioSourceWrites.ts`, `nodeActions.ts`, new `src/admin/pages/site/studio/studioStructuralCommits.ts` (split out of `studioSaveRequests.ts` — the six structural commits, rebased on top of `perf-04`'s `resyncBoardAfterWrite`), `deleteNodesAction.ts`, `LayerNodeContextMenu.tsx`.
+  - Tests: new `src/core/ast-codemods/__tests__/copyJsxCodemods.test.ts` (23), new block in `server/handlers/__tests__/studioWriteback.test.ts` against a snapshot of a REAL imported page, rewritten gates in `sourceStructure.test.ts` / `editConstraint.test.ts` / `dom-panel/layerNodeContextMenu.test.tsx`.
+  - Docs: `docs/features/studio-import.md`, `docs/agent-refs/studio-pipeline.md`, `docs/agent-refs/path-index.md`, `PROJECT-BRIEF.md`, `STUDIO-WAVE4-PLAN.md` §W4-1.
+- **Done so far:**
+  - Duplicate = the element's own bytes re-inserted at `range.end` (a whole-line range already carries its indentation and trailing newline, so the copy is byte-identical; an inline element joins the row with one space). No imports, no scope analysis — same file, same scope, one line down.
+  - Wrap = replace the element's own range with `<div>…it…</div>`, re-hanging the subtree one indent level (`reindentBlock`, leading whitespace only). Writes the wrapper's `import` when it is a component.
+  - Reparent = `resolveChildPlacement` (the SAME function an insert uses) for the destination edit + a removal edit, both measured against the original text and applied last-first.
+  - `bun test src/core src/__tests__/architecture src/__tests__/studio src/__tests__/dom-panel src/admin server/handlers/__tests__` → 3127 pass, 1 fail (pre-existing icon-catalog).
+- **Next step:** dogfood on a real imported board: duplicate a card, wrap it, drag it into another container, then check `git diff` in the workspace repo. The one thing no test covers is what the canvas does between the optimistic gesture and the narrow reload.
+- **Decisions:**
+  - **The three verbs write; the plugin/agent dispatcher still refuses.** `applyTreeOperation` persists a TREE (into a `data_row`), never a `.tsx`, so duplicating a source-derived node there would mint a nanoid child no file describes — the silent no-op `struct-01` exists to prevent. That is `refuseMintedNodeCopy`, the sibling of `refuseMintedNodeInsert`. A reorder through that path mints nothing and stays allowed.
+  - **Multi-select: duplicate yes, wrap no.** A batch is ordered bottom-to-top, so N copies cannot move each other's lines. One wrapper around N elements is one write spanning N ranges — refused `multi-select` with its own sentence, not silently wrapping the first.
+  - **`explainInstanceDuplicateConstraint` deleted, not reworded.** It existed to offer "duplicate the COMPONENT as a new file" because duplicating a call site refused. Duplicating `<SheetShell/>` is now an ordinary write, so the sentence had become false — and a refusal that is no longer true is worse than no refusal.
+  - **`planSourceMove` collapsed into `previewStructuralMove`.** The two were line-for-line copies with a comment in each promising hand-sync. Lifting the reparent refusal in one and not the other would have made the drop line go green on a gesture the store refused.
+  - **The reparent anchor is dropped when the container had to be re-resolved** (the synthetic page root → the page's root element): `newIndex` counts a different child list, and appending is an honest position while writing at an index derived from the wrong list is not.
+- **Landmines:**
+  - **`findJsxElementAtLocation` used to THROW** on a `line:col` past the end of the file — `ts.getPositionOfLineAndCharacter` asserts rather than returning. A stale node id (the file shrank since the board read it) therefore reached the user as an *unexplained skip* instead of "no element is written there any more". Now bounds-checked, so every codemod gets the honest `not-found` refusal. This affected the SHIPPED move/delete/insert paths too, not just the new ones.
+  - **`wrapJsxElement` is the one structural codemod that rewrites bytes it did not otherwise touch** — the wrapped subtree's leading whitespace. Deliberate (the new nesting IS the change), and only leading whitespace: a line that does not start with the base indent is left exactly as it is rather than guessed at, so a template literal's continuation lines are never touched.
+  - **A reparent out of an inline run leaves a whitespace hole** (`<div><a/> <b/></div>` → `<div> <b/></div>`), and JSX renders that leading space. `deleteJsxElement` has had the identical behaviour since `struct-01`; not fixed here, but it is a real rendering difference, not a cosmetic one.
+  - **`refusePlacement` assumes a source-derived id.** Ask it about the synthetic page root and it answers `list-row`, which is nonsense — that is why the reparent path runs `resolveSourceContainer` first. Any new caller must do the same.
+  - `studio-workspace/esim-journey` (named in the work order) **does not exist in this checkout**; the real-corpus test uses a byte-for-byte snapshot of `studio-workspace/test4/pages/Onboarding.tsx` inlined in the test, and never writes to the workspace.
+  - **`studio-scribe`:** the 578-line `docs/features/studio-import.md` now carries the lifted refusals, but the two landmines above (the throwing locator, the inline whitespace hole) are worth a permanent home there.
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` on every touched area ✅ (one pre-existing icon-catalog failure, plus the known canvas-iframe/step-up/cmsPlugins flakes in a full run).
+- **Human action needed:** dogfood the three gestures on an imported board; confirm the narrow reload brings the new element back selected-or-not as expected.
+
+---
+
 ### perf-04 — the user's own save reparsed the whole board; the agent's writes had used the narrow path for weeks
 
 - **Agent:** store-engineer
@@ -628,6 +671,7 @@ before this branch and are not this change's.
      exactly the state its own doc argues against.
 
 ---
+
 
 ### canvas-15 — the viewport and keyboard staples: clickable zoom, selection traversal, frame nudge, a visible shortcuts door
 - **Agent:** canvas-engineer

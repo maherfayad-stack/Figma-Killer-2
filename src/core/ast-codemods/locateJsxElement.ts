@@ -9,9 +9,10 @@
  * rendered canvas elements back to their JSX source.
  *
  * Resolution algorithm:
- *   1. Convert the 1-based (line, col) to a 0-based TypeScript position with
- *      `ts.getPositionOfLineAndCharacter(sourceFile.compilerNode, line - 1, col - 1)`
- *      (the TypeScript compiler API is 0-based for both line and character).
+ *   1. Convert the 1-based (line, col) to an absolute position against the
+ *      source file's own line starts, BOUNDS-CHECKED (a location past the end
+ *      of the file is an ordinary "no element there any more", not a crash —
+ *      see `findJsxElementAtLocation`).
  *   2. Walk every `JsxOpeningElement` and `JsxSelfClosingElement` descendant
  *      of the source file and compare `element.getTagNameNode().getStart()`
  *      against that position. `getStart()` skips leading trivia by default,
@@ -21,7 +22,6 @@
  *      target. If none match, the location does not point at a JSX element.
  */
 import { Node, Project, SyntaxKind, type JsxOpeningElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import * as ts from 'typescript'
 
 export type JsxOpeningLikeElement = JsxOpeningElement | JsxSelfClosingElement
 
@@ -57,7 +57,19 @@ export function findJsxElementAtLocation(
   line: number,
   col: number,
 ): JsxOpeningLikeElement | undefined {
-  const pos = ts.getPositionOfLineAndCharacter(sourceFile.compilerNode, line - 1, col - 1)
+  // A location past the end of the file (or of its line) is an ORDINARY
+  // outcome, not a bug: node ids carry a `line:col` the board read earlier, and
+  // an edit made after the file shrank names a position that no longer exists.
+  // `ts.getPositionOfLineAndCharacter` asserts rather than returning, and a
+  // codemod that throws there reaches the user as an unexplained skip instead
+  // of the "no element is written there any more — reload" refusal every caller
+  // already has. Bounds-checked here so all of them get the honest answer.
+  const lineStarts = sourceFile.compilerNode.getLineStarts()
+  if (line < 1 || line > lineStarts.length || col < 1) return undefined
+  const lineStart = lineStarts[line - 1]!
+  const lineEnd = line < lineStarts.length ? lineStarts[line]! : sourceFile.getFullText().length
+  const pos = lineStart + col - 1
+  if (pos > lineEnd) return undefined
 
   let found: JsxOpeningLikeElement | undefined
   for (const descendant of sourceFile.getDescendants()) {

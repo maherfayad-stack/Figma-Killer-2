@@ -76,7 +76,9 @@
  */
 import { Node, QuoteKind, SyntaxKind, type JsxAttribute, type JsxFragment, type Project, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
-import { conflictingBinding, indentUnit, insertJsxElement } from './insertJsxElement'
+import { insertJsxElement } from './insertJsxElement'
+import { indentUnit } from './jsxChildPlacement'
+import { conflictingBinding } from './jsxImportEdits'
 import {
   collectSubtreeImports,
   renderJsxNode,

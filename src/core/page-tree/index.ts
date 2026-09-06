@@ -41,10 +41,13 @@ export type { SourceWritableNode } from './sourceWritability'
 // The structural counterpart: can this node's PLACE be written back?
 export {
   SourceStructureError,
+  refuseMintedNodeCopy,
   refuseMintedNodeInsert,
   refuseStructuralEdit,
   refusePlacement,
   previewStructuralMove,
+  resolveContainerAnchor,
+  resolveSourceContainer,
 } from './sourceStructure'
 export type {
   SourceStructureNode,
@@ -64,7 +67,6 @@ export {
   explainCssRuleConstraint,
   explainDetachConstraint,
   explainGestureConstraint,
-  explainInstanceDuplicateConstraint,
   explainMintedInsertConstraint,
   explainPropConstraint,
   explainStructuralConstraint,

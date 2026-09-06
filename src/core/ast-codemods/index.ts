@@ -24,6 +24,15 @@ export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
 export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
+export { duplicateJsxElement } from './duplicateJsxElement'
+export type {
+  DuplicateJsxElementParams,
+  DuplicateJsxElementResult,
+  DuplicateJsxRefusal,
+  DuplicateJsxRefusalReason,
+} from './duplicateJsxElement'
+export { wrapJsxElement } from './wrapJsxElement'
+export type { WrapJsxElementParams, WrapJsxElementResult } from './wrapJsxElement'
 export { deleteJsxElement } from './deleteJsxElement'
 export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
 export type { ImportPruneSession } from './pruneOrphanedImports'

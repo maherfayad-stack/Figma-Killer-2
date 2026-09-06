@@ -53,10 +53,18 @@
  * (`jsxChildRange.ts`). Indentation is COPIED from a sibling wherever one
  * exists rather than assumed, so a file indented with tabs or four spaces
  * keeps its own style and no unrelated line is reformatted.
+ *
+ * WHERE the child goes is `jsxChildPlacement.ts` (W4-1) and the `import` it
+ * needs is `jsxImportEdits.ts` — both were this module's private helpers until
+ * `moveJsxElement`'s cross-parent form and `wrapJsxElement` needed the same two
+ * answers. A reparent lands with exactly the whitespace an insert at the same
+ * spot would have produced, because it is the same function.
  */
-import { Node, Project, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
+import { Project } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
-import { applyTextEdits, resolveJsxChildRange, verbatimSourceText, writeVerbatimSource, type TextEdit } from './jsxChildRange'
+import { applyTextEdits, verbatimSourceText, writeVerbatimSource } from './jsxChildRange'
+import { resolveChildPlacement } from './jsxChildPlacement'
+import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
 import {
   collectSubtreeImports,
   indentBlock,
@@ -154,8 +162,18 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
     )
   }
 
-  const placement = resolvePlacement(sourceFile, verbatim, parentOpening, params, (indent, unit) =>
-    indentBlock(renderJsxNode({ name, props: params.props, importSpecifier, children }, unit), indent),
+  const placement = resolveChildPlacement(
+    sourceFile,
+    verbatim,
+    parentOpening,
+    {
+      anchor:
+        params.anchorLine !== undefined && params.anchorCol !== undefined
+          ? { line: params.anchorLine, col: params.anchorCol }
+          : null,
+      ...(params.position ? { position: params.position } : {}),
+    },
+    (indent, unit) => indentBlock(renderJsxNode({ name, props: params.props, importSpecifier, children }, unit), indent),
   )
   if (!placement.ok) return placement
 
@@ -163,333 +181,4 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, ...importEdits]))
   return { ok: true }
-}
-
-type PlacementResult = { ok: true; edit: TextEdit } | { ok: false; refusal: InsertJsxRefusal }
-
-/**
- * Where the new element's bytes go, and with what surrounding whitespace.
- *
- * Four shapes, and the difference between them is entirely about whitespace
- * the user already wrote:
- *
- *  - **Against a whole-line anchor** — the new element gets its own line, at
- *    the anchor's own indentation.
- *  - **Against an inline anchor** (`<div><a/><b/></div>`) — the new element
- *    joins the line, separated by a single space.
- *  - **Appended to a parent that has children** — same two cases, resolved
- *    from the last child.
- *  - **Appended to an EMPTY parent** — the only case that rewrites existing
- *    bytes, and only ever whitespace: the run between `>` and `</` is replaced
- *    with a properly indented line. A self-closing parent (`<div />`) is
- *    reopened into a paired tag, which is the same idea one step further.
- */
-function resolvePlacement(
-  sourceFile: SourceFile,
-  text: string,
-  parentOpening: ReturnType<typeof findJsxElementAtLocation> & object,
-  params: InsertJsxElementParams,
-  render: RenderJsx,
-): PlacementResult {
-  const parentIndent = lineIndentAt(text, parentOpening.getStart())
-  const unit = indentUnit(text)
-
-  if (Node.isJsxSelfClosingElement(parentOpening)) {
-    // `<Foo />` has no children region at all. Reopening it into `<Foo>…</Foo>`
-    // rewrites only the `/>` the user wrote, and is the only honest way to give
-    // a leaf element a first child.
-    const tagName = parentOpening.getTagNameNode().getText()
-    const end = parentOpening.getEnd()
-    const selfCloseStart = text.lastIndexOf('/>', end)
-    if (selfCloseStart < parentOpening.getStart()) {
-      return refuse('not-a-container', 'Studio could not read where this element closes, so it cannot add a child to it.')
-    }
-    // Drop the whitespace the user had before `/>` — `<Foo />` closes as `<Foo>`.
-    const beforeSlash = trimTrailingBlankBack(text, selfCloseStart)
-    const childIndent = parentIndent + unit
-    return {
-      ok: true,
-      edit: {
-        start: beforeSlash,
-        end,
-        text: `>\n${childIndent}${render(childIndent, unit)}\n${parentIndent}</${tagName}>`,
-      },
-    }
-  }
-
-  const parentElement = parentOpening.getParent()
-  if (!parentElement || !Node.isJsxElement(parentElement)) {
-    return refuse('not-a-container', 'Studio could not resolve this element to something that can hold children.')
-  }
-
-  const anchorEdit = resolveAnchorPlacement(sourceFile, parentElement, params, render, unit)
-  if (anchorEdit) return anchorEdit
-
-  const children = elementChildren(parentElement)
-  const last = children[children.length - 1]
-  if (last) {
-    const range = resolveJsxChildRange(sourceFile, ...tagLocation(sourceFile, last))
-    if (range.ok) return { ok: true, edit: insertBeside(range.range, 'after', render, unit, text) }
-  }
-
-  // Empty parent: replace the whitespace-only run between the tags.
-  const innerStart = parentOpening.getEnd()
-  const innerEnd = parentElement.getClosingElement().getStart()
-  const childIndent = parentIndent + unit
-  const inner = text.slice(innerStart, innerEnd)
-  const jsx = render(childIndent, unit)
-  if (inner.trim() !== '') {
-    // Children exist but none of them resolved to a plain element (an
-    // expression child, a bare text node). Append after them without touching
-    // what is already there.
-    return { ok: true, edit: { start: innerEnd, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` } }
-  }
-  return {
-    ok: true,
-    edit: { start: innerStart, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` },
-  }
-}
-
-/** Placement against an explicit sibling anchor, or `null` when the caller gave none. */
-function resolveAnchorPlacement(
-  sourceFile: SourceFile,
-  parentElement: JsxElement,
-  params: InsertJsxElementParams,
-  render: RenderJsx,
-  unit: string,
-): PlacementResult | null {
-  const { anchorLine, anchorCol } = params
-  if (anchorLine === undefined || anchorCol === undefined) return null
-
-  const anchor = resolveJsxChildRange(sourceFile, anchorLine, anchorCol)
-  if (!anchor.ok) return refuse(anchor.reason, anchor.message)
-  if (anchor.range.parent !== parentElement) {
-    return refuse(
-      'not-siblings',
-      'The element this would be written next to is not a child of the container it was dropped into, so there is no single place in the file to write it.',
-    )
-  }
-  return {
-    ok: true,
-    edit: insertBeside(anchor.range, params.position ?? 'after', render, unit, sourceFile.getFullText()),
-  }
-}
-
-/** The zero-length edit that puts the rendered subtree immediately before or after an existing child's owned range. */
-function insertBeside(
-  range: { start: number; end: number; wholeLine: boolean },
-  position: 'before' | 'after',
-  render: RenderJsx,
-  unit: string,
-  text: string,
-): TextEdit {
-  if (range.wholeLine) {
-    // `start` is the line start and `end` is one past the newline, so a whole
-    // line (indentation + element + newline) inserted at either point lands
-    // exactly where a hand-written sibling would.
-    const indent = lineIndentAt(text, range.start + countLeadingWhitespace(text, range.start))
-    const at = position === 'before' ? range.start : range.end
-    return { start: at, end: at, text: `${indent}${render(indent, unit)}\n` }
-  }
-  // Inline sibling (`<div><a/><b/></div>`). A multi-line subtree would break
-  // the line the user chose to keep on one line, so it is rendered with no
-  // base indent and simply joins the row.
-  const at = position === 'before' ? range.start : range.end
-  const jsx = render('', unit)
-  return { start: at, end: at, text: position === 'before' ? `${jsx} ` : ` ${jsx}` }
-}
-
-/** The element children of a JSX element, in source order — whitespace and expression children excluded. */
-function elementChildren(element: JsxElement): (JsxElement | JsxSelfClosingElement)[] {
-  const children: (JsxElement | JsxSelfClosingElement)[] = []
-  for (const child of element.getJsxChildren()) {
-    if (Node.isJsxElement(child) || Node.isJsxSelfClosingElement(child)) children.push(child)
-  }
-  return children
-}
-
-/** The 1-based `line, col` of a JSX element's tag name — the coordinate `resolveJsxChildRange` speaks. */
-function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosingElement): [number, number] {
-  const opening = Node.isJsxElement(element) ? element.getOpeningElement() : element
-  const { line, column } = sourceFile.getLineAndColumnAtPos(opening.getTagNameNode().getStart())
-  return [line, column]
-}
-
-/**
- * Renders the subtree at a known base indentation. `indent` is the whitespace
- * the FIRST line will sit at (the caller writes that prefix itself, so the
- * returned string's first line is bare); `unit` is one indentation step, copied
- * from the file.
- */
-type RenderJsx = (indent: string, unit: string) => string
-
-/**
- * `<Name a="1" b={2} c />` — a tag plus its literal props; `<Name>text</Name>`
- * for a text child; and a multi-line block for a nested subtree.
- *
- * Relative indentation only: nested lines are indented by `unit` per level
- * from column zero, and `indentBlock` shifts the whole block to wherever
- * `resolvePlacement` decided it goes. That split is what lets placement and
- * rendering stay independent — the renderer never needs to know the parent's
- * column, and placement never needs to know the subtree's shape.
- *
- * Exported for `insertJsxIntoSlotProp.ts` (E2.4), which writes the identical
- * subtree shape into a component PROP instead of a JSX child list and has no
- * reason to re-implement this rendering.
- */
-/**
- * The edits that put every `(name → specifier)` in `required` in scope.
- *
- * Per specifier, three cases, cheapest first: the import declaration exists and
- * already names the binding (nothing to do); it exists and gains one more named
- * import; it does not exist and a whole line is added after the last import.
- * The quote character is copied from an existing import so a file written with
- * double quotes does not acquire a single-quoted line.
- *
- * Every returned edit is measured against the ORIGINAL text and the caller
- * applies them in descending-offset order. That is why all the brand-new
- * declarations are emitted as ONE edit at a single offset rather than one edit
- * each: several edits sharing an identical `start` would be applied in an
- * unspecified relative order, and — being zero-length inserts at the same point
- * — could interleave. Grouping them keeps the written order deterministic
- * (specifier insertion order, which is the subtree's own depth-first order).
- */
-function resolveImportEdits(
-  sourceFile: SourceFile,
-  text: string,
-  required: ReadonlyMap<string, string>,
-): TextEdit[] {
-  if (required.size === 0) return []
-
-  const declarations = sourceFile.getImportDeclarations()
-  const quote = importQuoteChar(declarations)
-  const edits: TextEdit[] = []
-  /** Specifier → the names it must newly declare, in first-seen order. */
-  const newDeclarations = new Map<string, string[]>()
-
-  for (const [name, specifier] of required) {
-    const existing = declarations.find((d) => d.getModuleSpecifierValue() === specifier)
-    if (existing) {
-      const named = existing.getNamedImports()
-      if (named.some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)) continue
-      const lastNamed = named[named.length - 1]
-      if (lastNamed) {
-        const at = lastNamed.getEnd()
-        edits.push({ start: at, end: at, text: `, ${name}` })
-        continue
-      }
-      // A default- or namespace-only import: `import DS from 'x'` gains `, { name }`.
-      const defaultImport = existing.getDefaultImport() ?? existing.getNamespaceImport()
-      if (defaultImport) {
-        const at = defaultImport.getEnd()
-        edits.push({ start: at, end: at, text: `, { ${name} }` })
-        continue
-      }
-      // A bare side-effect import (`import 'x'`) — leave it alone and add a
-      // second, explicit declaration below rather than rewriting the user's line.
-    }
-    const names = newDeclarations.get(specifier)
-    if (names) names.push(name)
-    else newDeclarations.set(specifier, [name])
-  }
-
-  if (newDeclarations.size > 0) {
-    const lines = [...newDeclarations]
-      .map(([specifier, names]) => `import { ${names.join(', ')} } from ${quote}${specifier}${quote}\n`)
-      .join('')
-    const lastDeclaration = declarations[declarations.length - 1]
-    if (!lastDeclaration) {
-      edits.push({ start: 0, end: 0, text: lines })
-    } else {
-      // Start of the line after the last import, so the new lines join the block.
-      const newlineAfter = text.indexOf('\n', lastDeclaration.getEnd())
-      const at = newlineAfter === -1 ? text.length : newlineAfter + 1
-      edits.push({ start: at, end: at, text: lines })
-    }
-  }
-
-  return edits
-}
-
-/** The quote character the file's existing imports use — `'` when there are none to copy. */
-function importQuoteChar(declarations: readonly { getModuleSpecifier: () => Node }[]): string {
-  const first = declarations[0]
-  if (!first) return "'"
-  return first.getModuleSpecifier().getText().startsWith('"') ? '"' : "'"
-}
-
-/**
- * How `name` is already bound in this file, when that binding is NOT the
- * import this insert wants — a local `function Button()`, a `const Button =`,
- * or an import of the same name from a different module. `undefined` when the
- * name is free, or already bound to exactly the right import.
- *
- * Reads declarations only, never references: the question is what the name
- * MEANS in this file, and a shadowing insert is the one outcome that would
- * silently change an element the user never touched.
- *
- * Exported for `insertJsxIntoSlotProp.ts` — filling a slot with a component
- * asks the identical "would this shadow something already in scope" question.
- */
-export function conflictingBinding(sourceFile: SourceFile, name: string, specifier: string): string | undefined {
-  for (const declaration of sourceFile.getImportDeclarations()) {
-    const from = declaration.getModuleSpecifierValue()
-    const names = [
-      declaration.getDefaultImport()?.getText(),
-      declaration.getNamespaceImport()?.getText(),
-      ...declaration.getNamedImports().map((n) => (n.getAliasNode() ?? n.getNameNode()).getText()),
-    ]
-    if (!names.includes(name)) continue
-    if (from === specifier) return undefined
-    return `it is imported from "${from}"`
-  }
-  for (const fn of sourceFile.getFunctions()) {
-    if (fn.getName() === name) return 'a function declared here'
-  }
-  for (const statement of sourceFile.getVariableDeclarations()) {
-    if (statement.getName() === name) return 'a variable declared here'
-  }
-  for (const cls of sourceFile.getClasses()) {
-    if (cls.getName() === name) return 'a class declared here'
-  }
-  return undefined
-}
-
-/** The leading whitespace of the line `pos` sits on. */
-function lineIndentAt(text: string, pos: number): string {
-  const lineStart = text.lastIndexOf('\n', pos - 1) + 1
-  return text.slice(lineStart, lineStart + countLeadingWhitespace(text, lineStart))
-}
-
-function countLeadingWhitespace(text: string, from: number): number {
-  let i = from
-  while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i += 1
-  return i - from
-}
-
-/**
- * One level of indentation, as this file writes it — a tab when the file is
- * tab-indented, otherwise the smallest non-zero space indent it uses (falling
- * back to two spaces). Copied rather than assumed so an insert never mixes a
- * second indentation style into a file.
- *
- * Exported for `insertJsxIntoSlotProp.ts` — a slot fill's nested children
- * should indent in the file's own style too.
- */
-export function indentUnit(text: string): string {
-  let smallest = 0
-  for (const line of text.split('\n')) {
-    const width = countLeadingWhitespace(line, 0)
-    if (width === 0 || line.trim() === '') continue
-    if (line[0] === '\t') return '\t'
-    if (smallest === 0 || width < smallest) smallest = width
-  }
-  return ' '.repeat(smallest > 0 ? smallest : 2)
-}
-
-/** Walks back over spaces/tabs from `pos`, so `<Foo />` closes as `<Foo>` rather than `<Foo >`. */
-function trimTrailingBlankBack(text: string, pos: number): number {
-  let i = pos
-  while (i > 0 && (text[i - 1] === ' ' || text[i - 1] === '\t')) i -= 1
-  return i
 }

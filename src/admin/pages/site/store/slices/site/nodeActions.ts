@@ -35,29 +35,21 @@ import {
   isPropPatchWritableToSource,
   isPropWritableToSource,
   isStylePatchWritableToSource,
-  describeStructuralRefusal,
 } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
-import { commitStudioDelete, commitStudioInsert, commitStudioMove } from '@site/studio/studioSaveRequests'
+import { commitStudioDelete, commitStudioMove, commitStudioReparent } from '@site/studio/studioStructuralCommits'
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
-import {
-  STRUCTURAL_REFUSAL_TITLE,
-  planSourceCopy,
-  planSourceDelete,
-  planSourceInsert,
-  planSourceMove,
-  toastStructuralRefusal,
-} from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, toastStructuralRefusal } from './structuralSourceEdits'
+import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import { coalesceKeyForPatch } from '../../historyCoalesce'
-import { insertableJsxProps } from './insertablePropValues'
 
 
 type NodeActions = Pick<
@@ -117,93 +109,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
    */
   const readTree = (): NodeTree<PageNode> | null => resolveActiveTreeTarget(get())?.tree ?? null
 
-  /**
-   * `struct-01` — refuse a structural gesture that cannot be written back to
-   * a studio-imported `.tsx`. Returns true when the caller must stop.
-   * A `null` tree (no site loaded) is not this guard's business.
-   */
-  const refuseInsertInto = (parentId: string): boolean => {
-    const tree = readTree()
-    if (!tree) return false
-    const plan = planSourceInsert(tree, parentId)
-    if (plan.ok) return false
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
-    return true
-  }
-
-  /**
-   * Adds a module to a studio-imported tree by writing it to the user's source
-   * instead of mutating the tree, or `false` when this is an ordinary CMS tree
-   * that should take the normal in-memory path.
-   *
-   * The board is NOT updated here and no node id is returned, because there is
-   * no honest one to return: the element does not exist until the codemod has
-   * written it, and its id is the `line:col` that write produces. The commit
-   * reloads on every outcome, which is what brings the new node in — the same
-   * "one-shot commit, then re-sync with disk" shape `move`/`delete` use, minus
-   * the optimistic mutation they can afford and this cannot.
-   */
-  const writeInsertToSource = (moduleId: string, defaults: Record<string, unknown> | undefined, parentId: string, index?: number): boolean => {
-    const tree = readTree()
-    if (!tree) return false
-    const plan = planSourceInsert(tree, parentId, index)
-    if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
-      return true
-    }
-    if (!plan.commit) return false // an ordinary CMS tree — nothing to write
-
-    const mod = registry.get(moduleId)
-    const props = { ...(mod?.defaults ?? {}), ...(defaults ?? {}) }
-    const sourceImport = mod?.sourceImport
-
-    if (sourceImport) {
-      void commitStudioInsert({
-        ...plan.commit,
-        name: sourceImport.name,
-        importSpecifier: sourceImport.specifier,
-        props: insertableJsxProps(props),
-      })
-      return true
-    }
-
-    // Still possibly a real element: `base.container` is a `<div>`/`<span>`,
-    // `base.text` a `<p>` wrapping text. `insertJsxElement` writes those by
-    // omitting `importSpecifier`. See `sourceIntrinsic` on `ModuleDefinition`.
-    const intrinsic = mod?.sourceIntrinsic?.(props)
-    if (intrinsic) {
-      void commitStudioInsert({
-        ...plan.commit,
-        name: intrinsic.tag,
-        props: {},
-        ...(intrinsic.text === undefined ? {} : { children: intrinsic.text }),
-      })
-      return true
-    }
-
-    // Everything else is an editor construct with no spelling in a user's repo;
-    // the picker hides those in studio mode, so this is the programmatic path.
-    toastStructuralRefusal(
-      STRUCTURAL_REFUSAL_TITLE.insert,
-      describeStructuralRefusal({
-        refusal: {
-          reason: 'insert',
-          message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
-        },
-      }),
-      get,
-    )
-    return true
-  }
-
-  const refuseCopy = (kind: 'duplicate' | 'wrap', nodeIds: readonly string[]): boolean => {
-    const tree = readTree()
-    if (!tree) return false
-    const plan = planSourceCopy(tree, kind, nodeIds)
-    if (plan.ok) return false
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE[kind], plan.constraint, get)
-    return true
-  }
+  const { refuseInsertInto, writeInsertToSource, writeDuplicateToSource, writeWrapToSource } =
+    createStudioSourceWrites(helpers, readTree)
 
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index) => {
@@ -544,11 +451,22 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         return true
       })
       const commit = plan?.commit
-      if (commit) void commitStudioMove(commit.nodeId, commit.anchorNodeId, commit.position)
+      if (commit?.destinationParentNodeId) {
+        // W4-1 — the move crossed parents, so the write names the container as
+        // well as the neighbour (which may be absent: appending is a position).
+        void commitStudioReparent({
+          nodeId: commit.nodeId,
+          parentNodeId: commit.destinationParentNodeId,
+          anchorNodeId: commit.anchorNodeId,
+          position: commit.position,
+        })
+      } else if (commit?.anchorNodeId) {
+        void commitStudioMove(commit.nodeId, commit.anchorNodeId, commit.position)
+      }
     },
 
     duplicateNode: (nodeId) => {
-      if (refuseCopy('duplicate', [nodeId])) return ''
+      if (writeDuplicateToSource([nodeId])) return ''
       let newId = ''
       let blockedByOutlet = false
       // Per-node "module-style" classes (scope.type === 'node') must be cloned
@@ -575,7 +493,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     duplicateNodes: (nodeIds) => {
       if (nodeIds.length === 0) return []
-      if (refuseCopy('duplicate', nodeIds)) return []
+      if (writeDuplicateToSource(nodeIds)) return []
       const newIds: string[] = []
       let blockedByOutlet = false
       mutateActiveTreeAndSite((tree, site) => {
@@ -604,7 +522,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     deleteNodes: createDeleteNodesAction(helpers),
 
     wrapNode: (nodeId, containerModuleId, defaults = {}) => {
-      if (refuseCopy('wrap', [nodeId])) return ''
+      if (writeWrapToSource([nodeId], containerModuleId, defaults)) return ''
       // Auto-resolve the module's schema defaults so the wrapper node renders correctly.
       // Without this, wrapNode(id, 'base.container') produces props:{} → props.tag=undefined
       // → React.createElement(undefined) → "Element type is invalid" crash (Task #414).
@@ -620,7 +538,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     wrapNodes: (nodeIds, containerModuleId, defaults = {}) => {
       if (nodeIds.length === 0) return null
-      if (refuseCopy('wrap', nodeIds)) return null
+      if (writeWrapToSource(nodeIds, containerModuleId, defaults)) return null
       // Same defaults-resolution rule as `wrapNode` (Task #414 — defaults must
       // come from the module registry so the wrapper renders).
       const mod = registry.get(containerModuleId)

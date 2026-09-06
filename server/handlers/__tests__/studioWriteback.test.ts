@@ -19,6 +19,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { applyStudioEdit, applyStudioEditBatch, isSharedSourceNodeId, studioEditLocation } from '../studioWriteback'
+import { locateTag } from '../../../src/core/ast-codemods/__tests__/fixtureLocation'
 
 let tmpDir: string
 
@@ -1388,5 +1389,189 @@ describe('applyStudioEdit — the style kind, removal + refusal', () => {
     expect(result.unexplainedSkips).toHaveLength(0)
     expect(result.refusals).toHaveLength(1)
     expect(result.refusals[0]!.reason).toBe('style-target')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// W4-1 — duplicate / wrap / reparent, exercised through the same batch entry
+// the save route uses, against a COPY of a real imported page.
+//
+// The fixture below is a byte-for-byte snapshot of a page from the eSIM corpus
+// (`studio-workspace/`'s own `pages/Onboarding.tsx`): CSS-module classes, an
+// i18n dictionary read through a hook, `?raw` SVG imports, a design-system
+// component, and a four-row list. Every test copies it into a temp dir first —
+// the workspace is the user's data and is never written to by a test.
+// ---------------------------------------------------------------------------
+
+const IMPORTED_PAGE = `import styles from './Onboarding.module.css'
+import { Button } from '@alm-design/design-system'
+import discountSvg from '@alm-design/design-system/src/icons/line-icons/discount.svg?raw'
+import lightningSvg from '@alm-design/design-system/src/icons/line-icons/lightning.svg?raw'
+import smsSvg from '@alm-design/design-system/src/icons/line-icons/sms.svg?raw'
+import chartLineDownSvg from '../assets/cf9f4f5a-713a-4a3b-aceb-dacabb79e562.svg?raw'
+import heroImage from '../assets/dc9ed589-a139-4597-9cbc-7919c2afbe7b.png'
+import IOSStatusBar from '../components/IOSStatusBar'
+import { useLanguage } from '../i18n/LanguageContext'
+
+export default function Onboarding() {
+  const { t } = useLanguage()
+  return (
+    <main className={styles.page}>
+      <IOSStatusBar />
+
+      <div className={styles.body}>
+        <div className={styles.top}>
+          <img className={styles.hero} src={heroImage} alt="" />
+
+          <div className={styles.copy}>
+            <h1 className={styles.title}>{t.onboarding.completeYourSetupDonT}</h1>
+
+            <ul className={styles.features}>
+              <li className={styles.feature}>
+                <span className={styles.icon} dangerouslySetInnerHTML={{ __html: smsSvg }} />
+                <span className={styles.featureText}>{t.onboarding.uniqueRatesViaWhatsappEmail}</span>
+              </li>
+              <li className={styles.feature}>
+                <span className={styles.icon} dangerouslySetInnerHTML={{ __html: chartLineDownSvg }} />
+                <span className={styles.featureText}>{t.onboarding.priceDropsBeforeTheyAre}</span>
+              </li>
+              <li className={styles.feature}>
+                <span className={styles.icon} dangerouslySetInnerHTML={{ __html: lightningSvg }} />
+                <span className={styles.featureText}>{t.onboarding.flashSales}</span>
+              </li>
+              <li className={styles.feature}>
+                <span className={styles.icon} dangerouslySetInnerHTML={{ __html: discountSvg }} />
+                <span className={styles.featureText}>{t.onboarding.offersPickedForYou}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div className={styles.footer}>
+          <div className={styles.cta}>
+            <Button variant="primary" size="default" label={t.onboarding.agree} className={styles.ctaButton} />
+          </div>
+          <div className={styles.cta}>
+            <Button variant="primary-inverted" size="default" label={t.onboarding.maybeLater} className={styles.ctaButton} />
+          </div>
+          <p className={styles.legal}>
+            <span className={styles.legalRun}>{t.onboarding.byClickingAgreeIConsent}</span>
+            <span className={styles.link}>{t.onboarding.privacyPolicy}</span>
+            <span className={styles.legalRun}>{t.onboarding.and}</span>
+            <span className={styles.linkSpaced}>{t.onboarding.termsAndConditions}</span>
+            <span>{t.onboarding.youCanOptOutAnytime}</span>
+          </p>
+        </div>
+      </div>
+    </main>
+  )
+}
+`
+
+describe('applyStudioEditBatch — duplicate / wrap / reparent on a real imported page (W4-1)', () => {
+  const REL = 'pages/Onboarding.tsx'
+  const at = (tag: string, occurrence = 1): string => {
+    const { line, col } = locateTag(IMPORTED_PAGE, tag, occurrence)
+    return `${REL}:${line}:${col}`
+  }
+
+  beforeEach(() => {
+    write(REL, IMPORTED_PAGE)
+  })
+
+  it('duplicates a list row into the file, byte for byte', () => {
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'duplicate', nodeId: at('li', 1) }])
+
+    expect(result.written).toBe(1)
+    expect(result.skipped).toBe(0)
+    // The write shifted every line below it, so the board must re-read.
+    expect(result.shifted).toBe(true)
+    expect(result.sharedComponents).toBe(true)
+
+    const row = [
+      '              <li className={styles.feature}>',
+      '                <span className={styles.icon} dangerouslySetInnerHTML={{ __html: smsSvg }} />',
+      '                <span className={styles.featureText}>{t.onboarding.uniqueRatesViaWhatsappEmail}</span>',
+      '              </li>',
+      '',
+    ].join('\n')
+    expect(read(REL)).toBe(IMPORTED_PAGE.replace(row, row + row))
+  })
+
+  it('duplicates TWO rows in one batch — neither collapses, and neither shifts the other', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'duplicate', nodeId: at('li', 1) },
+      { kind: 'duplicate', nodeId: at('li', 3) },
+    ])
+
+    expect(result.written).toBe(2)
+    const after = read(REL)
+    expect(after.split('{t.onboarding.uniqueRatesViaWhatsappEmail}').length - 1).toBe(2)
+    expect(after.split('{t.onboarding.flashSales}').length - 1).toBe(2)
+  })
+
+  it('wraps an element in a div written into the source', () => {
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'wrap', nodeId: at('h1'), name: 'div' }])
+
+    expect(result.written).toBe(1)
+    expect(read(REL)).toBe(
+      IMPORTED_PAGE.replace(
+        '            <h1 className={styles.title}>{t.onboarding.completeYourSetupDonT}</h1>',
+        [
+          '            <div>',
+          '              <h1 className={styles.title}>{t.onboarding.completeYourSetupDonT}</h1>',
+          '            </div>',
+        ].join('\n'),
+      ),
+    )
+  })
+
+  it('reparents an element into another container in the same file', () => {
+    // `t` comes from the component body and `styles` from module scope, so both
+    // are in scope at the destination — the move keeps the file compiling.
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'reparent', nodeId: at('p'), parentNodeId: at('ul') },
+    ])
+
+    expect(result.written).toBe(1)
+    const after = read(REL)
+    expect(after).not.toBe(IMPORTED_PAGE)
+    expect(after).toContain('              </li>\n              <p className={styles.legal}>')
+    expect(after).toContain('              </p>\n            </ul>')
+    // The paragraph left exactly one place: its old one.
+    expect(after.split('<p className={styles.legal}>').length - 1).toBe(1)
+  })
+
+  it('REFUSES a reparent whose new parent is in another file, and writes nothing', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'reparent', nodeId: at('p'), parentNodeId: 'pages/Home.tsx:4:5' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('cross-file')
+    expect(result.refusals?.[0]?.message).toContain('different file')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES duplicating the element the component returns, through the batch', () => {
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'duplicate', nodeId: at('main') }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('no-jsx-parent')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES a wrapper tag Studio will not write, and writes nothing', () => {
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'wrap', nodeId: at('h1'), name: 'script' }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('unsafe-tag')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('treats all three as shared — each write shifts every line below it', () => {
+    for (const kind of ['duplicate', 'wrap', 'reparent'] as const) {
+      expect(isSharedSourceNodeId(`${REL}:5:6`, kind)).toBe(true)
+    }
   })
 })

@@ -38,6 +38,7 @@ import {
 } from './mutations'
 import {
   SourceStructureError,
+  refuseMintedNodeCopy,
   refuseMintedNodeInsert,
   refuseStructuralEdit,
   type StructuralEditKind,
@@ -58,6 +59,26 @@ function assertSourceStructureWritable(
   const node = tree.nodes[nodeId]
   if (!node) return
   const refusal = refuseStructuralEdit({ kind, node })
+  if (refusal) throw new SourceStructureError(refusal, nodeId)
+}
+
+/**
+ * Throw if this operation would MINT canvas-only structure on a studio-imported
+ * node — a duplicate, a wrapper, or a node relocated under a new parent.
+ *
+ * W4-1 taught those three verbs to write real source, but this dispatcher is
+ * not the caller that issues the write: `mutatePageTree` persists the tree into
+ * a `data_row`, never into a `.tsx`. See `refuseMintedNodeCopy` for the full
+ * distinction; a plain REORDER stays permitted here because it mints nothing.
+ */
+function assertNotMintedCopy(
+  tree: NodeTree<PageNode>,
+  kind: 'duplicate' | 'wrap' | 'reparent',
+  nodeId: string,
+): void {
+  const node = tree.nodes[nodeId]
+  if (!node) return
+  const refusal = refuseMintedNodeCopy({ kind, node })
   if (refusal) throw new SourceStructureError(refusal, nodeId)
 }
 
@@ -117,7 +138,8 @@ export function applyTreeOperation(
     }
     case 'moveNode': {
       const oldParent = getParent(tree, op.nodeId)
-      assertSourceStructureWritable(tree, oldParent?.id === op.parentId ? 'reorder' : 'reparent', op.nodeId)
+      if (oldParent?.id === op.parentId) assertSourceStructureWritable(tree, 'reorder', op.nodeId)
+      else assertNotMintedCopy(tree, 'reparent', op.nodeId)
       moveNode(tree, op.nodeId, op.parentId, op.index)
       return {
         tree,
@@ -127,12 +149,12 @@ export function applyTreeOperation(
       }
     }
     case 'duplicateNode': {
-      assertSourceStructureWritable(tree, 'duplicate', op.nodeId)
+      assertNotMintedCopy(tree, 'duplicate', op.nodeId)
       const newId = duplicateNode(tree, op.nodeId)
       return { tree, affectedNodeIds: [op.nodeId, newId] }
     }
     case 'wrapNode': {
-      assertSourceStructureWritable(tree, 'wrap', op.nodeId)
+      assertNotMintedCopy(tree, 'wrap', op.nodeId)
       const wrapperId = wrapNode(tree, op.nodeId, op.wrapper.moduleId, op.wrapper.defaults)
       return { tree, affectedNodeIds: [op.nodeId, wrapperId] }
     }

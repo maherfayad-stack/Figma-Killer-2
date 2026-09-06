@@ -32,7 +32,20 @@ line references are from the audit date and drift — grep, don't trust.
 
 ---
 
-# W4-1 — Reparent, duplicate, wrap (~1 day)
+# W4-1 — Reparent, duplicate, wrap (~1 day) — ✅ DONE
+
+**Shipped** (`feat/reparent-duplicate-wrap`): `duplicateJsxElement.ts`,
+`wrapJsxElement.ts` and `moveJsxElement.ts`'s destination-parent form, with the
+placement/import halves of `insertJsxElement` extracted to
+`jsxChildPlacement.ts` / `jsxImportEdits.ts` so a reparent lands with exactly
+the whitespace an insert would have produced. Wire kinds `duplicate` / `wrap` /
+`reparent`; `sourceStructure.ts`'s three blanket refusals lifted, with
+`refuseMintedNodeCopy` added for the `applyTreeOperation` path (which persists a
+tree, not a `.tsx`, so it must keep refusing). Cross-FILE reparent and
+out-of-scope captures still refuse, by name. The two copies of the move rule
+(`planSourceMove` / `previewStructuralMove`) were collapsed into one in the same
+pass — lifting a refusal in one and not the other was exactly the drift their
+own comments predicted.
 
 **Goal.** The last three Figma verbs that refuse. `sourceStructure.ts` states the
 blocker plainly: "the new element would have no source location of its own, so it

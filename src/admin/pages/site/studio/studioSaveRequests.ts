@@ -19,18 +19,21 @@
  * `studioWorkspaceDir.ts` (`studioWriteDir`) and what a landed write does to
  * the board in `studioBoardResync.ts` — both were extracted from here once a
  * second caller (`fsCodemodAdapter`'s autosave) needed them too.
+ *
+ * The STRUCTURAL commits (move/reparent/duplicate/wrap/delete/insert) moved
+ * out to `studioStructuralCommits.ts` in W4-1, for the same "a second reason to
+ * change" reason: they post a BATCH and share a reload contract of their own —
+ * "re-sync with disk, but only when a write actually landed" — which none of
+ * the one-shot commits here have. They still post through `postEdits` below.
  */
 import type { StyleRule } from '@core/page-tree'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
-import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
-import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { studioWriteDir } from './studioWorkspaceDir'
 import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
-import { resyncBoardAfterWrite } from './studioBoardResync'
 
 /**
  * POST /admin/api/studio/save response. `shifted` is true when a write changed
@@ -154,221 +157,12 @@ function postOneEdit(edit: Record<string, unknown>): Promise<StudioSaveResponse>
 }
 
 /** Post a batch of edits to `/save`. The save route orders them bottom-to-top before applying. */
-function postEdits(edits: readonly Record<string, unknown>[]): Promise<StudioSaveResponse> {
+export function postEdits(edits: readonly Record<string, unknown>[]): Promise<StudioSaveResponse> {
   return apiRequest('/admin/api/studio/save', {
     method: 'POST',
     body: { dir: studioWriteDir(), edits },
     schema: StudioSaveResponseSchema,
   })
-}
-
-/**
- * `struct-01` — a sibling reorder, committed to the user's `.tsx` the moment
- * the drag ends.
- *
- * A one-shot commit rather than a `saveSite` diff, for the reason every other
- * one-shot commit in this module is one and then a sharper one: `saveSite`
- * walks node VALUES and has no notion of parent, order, or child list at all,
- * which is exactly why a structural edit used to vanish silently. There is
- * also nothing to debounce — a drag ends once.
- *
- * `anchorNodeId` is the sibling the moved element is written against, not an
- * index: see `MoveEditSchema` in `server/handlers/studioWriteback.ts` for why
- * an index computed on the canvas does not name a position in the source.
- *
- * The store has already refused everything it can decide from the node ids
- * (`refuseStructuralEdit`); what can still come back is the residue only the
- * AST can answer — these two are not really siblings in the code, their
- * formatting will not admit a byte-exact move. Those arrive as refusals, and
- * because the store applied the move optimistically, the board is then showing
- * something the file does not say. Reloading is what makes it honest again,
- * which is why it happens on EVERY outcome: a successful write shifted every
- * `line:col` id below it, and a refused one has to be taken back.
- */
-export async function commitStudioMove(
-  nodeId: string,
-  anchorNodeId: string,
-  position: 'before' | 'after',
-): Promise<void> {
-  await commitStructural([{ kind: 'move', nodeId, anchorNodeId, position }], 'Move refused')
-}
-
-/**
- * `struct-01` — removing one or more elements from the user's `.tsx`.
- *
- * Several ids in one request on purpose: `applyStudioEditBatch` orders a batch
- * bottom-to-top, so removing a lower element cannot move a higher one's line,
- * which makes a multi-select delete a single honest transaction rather than N
- * racing ones.
- */
-export async function commitStudioDelete(nodeIds: readonly string[]): Promise<void> {
-  if (nodeIds.length === 0) return
-  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'delete', nodeId })), 'Delete refused')
-}
-
-/**
- * Adding a new element to the user's `.tsx` — the write behind picking a
- * design-system component out of the canvas inserter.
- *
- * Nothing is minted on the canvas first. A node created in the editor carries a
- * nanoid id that could never be written back, which is exactly why `insert`
- * used to be refused outright; instead the SOURCE grows the element (plus the
- * `import` that names it) and the reload below brings it in as an ordinary
- * parsed node with a real `rel:line:col`. That is why the success toast is
- * pushed HERE rather than by the inserter: until the write lands there is
- * nothing to report, and the inserter has no way to know whether it did.
- */
-export async function commitStudioInsert(insert: {
-  parentNodeId: string
-  anchorNodeId: string | null
-  position: 'before' | 'after'
-  name: string
-  /**
-   * Omit for an INTRINSIC element (`<div>`, `<p>`) — those need no import, and
-   * `insertJsxElement` reads the field's absence as exactly that. Present for a
-   * component, which is imported from this specifier.
-   */
-  importSpecifier?: string
-  props: Record<string, InsertPropValue>
-  /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
-  children?: string
-}): Promise<void> {
-  await commitStructural(
-    [
-      {
-        kind: 'insert',
-        nodeId: insert.parentNodeId,
-        ...(insert.anchorNodeId ? { anchorNodeId: insert.anchorNodeId, position: insert.position } : {}),
-        name: insert.name,
-        // Spread conditionally, never passed as `undefined`: the codemod
-        // branches on `importSpecifier === undefined` to choose intrinsic vs
-        // component, and the wire schema has it optional for the same reason.
-        ...(insert.importSpecifier === undefined ? {} : { importSpecifier: insert.importSpecifier }),
-        ...(insert.children === undefined ? {} : { children: insert.children }),
-        props: insert.props,
-      },
-    ],
-    'Add refused',
-    { title: `Added ${insert.name}`, body: 'Written to your project source.' },
-  )
-}
-
-/**
- * Shared body of the structural commits: flush any pending debounced save,
- * post, report what the source refused, and re-sync the board with disk when
- * (and only when) a write actually landed.
- *
- * `success` is passed only by commits with no optimistic canvas change to
- * stand in for the result — an insert shows nothing at all until the reload, so
- * silence would be indistinguishable from a no-op. A move or a delete has
- * already updated the tree, so it stays quiet on success.
- *
- * `STUDIO-FIGMA-PARITY-PLAN.md` 0.2 (audit E2) — two fixes, both applied here:
- *
- *   1. The reload used to fire unconditionally from a `finally` block, on
- *      EVERY outcome including a pure refusal/skip where nothing reached
- *      disk. `loadSite()` wipes the whole undo stack and clears
- *      `hasUnsavedChanges` unconditionally — so a user who typed five
- *      headings, then dragged one layer in the tree, lost Ctrl+Z for all
- *      five headings, and any edit still inside its 2s autosave debounce at
- *      that moment was silently discarded. Trap #5 ("reload only when a
- *      write landed") already applies to `fsCodemodAdapter.saveSite`'s own
- *      reload gate (`result.written > 0`) — this now matches it. (Since
- *      `historyPreservation.ts` landed alongside this, most reloads no
- *      longer wipe history at all when they DO fire — see `loadSite`'s own
- *      doc — so this gate mainly matters for the "nothing to resync" case:
- *      reloading when disk is unchanged would replace the user's optimistic
- *      move/delete/insert with the pre-edit source, undoing it silently.
- *      KNOWN LIMITATION, not fixed here: a REFUSED move/delete (the
- *      "residue only the AST can answer" case — see `commitStudioMove`'s own
- *      doc) already applied its optimistic tree mutation before the refusal
- *      came back; with no reload to correct it, the board can show a
- *      move/delete that never actually reached the source until some LATER,
- *      unrelated reload happens to resync it. Building a targeted revert of
- *      just that transaction (rather than either "reload everything" or
- *      "leave it diverged") is `STUDIO-FIGMA-PARITY-PLAN.md`'s already-
- *      identified follow-up (audit finding E3), deferred deliberately: doing
- *      it here risks the exact same Ctrl+Z-vs-in-flight-POST race E3 already
- *      catalogs as needing its own guard.
- *   2. Before posting, flush any edit still inside the autosave debounce and
- *      AWAIT it, so a prop/text/style edit made moments before this
- *      structural gesture is durably written (and, per 0.1's fix, its own
- *      save-diff baseline advanced) before a later reload's re-parse could
- *      either discard it outright or — worse — target it at now-stale ids.
- *      A flush failure must not block the structural edit the user actually
- *      asked for; it's logged and the commit proceeds regardless (the
- *      autosave loop's own error state already surfaces that failure via the
- *      toolbar's save indicator).
- *
- * `STUDIO-FIGMA-PARITY-PLAN.md` Track C5 (reload surgery, Band 2, built on
- * top of 0.2 above) — the ONE thing that changed since: "reload" on a landed
- * write no longer means "reparse the whole workspace" by default. See
- * `studioBoardResync.ts`'s `resyncBoardAfterWrite` for the full contract;
- * every gate described in items 1/2 above (still gated on `written > 0`,
- * still flushes first, still leaves a refused move/delete visually diverged
- * until a later reload) is UNCHANGED — C5 only changes what a "reload" does
- * once the gate says one should happen.
- */
-async function commitStructural(
-  edits: readonly Record<string, unknown>[],
-  refusalTitle: string,
-  success?: { title: string; body: string },
-): Promise<void> {
-  try {
-    await flushEditorSave()
-  } catch (err) {
-    console.error('[studioSaveRequests] pre-structural-edit save flush failed:', err)
-  }
-
-  try {
-    const result = await postEdits(edits)
-    for (const refusal of result.refusals ?? []) {
-      pushToast({ kind: 'error', title: refusalTitle, body: refusal.message })
-    }
-    if (success && result.written > 0) {
-      pushToast({ kind: 'success', title: success.title, body: success.body, location: 'module-inserter' })
-    }
-    // A skip with no refusal means the location decoded to nothing writable at
-    // all — the id was stale against disk. Same remedy, but say so rather than
-    // letting the change quietly reappear after the reload with no explanation.
-    const unexplained = result.skipped - (result.refusals ?? []).length
-    const willReload = result.written > 0
-    if (unexplained > 0) {
-      pushToast({
-        kind: 'error',
-        title: refusalTitle,
-        body: willReload
-          ? 'The code no longer has an element at the position the canvas was showing. The board has been reloaded from the files on disk.'
-          : 'The code no longer has an element at the position the canvas was showing.',
-      })
-    }
-    // trap #5 — reload only when a write actually landed. Nothing reaching
-    // disk means there is nothing to resync FROM; reloading anyway would
-    // replace whatever the canvas is currently (optimistically) showing with
-    // the unchanged, pre-edit source.
-    //
-    // Track C5 (reload surgery) — `resyncBoardAfterWrite` tries a targeted
-    // per-page resync first (see its own doc) and only falls back to the
-    // full `requestCmsSiteReload()` this used to call unconditionally when
-    // that isn't provably safe. Every OTHER behaviour on this line is
-    // unchanged: still gated on `willReload`, still the thing that (per
-    // (1) above) leaves a refused move/delete visually diverged until a
-    // later reload happens to resync it.
-    if (willReload) await resyncBoardAfterWrite(result.touchedFiles ?? [])
-  } catch (err) {
-    // Fire-and-forget from the store's mutation guard, so this is the only
-    // place the failure can be reported. No response was ever obtained, so
-    // there is no `written` count to check — the safe assumption after a
-    // failed request is "disk is unchanged," which means no reload either
-    // (see this function's doc for why an unconditional reload here was the
-    // bug, not the fix).
-    console.error('[studioSaveRequests] structural edit failed:', err)
-    pushToast({
-      kind: 'error',
-      title: refusalTitle,
-      body: getErrorMessage(err, 'The change could not be written to the project source.'),
-    })
-  }
 }
 
 /**

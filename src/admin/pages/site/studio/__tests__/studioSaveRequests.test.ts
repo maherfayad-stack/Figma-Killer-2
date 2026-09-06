@@ -23,7 +23,7 @@
  *      step of the narrow path fails for any reason.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { commitStudioDelete, commitStudioInsert, commitStudioMove } from '../studioSaveRequests'
+import { commitStudioDelete, commitStudioInsert, commitStudioMove } from '../studioStructuralCommits'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
 import { CMS_SITE_PAGES_PATCH_EVENT, CMS_SITE_RELOAD_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
