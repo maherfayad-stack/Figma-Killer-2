@@ -112,7 +112,7 @@ async function openStudioBoard(page: Page, projectDir: string): Promise<Locator>
   await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
   // A COLD `pageParseCache` re-parses all 15 corpus pages with ts-morph before
   // the board can mount, which comfortably exceeds the 10s default. The admin
-  // shell shows its "Could not load CMS site" state in the meantime — that is
+  // shell shows its "Could not open this project" state in the meantime — that is
   // the pre-studio CMS document, transient, and NOT a failure to assert on.
   await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 90_000 })
   await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 30_000 })

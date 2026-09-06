@@ -33,7 +33,8 @@ import {
   type CanvasTransform,
 } from '@site/canvas/math'
 import { panToCenterBreakpointFrame } from '@site/canvas/canvasDomGeometry'
-import { computeZoomToFitTransform, type CanvasFitRect } from '@site/canvas/canvasZoomFit'
+import { computeZoomToFitTransform, DEFAULT_ZOOM_FIT_PADDING_PX, type CanvasFitRect, type ZoomFitMode } from '@site/canvas/canvasZoomFit'
+import { measureCanvasFrameRects, measureCanvasSelectionRects } from '@site/canvas/canvasViewportCommands'
 import {
   CANVAS_DRAG_PAN_BUTTONS,
   isCanvasPointerPanActive,
@@ -314,14 +315,15 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   )
 
   /**
-   * Zoom/pan so `targetRects` (screen-space, relative to the canvas root)
-   * are entirely visible, centered. Shared by `zoomToFit` and
-   * `zoomToSelection` — the only difference between the two is which rects
-   * they measure. Returns `false` when there was nothing to fit (empty or
-   * fully-degenerate rect list — see `computeZoomToFitTransform`).
+   * Zoom/pan so `targetRects` (screen-space, relative to the canvas root) are
+   * entirely visible (`contain`) or fill the viewport (`cover`), centered.
+   * Shared by `zoomToFit`, `zoomToFill` and `zoomToSelection` — the only
+   * differences between the three are which rects they measure and the mode.
+   * Returns `false` when there was nothing to fit (empty or fully-degenerate
+   * rect list — see `computeZoomToFitTransform`).
    */
   const applyZoomToFitRects = useCallback(
-    (targetRects: readonly CanvasFitRect[]): boolean => {
+    (targetRects: readonly CanvasFitRect[], mode: ZoomFitMode = 'contain'): boolean => {
       const root = canvasRootRef.current
       if (!root) return false
       const rootRect = root.getBoundingClientRect()
@@ -329,6 +331,8 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
         { width: rootRect.width, height: rootRect.height },
         targetRects,
         transformRef.current,
+        DEFAULT_ZOOM_FIT_PADDING_PX,
+        mode,
       )
       if (!next) return false
       transformRef.current = next
@@ -349,45 +353,31 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     const root = canvasRootRef.current
     const layer = transformLayerRef.current
     if (!root || !layer) return false
-    const rootRect = root.getBoundingClientRect()
-    // `data-breakpoint-id` sits on each frame's own iframe-viewport wrapper
-    // (`BreakpointFrame.tsx`) — one per rendered frame, and unlike
-    // `canvas-frame-<id>` it has no `-activate-`/`-live-`/`-collapse-`
-    // button siblings sharing the prefix, so a plain attribute-presence
-    // selector can't accidentally pick up chrome buttons.
-    const frames = layer.querySelectorAll<HTMLElement>('[data-breakpoint-id]')
-    const rects: CanvasFitRect[] = []
-    frames.forEach((frame) => {
-      const r = frame.getBoundingClientRect()
-      if (r.width === 0 && r.height === 0) return
-      rects.push({ left: r.left - rootRect.left, top: r.top - rootRect.top, width: r.width, height: r.height })
-    })
-    return applyZoomToFitRects(rects)
+    return applyZoomToFitRects(measureCanvasFrameRects(root, layer))
   }, [canvasRootRef, transformLayerRef, applyZoomToFitRects])
 
   /**
-   * `Shift+2` (`canvas.zoomToSelection`) — fit the current selection. Reads
-   * the ALREADY-POSITIONED selection ring element(s)
-   * (`[data-canvas-selection-ring="true"]`, `BreakpointSelectionOverlay.tsx`)
-   * rather than re-deriving node geometry: the ring is already the exact
-   * cross-iframe, `nodeVisualRect`-aware, per-`(frameId,nodeId)`-scoped
-   * screen rect a selection has, computed every RAF tick this hook has no
-   * visibility into (see `canvasSelectionOverlayPositioning.ts`). Multiple
-   * rings (multi-select) are unioned automatically by
-   * `computeZoomToFitTransform`. No-ops (`false`) when nothing is selected.
+   * The toolbar zoom menu's "Fill" (viewport-01) — same frames as `zoomToFit`,
+   * scaled to COVER the viewport instead of fitting inside it. Keyboard-free
+   * on purpose: Figma has no default key for it either, and the registry only
+   * carries keys that exist.
+   */
+  const zoomToFill = useCallback((): boolean => {
+    const root = canvasRootRef.current
+    const layer = transformLayerRef.current
+    if (!root || !layer) return false
+    return applyZoomToFitRects(measureCanvasFrameRects(root, layer), 'cover')
+  }, [canvasRootRef, transformLayerRef, applyZoomToFitRects])
+
+  /**
+   * `Shift+2` (`canvas.zoomToSelection`) — fit the current selection, measured
+   * from the live selection rings (see `measureCanvasSelectionRects`).
+   * No-ops (`false`) when nothing is selected.
    */
   const zoomToSelection = useCallback((): boolean => {
     const root = canvasRootRef.current
     if (!root) return false
-    const rootRect = root.getBoundingClientRect()
-    const rings = document.querySelectorAll<HTMLElement>('[data-canvas-selection-ring="true"]')
-    const rects: CanvasFitRect[] = []
-    rings.forEach((ring) => {
-      const r = ring.getBoundingClientRect()
-      if (r.width === 0 && r.height === 0) return
-      rects.push({ left: r.left - rootRect.left, top: r.top - rootRect.top, width: r.width, height: r.height })
-    })
-    return applyZoomToFitRects(rects)
+    return applyZoomToFitRects(measureCanvasSelectionRects(root))
   }, [canvasRootRef, applyZoomToFitRects])
 
   // ─── Spacebar tracking (for Space+drag pan) ───────────────────────────────
@@ -428,7 +418,7 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== '0') return
+      if (!getKeybindingForCommand('canvas.zoomReset')?.match(e)) return
 
       const target = e.target as HTMLElement
       if (
@@ -482,9 +472,6 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       const c = getViewportCenter()
       if (c) zoomOut(c.x, c.y)
       else zoomOut()
-    } else if ((e.metaKey || e.ctrlKey) && e.key === '0') {
-      e.preventDefault()
-      resetCanvasView()
     } else if (getKeybindingForCommand('canvas.zoomToFit')?.match(e)) {
       // `Shift+1` → zoom to fit every visible frame (D3 — was a "reset to
       // 100%" alias before; see this function's own module doc).
@@ -682,9 +669,12 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     handleKeyDown,
     panBy,
     centerOnBreakpointFrame,
-    /** `Shift+1` (`canvas.zoomToFit`) as a callable, e.g. for a future toolbar button. */
+    // viewport-01 — `CanvasRoot` publishes these three to the store as
+    // `canvasViewportCommands` so the toolbar's zoom menu (rendered outside
+    // this hook's tree) runs the real gesture. `canvasViewportCommands.ts`
+    // explains why the bodies stay here rather than becoming store actions.
     zoomToFit,
-    /** `Shift+2` (`canvas.zoomToSelection`) as a callable, e.g. for a future toolbar button. */
+    zoomToFill,
     zoomToSelection,
     /** Whether a space-pan drag is in progress */
     isDragging: isDraggingRef,

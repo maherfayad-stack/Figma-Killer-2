@@ -1,5 +1,6 @@
 /**
- * AlmLogo — the ALM Figma Killer brand mark (Almosafer app icon).
+ * AlmLogo — Studio's brand mark (the Almosafer app icon the fork inherited
+ * its name from; the component name is kept, the user-visible label is not).
  *
  * A brand logo, not a design-system icon — it does not come from
  * `pixel-art-icons` because it is a fixed multi-color mark, not a
@@ -22,7 +23,7 @@ export function AlmLogo({ size = 16, className }: AlmLogoProps) {
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       role="img"
-      aria-label="ALM Figma Killer"
+      aria-label="Studio"
       className={className}
     >
       <path

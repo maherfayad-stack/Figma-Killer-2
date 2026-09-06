@@ -25,14 +25,25 @@
  * remove now reaches disk via `setJsxClassName` instead of only ever warning
  * that it couldn't.
  */
+/**
+ * One class token — `server/handlers/studioEditSchemas.ts`'s
+ * `ClassNameTokenSchema`. `style-02`: a class declared in a `*.module.css`
+ * has no literal name in the built app, so it travels structurally and the
+ * codemod writes the only reachable spelling (`styles.<local>`).
+ */
+export type StudioClassToken =
+  | { kind: 'literal'; token: string }
+  | { kind: 'module'; file: string; local: string }
+
 export type StudioEditPayload =
   | { kind: 'prop'; nodeId: string; prop: string; value: string | number | boolean }
   | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
-  | { kind: 'class'; nodeId: string; add: string[]; remove: string[] }
+  | { kind: 'class'; nodeId: string; add: StudioClassToken[]; remove: StudioClassToken[] }
   | { kind: 'literal'; nodeId: string; text: string }
   | { kind: 'tag'; nodeId: string; tag: string }
   | { kind: 'asset'; nodeId: string; assetPath: string }
-  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string }
+  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string; atMedia?: string }
+  | { kind: 'css'; op: 'unset'; nodeId: string; file: string; selector: string; property: string; atMedia?: string }
   | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atMedia?: string }
   | { kind: 'css'; op: 'create'; nodeId: string; pageFile: string; selector: string; declarations: Record<string, string>; atMedia?: string }

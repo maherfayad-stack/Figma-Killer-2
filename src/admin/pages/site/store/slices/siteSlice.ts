@@ -39,6 +39,7 @@ import { createFrameworkPreferencesActions } from './site/framework/preferences'
 import { createFrameworkPreviewActions } from './site/framework/preview'
 import { createFrameworkManagerActions } from './site/framework/manage'
 import { createFrameworkTokenImportActions } from './site/framework/tokenImport'
+import { emptyNodeIndexes, nodeIndexState } from './site/nodeIndex'
 import type { SiteSlice } from './site/types'
 
 // Re-export the public slice type for store wiring.
@@ -67,11 +68,10 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
     canRedo: false,
     _historyCoalesceKey: null,
 
-    // Node-lookup indexes (WS-5.2) — rebuilt whole in loadSite/createSite,
-    // maintained incrementally by helpers.ts/undoRedoActions.ts. See nodeIndex.ts.
-    _nodeIdToPageIds: new Map(),
-    _textOriginKeyToCount: new Map(),
-    _inlineTailToCount: new Map(),
+    // Node-lookup indexes (WS-5.2, extended in store-01b) — rebuilt whole in
+    // loadSite/createSite, maintained incrementally by
+    // helpers.ts/undoRedoActions.ts. See nodeIndex.ts.
+    ...nodeIndexState(emptyNodeIndexes()),
 
     // mutateAllPagesAndSite is the public entry point for the Super Import
     // wizard — one Cmd+Z reverts the entire import.

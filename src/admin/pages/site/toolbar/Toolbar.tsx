@@ -33,6 +33,7 @@ import type { RegisteredPluginToolbarButton } from '@core/plugin-sdk'
 import { AccountMenuButton } from '@admin/shared/AccountMenuButton'
 import { OpenLivePageButton } from '@admin/shared/OpenLivePageButton'
 import { SettingsButton } from './SettingsButton'
+import { ShortcutsHelpButton } from './ShortcutsHelpButton'
 import { Link } from '@admin/lib/routing'
 import { Button } from '@ui/components/Button'
 import { Skeleton } from '@ui/components/Skeleton'
@@ -330,7 +331,15 @@ export function Toolbar({
               the site root elsewhere); AccountMenuButton is the account /
               sign-out entry point. All three are reachable from every admin
               route (Site / Content / Data / Media / Plugins / Users / …), so
-              they live in the toolbar shell, not in any layout's right slot. */}
+              they live in the toolbar shell, not in any layout's right slot.
+
+              ShortcutsHelpButton joined them in viewport-01: the generated
+              shortcuts sheet already existed but had no chrome affordance at
+              all — you had to already know the "?" key, or the command
+              palette, to find the list of keys you don't know yet. Same
+              adminUi-only dependency as SettingsButton, so it stays
+              bundle-safe on non-editor routes. */}
+          <ShortcutsHelpButton />
           <SettingsButton />
           {/* "Open live page" jumps to the CMS's published static output —
               meaningless in Studio (its pages are never run through the

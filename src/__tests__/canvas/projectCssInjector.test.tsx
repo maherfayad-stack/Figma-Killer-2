@@ -15,6 +15,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, render } from '@testing-library/react'
 import { ProjectCssInjector } from '@site/canvas/ProjectCssInjector'
+import { createVendorCssMemo } from '@site/canvas/canvasVendorCss'
 import { fsCodemodAdapter, getStudioVendorCss } from '@admin/pages/site/studio/fsCodemodAdapter'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER, VENDOR_LAYER } from '@site/canvas/canvasCssLayers'
 
@@ -119,6 +120,29 @@ describe('ProjectCssInjector', () => {
     const target = document.implementation.createHTMLDocument('iframe')
     render(<ProjectCssInjector targetDocument={target} />)
     expect(target.getElementById('mc-vendor')?.textContent ?? '').toContain(raw)
+  })
+
+  it('rewrites+concatenates the vendor bytes ONCE across every mounted frame', async () => {
+    let rewrites = 0
+    const build = createVendorCssMemo((css) => {
+      rewrites++
+      return css
+    })
+
+    // Six frames mounting in one commit, all with the same project vendor CSS
+    // — the shape a board pan into six new frames produces.
+    const outputs = Array.from({ length: 6 }, () => build('.acme { color: teal }'))
+    expect(rewrites).toBe(1)
+    // Same string identity, so assigning it to `styleEl.textContent` in each
+    // frame costs nothing extra either.
+    for (const out of outputs) expect(out).toBe(outputs[0])
+    expect(outputs[0]).toContain('.acme { color: teal }')
+
+    // A genuinely new project vendor CSS still rebuilds.
+    const next = build('.acme { color: coral }')
+    expect(rewrites).toBe(2)
+    expect(next).toContain('.acme { color: coral }')
+    expect(next).not.toContain('teal')
   })
 
   it('removes its <style> tag on unmount', async () => {

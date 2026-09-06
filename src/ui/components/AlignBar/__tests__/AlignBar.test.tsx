@@ -10,7 +10,7 @@ import { AlignBar } from '../AlignBar'
 // this is the correct disabled check for them, matching Button's own
 // documented behaviour (`Button.tsx`'s `useAriaDisabled`).
 function isDisabled(el: HTMLElement): boolean {
-  return el.getAttribute('aria-disabled') === 'true'
+  return el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('disabled')
 }
 
 describe('AlignBar', () => {
@@ -36,37 +36,89 @@ describe('AlignBar', () => {
     expect(isDisabled(screen.getByTestId('align-bar-left'))).toBe(false)
   })
 
-  it('hides the distribute row when onDistribute and onTidy are both omitted', () => {
+  it('hides the overflow trigger when onDistribute and onTidy are both omitted', () => {
     render(<AlignBar count={5} onAlign={() => {}} />)
-    expect(screen.queryByRole('group', { name: 'Distribute selection' })).toBeNull()
-  })
-
-  it('disables distribute buttons below minDistribute (default 3)', () => {
-    render(<AlignBar count={2} onAlign={() => {}} onDistribute={() => {}} />)
-    expect(isDisabled(screen.getByTestId('align-bar-distribute-horizontal'))).toBe(true)
-  })
-
-  it('fires onDistribute with the clicked axis once minDistribute is met', async () => {
-    const user = userEvent.setup()
-    const onDistribute = mock(() => {})
-    render(<AlignBar count={3} onAlign={() => {}} onDistribute={onDistribute} />)
-
-    await user.click(screen.getByTestId('align-bar-distribute-vertical'))
-    expect(onDistribute).toHaveBeenCalledWith('vertical')
-  })
-
-  it('fires onTidy regardless of count', async () => {
-    const user = userEvent.setup()
-    const onTidy = mock(() => {})
-    render(<AlignBar count={1} onAlign={() => {}} onTidy={onTidy} />)
-
-    await user.click(screen.getByTestId('align-bar-tidy'))
-    expect(onTidy).toHaveBeenCalled()
+    expect(screen.queryByTestId('align-bar-more')).toBeNull()
   })
 
   it('disabled prop overrides count thresholds entirely', () => {
     render(<AlignBar count={10} onAlign={() => {}} onDistribute={() => {}} disabled />)
     expect(isDisabled(screen.getByTestId('align-bar-left'))).toBe(true)
-    expect(isDisabled(screen.getByTestId('align-bar-distribute-horizontal'))).toBe(true)
+    expect(isDisabled(screen.getByTestId('align-bar-more'))).toBe(true)
+  })
+
+  describe('overflow menu (distribute + tidy)', () => {
+    it('renders all three items with their shortcuts once opened', async () => {
+      const user = userEvent.setup()
+      render(<AlignBar count={5} onAlign={() => {}} onDistribute={() => {}} onTidy={() => {}} />)
+
+      await user.click(screen.getByTestId('align-bar-more'))
+
+      expect(screen.getByTestId('align-bar-tidy')).toBeTruthy()
+      expect(screen.getByTestId('align-bar-distribute-horizontal')).toBeTruthy()
+      expect(screen.getByTestId('align-bar-distribute-vertical')).toBeTruthy()
+      expect(screen.getByText('Tidy up')).toBeTruthy()
+      expect(screen.getByText('Distribute horizontal spacing')).toBeTruthy()
+      expect(screen.getByText('Distribute vertical spacing')).toBeTruthy()
+    })
+
+    it('disables distribute items below minDistribute (default 3) but not tidy', async () => {
+      const user = userEvent.setup()
+      render(<AlignBar count={2} onAlign={() => {}} onDistribute={() => {}} onTidy={() => {}} />)
+
+      await user.click(screen.getByTestId('align-bar-more'))
+
+      expect(isDisabled(screen.getByTestId('align-bar-distribute-horizontal'))).toBe(true)
+      expect(isDisabled(screen.getByTestId('align-bar-tidy'))).toBe(false)
+    })
+
+    it('fires onDistribute with the clicked axis once minDistribute is met', async () => {
+      const user = userEvent.setup()
+      const onDistribute = mock(() => {})
+      render(<AlignBar count={3} onAlign={() => {}} onDistribute={onDistribute} />)
+
+      await user.click(screen.getByTestId('align-bar-more'))
+      await user.click(screen.getByTestId('align-bar-distribute-vertical'))
+      expect(onDistribute).toHaveBeenCalledWith('vertical')
+    })
+
+    it('fires onTidy regardless of count', async () => {
+      const user = userEvent.setup()
+      const onTidy = mock(() => {})
+      render(<AlignBar count={1} onAlign={() => {}} onTidy={onTidy} />)
+
+      await user.click(screen.getByTestId('align-bar-more'))
+      await user.click(screen.getByTestId('align-bar-tidy'))
+      expect(onTidy).toHaveBeenCalled()
+    })
+  })
+
+  describe('alignDisabledReasons (single-node mode)', () => {
+    it('disables only the edges with a reason, independent of count', () => {
+      render(
+        <AlignBar
+          count={1}
+          onAlign={() => {}}
+          minAlign={0}
+          alignDisabledReasons={{ left: 'Align needs a flex or grid parent.' }}
+        />,
+      )
+      expect(isDisabled(screen.getByTestId('align-bar-left'))).toBe(true)
+      expect(isDisabled(screen.getByTestId('align-bar-top'))).toBe(false)
+    })
+
+    it('surfaces the reason as the button tooltip on hover', async () => {
+      const user = userEvent.setup()
+      render(
+        <AlignBar
+          count={1}
+          onAlign={() => {}}
+          minAlign={0}
+          alignDisabledReasons={{ left: '2 siblings share this axis.' }}
+        />,
+      )
+      await user.hover(screen.getByTestId('align-bar-left'))
+      expect(await screen.findByText('2 siblings share this axis.')).toBeTruthy()
+    })
   })
 })

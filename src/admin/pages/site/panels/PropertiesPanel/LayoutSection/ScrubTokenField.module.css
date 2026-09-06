@@ -1,0 +1,21 @@
+/* ScrubTokenField — the draggable letterform glyph rendered via
+ * TokenAwareInput's own `prefix` slot. Mirrors ScrubInput.module.css's
+ * `.label` cursor/hit-area treatment so the gesture feels identical whether
+ * the field underneath is plain (`ScrubInput`, Size section) or
+ * token-aware (this component, Layout padding / Spacing margin). */
+
+.handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-subtle);
+    font-size: inherit;
+    font-variant-numeric: tabular-nums;
+    cursor: ew-resize;
+    user-select: none;
+    touch-action: none;
+}
+
+.handle:hover {
+    color: var(--text);
+}

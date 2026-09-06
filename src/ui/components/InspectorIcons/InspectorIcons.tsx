@@ -294,3 +294,24 @@ export function CommentBubbleIcon(props: IconProps) {
     />
   )
 }
+
+// ---------------------------------------------------------------------------
+// Rotation (PositionSection, G10 follow-up) — the vendored catalogue has no
+// rotate/angle mark, so it is drawn here under the same Gate 3 exemption as
+// everything above.
+// ---------------------------------------------------------------------------
+
+/**
+ * An open square ring — three sides solid, the fourth trailing off into a
+ * stepped diagonal "swoosh" — reading as a partial turn rather than a full
+ * closed shape. The trailing steps stand in for the vendored set's usual
+ * diagonal staircase, so a clockwise sweep is legible without a real curve.
+ */
+export function RotateIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M5 8h2v12H5V8Zm0 10h14v2H5v-2Zm12-13h2v15h-2V5Zm-2 0h2v2h-2V5Zm-2 2h2v2h-2V7Zm-2 2h2v2h-2V9Z"
+    />
+  )
+}

@@ -1,22 +1,34 @@
 /**
- * DropdownSwitcher — shared 3-state segmented + dropdown chip used by the
- * Layout and Position sections.
+ * DropdownSwitcher — shared segmented + dropdown control used by the Layout
+ * and Position sections.
  *
- * Three visual states keyed off the current CSS value:
+ * ONE shape, always: `[ A | B | ▼ ]` (unset — no segment pressed), `[ A | B |
+ * ▼ ]` with the matching segment pressed (primary value), or `[ A | B |
+ * <value> | ▼ ]` with a synthetic trailing segment carrying the CURRENT value
+ * when it's outside the two promoted primaries (e.g. `position: static`).
+ * That third case used to swap the whole row for a full-width chip + a
+ * separate close button — visually a different control, and on a narrow
+ * panel it read as an oversized pill sitting where a compact row belongs.
+ * Folding the out-of-band value into the SAME segmented track means the
+ * shape never changes shell, only which segment (if any) is pressed — this
+ * is what "same treatment" means when a sibling section reaches for this
+ * shell for a property whose default value (like `display: block` or
+ * `position: static`) never earns a promoted segment.
  *
- *   1. unset — `[ A | B | ▼ ]` segmented row, no segment pressed.
- *   2. primary value — same row, the matching segment pressed. Hovering the
- *      pressed segment reveals a close-icon overlay; clicking it clears the
- *      property (`onClear()`).
- *   3. other value — segmented row replaced by a full-width chip showing
- *      `kicker · value` with a square close button. Clicking the chip body
- *      reopens the dropdown so users can pick a different value.
+ * Every segment — primary or synthetic — shares one interaction: hovering the
+ * PRESSED segment reveals a close-icon overlay, and clicking it fires
+ * `onClear()` (never a silent rewrite — the value stays exactly what it was
+ * until the user explicitly clears it or picks a different one from the
+ * dropdown). The synthetic segment never invents a label the control can't
+ * honestly represent — it just echoes the raw CSS value string, so a value
+ * this shell has no promoted button for is still shown verbatim rather than
+ * coerced towards one of the primaries.
  *
  * The trailing chevron always opens a ContextMenu listing every value in
  * `allOptions` so power users can reach values not promoted to the primary
- * segments. Identification (test id, data attribute, aria labels, kicker
- * text) is driven by `property`, so the same shell works for `display`,
- * `position`, and any future CSS property that fits this three-state mold.
+ * segments. Identification (test id, data attribute, aria labels) is driven
+ * by `property`, so the same shell works for `display`, `position`, and any
+ * future CSS property that fits this mold.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -25,7 +37,6 @@ import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
-import { CloseIcon } from 'pixel-art-icons/icons/close'
 import styles from './LayoutSection.module.css'
 
 interface PrimarySegment {
@@ -37,7 +48,7 @@ interface PrimarySegment {
 }
 
 interface DropdownSwitcherProps {
-  /** Lowercase CSS property name. Drives kicker text, aria labels, test id. */
+  /** Lowercase CSS property name. Drives aria labels and the test id. */
   property: string
   /** Current CSS value (undefined renders the unset segmented control). */
   value: string | undefined
@@ -98,6 +109,15 @@ export function DropdownSwitcher({
   const isPrimary = value != null && primarySegments.some((seg) => seg.value === value)
   const isOtherValue = value != null && value !== '' && !isPrimary
 
+  // The out-of-band value gets its own segment, appended after the
+  // primaries, so it renders verbatim (never coerced towards a primary)
+  // while keeping the exact same track shell. `ariaLabel` matches the old
+  // chip's `"${Property}: ${value}"` accessible name — callers and tests
+  // identify this state by that name, not by a class name or DOM shape.
+  const segments: ReadonlyArray<PrimarySegment> = isOtherValue
+    ? [...primarySegments, { value, label: value, ariaLabel: `${capitalized}: ${value}`, tooltip: `${property}: ${value}` }]
+    : primarySegments
+
   const menu = menuOpen ? (
     <ContextMenu
       anchorRef={triggerRef}
@@ -127,49 +147,6 @@ export function DropdownSwitcher({
     </ContextMenu>
   ) : null
 
-  // ── Other-value state — full-width chip + close button ───────────────────
-  if (isOtherValue) {
-    return (
-      <div
-        className={styles.displayRow}
-        data-testid={testId}
-        {...{ [dataValueAttr]: value ?? '' }}
-      >
-        <div className={styles.displayChipGroup}>
-          <Button
-            ref={triggerRef}
-            variant="secondary"
-            size="sm"
-            fullWidth
-            align="start"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            aria-label={`${capitalized}: ${value}`}
-            tooltip={`Change ${property} value`}
-            className={styles.displayChip}
-            onClick={toggleMenu}
-          >
-            <span className={styles.displayChipKicker}>{property}</span>
-            <span className={styles.displayChipValue}>{value}</span>
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            iconOnly
-            aria-label={`Clear ${property} (${value})`}
-            tooltip={`Clear ${property}`}
-            className={styles.displayChipClear}
-            onClick={onClear}
-          >
-            <CloseIcon size={14} color="currentColor" />
-          </Button>
-        </div>
-        {menu}
-      </div>
-    )
-  }
-
-  // ── Unset / primary value — segmented control ────────────────────────────
   return (
     <div
       className={styles.displayRow}
@@ -179,10 +156,10 @@ export function DropdownSwitcher({
       <SegmentedControl
         fullWidth
         aria-label={capitalized}
-        value={isPrimary ? value : undefined}
+        value={isPrimary || isOtherValue ? value : undefined}
         onChange={onChange}
         onClear={onClear}
-        options={primarySegments.map((seg) => ({
+        options={segments.map((seg) => ({
           value: seg.value,
           label: seg.label,
           icon: seg.icon,

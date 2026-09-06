@@ -137,6 +137,13 @@
  *       unregistered `pkg.*` node — see `NodeRenderer.tsx`'s
  *       `PackageComponentPlaceholder`.
  *
+ *   GET/POST /admin/api/studio/style-compile-consent → `studio/styleCompileConsent.ts`
+ *       WS-2.1's missing front door: whether THIS project needs its own
+ *       Sass/PostCSS/Tailwind compiler run (and is still at Tier 0, so it
+ *       isn't happening), plus the per-project "not now" the board's consent
+ *       banner persists. Reports only — promoting still goes through
+ *       `trust-tier` above, the one promotion path.
+ *
  *   POST /admin/api/studio/extract-component   → `studio/extractComponent.ts`
  *       instance-ui-01 — the detach-refusal escape hatch (`extractComponentCopy`)
  *       as a plain route the admin browser can call: duplicate a component
@@ -231,6 +238,7 @@ import { tryServeStudioReferenceUpload } from './studio/referenceUpload'
 import { tryServeStudioComponentBundle } from './studio/componentBundle'
 import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
+import { tryServeStudioStyleCompileConsent } from './studio/styleCompileConsent'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 import { tryServeStudioLocalizedPage } from './studio/localizedPage'
@@ -263,6 +271,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,
+  tryServeStudioStyleCompileConsent,
   tryServeStudioTokens,
   tryServeStudioExtractComponent,
   tryServeStudioPreviewAxes,

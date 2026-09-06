@@ -44,7 +44,7 @@
  * caller (`server/handlers/studioCssWriteback.ts`) runs this immediately
  * before `setDeclaration` on the same text it is about to write.
  */
-import postcss, { type Declaration, type Root, type Rule } from 'postcss'
+import postcss, { type Container, type Declaration, type Root, type Rule } from 'postcss'
 
 /** A named, user-readable reason a CSS write refused. `reason` is the machine tag; `message` is shown verbatim in a toast. */
 export interface DeclarationTargetRefusal {
@@ -98,13 +98,37 @@ function shorthandCovers(shorthand: string, longhand: string): boolean {
   return false
 }
 
-/** Every top-level rule in `root` whose selector matches `selector` exactly, trimmed — the same match rule `setDeclaration` uses. */
-function matchingRules(root: Root, selector: string): Rule[] {
+/**
+ * The scopes a write for `atMedia` could land in, in source order.
+ *
+ * Without `atMedia` that is the file's top level, and only its top level: a
+ * rule nested in an `@media` block does not participate in the unconditional
+ * cascade the caller is asking about.
+ *
+ * With `atMedia` it is EVERY `@media` block whose params match, not just the
+ * first — `setDeclarationAtMedia` writes the first one, so a second block with
+ * the same query that also sets this property is exactly the duplicate-selector
+ * hazard this analyzer exists to catch, one nesting level down.
+ */
+function targetScopes(root: Root, atMedia: string | undefined): Container[] {
+  if (!atMedia) return [root]
+  const query = atMedia.trim()
+  const scopes: Container[] = []
+  root.each((node) => {
+    if (node.type === 'atrule' && node.name === 'media' && node.params.trim() === query) scopes.push(node)
+  })
+  return scopes
+}
+
+/** Every direct-child rule of `scopes` whose selector matches `selector` exactly, trimmed — the same match rule `setDeclaration` uses. */
+function matchingRules(scopes: readonly Container[], selector: string): Rule[] {
   const target = selector.trim()
   const matches: Rule[] = []
-  root.each((node) => {
-    if (node.type === 'rule' && node.selector.trim() === target) matches.push(node)
-  })
+  for (const scope of scopes) {
+    scope.each((node) => {
+      if (node.type === 'rule' && node.selector.trim() === target) matches.push(node)
+    })
+  }
   return matches
 }
 
@@ -118,11 +142,22 @@ function ownDeclarations(rule: Rule): Declaration[] {
 }
 
 /**
- * Whether `setDeclaration(cssText, selector, property, …)` would land on
- * exactly one honest target — see this module's doc for what each refusal
- * means and why the non-refusal cases are safe.
+ * Whether `setDeclaration`/`removeDeclaration` on this selector+property would
+ * land on exactly one honest target — see this module's doc for what each
+ * refusal means and why the non-refusal cases are safe.
+ *
+ * `atMedia` scopes the whole analysis to rules inside `@media <query>`, which
+ * is where `setDeclarationAtMedia` writes. Answering from the file's top level
+ * for a breakpoint override would be the wrong question twice over: it would
+ * miss a duplicate inside the block, and it would refuse for an unrelated
+ * shorthand outside it.
  */
-export function analyzeDeclarationTarget(cssText: string, selector: string, property: string): DeclarationTargetAnalysis {
+export function analyzeDeclarationTarget(
+  cssText: string,
+  selector: string,
+  property: string,
+  options: { atMedia?: string } = {},
+): DeclarationTargetAnalysis {
   let root: Root
   try {
     root = postcss.parse(cssText)
@@ -140,9 +175,10 @@ export function analyzeDeclarationTarget(cssText: string, selector: string, prop
   }
 
   const prop = property.toLowerCase()
-  const matches = matchingRules(root, selector)
-  // No existing rule: `setDeclaration` appends a fresh one at the end of the
-  // file, which cascades last and is unambiguous.
+  const matches = matchingRules(targetScopes(root, options.atMedia), selector)
+  // No existing rule (or, for `atMedia`, no such block yet): the writer
+  // appends a fresh one at the end, which cascades last and is unambiguous.
+  // For a REMOVAL there is likewise nothing to be shadowed by.
   if (matches.length === 0) return { ok: true }
 
   const target = matches[0]!

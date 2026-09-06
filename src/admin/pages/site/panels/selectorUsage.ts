@@ -1,35 +1,23 @@
 import { isUserVisibleClass, styleRuleSelector } from '@core/page-tree'
-import type { StyleRule, SiteDocument } from '@core/page-tree'
+import type { StyleRule } from '@core/page-tree'
+
+/**
+ * `classId → how many nodes carry it`, read straight off the store's
+ * `_classIdToNodeCount` index (`store/slices/site/nodeIndex.ts`). Classes
+ * with zero references are simply absent — callers default to 0.
+ *
+ * This used to be `buildSelectorUsageMap(site)`, a full walk of every node of
+ * every page, called from the Selectors panel AND the Properties panel render
+ * bodies. Mutative replaces the `site` reference on every mutation, so the
+ * React Compiler's memo (keyed on `site`) missed on every keystroke and the
+ * walk ran per character typed. The index maintains the identical tally
+ * incrementally from the same `DirtyMarks` that keep the other node indexes
+ * true, so every lookup here is O(1) and nothing recomputes on a keystroke.
+ */
+export type SelectorUsageIndex = ReadonlyMap<string, number>
 
 export function getReusableClasses(classes: Record<string, StyleRule>): StyleRule[] {
   return Object.values(classes).filter(isUserVisibleClass)
-}
-
-/**
- * Tally how many nodes reference each class, in a SINGLE pass over the whole
- * site tree. Returns a `Map<classId, count>`; classes with zero references are
- * simply absent (callers default to 0).
- *
- * This replaces a per-selector scan: counting one selector at a time was
- * O(selectors × pages × nodes), which made the Selectors panel janky to open
- * with hundreds of generated utility classes. One pass is O(pages × nodes)
- * regardless of how many selectors exist, and the React Compiler memoizes the
- * result against `site` so it only recomputes when the tree changes.
- */
-export function buildSelectorUsageMap(site: SiteDocument | null): Map<string, number> {
-  const usage = new Map<string, number>()
-  if (!site) return usage
-
-  for (const page of site.pages) {
-    for (const node of Object.values(page.nodes)) {
-      const classIds = node.classIds
-      if (!classIds) continue
-      for (const classId of classIds) {
-        usage.set(classId, (usage.get(classId) ?? 0) + 1)
-      }
-    }
-  }
-  return usage
 }
 
 export function formatSelectorUsage(count: number): string {
@@ -37,16 +25,25 @@ export function formatSelectorUsage(count: number): string {
   return count === 1 ? 'Used 1 time' : `Used ${count} times`
 }
 
+/** No ambient rule is on screen, so no token rollup is needed — see `resolveSelectorUsage`. */
+export const NO_CLASS_TOKEN_USAGE: SelectorUsageIndex = new Map()
+
 /**
  * Map each class-kind rule's selector token (`.<escaped-name>`) to how many
- * nodes carry it, reusing the per-id tally from {@link buildSelectorUsageMap}.
+ * nodes carry it, rolling up the per-id tally in `_classIdToNodeCount`.
  * `rule.selector` is already the escaped `.name` form the publisher emits, so
  * tokens here compare directly against tokens pulled out of an ambient
  * selector string — no re-escaping, no guesswork.
+ *
+ * O(rules), NOT O(pages × nodes) — but still worth building only when an
+ * ambient rule is actually being assessed. The Selectors panel needs it for
+ * every row it renders (it is already iterating the registry); the Properties
+ * panel builds it only when the ONE selected selector is ambient, and passes
+ * {@link NO_CLASS_TOKEN_USAGE} otherwise.
  */
 export function buildClassTokenUsageMap(
   classes: Record<string, StyleRule>,
-  usageById: Map<string, number>,
+  usageById: SelectorUsageIndex,
 ): Map<string, number> {
   const byToken = new Map<string, number>()
   for (const rule of Object.values(classes)) {
@@ -74,7 +71,7 @@ const CLASS_TOKEN_RE = /\.(?:\\.|[\w-])+/g
  */
 function isAmbientSelectorProvablyDead(
   cls: StyleRule,
-  classTokenUsage: Map<string, number>,
+  classTokenUsage: SelectorUsageIndex,
 ): boolean {
   const groups = styleRuleSelector(cls)
     .split(',')
@@ -113,8 +110,8 @@ interface SelectorUsage {
  */
 export function resolveSelectorUsage(
   cls: StyleRule,
-  usageById: Map<string, number>,
-  classTokenUsage: Map<string, number>,
+  usageById: SelectorUsageIndex,
+  classTokenUsage: SelectorUsageIndex,
 ): SelectorUsage {
   if (cls.kind === 'ambient') {
     const dead = isAmbientSelectorProvablyDead(cls, classTokenUsage)

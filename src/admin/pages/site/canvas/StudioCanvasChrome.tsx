@@ -2,15 +2,20 @@
  * StudioCanvasChrome — the UNTRANSFORMED studio-only canvas chrome, bundled
  * behind one lazy boundary.
  *
- * Two pieces that must sit outside `CanvasTransformLayer` (so they never scale
- * with pan/zoom) and are meaningless outside a Studio board:
+ * Three pieces that must sit outside `CanvasTransformLayer` (so they never
+ * scale with pan/zoom) and are meaningless outside a Studio board:
  *
  *   - `BoardNotesToolbar` — "+ Sticky note" / "+ Doc" / the comment tool.
  *   - `CommentPlacementLayer` — the armed comment tool's capture surface,
  *     which renders `null` unless the tool is on.
+ *   - `StyleCompileConsentBanner` — the first-run "this project's styles need
+ *     its own compiler run" prompt, which renders `null` for every project
+ *     that doesn't need one (and every project that already said no).
  *
- * Both self-gate on `selectActiveBoard`, so mounting this changes nothing
- * outside Studio — it changes only WHEN the chunk is fetched. That matters:
+ * All three self-gate — the first two on `selectActiveBoard`, the banner on
+ * `studioProject` plus its own consent probe — so mounting this changes
+ * nothing outside Studio; it changes only WHEN the chunk is fetched. That
+ * matters:
  * `BoardNotesToolbar` used to be imported eagerly by `CanvasRoot`, which put
  * it (and now the whole comments graph — `@core/studio-comments`, the store
  * slice, the composer) into the SitePage route chunk for every CMS editor
@@ -23,6 +28,7 @@
 import type { RefObject } from 'react'
 import { BoardNotesToolbar } from './BoardNotesLayer/BoardNotesToolbar'
 import { CommentPlacementLayer } from './BoardCommentsLayer/CommentPlacementLayer'
+import { StyleCompileConsentBanner } from './StyleCompileConsentBanner'
 
 interface StudioCanvasChromeProps {
   transformLayerRef: RefObject<HTMLDivElement | null>
@@ -39,6 +45,7 @@ export function StudioCanvasChrome({ transformLayerRef }: StudioCanvasChromeProp
         armed the tool stays clickable to disarm it.
       */}
       <CommentPlacementLayer transformLayerRef={transformLayerRef} />
+      <StyleCompileConsentBanner />
     </>
   )
 }

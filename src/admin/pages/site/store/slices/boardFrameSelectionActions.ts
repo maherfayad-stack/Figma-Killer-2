@@ -15,11 +15,16 @@
  */
 import type { EditorStore } from '@site/store/types'
 import type { EditorStoreSliceCreator } from '@site/store/types'
-import { getActiveBoard } from '@core/studio-board'
+import { getActiveBoard, moveFrame, upsertBoard } from '@core/studio-board'
+import { firstFrameForPage } from './boardBulkFrameActions'
 
 type FrameSelectionActions = Pick<
   EditorStore,
-  'selectFrame' | 'setSelectedFrameIds' | 'selectAllFrames' | 'clearFrameSelection'
+  | 'selectFrame'
+  | 'setSelectedFrameIds'
+  | 'selectAllFrames'
+  | 'clearFrameSelection'
+  | 'nudgeSelectedFrames'
 >
 
 export function createFrameSelectionActions(
@@ -81,6 +86,43 @@ export function createFrameSelectionActions(
     clearFrameSelection: () => {
       if (get().selectedFrameIds.length === 0) return
       set({ selectedFrameIds: [] })
+    },
+
+    /**
+     * viewport-01 — move every selected frame by a board-space delta
+     * (arrow-key nudge: 1 unit, 10 with Shift). ONE `set()` for the whole
+     * selection, so a press costs one `Board` reallocation and one
+     * `boardsDirty` flip — the same shape `nudgeSelectedAnnotations` uses.
+     *
+     * Board layout is NOT in the page-tree undo history. It persists to
+     * `.studio/boards.json` through `AdminCanvasLayout`'s debounced
+     * auto-save (`BOARDS_AUTOSAVE_DEBOUNCE_MS`), which is what actually
+     * coalesces a burst of held-arrow nudges into a single write; ⌘Z does
+     * not (and never did) rewind a frame move.
+     *
+     * `selectedFrameIds` is page-id-keyed, so this reaches the FIRST frame
+     * of each selected page — the documented WS-10 Phase 2 scope boundary
+     * every other bulk frame action shares.
+     */
+    nudgeSelectedFrames: (dx, dy) => {
+      if (dx === 0 && dy === 0) return
+      const { boards, activeBoardId, selectedFrameIds } = get()
+      if (selectedFrameIds.length === 0) return
+      const board = getActiveBoard(boards, activeBoardId)
+      if (!board) return
+
+      let nextBoard = board
+      let moved = false
+      for (const pageId of selectedFrameIds) {
+        const frame = firstFrameForPage(nextBoard, pageId)
+        if (!frame) continue
+        nextBoard = moveFrame(nextBoard, frame.id, frame.x + dx, frame.y + dy)
+        moved = true
+      }
+      // A selection of ids that no longer resolve to frames must not flip
+      // `boardsDirty` and trigger a pointless save.
+      if (!moved) return
+      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
     },
   }
 }

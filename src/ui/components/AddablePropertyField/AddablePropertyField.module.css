@@ -1,0 +1,81 @@
+/* AddablePropertyField — a ScrubInput plus a trailing chevron that opens the
+ * mode / addition / action menu. The two sit in one flex row rather than one
+ * merged box: ScrubInput owns its own bordered field shell (and the
+ * `data-field-skin="inspector"` reskin an inspector ancestor already opts it
+ * into — see ScrubInput.module.css), so the chevron rides beside it instead
+ * of forking that shell. */
+
+.field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    gap: var(--space-4xs);
+}
+
+.scrubWrapper {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.chevron {
+    flex: 0 0 auto;
+    color: var(--text-subtle);
+}
+
+.chevron:hover {
+    color: var(--text-muted);
+}
+
+/* Mode-word display (F4's "Hug"): the word replaces the number and reads as
+ * a state rather than a quantity, so it right-aligns inside the field
+ * instead of sitting where a number's leftmost digit would. Targets the
+ * native <input> ScrubInput renders internally — there is exactly one per
+ * field — rather than forking ScrubInput's own module. */
+.wordMode .scrubWrapper input {
+    text-align: right;
+}
+
+/* ─── RevealedField — the companion row an "Add …" menu item reveals ─────── */
+
+.revealedCell {
+    position: relative;
+    min-width: 0;
+}
+
+.revealedScrubWrapper {
+    width: 100%;
+}
+
+/* Hover-revealed trailing "−", matching SizeSection's DimensionCell clear
+ * button so a revealed min/max row reads exactly like the rest of the
+ * dimension grid it lives beside. */
+.revealedRemoveBtn.revealedRemoveBtn {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-muted);
+    color: var(--text-muted);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition:
+        opacity 100ms ease,
+        background-color 100ms ease,
+        color 100ms ease;
+}
+
+.revealedCell:hover .revealedRemoveBtn,
+.revealedCell:focus-within .revealedRemoveBtn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.revealedRemoveBtn.revealedRemoveBtn:hover {
+    color: var(--text);
+}

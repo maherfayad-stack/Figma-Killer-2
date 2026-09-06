@@ -346,6 +346,8 @@ interface BoardSlice {
   selectAllFrames: () => void
   /** Empty the frame selection. No-op if already empty. */
   clearFrameSelection: () => void
+  /** viewport-01 — arrow-key nudge: move every selected frame by a board-space delta, in one `set()`. See `boardFrameSelectionActions.ts` (incl. why board layout isn't undoable). */
+  nudgeSelectedFrames: (dx: number, dy: number) => void
 
   // ── Per-project frame size default (WS-7.2 — "apply to all pages") ──────
   /** Local mirror of `.studio/meta.json`'s `frameDefaults` — hydrated by `AdminCanvasLayout`, read by `addFrame`/`seedFramesForActiveBoard`. */

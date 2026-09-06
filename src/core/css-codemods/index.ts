@@ -11,9 +11,12 @@
  * `POST /admin/api/studio/save`. Three checks compose, in this order, before
  * a single byte is written — `classifyStylesheetEditability` (is this file
  * hand-authored at all?), `analyzeDeclarationTarget` (would the write land on
- * exactly one honest target?), then `setDeclaration` (do it).
+ * exactly one honest target?), then `setDeclaration`/`removeDeclaration` (do
+ * it). `style-03` added the removal half: a cleared declaration used to reach
+ * no code path at all, so it was silently restored on the next reload.
  */
 export { setDeclaration, setDeclarationAtMedia, type SetDeclarationResult } from './setDeclaration'
+export { removeDeclaration, type RemoveDeclarationResult } from './removeDeclaration'
 export { insertRule, type InsertRuleResult, type InsertRuleOptions } from './insertRule'
 export {
   analyzeDeclarationTarget,
