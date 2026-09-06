@@ -1,10 +1,21 @@
 /**
- * railAccent — deterministic identity tinting for panel rail buttons.
+ * railAccent — identity tinting for panel rail buttons.
  *
- * Unlike compact tag pills, rail buttons need the full panel identity rather
- * than the first letter: Site, Selectors, and Spacing should not all collapse
- * to the same color. The assignment helpers keep visible rail groups diverse
- * by avoiding repeats until the palette is exhausted.
+ * Two tiers, and the order matters:
+ *
+ * 1. **Known surfaces get a deliberate accent** — `railGroupAccent(group)`.
+ *    Colour in this design system is identity, never decoration
+ *    (`docs/design.md` → "Two-layer colour model"), so a rail's colours have to
+ *    *say* something. Two buttons that do the same kind of job share a tint; a
+ *    different job gets a different tint. Callers that know what their items
+ *    are for pass this through `assignRailAccents`' `explicitAccentForItem`.
+ *
+ * 2. **Unknown surfaces get a deterministic hash** — plugin panels and the
+ *    ad-hoc category lists in the import/export dialogs, where nothing here can
+ *    know what a category means. `hashIdentity` uses the full identity string
+ *    rather than the first letter (Site, Selectors, and Spacing must not
+ *    collapse to one colour), and the assignment helper keeps a visible group
+ *    diverse by avoiding repeats until the palette is exhausted.
  */
 
 export const RAIL_ACCENTS = [
@@ -36,6 +47,38 @@ const RAIL_ACCENT_TOKEN: Record<RailAccent, string> = {
   coral: 'var(--accent-10)',
 }
 
+/**
+ * What a rail item is FOR. The five jobs the editor's rails actually do:
+ *
+ *   - `navigate` — move around the document (Explorer).
+ *   - `style`    — change how things look (Framework, Classes, and the
+ *                  Colors / Typography / Spacing surfaces inside Framework).
+ *   - `inspect`  — read what is already there (Inspect, Properties,
+ *                  Dependencies).
+ *   - `content`  — the words on the page and the conversation about them
+ *                  (Content, Comments).
+ *   - `assist`   — hand the work to something else (AI assistant).
+ */
+export type RailAccentGroup = 'navigate' | 'style' | 'inspect' | 'content' | 'assist'
+
+/**
+ * Two of these are unchanged from what shipped: Explorer was already pinned to
+ * `gold` and Comments to `lilac`. The other three replace a hash draw, so the
+ * whole rail now reads as four jobs instead of five unrelated colours.
+ */
+const RAIL_GROUP_ACCENT: Record<RailAccentGroup, RailAccent> = {
+  navigate: 'gold',
+  style: 'mint',
+  inspect: 'sky',
+  content: 'lilac',
+  assist: 'violet',
+}
+
+/** The accent every rail item doing `group`'s job wears. */
+export function railGroupAccent(group: RailAccentGroup): RailAccent {
+  return RAIL_GROUP_ACCENT[group]
+}
+
 function hashIdentity(value: string): number {
   const normalized = value.trim().toLowerCase()
   if (!normalized) return 0
@@ -57,6 +100,15 @@ export function railTintVar(accent: RailAccent): string {
   return RAIL_ACCENT_TOKEN[accent]
 }
 
+/**
+ * Assign an accent per item, in order.
+ *
+ * `explicitAccentForItem` wins and is returned verbatim — including when two
+ * items ask for the same accent. That is the point: items in the same
+ * `RailAccentGroup` are *supposed* to match. Repeat-avoidance applies only to
+ * the hashed fallback, where a repeat would be meaningless rather than
+ * meaningful.
+ */
 export function assignRailAccents<TItem>(
   items: readonly TItem[],
   identityForItem: (item: TItem) => string,
