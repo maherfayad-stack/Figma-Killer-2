@@ -73,9 +73,10 @@
  *   3. Pick the capture dpr that lands on the reference's own pixel width, so
  *      the common case is an EXACT-size comparison rather than a resampled
  *      one (the same computation `studio_recommend_export_dpr` exposes).
- *   4. Await the canvas re-read, then capture every cache-miss page through the
- *      live editor bridge in ONE call per dpr (`captureMissedPages`) — skipped
- *      entirely for a page the verdict cache already answers.
+ *   4. Await the canvas re-read, then capture every cache-miss page in ONE
+ *      call per dpr (`captureMissedPages`) — headlessly by default (W4-2A),
+ *      through the live editor bridge only as a fallback — skipped entirely
+ *      for a page the verdict cache already answers.
  *   5. Diff against the reference bytes and score it.
  *
  * ## What `pass` means, and what it does not
@@ -105,7 +106,7 @@ import { collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets
 import type { Page } from '@core/page-tree'
 import { Type } from '@core/utils/typeboxHelpers'
 import { aiToolError, aiToolOk, type AiToolImage, type AiToolOutput } from '@core/ai'
-import type { AiBrowserBridge, AiTool, ToolContext } from '../../../runtime/types'
+import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
@@ -114,7 +115,7 @@ import { recordPassingCompare } from '../../../../handlers/studio/pageVerificati
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { resolveDesignReference } from './referenceResolve'
-import { awaitEditorBridgeForUser } from '../../editorBridge'
+import { captureFrames } from '../../capture/captureFrames'
 import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
@@ -219,14 +220,22 @@ type PageCapture =
  *
  * Grouped by dpr rather than sent as a single call because the dpr is exactly
  * what makes a diff EXACT rather than resampled (`captureDprFor`), and one
- * `studio_export_frames` call applies one dpr to its whole batch. In the
- * ordinary case — screens of one size measured against references of one size —
- * every page shares a dpr and this is a single call.
+ * capture call applies one dpr to its whole batch. In the ordinary case —
+ * screens of one size measured against references of one size — every page
+ * shares a dpr and this is a single call.
+ *
+ * W4-2A — routed through `capture/captureFrames.ts` rather than straight at
+ * the editor bridge, so a measurement runs headlessly by default. That is not
+ * merely a latency win: a comparison against a design reference is a question
+ * about what is ON DISK, and answering it used to require a browser tab whose
+ * viewport it then hijacked. The live bridge remains the automatic fallback.
  */
 async function captureMissedPages(
-  bridge: AiBrowserBridge,
+  userId: string,
+  dir: string,
   targets: readonly { pageId: string; dpr: number | null }[],
-): Promise<Map<string, PageCapture>> {
+  signal: AbortSignal | undefined,
+): Promise<{ captures: Map<string, PageCapture>; source: 'headless' | 'live' | 'none' }> {
   const byDpr = new Map<number | null, string[]>()
   for (const target of targets) {
     const group = byDpr.get(target.dpr)
@@ -235,8 +244,11 @@ async function captureMissedPages(
   }
 
   const captures = new Map<string, PageCapture>()
+  let source: 'headless' | 'live' | 'none' = 'none'
   for (const [dpr, pageIds] of byDpr) {
-    const captured = await bridge.callBrowser('studio_export_frames', {
+    const captured = await captureFrames({
+      userId,
+      dir,
       pageIds,
       ...(dpr === null ? {} : { dpr }),
       // This capture is measured server-side with pixelmatch, not shown to
@@ -244,20 +256,22 @@ async function captureMissedPages(
       // a reason that does not apply here (A2). Model visibility is decided
       // separately by `includeImages`.
       purpose: 'measurement',
+      ...(signal ? { signal } : {}),
     })
-    if (!captured.ok) {
+    if (captured.source !== 'none') source = captured.source
+    if (!captured.output.ok) {
       // A transport-level failure is the whole group's failure, but never the
       // whole call's: pages in another dpr group, and every cache hit, stand.
-      const error = captured.error ?? 'The capture request failed.'
+      const error = captured.output.error ?? 'The capture request failed.'
       for (const pageId of pageIds) captures.set(pageId, { ok: false, error })
       continue
     }
-    const frames = (captured.data as { frames?: CapturedFrame[] } | null)?.frames ?? []
+    const frames = (captured.output.data as { frames?: CapturedFrame[] } | null)?.frames ?? []
     for (const frame of frames) {
-      captures.set(frame.pageId, { ok: true, frame, images: captured.images })
+      captures.set(frame.pageId, { ok: true, frame, images: captured.output.images })
     }
   }
-  return captures
+  return { captures, source }
 }
 
 interface PageCompareSuccess {
@@ -325,7 +339,7 @@ export const studioCompareTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Measure one or more screens against the design they are supposed to match, and get a verdict instead of an opinion. Captures each live screen at the resolution that matches its registered design reference, diffs server-side, and returns { pass, results[] }. Each results[] entry carries { pass, similarityScore, regions[] } plus, by default (single page only — see includeImages), three images: your screen, the reference, and the diff. Each region is a rectangle that is actually wrong, worst first, with the node ids inside it — so "it looks off" becomes "this 240x88 block at y=412 is 71% different and covers these nodes". Name screens the way you named the files ("Checkout"), or pass several at once ("Checkout", "Cart", "Confirm") to verify a whole flow in one call instead of one round trip per screen — the reference for each is picked up automatically from the one registered for that page. Repeat calls on a page you have not written to since the last compare are usually served from an internal verdict cache (results[].fromCache) — no recapture, no bridge round trip — unless you pass forceRecapture. `pass` is deliberately NOT pixel-identity — a browser and Figma rasterise text differently, so it requires high overall similarity AND no single differing region big enough to be structural; the top-level `pass` is true only when EVERY requested page resolved to a screen and passed — a page with no registered reference or a failed capture becomes a results[] entry with ok:false and always drags the top-level verdict down, never a silent pass. A failing result is a work list: fix the largest region first, then call this again. capture.dimensionMatch is "resampled", not "exact", whenever the captured screen could not be produced at the reference\'s own pixel size — the vision-safe capture cap (~1568px, applied to BOTH width and height) is the usual cause on a tall mobile screen, and capture.dimensionMatchNote names the axis and explains it when this fires: treat that verdict as directional, not exact-pixel. Use this rather than studio_diff_frames — a capture reaches you as an image you cannot turn back into the base64 that tool wants.',
+    'Measure one or more screens against the design they are supposed to match, and get a verdict instead of an opinion. Captures each screen at the resolution that matches its registered design reference, diffs server-side, and returns { pass, results[] }. It does NOT need a Studio browser tab open and never disturbs one that is: the capture runs headlessly on the server against what is on disk, falling back to an open editor tab only if the headless browser cannot run (`capturedVia` says which answered, and a failure of BOTH names both reasons rather than blaming a missing board). Each results[] entry carries { pass, similarityScore, regions[] } plus, by default (single page only — see includeImages), three images: your screen, the reference, and the diff. Each region is a rectangle that is actually wrong, worst first, with the node ids inside it — so "it looks off" becomes "this 240x88 block at y=412 is 71% different and covers these nodes". Name screens the way you named the files ("Checkout"), or pass several at once ("Checkout", "Cart", "Confirm") to verify a whole flow in one call instead of one round trip per screen — the reference for each is picked up automatically from the one registered for that page. Repeat calls on a page you have not written to since the last compare are usually served from an internal verdict cache (results[].fromCache) — no recapture, no bridge round trip — unless you pass forceRecapture. `pass` is deliberately NOT pixel-identity — a browser and Figma rasterise text differently, so it requires high overall similarity AND no single differing region big enough to be structural; the top-level `pass` is true only when EVERY requested page resolved to a screen and passed — a page with no registered reference or a failed capture becomes a results[] entry with ok:false and always drags the top-level verdict down, never a silent pass. A failing result is a work list: fix the largest region first, then call this again. capture.dimensionMatch is "resampled", not "exact", whenever the captured screen could not be produced at the reference\'s own pixel size — the vision-safe capture cap (~1568px, applied to BOTH width and height) is the usual cause on a tall mobile screen, and capture.dimensionMatchNote names the axis and explains it when this fires: treat that verdict as directional, not exact-pixel. Use this rather than studio_diff_frames — a capture reaches you as an image you cannot turn back into the base64 that tool wants.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const {
@@ -404,19 +418,21 @@ export const studioCompareTool: AiTool = {
       .map((p) => ({ pageId: p.pageId, dpr: captureDprFor(dir, p.pageId, p.reference!.width) }))
     const dprByPageId = new Map(captureTargets.map((t) => [t.pageId, t.dpr]))
     let captures = new Map<string, PageCapture>()
+    let capturedVia: 'headless' | 'live' | 'none' = 'none'
     if (captureTargets.length > 0) {
-      const bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
-      if (!bridge) {
-        return aiToolError('No Studio board is connected. Measuring captures the live canvas, so it needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once.')
-      }
-      // Awaited once for every page that actually needs a fresh capture —
-      // a page served from cache never re-reads the board at all.
+      // The live-reload push only matters to an OPEN tab (it is what makes the
+      // live capture path photograph the files as they are NOW). The headless
+      // path re-parses from disk on every navigation, so it is already current
+      // — but this is awaited before the capture either way, since the routing
+      // decision belongs to `captureFrames` and a tab may still answer.
       await awaitStudioLiveReload(ctx.userId, {
         dir,
         pageIds: captureTargets.map((t) => t.pageId),
         boardsChanged: true,
       })
-      captures = await captureMissedPages(bridge, captureTargets)
+      const captured = await captureMissedPages(ctx.userId, dir, captureTargets, ctx.signal)
+      captures = captured.captures
+      capturedVia = captured.source
     }
 
     // Built lazily, ONCE for the whole batch, and only if some page's cache
@@ -620,6 +636,10 @@ export const studioCompareTool: AiTool = {
         passCount,
         failCount,
         errorCount,
+        // Which renderer produced this batch's captures. "none" means every
+        // requested page was served from the verdict cache, so nothing was
+        // captured at all.
+        capturedVia,
         results,
         ...(unmatched.length > 0 ? { unmatched } : {}),
         ...(placed.length > 0 ? { newlyPlacedOnBoard: placed } : {}),

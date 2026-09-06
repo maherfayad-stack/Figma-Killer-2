@@ -196,6 +196,16 @@ export default defineConfig({
     // established budgets — `bundle-size-budgets.test.ts` is the actual gate.
     chunkSizeWarningLimit: 720,
     rolldownOptions: {
+      // TWO HTML entries. `index.html` is the admin app; `agent-capture.html`
+      // is the headless capture surface (W4-2A) — a separate entry so "no
+      // editor shell" is structural rather than a promise a lazy route would
+      // have to keep. They share the canvas/store/base-module chunks through
+      // the ordinary chunk graph, so the second entry costs a small entry
+      // chunk, not a second copy of the editor.
+      input: {
+        index: path.resolve(__dirname, 'index.html'),
+        'agent-capture': path.resolve(__dirname, 'agent-capture.html'),
+      },
       // Rolldown's manual chunk groups capture dependencies recursively by
       // default. That can accidentally put React internals into feature vendor
       // chunks (e.g. dnd-vendor), making React startup depend on editor-only

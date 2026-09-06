@@ -643,6 +643,133 @@ before this branch and are not this change's.
 
 ---
 
+### mcp-19 — visual verification stopped being hostage to the user's open tab
+
+- **Agent:** mcp-tooling
+- **Stage:** done (needs human dogfood — see "Human action needed" below)
+- **Updated:** 2026-09-06
+- **Branch:** `feat/headless-agent-capture`, based on `main` (after PR #19 diagnostics and PR #20 Storybook import).
+- **Goal:** W4-2 Part A. `studio_screenshot` / `studio_export_frames` /
+  `studio_compare` work with the editor tab CLOSED, and never disturb one that
+  is open.
+
+**The problem, precisely.** All three tools relayed to the live editor bridge.
+That meant nothing could be verified with the tab closed; each frame cost a
+canvas pan + mount + settle wait (8-12s); the viewport of whoever was editing
+visibly jumped and their selection cleared; a wedged tab burned the full bridge
+timeout; and EVERY failure — no Chromium, no tab, a wedged tab, a page that
+would not settle — reported the same sentence, "No Studio board is connected."
+
+**What shipped.**
+
+- **A dedicated capture route.** `/admin/agent-capture?token=…`, served by
+  `server/ai/mcp/capture/captureRoute.ts`. It is a **second Vite HTML entry**
+  (`agent-capture.html` → `src/admin/agentCapture/`), NOT a route inside the
+  admin SPA — that is what makes "no editor shell" structural instead of a
+  promise. The bundle is base modules + editor store + canvas + the capture app:
+  no router, no boot probe, no toasts, no plugin runtime, no panels, no
+  persistence, no autosave.
+- **It renders with the canvas's own code.** `IframeFrameSurface`
+  (`interaction="capture"`) wrapping `CanvasComposedTree`, one frame per page
+  under its own `CanvasPageContext` — the same mechanism `BoardFrameView` uses
+  to render several pages at once, which is why a five-page batch is ONE
+  navigation. Readiness is `AgentSnapshotFrame`'s own settle loop (preview data
+  idle → DOM quiet → fonts → DOM quiet), reused rather than re-described.
+- **Single-purpose capture grants** (`captureToken.ts`), following
+  `sessionConnector.ts`'s turn-token pattern one notch tighter: no capabilities
+  at all, scoped to ONE dir and ONE page set, 5-minute TTL, revoked in the
+  driver's `finally`. Never a session cookie. `dir` never comes from the
+  request; parsed asset URLs are re-pointed at the grant-gated asset endpoint
+  server-side, so there is no traversal surface.
+- **One warm Chromium, N pages** (`browserPool.ts`), captures serialised,
+  idle-torn-down after 5 min. `referenceRender.ts` now imports its browser
+  types + launcher from here instead of keeping its own copy.
+- **Headless-first routing** in `captureFrames.ts`, consumed identically by all
+  three tools. `studio_export_frames` changed from `execution:'browser'` to
+  `execution:'server'`; the CLIENT handler is untouched and still reached over
+  the same `'studio_export_frames'` bridge protocol name, so `executor.ts`
+  needed no change.
+- **Named failures.** `headless-browser-unavailable` /
+  `-navigation-failed` / `-not-ready` / `-page-error` / `-invalid-report`, and
+  `capture-unavailable` when BOTH paths fail — which states both reasons and
+  names the fix (`bunx playwright install chromium`).
+
+**Durable facts the next agent should not re-derive.**
+
+1. **The capture page must hydrate the real editor store.** `NodeRenderer`,
+   `CanvasComposedTree` and every injector read `useEditorStore`. That is not
+   incidental coupling to route around — it is what makes the capture render the
+   SAME pixels as the canvas. A standalone renderer would be a second canvas
+   implementation, and the first time the two disagreed `studio_compare` would
+   be measuring the renderers, not the design.
+2. **The vision/measurement pixel caps now live in ONE place** —
+   `src/core/ai/captureScale.ts`'s `effectiveCaptureRatio`. `renderEvidence.ts`
+   was refactored to call it. Two rasterisers with two copies of that clamp
+   would make a verdict depend on which one ran.
+3. **`bun test` cannot run `Bun.serve` in this suite.** The preload
+   (`src/__tests__/setup.ts`) installs happy-dom's `Response` as the global, and
+   `Bun.serve` cannot serialise it — a listener returns an empty body and
+   `res.json()` throws "Failed to parse JSON". `Bun.fetch` exists and reaches
+   the socket, but the response is already broken by then. Call route handlers
+   as FUNCTIONS in server tests (`tryServeAgentCapture(req, url, pathname)`) and
+   read bodies with `await res.text()` + `JSON.parse`.
+4. **Dev vs built origin.** Vite's SPA fallback answers `/admin/agent-capture`
+   with the MAIN entry, so in a `bun run dev` session the driver addresses
+   Vite's `agent-capture.html` on 5173 directly; with a build on disk it uses
+   the canonical route on this server. `captureOrigin.ts` owns that decision;
+   `STUDIO_CAPTURE_ORIGIN` overrides it.
+5. **No `studio.run.project` gate, deliberately.** This renders Studio's own
+   parse output — no project component is invoked, no hook called, no project
+   module evaluated. Gating it at Tier 2 would make the SAFE path harder to
+   reach than the live-tab path that renders the identical DOM.
+   `studio_render_reference`'s gate is unchanged and still correct: it boots the
+   project's own dev server.
+
+**Verification.** `bun run build` ✅ (both HTML entries emit; `agent-capture-*.js`
++ `.css` in `dist/assets/`). `bun run lint` ✅ clean. `bun test --parallel=4
+server/ai/mcp/` → 365 pass / 0 fail. `src/__tests__/agent/` → 307 pass / 0 fail
+(covers the `renderEvidence` clamp refactor). `src/__tests__/architecture/` →
+511 pass / 2 fail, **both pre-existing and outside this diff**:
+`module-size-budgets` (IframeFrameSurface.tsx 707 lines, claudeCli.ts 716 —
+neither touched here) and `icon-catalog-integrity`.
+
+The definition-of-done test is
+`server/ai/mcp/capture/headlessCapture.test.ts` → "W4-2A definition of done —
+studio_compare across 5 pages, no editor bridge". Everything server-side in it
+is real: the route handler, grant minting/resolution/revocation, the payload
+builder running the real `loadStudioPages` parse against five scaffolded pages,
+the driver, the resolution clamp, and all of `studio_compare` (reference
+resolution, dpr selection, pixelmatch diffing, verdict composition). **Only
+Chromium is faked**, and the fake still calls the real route with the token out
+of the navigation URL and validates the payload against the shared TypeBox
+schema — so a broken route or a rejected grant fails the test. It stands in for
+rasterisation alone.
+
+**Human action needed (dogfood, in a browser).** The DoD test proves the server
+stack; it cannot prove the PAGE renders correctly, because that is the half
+Chromium was faked for. Please:
+1. `bun run dev`, open a project at `/admin/site?studio`, then run a
+   `studio_compare` or `studio_screenshot` from the agent panel and confirm the
+   returned PNG looks like the board frame — not blank, not unstyled, fonts
+   loaded, images present.
+2. Do the same with the Studio tab CLOSED.
+3. With the tab OPEN and a node selected, run a capture and confirm the canvas
+   does NOT pan/zoom and the selection is NOT cleared.
+4. Confirm `capturedVia` reads `"headless"` in both cases.
+If step 1 shows an unstyled or blank frame, the suspect is store hydration in
+`src/admin/agentCapture/CaptureApp.tsx` (`hydrateCaptureStore`) — specifically
+whether `authoredCss`/`vendorCss` reached the injectors and whether the
+synthetic `'studio'` breakpoint id matches the class CSS, not the driver.
+
+**Follow-ups deliberately not taken.**
+- W4-2 Part B (warm CLI session, `claudeCli.ts`) — a separate work order; that
+  file was untouched here.
+- The capture page renders every requested frame concurrently. Twenty heavy
+  frames in one page is untested at scale; if it becomes a problem the fix is
+  chunking inside the driver, not a second capture path.
+
+---
+
 ### mcp-18 — the agent learned a page threw only as a blank rectangle in a PNG, and every turn paid frontier price
 
 - **Agent:** mcp-tooling

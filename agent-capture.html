@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Studio agent capture</title>
+    <!--
+      The headless capture surface (W4-2A). Deliberately NOT index.html:
+
+        - No import map. Plugin canvas module packs are not loaded here, so
+          there is nothing to resolve bare specifiers for, and a plugin bundle
+          must never execute inside a capture.
+        - No loader spinner. Whatever is in <div id="root"> at load time can be
+          photographed, so it is empty.
+        - No `class="dark"` on <html>. The capture's colour scheme comes from
+          the board's own preview axes, applied per frame — inheriting the
+          admin's dark chrome here would tint every screen.
+
+      `body { margin: 0 }` because the driver rasterises each frame element by
+      itself: any body margin would offset the frames without changing what is
+      captured, which is harmless but makes the layout lie about itself.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/admin/agentCapture/main.tsx"></script>
+  </body>
+</html>

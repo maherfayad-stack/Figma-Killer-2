@@ -46,6 +46,17 @@ import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveAppRoot } from '../../../../handlers/studio/appRoot'
 import { detectPackageManager, type PackageManager } from '../../../../handlers/studio/installDeps'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from '../../../../handlers/studio/subprocessRunner'
+import {
+  defaultLaunchBrowser,
+  type PlaywrightLikeBrowser,
+  type PlaywrightLikePage,
+} from '../../capture/browserPool'
+
+// The browser plumbing this tool pioneered now lives in `capture/browserPool.ts`,
+// where the headless capture driver shares it. Re-exported because this
+// module's own `ReferenceRenderOverrides` is typed in terms of them and
+// callers (including its test) inject fakes against these names.
+export type { PlaywrightLikeBrowser, PlaywrightLikePage }
 
 const BOOT_TIMEOUT_MS = 30_000
 const NAV_TIMEOUT_MS = 20_000
@@ -95,26 +106,8 @@ export interface ReferenceRenderOverrides {
   navTimeoutMs?: number
 }
 
-/** The minimal `playwright-core` surface this tool needs — real `chromium.launch()` output satisfies it. */
-export interface PlaywrightLikeBrowser {
-  newPage(options: { viewport: { width: number; height: number }; deviceScaleFactor?: number }): Promise<PlaywrightLikePage>
-  close(): Promise<void>
-}
-export interface PlaywrightLikePage {
-  goto(url: string, options: { waitUntil: 'load'; timeout: number }): Promise<unknown>
-  waitForTimeout(ms: number): Promise<void>
-  screenshot(options: { type: 'png' }): Promise<Buffer>
-  close(): Promise<void>
-}
-
 const defaultSpawn: NonNullable<ReferenceRenderOverrides['spawn']> = (argv, options) =>
   Bun.spawn(argv, options) as unknown as SpawnedProcessLike
-
-const defaultLaunchBrowser = async (): Promise<PlaywrightLikeBrowser> => {
-  const { chromium } = await import('playwright-core')
-  const browser = await chromium.launch({ headless: true })
-  return browser as unknown as PlaywrightLikeBrowser
-}
 
 /** Per-process registry, keyed by resolved app root — one dev server per project, reused across calls. */
 const servers = new Map<string, DevServerEntry>()
