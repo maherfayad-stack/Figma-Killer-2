@@ -2094,6 +2094,30 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### meta-07 — the first three screens a new user sees still spoke in the CMS's voice
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** nothing on a first-contact surface calls this product a CMS, or calls it "ALM Figma Killer". The product is **Studio**, and the thing that fails to load is the user's React project.
+- **Scope:** `src/admin/preauth/AdminPreAuthForm.tsx`, `src/admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx`, `src/admin/pages/site/toolbar/SettingsButton.tsx`, `src/admin/modals/{SiteImport/SiteImportModal,ImportHtml/ImportHtmlModal}.tsx`, `src/admin/shared/ExportDialog/ExportDialog.tsx`, `src/admin/spotlight/commands/help.ts`, `src/admin/AppLoadingScreen.tsx`, `src/ui/components/AlmLogo/AlmLogo.tsx`, `server/handlers/cms/me.ts`, `index.html`, `src/admin/pages/site/preferences/{catalog,editorPreferences}.ts`, `docs/design.md`, and the tests/e2e helpers that pinned the old strings.
+- **Done so far:**
+  - **Pre-auth** (`AdminPreAuthForm.tsx:41-42`): "Set Up CMS"/"Create Admin" → "Set up Studio"/"Create account"; "Admin Login"/"Sign In" → "Sign in to Studio"/"Sign in". `:128` brand fallback `'ALM Figma Killer'` → `'Studio'`.
+  - **Canvas load failure** (`AdminCanvasEditorBody.tsx:222`): "Could not load CMS site" → "Could not open this project". What failed is a directory of `.tsx` under `studio-workspace/`, not a CMS document.
+  - **Settings gear** (`SettingsButton.tsx:31`): `openSettings('general')` → `openSettings('preferences')`. 'general' is the CMS site's meta tags — site name, description, favicon. Both source-reading gates updated (`settingsModal.test.tsx`, `toolbar.test.ts`).
+  - **Product name unified to "Studio"** in four `eyebrow=` props, the spotlight "About …" command + its copied env-info block, `AlmLogo`'s `aria-label`, `AppLoadingScreen`'s label, `index.html`'s `<title>` and pre-hydration loader label, and the TOTP `issuer` in `server/handlers/cms/me.ts:188`.
+  - **Bonus, landed:** a third `theme` option, **System**. `catalog.ts:183` adds it; `editorPreferences.ts:260` adds `resolveEditorTheme(theme, prefersLight)` and a `matchMedia('(prefers-color-scheme: light)')` subscription, so `useEditorAppearancePreferences` now returns the RESOLVED theme.
+- **Next step:** none for this entry. The setup form's "Site name" field (and the `setupCms({ siteName })` call under it) is still CMS-shaped — left alone deliberately, it is a data-model question, not a copy one.
+- **Decisions:**
+  - **`resolveEditorTheme` collapses three states into two before the stamp.** `globals.css` gates the light palette on `[data-editor-theme='light']`, and `AdminPageLayout.tsx:125` / `AdminCanvasLayout.tsx:231` each mirror the same attribute onto their own roots. Stamping a literal `system` would match no token block anywhere. The raw preference is what gets persisted and what the Select shows; only the stamp is resolved.
+  - **Renamed the TOTP issuer.** The issuer is provisioning-time only — it is not an input to TOTP verification — so an already-enrolled authenticator entry keeps working; only new enrolments get the new label. Confirmed against `server/auth/mfa.ts:17-20`.
+  - **No identifier renames.** `AlmLogo`, `setupCms`, `loginCms`, `CMS_API_PREFIX` are untouched. This is user-facing voice, not a refactor.
+- **Landmines:**
+  - The pre-auth headings are **e2e selectors**, not just copy: `tests/e2e/helpers/auth.ts` drives setup and login by accessible name. Changing this copy without changing that helper silently breaks every authenticated e2e spec. Updated here (`accessibility.e2e.ts`, `auth.e2e.ts`, `helpers/auth.ts`) but **not run** — see `standing-02`.
+  - `resolveEditorTheme` deliberately falls back to dark for an unrecognised stored value. A newer build could write a theme this one has never heard of, and the old behaviour stamped it verbatim, which would have matched neither palette. Pinned by a test.
+  - `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx` is **timing-flaky**, not broken: consecutive runs of that one file gave 2 fails then 1 fail with an identical tree. Do not chase it as a regression.
+- **Verification:** `bun run lint` ✅ (exit 0). `tsc -b` ✅ (exit 0). `bun test` → 10209 pass / 80 fail; diffed the failing-test set against a run on `feat/dashboard-import-entry` — identical except the one flaky canvas-unroll case above. All are `standing-01`-class (claudeCli driver suite, canvas/NodeRenderer/VC suites, `icon-catalog-integrity`'s `chevron-left` sample). `bun test src/__tests__/{settings,toolbar,app,admin,spotlight}` → 289 pass / 0 fail after updating the three copy-pinning gates. **Playwright not run** (`standing-02`).
+- **Human action needed:** **dogfood.** (1) Log out and confirm the login heading reads "Sign in to Studio" and the button "Sign in"; on a fresh DB the setup screen reads "Set up Studio" / "Create account". (2) Click the toolbar gear and confirm it opens on **Preferences**, not General. (3) Settings → Preferences → Theme → **System**, then flip macOS between Light and Dark with the modal open and confirm the chrome repaints live, with no reload — and that reopening the modal still shows "System" selected. (4) Confirm the browser tab title reads "Studio". (5) If anyone has TOTP enrolled, confirm their existing code still verifies (it should — the issuer is not part of the algorithm).
+
 ### board-27c — canvas silently drops `color-mix()`, system colours, slash-alpha `rgb()` from a project's own CSS
 - **Agent:** studio-architect
 - **Stage:** design — **implemented, see `board-27e` below (this entry's design shipped unchanged from what's written here).**
