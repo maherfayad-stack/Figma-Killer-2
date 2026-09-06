@@ -121,6 +121,51 @@ are the remaining WS-2 items, not yet dispatched. See
   - `bun test src/__tests__/architecture` is 18 red on this base — all of them the pre-existing `icon-catalog-integrity` cluster (`standing-01`), untouched by this diff.
 - **Verification:** `bunx tsc -b` ✅ exit 0 (`bun run build`'s vite half cannot run in a worktree — `standing-08`). `bun run lint` ✅ clean. `bun test src/admin/pages/site/agent` → 18 pass / 0 fail. `bun test src/__tests__/ai src/__tests__/agent` → 488 pass / 0 fail. `bun test src/__tests__/architecture` → 478 pass / 18 fail, all `icon-catalog-integrity`.
 - **Human action needed:** **dogfood.** Open a project at `/admin/site`, ask the agent to call `studio_computed_styles` on a page with a board frame, and confirm it now reports real `fontSizePx`/`fontFamily` rows instead of `nodeCount: 0`. (Same-origin access is not the risk — `renderEvidence.ts` and `studioPageDiagnostics.ts` already read the same `srcDoc` iframe in production. What only a browser can show is whether the frame is settled at the moment the agent calls, i.e. how often the new not-ready refusal fires in practice.)
+### test-02 — W9-1.3: `bench:agent-turn` measured one function against a fixture that no longer exists; it now measures the whole turn
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; PR open as draft)
+- **Updated:** 2026-09-06
+- **Branch:** `test/agent-turn-bench` off `origin/main` (`8c41a40`).
+- **Goal:** W9-1 item 3 — three shipped agent optimisations (warm CLI session pool, headless capture, the compare verdict cache) had no after-number. Extend the bench to warm-vs-cold turn, capture latency, a 5-page compare, and the per-turn MCP round-trip count, and record baselines here.
+- **The corpus drift, concretely:** the bench preferred `studio-workspace/untitled` and fell back to `studio-workspace/__canonical-fixture`. `untitled` was deleted some waves ago, so every run since has silently measured the fallback while the module doc, the headline and `scripts/bench/README.md` all described the other project. The README additionally still named `generateStudioAgentRoster`, a function deleted with the subagent roster. Both are corrected; `__canonical-fixture` is now the only fixture and is named as such.
+- **Scope:** `scripts/bench/benches/agent-turn.ts` (rewritten), `scripts/bench/lib/fakeClaudeCli.ts` (new), `scripts/bench/lib/captureHost.ts` (new), `scripts/bench/README.md`, `eslint.config.js`.
+- **What it measures now, in the order a turn pays for it:**
+  1. **Project guide** — `generateStudioProjectGuide` cold/warm, `resolveProjectProfile` uncached/cached, the design-system digest warm (unchanged from before, minus the drift).
+  2. **Turn → first stream line** — the REAL `streamClaudeCli` with a fake `claude` at its `spawn` seam, cold-spawned vs. served from the warm pool.
+  3. **MCP attachment per turn** — spawns, connector mints, config writes and servers-per-config, read off the real `--mcp-config` file each spawn was handed, at spawn time (the driver deletes it in its own `finally`).
+  4. **Headless capture + `studio_compare`** — real Chromium, real capture route, real ts-morph parse, real `sharp` clamp, real `pixelmatch` diff.
+- **BASELINE, 2026-09-06, darwin arm64 Apple M1 Pro, Bun 1.3.13, full (non-`--quick`) run, 14.4s wall:**
+
+  | measurement | value |
+  |---|---|
+  | `generateStudioProjectGuide` cold | mean 24.96ms · p50 25.98ms · p95 29.53ms (n=5) |
+  | `generateStudioProjectGuide` warm | mean 653µs · p50 526µs · p95 963µs (n=30) |
+  | `resolveProjectProfile` uncached → cached | p50 ~3.4ms → ~35µs |
+  | design-system digest warm | p50 ~320µs |
+  | turn → first stream line, **cold** | mean 2.93ms · p50 1.91ms · p95 7.06ms (n=12) |
+  | turn → first stream line, **warm** | mean 1.10ms · p50 930µs · p95 1.53ms (n=12) — **2.1x** |
+  | warm session's own spawning turn | 3.03ms (paid once per conversation) |
+  | MCP handshakes/turn, cold → warm | **3.00 → 0.23** (3 servers: `studio`, `design-system`, `figma`; 12 spawns/12 turns → 1 spawn/13 turns) |
+  | Studio tool surface per `tools/list` | 47 tools · 103.7 KB of schema |
+  | capture, first call (5 frames @dpr2, incl. Chromium launch) | 2.19s |
+  | capture, single frame, warm browser | mean 465ms · p50 456ms (n=5) |
+  | capture, 5-page batch, warm browser | mean 749ms · p50 751ms (n=5) → **150ms/frame** |
+  | `studio_compare` 5 pages, cache bypassed | mean 1.69s · p50 1.67s (n=3) |
+  | `studio_compare` 5 pages, verdict cache | mean 7.55ms · p50 7.77ms (n=3) — **~215x** |
+
+- **Decisions:**
+  - **The turn number is Studio's overhead, not a turn's wall time, and the module says so twice.** A fake CLI answers instantly, so what is left is guide regeneration, containment + turn routing, config dir, session-id derivation and the transcript probe, connector mint, MCP config file and argv. The real cold-path costs a fake cannot model — process startup and N MCP handshakes — are exactly what section 3 counts instead of pretending to time.
+  - **"Per-turn MCP round-trip count" is measured as `spawns x servers-per-config`, off the real config file.** Standing up a real MCP client to count JSON-RPC frames would need a real connector token and a real DB for a number that is already determined by those two integers.
+  - **Capture and compare run with a REAL browser or not at all.** A fake rasteriser (what `headlessCapture.test.ts` injects) would have made the section always-on and its numbers meaningless — the browser is most of what is being measured. Without `dist/agent-capture.html` or a launchable Chromium the two sections report `skipped` with the reason, the posture `benches/browser.ts` and `studioBoard.bench.ts` already take. Groups 1–3 stay fully offline.
+  - **The capture route is served IN-PROCESS (`lib/captureHost.ts`), not by a spawned server.** A capture grant lives in the memory of the process that minted it, so a token minted by the bench is a bare 404 to a separately spawned server. One `Bun.serve` hands the capture namespace to the real `tryServeAgentCapture` and serves `dist/` for the entry's assets.
+  - **The five compare references are sized from a probe capture, not from authored geometry.** A frame renders to its CONTENT height (390x500 authored → 390x900 rendered), and a reference of the wrong aspect makes `studio_compare` refuse the page on aspect instead of measuring it — which is what the first working draft did, five errors and zero timings.
+  - **The references are solid white, so all five pages legitimately FAIL.** That is deliberate: a failing page walks the whole diff + region-scoring + worst-region path. `errorCount` is the number that must stay 0, and the report says so.
+- **Landmines / handed on:**
+  - **`bun run bench:agent-turn` needs `bun run build` and `bun run bench:browser:install` for its last two sections.** This machine had Playwright's chromium-headless-shell **1223** missing (1208/1228/1234 were present) — the pinned build is exact, so `bunx playwright install chromium` is a real prerequisite, not a formality.
+  - **`.tmp` was not in eslint's `globalIgnores`, and running any bench then `bun run lint` failed on the FIXTURE's source.** `__canonical-fixture` contains `Math.random()` in a render path on purpose (it is what the parser's auto-select branch is tested against), and copying it into `.tmp/benchmarks/` made it lintable. `.tmp` + `.tmp-lint` are now ignored for the same reason `studio-workspace` and `.data` already are.
+  - **The compare numbers are for a 5-page batch of SMALL screens on one machine.** They are a floor, not a budget — nothing gates on them yet, and nobody should turn them into a gate without a second machine's run.
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — see the entry's PR body for the run; failures are the standing pre-existing set (`standing-01`), none in `scripts/`.
+- **Human action needed:** none. Re-run `bun run bench:agent-turn` after W9-2/W9-5 land and diff against the table above.
 
 ### struct-07 — W6-5: the code the wave train orphaned is deleted
 - **Agent:** studio-implementer
