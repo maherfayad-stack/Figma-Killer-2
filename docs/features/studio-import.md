@@ -58,6 +58,9 @@ src/core/page-parser/
 ├── staticEvalOperators.ts    — Tier A operators: arithmetic, concatenation, unary, `&&`/`||`/`??`
 ├── staticEvalValues.ts       — pure leaf: operations on an ALREADY-RESOLVED value (`pluck`, `withNote`,
 │                                `unresolved`, `originOf`) — shared by Core/Calls/Operators without a cycle
+├── cssInJsExtract.ts         — W4-4 Phase A: `styled.…`/`css` templates → compiled-origin StyleRules
+├── cssInJsTemplate.ts        — pure leaf: one template body → flattened CSS via postcss (nesting, @media)
+├── cssInJsAttach.ts          — pure leaf: a JSX tag + its attributes → the host tag and classes it renders
 ├── assetImports.ts           — imports that name a FILE: `?raw` → text, image → `studio-asset:` path
 └── nodeResolution.ts         — resolved value → `resolution` metadata; scalar vs structured prop values
 
@@ -777,7 +780,7 @@ The alternative was keeping the interior as real nodes with `base.container` car
 
 ## Element → module resolution
 
-`resolveModuleId` (`studioPageLoad.ts`) maps a parsed node to an Studio module:
+`resolveModuleId` (`server/handlers/studio/moduleMapping.ts`) maps a parsed node to an Studio module:
 
 | Source | moduleId |
 |---|---|
@@ -1080,6 +1083,59 @@ The per-node `PackageComponentPlaceholder` ("promote this project", shown where 
 
 `import styles from './Card.module.css'` then `className={styles.card}` — the evaluator already resolved member chains off a resolved object, it just had no value for `styles`. `src/core/page-parser/assetImports.ts`'s `resolveCssModuleImport` teaches `resolveIdentifier` one more "an import with no `SourceFile`" case, sourced from `styleCompile.ts`'s `moduleClassMaps` (threaded through as `StaticEvalOptions.cssModuleClassMaps`). Everything downstream — `classIdsForClassName`, member chains, template literals — works for free. `cn()`/`clsx()`/`classNames()`/`classnames()` are a Tier C built-in (matched by identifier name, not import provenance): a pure string join with clsx's own tiny semantics — truthy strings/numbers kept, falsy scalars dropped, arrays flattened, object keys kept when truthy — implemented directly rather than calling the user's actual function, so it executes no user code and stays inside §7's envelope.
 
+### CSS-in-JS — static extraction (W4-4 Phase A)
+
+`styled-components`/`emotion` were *detected* and nothing more: `ProjectProfile.styleToolchain.cssInJs` named the package, `styleCompile.ts` did nothing with it, and a component styled that way reached the canvas as an opaque **"Unknown module" box with no styling at all** — not merely unstyled. That is not a subtle fidelity gap; it is a whole class of repository that does not open. This slice closes the READ half of it.
+
+**Read side only.** There is no writeback in this pass, and none by accident either: the extracted CSS enters through the SAME `extraCss` door Tailwind output and compiled CSS Modules already use (`studioCss.ts`), which means it gets no `StyleRuleSource` entry, which means the `kind: 'css'` write-back refuses it as unmapped and `StyleTargetChip` says so — the compiled-origin presentation comes for free rather than being re-derived. Writing an edit back INTO a template is Phase B.
+
+#### What is recognised
+
+| Shape | Result |
+|---|---|
+| `styled.div\`…\`` | The JSX call site renders as `<div>` with the synthetic class. **No wrapper element** — same source location, same node id, `kind: 'element'`. |
+| `styled('div')\`…\`` | Same; the string form of the above. |
+| `styled(OtherStyled)\`…\`` | Chains: the base tag of `OtherStyled`, carrying BOTH classes base-first — which is exactly what styled-components renders. |
+| `styled(Card)\`…\`` where `Card` is not styled | The class is applied at the call site (styled-components really does render `<Card className="…"/>`), `Card` keeps its own identity — and so its own inlining/detach/swap behaviour — and the template is reported **partial**, because which element wears the class is decided in `Card`'s own file. |
+| `styled.div.attrs(…)\`…\`` / `.withConfig(…)` | The chain is unwrapped and the template extracts; `attrs` is reported (`attrs-ignored`) rather than applied — it can inject props and inline styles this pass does not read. |
+| emotion `css\`…\`` assigned to a const | A synthetic class, attached to any element using it as `css={x}` or `className={x}` (bare identifier only). The `css` prop is then dropped from `props` AND `codeProps` — emotion's babel plugin compiles it away, so it is never a DOM attribute. |
+| A styled component IMPORTED from another file | Resolved through the same barrel-aware import walk `componentSources.ts` uses. This is not optional polish: `export const Panel = styled.section\`…\`` in `ui/Panel.tsx` is the most common way a real repo organises these, and `inlineLocalComponents` can never expand it (a tagged template is not a function that returns JSX). |
+
+The synthetic class is `Card_sc__a1b2c3` — `sha1(relFile|bindingName|line|col)`, deterministic across reloads for the same reason `styleRuleId` is, and shaped to mirror `styleCompile.ts`'s CSS-Modules convention (`Card_card__a1b2`) so it reads as "generated" in the panel. It is **prepended** to whatever `className` the call site itself wrote, matching styled-components' own ordering.
+
+#### The template body goes through postcss, not a string split
+
+A styled template is nested CSS. `&:hover`, `& > *`, `&&`, a nested `@media`, and a rule nested inside that `@media` are all everyday shapes, and each one changes which element a declaration applies to. `cssInJsTemplate.ts` parses the body with postcss (already a dependency — `@core/css-codemods` round-trips real `.css` through it) and flattens it into top-level rules: `&` substitutes the parent (comma lists on both sides cross-produce), a nested selector STARTING with a pseudo (`:hover { … }`, written without the ampersand) attaches to the parent with no space — what styled-components' own compiler does with it — and anything else is an ordinary descendant. A nested `@media`/`@supports`/`@container`/`@layer` re-wraps the flattened rule.
+
+#### Interpolations: the ONE declaration, never the template
+
+Each `${…}` is resolved through the SAME bounded evaluator every prop goes through — Tier A/B/C: a local const, an imported theme token (`${tokens.space.md}`), a member chain, a resolvable pure call. Three extra rules, all of them precedents this codebase already set:
+
+- **A reference to another binding in scope.** `${Card}` where `Card` is a styled component substitutes `.Card_sc__…` (styled-components' component selector); `${flexCenter}` where `flexCenter` is a `css` mixin splices its DECLARATIONS, including across files. Both are read out of what the extractor already computed, not through the evaluator, which has no notion of either shape.
+- **A ternary the evaluator cannot decide** gets `branchSelection.ts`'s stated positional rule: the CONSEQUENT is taken and the untaken side is recorded as a `branch-guessed` finding. Same prefer-a-position-never-evaluate-state decision parser-06 documents for JSX, applied to a value; `${(p) => (p.active ? 'a' : 'b')}` is the shape it exists for. **`&&` deliberately does NOT get it**: an `&&` in a template is by construction the non-default state, so painting its right side by default would show a screen no user opens on, where a ternary's consequent is the author's own first-written branch.
+- **`false`/`null`/an absent value substitute the empty string**, because that is what styled-components itself does with them — a real answer, the same distinction parser-08 drew for `{kind:'undefined'}`.
+
+Anything else is replaced by a **sentinel** before the text reaches postcss, and the flattener then deletes exactly the node carrying it — the declaration, the nested rule, or the at-rule — recording a per-declaration finding with the property name and the interpolation's own source text. An unreadable `${(p) => p.theme.color}` costs one `color:` line, never the other twenty declarations around it. A STATEMENT-position interpolation (`${someMixin}` alone on a line) becomes a valid throwaway custom-property declaration instead, because a bare sentinel word makes postcss reject the whole template — which would cost everything.
+
+#### The evaluator budget is this module's own
+
+Interpolations resolve against a FRESH 5 000-step budget per file, never the page's shared `pageBudget`. Adding CSS-in-JS support must not be able to starve the prop/text resolution on the same page, and — the load-bearing half — a result that depends on how much budget happened to be left is exactly the shape `staticEval.ts` documents as uncacheable. With its own budget the extraction is a pure function of (file, `preferredKey`), so the per-`SourceFile` memo is sound; a truncated one is still never cached.
+
+#### Reported, per template
+
+`ParsedPage.cssInJs.templates` carries one `CssInJsTemplate` per template: its synthetic class, its base, `status` (`clean` / `partial` / `unresolvable`), `declarationCount`, and its `findings`. `canonicalCheck.ts`'s `single-styling-mechanism` reads it and emits a headline with the split plus one line per non-clean template at that template's own `line:col` — replacing the blanket "this file imports styled-components", which said the same thing about a file whose eleven templates extracted byte for byte and a file whose one template resolved nothing.
+
+#### Measured on real repos
+
+| Repo | Templates | Clean | Partial | Unresolvable | Declarations extracted |
+|---|---|---|---|---|---|
+| `bchiang7/v4` (Gatsby + styled-components, theme mixins throughout) | 48 | 20 (41.7%) | 27 (56.3%) | 1 (2.1%) | **907** |
+| `react-boilerplate/react-boilerplate` | 30 | 24 (80.0%) | 6 (20.0%) | 0 | **137** |
+
+On `bchiang7/v4`, 34 of 221 parsed nodes now carry a real host tag plus an extracted class where every one of them was previously an opaque "Unknown module" box. Its partial rate is dominated by ONE shape — 48 `block-dropped` findings, all of them `${({ theme }) => theme.mixins.flexCenter}`: a mixin reached through a runtime `ThemeProvider`. `react-boilerplate`'s 6 partials are all `wraps-component` (`styled(Link)`), which is a report, not a loss.
+
+**The single highest-value follow-up** is therefore the `ThemeProvider` case, and it is bigger than it looks: resolving `theme` to the single `<ThemeProvider theme={…}>` in the workspace is exactly Tier B's existing "one provider or nothing" rule, but the value it lands on is usually a `css\`…\`` tagged template, and splicing THAT needs the evaluator to hand back the declaration NODE a member chain bottoms out at rather than a value. That is a `staticEvalCore` change, not a CSS-in-JS one — writing a second, parallel node-resolution chain inside this module to avoid it would be exactly the duplicate-evaluator this codebase's tier table exists to prevent.
+
 ### Package CSS (WS-2.3)
 
 `import '@acme/ui/dist/style.css'` — a bare-specifier stylesheet import — is a THIRD, separate input `styleCompile.ts` produces, alongside `css`/`moduleClassMaps`: `CompiledStyles.vendorCss`. Unlike Sass/PostCSS/Tailwind, this needs **no trust promotion** — resolving a bare specifier against `<dir>/node_modules/<pkg>/<subpath>` and reading the already-built `.css` file is a text scan plus a file read, never code execution, so `collectVendorCss` runs unconditionally at every trust tier (only `node_modules` existing is required; missing it degrades to a `vendor-css-requires-install` warning pointing at `POST /admin/api/studio/install`).
@@ -1128,7 +1184,7 @@ here once it is genuinely detectable.
 | `tailwind-config-not-found` / `vite-entry-not-found` / `next-config-no-routes-found` | Project-level config gaps the probe found. |
 | `—` | CSS Modules only compiles `.module.css` (Sass/Less module variants detected, not compiled). |
 | `—` | Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0. The board asks once, on load, through `StyleCompileConsentBanner` (below); the underlying `style-toolchain-requires-trust-promotion` warning still has no path through `/load` itself. |
-| `—` | CSS-in-JS (`styled-components`/`emotion`/`stitches`) is detected, never compiled. |
+| `—` | CSS-in-JS: `styled-components`/`emotion` TEMPLATES are statically extracted (W4-4 Phase A, below); an interpolation the evaluator cannot read drops that one declaration; `stitches`, emotion OBJECT styles, and writeback are not done. |
 | `—` | Linked package dependencies (a `?raw` import from a symlinked `file:../pkg`) do not resolve. |
 | `—` | A JSX-valued prop that is not an icon is dropped rather than flattened. |
 | `—` | Editing TEXT in a locale-variant board frame (e.g. the Arabic copy of a "duplicate as variant" pair) now saves to that locale's own dictionary branch (WS-10 §4.4/Phase 4). Editing a PROP or STYLE on that same frame in the Properties panel does NOT — the panel always edits the board-DEFAULT frame's copy of the node, regardless of which frame you clicked in, and that change is visible in both frames (they share `classIds`). No in-app warning yet when this happens — if you're working in a duplicated-locale frame, use the panel only on the default-locale copy. |
@@ -1149,7 +1205,7 @@ here once it is genuinely detectable.
   **Deliberately not fixed in this pass, and the scope call is explained rather than half-landed.** `classIds` is BOTH the editable-styling registry AND (via this path) the sole surviving representation of a literal className — conflating "can the editor show a control for this" with "does this class reach the DOM at all" is the exact "structure vs values" trap this codebase names as its single biggest source of past bugs. A correct fix needs to separate the two: keep the literal className string (currently discarded at the point of `delete props.className`) somewhere new on `PageNode`, thread it through `NodeRenderer`/`getCanvasNodeClassName` as a passthrough that renders REGARDLESS of `classIds`, and resolve a real precedence question this pass did not have time to settle safely — if a name IS matched into `classIds` (and so ALSO gets the editor's own generated class for that rule), does the literal name render ADDITIONALLY alongside it (safe, but doubles the declaration and could let the raw vendor rule's specificity/order fight an edited value), or is it excluded once matched (requires exposing the per-name matched/unmatched split `classIdsForClassName` currently collapses into one list)? This touches the page-tree schema, the parser-to-page-tree sync layer, and canvas rendering — real, load-bearing plumbing this parser-surgeon session declined to rush. Flagged for a dedicated pass; `studio-scribe` has this section to hand to whoever picks it up.
 - **CSS Modules only compiles `.module.css`.** `.module.scss`/`.module.sass`/`.module.less` are detected (`css-module-sass-not-supported` warning) but not compiled — that needs Sass/Less compilation (Tier 1) BEFORE the class-name renamer could run, and this slice doesn't wire that chain.
 - **Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0.** A freshly-imported project defaults to Tier 0 (`static`, `meta-03` decision 1) and never auto-promotes; `styleCompile.ts` returns a `style-toolchain-requires-trust-promotion` warning and compiles nothing until the user explicitly promotes the project's trust tier. The board now ASKS for that promotion on first load instead of leaving the project silently unstyled — see [The first-run style-compile consent prompt](#the-first-run-style-compile-consent-prompt) — but the promotion itself is still an explicit user action and nothing else.
-- **CSS-in-JS is detected, never compiled.** `ProjectProfile.styleToolchain.cssInJs` names `styled-components`/`emotion`/`stitches` when present; `styleCompile.ts` does nothing with it. A component styled this way renders structurally correct and unstyled.
+- **CSS-in-JS extracts, but only the template forms, and read-only.** `styled.div\`…\``, `styled(X)\`…\``, `styled.div.attrs(…)\`…\`` and emotion's `css\`…\`` are statically extracted into compiled-origin `StyleRule`s (see [CSS-in-JS](#css-in-js-static-extraction-w4-4-phase-a) below). What is still NOT done: `stitches` (a different API — `styled(tag, {objectStyles})`), emotion OBJECT styles and the object form of the `css` prop, `vanilla-extract`, a `keyframes`/`createGlobalStyle` block inside a template (reported, not hoisted — it declares a GLOBAL name, not this element's styling), a theme value reachable only through a runtime `ThemeProvider`, and **write-back of any kind** — a styled rule has no `StyleRuleSource`, so the CSS write-back refuses it as unmapped, exactly like a Tailwind utility.
 - **Linked package dependencies.** A `?raw` import from a symlinked `file:../pkg` (or a pnpm store) does not resolve — containment is checked on the real path ([why](#installed-package-specifiers)). Install the package instead.
 - **A JSX-valued prop that is not an icon, and not a bare element/fragment either.** `iconPropFromJsx` recovers inline SVG markup one level deep, and (WS-3.4/E2.3, `captureSlotProps`) a bare `<Icon/>` or `<><Back/><Title/></>` value is materialized as a real, locked slot child — that half is NOT a limitation any more, and this bullet used to be stale about it. What is still genuinely unrepresented is a JSX element reached through anything OTHER than a direct assignment: nested inside an array/object (`tabs={[<Tab/>, <Tab/>]}`), or behind a ternary/`&&` (`icon={cond ? <A/> : <B/>}` — neither `iconPropFromJsx` nor `captureSlotProps` guesses which branch a runtime condition takes, the same Tier D line `selectJsxBranch` draws for JSX CHILDREN, just not yet extended to a component PROP's own value). As of board-27b these are traced in `codeProps` (see "Every unresolvable prop leaves a trace", above) rather than silently dropped, but the JSX itself still isn't flattened into a node.
 - **Locale is switchable board-wide AND per frame, side by side.** The board's
@@ -1204,6 +1260,7 @@ here once it is genuinely detectable.
 | `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
 | Image imports through data structures, inline-`<svg>` serialisation, Tier A operators | `src/core/page-parser/__tests__/imageAssetsAndInlineSvg.test.ts` |
 | A repo unlike the validation corpus (barrels, named exports, typed data, CSS modules, hooks) | `src/core/page-parser/__tests__/genericRepoShapes.test.ts` |
+| CSS-in-JS extraction: both libraries' idioms, nesting, the drop cases, and the refusals | `src/core/page-parser/__tests__/cssInJsExtraction.test.ts` |
 | Panel never offers an editable input for a structured value, or for a code-valued prop | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
 | `codeProps` derived from real source: conditional branches stay editable, resolved props don't, `.map` rows have nothing | `src/core/studio-sync/__tests__/codeProps.test.ts` |
 | Store gate, panel gate, and the writability predicate agreeing | `src/__tests__/studio/resolvedTextEditing.test.ts` |

@@ -48,6 +48,119 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
   - **`studio-scribe`:** the 578-line `docs/features/studio-import.md` now carries the lifted refusals, but the two landmines above (the throwing locator, the inline whitespace hole) are worth a permanent home there.
 - **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` on every touched area ✅ (one pre-existing icon-catalog failure, plus the known canvas-iframe/step-up/cmsPlugins flakes in a full run).
 - **Human action needed:** dogfood the three gestures on an imported board; confirm the narrow reload brings the new element back selected-or-not as expected.
+### parser-11 — CSS-in-JS renders (W4-4 Phase A: extract, attach, report — no writeback)
+
+**What was wrong.** A `styled-components`/`emotion` repo was *detected* and
+nothing more. `ProjectProfile.styleToolchain.cssInJs` named the package,
+`styleCompile.ts` did nothing with it, and `canonicalCheck.ts` emitted one
+blanket "imports a CSS-in-JS package" line. The result on the board was worse
+than "unstyled", which is how the docs described it: `const Card =
+styled.div\`…\`` is a `kind: 'component'` node whose local declaration
+`inlineLocalComponents` can never expand (a tagged template is not a function
+that returns JSX), so every styled element rendered as an opaque **"Unknown
+module" placeholder** — no tag, no children, no CSS. A whole class of
+repository did not open.
+
+**Scope — every parser file touched.**
+
+- `src/core/page-parser/cssInJsExtract.ts` *(new)* — the ts-morph half: which
+  tagged templates are styled templates, interpolation resolution, the
+  synthetic class name, the per-file memo, the cross-file import walk.
+- `src/core/page-parser/cssInJsTemplate.ts` *(new, pure leaf)* — the CSS half:
+  one template body → flattened top-level rules, via **postcss**.
+- `src/core/page-parser/cssInJsAttach.ts` *(new, pure leaf)* — a JSX tag +
+  its attributes → the host tag and classes it actually renders.
+- `src/core/page-parser/types.ts` — `CssInJsTemplate`/`CssInJsFinding`/
+  `CssInJsExtraction` + `ParsedPage.cssInJs`.
+- `src/core/page-parser/parsePageFile.ts` — builds the scope once per parse;
+  `processElement` rewrites a styled call site to its host tag.
+- `src/core/page-parser/jsxAttributeReaders.ts` — `ParseContext.cssInJs`.
+- `src/core/page-parser/inlineLocalComponents.ts`,
+  `src/core/page-parser/nextAppLayout.ts` — merge an inlined component's / a
+  layout's own templates into the page's (dedup by class name).
+- `src/core/page-parser/canonicalCheck.ts` — per-template honesty.
+- `src/core/page-parser/index.ts` — barrel.
+- `server/handlers/studioPageLoad.ts` — the stylesheet joins
+  `compiledStyles.css` as `extraCss`.
+- `src/core/page-parser/__tests__/cssInJsExtraction.test.ts` *(new, 20 tests)*.
+- Docs: `docs/features/studio-import.md` (new "CSS-in-JS — static extraction"
+  section + the two "what still does not import" entries + file/test indexes),
+  `docs/reference/canonical-jsx.md` (rule 7's detection),
+  `docs/agent-refs/studio-pipeline.md` (known non-imports).
+
+**Decisions — for each new resolution: locks? codeProps? origin?**
+
+| Resolution | Locks the node? | `codeProps`? | `origin`? |
+|---|---|---|---|
+| The synthetic class on a styled element | **No.** This is a fact about styling, not about whether the source places the element — the element is written at a real `line:col` and moves/deletes exactly as before. | **No.** `className` is translated to `classIds` by `parsedPageToSitePage` and never reaches the panel as a prop; a call site that ALSO wrote its own non-literal `className` still lands in `codeProps` through `extractProps`' existing catch-all, unchanged. | **No** — the class name is COMPUTED (a hash of file + binding + position). There is no literal behind it, so per the origin rule it gets none. |
+| A resolved interpolation inside a template | **No** — it never reaches a `ParsedNode` at all; it becomes CSS text in the registry. | No. | **No** — even where the interpolation bottoms out in a literal, the CSS declaration is a computed string. Attaching one would point a future writeback at the token's own file while the user was editing a rule, which is precisely the wrong-literal hazard `textOrigin` is scoped to text to avoid. |
+| The dropped `css` prop (emotion) | No. | **Removed from it.** The prop is compiled away by emotion's babel plugin, so a `codeProps` entry would put a read-only row in the panel for an attribute the rendered element does not have. | n/a |
+
+**What the panel shows.** Nothing new. A styled rule is an ordinary imported
+`StyleRule` with an `sc-` id, `updatedAt: 0`, and **no `styleRuleSources`
+entry** — so `StyleTargetChip` already says "not saved to source", the
+`kind: 'css'` write-back already refuses it as unmapped, and
+`styleRuleNeedsCanvasOverlay` already leaves it to the raw `authoredCss` text.
+That was the point of routing through `extraCss` instead of inventing a rule
+origin: the compiled/read-only presentation is inherited, not re-derived.
+
+**Measured on two real OSS repos** (cloned to `.tmp/`, since deleted):
+
+| Repo | Templates | Clean | Partial | Unresolvable | Declarations |
+|---|---|---|---|---|---|
+| `bchiang7/v4` | 48 | 20 (41.7%) | 27 (56.3%) | 1 (2.1%) | **907** |
+| `react-boilerplate/react-boilerplate` | 30 | 24 (80.0%) | 6 (20.0%) | 0 | **137** |
+
+On `bchiang7/v4`, **34 of 221 parsed nodes** now carry a real host tag plus an
+extracted class where each was previously an "Unknown module" box.
+
+**Landmines — things the 1013-line `studio-import.md` did not already say.**
+Every one of these is now written into that doc's new "CSS-in-JS" section
+(`studio-scribe`: they are already there; keep them there, and add the fourth
+one below to the Phase B brief when it opens).
+
+1. **A styled element's synthetic class is NOT a source token.** It exists in
+   `node.classIds` and in the DOM, but there is no `className` attribute in the
+   `.tsx` holding it. Removing it in the CSS Classes panel produces a
+   `kind: 'class'` edit whose `remove` token `setJsxClassName` cannot find, so
+   the codemod silently no-ops (`{ ok: true }`, file untouched) while the canvas
+   shows it gone — a canvas that disagrees with the file. **Phase B must refuse
+   a class add/remove on a styled node, by name, before it reaches the codemod.**
+   Not fixed here because the whole class-writeback path
+   (`classNameWriteback.ts`, `fsCodemodAdapter.ts`) is owned by another agent
+   this wave.
+2. **A styled component's own props reach the DOM as attributes.** `<Wrapper
+   active>` becomes `<div active="true">`. styled-components v6 filters
+   `$`-transient props at runtime; this pass does not, so a canvas frame can
+   carry attributes a real render would not. Cosmetic today, but it is the kind
+   of thing a future attribute-panel change would trip over.
+3. **`as` is not honoured.** `<Wrapper as="section">` still renders the
+   template's own base tag, and `as` lands in `props` as a bogus attribute. One
+   line to fix if it ever matters; deliberately not guessed at here.
+4. **The single biggest remaining fidelity gap is `ThemeProvider`, and it is
+   NOT a CSS-in-JS problem.** All 48 `block-dropped` findings on `bchiang7/v4`
+   are `${({ theme }) => theme.mixins.flexCenter}`. Resolving `theme` to the
+   one `<ThemeProvider theme={…}>` in the workspace is exactly Tier B's
+   existing "one provider or nothing" rule — but the value it lands on is a
+   `css\`…\`` tagged template, and splicing THAT needs the evaluator to hand
+   back the declaration NODE a member chain bottoms out at, not a
+   `StaticValue`. That is a `staticEvalCore` change. **Do not** solve it by
+   writing a second, parallel node-resolution walk inside `cssInJsExtract.ts` —
+   that is the duplicate-evaluator the tier table exists to prevent.
+5. **`extraCss` is parsed BEFORE the project's own `.css` files**
+   (`loadStudioStyles`), so a hand-authored stylesheet rule of equal
+   specificity wins over a styled rule. In a real app styled-components injects
+   at runtime and usually wins. Not observed to matter (synthetic class names
+   are unique), but it is a real cascade-order difference between the canvas
+   and the app.
+
+**Verification.** `bun test src/core/page-parser src/core/ast-codemods
+src/core/studio-sync src/__tests__/studio src/__tests__/architecture` — all
+green (808 + 616 + 281). `bun run build` and `bun run lint` clean. The full
+`bun test` shows 81 failures, all pre-existing/batch-isolation: the
+`streamClaudeCli` suites, `projectMcpApprovals`, `cmsPlugins`, step-up auth,
+and ~30 canvas/panel tests that pass individually (the documented batch-run
+isolation flake). None touch page-parser, studio-sync, or the studio handlers.
 
 ---
 

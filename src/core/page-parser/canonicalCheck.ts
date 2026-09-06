@@ -187,7 +187,7 @@ export const CANONICAL_JSX_RULES: readonly CanonicalRuleDef[] = [
     title: 'One styling mechanism',
     description: 'One authored styling mechanism: plain CSS or CSS Modules.',
     because:
-      'Sass/Less/PostCSS/Tailwind need Tier 1 trust promotion; CSS-in-JS is detected but never compiled. This governs the CSS you write — not CSS a package ships.',
+      'Sass/Less/PostCSS/Tailwind need Tier 1 trust promotion; CSS-in-JS is statically extracted per template, and an interpolation the evaluator cannot read drops that declaration. This governs the CSS you write — not CSS a package ships.',
     tier: 'violation',
   },
   {
@@ -426,22 +426,82 @@ const CSS_IN_JS_IMPORT_RE = /\bimport\s+(?:[^'";]*\bfrom\s+)?['"](?:styled-compo
  * not a per-page one; see `docs/reference/canonical-jsx.md`.
  */
 function checkSingleStylingMechanism(page: ParsedPage, sourceText: string | undefined, out: CanonicalFinding[]): void {
-  if (!sourceText) return
   const anchorId = page.rootIds[0]
   const anchor = anchorId ? page.nodes[anchorId] : undefined
   // No writable node to blame the finding on (an empty parse) — nothing to report against.
   if (!anchor) return
 
+  // The CSS-in-JS half runs off the PARSE, not off `sourceText`, so it works
+  // for every caller — including `canonicalPageCheck.ts`, which has never
+  // passed `sourceText` and therefore never saw this rule at all.
+  checkCssInJsTemplates(page, anchor, out)
+
+  if (!sourceText) return
   if (SASS_LESS_IMPORT_RE.test(sourceText)) {
     out.push(findingAt('single-styling-mechanism', anchor.id, anchor.loc, 'Imports a Sass/Less stylesheet, not plain CSS or a CSS Module.'))
   }
-  if (CSS_IN_JS_IMPORT_RE.test(sourceText)) {
+  // Only when the extractor found NOTHING — otherwise `checkCssInJsTemplates`
+  // has already said something far more useful than "this file imports a
+  // package", and saying both would double-count the same fact.
+  if (CSS_IN_JS_IMPORT_RE.test(sourceText) && (page.cssInJs?.templates.length ?? 0) === 0) {
     out.push(
       findingAt(
         'single-styling-mechanism',
         anchor.id,
         anchor.loc,
-        'Imports a CSS-in-JS package (styled-components/emotion/stitches), not plain CSS or a CSS Module.',
+        'Imports a CSS-in-JS package (styled-components/emotion/stitches) but declares no template this parser can extract — nothing from it reaches the canvas.',
+      ),
+    )
+  }
+}
+
+/**
+ * W4-4 Phase A — per-template honesty, replacing the blanket "imports a
+ * CSS-in-JS package" line this rule used to emit.
+ *
+ * That blanket finding was true and useless: it said the same thing about a
+ * file whose eleven templates all extracted byte for byte and a file whose one
+ * template resolved nothing. What a caller actually needs to decide is how
+ * much of THIS file's styling reached the canvas, so this emits one headline
+ * with the clean/partial/unresolvable split and then one finding per template
+ * that did not extract cleanly, at that template's own source location, naming
+ * the declarations that were dropped.
+ *
+ * Still `tier: 'violation'`, unchanged: CSS-in-JS is not one of the two
+ * authored mechanisms the canonical subset names, however well it extracts.
+ * The tier answers "is this file canonical"; these messages answer "what did
+ * it cost you", which is a different question and the reason a summary alone
+ * was not enough.
+ */
+function checkCssInJsTemplates(page: ParsedPage, anchor: ParsedNode, out: CanonicalFinding[]): void {
+  const templates = page.cssInJs?.templates ?? []
+  if (templates.length === 0) return
+
+  const clean = templates.filter((t) => t.status === 'clean').length
+  const partial = templates.filter((t) => t.status === 'partial').length
+  const unresolvable = templates.filter((t) => t.status === 'unresolvable').length
+  out.push(
+    findingAt(
+      'single-styling-mechanism',
+      anchor.id,
+      anchor.loc,
+      `Styles with CSS-in-JS, not plain CSS or a CSS Module: ${templates.length} template(s) statically extracted — ${clean} clean, ${partial} partial, ${unresolvable} unresolvable.`,
+    ),
+  )
+
+  for (const template of templates) {
+    if (template.status === 'clean') continue
+    const dropped = template.findings
+      .filter((f) => f.kind === 'declaration-dropped')
+      .map((f) => f.property)
+      .filter((p): p is string => p !== undefined)
+    const detail = dropped.length > 0 ? ` Dropped: ${[...new Set(dropped)].join(', ')}.` : ''
+    out.push(
+      findingAt(
+        'single-styling-mechanism',
+        anchor.id,
+        template.loc,
+        `\`${template.componentName}\` extracted ${template.status === 'unresolvable' ? 'nothing' : `${template.declarationCount} declaration(s)`}: ${template.findings[0]?.message ?? 'the template could not be read.'}${detail}`,
       ),
     )
   }

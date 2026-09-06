@@ -395,7 +395,124 @@ export interface ParsedNode {
   fragmentSlot?: true
 }
 
+// ---------------------------------------------------------------------------
+// CSS-in-JS static extraction (W4-4 Phase A)
+//
+// Lives here, next to `NodeLoc`, rather than in its own leaf module: a
+// template's report carries a `NodeLoc`, and `ParsedPage` carries the
+// extraction, so a separate file would need a type-only edge in BOTH
+// directions — which `madge`'s no-circular-dependencies gate reads as a cycle
+// even when it is types only.
+//
+// READ SIDE ONLY. Nothing here is a writeback target: a styled template's CSS
+// enters the registry through the same compiled/read-only door Tailwind and
+// CSS-Modules output already use (`studioCss.ts`'s `extraCss`), which means it
+// gets no `StyleRuleSource` and the CSS write-back refuses it by construction.
+// See `docs/features/studio-import.md`'s "CSS-in-JS" section.
+// ---------------------------------------------------------------------------
+
+/** Which package a template came from. `stitches` is detected by the project probe but deliberately NOT extracted — see `cssInJsExtract.ts`. */
+export type CssInJsLibrary = 'styled-components' | 'emotion'
+
+/**
+ * What a styled binding actually renders, which is what decides whether the
+ * canvas can put its class on a real element:
+ *
+ *  - `tag` — `styled.div` / `styled.div.attrs(…)`, and a `styled(OtherStyled)`
+ *    chain that bottoms out in one. The JSX call site is rewritten to that
+ *    host tag with the class applied, so the canvas DOM is what React renders:
+ *    no wrapper element, exactly the invariant `studio.instance` exists for.
+ *  - `component` — `styled(Card)` where `Card` is NOT itself a styled binding
+ *    in the same file. The CSS is still extracted and registered, and the class
+ *    is applied at the call site (which is precisely what styled-components
+ *    does: it renders `<Card className="…"/>`), but the element the class lands
+ *    on is decided by `Card`'s own file, so the template is reported `partial`.
+ *  - `standalone` — an emotion `css` block assigned to a const. It has no
+ *    element of its own; it attaches wherever that const is used in a `css`
+ *    or `className` prop.
+ */
+export type CssInJsBase =
+  | { kind: 'tag'; tag: string }
+  | { kind: 'component'; name: string }
+  | { kind: 'standalone' }
+
+/**
+ * One reason a template did not extract cleanly, at declaration granularity —
+ * the whole point of Phase A's per-template honesty. An interpolation the
+ * evaluator cannot read drops ONE declaration, never the template.
+ */
+export interface CssInJsFinding {
+  kind:
+    /** An interpolation inside a declaration's value/property could not be resolved — that declaration alone was dropped. */
+    | 'declaration-dropped'
+    /** An interpolation inside a nested selector could not be resolved — that nested rule alone was dropped. */
+    | 'selector-dropped'
+    /** A whole statement-position interpolation (a mixin, a `keyframes` reference used as a block) could not be resolved. */
+    | 'block-dropped'
+    /** A ternary whose condition is not statically decidable — `branchSelection.ts`'s stated positional heuristic picked the consequent. */
+    | 'branch-guessed'
+    /** `styled.div.attrs(…)` — the attrs bag is not applied (it can inject props and inline styles). */
+    | 'attrs-ignored'
+    /** `styled(Component)` — see `CssInJsBase`. */
+    | 'wraps-component'
+    /** postcss could not parse the template body, or it exceeded the size/nesting cap. */
+    | 'template-unreadable'
+  /** The CSS property whose declaration was dropped, when the drop was a declaration. */
+  property?: string
+  /** The interpolation's own source text, trimmed and truncated — what a person would search the file for. */
+  expression?: string
+  /** One sentence, safe to show a person verbatim. */
+  message: string
+}
+
+/** One `styled.*` / `styled(X)` / emotion `css` template, and how faithfully it extracted. */
+export interface CssInJsTemplate {
+  /** The binding the template is assigned to — `Card` for `const Card = styled.div\`…\``. */
+  componentName: string
+  /**
+   * The deterministic synthetic class name this template's CSS is registered
+   * under: `Card_sc__a1b2c3`, hashed from (rel file, binding name, line, col).
+   * Mirrors `styleCompile.ts`'s CSS-Modules convention (`Card_card__a1b2`) on
+   * purpose — same shape, same "generated, read-only" reading in the panel.
+   */
+  className: string
+  base: CssInJsBase
+  library: CssInJsLibrary
+  /** Where the `styled.…\`` tag itself is written. */
+  loc: NodeLoc
+  /** `clean` — no findings. `partial` — some CSS reached the registry, some did not. `unresolvable` — nothing did. */
+  status: 'clean' | 'partial' | 'unresolvable'
+  findings: CssInJsFinding[]
+  /** How many declarations DID reach the registry. `0` for `unresolvable`. */
+  declarationCount: number
+  /**
+   * This template's own flattened CSS, already scoped to `className` (nested
+   * `&:hover` / `& > *` selectors resolved, nested `@media` re-wrapped).
+   * Deliberately per-template rather than one blob per page: the same
+   * component file is parsed once per call site it is inlined at, so the
+   * consumer dedupes by `className` (`cssInJsStylesheet`) instead of emitting
+   * the same rule 29 times.
+   */
+  css: string
+}
+
+/** Every CSS-in-JS template reachable from one parsed page (its own file, plus every local component file inlined into it). */
+export interface CssInJsExtraction {
+  templates: CssInJsTemplate[]
+}
+
 export interface ParsedPage {
   rootIds: string[]
   nodes: Record<string, ParsedNode>
+  /**
+   * W4-4 Phase A — the CSS-in-JS templates statically extracted while parsing
+   * this page, if any. Absent for a page with none, so a project that uses no
+   * CSS-in-JS costs exactly what it did before (the extractor returns early
+   * unless the file actually imports one of the recognised packages).
+   *
+   * `inlineLocalComponents` merges an inlined component file's own templates
+   * into the page's — one component's styled definitions are just as much a
+   * part of what the page renders as its own.
+   */
+  cssInJs?: CssInJsExtraction
 }
