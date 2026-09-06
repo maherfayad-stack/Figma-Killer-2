@@ -400,6 +400,30 @@ function writeStyleCache(dir: string, cacheKey: string, styles: CompiledStyles):
 // ---------------------------------------------------------------------------
 
 /**
+ * The toolchains in a profile that can only be compiled by RUNNING the
+ * workspace's own code — i.e. the ones this module refuses to touch at Tier 0.
+ * Empty means a fresh import already renders everything it can (plain CSS +
+ * CSS Modules + vendor CSS are all Tier 0 safe).
+ *
+ * The one place that rule is written down. `compileProjectStyles` below asks
+ * it to decide whether to warn/compile, and `styleCompileConsent.ts` asks the
+ * SAME function to decide whether to offer the board's promote prompt — a
+ * second copy of `sass || tailwind || postcssConfigPath` in the UI layer would
+ * be a rule that drifts silently, showing a prompt for a project this module
+ * would not compile or (worse) staying quiet for one it would.
+ */
+export type CompilableStyleToolchain = 'tailwind' | 'sass' | 'postcss'
+
+export function compilableStyleToolchains(profile: ProjectProfile): CompilableStyleToolchain[] {
+  const toolchain = profile.styleToolchain
+  const found: CompilableStyleToolchain[] = []
+  if (toolchain.tailwind) found.push('tailwind')
+  if (toolchain.sass) found.push('sass')
+  if (toolchain.postcssConfigPath) found.push('postcss')
+  return found
+}
+
+/**
  * `dir + ProjectProfile -> CompiledStyles`, per §WS-2.1. Never throws:
  * anything that fails degrades to an empty contribution plus a warning,
  * matching the parser's own "unresolved, never a crash" contract, because a
@@ -422,7 +446,7 @@ export async function compileProjectStyles(
   const warnings: ProbeWarning[] = []
   const toolchain = profile.styleToolchain
   const needsCssModules = toolchain.cssModules
-  const needsTier1 = Boolean(toolchain.sass || toolchain.tailwind || toolchain.postcssConfigPath)
+  const needsTier1 = compilableStyleToolchains(profile).length > 0
   // WS-2.3 — vendor package CSS has no toolchain flag of its own (the probe
   // never scanned for it), so "is there anything to do" can't be answered
   // from `profile` alone the way CSS Modules/Tailwind/Sass can. The scan

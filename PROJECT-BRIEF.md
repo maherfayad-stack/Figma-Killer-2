@@ -189,7 +189,9 @@ never silently no-ops.
 CSS Modules (`.module.css` only — Sass/Less module variants are undetected),
 Tailwind v3/v4 and Sass/PostCSS compilation (WS-2.1 built the pipeline, but it
 requires the project promoted past Tier 0 trust — a fresh import never
-auto-runs it), CSS-in-JS ·
+auto-runs it; the board now ASKS once, on load, via
+`StyleCompileConsentBanner`, so the project no longer sits silently unstyled,
+but the promotion is still an explicit user action), CSS-in-JS ·
 **creating any new CSS** (a new rule, a new selector, a new stylesheet,
 `@font-face`, a new design token, `@keyframes`) — never reaches disk, reported
 through `collectStyleRuleEdits`'s `unmapped` list and toasted rather than
