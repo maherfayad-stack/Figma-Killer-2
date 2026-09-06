@@ -46,6 +46,59 @@
     cursor: default;
 }
 
+/* ── Loading ──────────────────────────────────────────────────────────────────
+ * `loading` overlays a spinner on a button whose label is still in flow, so the
+ * button keeps the exact width it had at rest. Anything that dims the whole
+ * button (the :disabled opacity above) would dim the spinner too, so loading
+ * opts back out of it — the spinner IS the affordance, and a 38%-opacity
+ * spinner reads as broken rather than busy. */
+.loading {
+    position: relative;
+    cursor: default;
+}
+
+.btn.loading:disabled,
+.btn.loading[aria-disabled="true"] {
+    opacity: 1;
+}
+
+.spinner {
+    position: absolute;
+    inset: 0;
+    width: 12px;
+    height: 12px;
+    margin: auto;
+    box-sizing: border-box;
+    border: 2px solid var(--overlay-20);
+    border-top-color: currentColor;
+    border-radius: 999px;
+    animation: buttonSpin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .spinner {
+        animation: none;
+    }
+}
+
+@keyframes buttonSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Inherits the button's own flex metrics so wrapping the children does not
+ * change how they were laid out — same gap, same justification. */
+.loadingLabel {
+    display: inline-flex;
+    align-items: center;
+    justify-content: inherit;
+    gap: inherit;
+    flex: 1 1 auto;
+    min-width: 0;
+    visibility: hidden;
+}
+
 /* ── Sizes ────────────────────────────────────────────────────────────────── */
 .size-micro {
     height: 18px;

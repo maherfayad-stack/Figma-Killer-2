@@ -90,10 +90,9 @@ export function AdminCanvasEditorBody({
         position: relative makes this the containing block for absolutely
         positioned panels (Guideline #356 / Task #358 / Architect #504).
         flex is kept so CanvasRoot's flex:1 fills the full width.
-        DndContext wraps the full editor body so SiteExplorerPanel rows can be
-        reordered across sections and folders.
-        DomPanel has its own nested DndContext for tree-node reordering — that
-        context is isolated; nested DndContexts are fully supported by dnd-kit.
+        DndContext wraps the full editor body. DomPanel has its own nested
+        DndContext for tree-node reordering — that context is isolated; nested
+        DndContexts are fully supported by dnd-kit.
       */}
       <DndContext sensors={canvasDndSensors} collisionDetection={pointerWithin}>
         {/* `ConfirmDeleteProvider` wraps the editor body so the canvas

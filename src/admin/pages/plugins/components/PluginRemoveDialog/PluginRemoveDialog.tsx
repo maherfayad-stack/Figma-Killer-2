@@ -56,9 +56,9 @@ export function PluginRemoveDialog({
             size="sm"
             type="button"
             onClick={() => void onConfirm()}
-            disabled={busy}
+            loading={busy}
           >
-            {busy ? 'Removing…' : force ? 'Remove anyway' : 'Remove plugin'}
+            {force ? 'Remove anyway' : 'Remove plugin'}
           </Button>
         </>
       }

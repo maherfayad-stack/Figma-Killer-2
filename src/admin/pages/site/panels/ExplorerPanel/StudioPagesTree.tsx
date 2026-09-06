@@ -29,8 +29,7 @@
  * screen". Every page row's `onPointerDownCapture` fires `openPageInCanvas`
  * BEFORE any click/context-menu/drag inside that row reaches node-selection
  * logic — same pattern `BoardFramesLayer`'s frame activation uses, and the
- * same "click a page to open it" convention `SiteExplorerPanel` already
- * follows.
+ * same "click a page to open it" convention every explorer row uses.
  *
  * Expand/collapse state is local component state (a `Set<string>` of
  * expanded page ids) — UI-only, never persisted to `boards.json` or the

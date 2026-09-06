@@ -1,7 +1,6 @@
 import { rawReturn } from 'mutative'
 import type { StoreApi, UseBoundStore } from 'zustand'
 import type { EditorStore } from '@site/store/types'
-import type { ExplorerPanelTab } from '@site/store/slices/uiSlice'
 import {
   readWorkspaceLayout,
   writeWorkspaceLayout,
@@ -23,7 +22,6 @@ export type SiteLayoutSelection = readonly [
   dependenciesOpen: boolean,
   codeEditorOpen: boolean,
   agentOpen: boolean,
-  explorerTab: ExplorerPanelTab,
   propertiesMode: PropertiesPanelMode,
   leftSidebarWidth: number,
   propertiesWidth: number,
@@ -36,15 +34,6 @@ function boolOrCurrent(value: unknown, current: boolean): boolean {
 
 function finiteNumberOrCurrent(value: unknown, current: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : current
-}
-
-function explorerTab(
-  value: unknown,
-  current: ExplorerPanelTab,
-): ExplorerPanelTab {
-  return value === 'layers' || value === 'site' || value === 'code' || value === 'media'
-    ? value
-    : current
 }
 
 function propertiesMode(
@@ -71,7 +60,6 @@ export function selectSiteLayoutState(s: EditorStore): SiteLayoutSelection {
     s.dependenciesPanelOpen,
     s.codeEditorPanelOpen,
     s.isAgentOpen,
-    s.explorerPanelTab,
     s.propertiesPanelMode,
     s.leftSidebarWidth,
     s.propertiesPanel.width,
@@ -113,7 +101,6 @@ export function siteLayoutFromSelection(
     ,
     codeEditorOpen,
     ,
-    explorerTab,
     propertiesMode,
     leftSidebarWidth,
     propertiesWidth,
@@ -126,7 +113,6 @@ export function siteLayoutFromSelection(
     leftOpen: deriveSiteActiveLeftPanel(selection) !== null,
     rightOpen: propertiesOpen,
     activeLeftPanel: deriveSiteActiveLeftPanel(selection),
-    explorerPanelTab: explorerTab,
     activeEditorFileId,
     codeEditorPanelOpen: codeEditorOpen,
     propertiesPanelMode: propertiesMode,
@@ -160,7 +146,6 @@ export function restoreStoredSiteEditorLayout(
       },
       propertiesPanelMode: propertiesMode(layout, state.propertiesPanelMode),
       leftSidebarWidth: leftSidebarWidth(layout, state.leftSidebarWidth),
-      explorerPanelTab: explorerTab(layout.explorerPanelTab, state.explorerPanelTab),
       codeEditorPanelOpen: boolOrCurrent(layout.codeEditorPanelOpen, state.codeEditorPanelOpen),
       activeEditorFileId: layout.activeEditorFileId !== undefined
         ? layout.activeEditorFileId

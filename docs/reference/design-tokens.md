@@ -529,7 +529,7 @@ The two `!important` declarations here are the **only legitimate `!important` us
 | `box-shadow: 0 4px 16px rgba(0,0,0,0.5);`            | `box-shadow: var(--shadow-panel-drop);`  |
 | Inventing a one-off radius                           | Use the radius scale                     |
 | Inventing a one-off z-index                          | Use the existing z-index tokens          |
-| Reaching for a one-off rail color                    | Use `railAccent` / `assignRailAccents`, or add a token |
+| Reaching for a one-off rail color                    | Use `railGroupAccent` (a known job) / `railAccent` / `assignRailAccents`, or add a token |
 | Hardcoding the canvas selection ring color           | `var(--canvas-selection-ring)`           |
 
 ---

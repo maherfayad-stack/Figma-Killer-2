@@ -1,6 +1,14 @@
 /**
- * Body-only styles. Backdrop, dialog chrome, header, footer all live in
- * @ui/components/Dialog — do not duplicate them here.
+ * The shared dialog-*body* stylesheet — the form / field / label / hint rules
+ * that eight admin dialogs (`ImportProjectDialog`, `DesignImportDialog`,
+ * `SelectorDialogs`, `CreateColorDialog`, `ClassRenameDialog`,
+ * `ExplorerRenameDialog`, `UserDialog`, `RoleDialog`, `McpServersSection`,
+ * `McpTab`) import as `dialogStyles`. The `SiteCreateDialog` component it was
+ * named for was CMS-only chrome and has been deleted; the folder name is
+ * historical and the file is very much live.
+ *
+ * Backdrop, dialog chrome, header, footer all live in @ui/components/Dialog —
+ * do not duplicate them here.
  */
 
 .form {

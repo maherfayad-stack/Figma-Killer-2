@@ -152,9 +152,10 @@ export function StepUpDialog({
               variant="primary"
               size="sm"
               disabled={confirmDisabled}
+              loading={submitting}
               data-testid="step-up-confirm"
             >
-              <span>{submitting ? 'Confirming…' : 'Confirm'}</span>
+              <span>Confirm</span>
             </Button>
           </div>
         </form>

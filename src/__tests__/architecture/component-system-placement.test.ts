@@ -17,10 +17,13 @@
  *
  * ENFORCED CONSTRAINTS:
  * G1 — ModulePickerDropdown must call insertComponentRef for VC insertion.
- * G2 — SiteExplorerPanel must not expose a visualComponentRef drag source.
  * G3 — LayerNodeContextMenu must call insertComponentRef for VC insertion.
  * G4 — No placement file may call insertNode with 'base.visual-component-ref' directly.
  * G5 — No placement file may call addNodeToVc with 'base.visual-component-ref' directly.
+ *
+ * G2 (the Site Explorer must not be a component-to-canvas drag source) is gone
+ * with its subject: `SiteExplorerPanel` was unreachable CMS chrome and has been
+ * deleted. The remaining gate numbering is kept so cross-references still land.
  */
 
 import { describe, test, expect } from 'bun:test'
@@ -36,14 +39,6 @@ const PROJECT_ROOT = resolve(import.meta.dir, '../../..')
 const PICKER_PATH = resolve(
   PROJECT_ROOT,
   'src/admin/pages/site/toolbar/ModulePickerDropdown.tsx',
-)
-const EXPLORER_PATH = resolve(
-  PROJECT_ROOT,
-  'src/admin/pages/site/panels/SiteExplorerPanel/SiteExplorerPanel.tsx',
-)
-const EXPLORER_TREE_SECTION_PATH = resolve(
-  PROJECT_ROOT,
-  'src/admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeSection.tsx',
 )
 const CONTEXT_MENU_PATH = resolve(
   PROJECT_ROOT,
@@ -106,30 +101,6 @@ describe('G1 — ModulePickerDropdown calls insertComponentRef for VC insertion 
 })
 
 // ---------------------------------------------------------------------------
-// Gate 2 — SiteExplorerPanel must not be a canvas insertion drag source.
-//
-// Visual Components are still insertable through explicit module-picking flows.
-// The Site Explorer is for opening and organizing site artifacts, so it must
-// not register a visualComponentRef drag payload or a component drag handle.
-// ---------------------------------------------------------------------------
-
-describe('G2 — SiteExplorerPanel does not expose a visualComponentRef drag source', () => {
-  test('SiteExplorer tree must not register component-to-canvas drag payloads', () => {
-    const src = readSource(EXPLORER_TREE_SECTION_PATH)
-    if (src.includes("'visualComponentRef'") || src.includes('site-explorer-component-drag-handle')) {
-      throw new Error(
-        '[Phase 4 / G2] Site Explorer exposes component-to-canvas dragging.\n' +
-        'Component rows may open and organize Visual Components, but they must not register\n' +
-        "a drag payload with kind: 'visualComponentRef' or render the canvas drag handle.\n" +
-        'File: src/admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeSection.tsx',
-      )
-    }
-    expect(src).not.toContain("'visualComponentRef'")
-    expect(src).not.toContain('site-explorer-component-drag-handle')
-  })
-})
-
-// ---------------------------------------------------------------------------
 // Gate 3 — LayerNodeContextMenu must use insertComponentRef
 // ---------------------------------------------------------------------------
 
@@ -160,7 +131,6 @@ describe("G3 — LayerNodeContextMenu calls insertComponentRef for 'Insert modul
 describe("G4 — No placement file calls insertNode with 'base.visual-component-ref' directly (Phase 4)", () => {
   const FILES: [string, string][] = [
     ['ModulePickerDropdown.tsx', PICKER_PATH],
-    ['SiteExplorerPanel.tsx', EXPLORER_PATH],
     ['LayerNodeContextMenu.tsx', CONTEXT_MENU_PATH],
   ]
 
@@ -193,7 +163,6 @@ describe("G4 — No placement file calls insertNode with 'base.visual-component-
 describe("G5 — No placement file calls addNodeToVc with 'base.visual-component-ref' directly (Phase 4)", () => {
   const FILES: [string, string][] = [
     ['ModulePickerDropdown.tsx', PICKER_PATH],
-    ['SiteExplorerPanel.tsx', EXPLORER_PATH],
     ['LayerNodeContextMenu.tsx', CONTEXT_MENU_PATH],
   ]
 

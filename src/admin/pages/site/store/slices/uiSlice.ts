@@ -17,14 +17,6 @@ export type LeftSidebarPanelId =
   | 'agent'
 /** Tabs inside the consolidated Framework panel. */
 export type FrameworkPanelTab = 'home' | 'colors' | 'typography' | 'spacing'
-/**
- * Tabs inside the consolidated Explorer panel.
- *   - `layers` — the current page's DOM tree (DomPanel)
- *   - `site`   — pages, templates, components (SiteExplorerPanel, `site` group)
- *   - `code`   — stylesheets + scripts source files (SiteExplorerPanel, `code` group)
- *   - `media`  — asset library (MediaExplorerPanel)
- */
-export type ExplorerPanelTab = 'layers' | 'site' | 'code' | 'media'
 export type PropertiesPanelMode = 'docked' | 'floating'
 
 const PROPERTIES_PANEL_DEFAULT_WIDTH = 360
@@ -125,11 +117,10 @@ interface UiSlice {
    */
   layoutNameDialogRequest: LayoutNameDialogRequest | null
 
-  // Consolidated Explorer panel — the Layers / Pages / Media navigation
-  // surfaces in one rail item with tabs.
+  // Explorer panel — Studio's boards list + all-pages layers tree. It has no
+  // tabs: the Site / Code / Media tabs (and the SiteExplorerPanel /
+  // MediaExplorerPanel bodies behind them) were CMS-only surfaces and are gone.
   explorerPanelOpen: boolean
-  /** Active tab inside the consolidated Explorer panel. */
-  explorerPanelTab: ExplorerPanelTab
   selectorsPanelOpen: boolean
   frameworkPanelOpen: boolean
   /** Active tab inside the consolidated Framework panel. */
@@ -186,7 +177,6 @@ interface UiSlice {
   closeLayoutNameDialog: () => void
 
   setExplorerPanelOpen: (open: boolean) => void
-  setExplorerPanelTab: (tab: ExplorerPanelTab) => void
   setSelectorsPanelOpen: (open: boolean) => void
   setFrameworkPanelOpen: (open: boolean) => void
   setFrameworkPanelTab: (tab: FrameworkPanelTab) => void
@@ -338,7 +328,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   componentizeEditorRequest: null,
   layoutNameDialogRequest: null,
   explorerPanelOpen: true,
-  explorerPanelTab: 'layers',
   selectorsPanelOpen: false,
   frameworkPanelOpen: false,
   frameworkPanelTab: 'home',
@@ -460,8 +449,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   closeLayoutNameDialog: () => set({ layoutNameDialogRequest: null }),
 
   setExplorerPanelOpen: (open) => set({ explorerPanelOpen: open }),
-
-  setExplorerPanelTab: (tab) => set({ explorerPanelTab: tab }),
 
   setSelectorsPanelOpen: (open) => set({ selectorsPanelOpen: open }),
 

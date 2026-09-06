@@ -170,16 +170,10 @@ export function ProfileTab({ user }: ProfileTabProps) {
                 type="button"
                 onClick={openFilePicker}
                 disabled={busy !== null}
-                aria-busy={busy === 'upload'}
+                loading={busy === 'upload'}
                 data-testid="profile-avatar-upload"
               >
-                <span>
-                  {busy === 'upload'
-                    ? 'Uploading…'
-                    : hasUploadedAvatar
-                      ? 'Change picture'
-                      : 'Upload picture'}
-                </span>
+                <span>{hasUploadedAvatar ? 'Change picture' : 'Upload picture'}</span>
               </Button>
               {hasUploadedAvatar && (
                 <Button
@@ -189,10 +183,10 @@ export function ProfileTab({ user }: ProfileTabProps) {
                   tone="danger"
                   onClick={() => void handleRemove()}
                   disabled={busy !== null}
-                  aria-busy={busy === 'remove'}
+                  loading={busy === 'remove'}
                   data-testid="profile-avatar-remove"
                 >
-                  <span>{busy === 'remove' ? 'Removing…' : 'Remove'}</span>
+                  <span>Remove</span>
                 </Button>
               )}
             </div>
@@ -251,10 +245,10 @@ export function ProfileTab({ user }: ProfileTabProps) {
                 size="sm"
                 type="submit"
                 disabled={busy !== null || !profileDirty}
-                aria-busy={busy === 'profile'}
+                loading={busy === 'profile'}
                 data-testid="profile-save"
               >
-                <span>{busy === 'profile' ? 'Saving…' : 'Save profile'}</span>
+                <span>Save profile</span>
               </Button>
             </div>
           </form>

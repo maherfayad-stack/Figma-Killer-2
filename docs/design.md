@@ -100,7 +100,7 @@ Categories of things have an associated color drawn from the numbered **accent**
 | `--accent-9` | `#f0a6ff` | Secondary violet identity tint                      |
 | `--accent-10` | `#ff9f9f` | Secondary red identity tint                          |
 
-Accent tokens don't live in `src/styles/globals.css` to be decorative — they're part of the design system. Panel rails assign these accents automatically using `assignRailAccents` (multi-item surfaces, avoids repeats inside the visible group) or `railAccent` (single item) from `src/ui/railAccent.ts`. Primitives like `Widget` can still accept an explicit tint when the category is product-defined. The light theme overrides the same accent names with darker foreground colors so rail icons and badges keep contrast on white surfaces. New identity colors are added by extending the `--accent-*` group, not by inlining a color.
+Accent tokens don't live in `src/styles/globals.css` to be decorative — they're part of the design system. **A rail accent means something.** Every built-in editor panel declares a `RailAccentGroup` — `navigate` (gold) · `style` (mint) · `inspect` (sky) · `content` (lilac) · `assist` (violet) — and `railGroupAccent(group)` from `src/ui/railAccent.ts` turns that into a tint, so two panels doing the same job deliberately share a colour. Only surfaces this repo cannot classify — third-party plugin panels, the import/export dialogs' ad-hoc category lists — fall back to `assignRailAccents`' deterministic identity hash (multi-item, avoids repeats inside the visible group) or `railAccent` (single item). Primitives like `Widget` can still accept an explicit tint when the category is product-defined. The light theme overrides the same accent names with darker foreground colors so rail icons and badges keep contrast on white surfaces. New identity colors are added by extending the `--accent-*` group, not by inlining a color.
 
 ### 7. The canvas owns its own palette
 
@@ -543,7 +543,7 @@ count, because a colour family is still hundreds long on its own.
 }
 ```
 
-Icons in the rail get a `drop-shadow` glow matching their tint. The active rail item has a 2px tinted indicator on its left edge. Canonical CSS implementation: `src/admin/pages/site/sidebars/PanelRail/PanelRail.module.css`. Accent assignment logic: `src/ui/railAccent.ts` (`assignRailAccents` for multi-item groups, `railAccent` for single items).
+Icons in the rail get a `drop-shadow` glow matching their tint. The active rail item has a 2px tinted indicator on its left edge. Canonical CSS implementation: `src/admin/pages/site/sidebars/PanelRail/PanelRail.module.css`. Accent assignment logic: `src/ui/railAccent.ts` — `railGroupAccent(group)` for anything whose job is known (every built-in panel; the mapping lives beside the rail item list in `PanelRail.tsx`), `assignRailAccents` / `railAccent` for the hashed fallback.
 
 This pattern (automatic per-item rail tint plus `data-accent` for inspection) is the recipe for any equivalent sidebar — media sidebar, data sidebar, content sidebar, etc.
 
@@ -746,7 +746,7 @@ The HTML `title` attribute is banned for hover hints — gated by `no-native-tit
 | Card with a colored border                               | Borderless tile on a darker parent (1px gap pattern)     |
 | Hover that changes a card's border color                 | Hover that lifts the surface tone (`-surface-2` → `-3`)  |
 | Filling an input with a tinted background                | Transparent fill, white-alpha border                     |
-| Inventing a one-off color for a category                 | Use `assignRailAccents` / `railAccent` from `@ui/railAccent`, or add a new tint token in `globals.css`|
+| Inventing a one-off color for a category                 | Use `railGroupAccent` (known job) or `assignRailAccents` / `railAccent` (open-ended) from `@ui/railAccent`, or add a new tint token in `globals.css`|
 
 ---
 
@@ -771,7 +771,7 @@ The HTML `title` attribute is banned for hover hints — gated by `no-native-tit
 2. The tile body is `background: var(--bg-surface-2)`, `border: 0`, `border-radius: var(--card-radius)`.
 3. Hover lifts to `--bg-surface-3` — never recolor the border.
 4. Add a title row with an accent dot (7px, `--radius-sm` (3px), `background: var(--tint)`).
-5. Use `assignRailAccents` from `@ui/railAccent` for multi-item surfaces (avoids repeats in the visible group) or `railAccent` for a single item. Skip if the surface has a product-defined category.
+5. If you know what the items ARE, give each a `RailAccentGroup` and call `railGroupAccent` — a shared colour between two same-job items is the point. Use `assignRailAccents` (multi-item, avoids repeats) or `railAccent` (single item) only when the surface's categories are open-ended. Skip both if the surface has a product-defined category.
 6. Reuse `Widget` from `src/ui/components/Widget/` unless the surface fundamentally differs.
 
 ---
@@ -786,7 +786,7 @@ The HTML `title` attribute is banned for hover hints — gated by `no-native-tit
   - `src/styles/globals.css` — all tokens
   - `src/ui/components/` — all primitives
   - `src/ui/cn.ts` — class composition helper
-  - `src/ui/railAccent.ts` — rail accent assignment helpers (`railAccent`, `assignRailAccents`, `railTintVar`, `RAIL_ACCENTS`, `RailAccent`)
+  - `src/ui/railAccent.ts` — rail accent helpers (`railGroupAccent`, `RailAccentGroup`, `railAccent`, `assignRailAccents`, `railTintVar`, `RAIL_ACCENTS`, `RailAccent`)
   - `src/ui/components/Widget/Widget.module.css` — canonical tile-card + 1px-gap grid implementation
   - `src/admin/pages/site/sidebars/PanelRail/PanelRail.module.css` — canonical tinted rail CSS
   - `vendor/pixel-art-icons/` — vendored icon set
