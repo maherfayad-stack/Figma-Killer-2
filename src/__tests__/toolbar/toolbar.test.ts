@@ -84,8 +84,9 @@ describe('ZoomControls — live mode', () => {
     // disabled+tooltip renders aria-disabled (not native disabled) so the
     // explanatory tooltip still shows on hover — the Button primitive's
     // zero-friction path.
+    // Four controls since viewport-01: −, the % menu trigger, +, and Fit.
     const buttons = [...container.querySelectorAll('button')]
-    expect(buttons).toHaveLength(3)
+    expect(buttons).toHaveLength(4)
     for (const button of buttons) {
       expect(button.getAttribute('aria-disabled')).toBe('true')
     }
@@ -93,15 +94,40 @@ describe('ZoomControls — live mode', () => {
     expect(container.innerHTML).toContain('Live mode always shows 100% zoom.')
   })
 
-  it('keeps the stored design zoom interactive in design mode', () => {
-    useEditorStore.setState({ canvasView: 'design', zoom: 0.5 })
+  it('keeps the stored design zoom interactive in design mode, but Fit stays disabled until a canvas publishes its viewport commands', () => {
+    useEditorStore.setState({ canvasView: 'design', zoom: 0.5, canvasViewportCommands: null })
     const { container } = render(React.createElement(ZoomControls))
 
     expect(container.textContent).toContain('50%')
     for (const button of container.querySelectorAll('button')) {
-      expect(button.getAttribute('aria-disabled')).toBeNull()
+      const isFit = button.getAttribute('data-testid') === 'toolbar-zoom-fit-btn'
+      // viewport-01: with no mounted canvas there is nothing to measure, so
+      // Fit is disabled WITH A REASON rather than silently doing nothing.
+      expect(button.getAttribute('aria-disabled')).toBe(isFit ? 'true' : null)
       expect(button.hasAttribute('disabled')).toBe(false)
     }
+  })
+
+  it('enables Fit once the mounted canvas publishes its viewport commands', () => {
+    let fitCalls = 0
+    useEditorStore.setState({
+      canvasView: 'design',
+      zoom: 1,
+      canvasViewportCommands: {
+        zoomToFit: () => { fitCalls += 1; return true },
+        zoomToFill: () => true,
+        zoomToSelection: () => true,
+      },
+    })
+    const { container } = render(React.createElement(ZoomControls))
+
+    const fit = container.querySelector('[data-testid="toolbar-zoom-fit-btn"]')
+    expect(fit).not.toBeNull()
+    expect(fit!.getAttribute('aria-disabled')).toBeNull()
+    ;(fit as HTMLButtonElement).click()
+    expect(fitCalls).toBe(1)
+
+    useEditorStore.setState({ canvasViewportCommands: null })
   })
 })
 

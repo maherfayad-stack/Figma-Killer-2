@@ -543,13 +543,34 @@ events. Four cases are bridged explicitly:
 `useCanvasKeyboardShortcuts` is a React handler on the canvas div, so it only
 fires while a canvas descendant holds DOM focus — and selecting a node
 auto-opens the Properties panel, so one click into it takes focus out of the
-canvas for the rest of the session. Two shortcut families are therefore
-document-level and scoped by *intent* instead: `board.selectAllFrames`
-(`CanvasRoot.tsx`, `board-02`) and the whole Enter/Escape selection ladder
-(`useCanvasSelectionKeyboard.ts`, `select-01`) — step into an instance, step
-out of one, clear the node + frame selection, leave VC mode. Adding a shortcut
-that a user would expect to work "wherever I am" belongs there, not in the
-React handler.
+canvas for the rest of the session. The same limit applies to
+`shortcutDispatch.ts`'s generic palette dispatcher, whose `isLayerShortcutSurface`
+asks the same focus question. Three shortcut families are therefore
+document-level and scoped by *intent* instead:
+
+- `board.selectAllFrames` (`CanvasRoot.tsx`, `board-02`).
+- the whole Enter / ⇧Enter / Escape / ⌘R selection ladder
+  (`useCanvasSelectionKeyboard.ts`, `select-01` + `viewport-01`) — step into an
+  instance, select first child, select parent, step out, clear the node + frame
+  selection, leave VC mode, open the rename dialog. **Escape is "deselect", not
+  "select parent"** — traversal took Figma's own Enter/⇧Enter instead, because
+  re-pointing Escape re-opens the reported bug `select-01` fixed.
+- `board.nudgeFrames` (`useBoardFrameNudge.ts`, `viewport-01`) — arrows move
+  the selected BOARD FRAMES by 1 (10 with Shift). This is the only bare-arrow
+  binding in the registry and it is scoped by **what is selected**, never
+  globally: with a node selected the arrows stay unclaimed (a node has no
+  canvas position — moving one would be a style write with its own refusal
+  story). Mounted after `useBoardAnnotationKeyboard`, which claims arrows first
+  when notes/docs are selected.
+
+Adding a shortcut that a user would expect to work "wherever I am" belongs
+there, not in the React handler. Keys themselves always go in
+`src/admin/spotlight/keybindings.ts` — never a hand-rolled listener, never a
+hand-typed `⌘…` label (`keybindings-registry-single-source.test.ts` gates
+both). A binding whose `commandId` is a real, argument-free spotlight Command
+needs no handler at all; the generic dispatcher runs it (that is how ⌘⇧H →
+`layers.toggleVisibility` works). Anything the canvas must own itself goes in
+`COMPONENT_OWNED_SHORTCUTS` so it can't double-fire.
 
 **During an inline edit both keyboard paths must stand down.**
 `useCanvasKeyboardShortcuts` bails on `activeInlineEdit`, and
@@ -642,6 +663,18 @@ that aren't direct children of `CanvasRoot`): anything that must track
 pan/zoom live — `CanvasRulers`, D2's drag/drop, a future measurement HUD —
 reads this ref, never the store selector, during an active gesture. See
 `docs/features/canvas-rulers-and-guides.md`.
+
+**Chrome outside `CanvasRoot` reaches the canvas through the store, not the
+context.** The toolbar is painted eagerly by `AdminCanvasLayout`, *above* the
+lazy boundary that mounts the editor body — so `ZoomControls` can never be a
+descendant of `CanvasViewportActionsContext`'s provider, and that context's
+value is built from refs that only exist after the canvas mounts. `CanvasRoot`
+therefore publishes its three DOM-measuring viewport gestures (fit / fill /
+selection) to the store as `canvasViewportCommands` while it is mounted in
+design mode, and retracts them (`null`) on unmount and in live mode.
+`null` disables the toolbar's Fit control instead of letting it no-op. The
+gesture BODIES stay in `useCanvas` because they need `transformRef` above;
+only the measurement is shared (`canvas/canvasViewportCommands.ts`).
 
 ---
 

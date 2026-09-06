@@ -56,6 +56,7 @@ import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
 import { useCanvasKeyboardShortcuts } from './useCanvasKeyboardShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
+import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
@@ -173,11 +174,33 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // silently mutating transformRef while in preview, which would otherwise
   // make the design canvas visibly jump on the first interaction after
   // returning from preview.
-  const { bind, handleKeyDown: canvasKeyDown, panBy, centerOnBreakpointFrame, transformRef } = useCanvas({
+  const {
+    bind,
+    handleKeyDown: canvasKeyDown,
+    panBy,
+    centerOnBreakpointFrame,
+    transformRef,
+    zoomToFit,
+    zoomToFill,
+    zoomToSelection,
+  } = useCanvas({
     canvasRootRef: canvasRef,
     transformLayerRef,
     enabled: !isLive,
   })
+
+  // viewport-01 — publish the three DOM-measuring viewport gestures while this
+  // canvas is mounted in design mode, so the toolbar's zoom menu (rendered
+  // outside this tree, above the lazy editor body) runs the real gesture
+  // instead of duplicating the measurement. Retracted on unmount / in live
+  // mode: `ZoomControls` reads `null` as "nothing to fit" and disables the
+  // control rather than letting it no-op. See `canvasViewportCommands.ts`.
+  const setCanvasViewportCommands = useEditorStore((s) => s.setCanvasViewportCommands)
+  useEffect(() => {
+    if (isLive) return
+    setCanvasViewportCommands({ zoomToFit, zoomToFill, zoomToSelection })
+    return () => setCanvasViewportCommands(null)
+  }, [isLive, zoomToFit, zoomToFill, zoomToSelection, setCanvasViewportCommands])
 
   // ─── Focus the chosen viewport frame: loading skeleton → page → switches ───
   // The canvas always mounts at pan (0,0), which shows the left-most (mobile)
@@ -427,10 +450,16 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // out, and otherwise clears the node + frame selection and leaves VC mode
   // (select-01). Document-level, not React `onKeyDown` — see that file for why
   // focus-scoping silently killed Escape the moment the user touched a panel.
-  useCanvasSelectionKeyboard(editable, isLive)
+  // viewport-01 also gave it Shift+Enter (select parent), Enter's
+  // select-first-child fallback, and Cmd/Ctrl+R → the canvas's own rename dialog.
+  useCanvasSelectionKeyboard(editable, isLive, renameDialog.open)
 
   // Sticky notes + doc cards: delete / duplicate / copy-paste / nudge.
   useBoardAnnotationKeyboard(editable, isLive)
+
+  // Board frames: arrow-key nudge. Mounted AFTER the annotation hook on
+  // purpose — see `useBoardFrameNudge`'s doc for the mixed-selection rule.
+  useBoardFrameNudge(editable, isLive)
 
   // Bare-letter tool keys: T (text), F (container), C (comment mode).
   useCanvasToolShortcuts(editable, isLive)

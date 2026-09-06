@@ -11,6 +11,20 @@ const COMPONENT_OWNED_SHORTCUTS = new Set([
   'editor.undo',
   'editor.redo',
   'layers.delete',
+  // viewport-01 — the selection ladder owns Enter / ⇧Enter
+  // (`useCanvasSelectionKeyboard.ts`). Plain Enter has to interleave with
+  // `enterSelectedInstance`, which claims it first in the capture phase, and
+  // both must fire from anywhere rather than only while focus is still inside
+  // the canvas / layer tree (`isLayerShortcutSurface` below) — one click into
+  // the Properties panel ends that for the session, which is the exact defect
+  // `select-01` fixed for Escape.
+  'layers.selectParent',
+  'layers.selectFirstChild',
+  // ⌘R opens the canvas rename DIALOG. `layers.rename` takes a text arg, so
+  // the arg guard below would skip it anyway — listed explicitly because the
+  // reason it can't auto-dispatch is a property of the command, and a future
+  // argless rename command must not silently start double-firing.
+  'layers.rename',
 ])
 
 function isElementLike(value: unknown): value is Element {

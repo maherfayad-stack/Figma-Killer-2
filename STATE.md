@@ -12,6 +12,155 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### canvas-15 — the viewport and keyboard staples: clickable zoom, selection traversal, frame nudge, a visible shortcuts door
+- **Agent:** canvas-engineer
+- **Stage:** built and gated. `bun run build`, `bun run lint` clean; `bun test` — see "Verification" below. **Needs human dogfood for feel.**
+- **Updated:** 2026-09-06
+- **Branch:** `feat/viewport-and-keyboard-staples`
+
+Four Figma-muscle-memory gaps, all in the viewport/keyboard layer.
+
+**1. Zoom-to-fit and zoom-to-selection stopped being keyboard-only.**
+`ZoomControls.tsx` carried a TODO saying a toolbar button "needs that context
+threaded out here first, or a second, independent DOM-measurement path". Neither
+was the answer: `AdminCanvasLayout` paints the `Toolbar` **eagerly, above** the
+lazy boundary that mounts the editor body containing `CanvasRoot`, so there is
+no common provider to move either component into, and
+`CanvasViewportActionsContext`'s value is built from refs that only exist once
+the canvas has mounted. The fix is the third option — the canvas publishes.
+`CanvasRoot` writes `{ zoomToFit, zoomToFill, zoomToSelection }` into the store
+as `canvasViewportCommands` while mounted in design mode and retracts them
+(`null`) on unmount / in live mode; `ZoomControls` calls them exactly the way it
+already called `zoomIn`/`zoomOut`. `null` **disables** the Fit control with a
+reason rather than letting it silently no-op. The gesture bodies stayed in
+`useCanvas` on purpose — they need `transformRef` (the live transform, up to
+100 ms ahead of the store's debounced `zoom`/`panX`/`panY`); measuring against
+the store copy would compute the fit from a stale zoom. Only the DOM
+measurement moved out, into `canvasViewportCommands.ts`, shared by the keyboard
+and toolbar paths. The `%` readout is now a menu (50 / 100 / 200 / Fit / Fill /
+Zoom to selection), not a reset-only button; "Fill" is a new `cover` mode on
+`computeZoomToFitTransform` (`min` → `max` of the two axis ratios, with the
+`Infinity` sentinel of a one-axis-degenerate rect filtered out first, or "fill"
+would clamp to MAX_ZOOM).
+
+**2. Keyboard staples.** ⌘0 (`canvas.zoomReset` — was an inline `e.key === '0'`
+check in `useCanvas`, in *two* places; the second was dead), Enter = select
+first child, ⇧Enter = select parent, ⌘R = rename, ⌘⇧H = toggle hidden.
+
+Two deliberate deviations from the brief, both because the alternative was
+worse:
+
+- **⌘1/⌘2 are NOT bound.** They are free in the registry, but Cmd/Ctrl+1…8 is
+  reserved by every major browser for tab switching and is not cancellable from
+  page script. Binding them would put two rows in the generated help sheet for
+  keystrokes that never arrive. ⇧1/⇧2 (what Figma binds) stay canonical, and
+  the toolbar menu is now the discoverable path. ⌘0 and ⌘R *are* cancellable,
+  which is why they're fine.
+- **Escape did NOT become "select parent".** Escape is the deselect ladder
+  `select-01` shipped to fix a reported "I can't deselect after selecting" bug.
+  Making it walk up would turn one press into N for a deeply nested node and
+  re-open exactly that bug. Traversal took Figma's own Enter / ⇧Enter instead.
+  `keybindings.test.ts` now asserts *no* binding matches Escape, so the next
+  agent tempted to do it has to delete an assertion with a reason first.
+
+⌘⇧H needed **no handler at all**: `shortcutDispatch.ts` auto-runs any binding
+whose `commandId` is an argument-free, non-destructive spotlight Command, and
+`layers.toggleVisibility` already was one. The traversal pair are
+`COMPONENT_OWNED_SHORTCUTS` because plain Enter must interleave with
+`enterSelectedInstance` (capture phase claims it first) and both must fire from
+anywhere, not only while focus is still in the canvas.
+
+The two traversal *commands* already existed in the palette and walked the tree
+inline against `selectActiveCanvasPage` — which silently no-opped for every
+studio-board frame but the active page's. They now call the new board-aware
+store actions, so palette and keyboard can't disagree.
+
+**3. Arrow-key nudge for board frames** (1 unit, 10 with Shift), through a new
+`nudgeSelectedFrames` that applies the existing pure `moveFrame` to every
+selected frame in ONE `set()`. Node nudging stays out of scope: a node has no
+canvas position, so "move it" is a CSS write with its own writability gate and
+refusal story.
+
+**4. A visible help affordance.** `ShortcutsHelpButton` in the global toolbar
+trailer, next to `SettingsButton`, same `adminUi`-only dependency so it stays
+bundle-safe on non-editor routes. Its tooltip carries the `?` keycap, read from
+the registry.
+
+**Files touched.**
+
+Canvas: `canvas/canvasViewportCommands.ts` (new), `canvas/useBoardFrameNudge.ts`
+(new), `canvas/CanvasRoot.tsx`, `canvas/useCanvasSelectionKeyboard.ts`,
+`canvas/canvasZoomFit.ts`, `hooks/useCanvas.ts`.
+Toolbar: `toolbar/ZoomControls.tsx`, `toolbar/ShortcutsHelpButton.tsx` (new),
+`toolbar/Toolbar.tsx`.
+Store: `store/slices/canvasSlice.ts`, `store/slices/selectionResolve.ts` (new),
+`store/slices/selectionTraversalActions.ts` (new),
+`store/slices/selectionSlice.ts`, `store/slices/inlineEditSlice.ts`,
+`store/slices/boardFrameSelectionActions.ts`, `store/slices/boardSlice.ts`.
+Keybindings: `spotlight/keybindings.ts`, `spotlight/shortcutDispatch.ts`,
+`spotlight/commands/layers.ts`.
+Tests: `spotlight/__tests__/keybindings.test.ts`,
+`src/__tests__/editor-store/selectionTraversal.test.ts` (new),
+`src/__tests__/canvas/canvasZoomFit.test.ts`, `src/__tests__/toolbar/toolbar.test.ts`.
+Docs: `docs/agent-refs/canvas-internals.md`.
+
+**Landmines — new interactions between height, injectors and events.**
+
+1. **Two document-level arrow handlers now exist, and order decides.**
+   `useBoardAnnotationKeyboard` (notes/docs) is mounted BEFORE
+   `useBoardFrameNudge` in `CanvasRoot` and `preventDefault`s arrows when
+   annotations are selected; the frame hook honours `defaultPrevented`. So a
+   mixed marquee selection (frames AND annotations) nudges the **annotations
+   only**. Accepted and documented in the hook — but if you ever want both to
+   move, do NOT just drop the `defaultPrevented` guard; that guard is what
+   keeps overlays and inline edits safe. Make one hook own the arrows.
+2. **A bare `event.key === 'Enter'` test is now a bug.** The instance-enter
+   branch in `useCanvasSelectionKeyboard`'s capture phase used one, which meant
+   it also swallowed ⇧Enter the moment select-parent existed. It matches through
+   the registry now. Any *other* handler still testing `key === 'Enter'` without
+   checking `shiftKey` will shadow the parent-select. `keybindings.test.ts`'s
+   "no two bindings in the same scope claim the same keystroke" test is the
+   cheap tripwire for the registry half of this; it cannot see hand-rolled
+   listeners.
+3. **`canvasViewportCommands` holds functions in the Zustand store.** Written
+   with `set({ ... })` (replace) so Mutative hands the bag back by identity
+   rather than drafting it. It is editor-session state: never persisted, never
+   in the undo history, and it MUST be retracted on unmount — a stale closure
+   would measure a dead canvas root and animate to nowhere. If a second canvas
+   surface is ever mounted concurrently, this becomes last-writer-wins and
+   needs a real registry.
+4. **Frame nudge is not undoable and that is not a bug.** Board layout lives in
+   `.studio/boards.json`, not the page-tree history. What coalesces a burst of
+   held-arrow nudges is `AdminCanvasLayout`'s 800 ms boards autosave debounce.
+   ⌘Z never rewound a frame move.
+5. **`getActiveTree`/`resolveSelectableNode` moved** out of `selectionSlice.ts`
+   into `selectionResolve.ts`. Importing them back out of the slice created a
+   real `selectionSlice ↔ selectionTraversalActions` cycle that
+   `no-circular-dependencies.test.ts` catches. Import from `selectionResolve`,
+   not from the slice.
+6. **`useCanvas.ts` and `CanvasRoot.tsx` sit within a handful of lines of the
+   700-line module ceiling** (690 / 697 after this change). The next feature in
+   either has to extract before it adds.
+
+**Verification.** `bun run build` ✅, `bun run lint` ✅. `bun test`: 10228 pass /
+80 fail against a stashed baseline of 10205 pass / 79 fail (this change adds 23
+passing tests). Every failure is pre-existing and outside this change:
+`streamClaudeCli`/`projectMcpApprovals`, `icon-catalog-integrity`, and the
+iframe-rendering canvas suites (`NodeRenderer lock-down`, board-frame selection
+leak, body context menu, frame mounting, …) — each of which **passes in
+isolation** and fails only in a full-suite batch run, the known ordering flake.
+
+**Dogfood, please** (`standing-02`): `/admin/site?studio` on a project with
+≥ 3 board frames. (a) Click the `%` readout → 50 / 100 / 200 / Fit / Fill /
+Zoom to selection; Fit should frame every frame with even margins, Fill should
+bleed off the short axis, and Zoom to selection should be greyed out until you
+select a layer. (b) Zoom to ~40 %, click a frame header, hold ← and → — the
+frame should slide 1 unit per press and 10 with Shift, and the move should
+persist across a reload. (c) Select a nested node, press Enter repeatedly to
+walk in, ⇧Enter to walk back out, then Escape once — it must clear the whole
+selection in ONE press, not walk up. (d) ⌘R on a selected node opens the rename
+dialog and does **not** reload the browser. (e) The `⌘`-ish icon left of the
+settings cog opens Settings → Shortcuts.
 ### store-01b — the WS-5.2 defect came back one import away from its own gate: two more full-site walks per keystroke
 
 - **Agent:** store-engineer
