@@ -12,7 +12,8 @@ import {
   type DomDropRowMeta,
   type DomDropTarget,
 } from './domPanelDnd'
-import type { DomPanelDndContextValue } from './DomPanelDndContext'
+import type { DomPanelDropState, DomPanelRowRegistry } from './DomPanelDndContext'
+import { findScrollContainer } from './rowWindow'
 import { getDragPoint, getEventPoint } from '@admin/lib/dndPointer'
 
 interface Point {
@@ -62,6 +63,8 @@ export function useDomPanelDnd({
   } | null>(null)
   const scrollFrameRef = useRef<number | null>(null)
   const runAutoScrollRef = useRef<() => void>(() => {})
+  /** Resolved once per drag — the shared scroller auto-scroll actually moves. */
+  const scrollContainerRef = useRef<HTMLElement | null>(null)
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
@@ -80,10 +83,16 @@ export function useDomPanelDnd({
     return registry.get(moduleId)?.canHaveChildren === true
   }, [])
 
-  const registerRow = (nodeId: string, element: HTMLElement | null) => {
-    if (element) rowsRef.current.set(nodeId, element)
-    else rowsRef.current.delete(nodeId)
-  }
+  // `useState` lazy init (an initializer, not memoization): ONE registry object
+  // for the panel's lifetime. Rows read it through
+  // `DomPanelRowRegistryContext`, and a context value that never changes
+  // identity is a context that never re-renders a memoized row.
+  const [rowRegistry] = useState<DomPanelRowRegistry>(() => ({
+    registerRow: (nodeId: string, element: HTMLElement | null) => {
+      if (element) rowsRef.current.set(nodeId, element)
+      else rowsRef.current.delete(nodeId)
+    },
+  }))
 
   // exception #1: feeds runAutoScroll's effect-bound closure (exhaustive-deps)
   const measureRows = useCallback(() => {
@@ -200,7 +209,12 @@ export function useDomPanelDnd({
   // exception #1: assigned to runAutoScrollRef inside a useEffect dep array (exhaustive-deps)
   const runAutoScroll = useCallback(() => {
     scrollFrameRef.current = null
-    const container = treeAreaRef.current
+    // The panel's own tree area is `overflow: visible` by design — the single
+    // scroll container for this column is `StudioPagesTree`'s page list, an
+    // ancestor (see `DomPanel.module.css`). Auto-scroll has to drive THAT
+    // element and measure ITS viewport rect; driving the tree area scrolled
+    // nothing and compared the pointer against the full content height.
+    const container = scrollContainerRef.current
     const point = latestPointerRef.current
     const draggedId = activeIdRef.current
 
@@ -227,7 +241,7 @@ export function useDomPanelDnd({
     measureRows()
     resolveTargetAtPoint(draggedId, point)
     scrollFrameRef.current = requestAnimationFrame(() => runAutoScrollRef.current())
-  }, [measureRows, resolveTargetAtPoint, treeAreaRef])
+  }, [measureRows, resolveTargetAtPoint])
 
   useEffect(() => {
     runAutoScrollRef.current = runAutoScroll
@@ -246,6 +260,7 @@ export function useDomPanelDnd({
     clearAutoExpand()
     activeIdRef.current = null
     activeIdsRef.current = []
+    scrollContainerRef.current = null
     startPointRef.current = null
     latestPointerRef.current = null
     latestTargetRef.current = null
@@ -271,6 +286,9 @@ export function useDomPanelDnd({
 
     activeIdRef.current = draggedId
     activeIdsRef.current = draggedIds
+    // Resolve the shared scroller once per gesture rather than per rAF tick —
+    // `getComputedStyle` up the ancestor chain is not a per-frame cost.
+    scrollContainerRef.current = findScrollContainer(treeAreaRef.current)
     measureRows()
 
     const point = getEventPoint(event.activatorEvent) ?? getRowCenter(rowsRef.current.get(draggedId))
@@ -309,16 +327,18 @@ export function useDomPanelDnd({
 
   useEffect(() => resetDragState, [resetDragState])
 
-  const contextValue: DomPanelDndContextValue = {
+  const dropState: DomPanelDropState = {
     activeId,
     target,
     invalidOverId,
     invalidReason,
-    registerRow,
   }
 
   return {
-    contextValue,
+    /** Re-published on every drag move — consumed ONLY by the windowed list. */
+    dropState,
+    /** Stable for the lifetime of the panel — consumed by every mounted row. */
+    rowRegistry,
     activeId,
     activeLabel: dragPreview?.label ?? null,
     activeModuleId: dragPreview?.moduleId ?? null,
@@ -328,7 +348,6 @@ export function useDomPanelDnd({
     invalidOverId,
     /** G5 — non-null only when `invalidOverId` is a refused SOURCE WRITE, not a structural rejection. */
     invalidReason,
-    registerRow,
     handleDragStart,
     handleDragMove,
     handleDragEnd,

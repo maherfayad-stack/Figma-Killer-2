@@ -190,7 +190,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `src/admin/pages/site/property-controls/SlotPicker.tsx` | The picker UI — search, previews, SVG upload. Every source leaves as one `SlotJsxNode`. |
 | 🔴 `src/admin/pages/site/property-controls/svgToJsxNode.ts` | SVG markup → the JSX subtree the slot codemod writes. Sanitises first; inline JSX, never an import (an SVG import's meaning depends on the user's bundler). |
 | 🟡 `src/admin/pages/site/sidebars/` | LeftSidebar, RightSidebar, PanelRail. |
-| 🟡 `src/admin/pages/site/panels/DomPanel/` | Layer tree. |
+| 🟡 `src/admin/pages/site/panels/DomPanel/` | Layer tree. Flat + windowed: `layerRows.ts` (tree → row list), `rowWindow.ts` + `useRowWindow.ts` (visible slice), `LayerRowList.tsx` (all per-tree state), `TreeNode.tsx` (one row, one store subscription). |
 | 🟢 `src/admin/pages/site/panels/DependenciesPanel/` | Project dependencies. |
 | 🟢 `src/admin/pages/site/ui/ConstraintNotice/` | The ONE renderer for an `EditConstraint` — explanation + `origin` as a jump-to-source + `actions` as real controls. Mounted today by `LayerNodeContextMenu`'s refusal footer. |
 | 🟢 `src/admin/pages/site/store/constraintActions.ts` | The single `EditConstraintAction['kind']` → handler table (a kind with no honest handler returns `null`, and the caller renders the label as plain text), plus `constraintPrimaryAction`/`constraintToastBody`, the one-button shape the refusal toast uses. Lives beside the store, not beside the component, because a refusal is detected inside a store action — and takes `openSource` as context rather than importing `jumpToSource`, which would put the composed store in its own importers' cycle. |

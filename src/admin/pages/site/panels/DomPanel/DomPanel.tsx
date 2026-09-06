@@ -12,13 +12,21 @@
  * - Font: 12px, icons: 14px
  *
  * Guideline #318 (Phase 3 Perf):
- * - Per-node Zustand selectors: only affected rows re-render on selection/hover
+ * - The tree is FLATTENED and WINDOWED by `LayerRowList` — only the rows inside
+ *   the shared scroll viewport (plus overscan) are mounted, so a deep imported
+ *   page costs the same as a shallow one.
+ * - Per-tree facts (page, classes, VC names, prefs, drop state) are read once
+ *   in `LayerRowList`; a row subscribes to the store exactly once (its own
+ *   hover flag).
  * - DnD drag position tracked via refs; store updated once on dragEnd
  * - ExpansionStore is an external observable in DomTreeContext (UI-only) — never in siteSlice
  *
  * Guideline #321 (Phase 3 Architecture):
- * - DndContext wraps the whole tree; SortableContexts are per-parent group
- * - Ancestor auto-expand + scroll-to-selected on canvas selection change
+ * - DndContext wraps the whole tree; the drop target is resolved from measured
+ *   row rects, not from dnd-kit droppables
+ * - Ancestor auto-expand + scroll-to-selected on canvas selection change lives
+ *   in `LayerRowList`, which is the component that knows a row's INDEX (a row
+ *   outside the mounted window has no element to scroll into view)
  *
  * Accessibility:
  * - role="tree" on tree container
@@ -37,15 +45,13 @@ import {
 import { createPortal } from 'react-dom'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { flattenSubtree } from '@core/page-tree'
-import { getAncestorIds } from '@site/hooks/useTreeWalkOrder'
-import { TreeNode } from './TreeNode'
+import { LayerRowList } from './LayerRowList'
 import { TreeBackgroundContextMenu } from './TreeBackgroundContextMenu'
 import { useExpansionStore } from './DomTreeContext'
 import { DomTreeProvider } from './DomTreeProvider'
-import { DomPanelDndContext } from './DomPanelDndContext'
+import { DomPanelDropStateContext, DomPanelRowRegistryContext } from './DomPanelDndContext'
 import { useDomPanelDnd } from './useDomPanelDnd'
-import { TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
-import { useEditorPreference } from '@site/preferences/editorPreferences'
+import { TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
 import { SkeletonTree } from '@ui/components/Skeleton'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
@@ -65,14 +71,7 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
   const activeDocument = useEditorStore((s) => s.activeDocument)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const focusedPanel = useEditorStore((s) => s.focusedPanel)
-  // Per-node selector — only this ref updates when selection changes (Guideline #318)
-  const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
 
-  // Behavioural prefs for the tree's reaction to canvas selection.
-  const autoExpandSelected = useEditorPreference('layersAutoExpandSelected')
-  const smoothScroll = useEditorPreference('layersSmoothScroll')
-
-  const treeRef = useRef<HTMLDivElement>(null)
   const store = useExpansionStore()
 
   // Right-click on the empty background of the tree area opens a small
@@ -102,42 +101,6 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
 
   const treeAreaRef = useRef<HTMLDivElement>(null)
   const dnd = useDomPanelDnd({ page, treeAreaRef, expandNode: store.expand, isExpanded: store.isExpanded })
-
-  // ─── Ancestor auto-expand + scroll-to-selected ────────────────────────────
-  // When the canvas selection changes, ensure the selected node is visible in
-  // the tree (expand all its ancestors) and scroll the tree to it.
-  //
-  // `store` is the stable ExpansionStore instance from context — it never
-  // changes reference for the lifetime of the DomTreeProvider. Listing it in
-  // deps satisfies exhaustive-deps without ever causing effect re-runs.
-  useEffect(() => {
-    if (!page || !selectedNodeId) return
-
-    // Auto-expand all ancestors of the selected node so it is visible in the
-    // tree. Skipped when the user opts out via `layersAutoExpandSelected` —
-    // the row remains hidden under collapsed parents until the user expands
-    // them manually.
-    if (autoExpandSelected) {
-      const ancestorIds = getAncestorIds(page.nodes, page.rootNodeId, selectedNodeId)
-      for (const ancestorId of ancestorIds) {
-        store.expand(ancestorId)
-      }
-    }
-
-    // Scroll the selected row into view after the expand animation settles.
-    // The `smooth` vs `auto` choice is user-controllable via the
-    // `layersSmoothScroll` preference (some users find smooth scrolling
-    // distracting when bouncing between many nodes quickly).
-    requestAnimationFrame(() => {
-      const row = treeRef.current?.querySelector(`[data-node-id="${selectedNodeId}"]`)
-      if (row) {
-        row.scrollIntoView({
-          behavior: smoothScroll ? 'smooth' : 'auto',
-          block: 'nearest',
-        })
-      }
-    })
-  }, [selectedNodeId, page, autoExpandSelected, smoothScroll, store])
 
   // ─── Focus management: F6 moves focus into panel ──────────────────────────
   // The panel landmark is the landing target when the user cycles focus into
@@ -262,13 +225,8 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
             onDragEnd={handleDragEnd}
             onDragCancel={editable ? dnd.handleDragCancel : undefined}
           >
-            <DomPanelDndContext.Provider value={dnd.contextValue}>
-              <TreeContainer
-                ariaLabel="Page element tree"
-                testId="dom-panel-tree"
-                containerRef={treeRef}
-                data-studio-layer-tree="true"
-              >
+            <DomPanelRowRegistryContext.Provider value={dnd.rowRegistry}>
+              <DomPanelDropStateContext.Provider value={dnd.dropState}>
                 {/*
                   Page mode shows the `base.body` root because it represents
                   the document body and anchors page-level insertion.
@@ -278,11 +236,16 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
                   anchor. Background insert/paste still targets the hidden
                   root through TreeBackgroundContextMenu.
                 */}
-                {visibleRootNodeIds.map((nodeId) => (
-                  <TreeNode key={nodeId} nodeId={nodeId} depth={0} editable={editable} />
-                ))}
-              </TreeContainer>
-            </DomPanelDndContext.Provider>
+                <LayerRowList
+                  ariaLabel="Page element tree"
+                  testId="dom-panel-tree"
+                  rootNodeIds={visibleRootNodeIds}
+                  alwaysExpandedId={hideStructuralRoot ? null : page.rootNodeId}
+                  editable={editable}
+                  revealSelection
+                />
+              </DomPanelDropStateContext.Provider>
+            </DomPanelRowRegistryContext.Provider>
             {typeof document === 'undefined'
               ? dragOverlay
               : createPortal(dragOverlay, document.body)}

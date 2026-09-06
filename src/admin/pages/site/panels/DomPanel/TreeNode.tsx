@@ -1,37 +1,44 @@
 /**
- * TreeNode — a single row in the DOM tree panel.
+ * TreeNode — ONE row in the Layers tree. Presentational: it renders the row it
+ * is told to render and reads nothing about the tree it belongs to.
  *
- * Performance notes (Contribution #437 / Guideline #318):
- * - `React.memo` wrapping: re-renders only when nodeId or depth changes.
- * - Per-node isSelected / isHovered selectors: only the 2 affected rows
- *   re-render per canvas click (not all 1,000).
- * - Drag state tracked via refs; Zustand only updated on pointerUp (drag end).
+ * It used to be recursive — a `TreeNode` rendered a `role="group"` of more
+ * `TreeNode`s — and it carried 17 `useEditorStore` subscriptions per row. On a
+ * deep imported page with every branch open that was 2,441 rows x 17 = ~41,500
+ * selector invocations before React started work on ANY store commit.
+ * `LayerRowList` now flattens the tree, mounts only the visible slice, and
+ * hands each row everything that is a fact about the TREE (the node, the page
+ * root, class names, VC names, prefs, drop state) as a prop. What is left here
+ * is the one fact that is genuinely per-row and changes independently:
+ *
+ *     const isHovered = useEditorStore((s) => s.hoveredNodeId === nodeId)
+ *
+ * Everything else reaches the store through `getState()` inside an event
+ * handler, which costs no subscription at all (the pattern `BoardFrameView`
+ * adopted in `perf-02`).
  *
  * Drag-and-drop:
- * - Each TreeNode is a @dnd-kit draggable item with DOMPanel-owned targets.
+ * - Each row is a @dnd-kit draggable item with DOMPanel-owned targets.
  * - Visual indicators render as overlays (no DOM reorder during drag).
  * - moveNode() called once on DragEndEvent at the DomPanel level.
  *
  * Accessibility:
  * - role="treeitem" + aria-selected + aria-expanded on THE SAME element as
  *   tabIndex={0} and keyboard handlers (Guideline #234 / WCAG SC 4.1.2).
- * - onFocus/onBlur boxShadow focus ring (WCAG SC 2.4.7).
+ * - A windowed tree has no nested `role="group"` DOM to convey depth, so each
+ *   row states its own position: `aria-level` / `aria-posinset` /
+ *   `aria-setsize`, the flat-DOM form the WAI-ARIA tree pattern defines.
+ * - onFocus/onBlur focus ring (WCAG SC 2.4.7).
  * - height: 28px (Guideline #357 — compact density; WCAG 2.5.5 touch target
  *   NOT required for editor chrome per user directive / Guideline #357).
- * - Context menu focuses first item on mount.
  */
 import { memo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useEditorStore, selectActiveCanvasPage, selectCanvasPageFor } from '@site/store/store'
-import { registry } from '@core/module-engine'
-import {
-  getNodeDisplayName,
-  getNodeHtmlTag,
-  getNodeClassNames,
-} from '@core/page-tree'
+import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import type { PageNode } from '@core/page-tree'
 import { useDraggable } from '@dnd-kit/core'
-import { useExpansionStore, useIsNodeExpanded, useDomTreePageId } from './DomTreeContext'
-import { useDomPanelDndContext } from './DomPanelDndContext'
+import { useExpansionStore } from './DomTreeContext'
+import { useDomPanelRowRegistry } from './DomPanelDndContext'
 import { LayerNodeContextMenu } from './LayerNodeContextMenu'
 import { Input } from '@ui/components/Input'
 import { cn } from '@ui/cn'
@@ -40,19 +47,45 @@ import {
   treeDropStyles,
 } from '@site/ui/Tree'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { LayerTreeNodeContent } from './LayerTreeNodeContent'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
+import type { LayerRowSpanPosition } from './layerRows'
 import styles from './TreeNode.module.css'
 
-// Stable empty fallback for the children selector (keeps referential equality).
-const EMPTY_CHILDREN: string[] = []
-
-interface TreeNodeProps {
-  nodeId: string
+export interface TreeNodeProps {
+  /** The node itself — resolved once by the list, never re-selected per row. */
+  node: PageNode
   depth: number
-  editable?: boolean
+  /** This node is the page body: forced open, no chevron, not draggable. */
+  isRoot: boolean
+  expanded: boolean
+  hasChildren: boolean
+  selected: boolean
+  editable: boolean
+  /** Resolved label — VC names and class registry live on the list, not here. */
+  displayName: string
+  htmlTag: string | null
+  /** Joined class chip (e.g. ".header.padding-m"), or null. */
+  classSelectorChip: string | null
+  showIcon: boolean
+  showTag: boolean
+  showClasses: boolean
+  /** Drop indicator for THIS row, if the pointer currently resolves to it. */
+  dropPosition?: 'before' | 'after' | 'inside'
+  /** This row is the refused drop target. */
+  invalidDrop: boolean
+  /** G5 — the refusal message, when the refusal is a source write. */
+  invalidReason: string | null
+  /** This row is the dragged node, or inside its subtree. */
+  dragSource: boolean
+  /** Position inside the highlighted open-container span, if any. */
+  openGroupPosition?: LayerRowSpanPosition
+  /** This row is the head of that span (drives `data-open-container-group`). */
+  openGroupHead: boolean
+  ariaLevel: number
+  ariaPosInSet: number
+  ariaSetSize: number
 }
 
 interface ContextMenuState {
@@ -60,61 +93,50 @@ interface ContextMenuState {
   y: number
 }
 
-// React.memo re-render bailout — exception #2: hot, recursive per-node tree row
-// rendered for every node in the document; skipping equal-prop re-renders here is
-// an O(N) critical path the React Compiler's within-render memoization can't cover.
-export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true }: TreeNodeProps) {
-  // Which page's tree this row belongs to. `null` (the default, set by every
-  // plain DomPanel mount) means "the active canvas document" — see
-  // `DomTreePageContext`'s doc comment. The Studio Pages/Layers tree provides
-  // an explicit page id here so a page's rows resolve correctly even before
-  // that page becomes active.
-  const pageId = useDomTreePageId()
+// React.memo re-render bailout — exception #2: the hot, list-rendered row of the
+// Layers tree. The windowed list re-renders on every scroll tick, every drag
+// move and every selection change; without this bailout each of those would
+// re-render all ~40 mounted rows instead of the one or two whose props moved.
+// Every prop above is a primitive or a store-stable object reference, so the
+// shallow compare is honest. Measured in `layersTreePerf.test.tsx`.
+export const TreeNode = memo(function TreeNode({
+  node,
+  depth,
+  isRoot,
+  expanded,
+  hasChildren,
+  selected,
+  editable,
+  displayName,
+  htmlTag,
+  classSelectorChip,
+  showIcon,
+  showTag,
+  showClasses,
+  dropPosition,
+  invalidDrop,
+  invalidReason,
+  dragSource,
+  openGroupPosition,
+  openGroupHead,
+  ariaLevel,
+  ariaPosInSet,
+  ariaSetSize,
+}: TreeNodeProps) {
+  const nodeId = node.id
 
-  // ── Per-node selectors — only THIS node re-renders on its own changes ──────
-  const node = useEditorStore((s) => selectCanvasPageFor(s, pageId)?.nodes[nodeId] ?? null)
-  // Per-node selection: only the rows whose membership flips re-render per
-  // selection event. With multi-select, several rows may flip in one event
-  // (e.g. shift-click range), but each row still reads only its own boolean.
-  const isSelected = useEditorStore((s) => s.selectedNodeIds.includes(nodeId))
+  // The ONLY per-row store subscription. Hover flips on every pointer move
+  // across the tree and affects exactly two rows, so it stays per-row rather
+  // than becoming a prop that would re-render the whole mounted window.
   const isHovered = useEditorStore((s) => s.hoveredNodeId === nodeId)
-  const isRoot = useEditorStore((s) => selectCanvasPageFor(s, pageId)?.rootNodeId === nodeId)
-  // Subscribe to visualComponents so VC renames re-render every ref's tree row
-  // (the VC name is part of the resolved displayName for visual-component-ref nodes).
-  const visualComponents = useEditorStore((s) => s.site?.visualComponents)
-  // Subscribe to the class registry so renaming a class updates every row that
-  // references it. The reference is stable across unrelated edits because
-  // siteSlice mutations only swap classes when class state actually changes.
-  const classes = useEditorStore((s) => s.site?.styleRules)
-
-  // User preferences — controls visibility of the tag pill, class chip, and
-  // module icon beside each row. Re-evaluated on storage / preferences-changed
-  // events so toggling the Setting flips the layout instantly.
-  const showIcon = useEditorPreference('layersShowIcon')
-  const showTag = useEditorPreference('layersShowTag')
-  const showClasses = useEditorPreference('layersShowClasses')
 
   // Delete confirmation — gated by `confirmBeforeDelete` preference. The
   // hook returns a function that either runs `commit` immediately (pref off)
   // or routes through the central confirm dialog (pref on).
   const confirmDelete = useConfirmDelete()
 
-  const selectNode = useEditorStore((s) => s.selectNode)
-  const hoverNode = useEditorStore((s) => s.hoverNode)
-  const deleteNode = useEditorStore((s) => s.deleteNode)
-  const deleteNodes = useEditorStore((s) => s.deleteNodes)
-  const duplicateNode = useEditorStore((s) => s.duplicateNode)
-  const renameNode = useEditorStore((s) => s.renameNode)
-  const wrapNode = useEditorStore((s) => s.wrapNode)
-  const copyNode = useEditorStore((s) => s.copyNode)
-  const cutNode = useEditorStore((s) => s.cutNode)
-  const pasteNode = useEditorStore((s) => s.pasteNode)
-  const openImportHtmlModal = useEditorStore((s) => s.openImportHtmlModal)
-
   const store = useExpansionStore()
-  // Hooks must be called unconditionally — evaluate expandedSelf regardless of isRoot,
-  // then gate with isRoot after the hook call (below, after the null guard).
-  const expandedSelf = useIsNodeExpanded(nodeId)
+  const { registerRow } = useDomPanelRowRegistry()
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [isFocused, setIsFocused] = useState(false)
@@ -124,15 +146,14 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
   const rowRef = useRef<HTMLDivElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
-  const { activeId, target, invalidOverId, invalidReason, registerRow } = useDomPanelDndContext()
   const selectLayerNode = (mode?: 'replace' | 'toggle' | 'range') => {
-    selectNode(nodeId, mode, {
+    useEditorStore.getState().selectNode(nodeId, mode, {
       preservePropertiesPanelCollapse: isNarrowEditorChromeViewport(),
     })
   }
 
   // ── dnd-kit draggable ─────────────────────────────────────────────────────
-  const draggableEnabled = editable && !!node && !isRoot && !node.locked && !isRenaming
+  const draggableEnabled = editable && !isRoot && !node.locked && !isRenaming
   const {
     attributes,
     listeners,
@@ -151,33 +172,14 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
     registerRow(nodeId, element)
   }
 
-  // ── Guard against unmounted nodes ─────────────────────────────────────────
-  if (!node) return null
-
-  const definition = registry.get(node.moduleId)
-  const displayName = getNodeDisplayName(node, definition, visualComponents)
-  const htmlTag = getNodeHtmlTag(node, definition)
-  const classNames = getNodeClassNames(node, classes)
-  const hasChildren = node.children.length > 0
-  // The page body is the root of the page tree — the only top-level row, so
-  // collapsing it would just hide the entire document. Force it open and hide
-  // its chevron — the row is purely a label for "the page body", with no
-  // expand/collapse affordance.
-  const expanded = isRoot ? true : expandedSelf
-  const isOpenContainerGroup = node.moduleId === 'base.container' && hasChildren && expanded && isSelected
-  const dropPosition =
-    target?.overId === nodeId && target.position !== 'inside'
-      ? target.position
-      : target?.parentId === nodeId && target.position === 'inside'
-        ? 'inside'
-        : undefined
+  const isOpenContainerGroup = openGroupHead
 
   const requestDeleteLayer = () => {
     if (!editable || isRoot || node.locked) return
     confirmDelete({
       title: 'Delete layer?',
       description: `${displayName} and any of its children will be removed. This can be undone with Ctrl/Cmd+Z.`,
-      commit: () => deleteNode(nodeId),
+      commit: () => useEditorStore.getState().deleteNode(nodeId),
     })
   }
 
@@ -209,7 +211,7 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
     confirmDelete({
       title: 'Delete layers?',
       description: `${deletableIds.length} layers and any children will be removed. This can be undone with Ctrl/Cmd+Z.`,
-      commit: () => deleteNodes([...deletableIds]),
+      commit: () => useEditorStore.getState().deleteNodes([...deletableIds]),
     })
   }
 
@@ -266,7 +268,7 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
     }
     const trimmed = renameValue.trim()
     if (trimmed && trimmed !== displayName) {
-      renameNode(nodeId, trimmed)
+      useEditorStore.getState().renameNode(nodeId, trimmed)
     }
     setIsRenaming(false)
   }
@@ -278,32 +280,35 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setIsRenaming(false) }
   }
 
-  // Joined class chip (e.g. ".header.padding-m") — chained CSS-selector style.
-  // CSS truncates with an ellipsis when there isn't enough horizontal room.
-  const classSelectorChip = classNames.length > 0 ? `.${classNames.join('.')}` : null
-
   return (
-    // Wrapper preserves the recursive tree shape. DnD refs live on TreeRow so
-    // hit-testing uses the actual visible row height.
+    // One wrapper per row (NOT per subtree — the tree is flat now). It carries
+    // the row-identity data attributes the canvas, the tests and the
+    // scroll-to-selection path address rows by, and the group/drag-source
+    // backgrounds that must sit BEHIND the row's own selected/hover fill.
     <div
       data-node-id={nodeId}
+      data-layer-row={nodeId}
       data-open-container-group={isOpenContainerGroup ? 'true' : undefined}
+      data-drag-source={dragSource ? 'true' : undefined}
       className={cn(
         node.moduleId === 'base.slot-instance' && styles.slotInstanceRow,
-        isOpenContainerGroup && styles.openContainerGroup,
-        activeId === nodeId && styles.dragSource,
+        openGroupPosition && styles.openContainerGroup,
+        openGroupPosition === 'start' && styles.openContainerGroupStart,
+        openGroupPosition === 'middle' && styles.openContainerGroupMiddle,
+        openGroupPosition === 'end' && styles.openContainerGroupEnd,
+        dragSource && styles.dragSource,
       )}
     >
       {/* ── Row: role="treeitem" + tabIndex + handlers all on ONE element ── */}
       {/*
-          IMPORTANT: {…attributes} from useSortable injects role="button".
+          IMPORTANT: {…attributes} from useDraggable injects role="button".
           role="treeitem" is placed AFTER the spread to override it back
           (Guideline #234 / WAI-ARIA tree pattern — treeitem role is non-negotiable).
       */}
       <TreeRow
         ref={setRowNodeRef}
         depth={depth}
-        selected={isSelected}
+        selected={selected}
         hovered={isHovered}
         focused={isFocused}
         locked={node.locked}
@@ -313,13 +318,18 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
           dropPosition === 'before' && treeDropStyles.dropBefore,
           dropPosition === 'after' && treeDropStyles.dropAfter,
           dropPosition === 'inside' && treeDropStyles.dropInside,
-          invalidOverId === nodeId && treeDropStyles.dropInvalid,
+          invalidDrop && treeDropStyles.dropInvalid,
         )}
         {...draggableAttributes}
         {...draggableListeners}
         role="treeitem"
-        aria-selected={isSelected}
+        aria-selected={selected}
         aria-expanded={hasChildren && !isRoot ? expanded : undefined}
+        // Flat-DOM tree: depth and sibling position are stated, not implied by
+        // nesting, because the rows above and below may not be mounted.
+        aria-level={ariaLevel}
+        aria-posinset={ariaPosInSet}
+        aria-setsize={ariaSetSize}
         // aria-label names the row for AT, including locked/hidden state so screen
         // reader users get the full picture without relying on the emoji indicators
         // (which are aria-hidden and therefore invisible to AT).
@@ -335,7 +345,7 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
         // hover here. Only set when THIS row is the refused drop target AND
         // the refusal is a source-write one (not an ordinary structural
         // rejection, which has no message to show).
-        title={invalidOverId === nodeId ? (invalidReason ?? undefined) : undefined}
+        title={invalidDrop ? (invalidReason ?? undefined) : undefined}
         // Stable agent-addressable handles. `dom-tree-item` is keyed by the
         // node id (matches `data-studio-node-id` on the canvas) so a single id
         // round-trips between the canvas and the layers tree. `data-studio-tag`
@@ -380,8 +390,8 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
           }
           setContextMenu({ x: e.clientX, y: e.clientY })
         }}
-        onMouseEnter={() => hoverNode(nodeId)}
-        onMouseLeave={() => hoverNode(null)}
+        onMouseEnter={() => useEditorStore.getState().hoverNode(nodeId)}
+        onMouseLeave={() => useEditorStore.getState().hoverNode(null)}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
       >
@@ -421,11 +431,6 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
         />
       </TreeRow>
 
-      {/* Children — role="group" as required by WAI-ARIA tree pattern */}
-      {hasChildren && expanded && (
-        <ChildrenGroup nodeId={nodeId} depth={depth} editable={editable} />
-      )}
-
       {/* Context menu — rendered via portal at document.body to escape the
           DomPanel's transform: translateZ(0) stacking context.
           Without the portal, position:fixed inside a transformed ancestor is
@@ -441,15 +446,15 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
             setContextMenu(null)
             requestDeleteLayer()
           }}
-          onDuplicate={() => { duplicateNode(nodeId); setContextMenu(null) }}
+          onDuplicate={() => { useEditorStore.getState().duplicateNode(nodeId); setContextMenu(null) }}
           onRename={() => { setContextMenu(null); openRename() }}
           onWrapInContainer={() => {
-            wrapNode(nodeId, 'base.container')
+            useEditorStore.getState().wrapNode(nodeId, 'base.container')
             setContextMenu(null)
           }}
-          onCopy={() => { copyNode(nodeId); setContextMenu(null) }}
-          onCut={() => { cutNode(nodeId); setContextMenu(null) }}
-          onPaste={() => { pasteNode(nodeId); setContextMenu(null) }}
+          onCopy={() => { useEditorStore.getState().copyNode(nodeId); setContextMenu(null) }}
+          onCut={() => { useEditorStore.getState().cutNode(nodeId); setContextMenu(null) }}
+          onPaste={() => { useEditorStore.getState().pasteNode(nodeId); setContextMenu(null) }}
           onPasteHtml={async (targetNodeId) => {
             setContextMenu(null)
             let prefillHtml = ''
@@ -458,7 +463,7 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
             } catch (_err) {
               // Clipboard permission denied or API unavailable — open with an empty editor.
             }
-            openImportHtmlModal({ parentId: targetNodeId, prefillHtml })
+            useEditorStore.getState().openImportHtmlModal({ parentId: targetNodeId, prefillHtml })
           }}
         />,
         document.body,
@@ -466,23 +471,3 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
     </div>
   )
 })
-
-// ─── ChildrenGroup — recursive child rendering ───────────────────────────────
-
-import { useEditorStore as useStore } from '@site/store/store'
-
-function ChildrenGroup({ nodeId, depth, editable }: { nodeId: string; depth: number; editable: boolean }) {
-  // Same page-resolution rule as the parent TreeNode — see DomTreePageContext.
-  const pageId = useDomTreePageId()
-  // Fall back to a module-level stable empty array: returning a fresh [] from
-  // the selector would break referential equality every render (Guideline #239).
-  const children = useStore((s) => selectCanvasPageFor(s, pageId)?.nodes[nodeId]?.children) ?? EMPTY_CHILDREN
-
-  return (
-    <div role="group">
-      {children.map((childId) => (
-        <TreeNode key={childId} nodeId={childId} depth={depth + 1} editable={editable} />
-      ))}
-    </div>
-  )
-}
