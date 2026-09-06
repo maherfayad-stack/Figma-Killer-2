@@ -193,6 +193,49 @@ with exactly one stylesheet, and again in one with several.
 
 ---
 
+### mcp-17 — the warm CLI session: a conversation now keeps ONE `claude` process, and the stdin shape WS-11 deferred is verified (W4-2B)
+- **Agent:** mcp-tooling
+- **Stage:** done (built + gated + measured on a real binary). **Needs human dogfood** — no browser drove this; every test uses a fake process.
+- **Updated:** 2026-09-06
+- **Branch:** `feat/warm-cli-session`
+- **Goal:** stop paying a process start + an `initialize` handshake with every attached MCP server on every single turn.
+- **The spike came first, and it PASSED.** Hand-drove `claude 2.1.263` outside the repo with `--input-format stream-json --output-format stream-json --verbose`. Everything below is measured, not inferred; the evidence lives in `server/ai/drivers/claudeCliStdinProtocol.ts`'s module doc, which replaces WS-11's "was never verified" deferral note.
+  - **Envelope:** `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"…"}]},"parent_tool_use_id":null}`, one `\n`-terminated line. A sent `session_id` is ignored; unknown extra top-level fields are accepted and dropped.
+  - **Turn boundary = the single `result` line.** The process then takes the next turn on the same stdin with full context in memory (verified: "remember 8241" → turn 2 answered "8241").
+  - **MCP servers initialize ONCE.** A probe MCP server logged exactly one spawn, one `initialize`, one `tools/list` across three turns. This is the whole prize.
+  - **Malformed stdin is FATAL** — one non-JSON line kills the process (`SyntaxError`, exit 1) mid-conversation. An unrecognised *control request* is safe (error response, process lives).
+  - **`interrupt` cancels the TURN, not the session** — answered in ~1 ms, closed the turn with a normal `result` (`subtype: error_during_execution`), and the next message was answered normally.
+  - **There is no `set_effort`** (probed: "Unsupported control request subtype"). `set_model`, `set_permission_mode`, `set_cwd`, `set_max_thinking_tokens` DO exist and work.
+- **Measured** (real spawns, 3 stdio MCP servers, turn 2 of a conversation, to first stream-json line): **cold 840 ms / 856 ms → warm 4 ms / 4 ms**, two samples.
+- **Scope:**
+  - New: `claudeCliStdinProtocol.ts` (the verified wire format + the newline guard), `claudeCliWarmSession.ts` (one live process: turns, abort, death detection), `claudeCliSessionPool.ts` (the registry: reuse key, idle/lifetime/pool caps), `claudeCliWarmTurn.ts` (serving one turn: connector, registries, board-state carry), `claudeCliArgv.ts` (argv + `buildMcpConfig` + suffix extraction, lifted out of the driver).
+  - Renamed `claudeCliTurnConnector.ts` → `claudeCliConnector.ts`; it now serves BOTH lifetimes and exposes `bindConnectorRegistries` + `mintConnectorOrNull`.
+  - `claudeCliEvents.ts` gained `translateClaudeCliStream` + `claudeCliExitErrorMessage` (both paths share one translator). `claudeCliMcpConfigFile.ts` gained `tryWriteMcpConfigFile`. `claudeCliAttachments.ts` gained the conversation-stable staging root.
+  - `subprocessRunner.ts`: `stdin` widened to `'ignore' | 'pipe' | Uint8Array`, `SpawnedProcessLike.stdin?` added — ONE spawn seam for both paths.
+  - `server/ai/handlers/conversations.ts`: delete + restart-session now call `endClaudeCliConversation`.
+  - Tests: 3 new files (protocol/session/pool, 34 tests) + a new `describe('streamClaudeCli — the warm session (W4-2B)')` block; `claudeCli.test.ts`'s fake spawn now answers BOTH protocols.
+  - Docs: `docs/features/mcp-connectors.md` (new "warm CLI session" section + the connector's two lifetimes).
+- **Verification:** `bun run build` ✅, `bun run lint` ✅, `bun test server/ai/drivers/` → **264 pass, 0 fail**. Full `bun test`: 26 failures on this branch vs **32 on `origin/main`** — `comm` diff of the two sorted failure lists shows **zero regressions**; the 6 that stopped failing are listed under Decisions.
+- **Next step:** dogfood in a browser. Open the AgentPanel, send two turns, and confirm (a) the second starts streaming with no `initialize` lines in the server log, (b) Stop cancels a turn and the NEXT turn still works, (c) "Restart agent session" visibly kills the process. Nothing here has been driven by a real user.
+- **Decisions:**
+  - **The cold path stays, and it is not a shim — it is the crash recovery.** A dead/unusable warm process throws `ClaudeCliWarmSessionDeadError` *before yielding anything*, and the turn silently re-runs cold. Once a turn HAS streamed text, a death degrades to the same terminal error the cold path always produced; a silent retry there would duplicate the reply.
+  - **The connector token became CONVERSATION-scoped.** The CLI authenticates its MCP clients once, at startup, so revoking after turn 1 leaves a warm session silently toolless for turn 2. Revoked on: idle timeout (10 min), max lifetime (60 min), fingerprint change, pool eviction, crash, conversation delete, session restart. The 1-day TTL floor is still the backstop. Its MCP config FILE follows the same lifetime, for the same reason.
+  - **The two registries (permission gate, workspace binding) are re-bound EVERY turn anyway** — `bridge` is a different object after a browser reload, and `workspaceDir` changes when the user opens another project. Binding once at spawn would relay Allow/Deny down a dead socket and point writes at the previous project.
+  - **`effort` is in the respawn key, and it costs us.** `--effort` is argv-only (no `set_effort`), and `turnRouting.ts` routes a plain question to `low` and everything else to `medium` — so a conversation alternating question/build respawns on each switch and gets no discount on those turns. Never *slower* than today (a respawn is the status quo), but the win is real only for runs of same-shaped turns. `set_model`/`set_permission_mode` exist and could avoid two other respawns; kept in the key deliberately, because both change what the agent may DO and both change rarely.
+  - **`--add-dir` now grants the conversation's staging ROOT, unconditionally**, not the per-turn directory only when a turn staged something. `--add-dir` is argv, so a process can only read directories that existed at spawn; the first attachment sent to an already-running session would otherwise hit the exact "you haven't granted it yet" dead end that pre-authorisation exists to prevent. Not a real widening: the directory holds only this conversation's own attachments, and `--tools` (whether `Read` is granted at all) is still the ceiling.
+  - **The dynamic system-prompt suffix rides the USER MESSAGE on a warm turn, and only when it changed.** It cannot ride `--append-system-prompt` past the spawn. Sending it every turn would stack a copy of the board digest into permanent history.
+  - **I lifted the macOS platform gate out of `claudeCli.test.ts`'s `testOptions`** (injects `platformSupport: { supported: true }`). On a macOS host the driver refuses before any of its own code runs, so **53 of that file's tests were asserting against that one refusal event** — they measured the laptop, not the driver, and my entire warm path would have been invisible to them. The refusal itself still has its own test that injects an UNSUPPORTED result on purpose. This is what turned the "streamClaudeCli cluster" from 53 red into real coverage.
+  - **The 4 remaining stale expectations I then fixed** were all one root cause: the `routing` event that `turnRouting.ts` added this week, which those tests never accounted for. Fixed in place (they are in a file I own and directly adjacent to this change's subject), not grandfathered.
+- **Landmines:**
+  - **Attachment cleanup lived ONLY in the cold path's `finally`.** The warm path returns early on success, so every warm turn leaked its staged files until I wrapped both paths in one `finally`. Any future early-return in `streamClaudeCli` must stay inside that wrapper — this is exactly the bug shape that will come back.
+  - **`sessionFlag` (`--session-id` vs `--resume`) must NEVER enter the pool's reuse fingerprint.** It flips from establish to resume the moment the first turn writes a transcript, so including it would respawn on every second turn — silently converting the whole feature into a no-op that still looks like it works.
+  - **`CLAUDE.md` is read once, at startup.** A warm session serves the guide it was born with. Handled by respawning when `generateStudioProjectGuide().written` is non-empty (it is manifest-gated, so that list is empty on the common turn) — but anything else the CLI reads only at startup has the same staleness problem and is bounded only by the 60-minute max lifetime.
+  - **A test that leaves a warm session in the pool poisons the next test** that reuses a conversation id — it will be served by the previous test's fake process. `claudeCli.test.ts` and `claudeCliSessionPool.test.ts` both `disposeAllWarmSessions()` in `afterEach`; a new test file that drives `streamClaudeCli` must too.
+  - **The pool is process-local, in-memory, and capped at 8 live sessions across ALL users.** A multi-worker deployment gets one pool per worker, and a 9th concurrent conversation evicts the least-recently-used idle session rather than queuing. Never evicts a mid-turn session — running over the cap briefly beats truncating someone's reply.
+  - The `spawn` seam is now ONE function for both paths (`subprocessRunner.ts`'s `stdin` widened to accept `'pipe'`). A fake that models only a one-shot process (no writable `stdin`) makes `ClaudeCliWarmSession.start` throw, which correctly falls back to cold — convenient, but it means a fake missing `stdin` silently tests the cold path only.
+
+---
+
 ### struct-06 — duplicate, wrap and same-file reparent write real code (W4-1)
 - **Agent:** parser-surgeon
 - **Stage:** done (built + gated). **Needs human dogfood** — nothing here was driven in a browser.

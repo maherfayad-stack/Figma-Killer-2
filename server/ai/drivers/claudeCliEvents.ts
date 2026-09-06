@@ -23,6 +23,7 @@
 
 import { Type, parseValue, type Static } from '@core/utils/typeboxHelpers'
 import type { AiStreamEvent } from '../runtime/types'
+import type { ClaudeCliRawEvent } from './claudeCliSpawn'
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -403,4 +404,55 @@ function claudeCliResultErrorMessage(line: ClaudeCliLine): string {
   if (line.result) return `Claude CLI error: ${line.result}`
   if (line.subtype) return `Claude CLI turn failed (${line.subtype}). Check you're logged in with "claude auth status".`
   return 'Claude CLI turn failed. Check you\'re logged in with "claude auth status".'
+}
+
+// ---------------------------------------------------------------------------
+// Whole-stream translation
+// ---------------------------------------------------------------------------
+
+/**
+ * One CLI line stream → Studio's wire events. Shared verbatim by the warm and
+ * the cold path, which is what makes "a warm turn behaves exactly like a cold
+ * one" checkable rather than merely asserted: both produce the same
+ * `ClaudeCliRawEvent`s, and both are translated by this.
+ *
+ * Lives here, beside `translateClaudeCliLine`, rather than in the driver: it is
+ * the same responsibility one altitude up, and leaving it there would have left
+ * two callers of a per-line translator each carrying their own copy of the
+ * "have we seen a terminal event yet?" bookkeeping.
+ */
+export async function* translateClaudeCliStream(
+  raw: AsyncIterable<ClaudeCliRawEvent>,
+): AsyncGenerator<AiStreamEvent> {
+  let sawTerminalEvent = false
+  // Turn-scoped, never module-scoped — see `ClaudeCliTurnState`.
+  const turnState = createClaudeCliTurnState()
+  for await (const event of raw) {
+    if (event.kind === 'exit') {
+      if (!sawTerminalEvent) {
+        yield { type: 'error', message: claudeCliExitErrorMessage(event.exitCode, event.stderr, event.timedOut) }
+      }
+      return
+    }
+    const line = parseClaudeCliLineValue(event.value)
+    if (!line) continue
+    const { events, turnComplete } = translateClaudeCliLine(line, turnState)
+    if (turnComplete) sawTerminalEvent = true
+    for (const translated of events) yield translated
+  }
+}
+
+/** The user-facing sentence for a process that ended without ever emitting a `result` line. */
+export function claudeCliExitErrorMessage(exitCode: number | null, stderr: string, timedOut: boolean): string {
+  // Reached only after the CLI has gone completely silent for the whole idle
+  // window (see `idleTimeoutMs` in claudeCliSpawn.ts) — NOT because the turn
+  // took a long time. Say which, so the next person reading it in a toast
+  // doesn't go looking for a length limit that doesn't exist.
+  if (timedOut) return 'Claude CLI stopped responding — no output for 10 minutes. The turn was ended.'
+  const trimmedStderr = stderr.trim()
+  // WS-11 §4.0: stderr is empty on every non-crash path, so anything present
+  // here is a genuine crash — surface it verbatim (bounded by
+  // `pumpCapped`'s cap already).
+  if (trimmedStderr) return `Claude CLI crashed (exit ${exitCode ?? 'unknown'}): ${trimmedStderr}`
+  return `Claude CLI exited (${exitCode ?? 'unknown'}) without a result. Run "claude auth status" to check you're logged in.`
 }

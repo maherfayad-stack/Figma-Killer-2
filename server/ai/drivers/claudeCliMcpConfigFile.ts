@@ -38,10 +38,35 @@ const MCP_CONFIG_FILE_MODE = 0o600
 const MCP_CONFIG_FILE_NAME = 'mcp-config.json'
 
 export interface McpConfigFile {
-  /** The turn-scoped directory holding just this one file — removed wholesale on cleanup. */
+  /**
+   * The directory holding just this one file — removed wholesale on cleanup.
+   *
+   * Its LIFETIME depends on who wrote it: turn-scoped for a cold turn, which
+   * cleans up in its own `finally`, and session-scoped for a warm one, whose
+   * running process authenticated from this file and whose second turn must
+   * still find the session it belongs to valid.
+   */
   readonly dir: string
   /** Absolute path to pass as `--mcp-config <path>`. */
   readonly path: string
+}
+
+/**
+ * `writeMcpConfigFile`, with the fail-soft posture both spawn paths share: a
+ * turn that cannot get a config file runs WITHOUT MCP tools rather than
+ * failing, exactly as a failed connector mint already degrades it.
+ *
+ * Here rather than in the driver so the warm and cold paths cannot drift on
+ * what a write failure means — the one thing that must never differ between
+ * them is whether a secret file failing to appear is fatal.
+ */
+export function tryWriteMcpConfigFile(config: unknown): McpConfigFile | null {
+  try {
+    return writeMcpConfigFile(config)
+  } catch (err) {
+    console.error('[ai/claudeCli] failed to write the MCP config file — continuing without tools:', err)
+    return null
+  }
 }
 
 /**
