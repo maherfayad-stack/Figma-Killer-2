@@ -139,9 +139,17 @@ contains its id. Resetting to home is right when opening a different project and
 wrong when re-syncing the open one.
 
 **`patchPages(input)`** merges a freshly-re-parsed SUBSET of pages into
-`site.pages` — the agent-write live-reload path (a `execution: 'server'` tool
-wrote `.tsx` to disk; only the touched files get re-parsed and patched here,
-`loadSite`'s full-reload is for a whole-workspace re-parse). `input.pages`
+`site.pages` — the targeted-reload path for **every** write, the agent's and
+the user's alike. Three callers reach it: the MCP live-reload push, a
+structural commit, and `fsCodemodAdapter.saveSite` when the response reports
+`shifted`/`sharedComponents`. All three go through
+`studioBoardResync.ts`'s `resyncBoardAfterWrite`, which asks
+`POST /admin/api/studio/reload-scope` which pages the touched files actually
+feed (`pageParseCache.ts`'s recorded per-route dependency sets, inverted) and
+widens to `loadSite` whenever it cannot prove the scope. `loadSite`'s full
+reload is now reserved for the cases that change the board's global SHAPE —
+page create/delete, a new component file, a project switch, project-wide
+settings — enumerated in `studioBoardResync.ts`'s own doc. `input.pages`
 upserts by id (appends an unrecognised id — how `studio_create_page` lands);
 `input.removedPageIds` drops a page confirmed gone, its board frame(s), and
 any dangling `selectedFrameIds`/selection entry. **Deliberately bypasses
@@ -170,7 +178,16 @@ collapsed — bare containers falling back to the "Empty container" placeholder
 fresher (a test, or a patch that never re-read the project). `?pageIds=`
 callers get them from `fetchStudioPagesById`, which also applies the meta
 line's store-free halves (`authoredCss`, `vendorCss`, `styleRuleSources`,
-`trust`) itself.
+`trust`) itself. `?pageIds=` narrows the server's COMPUTE too — the per-page
+convert is skipped for every unrequested route — but never the meta: the style
+registry is built from every route's stylesheets together, so it stays a full,
+fresh recompute (`studioPageLoad.ts`'s `options.pageIds` doc).
+
+A resync triggered by `saveSite` runs as the **last** thing that function does,
+after every diff baseline has advanced, and carries the save's `refusedRuleIds`
+so the reload's own `commitBaseline` does not adopt a value the server refused.
+Both are load-bearing and both have a regression test
+(`studio/__tests__/saveNarrowResync.test.ts`).
 
 **`saveSite`** collects dirty nodes into a `StudioEdit[]` batch:
 - `tag`/`customTag` collapse into one `effectiveTag`, diffed against the load

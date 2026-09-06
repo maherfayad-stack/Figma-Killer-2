@@ -110,41 +110,37 @@ export function clearPageParseCache(): void {
 }
 
 /**
- * Track C5 (reload surgery) — the safety check behind a TARGETED per-file
- * reload: whether ANY cached route for `dir`, other than the route(s) named
- * in `excludeCacheKeys` (the one(s) about to be re-parsed and returned to the
- * client), recorded `absFile` as one of ITS OWN dependencies (its own file,
- * a resolved local-component import, or — for App Router — a layout-chain
- * file). If some OTHER route depends on the same file, that route's content
- * is now stale too and a narrow reload of just the touched route would
- * silently desync the board; the caller must widen to a full reload instead.
+ * Track C5 (reload surgery) — the dependency data behind a TARGETED reload:
+ * for every cached route of `dir`, the exact set of ABSOLUTE files that
+ * route's own parse depended on (its own file, its resolved local-component
+ * imports, and — for App Router — its layout chain). `reloadScope.ts` inverts
+ * this map to answer the only question a narrow reload needs: *given the
+ * file(s) a write just touched, which routes' parsed content is now stale?*
  *
- * Three-way, not boolean, because "no data" and "no dependency" are different
- * answers with different consequences:
- *   - `true` — a sharing route was found. Always widen.
- *   - `false` — every cached route for `dir` was checked and none depend on
- *     `absFile`. Safe to reload narrowly.
- *   - `null` — the cache holds NO entries at all for `dir` (a cold cache:
- *     server restart, or nothing has parsed this project in this process
- *     yet). There is no dependency data to consult, so there is nothing
- *     honest to answer — the caller treats this the same as `true` and
- *     widens, rather than guessing "probably fine".
+ * Keyed by the route-relative half of the cache key (`${dir}::` stripped),
+ * which is exactly the `relPath` `studioPageLoad.ts` built the key from — so
+ * the caller can map it back to a page id with the SAME `assignPageIds` /
+ * `assignAppRouterPageIds` a full load uses.
+ *
+ * `null` — not an empty map — when the cache holds NO entries at all for
+ * `dir` (a cold cache: server restart, or nothing has parsed this project in
+ * this process yet). "No data" and "no dependency" are different answers with
+ * different consequences, and the caller must widen on the first rather than
+ * guessing "probably fine".
+ *
+ * Reads only the RECORDED dependency keys, never the mtimes: a stale entry
+ * (the write that triggered this reload moved a tracked file's mtime, by
+ * construction) still tells the truth about which files that route read.
  *
  * Cheap: a scan over the in-memory cache's own keys and each entry's already-
  * recorded `depMtimes` object, no filesystem access.
  */
-export function anyOtherRouteDependsOnFile(
-  dir: string,
-  absFile: string,
-  excludeCacheKeys: ReadonlySet<string>,
-): boolean | null {
+export function cachedRouteDependencies(dir: string): Map<string, ReadonlySet<string>> | null {
   const prefix = `${dir}::`
-  let sawEntryForDir = false
+  const byRoute = new Map<string, ReadonlySet<string>>()
   for (const [key, entry] of cache) {
     if (!key.startsWith(prefix)) continue
-    sawEntryForDir = true
-    if (excludeCacheKeys.has(key)) continue
-    if (absFile in entry.depMtimes) return true
+    byRoute.set(key.slice(prefix.length), new Set(Object.keys(entry.depMtimes)))
   }
-  return sawEntryForDir ? false : null
+  return byRoute.size > 0 ? byRoute : null
 }

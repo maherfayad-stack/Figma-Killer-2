@@ -14,20 +14,23 @@
  * (replace this image, detach this instance, swap this component) rather than
  * a value the user is continuously typing, so there is nothing to debounce and
  * no diff to compute — they post a single edit and act on the response. They
- * all need the same three things, which is exactly what this module holds: the
- * response schema, the active workspace dir, and the reload-on-success rule.
+ * all need the same two things, which is exactly what this module holds: the
+ * response schema and the post-write reporting. Where a write TARGETS lives in
+ * `studioWorkspaceDir.ts` (`studioWriteDir`) and what a landed write does to
+ * the board in `studioBoardResync.ts` — both were extracted from here once a
+ * second caller (`fsCodemodAdapter`'s autosave) needed them too.
  */
 import type { StyleRule } from '@core/page-tree'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { dispatchCmsSitePagesPatch, requestCmsSiteReload } from '@admin/state/adminEvents'
+import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
-import { getStudioWorkspaceDir } from './studioWorkspaceDir'
+import { studioWriteDir } from './studioWorkspaceDir'
 import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
-import { fetchStudioPagesById } from './studioLiveReloadFetch'
+import { resyncBoardAfterWrite } from './studioBoardResync'
 
 /**
  * POST /admin/api/studio/save response. `shifted` is true when a write changed
@@ -145,28 +148,6 @@ export function notifyCreatedStylesheets(
   }
 }
 
-/**
- * Remembered from the last load so every save can tell the server which
- * folder to write. Module state rather than a store slice for the same reason
- * `componentSources` is: it is ephemeral, server-derived, per-load state, not
- * part of the persisted `SiteDocument` shape.
- */
-let loadedDir: string | null = null
-
-export function setStudioLoadedDir(dir: string | null): void {
-  loadedDir = dir
-}
-
-/**
- * The dir every studio write targets: the explicitly-selected project when
- * there is one, otherwise whatever the last load reported. Every call in this
- * module resolves it the same way so a one-shot commit can never land in a
- * different project than the canvas is showing.
- */
-export function studioWriteDir(): string | null {
-  return getStudioWorkspaceDir() ?? loadedDir
-}
-
 /** Post one edit to `/save` and return the parsed response. The shared body of every one-shot commit below. */
 function postOneEdit(edit: Record<string, unknown>): Promise<StudioSaveResponse> {
   return postEdits([edit])
@@ -179,52 +160,6 @@ function postEdits(edits: readonly Record<string, unknown>[]): Promise<StudioSav
     body: { dir: studioWriteDir(), edits },
     schema: StudioSaveResponseSchema,
   })
-}
-
-/** POST /admin/api/studio/reload-scope response — see `server/handlers/studio/reloadScope.ts`'s doc for the full contract. */
-const StudioReloadScopeResponseSchema = Type.Union([
-  Type.Object({ ok: Type.Literal(true), narrow: Type.Literal(true), pageIds: Type.Array(Type.String()) }),
-  Type.Object({ ok: Type.Literal(true), narrow: Type.Literal(false) }),
-])
-
-/**
- * Track C5 — resync the board after a STRUCTURAL write (`commitStructural`,
- * below) without a full-workspace reparse when it is safe to skip one.
- *
- * Asks `/reload-scope` whether `touchedFiles` is narrow-safe; when it is,
- * fetches exactly those pages through the SAME `?pageIds=` filtered load the
- * MCP live-reload bridge already uses (`fetchStudioPagesById` —
- * store-agnostic, and it advances `loadedValuesBaseline.ts`'s save-diff
- * baseline for the reloaded pages, same as that bridge needs) and dispatches
- * them as a store patch. Falls back to the existing full `requestCmsSiteReload()`
- * whenever the scope check says "not safe", or whenever ANY step here throws
- * — a narrow reload is an optimization, never the only path to a correct
- * board: any failure here must still leave the board honest.
- */
-async function reloadStructuralScope(touchedFiles: readonly string[]): Promise<void> {
-  // Nothing to ask about — a batch that landed a write always decodes at
-  // least one location (see `applyStudioEditBatch`), so this is defensive,
-  // not a real path; skip the round trip rather than ask a question with no
-  // honest answer.
-  if (touchedFiles.length === 0) {
-    requestCmsSiteReload()
-    return
-  }
-  try {
-    const scope = await apiRequest('/admin/api/studio/reload-scope', {
-      method: 'POST',
-      body: { dir: studioWriteDir(), files: touchedFiles },
-      schema: StudioReloadScopeResponseSchema,
-    })
-    if (scope.narrow && scope.pageIds.length > 0) {
-      const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(scope.pageIds)
-      dispatchCmsSitePagesPatch({ pages, removedPageIds: missingPageIds, styleRules, conditions })
-      return
-    }
-  } catch (err) {
-    console.error('[studioSaveRequests] reload-scope check failed, widening to a full reload:', err)
-  }
-  requestCmsSiteReload()
 }
 
 /**
@@ -368,7 +303,7 @@ export async function commitStudioInsert(insert: {
  * `STUDIO-FIGMA-PARITY-PLAN.md` Track C5 (reload surgery, Band 2, built on
  * top of 0.2 above) — the ONE thing that changed since: "reload" on a landed
  * write no longer means "reparse the whole workspace" by default. See
- * `reloadStructuralScope`'s own doc for the full targeted-reload contract;
+ * `studioBoardResync.ts`'s `resyncBoardAfterWrite` for the full contract;
  * every gate described in items 1/2 above (still gated on `written > 0`,
  * still flushes first, still leaves a refused move/delete visually diverged
  * until a later reload) is UNCHANGED — C5 only changes what a "reload" does
@@ -412,14 +347,14 @@ async function commitStructural(
     // replace whatever the canvas is currently (optimistically) showing with
     // the unchanged, pre-edit source.
     //
-    // Track C5 (reload surgery) — `reloadStructuralScope` tries a targeted
+    // Track C5 (reload surgery) — `resyncBoardAfterWrite` tries a targeted
     // per-page resync first (see its own doc) and only falls back to the
     // full `requestCmsSiteReload()` this used to call unconditionally when
     // that isn't provably safe. Every OTHER behaviour on this line is
     // unchanged: still gated on `willReload`, still the thing that (per
     // (1) above) leaves a refused move/delete visually diverged until a
     // later reload happens to resync it.
-    if (willReload) await reloadStructuralScope(result.touchedFiles ?? [])
+    if (willReload) await resyncBoardAfterWrite(result.touchedFiles ?? [])
   } catch (err) {
     // Fire-and-forget from the store's mutation guard, so this is the only
     // place the failure can be reported. No response was ever obtained, so

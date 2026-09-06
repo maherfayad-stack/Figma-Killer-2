@@ -8,9 +8,11 @@
  *
  * `pageIdFromRelPath`/`assignPageIds` turn a page file's path (relative to
  * the workspace's `pages/` dir) into the stable, unique `pageId`/`slug` the
- * multi-page load scan uses. `resolveModuleId`/`resolveTextProp` map a parsed
- * node to an Studio module id and its inline-text-edit prop.
- * `rewriteStudioAssetSentinels` turns a resolved local-image import into a
+ * multi-page load scan uses. `studio/moduleMapping.ts`'s `resolveModuleId`/
+ * `resolveTextProp` (bound as the two converter callbacks below) map a parsed
+ * node to an Studio module id and its inline-text-edit prop — they encode the
+ * base-module catalogue's rules, not this pipeline's, so they live in their
+ * own module. `rewriteStudioAssetSentinels` turns a resolved local-image import into a
  * fetchable `/admin/api/studio/asset` URL. `loadStudioPages` is the per-page
  * parse → inline → convert sequence that ties all of the above together for
  * every discovered page file, sharing one workspace-wide ts-morph `Project`
@@ -65,17 +67,14 @@ import {
   STUDIO_ASSET_SENTINEL,
   type ComponentSource,
   type ParsedPage,
-  type ParsedPropValue,
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
-import { TEXT_HTML_TAG_SET } from '@modules/base/utils/htmlTag'
-import { packageModuleId } from '@core/module-engine'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles, type StyleRuleSource } from './studioCss'
 import { probeProject } from './studio/projectProbe'
 import { getCachedRouteParse, hashWorkspaceConfig, setCachedRouteParse } from './studio/pageParseCache'
-import { ALM_DESIGN_PACKAGE_SPECIFIER } from './studio/designSystemDetect'
+import { resolveModuleId, resolveTextProp } from './studio/moduleMapping'
 import { compileProjectStyles } from './studio/styleCompile'
 import { readStudioMeta } from './studio/studioMeta'
 import type { RoutePageEntry } from './studio/routePageEntry'
@@ -93,130 +92,6 @@ import {
   assignPageIds,
   slugFromAppRoute,
 } from './studioPageIds'
-
-const CONTAINER_TAGS: ReadonlySet<string> = new Set([
-  'div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside',
-])
-
-/**
- * Map a parsed node to an Studio moduleId (design-system → alm.* / pkg.*, host
- * tags → base.*).
- *
- * WS-3.3 — a `kind: 'component'` node whose `componentSources` classification
- * (computed earlier in `loadStudioPages`, from the PRE-inline tree — see that
- * function's doc) says it's a `package` import gets the generic
- * `pkg.<sanitized-package>.<ComponentName>` id (`packageModuleId`), so
- * `registerProjectModules.ts` can register — and the canvas can find — a
- * module for whatever npm design system the project actually imports, not
- * just the one hardcoded `@alm-design/design-system` case (kept on `alm.*`
- * — see `ALM_DESIGN_PACKAGE_SPECIFIER`'s doc). A `kind: 'component'` node with
- * no package classification at all (a LOCAL component `inlineLocalComponents`
- * declined to expand — recursion, missing declaration, cap reached) keeps the
- * old `alm.<Name>` id: there is no package to bundle for it, so it renders
- * "Unknown module" exactly as it did before this change, which is the honest
- * outcome for content this pipeline cannot materialize.
- *
- * `base.text` and `base.button` are the two modules that need care, because
- * they share two properties: both are leaves (`canHaveChildren: false`) and
- * both render a hardcoded placeholder — the literal words "Text" and "Button" —
- * when their content prop is empty. That placeholder is the right affordance
- * for a hand-authored page (an empty text block stays visible and clickable),
- * but on an imported page it is pure noise: real repos are full of elements
- * that carry no text at all, like `<span className="hp-avatar" />` used purely
- * as a CSS-styled icon slot.
- *
- * So those two modules apply only to an element that BOTH has captured text and
- * has no element children. Everything else that isn't a genuine HTML leaf
- * becomes `base.container`, which preserves the real host tag through its
- * `tag`/`customTag` props (see `parsedPageToSitePage`) and renders children —
- * so an `<h1>` stays an `<h1>`, and an icon-only `<button>` still emits
- * `<button>`, just without a phantom label.
- *
- * Measured on the eSIM corpus before this rule: 154 nodes rendered the literal
- * word "Text", 21 rendered "Button", and 10 buttons silently dropped their
- * children.
- */
-function resolveModuleId(
-  node: {
-    id: string
-    kind: 'element' | 'component'
-    name: string
-    children: string[]
-    text?: string
-    props?: Record<string, ParsedPropValue>
-    /** WS-4.2 — present when `inlineLocalComponents` successfully expanded this call site into an instance. */
-    instanceOf?: { componentName: string; source: 'local' | 'package'; sourceFile: string | null }
-    /** E2.3 — present when `captureSlotProps`'s fragment branch minted this node as a fragment-valued slot's container. */
-    fragmentSlot?: true
-  },
-  componentSources: Record<string, ComponentSource>,
-): string {
-  // E2.3 — checked before the `kind`-based dispatch below, same as
-  // `instanceOf` is: a fragment-captured slot container has no tag name to
-  // route on (`node.name` is the placeholder `'Fragment'`), so this must be
-  // the first thing asked, not a fallback.
-  if (node.fragmentSlot) return 'studio.slot'
-  if (node.kind === 'component') {
-    // WS-4.2 — a call site `inlineLocalComponents` actually expanded renders
-    // as the zero-DOM instance fragment, whatever `componentSources` says
-    // about it (it will say `local`, since only local expansion produces
-    // this field — checked FIRST, not merged into the branch below, so a
-    // future package-instance producer of this same field doesn't have to
-    // fight the `alm.`/`pkg.` fallback order). A `kind: 'component'` node
-    // with NO `instanceOf` is either a package reference (never inlined) or
-    // a local call site inlining DECLINED to expand — both keep the
-    // pre-WS-4 fallback below unchanged.
-    if (node.instanceOf) return 'studio.instance'
-    const source = componentSources[node.id]
-    if (source?.kind === 'package' && source.specifier !== ALM_DESIGN_PACKAGE_SPECIFIER) {
-      return packageModuleId(source.specifier, node.name)
-    }
-    return `alm.${node.name}`
-  }
-  // An element carrying resolved raw SVG markup renders as `base.svg`
-  // whatever its tag — the `<span dangerouslySetInnerHTML={{__html: icon}} />`
-  // shape is how real repos inline an icon, and the markup is the content.
-  if (typeof node.props?.svg === 'string' && node.props.svg.length > 0) return 'base.svg'
-  const tag = node.name.toLowerCase()
-  if (CONTAINER_TAGS.has(tag)) return 'base.container'
-  // Genuine HTML leaves, plus `base.link` which does accept children.
-  if (tag === 'img') return 'base.image'
-  if (tag === 'svg') return 'base.svg'
-  if (tag === 'a') return 'base.link'
-  // No element children AND non-empty text. `''` counts as no content — an
-  // element whose text is empty or whitespace-only would render the
-  // placeholder just the same.
-  if (node.children.length > 0 || !node.text) return 'base.container'
-  if (tag === 'button') return 'base.button'
-  // `base.text` has no custom-tag escape hatch, so a tag it cannot render
-  // (`<label>`, `<figcaption>`, …) would silently come out as its default
-  // `<p>`. Those go to `base.container`, which can represent any tag.
-  return TEXT_HTML_TAG_SET.has(tag) ? 'base.text' : 'base.container'
-}
-
-/**
- * Map a resolved moduleId to the single prop key its module's
- * `inlineTextEdit` declares. MUST stay in sync with the base modules'
- * `inlineTextEdit.prop` (`src/modules/base/{text,button,link}/index.ts`) —
- * the browser-side `fsCodemodAdapter` reads the same contract off the actual
- * module registry (`@core/module-engine`), which this server-side handler
- * intentionally does not import (page-parser/ast-codemods run here in Node,
- * decoupled from the browser module bundle). `alm.*` design-system
- * components declare no `inlineTextEdit` — out of scope for source
- * writeback this slice.
- */
-function resolveTextProp(moduleId: string): string | null {
-  switch (moduleId) {
-    case 'base.text':
-      return 'text'
-    case 'base.button':
-      return 'label'
-    case 'base.link':
-      return 'text'
-    default:
-      return null
-  }
-}
 
 /**
  * Rewrites every `studio-asset:<workspace-rel>` sentinel prop value (§5.1 —
@@ -472,6 +347,17 @@ function buildAppRouterPageEntries(
   )
 }
 
+/** `loadStudioPages` options — today only the targeted-reload page filter. */
+export interface StudioLoadOptions {
+  /**
+   * Track C5 (reload surgery) — return ONLY these page ids, and skip the
+   * per-page CONVERT work for every other route. `undefined` (every existing
+   * caller) is a full load, unchanged. See `loadStudioPages`'s own doc for
+   * exactly which stages this narrows and which stay project-wide.
+   */
+  pageIds?: readonly string[]
+}
+
 /**
  * W5-3 — every accepted Storybook story in the project, with its page id
  * guaranteed not to collide with an already-assigned PAGE id.
@@ -524,6 +410,40 @@ function discoverProjectStories(
  * `pagesDir` override) and parses EACH into an Studio `Page`. Returns empty
  * results (not an error) when the pages directory doesn't exist yet.
  *
+ * ## `options.pageIds` — what a narrowed load actually skips
+ *
+ * A targeted reload (`GET /load?pageIds=`, driven by `reloadScope.ts`) asks
+ * for one or two pages out of forty. Three stages run below, and only one of
+ * them can honestly be narrowed:
+ *
+ *   - **Parse + inline stays project-wide.** `loadStudioStyles` builds the
+ *     style registry from EVERY route's imported stylesheets together (shared
+ *     files, cascade order, `classIdsByName`), so it needs every route's
+ *     parsed tree in hand. Dropping the unrequested ones would shrink
+ *     `styleRules` — and the client replaces its registry wholesale from this
+ *     response, so the requested page would then render against a registry
+ *     missing every rule only its siblings import. That is the exact failure
+ *     `canvas-14` fixed; it is not being reintroduced for a parse that
+ *     `pageParseCache.ts` already answers from memory (a warm cache — which a
+ *     targeted reload always has, by construction — costs one `statSync` per
+ *     tracked file per route).
+ *   - **Style resolution stays project-wide,** for the same reason, computed
+ *     once and reused by every converted page below. This is genuinely global
+ *     work, not per-page work being done N times.
+ *   - **Convert IS narrowed.** `parsedPageToSitePage` + the asset-sentinel
+ *     rewrite walk every node of every page and allocate a whole `Page`
+ *     object graph per route, on every call, cached by nothing. That is the
+ *     one stage whose cost scales with project size and buys the caller
+ *     nothing when it asked for one page — so it now runs only for the
+ *     requested ids. All three route producers narrow together (file-per-page,
+ *     App Router, W5-3 stories); `stories` itself is still reported IN FULL,
+ *     because the route reads it to place board frames and a narrowed reload
+ *     must never retract one.
+ *
+ * An id that matches no route is simply absent from the result; naming the
+ * missing ones is the ROUTE's job (`studioLoadResponse.ts`), which is the only
+ * layer that knows what the client asked for.
+ *
  * Branches on the cached `ProjectProfile.framework` (`meta-04`'s probe),
  * never a guess: `next-app` routes through `buildAppRouterPageEntries`
  * (route-derived ids, `RootLayout(SegmentLayout(Page))` composition); every
@@ -538,7 +458,7 @@ function discoverProjectStories(
  * merged classification for every page/route is returned as
  * `componentSources`, keyed by node id.
  */
-export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
+export async function loadStudioPages(dir: string, options: StudioLoadOptions = {}): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
     return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [] }
@@ -602,7 +522,13 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   )
   const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
 
-  const pages = routeEntries.map(({ expanded, pageId, slug, title }) => {
+  // The one narrowable stage — see this function's `options.pageIds` doc.
+  const requestedPageIds = options.pageIds ? new Set(options.pageIds) : null
+  const convertedEntries = requestedPageIds
+    ? routeEntries.filter(({ pageId }) => requestedPageIds.has(pageId))
+    : routeEntries
+
+  const pages = convertedEntries.map(({ expanded, pageId, slug, title }) => {
     const page = parsedPageToSitePage(expanded, {
       pageId,
       slug,

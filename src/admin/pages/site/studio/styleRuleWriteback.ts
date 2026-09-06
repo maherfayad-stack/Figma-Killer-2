@@ -262,14 +262,22 @@ let baseline = new Map<string, Record<string, unknown>>()
  */
 let contextBaseline = new Map<string, Record<string, unknown>>()
 
-/** Record the load's mapping + baseline. Called once per `loadSite`. */
+/**
+ * Record the load's mapping + baseline. Called once per `loadSite`, and once
+ * per TARGETED reload (`studioLiveReloadFetch.ts`) — which is why it takes the
+ * full `CommitBaselineOptions` rather than just `pages`: a reload triggered by
+ * a save whose CSS edits the server refused must not adopt the on-disk value
+ * as the new baseline for those rules, or the user's retry diffs as "no
+ * change" and is never attempted again (`style-02`'s bug #3, reachable through
+ * the reload path even after that fix).
+ */
 export function setStudioStyleRuleSources(
   sources: Record<string, StyleRuleSource>,
   styleRules: Record<string, StyleRule>,
-  pages: readonly Page[] = [],
+  options: CommitBaselineOptions = {},
 ): void {
   replaceStyleRuleSources(sources)
-  commitBaseline(styleRules, { pages })
+  commitBaseline(styleRules, options)
 }
 
 /**

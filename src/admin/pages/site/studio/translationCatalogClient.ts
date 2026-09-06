@@ -13,7 +13,7 @@
  */
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { studioWriteDir } from './studioSaveRequests'
+import { studioWriteDir } from './studioWorkspaceDir'
 
 export const TranslationEntrySchema = Type.Object({
   key: Type.String(),
