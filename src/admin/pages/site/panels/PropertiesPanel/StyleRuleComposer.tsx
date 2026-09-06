@@ -9,7 +9,7 @@
 import { useEditorStore } from '@site/store/store'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
 import { StyleSectionsEditor } from './StyleSectionsEditor'
-import { getActiveStyleTab } from './cssControlTypes'
+import { getActiveStyleTab } from './classStyleSections'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 
 // ---------------------------------------------------------------------------

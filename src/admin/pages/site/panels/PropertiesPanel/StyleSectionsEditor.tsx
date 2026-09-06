@@ -18,22 +18,20 @@ import { ClassPropertyRow } from './ClassPropertyRow'
 import { Section } from '@ui/components/Section'
 import { Button } from '@ui/components/Button'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
-import { SpacingBoxControl } from './SpacingBoxControl/SpacingBoxControl'
+import { SpacingSection } from './SpacingBoxControl/SpacingSection'
 import { BorderControl } from './BorderControl/BorderControl'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { LayoutSection } from './LayoutSection'
 import { PositionSection } from './PositionSection'
 import { SizeSection } from './SizeSection'
 import { TypographySection } from './TypographySection'
+import { AppearanceSection, AppearanceSectionActions } from './AppearanceSection'
 import { BackgroundSection } from './BackgroundSection'
 import { EffectsSection } from './EffectsSection'
 import { InteractionSection } from './InteractionSection'
 import { SectionStylesMenu } from './SectionStylesMenu'
-import {
-  CLASS_STYLE_SECTIONS,
-  cssPropertyLabel,
-  type ClassStyleSectionDefinition,
-} from './cssControlTypes'
+import { cssPropertyLabel } from './cssControlTypes'
+import { CLASS_STYLE_SECTIONS, type ClassStyleSectionDefinition } from './classStyleSections'
 import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue } from './styleValueUtils'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
@@ -46,6 +44,7 @@ const LAYOUT_SECTION_ID = 'layout'
 const POSITION_SECTION_ID = 'position'
 const SIZE_SECTION_ID = 'size'
 const TYPOGRAPHY_SECTION_ID = 'typography'
+const APPEARANCE_SECTION_ID = 'appearance'
 const BACKGROUND_SECTION_ID = 'background'
 const INTERACTION_SECTION_ID = 'interaction'
 const EFFECTS_SECTION_ID = 'effects'
@@ -278,6 +277,21 @@ function StyleSectionGroup({
     />
   )
 
+  // Appearance's header carries two extra icons ahead of the styles menu —
+  // the eye (F10's `visibility` toggle) and the droplet (F12's blend-mode
+  // menu). Both read/write the same `storedStyles`/`onChange` this group
+  // already has; see `AppearanceSection.tsx`'s doc for why they live in the
+  // header instead of the body.
+  const sectionActions =
+    section.id === APPEARANCE_SECTION_ID ? (
+      <>
+        <AppearanceSectionActions storedStyles={storedStyles} onChange={onChange} />
+        {stylesMenu}
+      </>
+    ) : (
+      stylesMenu
+    )
+
   // Law 1's empty state: nothing set anywhere, no active search, and the
   // user hasn't clicked "+" yet for this selection — one header line, no
   // body. This is independent of the `propertiesSectionsExpanded`
@@ -331,11 +345,11 @@ function StyleSectionGroup({
       indicator={displaySetCount > 0}
       indicatorTestId={`class-style-section-dot-${section.id}`}
       meta={displaySetCount > 0 ? `${displaySetCount} set` : undefined}
-      actions={stylesMenu}
+      actions={sectionActions}
     >
       <div className={sectionStyles.sectionBody}>
         {section.id === SPACING_SECTION_ID ? (
-          <SpacingBoxControl
+          <SpacingSection
             key={activeTab}
             storedStyles={storedStyles}
             currentStyles={currentStyles}
@@ -387,6 +401,18 @@ function StyleSectionGroup({
             storedStyles={storedStyles}
             currentStyles={currentStyles}
             visibleProperties={section.properties}
+            activeTab={activeTab}
+            onChange={onChange}
+            onRemove={onRemove}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+            provenanceByProperty={provenanceByProperty}
+          />
+        ) : section.id === APPEARANCE_SECTION_ID ? (
+          <AppearanceSection
+            key={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
             activeTab={activeTab}
             onChange={onChange}
             onRemove={onRemove}

@@ -43,6 +43,23 @@ const CSSPropertyBagSchema = Type.Object({
   color: Type.Optional(Type.String()),
   textShadow: Type.Optional(Type.String()),
 
+  // Typography — the long tail reached through the section's settings popover
+  // (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G9, Figma F25/F26/F27). Declared here
+  // rather than cast at each call site: `keyof CSSPropertyBag` is how the whole
+  // style pipeline is typed, so a property missing from this schema can only be
+  // written by defeating that type, and would then be invisible to the section's
+  // search and "N set" accounting.
+  textOverflow: Type.Optional(Type.String()),
+  textIndent: Type.Optional(Type.String()),
+  marginBlock: Type.Optional(Type.String()),
+  fontVariantNumeric: Type.Optional(Type.String()),
+  fontFeatureSettings: Type.Optional(Type.String()),
+  hangingPunctuation: Type.Optional(Type.String()),
+  fontKerning: Type.Optional(Type.Union([
+    Type.Literal('auto'), Type.Literal('normal'), Type.Literal('none'),
+  ])),
+  fontVariationSettings: Type.Optional(Type.String()),
+
   // Layout
   display: Type.Optional(Type.Union([
     Type.Literal('block'), Type.Literal('flex'), Type.Literal('grid'),
@@ -119,6 +136,15 @@ const CSSPropertyBagSchema = Type.Object({
   overflow: Type.Optional(Type.String()),
   overflowX: Type.Optional(Type.String()),
   overflowY: Type.Optional(Type.String()),
+
+  // Appearance (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5) — `visibility` backs
+  // the inspector's "hide element, keep its space" eye, distinct from the
+  // layer tree's `toggleNodeHidden` (which removes the node's own box
+  // entirely). `mixBlendMode` backs the section header's blend-mode menu.
+  visibility: Type.Optional(Type.Union([
+    Type.Literal('visible'), Type.Literal('hidden'), Type.Literal('collapse'),
+  ])),
+  mixBlendMode: Type.Optional(Type.String()),
 
   // Border
   border: Type.Optional(Type.String()),

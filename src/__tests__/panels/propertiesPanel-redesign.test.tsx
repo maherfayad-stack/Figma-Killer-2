@@ -744,8 +744,11 @@ describe('LayoutSection — grid block', () => {
     // are present.
     expect(screen.getByRole('group', { name: /grid template columns/i })).toBeDefined()
     expect(screen.getByRole('group', { name: /grid template rows/i })).toBeDefined()
-    expect(screen.getByRole('group', { name: /^align items$/i })).toBeDefined()
-    expect(screen.getByRole('group', { name: /^justify items$/i })).toBeDefined()
+    // G3.3: the two linear align/justify SegmentedControls became ONE 3x3
+    // AlignGrid pad that writes both properties in a single gesture, so there
+    // is one `role="grid"` here rather than two `role="group"`s.
+    expect(screen.getByTestId('css-align-grid')).toBeDefined()
+    expect(screen.getByRole('grid', { name: /alignment/i })).toBeDefined()
   })
 
   it('does not render the grid block when display is flex', () => {
@@ -854,9 +857,13 @@ describe('LayoutSection — grid block', () => {
     expect(screen.queryByLabelText('Gap')).toBeNull()
     expect(document.querySelector('[data-testid="css-property-row-rowGap"]')).toBeNull()
     expect(document.querySelector('[data-testid="css-property-row-columnGap"]')).toBeNull()
-    // Item-level properties (gridColumn / gridRow / alignSelf / flex)
-    // still render — they depend on the parent's display, which we don't
-    // observe from a class-style editor.
+    // Item-level properties (gridColumn / gridRow / alignSelf / flex) remain
+    // REACHABLE with no display set — they depend on the PARENT's display,
+    // which we cannot observe from a class-style editor. G3 moved them into
+    // the layout settings popover, whose trigger is deliberately resident for
+    // exactly this reason; it must not be nested inside the flex/grid block.
+    expect(document.querySelector('[data-testid="css-property-row-alignSelf"]')).toBeNull()
+    fireEvent.click(screen.getByTestId('layout-settings-trigger'))
     expect(document.querySelector('[data-testid="css-property-row-alignSelf"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="css-property-row-gridColumn"]')).not.toBeNull()
   })
@@ -871,6 +878,10 @@ describe('LayoutSection — grid block', () => {
 
     // Gap is now inside the flex block (token-aware input), not a fallback row.
     expect(screen.getByLabelText('Gap')).toBeDefined()
+    // The split-axis rowGap / columnGap are container-only and live in the
+    // layout settings popover — one click, not a resident row.
+    expect(document.querySelector('[data-testid="css-property-row-rowGap"]')).toBeNull()
+    fireEvent.click(screen.getByTestId('layout-settings-trigger'))
     expect(document.querySelector('[data-testid="css-property-row-rowGap"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="css-property-row-columnGap"]')).not.toBeNull()
   })
