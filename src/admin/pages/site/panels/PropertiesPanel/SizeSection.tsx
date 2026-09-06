@@ -1,12 +1,12 @@
 /**
  * SizeSection — Figma-style visual editor for the `size` CSS section.
  *
- * STUDIO-INSPECTOR-DISCLOSURE-PLAN.md, G2 (F30/F31): width and height are
+ * docs/features/inspector-disclosure.md, G2 (F30/F31): width and height are
  * `AddablePropertyField`s that fold their own sizing intent — `Fixed` /
  * `Hug contents` / `Fill container`, resolved through `elementSizing.ts` —
  * into their own dropdown, rather than a separate always-on segmented row.
  * `min`/`max` width and height are not fields at all until asked for (Law 3,
- * `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` §1): each starts life as an
+ * `docs/features/inspector-disclosure.md` §1): each starts life as an
  * `Add minimum width…` / `Add maximum width…` menu item on the field it
  * constrains, and `onAdd` REVEALS the row without writing any CSS — the
  * property is only written the first time the user commits a value into it.
@@ -25,7 +25,7 @@
  * rather than resetting it to nothing.
  *
  * `aspectRatio` and `boxSizing` are both rare — G3
- * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` §6) moves them into a small `⚙`
+ * (`docs/features/inspector-disclosure.md` §6) moves them into a small `⚙`
  * popover on the Size section itself (the Layout ⚙ is a different
  * component, `LayoutSection/LayoutSettingsButton.tsx`, scoped to
  * layout-only properties), reusing `InspectorPopover` — the same

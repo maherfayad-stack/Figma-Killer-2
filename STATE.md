@@ -641,6 +641,77 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### docs-04 — W6-1: retire the shipped plan files
+
+- **Agent:** studio-scribe
+- **Stage:** done (gates green; PR open as draft)
+- **Updated:** 2026-09-06
+- **Branch:** `docs/plan-file-retirement` off `origin/main` (W6-1).
+- **Goal:** every root `STUDIO-*.md` either describes work still open, or is
+  deleted with its load-bearing rationale folded into `docs/` and every inbound
+  link retargeted.
+- **Scope:** root `STUDIO-*.md`, `PROJECT-BRIEF.md`, `docs/README.md`,
+  `docs/design.md`, new `docs/features/inspector-disclosure.md`, and comment-only
+  edits in 47 files under `src/`. Deliberately NOT touched: `CLAUDE.md` and
+  `README.md` (docs-03 owns them), STATE.md's structure (docs-02 owns it).
+- **Done so far:**
+  - **Deleted `STUDIO-COMMENTS-PLAN.md`** — all six phases shipped
+    (`src/core/studio-comments/`, `server/handlers/studio/commentsRoutes.ts`,
+    `CommentsPanel`, the three MCP comment tools), with a 467-line contract at
+    `docs/features/studio-comments.md`. Its own header still read "proposed, not
+    started. No comments code exists anywhere in the repo today" — false in every
+    clause. Zero inbound links.
+  - **Deleted `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`** — G1–G10 shipped. Folded
+    §1 laws, §3 primitives, §4 goals, §6 budgets, §7 do-not-copy and §8 resolved
+    decisions into the new `docs/features/inspector-disclosure.md`.
+  - **Deleted `STUDIO-WAVE4-PLAN.md`** — W4-1/2A/2B/3/4A/4B and W5-2/4/5 all
+    verified shipped against the tree; three tails carried forward.
+  - **Kept `STUDIO-IMPORT-V2-PLAN.md`.** 9 of 10 sections shipped, but WS-3.3's
+    `src/modules/alm/` deletion (deferred under `standing-07`), WS-4.4's
+    package-instance detach, WS-8.1's `runScripts` default and WS-5.6's bench are
+    open. Added a header banner saying it is intent, not status; corrected WS-4's
+    stale "interaction layer open" claim, which `instance-ui-01` closed.
+  - **Kept `STUDIO-PROTOTYPE-PLAN.md`.** Phase 5 "Play" is unstarted — `BoardMode`
+    is a closed `'design' | 'prototype'` union, and `playMode`/`historyStack`/
+    `runPrototype` return zero hits. It did **not** shrink to §9: §1/§2/§4 hold
+    the storage and interaction-model rationale Phase 5 needs, and
+    `docs/features/studio-prototype.md` does not carry it.
+  - **Kept `STUDIO-CMS-REMOVAL-PLAN.md`** (not executed) and
+    `STUDIO-NEXT-WORKSTREAMS.md`, which gained **WS-14** holding the five open
+    code residues plus the two remaining truth-pass tasks (docs sweep, dead code).
+  - `STUDIO-FIGMA-PARITY-PLAN.md` §0a now states outright that it is the single
+    status ledger, and gained a waves 4–5 table verified against the tree rather
+    than against PR titles.
+- **Next step:** WS-14.6 (`docs/` sweep) and WS-14.7 (dead-code sweep) — both
+  were blocked on W6-1..3 merging and are now unblocked.
+- **Decisions:** the deletion test is **deliverables shipped**, not *plan looks
+  old*. That is why the import roadmap survived a work order that named it a
+  deletion candidate: it still has open deliverables, and it is the only record
+  of §0's argument for the trust model and §1's ten requirements in the user's
+  own words.
+- **Landmines:**
+  - The inspector plan was cited from **47 source files by section number**
+    (`§4 G5`, `Law 3 (§1)`, `G4.9`, `G6.2`, `§3.2`). A plain delete dangles every
+    one. `docs/features/inspector-disclosure.md` mirrors the plan's
+    `§1/§3/§4/§6/§7/§8` numbering on purpose — **do not renumber that page.**
+  - `docs/design.md` already carried the five laws in full, so only the link
+    target and a stale `BorderControl` reference needed fixing (G7.6 deleted
+    `BorderControl`; its `FieldRow` is gone, `LabeledControl` remains).
+  - STATE.md's docs-02/docs-03 entries and `docs/state-archive/2026-Q3.md` still
+    name `STUDIO-WAVE4-PLAN.md` in their `Branch:` lines. Those are historical
+    records of which work order an agent ran, left as-is.
+  - `docs/audits/2026-08-06/12-components-and-slots.md` cites
+    `STUDIO-IMPORT-V2-PLAN.md` by **line number**; the header banner shifted those
+    ~14 lines. They were already off by ~3. Not chased — dated audit archive.
+- **Verification:** `bun run build` pass · `bun run lint` clean · `bun test`
+  11366 pass / 27 fail / 9 errors — all 27 pre-existing (icon-catalog Gate 2, the
+  canvas batch-isolation cluster, the two headless-capture tests that need a
+  browser). This worktree was missing `node_modules`; after `bun install` the
+  baseline dropped 54 → 27 with no change of mine involved. Every `src/` edit is
+  comment-only, proven by `git diff -U0 -- src/ | grep '^+' | grep -vE '^\+\s*(\*|//|/\*)'`
+  returning empty.
+- **Human action needed:** none.
+
 ### docs-03 — W6-3: rule-book and identity accuracy pass (`CLAUDE.md`, README/package/index identity, the 14 agent files)
 
 - **Agent:** studio-scribe

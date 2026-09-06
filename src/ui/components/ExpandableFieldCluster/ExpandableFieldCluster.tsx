@@ -2,7 +2,7 @@
  * ExpandableFieldCluster — the "one field becomes four" idiom (Figma's
  * padding H/V → T/R/B/L, radius → four corners, stroke weight → four sides),
  * built once so the three consumers cannot draw it three slightly different
- * ways. See `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` §3.3 and Law 4.
+ * ways. See `docs/features/inspector-disclosure.md` §3.3 and Law 4.
  *
  * This component is deliberately dumb about what a "side" is: it takes two
  * arrays of already-built field nodes (`collapsed`, usually 1–2; `expanded`,

@@ -1,6 +1,6 @@
 /**
  * EffectsSection — F13/F20/F21/F22's list-of-effects shape
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G8).
+ * (docs/features/inspector-disclosure.md §4 G8).
  *
  * Two exports:
  *

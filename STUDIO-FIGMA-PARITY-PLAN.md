@@ -11,15 +11,24 @@ and was written against the code as it exists today.
 
 ---
 
-## 0a. Execution status — updated 2026-08-07
+## 0a. Execution status — the single status ledger
 
-**Everything below is uncommitted, in the working tree, awaiting one human review.**
-The body of this plan is the *original* analysis and is deliberately left as
-written; this block is the only place that tracks what has since landed. Where
-the two disagree, this block wins. Per-track detail — published contracts,
-refusal vocabularies, open seams — is in
+**This block is the repo's one per-track status ledger.** No other plan file
+tracks status; where a plan and this block disagree, this block wins. The body of
+this plan is the *original* analysis and is deliberately left as written.
+Per-track detail — published contracts, refusal vocabularies, open seams — is in
 [`docs/audits/2026-08-07-parity-handoffs/`](docs/audits/2026-08-07-parity-handoffs/),
 and `STATE.md`'s `parity-01` entry is the coordination record.
+
+Three delivery plans were retired into this ledger once their work landed:
+`STUDIO-WAVE4-PLAN.md`, `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` and
+`STUDIO-COMMENTS-PLAN.md`. Their design rationale moved to
+[`docs/features/inspector-disclosure.md`](docs/features/inspector-disclosure.md)
+and [`docs/features/studio-comments.md`](docs/features/studio-comments.md); what
+they left unfinished is tracked as **WS-14** in
+[`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md).
+
+### Waves 1–3 — updated 2026-08-07
 
 | Track | Status |
 |---|---|
@@ -49,6 +58,33 @@ and `STATE.md`'s `parity-01` entry is the coordination record.
 **Still true and still blocking:** the six open decisions in §15 are unanswered,
 and none of this has had the human dogfood pass that `standing-authorization`
 requires. Three features in this repo have shipped green and unusable.
+
+### Waves 4–5 — updated 2026-09-06
+
+Merged as PRs #4–#33. Verified against the tree, not against the PR titles.
+
+| Track | Status |
+|---|---|
+| **Reparent / duplicate / wrap** write real code | ✅ landed (`duplicateJsxElement`, `wrapJsxElement`, `moveJsxElement`) |
+| **Headless capture** — visual verification without the editor tab | ✅ landed (`server/ai/mcp/capture/`, `agent-capture.html`); the MCP screenshot/diff tools are headless-first with a live fallback |
+| **Warm CLI session** per conversation | ✅ landed — cold 840 ms → warm 4 ms (`mcp-17`) |
+| **Git v1** — status, diff, branch, commit, push | ✅ landed (`GitPanel`, `server/handlers/studio/git*.ts`); PR creation is link-out via git's own push output, as v1 specced |
+| **CSS-in-JS** phase A (static extraction) + phase B (value writeback) | ✅ landed for the **tagged-template** form. ◐ the **object** form (`css({…})`) is refused by name on both sides — WS-14.1 |
+| **Prototype mode** + code-derived flow connectors | ◐ **partial** — the differentiator landed; **Phase 5 "Play" is unstarted** (WS-14.2), as is Phase 4's drag-from-`+` |
+| **Share links** — read-only board snapshot at a revocable URL | ✅ landed (`server/handlers/studio/share*.ts`, `share.html`) |
+| **Storybook CSF import** | ◐ **partial** — discovery, 13 named refusals and board sync landed (measured: primer/react 67.2%, Shopify/polaris 97.8%); story `args` do **not** write back — WS-14.3 |
+| **Deploy previews** through the project's own Vercel/Netlify CLI | ✅ landed, Tier-2 gated, no provider token stored — **but never dogfooded against a real deploy** (CI cannot) |
+| **Animation editing** — the Animations inspector section | ✅ landed, including `insertKeyframes` for new `@keyframes` |
+| **Inspector progressive disclosure** (G1–G10) | ✅ landed. ◐ **G6.4** selection colours (WS-14.4) and the **§6 measurement gate** (WS-14.5) did not |
+| **Studio comments** — board review threads, agent loop | ✅ landed in full, including the MCP reply/resolve tools |
+| **Trust tiers** (§0 of the import roadmap) | ✅ landed — `TrustTierSchema`, the promotion route, the consent banner, the `studio.run.project` capability |
+
+**Carried forward from the earlier waves, still open:** Track D2's `dragSession`
+rewrite (G2, G3, G6, G7, G8, G15 and the `@dnd-kit` removal), Track G density's
+tail, A7 Figma discoverability, and E2.5's unverified panel-surface work. The
+`src/modules/alm/` deletion remains deliberately deferred under `standing-07`,
+and `scripts/bench/studioBoard.bench.ts` still carries uncalibrated budgets and
+has never run.
 
 ---
 

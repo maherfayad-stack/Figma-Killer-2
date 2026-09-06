@@ -88,7 +88,7 @@ export function TokenizedColorField({
   const menuId = id ? `${id}-token-menu` : undefined
   const showMenu = open && !disabled && filteredVariables.length > 0
 
-  // ── ColorPickerPopover wiring (G6.2, `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`) ──
+  // ── ColorPickerPopover wiring (G6.2, `docs/features/inspector-disclosure.md`) ──
   // The swatch button opens the real picker (SV square, hue/alpha rails,
   // model select, eyedropper, contrast, Tabs) as an `InspectorPopover`
   // anchored to itself — separate from `open` above, which still drives the
@@ -146,7 +146,7 @@ export function TokenizedColorField({
 
   /**
    * T8 (`STUDIO-FIGMA-PARITY-PLAN.md` §11) / G6.2
-   * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`) — the swatch used to be a native
+   * (`docs/features/inspector-disclosure.md`) — the swatch used to be a native
    * `<input type="color">` (no alpha, no eyedropper, no token awareness),
    * then a token listbox with an escape hatch to that same native dialog.
    * It now opens `ColorPickerPopover` directly — a real HSV picker with an

@@ -44,7 +44,7 @@ const CSSPropertyBagSchema = Type.Object({
   textShadow: Type.Optional(Type.String()),
 
   // Typography — the long tail reached through the section's settings popover
-  // (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G9, Figma F25/F26/F27). Declared here
+  // (docs/features/inspector-disclosure.md §4 G9, Figma F25/F26/F27). Declared here
   // rather than cast at each call site: `keyof CSSPropertyBag` is how the whole
   // style pipeline is typed, so a property missing from this schema can only be
   // written by defeating that type, and would then be invisible to the section's
@@ -137,7 +137,7 @@ const CSSPropertyBagSchema = Type.Object({
   overflowX: Type.Optional(Type.String()),
   overflowY: Type.Optional(Type.String()),
 
-  // Appearance (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5) — `visibility` backs
+  // Appearance (docs/features/inspector-disclosure.md §4 G5) — `visibility` backs
   // the inspector's "hide element, keep its space" eye, distinct from the
   // layer tree's `toggleNodeHidden` (which removes the node's own box
   // entirely). `mixBlendMode` backs the section header's blend-mode menu.

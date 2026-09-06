@@ -65,7 +65,7 @@ interface StyleSectionsEditorProps {
    * Every style bag for this rule across every context — base plus each
    * breakpoint/condition override — independent of which tab is active.
    * `StyleSectionGroup` reads this ONLY to decide whether a
-   * `collapsedWhenEmpty` section (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G1)
+   * `collapsedWhenEmpty` section (docs/features/inspector-disclosure.md §4 G1)
    * may collapse to its one-line "+" state: a property set on an inactive
    * tab is still the user's own work and must never disappear behind it.
    * `undefined` for inline styles, which have no context axis — `storedStyles`
@@ -131,7 +131,7 @@ export function StyleSectionsEditor({
   // Default open/closed state for every section, from the user preference.
   // NOTE: this no longer decides whether a `collapsedWhenEmpty` section
   // shows its body — an empty collapsible section is one line regardless of
-  // this preference (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G1). It still
+  // this preference (docs/features/inspector-disclosure.md §4 G1). It still
   // decides the resting open/closed state of the always-present sections
   // (Position/Size/Layout/Spacing) and of any collapsible section once it
   // has real content.
@@ -250,7 +250,7 @@ function StyleSectionGroup({
 }: StyleSectionGroupProps) {
   const setCount = section.properties.filter((prop) => hasStyleValue(storedStyles[prop])).length
 
-  // Law 1 (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G1): whether this section has
+  // Law 1 (docs/features/inspector-disclosure.md §4 G1): whether this section has
   // ANYTHING set, on the active tab OR any other breakpoint/condition. A
   // property set only on an inactive tab is still the user's own work, so
   // this — not `setCount` above — is what a `collapsedWhenEmpty` section

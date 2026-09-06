@@ -1,5 +1,5 @@
 /**
- * LayoutSettingsButton — the layout ⚙ (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md
+ * LayoutSettingsButton — the layout ⚙ (docs/features/inspector-disclosure.md
  * §4 G3, F5/F8's "Layout settings" popover).
  *
  * RESIDENT, regardless of `display` — mounted once by `LayoutSection.tsx`

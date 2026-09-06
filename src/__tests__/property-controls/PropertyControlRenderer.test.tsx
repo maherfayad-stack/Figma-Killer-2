@@ -209,7 +209,7 @@ describe('PropertyControlRenderer — type dispatch', () => {
     )
 
     const wrapper = screen.getByTestId('property-control-bgColor')
-    // G6.2 (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`): the swatch is a `Button`
+    // G6.2 (`docs/features/inspector-disclosure.md`): the swatch is a `Button`
     // that opens `ColorPickerPopover` — there is no native
     // `<input type="color">` in this component's DOM any more (see
     // `ColorPickerPopover.test.tsx` for the picker itself).

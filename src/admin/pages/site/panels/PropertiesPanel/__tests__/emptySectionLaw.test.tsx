@@ -1,6 +1,6 @@
 /**
  * StyleSectionsEditor — the empty-section law
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §1 Law 1 / §4 G1).
+ * (docs/features/inspector-disclosure.md §1 Law 1 / §4 G1).
  *
  * `collapsedWhenEmpty` sections (background / border / effects / interaction /
  * typography) render as a single header line with a "+" when nothing is set —

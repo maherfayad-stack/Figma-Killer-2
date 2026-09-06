@@ -420,9 +420,9 @@ crowded.
    from turning the panel into a rebus.
 
 `ClassPropertyRow` resolves all four in one place, so a section cannot drift
-into its own vocabulary. `LayoutSection`'s `LabeledControl` and
-`BorderControl`'s `FieldRow` speak the same language for their bespoke
-controls — both take an **optional** label and most of their rows pass none.
+into its own vocabulary. `LayoutSection`'s `LabeledControl` speaks the same
+language for its bespoke controls — it takes an **optional** label and most of
+its rows pass none.
 
 Bespoke marks live in `src/ui/components/InspectorIcons/` — `src/ui/` is the one
 place the icon gates exempt for hand-drawn glyphs, and they follow the vendored
@@ -437,7 +437,8 @@ carries the icon buttons Figma puts flush right of a title.
 **Progressive disclosure — the five laws.** Density is settled; what keeps the
 panel short now is *not drawing* what you have not used. The rules, and the
 Figma behaviour each one mirrors, are in
-[`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`](../STUDIO-INSPECTOR-DISCLOSURE-PLAN.md):
+[`docs/features/inspector-disclosure.md`](features/inspector-disclosure.md),
+which also carries the ten goals (G1–G10) the panel source cites by number:
 
 1. **An unused section costs one line.** A section marked `collapsedWhenEmpty`
    in `CLASS_STYLE_SECTIONS` with nothing set renders as a header plus a `+`.
@@ -463,7 +464,8 @@ Figma behaviour each one mirrors, are in
 
 Where a Figma control has no honest CSS translation (corner smoothing, miter
 join, stroke Inside/Center/Outside), we omit it rather than ship a lookalike
-that writes something else — see that plan's §7.
+that writes something else — see
+[`inspector-disclosure.md`](features/inspector-disclosure.md) §7.
 
 **Opting in.** The panel root carries `data-field-skin="inspector"`; the skins
 themselves live beside the primitives they restyle (`Input.module.css`,
@@ -782,6 +784,7 @@ The HTML `title` attribute is banned for hover hints — gated by `no-native-tit
 - [docs/architecture.md](architecture.md) — system overview
 - [docs/reference/design-tokens.md](reference/design-tokens.md) — complete token catalog
 - [docs/reference/ui-primitives.md](reference/ui-primitives.md) — primitive usage cookbook
+- [docs/features/inspector-disclosure.md](features/inspector-disclosure.md) — the inspector's five laws, ten goals (G1–G10) and do-not-copy list, in the numbering the panel source cites
 - Source-of-truth files:
   - `src/styles/globals.css` — all tokens
   - `src/ui/components/` — all primitives

@@ -1,5 +1,5 @@
 /**
- * TypographySection — G9 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * TypographySection — G9 (docs/features/inspector-disclosure.md).
  *
  * Covers:
  *   1. The four F23 rows at rest (family; weight+size; line-height+letter-

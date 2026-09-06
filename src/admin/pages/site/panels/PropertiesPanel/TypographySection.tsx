@@ -1,6 +1,6 @@
 /**
  * TypographySection — Figma-style compact editor for the `typography`
- * section (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md G9 / F23).
+ * section (docs/features/inspector-disclosure.md G9 / F23).
  *
  * Target shape (F23's four rows):
  *
@@ -27,7 +27,7 @@
  * node's OWN box (`verticalAlignWrite.ts`), which only means something once
  * that box is itself a flex container. When it can't be written honestly for
  * the current selection, the group renders DISABLED with the reason as its
- * tooltip rather than disappearing — STUDIO-INSPECTOR-DISCLOSURE-PLAN §7 /
+ * tooltip rather than disappearing — docs/features/inspector-disclosure.md §7 /
  * §8.4: the asymmetry with Figma is real, and hiding it would be the lie
  * this repo's second invariant forbids. It reads/writes the exact same
  * `alignItems` property `LayoutSection`'s own alignment control does — see

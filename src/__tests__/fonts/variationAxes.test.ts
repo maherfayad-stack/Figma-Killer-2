@@ -1,5 +1,5 @@
 /**
- * variationAxes — G9 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * variationAxes — G9 (docs/features/inspector-disclosure.md).
  *
  * `parseFontVariationAxes` reads a real (synthetic, minimal) `fvar` table out
  * of an `sfnt` byte buffer — no font-file fixture, no network, no browser

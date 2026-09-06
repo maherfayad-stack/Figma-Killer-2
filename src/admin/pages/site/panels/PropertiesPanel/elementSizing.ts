@@ -2,7 +2,7 @@
  * elementSizing — the Fixed / Hug / Fill sizing-intent model behind
  * `SizeSection`'s width and height fields.
  *
- * STUDIO-INSPECTOR-DISCLOSURE-PLAN.md, G2 (F30/F31): Figma folds a sizing
+ * docs/features/inspector-disclosure.md, G2 (F30/F31): Figma folds a sizing
  * INTENT into the same control that shows the number — `Fixed` (a literal
  * length), `Hug contents` (shrink-wrap to content), or `Fill container`
  * (stretch to the containing block). This module is the pure,

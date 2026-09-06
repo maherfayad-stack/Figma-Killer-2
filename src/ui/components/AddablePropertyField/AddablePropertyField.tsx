@@ -14,7 +14,7 @@
  *      Selecting one calls `onAdd(key)` and nothing else — see below.
  *   3. `actions` — caller-supplied extras (e.g. "Apply variable…").
  *
- * Law 3 (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` §1): a property with no
+ * Law 3 (`docs/features/inspector-disclosure.md` §1): a property with no
  * value and no default-worth is not a field, it is a menu item on the
  * field it constrains. Concretely: `onAdd` NEVER writes a CSS value. It
  * only tells the caller "reveal this companion row, unset, with the

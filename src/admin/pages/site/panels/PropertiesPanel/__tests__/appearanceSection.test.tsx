@@ -1,6 +1,6 @@
 /**
  * AppearanceSection — the section that didn't exist yet
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5).
+ * (docs/features/inspector-disclosure.md §4 G5).
  *
  * Covers:
  *   1. Opacity and the radius cluster render in one row (F10); radius

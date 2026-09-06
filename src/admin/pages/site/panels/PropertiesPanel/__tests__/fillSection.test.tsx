@@ -1,5 +1,5 @@
 /**
- * FillSection — G6 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * FillSection — G6 (docs/features/inspector-disclosure.md).
  *
  * Renders `FillSection`/`FillSectionActions` directly rather than through
  * `StyleSectionsEditor` (which still dispatches to the OLD `background`

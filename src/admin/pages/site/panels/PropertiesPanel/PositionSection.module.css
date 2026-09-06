@@ -1,4 +1,4 @@
-/* PositionSection — G10 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+/* PositionSection — G10 (docs/features/inspector-disclosure.md).
  * New, section-specific styles only — the TRBL offset grid keeps using
  * LayoutSection.module.css's existing `positionDirectionsGrid`/`directionCell`
  * classes unchanged (this file does not touch that module). */

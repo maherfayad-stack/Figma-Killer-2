@@ -2,7 +2,7 @@
  * PaddingCluster — F4/F9's `[⊓ 66] [⊐ 155] [⊞]` → four sides, built on
  * `ExpandableFieldCluster`.
  *
- * Padding moves into the Layout section (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md
+ * Padding moves into the Layout section (docs/features/inspector-disclosure.md
  * §4 G4.2): padding is a layout property of a container, margin is a
  * relationship with siblings, and Figma draws the line the same place.
  *

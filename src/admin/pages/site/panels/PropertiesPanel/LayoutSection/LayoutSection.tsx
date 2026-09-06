@@ -1,7 +1,7 @@
 /**
  * LayoutSection — visual editor for the `layout-position` CSS section.
  *
- * STUDIO-INSPECTOR-DISCLOSURE-PLAN.md G3 (layout) + G4 (padding). Figma's
+ * docs/features/inspector-disclosure.md G3 (layout) + G4 (padding). Figma's
  * F3/F4/F6/F7 shape: mode buttons always resident; flex/grid reveal their own
  * fields (Law 5, unchanged from before this pass); rare item-level /
  * split-axis properties move behind a ⚙ (Law 2); padding lives here, not in

@@ -1,5 +1,5 @@
 /**
- * SpacingSection — G4 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * SpacingSection — G4 (docs/features/inspector-disclosure.md).
  *
  * Covers:
  *   1. The margin cluster is independent of the Layout section's padding

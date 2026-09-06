@@ -3,7 +3,7 @@
  *
  * `ContextMenu` already solved portalled/anchored/dismissible positioning,
  * but it is a menu: roving-focus `menuitem` children, one gesture, then it
- * closes. Laws 2 and 4 of `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` need a
+ * closes. Laws 2 and 4 of `docs/features/inspector-disclosure.md` need a
  * floating surface that holds arbitrary controls and stays open while the
  * user works inside it — a ⚙ *settings popover* (F5, F8, F17, F21, F25-27),
  * not a dropdown. This is that primitive. It shares `useAnchoredFloating`
