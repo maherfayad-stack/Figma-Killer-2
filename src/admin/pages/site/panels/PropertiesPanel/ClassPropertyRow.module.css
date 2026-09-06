@@ -55,6 +55,23 @@
     color: var(--class-row-label-color);
 }
 
+/* ── Pre-flight write lock ────────────────────────────────────────────────
+   The enclosing style target has no hand-editable source (a compiled class,
+   an unmapped rule), so nothing typed into this row could survive a save.
+   The row still SHOWS its value — seeing what a compiled class actually
+   declares is the whole reason to open it — but reads as inert: the same
+   muted label tone an unset row uses, plus the dim `ControlRow` already
+   applies to its own disabled wrapper. `pointer-events` stays on so the
+   `title` explaining why still reaches the cursor. */
+.propertyRowLocked {
+    --class-row-label-color: var(--text-subtle);
+    opacity: 0.7;
+}
+
+.propertyRowLocked :global(label) {
+    color: var(--class-row-label-color);
+}
+
 /* ── Remove button — overlays the fixed label column, leaving controls full-width ───── */
 /* Hidden by default; revealed on row hover or keyboard focus-within (WCAG 2.1.1) */
 .removeBtn {
