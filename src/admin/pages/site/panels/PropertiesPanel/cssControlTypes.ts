@@ -9,16 +9,9 @@
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
-import type { IconComponent } from 'pixel-art-icons/types'
-import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
-import { MoveIcon } from 'pixel-art-icons/icons/move'
-import { ProportionsSolidIcon } from 'pixel-art-icons/icons/proportions-solid'
-import { RulerDimensionSolidIcon } from 'pixel-art-icons/icons/ruler-dimension-solid'
-import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
-import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
-import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
-import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
-import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
+// The curated-property set below is derived from the section registry,
+// which now lives in its own module — see that file's header for why.
+import { CLASS_STYLE_SECTIONS } from './classStyleSections'
 import { hasStyleValue } from './styleValueUtils'
 
 // ---------------------------------------------------------------------------
@@ -78,6 +71,21 @@ const BORDER_STYLE_KEYWORDS = [
 ]
 
 // ---------------------------------------------------------------------------
+// mix-blend-mode keywords — grouped exactly as Figma's F12 blend-mode menu
+// groups them (Normal, then the darken/lighten/contrast/difference/colour
+// families). `AppearanceSection`'s droplet menu renders the grouped form;
+// this flat list backs the enum dispatch / search / fallback paths.
+// ---------------------------------------------------------------------------
+const BLEND_MODE_KEYWORDS = [
+  'normal',
+  'darken', 'multiply', 'color-burn',
+  'lighten', 'screen', 'color-dodge',
+  'overlay', 'soft-light', 'hard-light',
+  'difference', 'exclusion',
+  'hue', 'saturation', 'color', 'luminosity',
+]
+
+// ---------------------------------------------------------------------------
 // Enum (select) properties → option lists (first option is the default)
 // ---------------------------------------------------------------------------
 
@@ -114,6 +122,8 @@ const ENUM_OPTIONS = new Map<keyof CSSPropertyBag, string[]>([
   ['borderLeftStyle',  BORDER_STYLE_KEYWORDS],
   // Native form-control appearance — only `none` and `auto` see real-world use.
   ['appearance',       ['auto', 'none']],
+  ['visibility',       ['visible', 'hidden', 'collapse']],
+  ['mixBlendMode',     BLEND_MODE_KEYWORDS],
 ])
 
 // ---------------------------------------------------------------------------
@@ -277,6 +287,8 @@ const DEFAULT_CSS_VALUES: Partial<Record<keyof CSSPropertyBag, string | number>>
   overflow:          'visible',
   overflowX:         'visible',
   overflowY:         'visible',
+  visibility:        'visible',
+  mixBlendMode:      'normal',
   // ── Border ────────────────────────────────────────────────────────────────
   border:       '',    // shorthands left empty — user specifies manually (e.g. "1px solid red")
   borderTop:    '',
@@ -355,233 +367,6 @@ export function cssPropertyLabel(prop: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
 }
 
-// ---------------------------------------------------------------------------
-// Class style inspector sections
-//
-// These sections drive the professional class editor in the Properties Panel.
-// They intentionally cover every CSSPropertyBag key so class styling is an
-// inspector with real controls, not a property search list.
-// ---------------------------------------------------------------------------
-
-export interface ClassStyleSectionDefinition {
-  id: string
-  title: string
-  icon: IconComponent
-  defaultOpen?: boolean
-  properties: ReadonlyArray<keyof CSSPropertyBag>
-}
-
-// ---------------------------------------------------------------------------
-// Section order — WS-6.1's Figma-shaped top-to-bottom flow: Position → Size
-// → Auto layout → Spacing → Fill → Stroke → Effects → Typography →
-// Interaction (Studio's own addition — Figma has no CSS-cursor/pointer-events
-// concept, so it stays last rather than displacing anything Figma-native).
-// Order is read by consumers via array iteration (`StyleCategoryRail`'s rail
-// buttons, `StyleSectionsEditor`'s scroll order) — changing it changes both
-// at once, deliberately, since they're meant to stay in lockstep.
-// ---------------------------------------------------------------------------
-
-export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    id: 'position',
-    title: 'Position',
-    icon: MoveIcon,
-    properties: [
-      'position',
-      'top',
-      'right',
-      'bottom',
-      'left',
-      'zIndex',
-    ],
-  },
-  {
-    id: 'size',
-    title: 'Size',
-    icon: ProportionsSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'width',
-      'height',
-      'minWidth',
-      'maxWidth',
-      'minHeight',
-      'maxHeight',
-      'aspectRatio',
-      'boxSizing',
-    ],
-  },
-  {
-    id: 'layout',
-    title: 'Layout',
-    icon: LayoutSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'display',
-      'flexDirection',
-      'flexWrap',
-      'alignItems',
-      'justifyContent',
-      'justifyItems',
-      'alignSelf',
-      'justifySelf',
-      'flex',
-      'gap',
-      'rowGap',
-      'columnGap',
-      'gridTemplateColumns',
-      'gridTemplateRows',
-      'gridColumn',
-      'gridRow',
-      'overflow',
-      'overflowX',
-      'overflowY',
-    ],
-  },
-  {
-    id: 'spacing',
-    title: 'Spacing',
-    icon: RulerDimensionSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'paddingTop',
-      'paddingRight',
-      'paddingBottom',
-      'paddingLeft',
-      'marginTop',
-      'marginRight',
-      'marginBottom',
-      'marginLeft',
-    ],
-  },
-  {
-    id: 'background',
-    title: 'Background',
-    icon: PaintBucketSolidIcon,
-    properties: [
-      'backgroundColor',
-      'background',
-      'backgroundImage',
-      'backgroundSize',
-      'backgroundPosition',
-      'backgroundRepeat',
-      'objectFit',
-      'objectPosition',
-    ],
-  },
-  {
-    id: 'border',
-    title: 'Border',
-    icon: BoxSolidIcon,
-    // Drives the section "N set" dot + search filtering. The visual
-    // BorderControl edits the per-side longhands + per-corner radius +
-    // outline; the shorthand props (border / borderTop / …) live in the
-    // section's Advanced disclosure and are listed here too so a search for
-    // "border" still surfaces the section.
-    properties: [
-      // Per-side longhands (canonical, edited by BorderControl)
-      'borderTopWidth', 'borderTopStyle', 'borderTopColor',
-      'borderRightWidth', 'borderRightStyle', 'borderRightColor',
-      'borderBottomWidth', 'borderBottomStyle', 'borderBottomColor',
-      'borderLeftWidth', 'borderLeftStyle', 'borderLeftColor',
-      // Per-corner radius
-      'borderTopLeftRadius',
-      'borderTopRightRadius',
-      'borderBottomLeftRadius',
-      'borderBottomRightRadius',
-      // Outline
-      'outline',
-      'outlineOffset',
-      // Shorthands (Advanced disclosure)
-      'border',
-      'borderTop',
-      'borderRight',
-      'borderBottom',
-      'borderLeft',
-      'borderWidth',
-      'borderStyle',
-      'borderColor',
-      'borderRadius',
-      'appearance',
-    ],
-  },
-  {
-    id: 'effects',
-    title: 'Effects',
-    icon: SparklesSolidIcon,
-    properties: [
-      'opacity',
-      'boxShadow',
-      'filter',
-      'backdropFilter',
-      'transform',
-      'transformOrigin',
-      'transition',
-      'animation',
-    ],
-  },
-  {
-    id: 'typography',
-    title: 'Typography',
-    icon: TextStartTIcon,
-    properties: [
-      'fontFamily',
-      'fontSize',
-      'fontWeight',
-      'fontStyle',
-      'lineHeight',
-      'letterSpacing',
-      'textAlign',
-      'textDecoration',
-      'textTransform',
-      'whiteSpace',
-      'color',
-      'textShadow',
-    ],
-  },
-  {
-    id: 'interaction',
-    title: 'Interaction',
-    icon: PointerSolidIcon,
-    properties: [
-      'cursor',
-      'pointerEvents',
-      'userSelect',
-      'scrollBehavior',
-    ],
-  },
-]
-
-// ---------------------------------------------------------------------------
-// Style tab utilities
-//
-// Shared by StyleRuleComposer, StyleSurface, and PropertiesPanel. Kept here (not
-// in StyleRuleComposer) so StyleRuleComposer stays a components-only file —
-// satisfying the react-refresh/only-export-components lint rule.
-// ---------------------------------------------------------------------------
-
-/**
- * Returns a map from section id → number of properties with stored values.
- * Used to render the set-style dot badges on the StyleCategoryRail.
- */
-export function getClassStyleSectionSetCounts(
-  storedStyles: Record<string, unknown>,
-): ReadonlyMap<string, number> {
-  return new Map(
-    CLASS_STYLE_SECTIONS.map((section) => [
-      section.id,
-      section.properties.filter((prop) => hasStyleValue(storedStyles[prop])).length,
-    ]),
-  )
-}
-
-/**
- * Returns the active breakpoint tab id for class style reads/writes.
- * 'base' when desktop (or no breakpoint); otherwise the breakpoint id.
- */
-export function getActiveStyleTab(activeBreakpointId: string | undefined): string {
-  return activeBreakpointId && activeBreakpointId !== 'desktop' ? activeBreakpointId : 'base'
-}
 
 // ---------------------------------------------------------------------------
 // Custom properties — the long tail of CSS the curated sections don't claim

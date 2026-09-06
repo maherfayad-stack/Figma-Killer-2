@@ -152,3 +152,75 @@ describe('setJsxStyle', () => {
     )
   })
 })
+
+
+/**
+ * `style-03` — the removal half. `setJsxStyle` only ever merged, so clearing
+ * an inline style produced no edit that could do anything: the declaration
+ * stayed in the `style={{…}}` on disk and came back on the next reload.
+ */
+describe('setJsxStyle — remove', () => {
+  it('deletes the named properties and keeps the rest', () => {
+    const source = ['export function App() {', "  return <div style={{ color: 'red', padding: 4 }}>Hi</div>", '}', ''].join('\n')
+    const file = writeFixture('style-remove.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: {}, remove: ['color'] })
+
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain('padding: 4')
+    expect(written).not.toContain('color')
+  })
+
+  it('removes the whole attribute once the last property is gone', () => {
+    const source = ['export function App() {', "  return <div style={{ color: 'red' }}>Hi</div>", '}', ''].join('\n')
+    const file = writeFixture('style-remove-all.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: {}, remove: ['color'] })
+
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('style')
+  })
+
+  it('is a no-op for a property that is already absent (idempotent re-send)', () => {
+    const source = ['export function App() {', "  return <div style={{ color: 'red' }}>Hi</div>", '}', ''].join('\n')
+    const file = writeFixture('style-remove-noop.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: {}, remove: ['padding'] })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+
+  it('never mints an empty style attribute for a removal-only request on a bare element', () => {
+    const source = ['export function App() {', '  return <div>Hi</div>', '}', ''].join('\n')
+    const file = writeFixture('style-remove-bare.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: {}, remove: ['color'] })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+
+  it('refuses to remove a shorthand property whose value it never read', () => {
+    const source = ['export function App({ color }) {', '  return <div style={{ color }}>Hi</div>', '}', ''].join('\n')
+    const file = writeFixture('style-remove-shorthand.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    expect(() => setJsxStyle({ file, line, col, style: {}, remove: ['color'] })).toThrow(JsxStyleTargetError)
+    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+
+  it('sets and removes in one edit', () => {
+    const source = ['export function App() {', "  return <div style={{ color: 'red', padding: 4 }}>Hi</div>", '}', ''].join('\n')
+    const file = writeFixture('style-set-and-remove.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: { margin: 8 }, remove: ['color'] })
+
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain('margin: 8')
+    expect(written).toContain('padding: 4')
+    expect(written).not.toContain('color')
+  })
+})

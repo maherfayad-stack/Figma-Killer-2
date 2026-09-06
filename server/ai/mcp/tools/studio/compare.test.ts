@@ -91,6 +91,37 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+/**
+ * A `studio_export_frames` response for EVERY requested page id, the way the
+ * real browser handler answers a batch: one `frames[]` entry per page, each
+ * pointing at its own index in the shared `images[]`. `failing` marks page ids
+ * whose frame did not render.
+ */
+function batchedCapture(
+  pageIds: string[],
+  png: (pageId: string) => Buffer,
+  failing: string[] = [],
+): AiToolOutput {
+  const images: Array<{ mimeType: string; data: string }> = []
+  const frames = pageIds.map((pageId) => {
+    if (failing.includes(pageId)) return { pageId, ok: false, error: 'frame not on board' }
+    const image = png(pageId)
+    const imageIndex = images.push({ mimeType: 'image/png', data: image.toString('base64') }) - 1
+    const decoded = PNG.sync.read(image)
+    return {
+      pageId,
+      ok: true,
+      width: decoded.width,
+      height: decoded.height,
+      imageIndex,
+      nodeRects: [],
+      imageScale: 1,
+      warnings: [],
+    }
+  })
+  return { ok: true, data: { frames }, images }
+}
+
 /** Scaffolds a page and sets its board frame's AUTHORED (CSS px) size. */
 function scaffoldPageAt(name: string, width: number, height: number): string {
   const scaffolded = createScaffoldedPage(dir, name)
@@ -351,20 +382,11 @@ describe('studio_compare — batching (CHANGE A)', () => {
     }
 
     // Beta's frame fails to render; Alpha's succeeds — a per-page capture
-    // failure, not a reference-resolution failure.
+    // failure, not a reference-resolution failure. Both pages ride the SAME
+    // batched capture call.
     bridgeImpl = async (_toolName, input) => {
       const { pageIds } = input as { pageIds: string[] }
-      const pageId = pageIds[0]!
-      if (pageId === pageIdB) {
-        return { ok: true, data: { frames: [{ pageId, ok: false, error: 'frame not on board' }] } }
-      }
-      return {
-        ok: true,
-        data: {
-          frames: [{ pageId, ok: true, width: 100, height: 100, imageIndex: 0, nodeRects: [], imageScale: 1, warnings: [] }],
-        },
-        images: [{ mimeType: 'image/png', data: solidPng(100, 100).toString('base64') }],
-      }
+      return batchedCapture(pageIds, () => solidPng(100, 100), [pageIdB])
     }
 
     const result = (await studioCompareTool.handler!(
@@ -422,14 +444,7 @@ describe('studio_compare — batching (CHANGE A)', () => {
 
     bridgeImpl = async (_toolName, input) => {
       const { pageIds } = input as { pageIds: string[] }
-      const pageId = pageIds[0]!
-      return {
-        ok: true,
-        data: {
-          frames: [{ pageId, ok: true, width: 100, height: 100, imageIndex: 0, nodeRects: [], imageScale: 1, warnings: [] }],
-        },
-        images: [{ mimeType: 'image/png', data: solidPng(100, 100).toString('base64') }],
-      }
+      return batchedCapture(pageIds, () => solidPng(100, 100))
     }
 
     const single = (await studioCompareTool.handler!({ dir, pages: ['Alpha'] }, ctx())) as { ok: boolean; images?: unknown[] }
@@ -438,6 +453,120 @@ describe('studio_compare — batching (CHANGE A)', () => {
 
     const batch = (await studioCompareTool.handler!({ dir, pages: ['Alpha', 'Beta'], forceRecapture: true }, ctx())) as { ok: boolean; images?: unknown[] }
     expect(batch.images).toBeUndefined()
+  })
+})
+
+describe('studio_compare — batched capture', () => {
+  it('captures every cache-miss page in ONE bridge round trip, not one per page', async () => {
+    const names = ['One', 'Two', 'Three']
+    for (const name of names) {
+      const pageId = scaffoldPageAt(name, 100, 100)
+      const registered = await registerDesignReference(dir, new Uint8Array(solidPng(100, 100)), { pageId })
+      if (!registered.ok) throw new Error(registered.error)
+    }
+
+    bridgeImpl = async (_toolName, input) => {
+      const { pageIds } = input as { pageIds: string[] }
+      return batchedCapture(pageIds, () => solidPng(100, 100))
+    }
+
+    const result = (await studioCompareTool.handler!(
+      { dir, pages: names, includeImages: false },
+      ctx(),
+    )) as { ok: boolean; data: CompareData }
+
+    // The whole point: three screens, one capture. Five sequential round trips
+    // were most of the wall time of a five-screen verification.
+    expect(bridgeCalls).toHaveLength(1)
+    expect((bridgeCalls[0]!.input as { pageIds: string[] }).pageIds).toHaveLength(3)
+    expect(result.data.results).toHaveLength(3)
+    expect(result.data.pass).toBe(true)
+    expect(result.data.results.every((r) => r.fromCache === false)).toBe(true)
+  })
+
+  it('splits the batch by capture dpr, so each page still diffs at its own reference\'s pixel width', async () => {
+    // Same 100x100 frames, different reference sizes ⇒ dpr 1 vs dpr 2. One
+    // studio_export_frames call carries ONE dpr, so these cannot share a call
+    // without one of them losing its exact-pixel comparison.
+    const onePageId = scaffoldPageAt('Exact1x', 100, 100)
+    const twoPageId = scaffoldPageAt('Exact2x', 100, 100)
+    for (const [pageId, size] of [[onePageId, 100], [twoPageId, 200]] as const) {
+      const registered = await registerDesignReference(dir, new Uint8Array(solidPng(size, size)), { pageId })
+      if (!registered.ok) throw new Error(registered.error)
+    }
+
+    bridgeImpl = async (_toolName, input) => {
+      const { pageIds, dpr } = input as { pageIds: string[]; dpr?: number }
+      const size = 100 * (dpr ?? 1)
+      return batchedCapture(pageIds, () => solidPng(size, size))
+    }
+
+    const result = (await studioCompareTool.handler!(
+      { dir, pages: ['Exact1x', 'Exact2x'], includeImages: false },
+      ctx(),
+    )) as { ok: boolean; data: CompareData }
+
+    expect(bridgeCalls).toHaveLength(2)
+    expect(bridgeCalls.map((c) => (c.input as { dpr?: number }).dpr)).toEqual([1, 2])
+    expect(bridgeCalls.every((c) => (c.input as { pageIds: string[] }).pageIds.length === 1)).toBe(true)
+    expect(result.data.results.map((r) => r.capture!.dimensionMatch)).toEqual(['exact', 'exact'])
+    expect(result.data.pass).toBe(true)
+  })
+
+  it('captures only the cache MISSES — a hit is never sent to the browser', async () => {
+    const hitId = scaffoldPageAt('Hit', 100, 100)
+    const missId = scaffoldPageAt('Miss', 100, 100)
+    for (const pageId of [hitId, missId]) {
+      const registered = await registerDesignReference(dir, new Uint8Array(solidPng(100, 100)), { pageId })
+      if (!registered.ok) throw new Error(registered.error)
+    }
+    bridgeImpl = async (_toolName, input) => {
+      const { pageIds } = input as { pageIds: string[] }
+      return batchedCapture(pageIds, () => solidPng(100, 100))
+    }
+
+    // Warm the cache for "Hit" only.
+    await studioCompareTool.handler!({ dir, pages: ['Hit'], includeImages: false }, ctx())
+    expect(bridgeCalls).toHaveLength(1)
+
+    const both = (await studioCompareTool.handler!(
+      { dir, pages: ['Hit', 'Miss'], includeImages: false },
+      ctx(),
+    )) as { ok: boolean; data: CompareData }
+
+    expect(bridgeCalls).toHaveLength(2)
+    expect((bridgeCalls[1]!.input as { pageIds: string[] }).pageIds).toEqual([missId])
+    expect(both.data.results.find((r) => r.page?.title === 'Hit')!.fromCache).toBe(true)
+    expect(both.data.results.find((r) => r.page?.title === 'Miss')!.fromCache).toBe(false)
+  })
+
+  it('fails only the pages in a failed capture group, never the whole call', async () => {
+    const okId = scaffoldPageAt('Fine', 100, 100)
+    const brokenId = scaffoldPageAt('Broken', 100, 100)
+    for (const [pageId, size] of [[okId, 100], [brokenId, 200]] as const) {
+      const registered = await registerDesignReference(dir, new Uint8Array(solidPng(size, size)), { pageId })
+      if (!registered.ok) throw new Error(registered.error)
+    }
+
+    // The dpr:2 group (Broken) fails at the transport level; the dpr:1 group
+    // (Fine) still lands.
+    bridgeImpl = async (_toolName, input) => {
+      const { pageIds, dpr } = input as { pageIds: string[]; dpr?: number }
+      if (dpr === 2) return { ok: false, error: 'the board went away' }
+      return batchedCapture(pageIds, () => solidPng(100, 100))
+    }
+
+    const result = (await studioCompareTool.handler!(
+      { dir, pages: ['Fine', 'Broken'], includeImages: false },
+      ctx(),
+    )) as { ok: boolean; data: CompareData }
+
+    expect(result.ok).toBe(true)
+    expect(result.data.results.find((r) => r.page?.title === 'Fine')!.pass).toBe(true)
+    const broken = result.data.results.find((r) => r.page?.title === 'Broken')!
+    expect(broken.ok).toBe(false)
+    expect(broken.error).toContain('the board went away')
+    expect(result.data.pass).toBe(false)
   })
 })
 

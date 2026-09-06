@@ -9,9 +9,11 @@
  * `moduleId`) — nothing about ITS controls is different. What is invisible
  * without this notice is WHERE it sits: nothing on the canvas marks "this is
  * the `header` slot of that Card below" the way `SharedComponentNotice`
- * already marks "this came from a shared component file". Uses `slotOwners`'
- * reverse index (`lookupSlotOwner`) — an O(1) lookup after the first ask per
- * site version, not a fresh scan per selection.
+ * already marks "this came from a shared component file". Reads the site
+ * slice's `_slotOwnerBindings` reverse index (`lookupSlotOwner`) — one Map
+ * lookup, returning the same entry object until the binding itself changes,
+ * so this subscribed selector is O(1) per store change instead of the
+ * full-site walk it used to run on every keystroke.
  */
 import { useEditorStore } from '@site/store/store'
 import { lookupSlotOwner } from './slotOwners'
@@ -24,7 +26,7 @@ interface SlotFillNoticeProps {
 }
 
 export function SlotFillNotice({ nodeId }: SlotFillNoticeProps) {
-  const owner = useEditorStore((s) => lookupSlotOwner(s.site, nodeId))
+  const owner = useEditorStore((s) => lookupSlotOwner(s._slotOwnerBindings, nodeId))
   const selectNode = useEditorStore((s) => s.selectNode)
 
   if (!owner) return null

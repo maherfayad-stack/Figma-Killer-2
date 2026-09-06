@@ -76,6 +76,12 @@ its own sub-plan.
 
 ## 1. Corrections to `PROJECT-BRIEF.md` — read first
 
+> **Applied.** Every correction in this section, plus the wave-2 landings §0a
+> records, has since been folded into [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md)
+> (see `STATE.md`'s `docs-01`). The table below is kept as the original
+> analysis — it is a record of what *was* wrong, not a live defect list. Read
+> the brief for current state and §0a for per-track status.
+
 The brief predates `pkg-01`, `pkg-02`, `parser-05`, `instance-ui-01`, `panel-01`,
 `panel-02`, `perf-01`, `board-02/03` and `struct-01/02`. Six of its claims are
 now false, and each one, believed, wastes days.

@@ -34,6 +34,7 @@ import {
   type SourceStructureNode,
   type StructuralEditKind,
   type StructuralMovePreview,
+  type StructuralRefusal,
   type StructuralRefusalReason,
 } from './sourceStructure'
 import { decodeSourceNodeId, hasWritableSourceLocation } from './sourceNodeId'
@@ -318,13 +319,22 @@ export function explainStyleConstraint(node: ConstraintPropSource, property: str
 // Structural / gesture scope — rows 7-18, plus the drag-preview seam (D2).
 // ---------------------------------------------------------------------------
 
-/** Which `EditConstraintAction`s make sense for a given structural reason — one small, honest table. */
+/**
+ * Which `EditConstraintAction`s make sense for a given structural reason — one
+ * small, honest table.
+ *
+ * `node` is optional because a refusal does not always name one: the store
+ * synthesises a handful of `insert` refusals about a CONTAINER it could not
+ * resolve at all ("this page has several top-level elements…"), which have a
+ * reason and a sentence but no element to point at.
+ */
 function structuralActions(
   reason: StructuralRefusalReason,
-  node: SourceStructureNode,
+  node?: SourceStructureNode,
 ): EditConstraintAction[] {
   switch (reason) {
     case 'list-row': {
+      if (!node) return []
       // Row 3/7 — "edit the array it maps over", made actionable: jump to the
       // row's own source position (best-effort — `decodeSourceNodeId` cannot
       // match a `.map`-row id at all, see `bestEffortRowLocation`), which
@@ -354,6 +364,36 @@ function structuralActions(
 }
 
 /**
+ * Dresses a refusal SOMEONE ELSE already computed — `refuseStructuralEdit`'s
+ * own return value, `previewStructuralMove`'s in-flight verdict, or one of the
+ * store's synthesised `insert` refusals — as the `EditConstraint` every
+ * surface renders. The single place `origin` and `actions` are derived, so a
+ * refusal reaching the UI through a plan object and one reaching it through a
+ * direct `explain*` call cannot disagree about the way forward.
+ *
+ * Deliberately takes the refusal rather than re-asking for it: the plan
+ * functions in `structuralSourceEdits.ts` do real work (simulating a reorder,
+ * resolving an anchor) to reach theirs, and re-deriving it here would be a
+ * second copy of that rule — exactly what this module's doc forbids.
+ */
+export function describeStructuralRefusal(input: {
+  refusal: StructuralRefusal
+  /** The element the refusal is about, when there is one. Supplies `origin`. */
+  node?: SourceStructureNode
+  /** `'gesture'` for a drag still in flight; `'node'` (the default) for a committed gesture. */
+  scope?: 'node' | 'gesture'
+}): EditConstraint {
+  const decoded = input.node ? decodeSourceNodeId(input.node.id) : null
+  return {
+    reason: input.refusal.reason,
+    scope: input.scope ?? 'node',
+    explanation: input.refusal.message,
+    ...(decoded ? { origin: { rel: decoded.rel, line: decoded.line, col: decoded.col } } : {}),
+    actions: structuralActions(input.refusal.reason, input.node),
+  }
+}
+
+/**
  * Explains a refused STRUCTURAL gesture (reorder/reparent/delete/insert/
  * duplicate/wrap), or `null` when it may proceed. Thin wrapper over
  * `refuseStructuralEdit` — same input shape, same refusal, now carrying an
@@ -367,14 +407,7 @@ export function explainStructuralConstraint(input: {
 }): EditConstraint | null {
   const refusal = refuseStructuralEdit(input)
   if (!refusal) return null
-  const decoded = decodeSourceNodeId(input.node.id)
-  return {
-    reason: refusal.reason,
-    scope: 'node',
-    explanation: refusal.message,
-    ...(decoded ? { origin: { rel: decoded.rel, line: decoded.line, col: decoded.col } } : {}),
-    actions: structuralActions(refusal.reason, input.node),
-  }
+  return describeStructuralRefusal({ refusal, node: input.node })
 }
 
 /**
@@ -411,14 +444,7 @@ export function explainMintedInsertConstraint(input: {
  */
 export function explainGestureConstraint(preview: StructuralMovePreview, node: SourceStructureNode): EditConstraint | null {
   if (preview.ok) return null
-  const decoded = decodeSourceNodeId(node.id)
-  return {
-    reason: preview.refusal.reason,
-    scope: 'gesture',
-    explanation: preview.refusal.message,
-    ...(decoded ? { origin: { rel: decoded.rel, line: decoded.line, col: decoded.col } } : {}),
-    actions: structuralActions(preview.refusal.reason, node),
-  }
+  return describeStructuralRefusal({ refusal: preview.refusal, node, scope: 'gesture' })
 }
 
 // ---------------------------------------------------------------------------

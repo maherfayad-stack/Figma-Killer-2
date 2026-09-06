@@ -1,9 +1,13 @@
 /*
- * LayerNodeContextMenu — selection-count chip.
+ * LayerNodeContextMenu — selection-count chip and refusal footer.
  *
  * The chip lives ABOVE the action items in the multi-select state and reads
  * "N layers selected". It's a presentational label (role="presentation"), not
  * a menuitem — separated from the rest of the menu by a ContextMenuSeparator.
+ *
+ * The footer sits BELOW them and explains why Duplicate / Wrap / Delete are
+ * greyed out, with the refusal's own way forward as real controls. Same
+ * presentational treatment, same separator convention.
  */
 
 .headerChip {
@@ -11,4 +15,12 @@
   font-size: var(--text-xs);
   color: var(--text-disabled);
   font-weight: 600;
+}
+
+/* Bounded so a long explanation wraps inside the menu instead of stretching
+   it: the menu sizes to its widest child, and the widest child must stay the
+   action items. */
+.refusalFooter {
+  max-width: 260px;
+  padding-block: var(--space-3xs);
 }

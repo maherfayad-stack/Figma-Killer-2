@@ -40,7 +40,6 @@ import {
   type SiteDocument,
   hasWritableSourceLocation,
   isPropWritableToSource,
-  isStyleWritableToSource,
   styleValueKey,
 } from '@core/page-tree'
 import { apiRequest, ndjsonRequest } from '@core/http'
@@ -52,7 +51,6 @@ import { registry } from '@core/module-engine'
 import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { useAdminUi } from '@admin/state/adminUi'
-import { pushToast } from '@ui/components/Toast'
 import { notifyUnexplainedSkips } from '@site/panels/unexplainedSkipsNotice'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
@@ -63,12 +61,21 @@ import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadSt
 import {
   commitClassIdsBaseline,
   commitNodeValuesBaseline,
+  diffInlineStyles,
+  dropNodeValuesBaseline,
   getLoadedNodeValues,
-  literalInlineStyles,
   resetLoadedValues,
   type NodeValueBump,
+  type NodeValueDrop,
 } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
+import {
+  reportClassTokenRefusals,
+  reportEditRefusals,
+  reportUnmappedStyleRules,
+  reportUnwritableContexts,
+  resetRefusalToasts,
+} from './refusalToasts'
 import type { StudioEditPayload } from './studioEditPayload'
 import {
   collectStyleRuleEdits,
@@ -256,8 +263,12 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     setStudioTrustTier(trust)
     // Baseline for the save-time diff — see `loadedValuesBaseline.ts`.
     resetLoadedValues(pages)
+    // `style-02` — a fresh document is a fresh set of refusals to report.
+    resetRefusalToasts()
     // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
-    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules)
+    // `pages` feeds `buildClassPageIndex`, which is how a new class gets
+    // co-located with the page it is used on (`style-02`).
+    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules, pages)
     // WS-10 §4.4 (Phase 4) — a fresh project load (or a `requestCmsSiteReload()`
     // re-load) must not carry a locale-variant page, or its writeback
     // baseline, over from whatever project was open before: `pageId` is only
@@ -317,10 +328,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
   },
 
   async saveSite(site: SiteDocument, opts: SaveSiteOptions = {}): Promise<void> {
-    // Collect current literal props + inline styles for every source-backed
-    // node across all pages. Re-writing unchanged values is idempotent, so we
-    // don't need a per-field diff for this first pass. Synthetic nodes (e.g.
-    // `index:body`) don't match the loc pattern and are skipped server-side.
+    // Every source-backed node's literal props + inline styles, DIFFED against
+    // `loadedValues` — an unchanged value must never be re-written, or a
+    // resolved expression gets baked into a literal. Synthetic nodes (e.g.
+    // `index:body`) are skipped server-side.
     const edits: StudioEditPayload[] = []
     // Parallel to `edits` — one `(nodeId, baseline key, value)` entry per
     // node-value edit pushed below, so `loadedValues` can be advanced to
@@ -329,6 +340,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // gated on `unexplainedSkips === 0` below rather than committed
     // unconditionally.
     const bumps: NodeValueBump[] = []
+    // `style-03`'s counterpart: the `(nodeId, key)` pairs this batch REMOVES
+    // from source, which have no value to record — see `dropNodeValuesBaseline`.
+    const drops: NodeValueDrop[] = []
 
     // C4 — this loop used to scan every node of every page on every autosave
     // tick, ignoring `opts.dirty` (fed correctly by every `mutateSite`/
@@ -466,15 +480,16 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // not forward a `style` prop to their root element at all — out of
         // scope for source writeback this slice.
         if (node.moduleId.startsWith('base.')) {
-          const style = literalInlineStyles(node.inlineStyles)
-          const changed = Object.entries(style).filter(
-            ([k, v]) =>
-              isStyleWritableToSource(node, k) &&
-              (!baseline || !Object.is(baseline[styleValueKey(k)], v)),
-          )
-          if (changed.length > 0) {
-            edits.push({ kind: 'style', nodeId: node.id, style: Object.fromEntries(changed) })
-            for (const [k, v] of changed) bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v })
+          const { changed, removed } = diffInlineStyles(node, baseline)
+          if (Object.keys(changed).length > 0 || removed.length > 0) {
+            edits.push({
+              kind: 'style',
+              nodeId: node.id,
+              style: changed,
+              ...(removed.length > 0 ? { remove: removed } : {}),
+            })
+            for (const [k, v] of Object.entries(changed)) bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v })
+            for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property) })
           }
         }
       }
@@ -495,13 +510,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     const classPlan = collectClassNameEdits(site.pages, site.styleRules, site.visualComponents)
     edits.push(...classPlan.edits)
     if (classPlan.unwritable.length > 0) notifyClassAssignmentUnsaved(classPlan.unwritable)
-    // Advance unconditionally, same discipline `commitStyleRuleBaseline`
-    // below uses: one user change produces exactly one write attempt and
-    // (if refused) exactly one refusal toast, not a re-send/re-toast on
-    // every later autosave tick. A `class` edit's per-token REFUSAL (a CSS
-    // Modules binding, a dynamic template, …) is reported once via
-    // `result.refusals` below, same channel `detach`/`swap`/`css` use.
-    commitClassIdsBaseline(site.pages)
+
+    reportClassTokenRefusals(classPlan.tokenRefusals)
 
     // `panel-02` (WS-6.3) — CSS write-back, owned by `styleRuleWriteback.ts`:
     // it diffs each rule's BASE `styles` bag against the load-time baseline
@@ -510,31 +520,25 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // the second list exists — an unmapped rule used to be skipped silently,
     // which meant a Tailwind project's style edits vanished on reload with
     // nothing ever said about it.
-    const cssPlan = collectStyleRuleEdits(site.styleRules)
+    //
+    // `style-02` — `site.pages` is passed so a brand-new class can be
+    // co-located with the page it is actually USED on. Without it, every
+    // project whose pages each own a stylesheet refused every new class as
+    // "N candidate stylesheets, will not guess".
+    //
+    // `style-03` — the document's own editing contexts are passed too, so a
+    // breakpoint/condition override resolves to a `@media` query and is
+    // written through `setDeclarationAtMedia` instead of being refused
+    // wholesale. `@container`/`@supports` contexts still refuse, by name.
+    const cssPlan = collectStyleRuleEdits(site.styleRules, site.pages, {
+      breakpoints: site.breakpoints,
+      conditions: site.conditions,
+    })
     edits.push(...cssPlan.edits)
 
-    if (cssPlan.unmapped.length > 0) {
-      const names = cssPlan.unmapped.join(', ')
-      pushToast({
-        kind: 'error',
-        title: 'Style not saved to source',
-        body:
-          `${names} ${cssPlan.unmapped.length === 1 ? 'has' : 'have'} no hand-editable CSS file in this project ` +
-          '(a generated utility class, a CSS Modules compile, or a build artefact), so this change stays on the ' +
-          'canvas only and will be lost on reload. Style the element instead to write it to source.',
-      })
-    }
+    reportUnmappedStyleRules(cssPlan.unmapped)
 
-    if (cssPlan.unwritableContexts.length > 0) {
-      pushToast({
-        kind: 'error',
-        title: 'Breakpoint override not saved to source',
-        body:
-          `${cssPlan.unwritableContexts.join(', ')} changed under a breakpoint or condition. Studio can only write ` +
-          'a class’s default declarations back to CSS today, so this override stays on the canvas only and ' +
-          'will be lost on reload.',
-      })
-    }
+    reportUnwritableContexts(cssPlan.unwritableContexts)
 
     // WS-10 §4.4 (Phase 4) — a locale-variant board frame's text edits.
     // `localizedPages` lives OUTSIDE `site` (a parallel map, not part of
@@ -546,6 +550,12 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     const localizedEdits = collectLocalizedTextEdits(useEditorStore.getState().localizedPages)
     edits.push(...localizedEdits)
 
+    // `style-02` — the two baselines below must not advance past a REFUSED
+    // write. Both lists start with the refusals this client already made
+    // (a token/destination it will not guess) and grow with the server's.
+    const refusedRuleIds = new Set<string>()
+    const refusedClassNodeIds = [...classPlan.refusedNodeIds]
+
     if (edits.length > 0) {
       const result = await apiRequest('/admin/api/studio/save', {
         method: 'POST',
@@ -553,21 +563,19 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         schema: StudioSaveResponseSchema,
       })
 
-      // WS-4.4/4.5/6.3 — a `detach`/`swap`/`css` refusal is a NAMED, expected
-      // outcome (Card uses a hook, the new name would shadow a binding, this
-      // stylesheet is a compiled build artefact, …), so it gets its own toast
-      // carrying the actual reason rather than folding into the generic "no
-      // writable location" message below, which would be actively misleading
-      // here (the location WAS writable — the codemod declined on purpose).
-      const REFUSAL_TITLES: Record<string, string> = {
-        detach: 'Detach refused',
-        swap: 'Swap refused',
-        css: 'Style not saved to source',
-        class: 'Class change not saved to source',
-      }
+      // WS-4.4/4.5/6.3 — every named refusal gets its own toast carrying the
+      // actual reason (`refusalToasts.ts`), de-duped by (kind, target, reason)
+      // rather than by advancing the baseline past it — which used to be how a
+      // repeat toast was avoided, and silently threw the edit away with it
+      // (`style-02`).
       const refusals = result.refusals ?? []
+      reportEditRefusals(refusals)
       for (const refusal of refusals) {
-        pushToast({ kind: 'error', title: REFUSAL_TITLES[refusal.kind] ?? 'Edit refused', body: refusal.message })
+        if (refusal.kind === 'css') {
+          const ruleId = cssPlan.ruleIdByNodeId[refusal.nodeId]
+          if (ruleId) refusedRuleIds.add(ruleId)
+        }
+        if (refusal.kind === 'class') refusedClassNodeIds.push(refusal.nodeId)
       }
 
       // Some edits resolved to no writable source location, so nothing reached
@@ -607,7 +615,13 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // tick, instead of a refused/skipped edit's value being silently
       // adopted as the new baseline and the user never seeing why their
       // change didn't stick.
-      if (unexplainedSkips === 0) commitNodeValuesBaseline(bumps)
+      if (unexplainedSkips === 0) {
+        commitNodeValuesBaseline(bumps)
+        // `style-03` — a REMOVED inline style has no value to record, so its
+        // baseline entry has to be deleted instead; leaving it behind would
+        // re-emit the same removal on every later tick.
+        dropNodeValuesBaseline(drops)
+      }
 
       // A write shifted line numbers, so every `line:col` node id below that
       // point is now stale against disk. Re-parse the workspace to re-derive
@@ -643,13 +657,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     }
 
     // `panel-02` — advance the CSS diff baseline to what was just sent, so one
-    // user change produces exactly one write attempt and exactly one refusal
-    // message. Without this every later autosave tick would re-send an
-    // already-applied declaration and re-toast an already-reported refusal on
-    // a two-second timer. See `styleRuleWriteback`'s "Baseline discipline".
+    // user change produces exactly one write attempt. `style-02` — EXCEPT for
+    // the rules the server refused: those never reached disk, so adopting
+    // their value would make the user's obvious retry (the same value again)
+    // diff as "no change" and never be attempted a second time. The repeat
+    // toast that used to prevent is handled by `toastOnce` instead.
+    //
+    // The class baseline (`commitClassIdsBaseline`) moved here from before
+    // the POST for the same reason: it now has server refusals to honour.
     if (cssPlan.edits.length > 0 || cssPlan.unmapped.length > 0 || cssPlan.unwritableContexts.length > 0) {
-      commitStyleRuleBaseline(site.styleRules)
+      commitStyleRuleBaseline(site.styleRules, { pages: site.pages, refusedRuleIds })
     }
+    commitClassIdsBaseline(site.pages, refusedClassNodeIds)
 
     // Framework settings (Colors/Typography/Spacing) live outside the
     // per-node edit batch above — sync them independently so a framework-only

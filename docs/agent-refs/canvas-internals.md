@@ -631,6 +631,30 @@ anything that needs to be pixel-exact (a ruler tick, a measurement HUD); see
 
 **Never** add a full-site scan inside a `useEditorStore(selector)` callback.
 
+**Frame-invariant work belongs in a cross-frame memo, not in the injector.**
+Every mounted iframe runs its injectors in the same commit over the same store
+snapshot, so anything that does not depend on the frame is being paid N times
+for one answer. The three that do this now, and the pattern to copy:
+
+| Module | Memo shape | What varies per frame |
+|---|---|---|
+| `canvasClassCss.ts` | single-slot identity memo over 9 inputs | nothing |
+| `canvasVendorCss.ts` | single-slot memo on `projectVendorCss` | nothing |
+| `canvasUserStylesheetCss.ts` | two stages: `(site, scopeId, scopeTemplate)` → `Map` by viewport | the viewport-unit resolution, and only by frame **width** |
+
+`canvasUserStylesheetCss.ts` also **reorders** the chain
+(`collect → rewritePrefersColorScheme → resolveViewportUnits`) so the
+frame-invariant half comes first. The two transforms commute — the resolver
+touches only `<number><viewport-unit>` tokens in declarations, the rewrite
+touches only selectors and the `@media` prelude — verified byte-for-byte over
+every `.css` file in `studio-workspace/`. **The reorder alone buys ~0.05 ms;
+the win is what it makes cacheable.**
+
+`selectCanvasPageFor` is the other per-node path worth knowing: **both** its
+lookups (`pageId → Page`, `frameId → axes.locale`) are memoised, and the
+locale branch is skipped entirely while `s.localizedPages` is empty. Any new
+branch there must arrive with its own memo — see `PROJECT-BRIEF.md` trap #11.
+
 `useCanvas()` returns `transformRef: RefObject<CanvasTransform>` — the LIVE
 transform, mutated in place every rAF tick during a gesture, up to 100ms
 AHEAD of the store's own debounced `zoom`/`panX`/`panY`. This is a published,

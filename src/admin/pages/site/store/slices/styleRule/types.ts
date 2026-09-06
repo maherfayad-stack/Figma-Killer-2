@@ -106,8 +106,19 @@ export interface StyleRuleSlice {
    * Create a new class with the given name and optional initial styles.
    * Returns the new StyleRule so callers can immediately activate it.
    * Throws if a class with the same name already exists.
+   *
+   * `scope` associates the new rule with the node it was created for
+   * (`{ type: 'node', nodeId, role: 'module-style' }`, the same shape
+   * `ensureNodeStyleClass` produces). In Studio this is the ONLY signal
+   * `styleRuleWriteback.ts`'s `resolveCssInsertDestination` has for which
+   * PAGE a brand-new class belongs to, and therefore which stylesheet its
+   * first declarations should be co-located with. Without it, a project
+   * whose pages each own a `*.module.css` refuses every new class as
+   * "N candidate stylesheets — Studio will not guess". Omit it for a
+   * freestanding class created with nothing selected: there genuinely is no
+   * page to co-locate with, and a fabricated association would be a guess.
    */
-  createClass(name: string, styles?: Partial<CSSPropertyBag>): StyleRule
+  createClass(name: string, styles?: Partial<CSSPropertyBag>, scope?: StyleRule['scope']): StyleRule
 
   /**
    * Create an ambient style rule — one whose `selector` is not a single class

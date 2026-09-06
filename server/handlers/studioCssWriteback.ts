@@ -19,7 +19,13 @@
  *
  * ## Three ops, one edit kind
  *
- *   - `op: 'set'` — an existing rule's declaration, `setDeclaration`.
+ *   - `op: 'set'` — an existing rule's declaration, `setDeclaration` (or
+ *     `setDeclarationAtMedia` when the edit carries an `atMedia` query — a
+ *     breakpoint/condition override, `style-03`).
+ *   - `op: 'unset'` — the same target, CLEARED (`removeDeclaration`,
+ *     `style-03`). Its absence was a silent no-op: the client's diff only ever
+ *     iterated the properties a rule has now, so removing one produced no edit
+ *     at all and the property returned on the next reload.
  *   - `op: 'insert'` — a rule with NO existing source, but the CLIENT already
  *     resolved exactly one editable stylesheet to put it in: a brand-new
  *     class the user created, or the very first edit to any rule the load
@@ -61,14 +67,14 @@
  *      living inside a `build/`/`out/` directory that isn't excluded at the
  *      filesystem-safety layer still shouldn't get a stylesheet fabricated
  *      inside it.
- *   2. `analyzeDeclarationTarget` — **`set` only.** Would the write land
- *      somewhere the cascade actually honours? A duplicated selector or a
- *      covering shorthand makes `setDeclaration`'s first-match rule disagree
- *      with the last-declaration-wins cascade, so the file would change and
- *      the canvas would not. Not run for `insert`/`create` — a brand-new
- *      rule has no prior declaration to be shadowed by, and `insertRule`
- *      itself refuses to create a second block for an exact-selector match
- *      (see its doc).
+ *   2. `analyzeDeclarationTarget` — **`set` and `unset` only**, scoped to
+ *      `atMedia` when present. Would the write land somewhere the cascade
+ *      actually honours? A duplicated selector or a covering shorthand makes
+ *      the codemods' first-match rule disagree with the last-declaration-wins
+ *      cascade, so the file would change and the canvas would not. Not run for
+ *      `insert`/`create` — a brand-new rule has no prior declaration to be
+ *      shadowed by, and `insertRule` itself refuses to create a second block
+ *      for an exact-selector match (see its doc).
  *   3. `resolveContainedCssPath` / `resolveContainedSourcePagePath` /
  *      `resolveStylesheetCreationPath` — is the target inside this
  *      workspace?
@@ -92,15 +98,27 @@ import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 
 import { Project, QuoteKind } from 'ts-morph'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 import { relativeSpecifier, topLevelBindingNames } from '@core/ast-codemods'
-import { analyzeDeclarationTarget, classifyStylesheetEditability, insertRule, setDeclaration } from '@core/css-codemods'
+import {
+  analyzeDeclarationTarget,
+  classifyStylesheetEditability,
+  insertRule,
+  removeDeclaration,
+  setDeclaration,
+  setDeclarationAtMedia,
+} from '@core/css-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
- * One CSS declaration writeback (WS-6.3, `panel-02`) — `setDeclaration`
- * (`@core/css-codemods`), a postcss CST round-trip. Scoped to a rule's BASE
- * declarations only this pass — a breakpoint/condition-scoped override
- * (`@media`) is a real, documented gap; `setDeclarationAtMedia` is ready for
- * it, this edit kind just doesn't carry a query yet.
+ * One CSS declaration writeback (WS-6.3, `panel-02`) — `setDeclaration` /
+ * `setDeclarationAtMedia` (`@core/css-codemods`), a postcss CST round-trip.
+ *
+ * `atMedia` (`style-03`) is the breakpoint/condition override's media query,
+ * e.g. `(max-width: 768px)`. Present ⇒ the declaration is written inside that
+ * `@media` block, creating the block if it does not exist. Absent ⇒ the rule's
+ * unconditional declarations, as before. The client resolves a `contextId` to
+ * a query from `site.breakpoints`/`site.conditions` and refuses, by name, for
+ * the context kinds that are not a media query at all (`@container`,
+ * `@supports`) — so nothing arrives here that this codemod cannot write.
  *
  * `file`/`selector` are `server/handlers/studioCss.ts`'s `StyleRuleSource`
  * for this rule id, resolved by the CLIENT at load time — a CSS rule's write
@@ -120,6 +138,29 @@ const CssSetEditSchema = Type.Object({
   selector: Type.String(),
   property: Type.String(),
   value: Type.String(),
+  atMedia: Type.Optional(Type.String()),
+})
+
+/**
+ * One CSS declaration REMOVAL (`style-03`) — `removeDeclaration`. The exact
+ * counterpart of `op: 'set'`, and it exists because clearing a property in the
+ * inspector used to reach no code path at all: the diff only iterated the
+ * properties a rule has NOW, so a removed one produced no edit, no toast, and
+ * came back on the next reload.
+ *
+ * Runs the SAME `analyzeDeclarationTarget` gate as `set`, for the same reason
+ * and with the same answers — removing the first of two duplicate declarations
+ * leaves the second in effect, so the file would change and the canvas would
+ * not, which is the one outcome worse than refusing.
+ */
+const CssUnsetEditSchema = Type.Object({
+  kind: Type.Literal('css'),
+  op: Type.Literal('unset'),
+  nodeId: Type.String(),
+  file: Type.String(),
+  selector: Type.String(),
+  property: Type.String(),
+  atMedia: Type.Optional(Type.String()),
 })
 
 /**
@@ -175,7 +216,7 @@ const CssCreateEditSchema = Type.Object({
  * union; they add their own sibling schemas the same way this module already
  * sits beside `studioStructuralWriteback.ts`'s `StructuralEditSchemas`.
  */
-export const CssEditSchema = Type.Union([CssSetEditSchema, CssInsertEditSchema, CssCreateEditSchema])
+export const CssEditSchema = Type.Union([CssSetEditSchema, CssUnsetEditSchema, CssInsertEditSchema, CssCreateEditSchema])
 
 export type CssEdit = Static<typeof CssEditSchema>
 type CssCreateEdit = Extract<CssEdit, { op: 'create' }>
@@ -509,14 +550,27 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
     return { applied: true }
   }
 
-  // The honest-target gate. Runs on the SAME text about to be written, so its
-  // verdict cannot go stale between the check and the write.
-  const analysis = analyzeDeclarationTarget(cssText, edit.selector, edit.property)
+  // The honest-target gate, shared by `set` and `unset`. Runs on the SAME text
+  // about to be written, so its verdict cannot go stale between the check and
+  // the write, and scoped to `atMedia` so a breakpoint override is analysed
+  // where it will actually land rather than against the file's top level.
+  const analysis = analyzeDeclarationTarget(cssText, edit.selector, edit.property, { atMedia: edit.atMedia })
   if (!analysis.ok) {
     return { applied: false, refusal: { reason: analysis.refusal.reason, message: analysis.refusal.message } }
   }
 
-  const result = setDeclaration(cssText, edit.selector, edit.property, edit.value)
+  if (edit.op === 'unset') {
+    const removed = removeDeclaration(cssText, edit.selector, edit.property, { atMedia: edit.atMedia })
+    if (removed.changed) writeFileSync(filePath, removed.css, 'utf8')
+    // `applied: true` even when the declaration was already absent: the
+    // requested state IS the state on disk, and reporting a skip would put the
+    // edit in `unexplainedSkips` and toast the user about a no-op.
+    return { applied: true }
+  }
+
+  const result = edit.atMedia
+    ? setDeclarationAtMedia(cssText, edit.selector, edit.atMedia, edit.property, edit.value)
+    : setDeclaration(cssText, edit.selector, edit.property, edit.value)
   if (result.changed) writeFileSync(filePath, result.css, 'utf8')
   return { applied: true }
 }

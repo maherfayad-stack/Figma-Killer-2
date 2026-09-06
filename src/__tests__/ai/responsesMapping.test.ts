@@ -291,7 +291,10 @@ describe('openrouterDriver', () => {
     expect(requestBodies).toHaveLength(1)
     expect(requestBodies[0]!.model).toBe('openai/gpt-5.4')
     expect(requestBodies[0]!.stream).toBe(true)
-    expect(requestBodies[0]!).not.toHaveProperty('prompt_cache_key')
+    // Both Responses drivers send the SAME toolset-derived cache key — this
+    // one shipped without any, so its requests fell into OpenRouter's default
+    // partition and got none of the prefix caching OpenAI was already getting.
+    expect(requestBodies[0]!.prompt_cache_key).toMatch(/^studio:/)
     expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text).join('')).toBe(
       'openrouter reply',
     )
