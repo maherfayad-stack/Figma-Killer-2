@@ -8,7 +8,13 @@
  *
  * The panel reads top to bottom the way the work does:
  *
- *   branch → what changed → what it changed → say what you did → send it
+ *   branch → what changed → what it changed → say what you did → send it →
+ *   see it live
+ *
+ * The last step is `DeploySection` (W5-4): a preview deploy through the
+ * provider CLI the user already has. It sits here rather than on its own rail
+ * entry because it is the end of this sentence, and because the branch and
+ * dirty state it reports are the ones this panel already has on screen.
  *
  * ## The decisions worth knowing
  *
@@ -59,6 +65,7 @@ import {
   type GitFileDiff,
   type GitStatusEntry,
 } from '@site/studio/gitRequests'
+import { DeploySection } from './DeploySection'
 import { GitDiffView } from './GitDiffView'
 import { GitHistorySection } from './GitHistorySection'
 import { useGitStatus } from './useGitStatus'
@@ -379,6 +386,15 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
           </Section>
         </>
       ) : null}
+
+      {/* -----------------------------------------------------------------
+          Deploy — the last step of the same sentence: see it live.
+
+          Deliberately OUTSIDE the `isRepo` branch: a project nobody has put
+          under version control can still be deployed, and refusing to show
+          the section there would be a gate the server does not have.
+      ----------------------------------------------------------------- */}
+      <DeploySection dir={dir} branch={branch?.branch ?? null} dirtyCount={entries.length} active={isOpen} />
     </Panel>
   )
 }
