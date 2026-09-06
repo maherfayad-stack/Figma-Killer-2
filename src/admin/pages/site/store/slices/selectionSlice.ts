@@ -5,7 +5,8 @@ import type { BaseNode } from '@core/page-tree'
 import type { NodeTree } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
 import { flattenSubtree, getParent } from '@core/page-tree'
-import { selectActiveBoard } from './boardSelectors'
+import { getActiveTree, resolveSelectableNode } from './selectionResolve'
+import { createSelectionTraversalActions } from './selectionTraversalActions'
 
 /**
  * Selection mode for `selectNode`:
@@ -126,6 +127,20 @@ interface SelectionSlice {
    * isn't an instance.
    */
   enterSelectedInstance: () => boolean
+
+  /**
+   * viewport-01 — move the selection to the anchor's PARENT (⇧Enter, and the
+   * `layers.selectParent` palette command). Returns `false` when nothing is
+   * selected or the anchor is already the tree root, so a keyboard handler can
+   * fall through. Implemented in `selectionTraversalActions.ts`.
+   */
+  selectParentNode: () => boolean
+  /**
+   * viewport-01 — move the selection to the anchor's FIRST CHILD (Enter, and
+   * the `layers.selectFirstChild` palette command). Returns `false` when
+   * nothing is selected or the anchor is a leaf.
+   */
+  selectFirstChildNode: () => boolean
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -135,6 +150,8 @@ declare module '@site/store/types' {
 }
 
 export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (set, get) => ({
+  ...createSelectionTraversalActions(get),
+
   selectedNodeIds: [],
   selectedNodeId: null,
   selectedNodeFrameId: null,
@@ -449,35 +466,6 @@ function applySelection(
 }
 
 /**
- * Resolve a node id to its node + owning tree, WS-7.3-aware: on a studio
- * board, a multi-selection may span any of the board's OWN curated frames
- * (`selectActiveBoard(state).frames`), not just the single active page —
- * `_nodeIdToPageIds` (WS-5.2) finds every page that carries `id` and this
- * picks the first one that's actually a frame on the active board. Outside
- * board mode (CMS editing, VC canvas) this is exactly `getActiveTree`'s own
- * lookup — unchanged behaviour.
- */
-function resolveSelectableNode(
-  state: EditorStore,
-  id: string,
-): { node: BaseNode; tree: NodeTree<PageNode> } | null {
-  const board = selectActiveBoard(state)
-  if (board) {
-    const framePageIds = new Set(board.frames.map((f) => f.pageId))
-    for (const pageId of state._nodeIdToPageIds.get(id) ?? []) {
-      if (!framePageIds.has(pageId)) continue
-      const page = state.site?.pages.find((p) => p.id === pageId)
-      const node = page?.nodes[id]
-      if (page && node) return { node, tree: page }
-    }
-    return null
-  }
-  const tree = getActiveTree(state)
-  const node = tree?.nodes[id]
-  return tree && node ? { node, tree } : null
-}
-
-/**
  * Filter ids to only those that may legally participate in a multi-selection.
  * Rules:
  * - The page/VC tree root cannot be part of a multi-selection (only solo).
@@ -563,24 +551,6 @@ function isDescendantInTree(tree: NodeTree<PageNode>, ancestorId: string, nodeId
     current = getParent(tree, current.id)
   }
   return false
-}
-
-/**
- * Resolve the active tree (page or VC) without going through the store-level
- * `selectActiveCanvasPage` selector. Importing that selector would create a
- * `selectionSlice ↔ store` cycle. The returned shape is `NodeTree<PageNode>`
- * so the slice's helpers can use the page-tree selectors uniformly.
- * Also consumed by `inlineEditSlice` (same no-cycle rationale).
- */
-export function getActiveTree(state: EditorStore): NodeTree<PageNode> | null {
-  if (!state.site) return null
-  const activeDocument = state.activeDocument
-  if (activeDocument?.kind === 'visualComponent') {
-    const vc = state.site.visualComponents?.find((v) => v.id === activeDocument.vcId)
-    return vc ? (vc.tree as NodeTree<PageNode>) : null
-  }
-  const page = state.site.pages.find((p) => p.id === state.activePageId)
-  return page ?? null
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {

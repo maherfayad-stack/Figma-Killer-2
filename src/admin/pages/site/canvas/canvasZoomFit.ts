@@ -24,6 +24,19 @@ export interface CanvasFitRect {
 export const DEFAULT_ZOOM_FIT_PADDING_PX = 64
 
 /**
+ * How the union of `targetRects` is scaled into the viewport.
+ *
+ * - `contain` — the whole union fits, letterboxed on the long axis. This is
+ *   "Zoom to fit" / "Zoom to selection".
+ * - `cover` — the union FILLS the viewport, bleeding off the short axis. This
+ *   is the toolbar zoom menu's "Fill" (viewport-01), Figma's zoom-to-fill.
+ *
+ * Everything else about the two is identical, including centering — the only
+ * difference is `min` vs. `max` of the two axis ratios.
+ */
+export type ZoomFitMode = 'contain' | 'cover'
+
+/**
  * Compute the `{ zoom, panX, panY }` that fits every rect in `targetRects`
  * inside a `rootRect.width × rootRect.height` viewport, centered, with
  * `padding` screen pixels of margin on all sides.
@@ -46,6 +59,7 @@ export function computeZoomToFitTransform(
   targetRects: readonly CanvasFitRect[],
   current: CanvasTransform,
   padding: number = DEFAULT_ZOOM_FIT_PADDING_PX,
+  mode: ZoomFitMode = 'contain',
 ): CanvasTransform | null {
   if (targetRects.length === 0) return null
   if (current.zoom <= 0) return null
@@ -75,10 +89,17 @@ export function computeZoomToFitTransform(
 
   // A rect degenerate on exactly one axis (e.g. an unmeasured 0-height frame)
   // must not force zoom to infinity on that axis alone — fall back to the
-  // other axis's ratio.
+  // other axis's ratio. `cover` therefore takes the max of the FINITE ratios:
+  // a plain `Math.max` would pick the `Infinity` sentinel and clamp to max
+  // zoom, which is the opposite of "fill".
   const widthRatio = boardWidth > 0 ? availableWidth / boardWidth : Infinity
   const heightRatio = boardHeight > 0 ? availableHeight / boardHeight : Infinity
-  const zoom = clampZoom(Math.min(widthRatio, heightRatio))
+  const finiteRatios = [widthRatio, heightRatio].filter(Number.isFinite)
+  const zoom = clampZoom(
+    mode === 'cover' && finiteRatios.length > 0
+      ? Math.max(...finiteRatios)
+      : Math.min(widthRatio, heightRatio),
+  )
 
   const boardCenterX = minX + boardWidth / 2
   const boardCenterY = minY + boardHeight / 2
