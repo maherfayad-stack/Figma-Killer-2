@@ -232,7 +232,35 @@ export function readAutoSaveDelayMs(): number {
 // component's behaviour. Apply them to the document root so portals mounted
 // under document.body (menus, tooltips, modals, toasts) inherit the same token
 // scope as the normal React tree.
+//
+// The `theme` preference is THREE-state ('dark' | 'light' | 'system') but the
+// stamp is two-state: `globals.css` gates the light palette on
+// `[data-editor-theme='light']`, and a `system` attribute value would match
+// neither block. So 'system' is resolved against `prefers-color-scheme`
+// BEFORE it is stamped — and before it reaches the two layouts that mirror
+// the same attribute onto their own roots (`AdminPageLayout`,
+// `AdminCanvasLayout`). `useEditorAppearancePreferences` therefore returns the
+// RESOLVED theme; the Preferences select reads the raw preference through
+// `useEditorSelectPreference('theme')` and still shows "System".
 // ---------------------------------------------------------------------------
+
+const SYSTEM_LIGHT_QUERY = '(prefers-color-scheme: light)'
+
+/** The OS-level appearance, false anywhere `matchMedia` is unavailable (SSR, tests). */
+function systemPrefersLight(): boolean {
+  return globalThis.matchMedia?.(SYSTEM_LIGHT_QUERY).matches === true
+}
+
+/**
+ * Collapse the three-state `theme` preference into the two values the
+ * stylesheet knows about. Anything that is not 'light' — including an
+ * unrecognised value written by a future build — resolves to dark, which is
+ * the catalog default.
+ */
+export function resolveEditorTheme(theme: string, prefersLight: boolean): 'dark' | 'light' {
+  const effective = theme === 'system' ? (prefersLight ? 'light' : 'dark') : theme
+  return effective === 'light' ? 'light' : 'dark'
+}
 
 export function applyEditorAppearancePreferencesToDocument(
   doc: Document,
@@ -243,10 +271,34 @@ export function applyEditorAppearancePreferencesToDocument(
   doc.documentElement.setAttribute('data-editor-text-scale', prefs.textScale)
 }
 
+/**
+ * Tracks `prefers-color-scheme` so a `theme: 'system'` install repaints when
+ * the OS flips at sunset, without a reload. Subscribed unconditionally rather
+ * than only under 'system' — a media-query listener is far cheaper than the
+ * conditional-hook gymnastics avoiding it would need.
+ */
+function useSystemPrefersLight(): boolean {
+  const [prefersLight, setPrefersLight] = useState(systemPrefersLight)
+
+  useEffect(() => {
+    const query = globalThis.matchMedia?.(SYSTEM_LIGHT_QUERY)
+    if (!query) return
+    const onChange = () => setPrefersLight(query.matches)
+    onChange()
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+
+  return prefersLight
+}
+
 export function useEditorAppearancePreferences(): EditorAppearancePreferences {
   const density = useEditorSelectPreference('density')
-  const theme = useEditorSelectPreference('theme')
+  const rawTheme = useEditorSelectPreference('theme')
   const textScale = useEditorSelectPreference('textScale')
+  const prefersLight = useSystemPrefersLight()
+
+  const theme = resolveEditorTheme(rawTheme, prefersLight)
 
   useEffect(() => {
     const doc = globalThis.document
