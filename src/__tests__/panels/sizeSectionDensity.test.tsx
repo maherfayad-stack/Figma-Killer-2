@@ -1,14 +1,15 @@
 /**
  * The Size block's density — what a 24px-tall field spends its width on.
  *
- * Before this pass the six size fields carried their names as text ("Min W",
- * "Max H") and `aspectRatio` / `boxSizing` each owned a full-width row under
- * a caption. That is eight rows of chrome for eight numbers, and it is the
- * single clearest place the panel read as a form rather than as an inspector.
- *
- * Width and height keep their letterforms — `W` and `H` are unambiguous, and
- * Figma keeps them too. Everything else is a mark, and the words survive only
- * where a screen reader can reach them.
+ * Before the WS-6 pass the six size fields carried their names as text
+ * ("Min W", "Max H") and were drawn unconditionally, and `aspectRatio` /
+ * `boxSizing` each owned a full-width row under a caption. G2
+ * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`, Law 3) went further for the
+ * constraint fields: `minWidth`/`maxWidth`/`minHeight`/`maxHeight` are no
+ * longer fields at all until asked for — see `sizeSection.test.tsx` for that
+ * behaviour. This file keeps the still-true claims: `W`/`H` keep their
+ * letterforms, and `aspectRatio`/`boxSizing` stay paired into one
+ * uncaptioned row.
  */
 import { describe, it, expect, afterEach } from 'bun:test'
 import { render, screen, cleanup } from '@testing-library/react'
@@ -32,26 +33,21 @@ function renderSizeSection(stored: Record<string, unknown> = {}) {
 }
 
 describe('size section density', () => {
-  it('names every constraint field for assistive tech while showing no words', () => {
+  it('names width and height for assistive tech while showing only a letterform', () => {
     const { container } = renderSizeSection()
 
-    for (const name of [
-      'Width',
-      'Height',
-      'Minimum width',
-      'Minimum height',
-      'Maximum width',
-      'Maximum height',
-    ]) {
+    for (const name of ['Width', 'Height']) {
       expect(screen.getByRole('textbox', { name })).toBeTruthy()
     }
 
-    // The four constraint fields draw marks, not text. `W` and `H` stay —
-    // a letterform IS the mark there.
     const visible = container.textContent ?? ''
     expect(visible).toContain('W')
     expect(visible).toContain('H')
-    for (const gone of ['Min W', 'Min H', 'Max W', 'Max H']) {
+
+    // Law 3: an unset constraint is not a field, it's a menu item — none of
+    // the four render (nor their withdrawn "Min W" / "Max H" text labels).
+    for (const gone of ['Minimum width', 'Minimum height', 'Maximum width', 'Maximum height', 'Min W', 'Min H', 'Max W', 'Max H']) {
+      expect(screen.queryByRole('textbox', { name: gone })).toBeNull()
       expect(visible).not.toContain(gone)
     }
   })
@@ -69,11 +65,14 @@ describe('size section density', () => {
     expect(container.textContent).not.toContain('Box sizing')
   })
 
-  it('keeps a clear affordance on a field that has a value', () => {
+  it('reveals a set constraint with a remove affordance, not a clear button', () => {
     renderSizeSection({ minWidth: '320px' })
 
-    // The mark replaced the words, not the ability to unset the property.
-    expect(screen.getByRole('button', { name: 'Clear minimum width' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Clear maximum width' })).toBeNull()
+    // The set constraint renders (a property already carrying a value is
+    // revealed automatically) with `RevealedField`'s "Remove …" affordance.
+    expect(screen.getByRole('button', { name: 'Remove minimum width' })).toBeTruthy()
+    // The unset sibling constraints stay menu items, not rows.
+    expect(screen.queryByRole('button', { name: 'Remove maximum width' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Maximum width' })).toBeNull()
   })
 })
