@@ -130,6 +130,18 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
   //   would resolve a virtual Page for the VC (slug `components/<Name>`) and
   //   compute a live path that 404s, instead of falling back to a real page.
   'admin/pages/site/hooks/useActiveLivePath.ts',
+
+  // §A.8 — PrototypePanel: a prototype link is anchored to a `pageId`
+  //   (`PrototypeSource.pageId`, `@core/studio-prototype`) and a flow runs
+  //   between two SCREENS on a board. A Visual Component is neither: it is a
+  //   definition embedded in pages, it never gets a board frame of its own,
+  //   and there is nothing for a connector drawn from it to point at. Same
+  //   "VCs are not standalone routes" reasoning as §A.4/§A.7. Switching to
+  //   `selectActiveCanvasPage` would be actively wrong here — it would hand
+  //   the panel a virtual Page whose id is not in `.studio/prototype.json`'s
+  //   vocabulary, and the link it authored would name a page that does not
+  //   exist.
+  'admin/pages/site/panels/PrototypePanel/PrototypePanel.tsx',
 ])
 
 describe('Canvas-aware selector gate — selectActivePage not imported in editor panels', () => {

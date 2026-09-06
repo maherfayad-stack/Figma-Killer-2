@@ -14,14 +14,23 @@
  * iframes (both modes), so authored behaviour runs in-place while editing. Its
  * build status + a manual Refresh live next to the toggle — Refresh re-runs the
  * scripts after edits that React reconciled away.
+ *
+ * PROTOTYPE is a THIRD, orthogonal axis, and deliberately not a third tab in
+ * the Design/Live tablist. Those two are mutually exclusive canvas SURFACES;
+ * prototype mode is an overlay on the design board that draws the project's
+ * flows (`BoardFlowLayer`), so it is a pressed-state toggle, not a tab. It only
+ * appears where it means anything — a Studio board in design view — because on
+ * a CMS page or in live mode there is no board to draw a flow across.
  */
 import type { SyntheticEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
+import { selectHasActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Breakpoint } from '@core/page-tree'
 import type { RuntimeScriptStatus } from './useRuntimeScriptBuild'
 import { CursorMinimalSolidIcon } from 'pixel-art-icons/icons/cursor-minimal-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
+import { ArrowRightIcon } from 'pixel-art-icons/icons/arrow-right'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import { SmartphoneSolidIcon } from 'pixel-art-icons/icons/smartphone-solid'
 import { TabletSolidIcon } from 'pixel-art-icons/icons/tablet-solid'
@@ -56,6 +65,9 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const runScripts = useEditorStore((s) => s.runScripts)
   const setRunScripts = useEditorStore((s) => s.setRunScripts)
+  const hasBoard = useEditorStore(selectHasActiveBoard)
+  const boardMode = useEditorStore((s) => s.boardMode)
+  const setBoardMode = useEditorStore((s) => s.setBoardMode)
 
   // The toggle lives inside the canvas surface, which has its own click /
   // keyboard handlers (deselect, shortcuts, etc.). Stop propagation so the
@@ -103,6 +115,26 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
           </button>
         </Tooltip>
       </div>
+
+      {/* Prototype mode — draws the project's flows over the board. Studio
+          boards only, and only in design view: see this file's own doc. */}
+      {hasBoard && view === 'design' && (
+        <>
+          <span className={styles.divider} aria-hidden="true" />
+          <Tooltip content="Prototype mode (show the project's flows on the board)">
+            <button
+              type="button"
+              aria-pressed={boardMode === 'prototype'}
+              aria-label="Prototype"
+              data-testid="canvas-prototype-toggle"
+              className={cn(styles.tab, boardMode === 'prototype' && styles.tabActive)}
+              onClick={() => setBoardMode(boardMode === 'prototype' ? 'design' : 'prototype')}
+            >
+              <ArrowRightIcon size={14} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </>
+      )}
 
       {/* Run scripts toggle — injects the site's bundled runtime scripts into
           the editable frames so authored behaviour runs while editing. */}

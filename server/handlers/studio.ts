@@ -137,6 +137,18 @@
  *       unregistered `pkg.*` node — see `NodeRenderer.tsx`'s
  *       `PackageComponentPlaceholder`.
  *
+ *   GET  /admin/api/studio/git/status          → `studio/git.ts`
+ *   GET  /admin/api/studio/git/diff
+ *   GET  /admin/api/studio/git/log
+ *   POST /admin/api/studio/git/{branch,commit,push,init,restore}
+ *       W4-3 — version control as Studio's publish verb. Every canvas edit is
+ *       a working-tree mutation; these routes are how a designer turns a
+ *       session of them into a commit, a branch, and a push. `Bun.spawn` of
+ *       system git with an argv array (never a shell), `cwd` pinned to a
+ *       project that must be contained under `studio-workspace/` AND own its
+ *       `.git` — otherwise git's discovery walk would find Studio's OWN
+ *       repository and commit into it. No force push, no reset, no arbitrary
+ *       argument passthrough: the route surface IS the allowed command set.
  *   GET/POST /admin/api/studio/style-compile-consent → `studio/styleCompileConsent.ts`
  *       WS-2.1's missing front door: whether THIS project needs its own
  *       Sass/PostCSS/Tailwind compiler run (and is still at Tier 0, so it
@@ -227,7 +239,7 @@ import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFrame
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
-import { filterStudioLoadPages, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
+import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatch, StudioEditSchema } from './studioWriteback'
 import { probeProject, tryServeStudioProbe } from './studio/projectProbe'
 import { mergeStudioMeta } from './studio/studioMeta'
@@ -250,6 +262,7 @@ import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
+import { tryServeStudioGit } from './studio/git'
 import { tryServeStudioStories } from './studio/storiesRoutes'
 import { syncStoryBoardFrames } from './studio/boardFrames'
 import type { DbClient } from '../db/client'
@@ -285,6 +298,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
+  tryServeStudioGit,
   tryServeStudioStories,
 ] as const
 
@@ -377,16 +391,22 @@ export async function tryServeStudio(
       const projectName = projectDisplayName(dir)
       const pageIdsParam = parseStudioLoadPageIdsParam(url.searchParams.get('pageIds')) // see studioLoadResponse.ts
       if (pageIdsParam === null) return badRequest('invalid pageIds query param')
-      const loaded = await loadStudioPages(dir) // always full — meta is project-wide, filtered below
-      const { componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss } = loaded
+      // The filter reaches the compute: `loadStudioPages` skips the per-page
+      // convert for every route not asked for, while the meta below stays a
+      // full, fresh project-wide recompute. See `studioLoadResponse.ts`.
+      const loaded = await loadStudioPages(dir, { pageIds: pageIdsParam })
+      const { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline
       // stays a pure read: opening the board is the moment the board may be
       // written, and this is the route that means it. One-time and idempotent
       // — see `syncStoryBoardFrames`. No-ops instantly when there are no
-      // stories, which is every project that does not use Storybook.
+      // stories, which is every project that does not use Storybook. Reads
+      // `loaded.stories`, which a narrowed load still reports IN FULL (the
+      // story ROUTES are all still discovered and parsed; only the per-page
+      // convert narrows), so a targeted reload can never retract a frame.
       syncStoryBoardFrames(dir, loaded.stories)
-      const { pages, missingPageIds } = filterStudioLoadPages(loaded.pages, pageIdsParam)
+      const missingPageIds = missingStudioLoadPageIds(pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)
       // or render the "promote to render" placeholder (Tier 0, the default

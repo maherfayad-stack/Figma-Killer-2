@@ -402,10 +402,11 @@ export function ExportDialog({
             variant="primary"
             type="button"
             disabled={!canExport}
+            loading={exporting}
             aria-describedby={error ? errorId : undefined}
             onClick={handleDownload}
           >
-            {exporting ? 'Exporting…' : 'Download bundle'}
+            Download bundle
           </Button>
         </>
       }

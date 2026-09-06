@@ -12,7 +12,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { apiRequest } from '@core/http'
 import type { PageKind } from '@core/studio-board'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
-import { studioWriteDir } from './studioSaveRequests'
+import { studioWriteDir } from './studioWorkspaceDir'
 
 /** POST /admin/api/studio/page response — the newly scaffolded page. */
 const StudioCreatePageResponseSchema = Type.Object({

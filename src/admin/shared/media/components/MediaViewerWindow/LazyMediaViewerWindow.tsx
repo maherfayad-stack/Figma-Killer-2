@@ -3,9 +3,9 @@
  *
  * `MediaViewerWindow` (+ its `viewers/` subtree, `TagEditor`,
  * `ReplaceFileDialog`, and `useDebouncedSave`) is only needed when a user
- * actually opens an asset preview/edit flow — the callers
- * (`MediaLibraryControl`, `MediaExplorerPanel`) mount it unconditionally with
- * `open`/`editor` props that are usually falsy. `MediaViewerWindow` itself
+ * actually opens an asset preview/edit flow — the caller
+ * (`MediaLibraryControl`) mounts it unconditionally with `open`/`editor`
+ * props that are usually falsy. `MediaViewerWindow` itself
  * already returns `null` when `!open || !editor`, so gating the dynamic
  * `import()` on the same condition here doesn't change when the window is
  * visible — it only defers the network fetch for its chunk until the first

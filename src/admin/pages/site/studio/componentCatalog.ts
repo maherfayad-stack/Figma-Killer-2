@@ -23,7 +23,7 @@ import { useEffect, useState } from 'react'
 import { apiRequest } from '@core/http'
 import { Type } from '@core/utils/typeboxHelpers'
 import { LocalComponentSpecSchema, type LocalComponentSpec } from '@site/property-controls/componentPropKind'
-import { studioWriteDir } from './studioSaveRequests'
+import { studioWriteDir } from './studioWorkspaceDir'
 
 const ComponentsResponseSchema = Type.Object({
   components: Type.Array(LocalComponentSpecSchema),

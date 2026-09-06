@@ -195,6 +195,11 @@ export const CAPABILITY_META: Record<CoreCapability, CapabilityMeta> = {
     label: 'Run studio project code',
     description: "Boot an imported project's own dev server and screenshot it for visual comparison. Executes the user's code — never granted by default.",
   },
+  'studio.git.write': {
+    label: 'Commit to a studio project',
+    description:
+      "Let the AI record a commit in the project's own git repository, under the user's git identity. Never granted by default, and never implies push, branch, or repository creation.",
+  },
 }
 
 /**

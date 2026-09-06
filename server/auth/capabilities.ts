@@ -90,6 +90,15 @@ const adminCapabilities: CoreCapability[] = [
   // `studio.run.project` is deliberately NOT granted: that is Tier 2 —
   // executing the open project's own code (dev server + Playwright) — and
   // stays opt-in per its note in `src/core/capabilities.ts`.
+  //
+  // `studio.git.write` (W4-3) is deliberately NOT granted either, for the
+  // adjacent reason: a commit carries the user's git identity into a history
+  // their team reads, and delegating file WRITES to an agent is not the same
+  // decision as delegating attribution. A human in the Version control panel
+  // is unaffected — that surface is gated by `site.structure.edit` like every
+  // other editing panel, not by this capability, which exists to gate the
+  // AGENT tool (`studio_git_commit`). Grant it per connector, or on a custom
+  // role, when that delegation is actually wanted.
   'studio.write',
 ]
 

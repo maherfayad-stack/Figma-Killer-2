@@ -8,8 +8,8 @@ import { DependenciesPanel } from '@site/panels/DependenciesPanel'
 import { PanelRail } from '@site/sidebars/PanelRail'
 import { PluginEditorPanel } from '@site/panels/PluginEditorPanel'
 import { SelectorsPanel } from '@site/panels/SelectorsPanel'
+import { GitPanel } from '@site/panels/GitPanel'
 import { FrameworkChangeConfirmProvider } from '@admin/shared/dialogs/FrameworkChangeConfirmDialog'
-import { VCDeletionConfirmProvider } from '@admin/shared/dialogs/VCDeletionConfirmDialog'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import styles from './LeftSidebar.module.css'
 
@@ -53,6 +53,7 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
   if (state.dependenciesPanelOpen) return 'dependencies'
   if (state.inspectPanelOpen) return 'inspect'
   if (state.contentPanelOpen) return 'content'
+  if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
   return null
 }
@@ -134,7 +135,6 @@ export function LeftSidebar({
       />
 
       <FrameworkChangeConfirmProvider>
-      <VCDeletionConfirmProvider>
         <div
           className={styles.panelSlot}
           data-testid="left-sidebar-panel-slot"
@@ -193,6 +193,13 @@ export function LeftSidebar({
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'dependencies'}>
                 <DependenciesPanel variant="docked" />
               </div>
+              {/* Version control. Hidden-but-mounted like its siblings so a
+                  half-typed commit message survives a tab switch — the panel's
+                  own status read is gated on `gitPanelOpen`, so being mounted
+                  costs no subprocess while it is not the active panel. */}
+              <div className={styles.panelMount} hidden={effectiveActivePanel !== 'git'}>
+                <GitPanel variant="docked" />
+              </div>
               {effectivePluginPanelId !== null && (
                 <div
                   className={styles.panelMount}
@@ -224,7 +231,6 @@ export function LeftSidebar({
             </div>
           )}
         </div>
-      </VCDeletionConfirmProvider>
       </FrameworkChangeConfirmProvider>
 
       {panelExpanded && (

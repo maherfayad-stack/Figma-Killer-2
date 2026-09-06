@@ -1,7 +1,8 @@
 /**
  * useStandaloneMediaEditor — build a `MediaAssetEditor` handle for callers
- * that aren't the Media page (e.g. the docked `MediaExplorerPanel` inside
- * Site/Content). Wraps the same `cmsMedia.ts` mutations the Media page uses
+ * that hold a single asset rather than a whole library (today:
+ * `MediaLibraryControl` in the site editor's property panel). Wraps the same
+ * `cmsMedia.ts` mutations the full media workspace uses
  * under the hood, then notifies the caller of every successful change so
  * its local list cache can stay in sync.
  *

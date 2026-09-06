@@ -79,6 +79,13 @@ export const CORE_CAPABILITIES = [
   // and is never granted by default.
   'studio.write',
   'studio.run.project',
+  // Committing to the open project's git repository (W4-3). Separate from
+  // `studio.write` on purpose: writing a file into a workspace is a draft the
+  // user can see and undo in the editor, while recording a commit attaches
+  // their git identity to a change in a repository they may push to a team.
+  // Like `studio.run.project`, it is never granted by default — see
+  // `server/auth/capabilities.ts`.
+  'studio.git.write',
 ] as const
 
 export type CoreCapability = typeof CORE_CAPABILITIES[number]

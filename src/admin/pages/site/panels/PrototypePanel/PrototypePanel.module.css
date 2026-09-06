@@ -1,0 +1,94 @@
+/* The prototype inspector — the right sidebar's body while the board is in
+   prototype mode. Mirrors CommentsPanel's shell so the sidebar does not change
+   shape when the mode does. */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    /* min-height:0 lets the sections scroll instead of the panel growing — the
+       same flex-child trap the properties and comments panels both hit. */
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    /* No padding at the top: `PanelHeader` is a full-bleed bar with its own
+       inset, exactly as in CommentsPanel. */
+    padding: 0 var(--space-s) var(--space-s);
+}
+
+/* Undo the panel's own horizontal padding for the full-bleed header bar. */
+.panel > header {
+    margin: 0 calc(-1 * var(--space-s));
+}
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding: var(--space-s) 0;
+}
+
+.section + .section {
+    border-top: 1px solid var(--border-subtle);
+}
+
+.sectionTitle {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-s);
+}
+
+.fieldLabel {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.note {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}
+
+.codeList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.codeRow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-px);
+    min-width: 0;
+}
+
+.codeTarget {
+    color: var(--text-bright);
+    font-size: var(--text-xs);
+}
+
+/* The evidence never wraps mid-token and never widens the sidebar — a long
+   handler expression truncates rather than pushing a horizontal scrollbar
+   under the whole panel. */
+.codeEvidence {
+    overflow: hidden;
+    color: var(--text-subtle);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}

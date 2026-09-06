@@ -21,17 +21,19 @@ topology below first.
   (`SelectionToolbar.tsx`), not by pressing the node itself:
   `NodeRenderer.tsx`'s only pointer hook is `onPointerDownCapture` for
   selection, not `useDraggable`.
-- `@dnd-kit/core` genuinely IS used — but only on surfaces that never cross
-  an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s `<DndContext>`)
-  and the **Site Explorer** (`useSiteExplorerDnd.ts`, its own separate
-  `<DndContext>`). `CanvasRoot.tsx` mounts no `<DndContext>` at all.
+- `@dnd-kit/core` genuinely IS used — but only on one surface that never
+  crosses an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s
+  `<DndContext>`). The Site Explorer used to be the second such surface; its
+  panel was CMS-only chrome and has been deleted along with
+  `useSiteExplorerDnd.ts`. `CanvasRoot.tsx` mounts no `<DndContext>` at all.
   `src/__tests__/architecture/single-drag-mechanism.test.ts` contains
   `@dnd-kit/core` (and native HTML5 `dataTransfer`) to an explicit allowlist
   of exactly these files — a new surface reaching for either fails that gate.
-- **Module-picker and media-canvas-insertion** drags are a third mechanism —
-  raw pointer events with no `DndContext` (`ModuleInserterDialog.tsx`,
-  `useMediaCanvasInsertionDrag.ts`), sharing the canvas's drop-zone resolver
-  through `canvasInsertionDrop.ts`.
+- **Module-picker** drags are a third mechanism — raw pointer events with no
+  `DndContext` (`ModuleInserterDialog.tsx`), sharing the canvas's drop-zone
+  resolver through `canvasInsertionDrop.ts`. A media-asset counterpart
+  (`useMediaCanvasInsertionDrag.ts`) used to ride the same resolver from the
+  Media Explorer panel; that panel was CMS-only chrome and both are gone.
 - The **Media workspace** (folders/assets — not the canvas) is a fourth
   mechanism: native HTML5 drag-and-drop (`draggable`, `dataTransfer` —
   `useMediaDnd.ts`, `mediaDragDrop.ts`, `mediaDnd.ts`). `dataTransfer` is
@@ -78,17 +80,24 @@ Canvas node reorder (move an existing node) — RAW POINTER, not @dnd-kit
 DOM panel / layer tree reorder — the ONE real @dnd-kit/core canvas-adjacent surface
 ─────────────────────────────────────────────────────────────────────────
   <DndContext>  (DomPanel.tsx, autoScroll={false} — see useDomPanelDnd.ts)
-    <TreeNode>  useDraggable/useDroppable, one SortableContext per parent group
+    <LayerRowList>  flattens the tree and mounts only the visible row slice
+      <TreeNode>    useDraggable per MOUNTED row; there is no droppable and no
+                    SortableContext — the drop target is resolved from
+                    measured row rects (`measureRows` + `findDomDropRow`)
   onDragEnd → useDomPanelDnd.ts → the same `moveNodes` store action
 
-Site Explorer (page tree / folders) — its OWN separate @dnd-kit context
-─────────────────────────────────────────────────────────────────────────
-  <DndContext>  (useSiteExplorerDnd.ts) — isolated from the DOM panel's.
+  Windowing consequences, both deliberate:
+   - only mounted rows register a rect, so an off-screen row is never a drop
+     target. It is also off screen, and the pointer is inside the viewport.
+   - dnd-kit's own auto-scroll stays off. `useDomPanelDnd`'s `runAutoScroll`
+     drives the nearest SCROLLABLE ancestor (`findScrollContainer`), which is
+     `StudioPagesTree`'s page list — the panel's own `.treeArea` is
+     `overflow: visible`, so scrolling it moved nothing.
 
-New-module / media insertion — raw pointer, no DndContext at all
+New-module insertion — raw pointer, no DndContext at all
 ─────────────────────────────────────────────────────────────────────────
-  ModuleInserterDialog.tsx / useMediaCanvasInsertionDrag.ts
-    own pointer listeners, own ghost element. Both call
+  ModuleInserterDialog.tsx
+    own pointer listeners, own ghost element. Calls
     canvasInsertionDrop.ts's resolveCanvasPointerInsertionDrop, which shares
     canvasDnd.ts's resolver with the canvas reorder drag above.
 
@@ -105,12 +114,11 @@ Drag sources (canvas + DOM panel — the Media workspace is a separate topology,
 |--------------------------------------|-----------------------------------|-----------------------------------------------------------------------------|
 | Selection toolbar hand-grab button   | Canvas — the selected node/group | Move the node(s) to the drop target (raw pointer, `useCanvasReorderDrag.ts`) |
 | Module inserter item                 | Module picker / inserter dialog  | Insert a new node of the picked module at the drop target (raw pointer, `ModuleInserterDialog.tsx`) |
-| Media Explorer asset                 | Site editor Media panel          | Image asset inserts `base.image`; video asset inserts `base.video` (raw pointer, `useMediaCanvasInsertionDrag.ts`) |
 | DOM panel tree row                   | The DOM panel tree               | Move the node to the drop target (`@dnd-kit/core`, `useDomPanelDnd.ts`)     |
 
 Existing-node canvas moves and DOM-panel moves both resolve through the same
 tree-mutation math but are driven by two different event systems — see the
-topology above. Module-picker / media-insertion sources start outside the
+topology above. Module-picker sources start outside the
 frame tree entirely and use pointer listeners plus
 `resolveCanvasPointerInsertionDrop(...)` because they need the same drop
 zones but carry no existing node id.
@@ -294,9 +302,8 @@ useEditorStore.getState().moveNodes(target.draggedIds, target.parentId, target.i
 (`DomPanel.tsx` → `useDomPanelDnd.ts`), against the same resolved target
 shape.
 
-**Module-picker / media insertion** (`ModuleInserterDialog.tsx`,
-`useMediaCanvasInsertionDrag.ts`) resolve through
-`resolveCanvasPointerInsertionDrop` on every pointer move and commit
+**Module-picker insertion** (`ModuleInserterDialog.tsx`) resolves through
+`resolveCanvasPointerInsertionDrop` on every pointer move and commits
 `insertNode` on pointerup — see the Cookbook below.
 
 All of `insertNode`, `moveNode`, and `moveNodes` go through
@@ -361,10 +368,6 @@ if (drop) insertModule(module, drop.location)
 
 The module inserter keeps its own pointer drag state, but target resolution and preview geometry are shared through `canvasInsertionDrop.ts`.
 
-### Drop media from the Site editor Media panel
-
-`mediaCanvasInsertionForAsset(asset)` maps image assets to `base.image` defaults (`{ src: asset.publicPath }`) and video assets to `base.video` defaults (`{ videoUrl: asset.publicPath }`). Other asset types are not canvas insert sources. The drag hook then calls `useInsertModule(mod, drop.location, { defaults })`, so the created node is selected and routed through the same page/Visual Component insertion path as module-picker drops.
-
 ### Drop an existing node
 
 On the **canvas**, the drag is armed from the selection toolbar's hand-grab
@@ -402,15 +405,14 @@ Bypasses DnD entirely. Same mutation as a drop.
 
 ### Listening for drop events
 
-**On the DOM panel / Site Explorer** (the real `@dnd-kit/core` surfaces):
-don't add raw `dragstart` / `dragend` listeners — `@dnd-kit` owns those. Put
-drop-reaction logic in `onDragEnd` (in the page that owns that `<DndContext>`).
+**On the DOM panel** (the real `@dnd-kit/core` surface): don't add raw
+`dragstart` / `dragend` listeners — `@dnd-kit` owns those. Put drop-reaction
+logic in `onDragEnd` (in the page that owns that `<DndContext>`).
 
-**On the canvas** (reorder, module-picker, media-insertion — none of them
-`@dnd-kit`): there is no `onDragEnd` to hook into. React to the resolved
-target in `handleWindowPointerUp` (`useCanvasReorderDrag.ts`) or the
-pointerup handler that closes the gesture (`ModuleInserterDialog.tsx`,
-`useMediaCanvasInsertionDrag.ts`).
+**On the canvas** (reorder, module-picker — neither of them `@dnd-kit`):
+there is no `onDragEnd` to hook into. React to the resolved target in
+`handleWindowPointerUp` (`useCanvasReorderDrag.ts`) or the pointerup handler
+that closes the gesture (`ModuleInserterDialog.tsx`).
 
 **On the Media workspace** (native HTML5 DnD): react in `onDrop` on the
 target element (`useMediaDnd.ts`'s `handleDrop`), same as any native
@@ -445,14 +447,13 @@ present on that surface.
 - Source-of-truth files:
   - `src/admin/pages/site/canvas/canvasDnd.ts` — `getCanvasDropZone`, `resolveCanvasDropTarget`, `resolveCanvasInsertionTarget` (zoom-aware edge bands)
   - `src/admin/pages/site/canvas/canvasDomGeometry.ts` — `measureCanvasDropCandidates`, `getViewportZoom`, iframe↔editor coordinate translation
-  - `src/admin/pages/site/canvas/canvasInsertionDrop.ts` — pointer-to-canvas insertion target + fixed preview geometry shared by module and media insert sources
+  - `src/admin/pages/site/canvas/canvasInsertionDrop.ts` — pointer-to-canvas insertion target + fixed preview geometry for pointer-driven insert sources
   - `src/admin/pages/site/canvas/CanvasRoot.tsx` — mounts NO `<DndContext>`; the canvas reorder drag is raw pointer events
   - `src/admin/pages/site/canvas/useCanvasReorderDrag.ts` — the canvas reorder drag-state hook (raw pointer, not dnd-kit)
   - `src/admin/pages/site/canvas/canvasPointerRelay.ts` — cross-iframe pointer relay the reorder drag depends on
   - `src/admin/pages/site/panels/DomPanel/DomPanel.tsx` — the DOM panel's own `<DndContext>` (`autoScroll={false}` — see `useDomPanelDnd.ts`'s own auto-scroll)
   - `src/admin/pages/site/panels/DomPanel/useDomPanelDnd.ts` — DOM panel drag-state hook (real `@dnd-kit/core`)
   - `src/admin/shared/media/hooks/useMediaDnd.ts` / `src/admin/shared/media/utils/mediaDragDrop.ts` / `src/admin/shared/media/utils/mediaDnd.ts` — Media workspace native HTML5 DnD, incl. the `dragover` protected-mode session mirror
-  - `src/admin/pages/site/panels/MediaExplorerPanel/mediaCanvasInsertion.ts` — media asset → base module/defaults mapping
   - `src/admin/pages/site/store/insertLocation.ts` — `InsertLocation` shape
   - `src/core/page-tree/mutations.ts` — `insertNode`, `moveNode`, `moveNodes`, `wrapNode`
   - `src/admin/pages/site/canvas/boardSnapping.ts` — `computeSnap`, `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)

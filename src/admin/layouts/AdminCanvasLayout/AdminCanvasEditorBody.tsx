@@ -13,6 +13,7 @@ import { useAutoResolveDependencies } from '@admin/pages/site/hooks/useAutoResol
 import { useRegisterProjectModules } from '@admin/pages/site/studio/registerProjectModules'
 import { usePreviewAxesHydration } from '@admin/pages/site/studio/usePreviewAxesHydration'
 import { useStudioCommentsLoad } from '@admin/pages/site/studio/useStudioCommentsLoad'
+import { useStudioPrototypeLoad } from '@admin/pages/site/studio/useStudioPrototypeLoad'
 import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { LeftSidebar } from '@admin/pages/site/sidebars/LeftSidebar'
@@ -63,6 +64,10 @@ export function AdminCanvasEditorBody({
   // Review comments — editor-only, and only meaningful once there is a board
   // to pin them on. See the hook's own doc for why it is not in the shell.
   useStudioCommentsLoad()
+  // Prototype flows — the links the user drew, plus the flow map Studio derives
+  // from the project's own navigation code. Same editor-only reasoning as the
+  // comments loader above; see the hook's own doc.
+  useStudioPrototypeLoad()
   // Own the toolbar's "Open live page" target. Resolves templates to the
   // page / post they're previewed against (templates have no routable slug of
   // their own); lives here, in the lazy body, so the CMS fetch it needs for
@@ -90,10 +95,9 @@ export function AdminCanvasEditorBody({
         position: relative makes this the containing block for absolutely
         positioned panels (Guideline #356 / Task #358 / Architect #504).
         flex is kept so CanvasRoot's flex:1 fills the full width.
-        DndContext wraps the full editor body so SiteExplorerPanel rows can be
-        reordered across sections and folders.
-        DomPanel has its own nested DndContext for tree-node reordering — that
-        context is isolated; nested DndContexts are fully supported by dnd-kit.
+        DndContext wraps the full editor body. DomPanel has its own nested
+        DndContext for tree-node reordering — that context is isolated; nested
+        DndContexts are fully supported by dnd-kit.
       */}
       <DndContext sensors={canvasDndSensors} collisionDetection={pointerWithin}>
         {/* `ConfirmDeleteProvider` wraps the editor body so the canvas

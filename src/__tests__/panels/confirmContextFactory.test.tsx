@@ -1,12 +1,12 @@
 /**
  * Unit tests for `createConfirmContext` — the shared "preview impact, then
- * fast-commit or defer to a confirmation dialog" machinery behind both
- * <FrameworkChangeConfirmProvider/> and <VCDeletionConfirmProvider/>.
+ * fast-commit or defer to a confirmation dialog" machinery behind
+ * <FrameworkChangeConfirmProvider/>.
  *
  * The factory owns the pending / confirm / cancel lifecycle; each provider
  * supplies only a `resolve` (impact computation) and the dialog body. These
  * tests exercise the factory directly with a tiny generic harness so the
- * lifecycle is verified once, independent of either concrete dialog.
+ * lifecycle is verified once, independent of any concrete dialog.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'

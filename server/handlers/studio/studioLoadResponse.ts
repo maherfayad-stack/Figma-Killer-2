@@ -14,58 +14,49 @@
  * actually needs re-parsed, instead of re-streaming (and re-patching into the
  * store) every page in the project for a one-page edit.
  *
- * **Deliberately NOT a second parse path.** `loadStudioPages(dir)` still runs
- * in full, unfiltered, exactly as it does for a normal load — this module
- * only decides which of its already-computed `pages` get sent back. Two
- * reasons that's the right split, not a missed optimization:
+ * **The filter reaches the COMPUTE, not just the response.** The parsed ids
+ * are handed to `loadStudioPages(dir, { pageIds })`, which skips the
+ * per-page convert (`parsedPageToSitePage` + the asset-sentinel rewrite) for
+ * every route the caller did not ask for — see that function's own
+ * `options.pageIds` doc for exactly which stages narrow and which stay
+ * project-wide. This module is then left owning the two things that are
+ * genuinely about the RESPONSE: naming the ids that matched nothing, and the
+ * `?stream=1` line shape.
  *
- * 1. **Meta correctness.** `componentSources`, `styleRules`,
- *    `styleRuleSources`, `conditions`, `vendorCss`, and `authoredCss` are
- *    genuinely PROJECT-WIDE, not per-page — `loadStudioStyles` builds the style
- *    registry from every page's imported stylesheets together (shared CSS
- *    files, cascade order), and `componentSources` is merged across every
- *    route. The very edit that triggered a targeted reload can change any of
- *    them without touching the page the client asked for: a new `import` on
- *    the edited page adds a `componentSource` for a component every OTHER
- *    page might also use; an edited page whose `className` maps to a
- *    previously-unseen selector changes `styleRules` for the whole registry a
- *    sibling page reads from too. There is no way to answer "what changed"
- *    without recomputing the whole registry — a filtered load that skipped
- *    this and returned stale `styleRules` would render the edited page
- *    WRONG, which is worse than the full reload this feature replaces. So the
- *    meta line is ALWAYS a full, fresh recompute, filtered or not.
- * 2. **The cache already pays for it — now genuinely, on both halves of the
- *    pipeline.** `pageParseCache.ts` (WS-5.5) keys on each route's own file
- *    plus its resolved local-component dependencies' mtimes — completely
- *    independent of whether THIS call filters its output. By the time a
- *    targeted reload fires, the board's own initial load already warmed the
- *    cache for every untouched page; only the file an agent tool just wrote
- *    has a stale mtime and pays a real re-parse. This claim used to be only
- *    HALF true: `loadStudioStyles` -> `collectEntryStylesheets` (the entry
- *    `index.html`/`main` import-graph BFS that finds the app's GLOBAL
- *    stylesheets) had no cache of its own and ran its full ts-morph
- *    semantic-resolution walk on every single `loadStudioPages` call
- *    regardless of `pageParseCache` hits — 500-850ms of synchronous compute
- *    paid again on every targeted reload no matter how narrow. Fixed by
- *    `@core/studio-sync`'s `entryStylesheetCache` (mtime + missing-candidate
- *    keyed, invalidated on any dependency it walked moving) — see that
- *    module's doc for the exact contract. With both caches warm, running the
- *    unfiltered pipeline and filtering the OUTPUT costs the same
- *    server-side compute as a genuinely page-scoped parse would, for the
- *    common case this feature exists for. What filtering actually saves is
- *    the part that scales with project size regardless of caching: the
- *    NDJSON transfer size, the client's JSON-parse work, and the store patch
- *    for every UNCHANGED page — the real "wrong cost" on a large project.
+ * **The meta line stays a full, fresh recompute — filtered or not.**
+ * `componentSources`, `styleRules`, `styleRuleSources`, `conditions`,
+ * `vendorCss`, and `authoredCss` are genuinely PROJECT-WIDE, not per-page:
+ * `loadStudioStyles` builds the style registry from every page's imported
+ * stylesheets together (shared CSS files, cascade order), and
+ * `componentSources` is merged across every route. The very edit that
+ * triggered a targeted reload can change any of them without touching the
+ * page the client asked for: a new `import` on the edited page adds a
+ * `componentSource` for a component every OTHER page might also use; an
+ * edited page whose `className` maps to a previously-unseen selector changes
+ * `styleRules` for the whole registry a sibling page reads from too. There is
+ * no way to answer "what changed" without recomputing the whole registry — a
+ * filtered load that returned stale `styleRules` renders the edited page
+ * WRONG, which is `canvas-14`'s bug and is worse than the full reload this
+ * feature replaces.
+ *
+ * The parse behind that registry is not re-paid per reload: `pageParseCache.ts`
+ * (WS-5.5) keys each route on its own file plus its resolved local-component
+ * dependencies' mtimes, and `@core/studio-sync`'s `entryStylesheetCache`
+ * covers the entry-stylesheet BFS that used to run its full ts-morph
+ * semantic-resolution walk on every single call. With both warm — which a
+ * targeted reload always has, by construction, since the board loaded the
+ * project before it could edit it — only the file the write actually touched
+ * pays a real re-parse.
  *
  * **Unknown/stale ids never fail the request.** A page id the client holds
  * may have been deleted or renamed by the very edit that triggered the
- * reload (or simply never existed). `filterStudioLoadPages` reports those as
- * `missingPageIds` instead of erroring, so the caller can drop the
+ * reload (or simply never existed). `missingStudioLoadPageIds` reports those
+ * as `missingPageIds` instead of erroring, so the caller can drop the
  * corresponding frame(s) from its store rather than keep a ghost page. A
  * BRAND-NEW page (`studio_create_page`) needs no special case here at all:
  * `loadStudioPages` re-walks the pages directory on every call, so a page
- * the client has never seen shows up in its unfiltered `pages` just like any
- * other, and gets selected the same way an edited one does.
+ * the client has never seen is converted and returned like any other as soon
+ * as the caller names its id.
  */
 import type { Page } from '@core/page-tree'
 import { safeParseValue, Type } from '@core/utils/typeboxHelpers'
@@ -95,28 +86,23 @@ export function parseStudioLoadPageIdsParam(raw: string | null): string[] | unde
   return result.ok ? result.value : null
 }
 
-export interface FilteredStudioLoadPages {
-  pages: Page[]
-  /** `undefined` when no filter was requested — see this module's doc for why that keeps an unfiltered response byte-identical (`JSON.stringify` drops `undefined`-valued keys). */
-  missingPageIds: string[] | undefined
-}
-
 /**
- * Selects the requested subset of an already-fully-computed `pages` array.
- * `pageIds === undefined` (no filter) returns every page, unchanged — the
- * existing, unfiltered contract. Otherwise returns only the pages whose id
- * matched, plus every requested id that matched nothing.
+ * Every requested id that the narrowed load produced no page for — a page
+ * deleted or renamed by the very edit that triggered this reload, or one that
+ * never existed. `undefined` when no filter was requested, which is what
+ * keeps an unfiltered response byte-identical (`JSON.stringify` drops
+ * `undefined`-valued keys).
+ *
+ * `pages` is already the narrowed set (`loadStudioPages(dir, { pageIds })`),
+ * so this only reports; it never filters a second time.
  */
-export function filterStudioLoadPages(
+export function missingStudioLoadPageIds(
   pages: readonly Page[],
   pageIds: readonly string[] | undefined,
-): FilteredStudioLoadPages {
-  if (!pageIds) return { pages: [...pages], missingPageIds: undefined }
-  const requested = new Set(pageIds)
-  const filtered = pages.filter((page) => requested.has(page.id))
-  const found = new Set(filtered.map((page) => page.id))
-  const missingPageIds = pageIds.filter((id) => !found.has(id))
-  return { pages: filtered, missingPageIds }
+): string[] | undefined {
+  if (!pageIds) return undefined
+  const found = new Set(pages.map((page) => page.id))
+  return pageIds.filter((id) => !found.has(id))
 }
 
 /**

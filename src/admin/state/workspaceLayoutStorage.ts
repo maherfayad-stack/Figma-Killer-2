@@ -75,11 +75,6 @@ export interface StoredWorkspaceLayout {
   activeLeftPanel?: string | null
 
   // ── Site-workspace-only fields ────────────────────────────────────────────
-  /**
-   * Active tab inside the consolidated Explorer panel
-   * ('layers' | 'pages' | 'media'). Site/content workspaces only.
-   */
-  explorerPanelTab?: string
   /** ID of the file currently open in the floating code editor (site only). */
   activeEditorFileId?: string | null
   /** Whether the floating code editor is visible (site only). */
@@ -120,7 +115,6 @@ const StoredWorkspaceLayoutSchema = Type.Object(
     leftOpen: Type.Optional(Type.Boolean()),
     rightOpen: Type.Optional(Type.Boolean()),
     activeLeftPanel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    explorerPanelTab: Type.Optional(Type.String()),
     activeEditorFileId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     codeEditorPanelOpen: Type.Optional(Type.Boolean()),
     // PropertiesPanelMode is a string union; keep loose to avoid coupling to

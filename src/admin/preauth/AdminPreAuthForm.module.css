@@ -43,18 +43,3 @@
   font-weight: 600;
 }
 
-@keyframes studioAdminSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.spinIcon {
-  animation: studioAdminSpin 0.8s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinIcon {
-    animation: none;
-  }
-}

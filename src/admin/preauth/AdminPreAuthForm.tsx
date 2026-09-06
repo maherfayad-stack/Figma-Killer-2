@@ -3,7 +3,6 @@ import type { FormEvent } from 'react'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { AlmLogo } from '@ui/components/AlmLogo'
-import { LoaderIcon } from 'pixel-art-icons/icons/loader'
 import {
   getCurrentCmsUser,
   loginCms,
@@ -221,12 +220,8 @@ export function AdminPreAuthForm({
             size="md"
             type="submit"
             fullWidth
-            disabled={submitting}
-            aria-busy={submitting}
+            loading={submitting}
           >
-            {submitting && (
-              <LoaderIcon size={14} className={styles.spinIcon} aria-hidden="true" />
-            )}
             <span>{submitLabel}</span>
           </Button>
         </form>

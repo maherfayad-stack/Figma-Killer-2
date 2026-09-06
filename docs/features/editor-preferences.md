@@ -275,11 +275,11 @@ The Settings → Preferences screen renders this list automatically from the cat
 | Editor           | `textScale`                 | select (small / default / large / extra-large) | `'default'` | `data-editor-text-scale` on the document + layout roots |
 | Canvas           | `defaultBreakpoint`         | select-dynamic (`site.breakpoints`) | `'desktop'` | `applyDefaultBreakpointPreference` |
 | Canvas           | `dimInactiveBreakpoints`    | boolean              | `true`      | `CanvasRoot.tsx`                               |
-| Layers panel     | `layersShowIcon`            | boolean              | `true`      | `TreeNode.tsx`                                 |
-| Layers panel     | `layersShowTag`             | boolean              | `true`      | `TreeNode.tsx`                                 |
-| Layers panel     | `layersShowClasses`         | boolean              | `true`      | `TreeNode.tsx`                                 |
-| Layers panel     | `layersAutoExpandSelected`  | boolean              | `true`      | `DomPanel.tsx` selection effect                |
-| Layers panel     | `layersSmoothScroll`        | boolean              | `true`      | `DomPanel.tsx` scroll handler                  |
+| Layers panel     | `layersShowIcon`            | boolean              | `true`      | `LayerRowList.tsx` (read once per tree, passed to each row) |
+| Layers panel     | `layersShowTag`             | boolean              | `true`      | `LayerRowList.tsx` (read once per tree, passed to each row) |
+| Layers panel     | `layersShowClasses`         | boolean              | `true`      | `LayerRowList.tsx` (read once per tree, passed to each row) |
+| Layers panel     | `layersAutoExpandSelected`  | boolean              | `true`      | `LayerRowList.tsx` selection-reveal effect     |
+| Layers panel     | `layersSmoothScroll`        | boolean              | `true`      | `LayerRowList.tsx` selection-reveal effect     |
 | Properties panel | `propertiesSmoothScroll`    | boolean              | `true`      | `StyleSurface.tsx` + `PropertiesPanel.tsx`     |
 | Properties panel | `propertiesSectionsExpanded`| boolean              | `true`      | `StyleSectionsEditor.tsx`, `StyleSurface.tsx`, `CustomPropertiesSection.tsx` |
 | Command palette  | `spotlightTelemetryEnabled` | boolean              | `false`     | command palette usage tracking                  |

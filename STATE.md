@@ -6,9 +6,341 @@ before stopping.** Format and rules: [`docs/agent-refs/handoff-protocol.md`](doc
 Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 `server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`.
 
+---
+
+### perf-04 — the user's own save reparsed the whole board; the agent's writes had used the narrow path for weeks
+
+- **Agent:** store-engineer
+- **Stage:** built and gated. `bun run build`, `bun run lint` clean; targeted
+  suites green (see "Verification"). **Needs human dogfood** — the numbers
+  below are a synthetic corpus, not a real board.
+- **Updated:** 2026-09-06
+- **Branch:** `fix/narrow-save-reload` off `main` (rebased onto `a90c3fc`).
+
+**The defect.** `fsCodemodAdapter.saveSite` answered `shifted ||
+sharedComponents` with `requestCmsSiteReload()` — the full `loadSite()`:
+re-parse and re-convert every page, re-stream all of them, replace the whole
+document, re-render every frame. `sharedComponents` is `isInlinedNodeId(id) ||
+isRouteChromeNodeId(id)`, so on a Next.js App Router board — where the layout
+chrome is shared by construction — it is true for a large share of ordinary
+edits. The user paid a whole-board reparse roughly two seconds after they
+stopped typing. The narrow path (`/reload-scope` → `?pageIds=` →
+`patchPages`) already existed, worked, and was used only by the MCP
+live-reload push and the structural commits.
+
+**Client.** One module now owns "a write landed; make the board agree" —
+`src/admin/pages/site/studio/studioBoardResync.ts`
+(`resyncBoardAfterWrite(touchedFiles, { refusedRuleIds })`). Both writers call
+it: `commitStructural` (moved out of `studioSaveRequests.ts`, where it was
+`reloadStructuralScope`) and `saveSite`. Its module doc **enumerates the cases
+that keep the full `loadSite()`** — page create/delete/rename, a new component
+file, a workspace switch, project-wide settings that re-derive every page, the
+`asset`/`detach`/`swap`/`insert-slot` one-shots, and anything `/reload-scope`
+cannot prove narrow.
+
+**Server, half 1 — `reload-scope` stopped asking a binary question.** It used
+to answer "is this file a page's OWN route file, and does no other route
+depend on it?", which meant a shared component always widened and App Router
+widened unconditionally. It now **inverts `pageParseCache.ts`'s recorded
+per-route dependency sets**: a touched file's scope is every cached route that
+recorded it as a dependency. `anyOtherRouteDependsOnFile` is replaced by
+`cachedRouteDependencies(dir)`. A shared `components/Card.tsx` narrows to the
+pages that inline it; an App Router `layout.tsx` narrows to every route
+beneath it. Four rules keep it from ever UNDER-reloading, all widening:
+cold cache · a discovered route with no cache entry · **a project with any
+Storybook story file** (W5-3's `storyPages.ts` is a third route producer and
+does not use the parse cache, so its routes record no dependencies at all) ·
+a touched file no cached route claims (this is what covers the cache's
+documented one-level-deep limit) · a cached route no longer discoverable.
+
+**Server, half 2 — `?pageIds=` reaches the compute.**
+`loadStudioPages(dir, { pageIds })` skips the per-page CONVERT
+(`parsedPageToSitePage` + the asset-sentinel rewrite) for unrequested routes.
+`filterStudioLoadPages` is gone; `missingStudioLoadPageIds` reports only.
+Parse and style collection stay project-wide **on purpose and it is
+commented**: `loadStudioStyles` builds the registry from every route's
+stylesheets together, so narrowing it would ship a shrunken `styleRules`, and
+the client replaces its registry wholesale — `canvas-14`'s "renders against
+last minute's stylesheet" with a new cause. The parse is cached; convert is
+not, which is exactly why convert is the narrowable stage.
+
+**Measured** (synthetic corpus: shared `Header` component, one stylesheet per
+page, ~100 nodes/page; warm parse cache, which a targeted reload always has;
+median of 15 runs on this machine):
+
+| | 15 pages | 40 pages |
+|---|---|---|
+| server compute, full | 22.5 ms | 102.9 ms |
+| server compute, `?pageIds=` one page | 14.5 ms (**−36%**) | 45.5 ms (**−56%**) |
+| page payload | 247 KB → 16 KB (−93%) | 659 KB → 16 KB (−97%) |
+| client `JSON.parse` of pages | 0.9 ms → 0.1 ms | 4.1 ms → 0.1 ms |
+
+Those are the *narrowed-load* numbers only. The path this replaces was
+`loadSite()`, which on top of the full load also pays two more HTTP round
+trips (`/framework`, `/tokens`), a whole-document `validateSite`,
+`resetLoadedValues` over every page, and a full-board re-render — none of
+which a `patchPages` patch pays.
+
+**Two interleaving landmines, both fixed, both with a regression test that was
+verified to FAIL when the fix is reverted** (`studio/__tests__/saveNarrowResync.test.ts`):
+
+1. **Ordering.** A resync re-reads the touched pages and rewrites the very
+   diff baselines `saveSite` advances *after* its POST
+   (`commitNodeValuesBaseline`, `commitStyleRuleBaseline`,
+   `commitClassIdsBaseline`). Resyncing inline — where `requestCmsSiteReload()`
+   used to sit — lets the save's own commit then overwrite the fresh disk
+   baseline with the PRE-reload document, and the next autosave tick re-sends
+   every prop of every reloaded page as if the user had just typed it. The
+   adapter therefore records `resyncTouchedFiles` and awaits the resync as the
+   LAST thing `saveSite` does. `requestCmsSiteReload()` was fire-and-forget and
+   hid this; an awaited narrow reload does not.
+2. **The refusal baseline.** `fetchStudioPagesById` calls
+   `setStudioStyleRuleSources`, which calls `commitBaseline` on the freshly
+   parsed rules. Without `refusedRuleIds` that adopts, as the new baseline, a
+   value the server just REFUSED to write — so the user's obvious retry (the
+   same value again) diffs as "no change" and is never attempted a second
+   time. That is `style-02`'s bug #3, reachable again through the reload path.
+   `refusedRuleIds` is now threaded save → resync → fetch → `commitBaseline`,
+   and `setStudioStyleRuleSources`'s third argument changed from `pages` to the
+   full `CommitBaselineOptions`.
+
+**Also cleaned up (in scope, not drive-by):** `studioWriteDir` /
+`setStudioLoadedDir` moved from `studioSaveRequests.ts` to
+`studioWorkspaceDir.ts`, which already owns "which project is active" — six
+unrelated clients (icon/component/translation catalogs, page requests, the
+live-reload bridge, the new resync module) were importing the save module
+purely to ask that question, and the resync module would otherwise have closed
+a cycle. `resolveModuleId`/`resolveTextProp` extracted from
+`studioPageLoad.ts` (which my doc additions pushed to 751 lines) into
+`server/handlers/studio/moduleMapping.ts` — they encode the base-module
+catalogue's rules, not the pipeline's.
+
+**Store-engineer handoff, per the contract.**
+
+- **Slices touched: none.** No slice gained state and no selector was added or
+  changed. `patchPages` (`site/lifecycleActions.ts`) is called with the same
+  `PatchPagesInput` it already accepted, from one more caller. Nothing new is
+  stored, nothing new is derived, nothing new needs to survive reload.
+- **New selectors: none.** (So: no O(n) selector was introduced; the "never
+  put a tree walk in a selector" rule is untouched by this change.)
+- **New mutations: none.** No history entry, no coalesce key. `patchPages`
+  keeps its deliberate posture — bypasses `mutateSite`/`runHistoricMutation`,
+  never flips `hasUnsavedChanges`, never pushes undo history, because the
+  content came FROM disk.
+- The one store-adjacent behaviour change is *which* store action a save-
+  triggered reload ends in: `patchPages` instead of `loadSite`. That is
+  strictly gentler — `loadSite` replaces the whole document; `patchPages`
+  upserts by page id and leaves other pages' unsaved edits alone.
+
+**Landmines for the next agent.**
+
+1. **Narrowing may never UNDER-reload.** Every widening rule in
+   `reloadScope.ts` is load-bearing. If you make one of them narrower, the
+   failure mode is a board silently showing stale content with no error
+   anywhere — the hardest class of bug in this system to notice.
+2. **Storybook projects do not narrow at all right now**, on purpose (rule 2).
+   The named follow-up is to have `buildStoryRouteEntries` record its parses
+   in `pageParseCache` like the other two route producers do; then delete the
+   `storyFilesIn` gate and its test.
+3. **`fsCodemodAdapter.ts` is at 699 of the 700-line ceiling.** The next
+   feature in it has to extract first. `studioSaveRequests.ts` (552) and
+   `studioBoardResync.ts` (158) are where the extractions have been going.
+4. **A narrow resync drops an editor-authored rule that was never written to
+   disk** — `patchPages` replaces `styleRules` wholesale and never merges
+   (a merge would resurrect a rule the edit deleted, `canvas-14`). This is
+   PARITY with `loadSite`, not a new hazard, and it is documented in
+   `studioBoardResync.ts`. Do not "fix" it by making the narrow path merge:
+   the two reload paths would then give different answers for the same
+   document, which is worse than the thing it fixes.
+5. **If you add a field to the load stream's `meta` line, apply it in
+   `fetchStudioPagesById` too** — `canvas-14`'s standing rule, now on a hotter
+   path than it was.
+
+**Verification.**
+
+- `bun run build` ✅, `bun run lint` ✅.
+- `bun test src/__tests__/architecture src/__tests__/editor-store
+  src/__tests__/studio src/admin/pages/site/studio server/handlers` — 2582
+  pass, 2 fail. Both pre-existing and outside this change:
+  `icon-catalog-integrity` (`chevron-left` missing from `node_modules`) and
+  `server/handlers/studio/projectMcpApprovals.test.ts` (`Cannot find module
+  './agentRosterMcpTools'`).
+- Full `bun test` on the pre-rebase tree: 10837 pass / 73 fail, every failure
+  in the documented pre-existing set (`streamClaudeCli` cluster,
+  `icon-catalog-integrity`, `stopGateCheck`, and the canvas iframe-rendering
+  suites that pass in isolation and fail only in a batch run).
+- New tests: 6 in `reloadScope.test.ts` (shared-component narrowing, App
+  Router route + layout-chain narrowing, and four widening cases), 5 in
+  `studioPageLoadNarrow.test.ts` (the narrowed compute keeps the project-wide
+  registries byte-identical, including rules only an unrequested page
+  imports), 4 in `pageParseCache.test.ts` (the dependency map, incl. that it
+  reads recorded keys and never mtimes), 8 in `saveNarrowResync.test.ts`
+  (routing + the two interleaving guards).
+- NOT run: browser/e2e.
+
+**Human action needed:** dogfood at `/admin/site?studio` on a board with
+several frames sharing a component. Type in one text node, wait for the
+autosave, and confirm (a) only the frames that actually share the touched file
+flicker/re-render, (b) undo still walks back through the whole burst, and
+(c) a class edit that Studio refuses still re-attempts on your next save
+instead of going quiet.
+
+---
+
+### struct-05 — two modules crossed the 700-line ceiling on `main`; both split, neither grandfathered
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Branch:** `refactor/split-oversize-modules` off `main`.
+
+Recent merges pushed `IframeFrameSurface.tsx` (707) and `server/ai/drivers/claudeCli.ts`
+(716) past `module-size-budgets`' 700-line CEILING, failing the gate on `main`.
+Fixed the way every prior crossing in this file was: **extraction, not a
+`GRANDFATHERED` entry** — the ledger gained nothing and should stay as it is.
+`IframeFrameSurface.tsx` (707 → 444) finally performed the split its own
+graduation note had named and deferred: the cross-iframe wheel + pointer +
+keyboard forwarding — every event that fires inside the frame but belongs to the
+editor's parent-document layers (canvas pan/zoom, the cross-frame drag relay, the
+global shortcut listeners) — moved verbatim to `canvas/useIframeEventForwarding.ts`,
+alongside its sibling `useIframeCursorBridge`/`useIframeFrameAutoHeight` hooks;
+the hook is called at the exact position the two effects occupied, so effect
+order, injector mount order, and dep arrays are unchanged (the extracted deps
+gained only `iframeRef`, a stable ref object, because it is now a parameter and
+`exhaustive-deps` demands it). The component is left owning the iframe document
+alone. `claudeCli.ts` (716 → 655) gave up the one part of itself that has nothing
+to do with running a turn: the static `FALLBACK_MODELS` catalogue plus
+`claudeCliCapabilities()` — pure data and one pure function, changing when
+Anthropic ships a model alias, not when the turn machinery changes — now
+`drivers/claudeCliModels.ts`, exporting `CLAUDE_CLI_FALLBACK_MODELS`. This was
+deliberately kept clear of the streaming body, the argv assembly, and the session
+flags so the **planned warm-process rework** of `streamClaudeCli` lands on an
+unmoved file with ~45 lines of headroom. Pure moves throughout: no re-export
+shims, no behaviour change, no runtime logic touched. Verified: the gate passes,
+`bun run build` and `bun run lint` clean, `src/admin/pages/site/canvas` 90/90,
+and `claudeCli.test.ts` is **bit-identical to its `origin/main` baseline (24 pass
+/ 53 fail)** — that cluster and `icon-catalog-integrity` were already failing
+before this branch and are not this change's.
 
 
+---
 
+### panel-11 — the unreachable CMS explorer panels are gone; Button has a `loading` state; rail colour means something
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** delete the dead CMS chrome the Explorer panel's own header comment
+  already declared unreachable, and land two design-system fixes that were
+  blocking consistent async UI.
+- **Scope:** `panels/SiteExplorerPanel/**` + `panels/MediaExplorerPanel/**`
+  (deleted) · `shared/dialogs/{SiteCreateDialog,TemplateSettingsDialog,VCDeletionConfirmDialog}`
+  (deleted, except `SiteCreateDialog.module.css`) · `store/slices/uiSlice.ts` ·
+  `layout/siteEditorLayoutPersistence.ts` · `state/workspaceLayoutStorage.ts` ·
+  `spotlight/commands/panels.ts` · `sidebars/LeftSidebar` + `sidebars/PanelRail` ·
+  `src/ui/components/Button/**` · `src/ui/railAccent.ts` · fourteen async-button
+  call sites · `docs/{design,editor}.md`, `docs/reference/{canvas-dnd,page-tree,persistence-keys,design-tokens}.md`.
+  Three commits on `refactor/dead-cms-chrome-and-ui-polish`, one draft PR.
+- **Done so far:**
+  - **Deleted** `SiteExplorerPanel/` (15 files) and `MediaExplorerPanel/` (8),
+    their four test files, and the three dialogs only they mounted. Every
+    importer was traced first: the sole survivors were their own tests, two
+    architecture allowlists, and docs.
+  - `VCDeletionConfirmProvider` was still wrapped around the whole left sidebar
+    (`LeftSidebar.tsx:136`) with zero consumers of `useVCDeletionConfirm` once
+    `SiteExplorerPanel` went — deleted with it.
+  - Killed the dead three-tab state end to end: `ExplorerPanelTab` /
+    `explorerPanelTab` / `setExplorerPanelTab` (`uiSlice.ts`), its
+    `SiteLayoutSelection` slot and `explorerTab()` reader
+    (`siteEditorLayoutPersistence.ts`), its storage-schema field
+    (`workspaceLayoutStorage.ts:82`), and the three spotlight commands that set
+    it (`panels.showSite` / `showCode` / `showMedia`).
+  - **`Button` now has `loading`** (`src/ui/components/Button/Button.tsx:47`):
+    native `disabled` + `aria-busy` + a spinner absolutely centred over the
+    resting label, which stays in flow under `visibility: hidden` inside a
+    wrapper that inherits the button's own `gap`/`justify-content`. The width
+    does not move. `.loading` also resets the `:disabled` 38% opacity.
+    Fourteen hand-rolled busy states migrated.
+  - **Rail accents are semantic** (`src/ui/railAccent.ts`): `RailAccentGroup` —
+    `navigate` gold · `style` mint · `inspect` sky · `content` lilac · `assist`
+    violet — declared per item in `PanelRail.tsx`'s `PRIMARY_RAIL_ITEMS`. The
+    FNV hash survives only for plugin panels and the import/export dialogs'
+    open-ended category lists.
+- **Next step:** none for this entry. Two follow-ups are listed in the PR body:
+  (1) rename `shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css` to
+  something honest once the in-flight `ImportProjectDialog` move lands — the
+  component is deleted, the stylesheet has ten live importers, and one of them
+  is a file this task was told not to touch; (2) ~18 remaining ternary-label
+  busy buttons that live in files this task could not touch
+  (`toolbar/DownloadCodeButton`, `studio/ImportProjectDialog`,
+  `PropertiesPanel/{ImageSourceSection,FormSettingsPanel,InstanceCallSiteView}`,
+  `canvas/PackageComponentPlaceholder`) plus a handful it could
+  (`ContentPanel`, `MfaSettingsCards`, `McpServersSection`,
+  `MediaStoragePanel`, `FrameworkManagerDialog`, the two font dialogs).
+- **Decisions:**
+  - **`src/admin/shared/media/` is kept in full** — the audit flagged its folder
+    panel / canvas / viewer window / picker modal as deletion candidates. They
+    are not dead: `MediaPickerModal` transitively owns `MediaSidebar` →
+    `MediaFolderPanel` + `MediaStoragePanel`, `MediaCanvas`, `useMediaWorkspace`,
+    `useMediaDnd`, and it is opened by Settings → General (favicon), `SvgControl`,
+    and `MediaLibraryControl`. `MediaViewerWindow` (→ `TagEditor`,
+    `ReplaceFileDialog`) is opened by `MediaLibraryControl`.
+  - **`SiteCreateDialog.module.css` is kept where it is** — see Landmines.
+  - **`assignRailAccents` no longer de-duplicates explicit accents** — two
+    surfaces in the same `RailAccentGroup` are *supposed* to match. Repeat
+    avoidance now applies only to the hashed fallback.
+  - **`SplitButton.busy` was deliberately not folded into `Button.loading`** —
+    it spins the caller's own leading icon and does NOT disable. Different
+    contract, left alone.
+- **Landmines:**
+  - `SiteCreateDialog/` looked like a clean leaf delete. Its `.module.css` is
+    imported as `dialogStyles` by **ten** live surfaces (`ImportProjectDialog`,
+    `DesignImportDialog`, `SelectorDialogs`, `CreateColorDialog`,
+    `ClassRenameDialog`, `ExplorerRenameDialog`, `UserDialog`, `RoleDialog`,
+    `McpServersSection`, `McpTab`). Deleting the folder wholesale breaks the
+    build. The `.tsx` / `index.ts` / `siteItemNames.ts` are gone; the stylesheet
+    stays with a header comment saying why the folder name is now historical.
+  - `single-drag-mechanism.test.ts` has a **stale-entry** assertion — deleting
+    an allowlisted file fails the gate until you also delete its allowlist line.
+    Same shape in `component-system-placement.test.ts` (its G2 gate read a file
+    that no longer exists). Both fixed in the same commit.
+  - **`git stash` is shared across all worktrees.** Using it to A/B a `fallow`
+    baseline raced another agent and popped *their* canvas/perf WIP into this
+    worktree (13 tracked + 5 untracked files). Recovered by re-stashing exactly
+    those paths with `git stash push -u -m "RECOVERED: …"` — it is back on the
+    stack under that label, at `stash@{0}` as of this entry. **Do not use
+    `git stash` for baseline comparisons here.** Use a throwaway worktree or
+    `git checkout HEAD~n` instead.
+  - `fallow dead-code`'s headline counts are useless as a before/after signal:
+    95% of "unused files" are `studio-workspace/` fixture projects, and the
+    number went *up* (409 → 411 src+workspace files, 1026 → 1041 issues) because
+    deleting `SiteExplorerPanel` orphaned ~8 `@core/page-tree` barrel
+    re-exports. Diff the JSON file list, not the summary line.
+- **Verification:** rebased twice while verifying (`main` moved three times);
+  final base is `da2c862`, and build/lint were re-run there.
+  - `bun run build` — exit 0.
+  - `bun run lint` — exit 0.
+  - `bun test` (full, at base `42712cd`) — 10774 pass / 74 fail. Triaged: 55
+    `claudeCli` + 1 `icon-catalog-integrity` (the known set); 3 batch-only
+    timeouts (`moduleInserterFavorites`, `publicSdkExports`,
+    `stepUpSecondaryActions`) that pass 12/12 in isolation; 15
+    canvas-iframe/happy-dom. `src/__tests__/canvas` was A/B'd at base and HEAD
+    — base 10 failures, HEAD 11, the single difference being one arm of
+    `canvasScrollUnrollPinInteraction.test.tsx`. That suite was then run four
+    times per side: base 0/2/1/1, HEAD 1/2. A 5000 ms-timeout flake; this PR
+    touches no file under `canvas/`.
+  - `bun test src/__tests__/{architecture,ui,layout,panels,site-explorer,media,toolbar}`
+    at the final base — 1373 pass / 2 fail, both pre-existing on `origin/main`
+    itself (`icon-catalog-integrity`, and `module-size-budgets` naming
+    `IframeFrameSurface.tsx` 707 + `claudeCli.ts` 716, both from upstream).
+- **Human action needed:** **dogfood the left rail at `/admin/site?studio`.**
+  This is a deliberate visual-identity change. Expect: Explorer gold
+  (unchanged), **Framework and Classes both mint** (they used to be two
+  different colours — the shared tint is the point), Inspect sky, Content lilac,
+  Comments lilac (unchanged), AI assistant violet. Also worth a look: click any
+  migrated async button (Account → Save profile, Settings → plugin dialogs,
+  Export → Download bundle) and confirm the spinner appears **without the button
+  changing width**.
 
 ---
 
@@ -914,6 +1246,152 @@ new), `.../StyleSurface.tsx`, `.../ClassPropertyRow.{tsx,module.css}`,
 
 ---
 
+### canvas-14 — the board now draws flows the user never drew, because their code already performs them
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Branch:** `feat/prototype-phases` (cut from `main`, rebased once mid-work)
+- **Goal:** W5-1 — finish Prototype Mode per `STUDIO-PROTOTYPE-PLAN.md`. Phase 1
+  had merged (PR #3); this is everything else except Play.
+- **Scope (all new unless marked):**
+  - `src/core/studio-prototype/`: **new** `codeFlow.ts`, **new**
+    `__tests__/codeFlow.test.ts`; edited `types.ts`, `serialize.ts`, `index.ts`,
+    `__tests__/prototype.test.ts`
+  - `server/handlers/studio/`: **new** `prototypeNavScan.ts`,
+    `prototypeRouteIndex.ts`, `prototypeCodeFlow.ts`,
+    `__tests__/prototypeCodeFlow.test.ts`; edited `prototypeRoutes.ts`
+  - `src/admin/pages/site/studio/`: **new** `prototypeApi.ts`,
+    `prototypeActions.ts`, `useStudioPrototypeLoad.ts`
+  - `src/admin/pages/site/store/slices/prototypeSlice.ts` (**new**);
+    `store/store.ts` (2 lines + doc)
+  - `src/admin/pages/site/canvas/BoardFlowLayer/` (**new**: layer, CSS,
+    `flowGeometry.ts`, `flowRouting.ts`, barrel, tests); edited
+    `StudioBoardLayers.tsx`, `CanvasModeToggle.tsx`
+  - `src/admin/pages/site/panels/PrototypePanel/` (**new**); edited
+    `sidebars/RightSidebar/RightSidebar.tsx`
+  - `src/admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx` (1 hook)
+  - `src/styles/globals.css` (5 tokens), `src/__tests__/architecture/canvas-aware-selectors.test.ts` (§A.8)
+  - `docs/features/studio-prototype.md` (**new**), `docs/README.md`,
+    `STUDIO-PROTOTYPE-PLAN.md`
+  - NOT touched, deliberately (other sessions own them): `canvas/{BreakpointFrame,
+    BoardFrameView,NodeRenderer,IframeFrameSurface,ProjectCssInjector,
+    UserStylesheetInjector,canvasFormPreview,canvasDnd}`, `uiSlice.ts`,
+    `PanelRail`, `keybindings.ts`, `panels/{PropertiesPanel,DomPanel,
+    SiteExplorerPanel,MediaExplorerPanel,GitPanel}`, `src/core/page-parser/**`
+    (read-only consumption in one test), `usePersistence.ts`, `server/ai/**`.
+
+**What landed.** Phases 1a, 1b, 2 (already there), **3**, **4 (connectors half)**
+and **6** of `STUDIO-PROTOTYPE-PLAN.md`. Phase 5 (Play) is untouched.
+
+**The differentiator, and it works end to end.** `deriveCodeFlow(dir)` reads the
+navigation the user's project already performs and returns it as read-only
+`CodeFlowEdge`s that the board draws between frames. Four purely syntactic AST
+rules (`prototypeNavScan.ts:36`): `href`/`to` string attributes; a navigation
+call anywhere inside a non-string attribute expression (so a handler nested in
+an object prop is found without enumerating the nesting); a bare identifier
+handler followed **one hop** to its same-file declaration; and
+`location.href = '…'`. Targets resolve to page ids through a stated key set
+(`prototypeRouteIndex.ts`), never a fuzzy match.
+
+**Half the design is refusal**, and the tests are weighted that way. Non-literal
+target, external scheme, unknown route, or a spelling two pages both answer to →
+**no edge**. An arrow nobody wrote is the one failure this feature cannot afford,
+because the user cannot tell it is wrong by looking.
+
+**Two plan decisions were reversed, both recorded in the plan's §6.**
+
+1. **`PrototypeLink.origin` is gone.** Phase 1 carried
+   `origin: 'design' | 'code'` on the guess that a derived flow would be the same
+   shape. It is not: a derived edge is recomputed every load, so it has no stable
+   id, no `NodeHint` and no transition anybody chose — three fabricated fields —
+   and it needs one a `PrototypeLink` has no room for, the source snippet
+   (`evidence`) that justifies a connector the user cannot edit. `origin` had
+   exactly one possible value left, so it was deleted rather than left dead.
+2. **`boardMode` lives in the new `prototypeSlice`, not `uiSlice`** (the plan said
+   `uiSlice`). Every reader of it already reads `codeFlow` or `prototype`. This
+   also dodged a live conflict — another session owns `uiSlice`.
+
+**Connectors are frame-to-frame, not element-to-frame,** and that is a decision
+rather than a shortcut. Tracking an element's rect means a cross-document
+measurement pass on every frame move/resize/reflow (the plan's §6 "stutter
+machine"), and the fact being drawn is about SCREENS — the element is named in
+the chip's tooltip, where it does not have to be measured to be true. Element
+anchoring for *authored* links is listed as follow-up 3 in the plan's new §9.
+
+**Verification:**
+
+| Command | Result |
+|---|---|
+| `bun run build` (`tsc -b && vite build`) | exit 0 |
+| `bun run lint` | exit 0 |
+| `bun test src/__tests__/architecture` | **512 pass / 0 fail** |
+| `bun test src/core/studio-prototype server/handlers/studio/__tests__/prototypeCodeFlow.test.ts src/admin/pages/site/canvas/BoardFlowLayer` | **68 pass / 0 fail** (all new) |
+| `bun test` (full) | **10772 pass / 69 fail** |
+
+The 69 were triaged against a throwaway worktree at `origin/main`, which is
+**69 fail** too. The sets are identical except for one flake each way (mine:
+`collectEntryStylesheets caching`, an mtime test; baseline: `inline text editing
+wiring`) — both pass in isolation. 53 of the 69 are the known `claudeCli` suite;
+the canvas ones are cross-file pollution (`bun test ./src/__tests__/canvas` alone
+gives 10 on this branch and **12** on `origin/main`, i.e. baseline is a strict
+superset). **Nothing in this entry's Scope fails.**
+
+**Landmines.**
+
+- **The whole-suite run lies about the canvas tests.** `src/__tests__/canvas`
+  fails 10–12 tests when run as a batch and 0 when run per-file, on `main` as
+  much as here. Diff against a baseline worktree before believing any canvas
+  failure is yours (`git worktree add --detach <tmp> origin/main`, symlink the
+  parent's `node_modules`, run the same filter). Do not `git stash`.
+- **A worktree has no `node_modules`.** Symlink the parent checkout's.
+  `bun run icons:sync` cannot run there at all (it wants the private
+  `pixel-art-icons` checkout as a sibling of the *parent*) — `arrow-right` was
+  already vendored, so nothing needed syncing.
+- **`codeFunctionPaths` is not enough for this.** The plan's §1 says the parser
+  "already sees" navigation handlers and drops them as `codeFunctionPaths`. It
+  records the handler's LOCATION and never its value, so it cannot answer "where
+  does this go". Hence a separate syntactic scan — which is also the right layer,
+  since resolving a target needs every page's routes and the render parse is
+  per-page.
+- **A node id from the scan may not exist in the page tree.** An element inside a
+  `.map` is expanded into N nodes with `#N` suffixes; the scan mints the
+  unsuffixed position. Harmless today (connectors are frame-level and the id is
+  only cited in a tooltip), load-bearing the moment anything tries to select from
+  it. `prototypeCodeFlow.test.ts` cross-checks the id against `parsePageFile`'s
+  own keys so the two minting sites cannot drift.
+- **The chip is the only pointer-events target in the board layer**, and only for
+  hover. Everything else is click-through — a full-board rectangle that swallowed
+  canvas clicks is the trap `BoardCommentsLayer.module.css` documents.
+- **`prunePrototypeLinks` and the `prune` op still have no caller.** Deleting a
+  page leaves its links in the file; they draw nothing (no frame to point at), so
+  it is cruft, not a bug. Plan §9 item 4.
+
+**Human action needed — this is visual, please dogfood.**
+
+1. `bun run dev`, open `/admin/site?studio` on a project with more than one page
+   (`studio-workspace/test-3` has four).
+2. Add a `<a href="/sign-up">` or `onClick={() => navigate('/sms')}` to one page's
+   `.tsx` and let it reload.
+3. In the canvas chrome pill, press the **arrow** toggle (right of Design/Live —
+   it only appears on a Studio board in design view).
+4. Expect: a **grey dashed** curve from that frame to the target frame, with a
+   monospace chip on it; hovering the chip cites the exact snippet and
+   `file:line:col`.
+5. Select an element, and in the right sidebar (now showing **Prototype**) pick a
+   destination. Expect a **teal solid** curve to appear, and
+   `.studio/prototype.json` to gain a link.
+6. Delete the element you linked. Expect the teal curve to turn **red and dashed**
+   rather than disappearing.
+7. Zoom right out and right in: line weight, dash rhythm, arrowhead and chip
+   should all stay the same size on screen.
+
+**Next step:** Phase 5 (Play) — see `STUDIO-PROTOTYPE-PLAN.md` §9, which lists
+the five remaining items in priority order. The authored-link model already
+carries everything Play needs (action, transition, target).
+
+---
+
 ### style-02 — a class assignment wrote Studio's own hash into the user's JSX, and a refused write was silently adopted
 
 - **Agent:** parser-surgeon
@@ -1397,6 +1875,438 @@ new), `.../StyleSurface.tsx`, `.../ClassPropertyRow.{tsx,module.css}`,
   (a) `cache_read_input_tokens` should now dominate `input_tokens` from round 2
   onward in the context meter, and (b) a multi-screen `studio_compare` should
   return in roughly a quarter of the time it used to.
+
+---
+
+### server-17 — Studio had no version control at all, so a designer could not ship
+
+**Status:** landed on `feat/studio-git-v1`. **Needs human dogfooding** against a
+real repository with a real remote — every route and refusal is covered by
+tests against real `git` (including a push to a local bare remote), but nobody
+has driven the panel in a browser yet.
+
+**What was wrong.** Studio's document IS the user's repository, and the editor
+knew nothing about that. Every canvas edit was an unattributed working-tree
+mutation; there was no way to see what had changed, no way to attribute it, and
+no way to ship it without leaving the tool for a terminal. There is no export
+step in this product, so git IS the publish verb — and it did not exist.
+
+**What landed.** `docs/features/studio-git.md` is the full writeup; this entry
+is the coordination summary.
+
+Server (`server/handlers/studio/`), all new:
+
+- `git.ts` — routing only, registered in `STUDIO_SUB_ROUTERS`.
+- `gitRunner.ts` — the only place `git` is spawned, plus the repository guard.
+- `gitOperations.ts` — the eight allowed operations, each building its own argv.
+- `gitStatusParse.ts` — pure `--porcelain=v2 --branch -z` parser.
+- `gitPaths.ts` — every caller-supplied path/branch/sha/message judged before
+  it can reach an argv.
+
+| Method | Route | Request | Response |
+|---|---|---|---|
+| GET | `/admin/api/studio/git/status` | `?dir` | `{ isRepo, status: { branch, entries[], excludedCount, hasOrigin } \| null }` |
+| GET | `/admin/api/studio/git/diff` | `?dir&file` | `{ file, staged, unstaged, untracked, truncated }` |
+| GET | `/admin/api/studio/git/log` | `?dir&limit` | `{ commits: [{ sha, shortSha, author, date, subject }] }` |
+| POST | `/admin/api/studio/git/branch` | `{ dir?, create? } \| { dir?, switch? }` | `{ ok, branch, created }` |
+| POST | `/admin/api/studio/git/commit` | `{ dir?, message, files[] }` | `{ ok, sha, shortSha, files }` |
+| POST | `/admin/api/studio/git/push` | `{ dir? }` | `{ ok, branch, output }` |
+| POST | `/admin/api/studio/git/init` | `{ dir?, confirm: true, message? }` | `{ ok, branch, sha, filesCommitted }` |
+| POST | `/admin/api/studio/git/restore` | `{ dir?, sha, file }` | `{ ok, file, sha }` |
+
+Client: `src/admin/pages/site/studio/gitRequests.ts` (wire contract) +
+`src/admin/pages/site/panels/GitPanel/` (rail panel). Agent:
+`server/ai/mcp/tools/studio/gitTools.ts` — `studio_git_commit` only.
+
+**Four things to know before you touch any of it.**
+
+1. **`studio-workspace/` is inside Studio's OWN working tree.** Git discovers a
+   repository by walking up from its `cwd`, so running git in a project with no
+   `.git` of its own silently finds THIS repo and reports — or commits into —
+   it. `assertOwnGitRepo` (containment on the real path + not the workspace
+   root + `<dir>/.git` exists) is what stops that, with
+   `GIT_CEILING_DIRECTORIES` as an independent second stop. **Never weaken it.**
+   `status` and `init` are the only routes exempt from the `.git` half, both
+   deliberately: `status` must be able to answer `isRepo: false` so the panel
+   can offer `init`, and `init` is about to create the repository.
+2. **The route surface IS the allowed command set.** There is no generic
+   "run git with these args" entry point and there must never be one. No force
+   push, no reset, no clean, no stash, no `git add -A` outside `init`.
+3. **Create-a-branch and switch-to-a-branch are deliberately asymmetric.**
+   Creating is allowed with a dirty tree (it moves a pointer; it cannot lose a
+   byte) — that IS the intended flow. Switching refuses and returns the dirty
+   file list. Studio never stashes: a stash is an invisible place a designer's
+   screen went.
+4. **Studio holds no git credentials.** The subprocess env is an allowlist of
+   locators with no token variable, and `GIT_TERMINAL_PROMPT=0` makes an
+   unauthenticated push fail fast with git's real message instead of hanging.
+
+**Decisions a later agent might want to revisit, with the reasoning.**
+
+- **The diff view is not CodeMirror**, despite the work order asking for it.
+  `@codemirror/merge` is not a dependency, no language mode understands a
+  unified diff, and `codemirror-lazy-only.test.ts` permits exactly one
+  CodeMirror consumer because a second static import pulls ~605 kB into the
+  eager admin chunk. `gitDiffLines.ts` is a pure, unit-tested parser and the
+  rendering is plain rows. Revisit only if highlighting INSIDE hunks is needed
+  — and widen the gate deliberately, not by accident.
+- **`studio.git.write` is a new capability**, separate from `studio.write`, and
+  is NOT granted to the built-in Admin role (same posture as
+  `studio.run.project`). Writing a file is a draft the user can undo in the
+  editor; a commit attaches their git identity to a change their team reads.
+  The human panel is unaffected — it is gated by `site.structure.edit` like
+  every other editing panel.
+- **`studio_git_commit` is in the MCP registry but NOT in
+  `STUDIO_AGENT_TOOL_NAMES`**, so the in-canvas agent is not offered it. That
+  list is documented as a deliberate decision each time; whether the in-canvas
+  turn loop should commit is a product call nobody has made.
+- **`status` entries carry `agentAuthored`**, paired server-side with
+  `turnWriteLog.ts`. Honest scope: the write log resets each turn, so it means
+  "written by the agent during the MOST RECENT turn", not "ever". A durable
+  per-file authorship record is a separate, larger feature.
+
+**Rejections covered by tests** (`server/handlers/__tests__/git.test.ts`,
+`gitPaths.test.ts`, `gitStatusParse.test.ts`,
+`server/ai/mcp/tools/studio/gitTools.test.ts`,
+`src/__tests__/studio/gitDiffLines.test.ts`):
+
+- `dir` outside `studio-workspace/` → 404 on every route.
+- `dir` with no `.git` of its own → 404 on every route except `status`
+  (explicitly asserted so it can never resolve to Studio's own repo).
+- `studio-workspace/` itself → 404.
+- Path traversal on both separators, absolute/UNC/drive-letter paths,
+  `node_modules`/`dist`/`.git`/`.studio` paths, flag-looking paths → 404 on
+  `diff`, `commit`, `restore`.
+- **Symlink escape** — both a symlinked leaf and a symlinked parent directory.
+- One unusable path in a commit's `files` fails the WHOLE commit; nothing is
+  staged and HEAD does not move.
+- Empty file list / blank message → 400.
+- Branch switch over a dirty tree → 409 with `dirtyFiles`, work untouched,
+  still on the original branch.
+- Branch names git itself rejects, and flag-looking ones → 409.
+- Push with no `origin` → 409.
+- `restore` addressed by `HEAD~1`/`@{-1}`/a branch name → 400.
+- No filesystem path appears in any error body.
+- MCP: the tool is invisible with `studio.write` alone, and invisible without
+  `ai.tools.write`.
+
+**Verification.** `bun run build` ✅, `bun run lint` ✅, all 104 architecture
+gates ✅, the five suites above ✅ (111 tests). Full `bun test`: 10314 pass / 81
+fail — every failure is either the `claudeCli` family (pre-existing; the driver
+is disabled on macOS hosts because the CLI keeps credentials in the Keychain)
+or a batch-run isolation flake in `canvas/` suites that pass in isolation.
+
+**Conflict risk for whoever merges next.** The rail registration is its own
+final commit and touches three files an in-flight agent also owns:
+`store/slices/uiSlice.ts`, `sidebars/PanelRail/PanelRail.tsx`,
+`sidebars/LeftSidebar/LeftSidebar.tsx`. Each edit is additive (one `'git'`
+member, one `gitPanelOpen` flag + setter, one rail item, one panel mount) — a
+conflict there should be resolvable by taking both sides.
+
+---
+
+### perf-03 — the Layers tree rendered every expanded node and paid 17 store subscriptions per row; it is now flat, windowed, and costs one
+
+- **Agent:** perf-hunter
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Branch:** `fix/layers-tree-virtualization`, based on
+  `feat/constraint-refusal-ui` (NOT `main` — it stacks on `panel-10`).
+- **Goal:** the audited next-panel-to-fall-over. `DomPanel` had zero windowing,
+  `TreeNode` carried ~17 `useEditorStore` subscriptions per row, and
+  `StudioPagesTree` mounted one of those trees per expanded board frame.
+
+**Before / after — measured, same file, same fixture, on both checkouts**
+
+Harness: `src/__tests__/panels/layersTreePerf.test.tsx`. Fixture: one synthetic
+imported-shaped page, **2,441 nodes at depth 11** (40 sections, a 6-deep wrapper
+spine each, fanning out to 6 branches x 8 leaves), rendered into a stubbed 640px
+scroll viewport at the compact 28px row height, then **fully expanded**
+(`Ctrl+E`). The file is written against `<DomPanel />` + the store only, so it
+runs unchanged on the pre-windowing checkout — that is where the "before" column
+comes from, not from an estimate.
+
+| Measurement | Before | After | Δ |
+|---|---|---|---|
+| Rows mounted, everything expanded | 2,441 | **32** | 76x fewer |
+| Rows mounted, default (collapsed) state | 41 | **32** | window-bounded |
+| `useEditorStore` subscriptions per row (`TreeNode.tsx`) | 17 | **1** | 17x |
+| **Selector invocations per store commit** | **41,497** | **32** | **1,297x** |
+| Expand-all wall time (median of 4/5 warm runs) | 611 ms (557 / 609 / 611 / 627) | **17.3 ms** (14.3 / 15.6 / 17.3 / 18.3 / 23.5) | 35x |
+| Hover commit wall time (median of 3/5 warm runs) | 8.6 ms (6.9 / 8.6 / 9.0) | **0.9 ms** (0.8 / 0.8 / 0.9 / 1.2 / 1.2) | 9.5x |
+
+The 41,497 is the number that mattered: it is what EVERY store commit — a
+keystroke, a hover, a drag move — paid before React began any work.
+
+The four STRUCTURAL rows above are deterministic and were reproduced twice:
+once in this worktree before any edit, once in an independent detached worktree
+at `origin/feat/constraint-refusal-ui`. The two WALL-TIME rows are same-worktree,
+warm-cache medians — the fair comparison, since a fresh worktree's cold
+transpile cache alone swings the "before" expand-all between 580 ms and 3,201 ms.
+Do not quote the wall times as a cross-machine contract; the harness prints
+them and gates only the structural numbers, deliberately.
+
+- **Mechanism (what actually changed, in order of size):**
+  1. **The tree is flat.** `layerRows.ts:flattenLayerRows(nodes, rootIds,
+     expandedIds, alwaysExpandedId)` walks ONLY expanded branches and returns
+     `{nodeId, depth, hasChildren, expanded, subtreeEnd, posInSet, setSize}[]`.
+     A collapsed 40,000-node page flattens to one row. `subtreeEnd` is what
+     replaces the old wrapper `<div>` semantics — the open-container-group
+     highlight and the drag-source dimming are both "this row plus its visible
+     subtree", i.e. an index range.
+  2. **Only the visible slice is mounted.** `rowWindow.ts:computeRowWindow` is
+     uniform-height arithmetic; `useRowWindow.ts` measures the shared scroll
+     ancestor. Rows outside the slice become two spacer blocks whose heights
+     sum to exactly the missing rows, so the scrollbar never moves.
+  3. **`TreeNode` went on a diet: 17 subscriptions → 1.** Everything that is a
+     per-TREE fact (the page, the root id, VC names, the class registry, layer
+     display prefs, live drop state, selection) is read ONCE in
+     `LayerRowList.tsx` and passed as a prop. All 11 store ACTIONS became
+     `useEditorStore.getState().x(...)` inside the handler — the pattern
+     `perf-02` established for `BoardFrameView`. The one survivor is
+     `useEditorStore((s) => s.hoveredNodeId === nodeId)`: hover affects exactly
+     two rows per pointer move, so making it a prop would re-render the window.
+  4. **The DnD context was split in two.** `DomPanelDropStateContext` (live,
+     re-published every `dragMove`) and `DomPanelRowRegistryContext` (stable
+     forever). They used to be one object, so every row re-rendered on every
+     pointer move of a drag just to keep hold of a `registerRow` that never
+     changed. Only the list consumes the live half now.
+  5. **Auto-expand is O(depth).** `getAncestors` (`@core/page-tree`, walks the
+     denormalised `parentId`) replaced `getAncestorIds`, a BFS over every node
+     of the page with a path-array copy per child. `hooks/useTreeWalkOrder.ts`
+     had no other caller and is deleted.
+- **Budgets added** (`layersTreePerf.test.tsx`, three gates, calibrated then
+  tightened so a regression actually fails):
+  - rows mounted with everything expanded ≤ **48** (actual 32; pre-windowing 2,441)
+  - store subscriptions per row ≤ **3** (actual 1; before 17)
+  - selector invocations per commit ≤ **144** (actual 32; before 41,497)
+- **Scope:** `panels/DomPanel/{layerRows.ts, rowWindow.ts, useRowWindow.ts,
+  LayerRowList.tsx+css}` (new) · `panels/DomPanel/{DomPanel,TreeNode,
+  PageLayerSubtree,DomPanelDndContext,DomTreeContext,expansionStore,
+  useDomPanelDnd}` · `TreeNode.module.css` · deleted
+  `hooks/useTreeWalkOrder.ts` · tests
+  `src/__tests__/panels/{layerRows,layersTreePerf,layersTreeWindowing}` · docs
+  `editor.md`, `agent-refs/path-index.md`, `reference/canvas-dnd.md`,
+  `reference/react-compiler.md`, `features/editor-preferences.md`.
+  Untouched by design: `LayerNodeContextMenu.tsx` (panel-10's `ConstraintNotice`
+  wiring), `LayerTreeNodeContent.tsx`, `domPanelDnd.ts`, `src/ui/Tree/**`.
+- **Decisions:**
+  - **If we cannot measure, we do not window.** A zero row height or zero
+    viewport (no scroll ancestor, headless runner, panel rendered outside its
+    host) returns the FULL range. Truncating a tree because layout was
+    unavailable would trade correctness for speed; rendering everything is
+    merely slow. This is also why the whole existing `domPanel.test.tsx` suite
+    passes untouched — happy-dom lays nothing out, so those tests exercise the
+    full-render path, exactly as before.
+  - **The first paint uses a guess, corrected in a LAYOUT effect.** Rows
+    `[0, 60)` at an assumed 28px, then measured before the browser paints. The
+    alternative (render all, then window) paid the full 2,441-row render once
+    per mount.
+  - **Scroll offset is quantized to the row grid** before it enters state, so
+    a 1px wheel tick commits nothing and the re-render count equals rows
+    crossed, not scroll events fired. That is not a debounce — nothing is
+    delayed, the state simply does not change until the window does.
+  - **`React.memo` on `TreeNode` is kept and now earns its keep** (compiler
+    exception #2): the list re-renders on every scroll tick, drag move and
+    selection change, and every prop is a primitive or a store-stable object,
+    so the shallow compare is honest.
+  - **Flat DOM means flat ARIA.** There is no nested `role="group"` any more;
+    each row states `aria-level` / `aria-posinset` / `aria-setsize`, the form
+    the WAI-ARIA tree pattern defines for exactly this case.
+  - **`PageLayerSubtree` was NOT made collapsed-by-default.** The work order
+    asked for that to stop "N frames = N full trees", but windowing against the
+    SHARED scroller already does it better: an off-screen page subtree mounts
+    **zero** rows and stands in for itself with one spacer, and the user still
+    sees layers on the first click instead of two. Gated by a test.
+- **Landmines:**
+  - **`ExpansionStore` is copy-on-write now.** `getExpandedIds()` is the
+    `useSyncExternalStore` snapshot AND an input to the flatten. If you make
+    `expanded` mutate in place again, React sees no change and — worse — the
+    React Compiler hands back a stale row list. A version counter was tried
+    first and is NOT enough for the same reason: the counter is not a
+    dependency of `flattenLayerRows`, so the compiler still caches.
+  - **Auto-scroll during drag was dead code before this branch, and is fixed
+    here.** `runAutoScroll` called `scrollBy` on `DomPanel`'s `.treeArea`,
+    which is `overflow: visible` by design (`DomPanel.module.css` — the single
+    scroller is `StudioPagesTree`'s page list, an ancestor), and compared the
+    pointer against that element's FULL content rect rather than a viewport. It
+    now resolves the real scroll ancestor once per gesture via
+    `findScrollContainer`. **This is the one change in this branch that the
+    tests cannot prove — it needs the dogfood below.**
+  - A row outside the mounted window registers no rect, so it is not a drop
+    target. Fine — it is off screen, and the pointer is not. But auto-scroll
+    near an edge has a ONE-FRAME lag: `scrollBy` → `measureRows()` runs before
+    the scroll listener's `setState` has re-rendered the new rows, so the newly
+    revealed rows resolve on the next rAF tick. If drag-to-edge ever feels like
+    it "sticks" for a frame, that is where it lives.
+  - **Do not put `flattenLayerRows` inside a Zustand selector.** It returns a
+    fresh array; a selector returning one re-renders every consumer on every
+    commit (the `EMPTY_PAGES` note in `StudioPagesTree` is the same hazard).
+  - `data-open-container-group="true"` still marks only the HEAD of the group
+    (the tests address it that way). The background is painted on every row of
+    the span via `.openContainerGroup` + `.openContainerGroupStart/Middle/End`,
+    which flatten the corners facing a neighbour — that is what reproduces the
+    old wrapper's single rounded block.
+  - New handle: `data-drag-source="true"` on every row of the dragged subtree.
+    Added because CSS Modules are not injected in happy-dom, so a class check
+    is not a testable assertion in this repo.
+- **Tried and did NOT help — do not repeat:**
+  - **Counting store subscriptions at runtime by patching
+    `useEditorStore.subscribe`.** It reports **0**. zustand v5's bound hook
+    closes over the internal store object and `Object.assign`s a COPY of
+    `subscribe` onto the exported hook, so patching the hook's property patches
+    the copy. The honest count is the source-level one the harness now does.
+  - **A version counter as the expansion snapshot** — see Landmines. It
+    re-renders correctly and still yields a stale flatten.
+  - **`React.memo` alone**, before the DnD context split, would have been
+    decorative here for the same reason `perf-02` recorded for
+    `BoardFrameView`: the shared context value changed identity on every drag
+    move, so no bailout could ever fire.
+- **Verification:**
+  - `bunx tsc -b` clean. `bun run build` cannot run in a worktree (it hardcodes
+    `./node_modules/vite/bin/vite.js`); ran
+    `bun ../../../node_modules/vite/bin/vite.js build` — built in 66s.
+  - `bun test src/__tests__/{panels,dom-panel,dom-panel-dnd,panels.test.ts}` —
+    **653 pass, 0 fail** (49 files), including all 39 pre-existing
+    `domPanel.test.tsx` tests unmodified.
+  - `bun test src/__tests__/architecture` — 479 pass, 18 fail, ALL
+    `icon-catalog-integrity` (vendored `dist/` unbuilt in a worktree; known).
+  - `bun test src/__tests__/canvas` — 671 pass, 10 fail. Confirmed
+    **pre-existing and identical** by running the same directory in a detached
+    `git worktree` at `origin/feat/constraint-refusal-ui`: same 10 names, same
+    5 file-level errors, `diff` clean. (Attribution was done against a real
+    baseline worktree, never `git stash` — the stash stack is shared between
+    parallel agents.)
+  - `bun eslint` over every changed/added `.ts`/`.tsx` — clean.
+  - Whole suite, both worktrees: baseline 10,240 pass / 96 distinct failure
+    names; this branch 10,221 pass / 105. The 10-name delta is entirely
+    `src/__tests__/canvas/{canvasAnimationInjectorMounting,canvasFrameMounting,
+    nodeRendererEditorAttrs,propertiesLayerLadder,slotContentReactivity,
+    slotPropertyPanelEdit}` — **11 pass / 0 fail when those six files are run
+    on their own** in this branch. That is the documented shared-global
+    isolation flake (`bunfig.toml`'s own comment: fails in a batch, passes in
+    isolation, moves between runs), not a regression. Running
+    `src/__tests__/canvas` as a directory gives byte-identical failure sets on
+    both branches (10 fail / 5 errors, `diff` clean).
+- **Human action needed — dogfood, three things the tests cannot see.** Open
+  `/admin/site?studio` on a real imported project (a deep one — `esim-journey`,
+  not `untitled`), expand the active page in the Layers panel, then `Ctrl+E` to
+  expand everything.
+  1. **Scroll feel.** Wheel-scroll the layers list fast, top to bottom. No blank
+     bands, no jitter, no scrollbar jump. Then switch Settings → density to
+     *comfortable* (36px rows) and scroll again — the row height is measured,
+     not assumed, so this is the case that would expose a wrong constant.
+  2. **Drag feel — the one real behaviour change.** Drag a layer to the top and
+     bottom edges of the list and hold. It should auto-scroll (it did NOT
+     before this branch — see Landmines), and the drop line should keep
+     resolving onto rows as they scroll in. Drop somewhere far from where you
+     started and confirm the move landed where the line said.
+  3. **Focus.** Click a row, press Tab/arrows to confirm it has keyboard focus,
+     then wheel-scroll it far out of view and back. Focus must return to the
+     same row, and `Enter` must still act on it. Also click a node on the
+     CANVAS that is deep inside a collapsed branch — the tree should expand the
+     path and scroll that row into view even though it was never mounted.
+
+---
+
+### panel-10 — a refusal now shows its reason, its way forward, and where in the source it lives
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** make `EditConstraint`'s `actions` and `origin` reach the screen. The
+  engine has computed both for a while; nothing in `src/` rendered either, so
+  every refusal died as a 6-second warning toast carrying one sentence.
+- **Scope:** `src/core/page-tree/editConstraint.ts` (+ barrel) ·
+  `src/admin/pages/site/ui/ConstraintNotice/` (new) ·
+  `src/admin/pages/site/store/{constraintActions,openSourceFile}.ts` (new) ·
+  `store/slices/site/{structuralSourceEdits,nodeActions,deleteNodesAction}.ts` ·
+  `canvas/{canvasDnd.ts,CanvasDropIndicators.tsx (new),BreakpointSelectionOverlay.tsx+css}` ·
+  `panels/DomPanel/LayerNodeContextMenu.tsx+css` ·
+  `panels/PropertiesPanel/jumpToSource.ts` (import-only rewrite — see Landmines) ·
+  `@ui/components/Toast/{toastBus,ToastProvider,Toast.module.css}`.
+- **Done so far:**
+  - `describeStructuralRefusal` (`editConstraint.ts:379`) is the one place a
+    refusal gets its `origin` + `actions`. `explainStructuralConstraint` and
+    `explainGestureConstraint` now both delegate to it, and the store's plan
+    objects call it directly — they hold the NODE, which is where `origin`
+    comes from, and re-deriving the refusal later would be a second copy of the
+    rule.
+  - `StructuralPlan`'s refusal branch carries `constraint: EditConstraint`
+    instead of `{reason, message}` (`structuralSourceEdits.ts:58`).
+  - `toastStructuralRefusal` (`structuralSourceEdits.ts:308`) is now
+    **persistent** (`durationMs: null`), **deduped** (`dedupeKey`, so a repeat
+    counts up on the card already showing instead of stacking), and carries the
+    constraint's first runnable action — or a jump to its `origin` — as the
+    toast button.
+  - Toast bus: new optional `dedupeKey` + `repeatCount`
+    (`toastBus.ts:60`/`:82`), rendered as a `×N` on the title.
+    `ToastProvider`'s timer effect now keeps per-toast REMAINING time in a ref
+    (`ToastProvider.tsx:86`) — it re-armed every visible toast's full countdown
+    on every push/dismiss/hover before, so a burst kept itself alive and a
+    mouse crossing the stack reset the lot.
+  - `ConstraintNotice` (`ui/ConstraintNotice/ConstraintNotice.tsx`) renders a
+    constraint whole; `constraintActions.ts` is the one `kind` → handler table.
+    Mounted today as the layers context menu's refusal **footer**
+    (`LayerNodeContextMenu.tsx:576`), under the disabled Duplicate/Wrap/Delete
+    items it explains.
+  - Reason-on-drag: `canvasDnd.ts:217` now attaches the whole
+    `explainGestureConstraint` result (the seam that had zero consumers) to the
+    invalid drop target, and `CanvasDropIndicators.tsx` paints the sentence in
+    a chip beside the refused rect while the pointer is still down.
+- **Next step:** none for this entry. The obvious follow-up is
+  `InstanceCallSiteView.tsx`'s hand-rolled detach-refusal card
+  (`PropertiesPanel/InstanceCallSiteView.tsx:234`) — it renders a refusal with
+  its own markup and its own extract button, and is a straight swap for
+  `<ConstraintNotice constraint={explainDetachConstraint(...)} nodeId={nodeId} />`.
+  Left alone because `PropertiesPanel/**` was another agent's this wave.
+- **Decisions:**
+  - **A kind with no honest handler renders as plain text, not a disabled
+    button** — "Drag them one by one" is advice, not a command the editor can
+    run; a greyed-out button would claim it could.
+  - **Copy is rendered as the engine authored it.** The only sentence this
+    change contributes is the "Open `<file>:<line>`" affordance label.
+  - `constraintActions.ts` lives beside the STORE, not beside the component,
+    and takes `openSource` as context instead of importing `jumpToSource` —
+    see Landmines.
+  - The drag chip is opaque `--bg-body` with `--warning-text`, not an amber
+    wash: it floats over the USER's page, which can be any colour.
+- **Landmines:**
+  - **Nothing in the store's import graph may import `@site/store/store`.**
+    `jumpToSource` does, so importing it (even transitively, via a barrel that
+    also exports a component) from a store slice fails
+    `no-circular-dependencies.test.ts`. That is why the jump resolution was
+    split into `store/openSourceFile.ts` (takes the state it needs, so a slice
+    can call it with its own `get`) with `jumpToSource.ts` reduced to the
+    component-side wrapper. If you add a refusal surface, follow that split.
+  - `BreakpointSelectionOverlay.tsx` was 4 lines under the 700-line module
+    ceiling; the chip pushed it over. The drag-time layer is now
+    `CanvasDropIndicators.tsx`. Do not grow that file again without splitting.
+  - `decodeSourceNodeId` on a composite (inlined) id returns the COMPONENT's
+    file, not the call site's — so a shared-component refusal's "open" lands in
+    the component definition. That is correct (it is where the markup is), but
+    it surprised the test that expected the page file.
+- **Verification:**
+  - `bunx tsc -b` — clean. `bun run build` cannot run in a worktree (it hardcodes
+    `./node_modules/vite/bin/vite.js`, which only exists at the repo root);
+    ran `bun ../../../node_modules/vite/bin/vite.js build` instead — built.
+  - `bun test src/__tests__/architecture` — 492 pass, 19 fail, ALL
+    `icon-catalog-integrity` (the vendored `dist/` is unbuilt in a worktree;
+    known pre-existing).
+  - `bun test --parallel=4 src/__tests__/{editor-store,panels,studio,ui,dom-panel}`
+    — 1248 pass, 0 fail. `src/__tests__/canvas` — 679 pass, 2 fail
+    (`canvasScrollUnrollPinInteraction`, `canvasSelectionToolbar`); confirmed
+    pre-existing by re-running them on a `git stash -u` of this branch.
+  - `bun x eslint <every changed .ts/.tsx>` — clean.
+- **Human action needed:** **dogfood** at `/admin/site?studio` on an imported
+  project. (1) Drag a `.map` row or a shared-component element in the canvas —
+  a warning chip should follow the refused drop box with the reason, readable at
+  25% and 200% zoom. (2) Let go: the toast should stay until dismissed, and its
+  button should open the right file; repeat the same drag twice more and the
+  toast should show `×3` rather than stacking. (3) Right-click that element in
+  the Layers panel — the footer under the greyed-out Delete/Duplicate should
+  explain why and offer "Open the array in code". Check the footer does not
+  stretch the menu.
 
 ---
 

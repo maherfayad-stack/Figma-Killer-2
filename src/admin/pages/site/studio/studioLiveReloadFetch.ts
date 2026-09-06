@@ -1,13 +1,19 @@
 /**
- * studioLiveReloadFetch — the read half of mcp-tooling's live-reload bridge.
+ * studioLiveReloadFetch — the read half of every targeted reload.
  *
- * After a headless MCP Studio write tool (`studio_apply_edits`/
- * `studio_codemod`/`studio_create_page`/`studio_set_frames`) lands a write on
- * disk, the server relays a best-effort push naming exactly the pages that
- * changed (`server/ai/mcp/tools/studio/liveReloadPush.ts`). This fetches ONLY
- * those pages via the same `?stream=1&pageIds=` filtered load `loadSite`
- * itself supports (`studioLoadStreamSchema.ts`), instead of a full
- * `loadSite()` re-read of the whole project.
+ * Fetches ONLY the named pages via the `?stream=1&pageIds=` filtered load
+ * `loadSite` itself supports (`studioLoadStreamSchema.ts`), instead of a full
+ * `loadSite()` re-read of the whole project. Two callers name the pages two
+ * different ways:
+ *
+ *   - **mcp-tooling's live-reload bridge.** After a headless MCP Studio write
+ *     tool (`studio_apply_edits`/`studio_codemod`/`studio_create_page`/
+ *     `studio_set_frames`) lands a write, the server relays a best-effort push
+ *     naming exactly the pages that changed
+ *     (`server/ai/mcp/tools/studio/liveReloadPush.ts`).
+ *   - **The user's own writes** — the autosave diff and the structural
+ *     commits, both through `studioBoardResync.ts`, which asks
+ *     `POST /admin/api/studio/reload-scope` which pages the touched files feed.
  *
  * CRITICAL — applies the stream's `meta` line, not just its pages. The server
  * recomputes that line IN FULL on every load, filtered or not, precisely
@@ -78,7 +84,21 @@ export interface StudioPagesByIdResult {
   conditions: ConditionDef[]
 }
 
-export async function fetchStudioPagesById(pageIds: readonly string[]): Promise<StudioPagesByIdResult> {
+export interface StudioPagesByIdOptions {
+  /**
+   * Style rules the write that triggered this reload could NOT be applied for
+   * (server refusals plus the client's own). Their diff baseline keeps its
+   * PREVIOUS entry instead of adopting the on-disk value — see
+   * `setStudioStyleRuleSources`. Absent for the MCP bridge, whose reload
+   * follows a headless tool call with no client-side CSS diff behind it.
+   */
+  refusedRuleIds?: ReadonlySet<string>
+}
+
+export async function fetchStudioPagesById(
+  pageIds: readonly string[],
+  options: StudioPagesByIdOptions = {},
+): Promise<StudioPagesByIdResult> {
   const overrideDir = getStudioWorkspaceDir()
   let meta: (StudioLoadStreamLine & { kind: 'meta' }) | null = null
   const pages: Page[] = []
@@ -104,7 +124,7 @@ export async function fetchStudioPagesById(pageIds: readonly string[]): Promise<
   // it is the write-back map, so a rule the agent's edit just introduced can
   // be edited by the user and land in the right file instead of being treated
   // as unmapped, in-memory-only styling.
-  setStudioStyleRuleSources(styleRuleSources, styleRules)
+  setStudioStyleRuleSources(styleRuleSources, styleRules, { refusedRuleIds: options.refusedRuleIds })
 
   mergeLoadedValuesBaseline(pages)
 

@@ -106,19 +106,23 @@ describe('tryServeStudioReloadScope', () => {
       expect(new Set(body.pageIds)).toEqual(new Set(['home', 'about']))
     })
 
-    it('widens for a file that is NOT any page\'s own file — a locally-inlined shared component', async () => {
+    it('narrows a SHARED local component to exactly the pages that inline it — not the whole board', async () => {
+      // The case this route used to refuse outright, and the one that matters:
+      // `components/Card.tsx` is inlined into About only, so About is the
+      // honest scope. Home is untouched and must not be reloaded.
       const { body } = await reloadScope(wsDir, ['components/Card.tsx'])
-      expect(body).toEqual({ ok: true, narrow: false })
+      expect(body).toEqual({ ok: true, narrow: true, pageIds: ['about'] })
     })
 
-    it('widens when editing About.tsx\'s own file even though About depends on Card.tsx — About IS the reparsed route, not a sharing OTHER route', async () => {
+    it('a page\'s own file names that page, even when that page also depends on a shared component', async () => {
       const { body } = await reloadScope(wsDir, ['pages/About.tsx'])
       expect(body).toEqual({ ok: true, narrow: true, pageIds: ['about'] })
     })
 
-    it('widens the WHOLE batch when even one touched file in it is not narrow-safe', async () => {
+    it('a batch of a page file AND a shared component unions their dependents', async () => {
       const { body } = await reloadScope(wsDir, ['pages/Home.tsx', 'components/Card.tsx'])
-      expect(body.narrow).toBe(false)
+      expect(body.narrow).toBe(true)
+      expect(new Set(body.pageIds)).toEqual(new Set(['home', 'about']))
     })
 
     it('widens for a path outside the workspace (adversarial input), never touches the filesystem with it', async () => {
@@ -145,15 +149,85 @@ describe('tryServeStudioReloadScope', () => {
     expect(body.narrow).toBe(false)
   })
 
-  it('widens unconditionally for an App Router project, even for its own page.tsx', async () => {
-    write('next.config.js', 'module.exports = {}\n')
-    write('app/page.tsx', 'export default function Page() { return <div>Home</div> }')
-    // Persist the probe — same step `import-github`'s route takes, and the
-    // one `loadStudioPages`/this route both actually consult.
-    mergeStudioMeta(wsDir, { profile: probeProject(wsDir) })
+  describe('an App Router project — route-derived page ids, layout chains', () => {
+    beforeEach(async () => {
+      write('next.config.js', 'module.exports = {}\n')
+      write('app/layout.tsx', [
+        'export default function RootLayout({ children }: { children: React.ReactNode }) {',
+        '  return <div className="shell">{children}</div>',
+        '}',
+        '',
+      ].join('\n'))
+      write('app/page.tsx', 'export default function Page() { return <div>Home</div> }')
+      write('app/about/page.tsx', 'export default function About() { return <div>About</div> }')
+      // Persist the probe — same step `import-github`'s route takes, and the
+      // one `loadStudioPages`/this route both actually consult.
+      mergeStudioMeta(wsDir, { profile: probeProject(wsDir) })
+      await loadStudioPages(wsDir)
+    })
+
+    it('narrows a route\'s own page.tsx to that route\'s id', async () => {
+      const { body } = await reloadScope(wsDir, ['app/about/page.tsx'])
+      expect(body).toEqual({ ok: true, narrow: true, pageIds: ['/about'] })
+    })
+
+    it('NEVER under-reloads a shared layout: a layout.tsx edit names EVERY route beneath it', async () => {
+      // The `sharedComponents` shape that fires on nearly every App Router
+      // save. Both routes compose this layout, so both are stale.
+      const { body } = await reloadScope(wsDir, ['app/layout.tsx'])
+      expect(body.narrow).toBe(true)
+      expect(new Set(body.pageIds)).toEqual(new Set(['/', '/about']))
+    })
+  })
+
+  it('widens when a discovered route has NO cache entry — it could depend on the touched file unseen', async () => {
+    write('pages/Home.tsx', ['export default function Home() {', '  return <div>Home</div>', '}', ''].join('\n'))
+    await loadStudioPages(wsDir) // warms Home only
+    // A page created after the load, which nothing has parsed yet. Home's own
+    // dependency set is complete and would happily narrow — but this route's
+    // is unknown, so the whole request must widen.
+    write('pages/Late.tsx', 'export default function Late() { return <div>Late</div> }')
+
+    const { body } = await reloadScope(wsDir, ['pages/Home.tsx'])
+    expect(body.narrow).toBe(false)
+  })
+
+  it('widens for a project with Storybook stories — story routes record no parse-cache dependencies', async () => {
+    write('pages/Home.tsx', ['export default function Home() {', '  return <div>Home</div>', '}', ''].join('\n'))
+    write('components/Card.stories.tsx', [
+      "import Card from './Card'",
+      'export default { title: "Card", component: Card }',
+      'export const Basic = { args: { label: "Hi" } }',
+      '',
+    ].join('\n'))
+    write('components/Card.tsx', 'export default function Card({ label }: { label: string }) { return <div>{label}</div> }')
     await loadStudioPages(wsDir)
 
-    const { body } = await reloadScope(wsDir, ['app/page.tsx'])
+    // W5-3's story routes are a third producer that does not use
+    // `pageParseCache`, so a shared-component edit could leave a story frame
+    // stale with nothing for this route to see. Correct beats optimized.
+    const { body } = await reloadScope(wsDir, ['pages/Home.tsx'])
+    expect(body.narrow).toBe(false)
+  })
+
+  it('widens for a file no cached route claims — deeper than one-level dependency tracking can see', async () => {
+    write('pages/Home.tsx', [
+      "import Card from '../components/Card'",
+      'export default function Home() { return <Card /> }',
+      '',
+    ].join('\n'))
+    write('components/Card.tsx', [
+      "import Badge from './Badge'",
+      'export default function Card() { return <Badge /> }',
+      '',
+    ].join('\n'))
+    write('components/Badge.tsx', 'export default function Badge() { return <span>B</span> }')
+    await loadStudioPages(wsDir)
+
+    // `pageParseCache.ts` tracks the route's own file plus its DIRECT local
+    // component sources. `Badge.tsx` is one level further down, so no route
+    // records it — and "nothing claims it" must widen, never reload nothing.
+    const { body } = await reloadScope(wsDir, ['components/Badge.tsx'])
     expect(body.narrow).toBe(false)
   })
 

@@ -7,7 +7,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
-  anyOtherRouteDependsOnFile,
+  cachedRouteDependencies,
   clearPageParseCache,
   getCachedRouteParse,
   hashWorkspaceConfig,
@@ -88,7 +88,7 @@ describe('pageParseCache', () => {
   })
 })
 
-describe('anyOtherRouteDependsOnFile (Track C5 — reload-scope safety check)', () => {
+describe('cachedRouteDependencies (Track C5 — the reload-scope dependency map)', () => {
   let tmpDir: string
   let fileA: string
   let fileB: string
@@ -106,38 +106,46 @@ describe('anyOtherRouteDependsOnFile (Track C5 — reload-scope safety check)', 
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('returns null (unknown) when the cache holds no entries at all for this dir', () => {
-    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set())).toBeNull()
+  it('returns null (unknown, never an empty map) when the cache holds no entries for this dir', () => {
+    // "No data" and "no dependency" are different answers — the caller widens
+    // to a full reload on the first and may narrow on the second.
+    expect(cachedRouteDependencies(tmpDir)).toBeNull()
   })
 
-  it('returns false when every OTHER cached route is checked and none depend on the file', () => {
+  it('keys each route by the relPath half of its cache key, holding its recorded dependency set', () => {
     setCachedRouteParse(`${tmpDir}::pages/A.tsx`, 'h1', [fileA], fakeResult)
-    setCachedRouteParse(`${tmpDir}::pages/B.tsx`, 'h1', [fileB], fakeResult)
-    // Excludes A's own entry (the route about to be re-parsed); B's recorded
-    // deps are just its own file, which is not A's file.
-    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set([`${tmpDir}::pages/A.tsx`]))).toBe(false)
-  })
-
-  it('returns true when an OTHER route (not excluded) recorded the file as a dependency — a locally-inlined component shared across pages', () => {
-    // B's own parse resolved fileA as a local-component dependency (e.g. `B.tsx` imports `A.tsx`).
-    setCachedRouteParse(`${tmpDir}::pages/A.tsx`, 'h1', [fileA], fakeResult)
+    // B's own parse resolved fileA as a local-component dependency — the
+    // shared-component shape a narrow reload has to see.
     setCachedRouteParse(`${tmpDir}::pages/B.tsx`, 'h1', [fileB, fileA], fakeResult)
-    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set([`${tmpDir}::pages/A.tsx`]))).toBe(true)
+
+    const deps = cachedRouteDependencies(tmpDir)!
+    expect([...deps.keys()].sort()).toEqual(['pages/A.tsx', 'pages/B.tsx'])
+    expect([...deps.get('pages/A.tsx')!]).toEqual([fileA])
+    expect(new Set(deps.get('pages/B.tsx')!)).toEqual(new Set([fileA, fileB]))
   })
 
   it('ignores entries for a DIFFERENT dir entirely', () => {
     const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'page-parse-cache-dep-other-'))
     try {
-      setCachedRouteParse(`${otherDir}::pages/C.tsx`, 'h1', [fileA], fakeResult) // pathological but shouldn't matter — different dir prefix
-      expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set())).toBeNull() // no entries for `tmpDir`, still unknown
+      setCachedRouteParse(`${otherDir}::pages/C.tsx`, 'h1', [fileA], fakeResult)
+      expect(cachedRouteDependencies(tmpDir)).toBeNull()
+      expect([...cachedRouteDependencies(otherDir)!.keys()]).toEqual(['pages/C.tsx'])
     } finally {
       fs.rmSync(otherDir, { recursive: true, force: true })
     }
   })
 
-  it('an excluded cache key never counts as "another route", even if it happens to reference the file', () => {
+  it('reports dependencies from a STALE entry too — it reads the recorded keys, never the mtimes', () => {
+    // The write that triggers a reload moves a tracked file's mtime by
+    // construction, so an entry that would MISS `getCachedRouteParse` still
+    // tells the truth about which files that route read.
     setCachedRouteParse(`${tmpDir}::pages/A.tsx`, 'h1', [fileA], fakeResult)
-    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set([`${tmpDir}::pages/A.tsx`]))).toBe(false)
+    const bumped = new Date(fs.statSync(fileA).mtime.getTime() + 5000)
+    fs.writeFileSync(fileA, 'export default function A() { return <span/> }', 'utf8')
+    fs.utimesSync(fileA, bumped, bumped)
+
+    expect(getCachedRouteParse(`${tmpDir}::pages/A.tsx`, 'h1')).toBeNull()
+    expect([...cachedRouteDependencies(tmpDir)!.get('pages/A.tsx')!]).toEqual([fileA])
   })
 })
 

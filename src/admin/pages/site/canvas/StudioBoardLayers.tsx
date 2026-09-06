@@ -1,5 +1,5 @@
 /**
- * StudioBoardLayers — the six Studio board overlay layers, bundled behind
+ * StudioBoardLayers — the seven Studio board overlay layers, bundled behind
  * one lazy boundary.
  *
  * `BoardFramesLayer`, `BoardNotesLayer`, `BoardDocsLayer`, `BoardGuidesLayer`,
@@ -28,17 +28,22 @@
  * second-to-last so its interactive drag/delete affordances paint above the
  * board furniture.
  *
+ * `BoardFlowLayer` (prototype mode's connectors) mounts second-to-last. It is
+ * the one layer that is inert even INSIDE Studio unless `boardMode` is
+ * `prototype`, so its cost on a normal editing session is one store read.
+ *
  * `BoardCommentsLayer` mounts LAST of all. A review pin has to stay clickable
- * over frames, notes, docs, snap guides and ruler guides alike — it is the
- * only thing on the board that is ABOUT the board rather than part of it.
- * It also self-gates on `selectActiveBoard`, so this is still six layers that
- * all render `null` outside Studio.
+ * over frames, notes, docs, snap guides, ruler guides and flow connectors
+ * alike — it is the only thing on the board that is ABOUT the board rather
+ * than part of it. It also self-gates on `selectActiveBoard`, so this is still
+ * seven layers that all render `null` outside Studio.
  */
 import { BoardFramesLayer } from './BoardFramesLayer/BoardFramesLayer'
 import { BoardNotesLayer } from './BoardNotesLayer/BoardNotesLayer'
 import { BoardDocsLayer } from './BoardDocsLayer/BoardDocsLayer'
 import { BoardGuidesLayer } from './BoardGuidesLayer/BoardGuidesLayer'
 import { RulerGuidesLayer } from './RulerGuidesLayer/RulerGuidesLayer'
+import { BoardFlowLayer } from './BoardFlowLayer/BoardFlowLayer'
 import { BoardCommentsLayer } from './BoardCommentsLayer/BoardCommentsLayer'
 
 export function StudioBoardLayers() {
@@ -49,6 +54,7 @@ export function StudioBoardLayers() {
       <BoardDocsLayer />
       <BoardGuidesLayer />
       <RulerGuidesLayer />
+      <BoardFlowLayer />
       <BoardCommentsLayer />
     </>
   )
