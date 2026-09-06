@@ -1119,6 +1119,152 @@ new), `.../StyleSurface.tsx`, `.../ClassPropertyRow.{tsx,module.css}`,
 
 ---
 
+### canvas-14 — the board now draws flows the user never drew, because their code already performs them
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Branch:** `feat/prototype-phases` (cut from `main`, rebased once mid-work)
+- **Goal:** W5-1 — finish Prototype Mode per `STUDIO-PROTOTYPE-PLAN.md`. Phase 1
+  had merged (PR #3); this is everything else except Play.
+- **Scope (all new unless marked):**
+  - `src/core/studio-prototype/`: **new** `codeFlow.ts`, **new**
+    `__tests__/codeFlow.test.ts`; edited `types.ts`, `serialize.ts`, `index.ts`,
+    `__tests__/prototype.test.ts`
+  - `server/handlers/studio/`: **new** `prototypeNavScan.ts`,
+    `prototypeRouteIndex.ts`, `prototypeCodeFlow.ts`,
+    `__tests__/prototypeCodeFlow.test.ts`; edited `prototypeRoutes.ts`
+  - `src/admin/pages/site/studio/`: **new** `prototypeApi.ts`,
+    `prototypeActions.ts`, `useStudioPrototypeLoad.ts`
+  - `src/admin/pages/site/store/slices/prototypeSlice.ts` (**new**);
+    `store/store.ts` (2 lines + doc)
+  - `src/admin/pages/site/canvas/BoardFlowLayer/` (**new**: layer, CSS,
+    `flowGeometry.ts`, `flowRouting.ts`, barrel, tests); edited
+    `StudioBoardLayers.tsx`, `CanvasModeToggle.tsx`
+  - `src/admin/pages/site/panels/PrototypePanel/` (**new**); edited
+    `sidebars/RightSidebar/RightSidebar.tsx`
+  - `src/admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx` (1 hook)
+  - `src/styles/globals.css` (5 tokens), `src/__tests__/architecture/canvas-aware-selectors.test.ts` (§A.8)
+  - `docs/features/studio-prototype.md` (**new**), `docs/README.md`,
+    `STUDIO-PROTOTYPE-PLAN.md`
+  - NOT touched, deliberately (other sessions own them): `canvas/{BreakpointFrame,
+    BoardFrameView,NodeRenderer,IframeFrameSurface,ProjectCssInjector,
+    UserStylesheetInjector,canvasFormPreview,canvasDnd}`, `uiSlice.ts`,
+    `PanelRail`, `keybindings.ts`, `panels/{PropertiesPanel,DomPanel,
+    SiteExplorerPanel,MediaExplorerPanel,GitPanel}`, `src/core/page-parser/**`
+    (read-only consumption in one test), `usePersistence.ts`, `server/ai/**`.
+
+**What landed.** Phases 1a, 1b, 2 (already there), **3**, **4 (connectors half)**
+and **6** of `STUDIO-PROTOTYPE-PLAN.md`. Phase 5 (Play) is untouched.
+
+**The differentiator, and it works end to end.** `deriveCodeFlow(dir)` reads the
+navigation the user's project already performs and returns it as read-only
+`CodeFlowEdge`s that the board draws between frames. Four purely syntactic AST
+rules (`prototypeNavScan.ts:36`): `href`/`to` string attributes; a navigation
+call anywhere inside a non-string attribute expression (so a handler nested in
+an object prop is found without enumerating the nesting); a bare identifier
+handler followed **one hop** to its same-file declaration; and
+`location.href = '…'`. Targets resolve to page ids through a stated key set
+(`prototypeRouteIndex.ts`), never a fuzzy match.
+
+**Half the design is refusal**, and the tests are weighted that way. Non-literal
+target, external scheme, unknown route, or a spelling two pages both answer to →
+**no edge**. An arrow nobody wrote is the one failure this feature cannot afford,
+because the user cannot tell it is wrong by looking.
+
+**Two plan decisions were reversed, both recorded in the plan's §6.**
+
+1. **`PrototypeLink.origin` is gone.** Phase 1 carried
+   `origin: 'design' | 'code'` on the guess that a derived flow would be the same
+   shape. It is not: a derived edge is recomputed every load, so it has no stable
+   id, no `NodeHint` and no transition anybody chose — three fabricated fields —
+   and it needs one a `PrototypeLink` has no room for, the source snippet
+   (`evidence`) that justifies a connector the user cannot edit. `origin` had
+   exactly one possible value left, so it was deleted rather than left dead.
+2. **`boardMode` lives in the new `prototypeSlice`, not `uiSlice`** (the plan said
+   `uiSlice`). Every reader of it already reads `codeFlow` or `prototype`. This
+   also dodged a live conflict — another session owns `uiSlice`.
+
+**Connectors are frame-to-frame, not element-to-frame,** and that is a decision
+rather than a shortcut. Tracking an element's rect means a cross-document
+measurement pass on every frame move/resize/reflow (the plan's §6 "stutter
+machine"), and the fact being drawn is about SCREENS — the element is named in
+the chip's tooltip, where it does not have to be measured to be true. Element
+anchoring for *authored* links is listed as follow-up 3 in the plan's new §9.
+
+**Verification:**
+
+| Command | Result |
+|---|---|
+| `bun run build` (`tsc -b && vite build`) | exit 0 |
+| `bun run lint` | exit 0 |
+| `bun test src/__tests__/architecture` | **512 pass / 0 fail** |
+| `bun test src/core/studio-prototype server/handlers/studio/__tests__/prototypeCodeFlow.test.ts src/admin/pages/site/canvas/BoardFlowLayer` | **68 pass / 0 fail** (all new) |
+| `bun test` (full) | **10772 pass / 69 fail** |
+
+The 69 were triaged against a throwaway worktree at `origin/main`, which is
+**69 fail** too. The sets are identical except for one flake each way (mine:
+`collectEntryStylesheets caching`, an mtime test; baseline: `inline text editing
+wiring`) — both pass in isolation. 53 of the 69 are the known `claudeCli` suite;
+the canvas ones are cross-file pollution (`bun test ./src/__tests__/canvas` alone
+gives 10 on this branch and **12** on `origin/main`, i.e. baseline is a strict
+superset). **Nothing in this entry's Scope fails.**
+
+**Landmines.**
+
+- **The whole-suite run lies about the canvas tests.** `src/__tests__/canvas`
+  fails 10–12 tests when run as a batch and 0 when run per-file, on `main` as
+  much as here. Diff against a baseline worktree before believing any canvas
+  failure is yours (`git worktree add --detach <tmp> origin/main`, symlink the
+  parent's `node_modules`, run the same filter). Do not `git stash`.
+- **A worktree has no `node_modules`.** Symlink the parent checkout's.
+  `bun run icons:sync` cannot run there at all (it wants the private
+  `pixel-art-icons` checkout as a sibling of the *parent*) — `arrow-right` was
+  already vendored, so nothing needed syncing.
+- **`codeFunctionPaths` is not enough for this.** The plan's §1 says the parser
+  "already sees" navigation handlers and drops them as `codeFunctionPaths`. It
+  records the handler's LOCATION and never its value, so it cannot answer "where
+  does this go". Hence a separate syntactic scan — which is also the right layer,
+  since resolving a target needs every page's routes and the render parse is
+  per-page.
+- **A node id from the scan may not exist in the page tree.** An element inside a
+  `.map` is expanded into N nodes with `#N` suffixes; the scan mints the
+  unsuffixed position. Harmless today (connectors are frame-level and the id is
+  only cited in a tooltip), load-bearing the moment anything tries to select from
+  it. `prototypeCodeFlow.test.ts` cross-checks the id against `parsePageFile`'s
+  own keys so the two minting sites cannot drift.
+- **The chip is the only pointer-events target in the board layer**, and only for
+  hover. Everything else is click-through — a full-board rectangle that swallowed
+  canvas clicks is the trap `BoardCommentsLayer.module.css` documents.
+- **`prunePrototypeLinks` and the `prune` op still have no caller.** Deleting a
+  page leaves its links in the file; they draw nothing (no frame to point at), so
+  it is cruft, not a bug. Plan §9 item 4.
+
+**Human action needed — this is visual, please dogfood.**
+
+1. `bun run dev`, open `/admin/site?studio` on a project with more than one page
+   (`studio-workspace/test-3` has four).
+2. Add a `<a href="/sign-up">` or `onClick={() => navigate('/sms')}` to one page's
+   `.tsx` and let it reload.
+3. In the canvas chrome pill, press the **arrow** toggle (right of Design/Live —
+   it only appears on a Studio board in design view).
+4. Expect: a **grey dashed** curve from that frame to the target frame, with a
+   monospace chip on it; hovering the chip cites the exact snippet and
+   `file:line:col`.
+5. Select an element, and in the right sidebar (now showing **Prototype**) pick a
+   destination. Expect a **teal solid** curve to appear, and
+   `.studio/prototype.json` to gain a link.
+6. Delete the element you linked. Expect the teal curve to turn **red and dashed**
+   rather than disappearing.
+7. Zoom right out and right in: line weight, dash rhythm, arrowhead and chip
+   should all stay the same size on screen.
+
+**Next step:** Phase 5 (Play) — see `STUDIO-PROTOTYPE-PLAN.md` §9, which lists
+the five remaining items in priority order. The authored-link model already
+carries everything Play needs (action, transition, target).
+
+---
+
 ### style-02 — a class assignment wrote Studio's own hash into the user's JSX, and a refused write was silently adopted
 
 - **Agent:** parser-surgeon

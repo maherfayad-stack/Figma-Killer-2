@@ -109,7 +109,6 @@ function coerceLink(raw: unknown): PrototypeLink | undefined {
 
   return {
     id,
-    origin: raw.origin === 'code' ? 'code' : 'design',
     source,
     // One trigger exists today, so anything else is a file from a future
     // version being opened by an older build: read it as the click it almost
