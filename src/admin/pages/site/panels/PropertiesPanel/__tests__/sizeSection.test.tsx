@@ -1,5 +1,5 @@
 /**
- * SizeSection — G2 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md, F30/F31).
+ * SizeSection — G2 (docs/features/inspector-disclosure.md, F30/F31).
  *
  * Covers:
  *   1. Law 3 at rest — an element with only `width` set renders exactly one

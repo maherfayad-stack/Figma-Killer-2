@@ -111,7 +111,7 @@ See [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md).
 | [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) | **Read first.** What the project is, current state, traps, task routing. |
 | [`CLAUDE.md`](CLAUDE.md) | The rule book — conventions every change must follow. |
 | [`STATE.md`](STATE.md) | Live coordination board for work in flight. |
-| [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) | The roadmap for everything not yet built. |
+| [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) | The feature roadmap (WS-1…WS-9) — intent, not status. Per-track status is [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) §0a. |
 | [`docs/README.md`](docs/README.md) | Full documentation index. |
 | [`docs/agent-refs/`](docs/agent-refs/) | Compressed references written for coding agents. |
 

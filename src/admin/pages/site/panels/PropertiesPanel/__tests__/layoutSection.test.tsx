@@ -1,5 +1,5 @@
 /**
- * LayoutSection — G3 + G4 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * LayoutSection — G3 + G4 (docs/features/inspector-disclosure.md).
  *
  * Covers:
  *   0. `resolveLayoutMode` / `layoutModePatch` — the (display, flexDirection)

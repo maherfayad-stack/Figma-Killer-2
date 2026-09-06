@@ -1,6 +1,6 @@
 /**
  * resolveAlignWrite — the honest single-CSS-write check behind every
- * `PositionSection` align button (G10, STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * `PositionSection` align button (G10, docs/features/inspector-disclosure.md).
  *
  * Pulled out of `PositionSection.tsx` into its own module (not just a
  * section of that file) because `react-refresh/only-export-components`

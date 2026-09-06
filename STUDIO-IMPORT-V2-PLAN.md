@@ -4,9 +4,24 @@ Plan for taking Studio from *"an eSIM-shaped Vite repo parses into a board"* to
 *"paste a GitHub URL or drop a zip, and the whole app is a Figma-grade design
 surface backed by the real source"*.
 
-Written against the code as it stands on `feat/alm-figma-killer-studio-shell`
-(HEAD `6610754`). Every "today" claim below was read out of the repo, not
-assumed.
+Written against the code as it stood on `feat/alm-figma-killer-studio-shell`
+(HEAD `6610754`). Every "today" claim below was read out of the repo at that
+moment, not assumed.
+
+> **Read this as intent, not as status.** Nine of this document's ten sections
+> have since shipped, and §1's "where we actually are" snapshot describes a tree
+> that no longer exists. **The single per-track status ledger is
+> [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) §0a** — check
+> there before believing any "today" or "not built" claim below. This file is
+> kept for three things the ledger does not carry: §0's argument for why the
+> trust model has to exist, §1's ten requirements in the user's own words, and
+> the WS-numbered vocabulary that the source, the agent definitions and
+> `docs/agent-refs/handoff-protocol.md` all route by.
+>
+> Still genuinely open here: WS-3.3's `src/modules/alm/` deletion (deliberately
+> deferred — `STATE.md`'s `standing-07`), WS-4.4's package-instance detach,
+> WS-8.1's `runScripts` default for freezing JS animation, and WS-5.6's bench,
+> whose budgets are uncalibrated and which has never run.
 
 ---
 
@@ -494,24 +509,21 @@ exists and nothing imports `@alm-design/design-system` outside a fixture.
 This is the heart of requirements 3 and 5, and it is a **redesign**, not an
 addition.
 
-**Engine layer done (`parser-05`), interaction layer open.** 4.2 (fragment
-node), 4.3 (call-site props writable), 4.4 (detach + `extractComponentCopy`
-escape hatch), and 4.5 (swap) are shipped at the parser/codemod/MCP layer —
-see `docs/features/studio-import.md`'s "Detach and swap" section and
-`STATE.md`'s `parser-05` entry for the eSIM corpus numbers (139 instances, 59
-clean detaches, 42 hook refusals, 38 `.map`-row no-location). **Not built**:
-Figma-style click-to-select-the-instance / Enter-to-enter / Esc-to-exit
-(needs new store "entered instance" state + a `findEnclosingComponentRef`-
-style click-routing mechanism — see that entry's Landmines), the DOM/Layers
-panel's collapsed-row-with-glyph treatment (falls back to the generic tree
-row today — `getNodeDisplayName` shows the component name, but no dedicated
-row chrome), the Properties panel's "Component" section (swap picker UI,
-typed call-site prop controls via WS-3.1's `PropKind` for LOCAL components —
-package components already have this from `pkg-01`/`panel-01`), and the
-package-instance side of detach ("Eject to local component" / "Replace with
-markup snapshot" — `detachComponentInstance` refuses a package instance with
-a clear `package-component` reason today, doesn't yet offer either
-alternative).
+**Shipped, except the package-instance side of detach.** 4.2 (fragment node),
+4.3 (call-site props writable), 4.4 (detach + `extractComponentCopy` escape
+hatch) and 4.5 (swap) landed at the parser/codemod/MCP layer — see
+`docs/features/studio-import.md`'s "Detach and swap" section, which records the
+eSIM corpus numbers (139 instances, 59 clean detaches, 42 hook refusals, 38
+`.map`-row no-location). The interaction layer landed afterwards as
+`instance-ui-01` and was browser-verified: click-to-select-the-instance,
+Enter-to-enter, Esc-to-exit (`findEnclosingComponentRef`), the DOM/Layers row
+treatment, and the Properties panel's Component section with typed call-site
+prop controls.
+
+**Still not built:** the package-instance side of detach — "Eject to local
+component" and "Replace with markup snapshot". `detachComponentInstance` refuses
+a package instance with a clear `package-component` reason and offers neither
+alternative.
 
 #### 4.1 The problem with today's inlining
 

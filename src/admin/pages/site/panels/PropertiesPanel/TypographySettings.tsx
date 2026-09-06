@@ -1,6 +1,6 @@
 /**
  * TypographySettings — the Typography section's ⚙ popover
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md G9, F25–F27).
+ * (docs/features/inspector-disclosure.md G9, F25–F27).
  *
  * A tabbed `InspectorPopover` that absorbs every typography control used in
  * under ~10% of edits (Law 2), so the resident section stays F23's four

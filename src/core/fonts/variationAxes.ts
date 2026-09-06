@@ -3,7 +3,7 @@
  * file actually exposes, and translating between that axis set and the CSS
  * `font-variation-settings` shorthand.
  *
- * STUDIO-INSPECTOR-DISCLOSURE-PLAN.md G9 / F27: the Typography settings
+ * docs/features/inspector-disclosure.md G9 / F27: the Typography settings
  * popover's "Variable" tab must render ONLY for a font that genuinely has
  * variable axes — a slider for `wght` on Helvetica is a control that lies.
  * The only honest source for that fact is the font file's own `fvar` table,

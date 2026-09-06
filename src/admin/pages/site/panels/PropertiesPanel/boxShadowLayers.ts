@@ -1,6 +1,6 @@
 /**
  * boxShadowLayers — pure parse/serialise for the CSS `box-shadow` value
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G8, F21).
+ * (docs/features/inspector-disclosure.md §4 G8, F21).
  *
  * `box-shadow` is a comma-separated LIST of layers, and each layer is itself
  * a small, order-flexible grammar:

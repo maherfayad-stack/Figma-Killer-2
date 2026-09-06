@@ -161,6 +161,7 @@ Three categories, three voices:
 | [features/studio-deploy.md](features/studio-deploy.md) | Preview deploys through the project's own Vercel/Netlify CLI — the Tier-2 gate, provider detection, the check → build → deploy job, and why Studio stores no provider token |
 | [features/studio-share.md](features/studio-share.md) | Share links: a read-only board snapshot at a revocable `/share/<token>` URL — the on-disk registry, the snapshot writer over the headless capture, the stripped viewer payload, and why every failure is the same 404 |
 | [features/studio-prototype.md](features/studio-prototype.md) | Prototype mode: authored links (`.studio/prototype.json`) plus the flow map Studio DERIVES from the project's own navigation code — the four AST rules, what they refuse, and the board-space connector layer |
+| [features/inspector-disclosure.md](features/inspector-disclosure.md) | The properties panel's density contract: the five laws, the ten goals (G1–G10) the panel source cites by number, the height budgets, and the Figma controls we refuse to fake |
 
 ### Reference
 

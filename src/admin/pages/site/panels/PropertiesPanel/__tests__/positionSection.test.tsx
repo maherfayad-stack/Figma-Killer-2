@@ -1,5 +1,5 @@
 /**
- * PositionSection — G10 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * PositionSection — G10 (docs/features/inspector-disclosure.md).
  *
  * Covers:
  *   1. `resolveAlignWrite` — the pure honesty check behind every align

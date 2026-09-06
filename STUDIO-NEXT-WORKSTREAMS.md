@@ -50,6 +50,7 @@ env var) and is handled as a documented limitation, not silently.
 | **WS-10** | [Preview axes — RTL, localization, dark mode](#ws-10--preview-axes) | its own PR |
 | **WS-11** | [Canvas chat on Claude subscription login (no API key)](#ws-11--canvas-chat-on-claude-cli-login) | its own PR |
 | **WS-12** | [The Studio agent — prompt, harness, subagents, tools](#ws-12--the-studio-agent) | 6 PRs (§10) |
+| **WS-14** | [Residue from the retired wave plans](#ws-14--residue-from-the-retired-wave-plans) | one PR per item — small, independent |
 
 Dependencies: **WS-13 → WS-12** (the agent authors in the canonical subset, which
 is what makes screen-building tractable) and **WS-11 → WS-12** (WS-11 decides who
@@ -1734,3 +1735,71 @@ All closed (D3, D4, D5).
    inside the user's project, so it shows up in their git status. Commit it (the
    agents become part of the repo, shared with their team) or `.gitignore` it
    (Studio-local)? I lean **commit** — a DS-expert agent is worth sharing.
+
+---
+
+# WS-14 — Residue from the retired wave plans
+
+**Why this section exists.** `STUDIO-WAVE4-PLAN.md`,
+`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` and `STUDIO-COMMENTS-PLAN.md` were
+delivery plans whose work landed; they were deleted rather than left to rot into
+misleading status claims (the comments plan's header still read "proposed, not
+started" for a feature that had shipped in full). Git remembers them. What
+survives here is only the work those plans did **not** finish, plus the docs
+tasks that were always scheduled to run last.
+
+Per-track status for everything else is
+[`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) **§0a** — the
+single status ledger. Design rationale from the inspector plan lives in
+[`docs/features/inspector-disclosure.md`](docs/features/inspector-disclosure.md);
+the comments feature's contract is
+[`docs/features/studio-comments.md`](docs/features/studio-comments.md).
+
+## 1. Code residue
+
+| # | Item | Where it stands |
+|---|---|---|
+| **14.1** | **Emotion object styles** (was W4-4C). The object form — `css({ color: 'red' })` and the object-shaped `css` prop — is neither extracted nor written. | Refused by name on both sides: `src/core/page-parser/cssInJsExtract.ts` ("Not extracted, on purpose") and `src/core/ast-codemods/setStyledDeclaration.ts`. The tagged-template form shipped in full. |
+| **14.2** | **Prototype Phase 5 — "Play"** (was W5-1's tail). The transition runtime, navigation history stack, back/close, scrim dismiss and reset. | Genuinely unstarted — `BoardMode` is a closed `'design' \| 'prototype'` union with no `'play'` member. Specced in [`STUDIO-PROTOTYPE-PLAN.md`](STUDIO-PROTOTYPE-PLAN.md) §5, which stays for exactly this reason. Its §4 interaction table is the input Phase 5 needs. |
+| **14.3** | **Storybook story `args` writeback** (was W5-3's tail). Args-only story call sites are `locked` and every arg lands in `codeProps`, so edits do not write back. | The blocker is `src/admin/pages/site/studio/fsCodemodAdapter.ts`'s `callSiteProps` branch having no origin case. Discovery, refusals and board sync all shipped. |
+| **14.4** | **Inspector G6.4 — Selection colours.** With 2+ nodes selected, list every distinct colour in the selection and let one edit rewrite all of them. | Deferred in `FillSection.tsx`: it needs store-side multi-select style editing that does not exist yet. `MultiSelectionInspector.tsx` has no colour list. |
+| **14.5** | **Inspector §6 — the measurement gate.** The `scrollHeight <= clientHeight` acceptance test for a text node's full inspector at 900px, plus the per-section height baseline in `docs/audits/`. | Never implemented; the budgets in [`docs/features/inspector-disclosure.md`](docs/features/inspector-disclosure.md) §6 are therefore unenforced. `test-engineer` owns this. |
+
+## 2. The truth pass — remaining tasks
+
+The wave plan's last stage was a documentation truth pass, run **after** all code
+waves merged. Its first three tasks (plan-file retirement, `STATE.md` archival,
+rule-book accuracy) ran as their own PRs. Two remain.
+
+**14.6 — `docs/` sweep.** Walk `docs/README.md`'s index end to end: every page
+either (a) describes the current tree, (b) is corrected in that PR, or (c) is a
+CMS-half page — and for (c), follow
+[`STUDIO-CMS-REMOVAL-PLAN.md`](STUDIO-CMS-REMOVAL-PLAN.md)'s disposition for it
+(delete/keep/rewrite) rather than inventing one. `docs/agent-refs/path-index.md`
+must reflect every file moved or deleted by the waves (the dashboard dialog move,
+the dead-panel deletions, the new GitPanel/capture routes). The glossary gains
+the new vocabulary (trust tiers, capture token, share token) — and its trust-tier
+entry, still marked "(planned)", must be corrected: the tiers shipped.
+
+Two known-stale pointers to fix in that sweep, found during plan retirement:
+
+- `docs/agent-refs/path-index.md` still points at
+  `src/core/studio-comments/anchorResolve.ts`. That file no longer exists — the
+  prototype work extracted it into `src/core/studio-anchor/`. The comment in
+  `src/__tests__/architecture/no-core-barrel-deep-imports.test.ts` repeats the
+  same stale reference.
+- That gate's `BARRELLED_MODULES` list contains `'studio-comments'` but not
+  `'studio-anchor'` or `'studio-prototype'`, though both are barrelled core
+  modules with an `index.ts`. `studio-anchor` is the one that most needs the
+  gate, since it holds the resolution logic that comment says must not be forked.
+
+**14.7 — Dead-code sweep.** `npx fallow dead-code` (canonical), `knip` as second
+opinion; delete unused exports and files the waves orphaned. Run
+`bun run fallow:health` and record the before/after in the PR body. Anything a
+gate test enumerates (icon catalog, `§` allowlists) gets its gate updated in the
+same commit — that is the convention, not drift.
+
+**Definition of done for both:** a fresh agent given only `PROJECT-BRIEF.md`,
+`STATE.md` and `docs/agent-refs/` can orient without hitting a single claim the
+tree contradicts. That was the audit's core finding about docs debt; these two
+close it.

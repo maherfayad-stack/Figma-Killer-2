@@ -1,5 +1,5 @@
 /**
- * StrokeSection — the Stroke `PropertyList` (STUDIO-INSPECTOR-DISCLOSURE-PLAN
+ * StrokeSection — the Stroke `PropertyList` (docs/features/inspector-disclosure.md
  * §4 G7, F16-F19), replacing the deleted `BorderControl`.
  *
  * Covers:

@@ -4,7 +4,7 @@
  * Before the WS-6 pass the six size fields carried their names as text
  * ("Min W", "Max H") and were drawn unconditionally, and `aspectRatio` /
  * `boxSizing` each owned a full-width row under a caption. G2
- * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`, Law 3) went further for the
+ * (`docs/features/inspector-disclosure.md`, Law 3) went further for the
  * constraint fields: `minWidth`/`maxWidth`/`minHeight`/`maxHeight` are no
  * longer fields at all until asked for — see `sizeSection.test.tsx` for that
  * behaviour. This file keeps the still-true claims: `W`/`H` keep their

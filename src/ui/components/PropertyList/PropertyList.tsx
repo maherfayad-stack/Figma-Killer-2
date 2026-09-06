@@ -1,6 +1,6 @@
 /**
  * PropertyList — the Fill / Stroke / Effects list shape (F13, F14, F16, F20 in
- * STUDIO-INSPECTOR-DISCLOSURE-PLAN.md §3.2). One component, three future
+ * docs/features/inspector-disclosure.md §3.2). One component, three future
  * consumers: fill layers, stroke, and shadow/blur effects. It must not know
  * what a fill is — every entry is opaque `ReactNode` content supplied by the
  * caller.

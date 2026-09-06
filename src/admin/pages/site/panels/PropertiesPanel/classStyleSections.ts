@@ -46,7 +46,7 @@ export interface ClassStyleSectionDefinition {
   icon: IconComponent
   defaultOpen?: boolean
   /**
-   * Figma's Fill/Stroke/Effects list law (STUDIO-INSPECTOR-DISCLOSURE-PLAN
+   * Figma's Fill/Stroke/Effects list law (docs/features/inspector-disclosure.md
    * §1 Law 1 / §4 G1): when nothing in this section is set — on the active
    * tab OR any other breakpoint/condition — it renders as a single header
    * line with a "+", not its full property grid. `StyleSectionGroup` in
@@ -62,7 +62,7 @@ export interface ClassStyleSectionDefinition {
 
 // ---------------------------------------------------------------------------
 // Section order — WS-6.1's Figma-shaped top-to-bottom flow, extended by
-// STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5: Position → Size → Auto layout →
+// docs/features/inspector-disclosure.md §4 G5: Position → Size → Auto layout →
 // Spacing → Appearance → Fill → Stroke → Effects → Typography → Animations →
 // Interaction. The last two are Studio's own additions — Figma has no
 // CSS-cursor/pointer-events concept, and its motion lives in prototyping
@@ -193,7 +193,7 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     // props (border / borderTop / …) live in the section's Advanced
     // disclosure and are listed here too so a search for "border" still
     // surfaces the section. Per-corner radius moved to the `appearance`
-    // section (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5) — `borderRadius`
+    // section (docs/features/inspector-disclosure.md §4 G5) — `borderRadius`
     // (the shorthand) stays here in Advanced for the raw-string power case.
     properties: [
       // Per-side longhands (canonical, edited by BorderControl)
@@ -222,7 +222,7 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     title: 'Effects',
     icon: SparklesSolidIcon,
     collapsedWhenEmpty: true,
-    // `opacity` moved to the `appearance` section (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5).
+    // `opacity` moved to the `appearance` section (docs/features/inspector-disclosure.md §4 G5).
     // `transition`/`animation` moved to the `animations` section below (W5-5):
     // they are motion, not effects, and a property may only be claimed by one
     // section — this array drives the "N set" count and the style search, so a

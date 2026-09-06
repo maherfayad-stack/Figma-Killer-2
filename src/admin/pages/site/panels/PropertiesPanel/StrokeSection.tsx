@@ -1,5 +1,5 @@
 /**
- * StrokeSection — the Stroke `PropertyList` (STUDIO-INSPECTOR-DISCLOSURE-PLAN
+ * StrokeSection — the Stroke `PropertyList` (docs/features/inspector-disclosure.md
  * §4 G7, F16-F19). Replaces `BorderControl` (deleted in this change): the
  * per-side width/style/colour diagram + its "Advanced" shorthand disclosure
  * become a two-row Figma-shaped list entry.

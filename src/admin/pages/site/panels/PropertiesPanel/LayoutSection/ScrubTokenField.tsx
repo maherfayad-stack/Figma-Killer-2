@@ -1,6 +1,6 @@
 /**
  * ScrubTokenField — `TokenAwareInput` + Figma's "drag the letterform to
- * scrub" gesture (G4.9, STUDIO-INSPECTOR-DISCLOSURE-PLAN.md).
+ * scrub" gesture (G4.9, docs/features/inspector-disclosure.md).
  *
  * `TokenAwareInput` has token autocomplete but no scrub gesture; `ScrubInput`
  * has the scrub gesture but no token autocomplete. This composes the two

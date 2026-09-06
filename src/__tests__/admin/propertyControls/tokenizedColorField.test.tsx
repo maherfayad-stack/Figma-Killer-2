@@ -1,6 +1,6 @@
 /**
  * TokenizedColorField — T8/T9 (`STUDIO-FIGMA-PARITY-PLAN.md` §11) and G6.2
- * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`).
+ * (`docs/features/inspector-disclosure.md`).
  *
  * T8 (superseded by G6.2): the swatch used to be a native
  * `<input type="color">` that wrote a raw hex on one click, silently

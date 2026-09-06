@@ -1,6 +1,6 @@
 /**
  * EffectsSection — the list-of-effects rebuild
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G8).
+ * (docs/features/inspector-disclosure.md §4 G8).
  *
  * Covers:
  *   1. Empty ⇒ nothing rendered (Law 1) — `PropertyList`'s own empty-render,

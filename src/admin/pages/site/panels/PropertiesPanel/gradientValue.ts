@@ -1,7 +1,7 @@
 /**
  * gradientValue — parse/serialize a conservative, exhaustively-tested subset
  * of CSS `linear-gradient()` / `radial-gradient()` into editable stops, for
- * `FillSection`'s image-fill popover (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G6,
+ * `FillSection`'s image-fill popover (docs/features/inspector-disclosure.md §4 G6,
  * F15).
  *
  * WHY THIS REFUSES SO OFTEN

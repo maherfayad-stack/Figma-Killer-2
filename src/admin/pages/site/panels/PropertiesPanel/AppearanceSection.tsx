@@ -1,6 +1,6 @@
 /**
  * AppearanceSection — the section that didn't exist yet
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5, F10-F12).
+ * (docs/features/inspector-disclosure.md §4 G5, F10-F12).
  *
  * Figma's Appearance block is one row at rest — opacity beside corner
  * radius, an expand icon for the four corners — plus two icons in its own

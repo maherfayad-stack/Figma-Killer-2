@@ -1,5 +1,5 @@
 /**
- * FillSection — Figma's Fill list (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G6,
+ * FillSection — Figma's Fill list (docs/features/inspector-disclosure.md §4 G6,
  * F13/F14/F15), replacing the old always-on 6-entry `BackgroundSection` grid.
  *
  * THE CSS MODEL, AND WHERE IT DIVERGES FROM FIGMA'S

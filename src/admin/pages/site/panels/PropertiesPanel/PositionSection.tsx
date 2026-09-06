@@ -1,7 +1,7 @@
 /**
  * PositionSection — visual editor for the `position` CSS section.
  *
- * G10 (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md) — Figma's F1/F2/F29 shape,
+ * G10 (docs/features/inspector-disclosure.md) — Figma's F1/F2/F29 shape,
  * tightened to three rows (WS-6 §6 — this section was running at roughly
  * double its row budget):
  *

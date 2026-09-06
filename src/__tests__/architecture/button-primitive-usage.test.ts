@@ -158,7 +158,7 @@ const ALLOWLIST = new Set([
   // represent a 6px edge bar — same pattern class as §8.6 (custom ARIA role +
   // bespoke structural layout). These are the only bare <button>s in the
   // file — the corner-radius picker that used to sit beside this one moved to
-  // `AppearanceSection` (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5) and was
+  // `AppearanceSection` (docs/features/inspector-disclosure.md §4 G5) and was
   // deleted from here, not reimplemented.
   'admin/pages/site/panels/PropertiesPanel/BorderControl/BorderControl.tsx',
 

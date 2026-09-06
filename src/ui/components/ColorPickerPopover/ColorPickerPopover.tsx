@@ -1,6 +1,6 @@
 /**
  * ColorPickerPopover — Figma's floating colour picker (F14 in
- * `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`), built on `InspectorPopover` so it
+ * `docs/features/inspector-disclosure.md`), built on `InspectorPopover` so it
  * opens to the LEFT of the inspector by default and never covers the field
  * being edited.
  *

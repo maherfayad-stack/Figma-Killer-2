@@ -10,7 +10,7 @@
  *     the layer list into the stored `box-shadow` string.
  *   - `'blur'`    — a single blur radius, backing `filter: blur()` (Layer
  *     blur) or `backdrop-filter: blur()` (Background blur).
- *   - `'raw'`     — the honest-refusal case (STUDIO-INSPECTOR-DISCLOSURE-PLAN
+ *   - `'raw'`     — the honest-refusal case (docs/features/inspector-disclosure.md
  *     §7 / §4 G8): a `box-shadow`/`filter`/`backdrop-filter` value this
  *     module can't restructure without risking a silent rewrite. Reuses
  *     `ClassPropertyRow` directly — the SAME raw-text control every other

@@ -1,7 +1,7 @@
 /**
  * verticalAlignWrite — the honest single-CSS-write check behind the
  * Typography section's vertical-align icon group
- * (STUDIO-INSPECTOR-DISCLOSURE-PLAN.md G9.2 / §7 / §8.4).
+ * (docs/features/inspector-disclosure.md G9.2 / §7 / §8.4).
  *
  * Figma's "vertical align" has no CSS equivalent for arbitrary text — there
  * is no `vertical-align: middle` for a block of wrapped copy. The nearest
