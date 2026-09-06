@@ -29,6 +29,7 @@ import {
   type Resolution,
   type ResolutionMap,
 } from './nodeResolution'
+import type { CssInJsScope } from './cssInJsExtract'
 import type { ValueOrigin } from './staticEvalTypes'
 import { packagedImageImportRefusal, STUDIO_ASSET_SENTINEL } from './assetImports'
 import { iconPropFromJsx, withNestedIconValues } from './iconPropValues'
@@ -52,6 +53,15 @@ export interface ParseContext {
    * See `./nodeResolution` for the wiring glue this feeds.
    */
   eval?: PageEvalContext
+  /**
+   * W4-4 Phase A — the `styled.…`/`css` bindings this parse can see: this
+   * file's own, plus (lazily, only when a tag asks) one imported from another
+   * file. Present even when `eval` is absent: recognising `styled.div\`…\`` is
+   * a structural read, and a template with no interpolations needs no
+   * evaluator at all. A file that declares and imports none costs one
+   * import-declaration scan.
+   */
+  cssInJs?: CssInJsScope
   /**
    * Appended to every node id minted under this context, to distinguish
    * iterations of an expanded `.map` (`…:70:21#0`, `…:70:21#1`, …) — one piece

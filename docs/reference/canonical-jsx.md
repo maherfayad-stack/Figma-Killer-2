@@ -192,7 +192,13 @@ import './Screen.scss'
 import styled from 'styled-components'
 ```
 
-**Detection.** A genuinely new check — `ParsedNode` carries no import information, so this scans the page's *own* raw source text for a relative Sass/Less stylesheet import (`\.(scss|sass|less)`) or a CSS-in-JS package import (`styled-components`, `@emotion/styled`, `@emotion/react`, `@emotion/css`, `@stitches/react`) — the same specifier set `ProjectProfile.styleToolchain.cssInJs` names. Requires `sourceText` (the page's own file content); the check is skipped, not guessed at, when it is not supplied.
+**Detection, two halves.**
+
+The Sass/Less half is a textual scan of the page's *own* raw source for a relative `\.(scss|sass|less)` import — `ParsedNode` carries no import information. It requires `sourceText` (the page's own file content) and is skipped, not guessed at, when that is not supplied.
+
+The CSS-in-JS half runs off the **parse**, not off `sourceText`, since W4-4 Phase A (`src/core/page-parser/cssInJsExtract.ts`). `ParsedPage.cssInJs` lists every `styled.*` / `styled(X)` / emotion `css` template the parser statically extracted, so instead of one blanket "this file imports styled-components" line the rule emits a headline with the clean/partial/unresolvable split and then **one finding per template that did not extract cleanly**, at that template's own `line:col`, naming the declarations that were dropped. A file that imports a CSS-in-JS package but declares no extractable template (stitches, emotion object styles) still gets the single blanket line — nothing from it reaches the canvas, and saying so is the whole point.
+
+The finding stays `violation` however cleanly a template extracts: CSS-in-JS is not one of the two *authored* mechanisms this rule names. The tier answers "is this file canonical"; the messages answer "what did it cost you", and those are different questions. See `docs/features/studio-import.md`'s "CSS-in-JS" section for the extraction contract itself.
 
 **Validator caveat.** Deliberately does **not** attempt to detect Tailwind utility-class soup in a `className` string — a hyphenated-token heuristic would be indistinguishable from an ordinary BEM class name and would false-positive on nearly every real screen. Tailwind usage is a *project-level* fact (`ProjectProfile.styleToolchain`, from the probe), not a per-page one the parser can see; a Tailwind-authored screen currently passes this check silently. Detecting it belongs in the project probe, not here.
 

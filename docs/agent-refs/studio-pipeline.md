@@ -306,7 +306,7 @@ does **not** lock the node.
 
 ## Element → module mapping
 
-`resolveModuleId` in `studioPageLoad.ts`:
+`resolveModuleId` in `server/handlers/studio/moduleMapping.ts`:
 
 | Source | moduleId |
 |---|---|
@@ -328,7 +328,10 @@ tag or the element is silently rewritten.
 
 ## Known non-imports (deliberate)
 
-Transform effects (`applyTokens(svg)` loops — falls back to the markup handed
+CSS-in-JS beyond the TEMPLATE forms (`styled.x`/`styled(X)`/emotion `css` DO
+extract statically — `cssInJsExtract.ts`, W4-4 Phase A, read-only, no writeback;
+stitches, emotion object styles, and a `ThemeProvider`-only theme value do not)
+· Transform effects (`applyTokens(svg)` loops — falls back to the markup handed
 in) · `.map` over props/state/fetch data · a multi-stage screen shows only the
 LAST stage by default (the others are addressable via `branchAlternatives`,
 not rendered — parser-06) · computed `className` keeps only its static prefix · linked
