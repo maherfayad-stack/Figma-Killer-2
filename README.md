@@ -51,6 +51,10 @@ Two rules hold the whole design together:
 
 1. **Parse, never execute.** Everything on the canvas was read out of the AST by
    a bounded evaluator with explicit, documented tiers — not by running your app.
+   A project starts at trust Tier 0, where nothing of yours ever runs. You can
+   promote it — one explicit click, never automatic — to let Studio compile your
+   own style toolchain (Tailwind, Sass, PostCSS) and render your installed
+   package components. Even then, the parse itself still executes nothing.
 2. **A write must have exactly one honest target.** If an edit can't land in
    exactly one place in your source without destroying a binding or silently
    changing N call sites, the editor refuses it and says why.
@@ -94,9 +98,9 @@ Compiler enabled · **Vite** · **Zustand + Mutative** for editor state ·
 CSS Modules with design tokens.
 
 Studio is built on a forked CMS. That subsystem — Postgres/SQLite, the
-publisher, plugins, content workspaces — is still present and load-bearing for
-the editor shell, but it is not what this product is. See
-[`PROJECT-BRIEF.md`](PROJECT-BRIEF.md).
+publisher, plugins — is still present and load-bearing for the editor shell,
+but it is not what this product is, and its standalone workspace UIs are gone.
+See [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md).
 
 ---
 

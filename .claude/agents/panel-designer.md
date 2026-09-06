@@ -63,7 +63,8 @@ This is the rule that separates this panel from an ordinary settings form.
   real bug: one keystroke replaced a whole actions array with that string.
 - Ask **`isPropWritableToSource(node, prop)`** — never re-derive the rule.
   `propLockReason` in `renderModuleTabContent` is how the panel surfaces it.
-- `SourceLockedNotice` explains the **structural** reason;
+- `SourceConstraintNotice` (`panels/PropertiesPanel/`) explains the
+  **structural** reason;
   `SharedComponentNotice` states the blast radius of editing shared source, with
   a live instance count.
 - **Structure and values are different facts.** A structurally locked node with a

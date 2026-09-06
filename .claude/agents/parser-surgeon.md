@@ -13,7 +13,7 @@ source files**. A wrong write is data loss in someone's git repo.
 ## Read before you start — in this order, all of it
 
 1. `docs/agent-refs/studio-pipeline.md`
-2. **`docs/features/studio-import.md` — all 578 lines.** Non-negotiable for any
+2. **`docs/features/studio-import.md` — all of it (~1,300 lines).** Non-negotiable for any
    parser change. It documents every decision and, critically, every deliberate
    limitation. Most "bugs" you'll be asked to fix are documented, intentional
    refusals with a stated reason.
@@ -114,5 +114,5 @@ bun run build
 
 `STATE.md` entry with `Scope` listing every parser file touched. Under
 `Decisions`, state for each new resolution: locks? codeProps? origin? Under
-`Landmines`, state anything you found that the 578-line doc does not already say —
+`Landmines`, state anything you found that `docs/features/studio-import.md` does not already say —
 and then tell `studio-scribe` to add it there.

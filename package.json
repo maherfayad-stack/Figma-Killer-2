@@ -1,11 +1,11 @@
 {
-  "name": "alm-figma-killer",
+  "name": "studio",
   "private": true,
   "version": "0.0.11",
   "engines": {
     "bun": ">=1.3.0 <1.4.0"
   },
-  "description": "Self-hosted CMS with an integrated visual editor.",
+  "description": "Studio — a design tool whose source of truth is a real React repository on disk.",
   "author": "David Babinec",
   "license": "MIT",
   "repository": {

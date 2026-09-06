@@ -528,6 +528,37 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### docs-03 — W6-3: rule-book and identity accuracy pass (`CLAUDE.md`, README/package/index identity, the 14 agent files)
+
+- **Agent:** studio-scribe
+- **Stage:** done (gates green; PR open as draft)
+- **Updated:** 2026-09-06
+- **Branch:** `docs/rulebook-identity-accuracy` off `origin/main` (W6-3, `STUDIO-WAVE4-PLAN.md` §W6-3).
+- **Goal:** no claim in `CLAUDE.md`, the product-identity surfaces, or `.claude/agents/*` that the tree contradicts.
+- **Scope:** `CLAUDE.md` · `README.md` · `package.json` (`name`/`description`) · `index.html` (meta description) · `Dockerfile` (image description label) · `.claude/agents/{README,canvas-engineer,panel-designer,parser-surgeon,perf-hunter,server-engineer,store-engineer,studio-implementer,studio-verifier,test-engineer}.md`. **No `.ts`/`.tsx` touched.**
+- **Done so far:**
+  - `CLAUDE.md` entry point: `/admin/site?studio` → `/admin/site`, rendered unconditionally by `src/admin/router.tsx`; project selection via `studioWorkspaceDir.ts`. There is no `?studio` param anywhere in `src`/`server` — only in historical `docs/audits/` and archived `STATE.md` entries.
+  - `CLAUDE.md` invariant 1: the "roadmap proposes… until that ships" parenthetical replaced with the shipped Tier 0 `static` / Tier 1 `render-packages` / Tier 2 `run-project` reality (`server/handlers/studio/trustTier.ts`), including that the parse executes nothing at *any* tier and that Tier 2 is not yet distinguished from Tier 1.
+  - CMS-half paragraph: Content/Data/Media workspace **routes are deleted** (PR #18). `src/admin/router.tsx` now serves only `/admin/dashboard`, `/admin/site`, `/admin/account`, `/admin/plugins/:pluginId/:pageId`; everything else redirects. `data_tables`/`data_rows` still power loops/data pickers/publish.
+  - MCP bullet: `EditorBridgeScope` is **`'site'` only** (`server/ai/mcp/editorBridge.ts:29`) — the "open Site **or Content** workspace" claim was dead. Also now names the `studio_*` tool family and `MCP_ENDPOINT_PATH`.
+  - **The design-token section was actively harmful**: it prescribed `--editor-*`, `--rail-tint-mint/lilac/sky/peach`, `--editor-danger/warning/success/info`, `--editor-surface*`, `--editor-radius*` — every one of those families is **banned** by `css-token-vocabulary.test.ts` and none exist in `globals.css`. Rewritten to the live vocabulary (`--bg-surface-2..5`, `--accent-1..10` + `--accent-N-10`, `--danger*`/`--warning*`/`--success*`/`--info-text`, `--radius-sm`/`--radius`/`--card-radius`/`--panel-radius`/`--input-radius`, `--inspector-*`), and the two previously-unmentioned gates `admin-typography-token-policy.test.ts` / `admin-spacing-token-policy.test.ts` added.
+  - `!important`: only **one** real use remains in the tree (`globals.css` `prefers-reduced-motion`). `Button.module.css` no longer uses it — the "two exceptions" claim was stale.
+  - Hole runtime measured at **1060 B**, not "~668 B".
+  - Repo layout: added `studio-workspace/` (user data, never `rm -rf`), `server/handlers/studio/`, `scripts/`; `src/modules/` corrected to `base/` + `studio/` + `alm/`; `src/admin/` "workspaces" → "dashboard launcher". New "Parsing + writeback" stack bullet — `ts-morph`/`postcss` were absent from a stack list for the product whose core they are.
+  - Identity: `package.json` `name` `alm-figma-killer` → `studio`, `description` "Self-hosted CMS with an integrated visual editor." → the Studio one-liner; the same sentence fixed on `Dockerfile`'s `org.opencontainers.image.description`; `index.html` gained a `<meta name="description">` (its `<title>` was already `Studio`). README: trust tiers added to rule 1, "content workspaces" removed from the Stack note.
+  - Agent files: `iframeCanvasQuery.ts` path fixed — it lives at `src/__tests__/canvas/`, not under `canvas/__tests__/` (canvas-engineer, test-engineer) · `SourceLockedNotice` → `SourceConstraintNotice` (panel-designer) · studio-import.md "578 lines" → ~1,300, in two places (parser-surgeon) · store-engineer + perf-hunter's "full-site scans are a live defect" → **fixed**, with `nodeIndex.ts` and `no-full-site-scan-in-selectors.test.ts` named · perf-hunter's "add a studio board benchmark" → shipped (`bun run bench:studio-board`) · server-engineer gained a table for the whole `server/handlers/studio/` subdirectory (git, deploy, share, comments, prototype, stories, trust tiers) that its flat-siblings table omitted entirely · the "~200 pre-existing failures" figure removed from **six** places (agents README ×2, studio-implementer, studio-verifier, test-engineer ×2) in favour of "read `standing-01`".
+- **Next step:** none for this entry. W6-4's `docs/` sweep should carry the `iframeCanvasQuery.ts` correction into `docs/agent-refs/path-index.md` (line ~283), `docs/agent-refs/canvas-internals.md` (line ~684) and `PROJECT-BRIEF.md` trap 10 — all three still name the dead `src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts` path.
+- **Decisions:**
+  - Numbers that drift (failure counts, doc line counts) are replaced with a **pointer to the authority** (`standing-01`, the doc itself) rather than a fresh number — re-pinning a number just schedules the next drift.
+  - `server/ai/mcp/server.ts`'s `serverInfo.name` is still the literal `'alm-figma-killer'` (asserted by `e2e.test.ts` and `transports/http.test.ts`). **Deliberately not changed here** — it is a wire identifier external MCP clients may already have configured, and this was a docs pass. If "one product name" is meant to cover it, that is a small code PR: `server.ts:59` plus two test assertions.
+  - `Dockerfile`'s `org.opencontainers.image.source`/`url`/`documentation` still point at `github.com/corebunch/studio` (the upstream fork) while `package.json` `repository` points at `MaherFayad/Figma-Killer-2`. Left alone — resolving that is an attribution call, not a docs-accuracy one.
+- **Landmines:**
+  - **A rule book can be worse than no rule book.** `CLAUDE.md`'s token section was instructing every agent to write `--editor-*` names that a gate test bans. `CLAUDE.md` is *not* in `css-token-vocabulary.test.ts`'s `DOC_FILES` list, so it will never fail — if you change a token family, grep `CLAUDE.md` by hand.
+  - `bun run build` fails in a fresh worktree until you `bun install` (no `node_modules/vite`). Not a code error.
+  - Verifying "does token `X` exist" by grep alone lies: `--rail-tint-*` appears in the tree exactly once — inside the regex that **bans** it.
+- **Verification:** `bun install`; `bun run build` ✅ (tsc -b + vite, exit 0); `bun test` → **11366 pass / 27 fail**, all 27 pre-existing and in the known clusters (`icon-catalog-integrity` `chevron-left`; the canvas batch-isolation set — NodeRenderer/VC, breakpoint activation, selection leak, inline text, pin⇄unroll, body context menu, AdminCanvasLayout; the browser-dependent `captureFramesHeadless` + `studio_compare` set). `bun test src/__tests__/architecture` → 509 pass / 1 fail (that same icon gate). `bun test server/ai/mcp/{e2e,transports/http}.test.ts` → 5 pass, confirming the `package.json` rename did not touch the MCP server name. `bun run lint` **not run** — no `.ts`/`.tsx` in the diff.
+- **Human action needed:** none. No UI changed.
+
 ### docs-02 — STATE.md archived per the handoff protocol (W6-2)
 
 - **Agent:** studio-scribe

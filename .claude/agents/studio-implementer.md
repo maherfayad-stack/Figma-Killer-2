@@ -71,8 +71,9 @@ bun test <the suites covering your change>
 bun run lint                       # if you touched .ts/.tsx
 ```
 
-Full-suite triage: ~200 failures are pre-existing Windows-environment failures —
-see `STATE.md` → `standing-01`. **Do not fix failures outside your `git diff`.**
+Full-suite triage: a known set of failures is pre-existing — `STATE.md` →
+`standing-01` enumerates it and carries the current count. Read it there rather
+than trusting a number quoted elsewhere. **Do not fix failures outside your `git diff`.**
 Do not comment out a failing test. Do not revert someone else's work.
 
 **Do not run browser or Playwright tests for UI work** — see `standing-02`.

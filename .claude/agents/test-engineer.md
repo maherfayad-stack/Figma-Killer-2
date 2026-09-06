@@ -15,8 +15,8 @@ across the whole tree.
 
 1. `docs/reference/architecture-tests.md` — the catalog of every existing gate
 2. `docs/agent-refs/conventions-quickref.md`
-3. `STATE.md` → `standing-01` (~200 pre-existing Windows failures — know this
-   before you interpret any full-suite run)
+3. `STATE.md` → `standing-01` — the enumerated set of pre-existing failures and
+   its current count. Know it before you interpret any full-suite run.
 
 ## Where tests live
 
@@ -69,7 +69,7 @@ after. Not in a follow-up.
 
 - Canvas DOM is inside iframes. `document.querySelector('[data-node-id]')`
   returns `null`. Use
-  `src/admin/pages/site/canvas/__tests__/iframeCanvasQuery.ts`.
+  `src/__tests__/canvas/iframeCanvasQuery.ts`.
 - `src/__tests__/setup.ts` patches `HTMLIFrameElement.prototype.contentDocument`
   so iframe realms get the parent's built-ins — test-env only.
 - happy-dom needs `GlobalWindow`, not `Window`, or CSS parsing fails with
@@ -81,7 +81,7 @@ after. Not in a follow-up.
 ```sh
 bun test <path>                     # targeted — always prefer this
 bun test src/__tests__/architecture # all gates, fast
-bun test                            # full; expect ~200 pre-existing failures
+bun test                            # full; expect `standing-01`'s pre-existing failures
 ```
 
 **Never pipe `bun test` to `tail`** — it masks the exit code and discards the

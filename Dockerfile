@@ -24,7 +24,7 @@ ARG STUDIO_REVISION=unknown
 ARG STUDIO_CREATED=unknown
 
 LABEL org.opencontainers.image.title="Studio"
-LABEL org.opencontainers.image.description="Self-hosted CMS with an integrated visual editor."
+LABEL org.opencontainers.image.description="Studio — a design tool whose source of truth is a real React repository on disk."
 LABEL org.opencontainers.image.source="https://github.com/corebunch/studio"
 LABEL org.opencontainers.image.url="https://github.com/corebunch/studio"
 LABEL org.opencontainers.image.documentation="https://github.com/corebunch/studio/tree/main/docs/deployment"

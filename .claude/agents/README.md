@@ -17,7 +17,7 @@ write a `STATE.md` handoff entry before stopping. Format:
 | `studio-scout` | You need to know where something lives or how it works. Run this **first** instead of grepping. | No — read-only |
 | `studio-architect` | The change spans more than one file, or the right layer isn't obvious. Produces a file-level work order. | No — plan + `STATE.md` only |
 | `studio-implementer` | The plan is settled and the task isn't one of the specialist areas below. | Yes |
-| `studio-verifier` | End of every task. Runs the gates and separates your failures from the repo's ~200 known ones. | No — reports |
+| `studio-verifier` | End of every task. Runs the gates and separates your failures from the repo's known pre-existing set (`standing-01`). | No — reports |
 | `studio-scribe` | Behaviour changed, a rule moved, or you learned something durable. | Docs + `STATE.md` only |
 
 ## Specialists — routed by what the change touches
@@ -28,8 +28,8 @@ write a `STATE.md` handoff entry before stopping. Format:
 | `canvas-engineer` | iframes, injectors, overlays, geometry, pan/zoom, cross-iframe events, inline editing, board frames |
 | `store-engineer` | Zustand slices, tree mutations, undo/coalescing, selection |
 | `panel-designer` | Right sidebar, property controls, `src/ui/` primitives, design tokens |
-| `server-engineer` | Bun routes, handlers, TypeBox boundaries, filesystem safety |
-| `mcp-tooling` | MCP tools, AI tool engine, editor bridge, visual-audit tooling |
+| `server-engineer` | Bun routes, handlers, TypeBox boundaries, filesystem safety — including everything under `server/handlers/studio/` (git, deploy, share links, comments, prototype, Storybook, trust tiers) |
+| `mcp-tooling` | MCP tools, AI tool engine, editor bridge, headless capture, visual-audit tooling |
 | `perf-hunter` | Frame rate, selection latency, load time, benchmarks and budgets |
 | `security-guard` | Untrusted input: archives, paths, subprocesses, the trust tiers |
 | `test-engineer` | Tests, fixtures, architecture gates |
@@ -58,7 +58,8 @@ skips `studio-verifier` or the `STATE.md` handoff.
   for any reason, the entry you leave is the deliverable.
 - **Never delete another agent's entry.** Append, or update the one you own.
 - **Verify once, at the end** — `bun run build`, targeted `bun test`, `bun run lint`.
-- **~200 full-suite failures are pre-existing and Windows-only** (`standing-01`).
+- **The pre-existing full-suite failures are enumerated in `standing-01`.** Read
+  the current count and set there — do not trust a number quoted anywhere else.
   Triage against `git diff`; never "fix" what isn't yours.
 - **UI is dogfooded by the human** (`standing-02`). No browser or Playwright
   passes for visual work — finish with a concrete "Human action needed" line.
