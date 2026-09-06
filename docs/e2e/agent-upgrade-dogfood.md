@@ -58,7 +58,7 @@ Highest risk: it touches the save path, and `store-02`/`store-04` record one
 data-loss incident on that path already.
 
 **A1 — an agent edit appears without a refresh.**
-Open a project at `/admin/site?studio`. Drive `studio_apply_edits` against a
+Open a project at `/admin/site`. Drive `studio_apply_edits` against a
 visible page (the Agent Panel, or an MCP client against `/_studio/mcp`).
 *Expect:* the frame updates on its own, within a second or so.
 *Failure:* the canvas stays stale until you reload — the push or the dispatch is

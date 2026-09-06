@@ -2318,6 +2318,96 @@ Verified directly against the live iframe DOM (`class` attribute literally empty
 
 ## Recently landed
 
+### docs-01 — `PROJECT-BRIEF.md` re-verified against the shipped tree; 8 of its 10 "does NOT work" items had already landed
+- **Agent:** studio-scribe
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** the brief's two status lists describe the tree as it is, so a new agent
+  stops re-solving solved problems. Every claim checked against source, not
+  against another doc.
+- **Scope:** `PROJECT-BRIEF.md` (§2 diagram + invariant 1, §3 table + both status
+  lists, §6 trap 11), `README.md` (quick-start entry point),
+  `docs/e2e/agent-upgrade-dogfood.md` (A1's URL),
+  `STUDIO-FIGMA-PARITY-PLAN.md` (§1 header note only — the table body is left
+  as written, per §0a's own rule). No source files touched.
+- **Sources of truth used, in this order:** `STUDIO-FIGMA-PARITY-PLAN.md` §0a
+  (the per-track ledger) and `STATE.md`'s `parity-01`, then **every claim
+  re-read in the code** before it was written down. Two of the claims handed to
+  me did not survive that check — see Landmines.
+- **Corrected from "not built" to shipped** (each verified by reading the file):
+  - New-CSS creation — `src/core/css-codemods/insertRule.ts`,
+    `studioCssWriteback.ts`'s `op: 'insert'` / `op: 'create'` +
+    `ensureStylesheetImport` (the ts-morph half that wires the new stylesheet's
+    `import` into the page).
+  - Project-wide component catalog — `server/handlers/studio/components.ts`,
+    `studio/componentCatalog.ts`. Live consumers confirmed:
+    `InstanceCallSiteView.tsx:154` (swap candidates) and `SlotPicker.tsx:73`.
+  - Dependency install — `server/handlers/studio/installDeps.ts` +
+    `DependenciesPanel/useDependencyInstallJob.ts`. The `// TODO(Phase G)` stubs
+    the brief cited are gone; `DepsSection.tsx`'s own header records their
+    deletion.
+  - Scroll unrolling (`canvasScrollUnroll.ts` + `CanvasScrollUnrollInjector.tsx`),
+    frame multi-select and bulk actions (`boardFrameSelectionActions.ts`,
+    `BoardFramesLayer/useMarqueeSelection.ts`, `FrameBulkInspector.tsx`).
+  - Visual-audit MCP tools — 46 `studio_*` names counted in
+    `server/ai/mcp/tools/studio/`, incl. `studio_export_frames`,
+    `studio_diff_frames`, `studio_fidelity_report`, `studio_compare`,
+    `studio_quality_check`.
+  - Trust tiers — `server/handlers/studio/trustTier.ts`,
+    `studio/studioProjectTrust.ts`; invariant 1 in §2 rewritten, because it
+    still claimed the relaxation had not shipped.
+  - Class-to-source writes (`setJsxClassName.ts` + the `kind: 'class'` edit),
+    which the brief never mentioned at all and which is the only way to edit a
+    Tailwind element.
+- **Left listed as open, each re-confirmed in code:** CSS-in-JS is
+  detection-only (`styleToolchainDetect.ts:86`); reparent/duplicate/wrap still
+  refuse (`sourceStructure.ts:148-177`); JS-driven animation is not frozen
+  (`CanvasAnimationInjector.tsx:66` says so explicitly); Tailwind/Sass/PostCSS
+  compile needs Tier-1 promotion so a fresh import renders unstyled
+  (`styleCompile.ts:444`); the insert picker lists `registry.list()`, not the
+  catalog (`ModuleInserterDialog.tsx:118`); a package-sourced instance cannot be
+  detached (`detachComponent.ts:309`).
+- **Decisions:** the brief no longer tries to carry granular per-track status —
+  it now points at `STUDIO-FIGMA-PARITY-PLAN.md` §0a for that and keeps only the
+  orientation-level set. Two lists in one file was how this drifted in the first
+  place.
+- **Landmines — two claims I was handed that the code does not support:**
+  1. **Breakpoint-scoped CSS writes do NOT reach disk.** `insertRule` and both
+     the `insert`/`create` payload schemas take an `atMedia` query, but a
+     repo-wide grep finds **no producer**: `collectStyleRuleEdits`
+     (`styleRuleWriteback.ts:529-534`) still routes any real `@media` context to
+     `unwritableContexts`. The capability exists end-to-end below the editor and
+     is unreachable from it. Wiring one producer closes it.
+  2. **Trap 11 is half-fixed, not fixed.** `selectCanvasPageFor`'s `pageId`
+     lookup is memoised (`lookupCanvasPageById`, `store.ts:303`), but the
+     `frameId` branch added at `store.ts:344-350` does an uncached
+     `selectActiveBoard(s)?.frames.find(...)` — a scan over boards then frames —
+     ahead of the memo, on the same per-node path. The trap text now describes
+     that instead of the fixed half.
+  Also: `.module.scss`/`.sass`/`.less` are detected and warned about
+  (`styleCompile.ts:195`), not "undetected" as the brief said.
+- **Known gap, stated not hidden:** `CLAUDE.md` still carries two of the same
+  stale claims — "Studio mode is entered at `/admin/site?studio`" and the
+  parse-never-execute parenthetical "until that ships, it holds absolutely".
+  Both are false in this tree (there is no `studioMode.ts` and no `?studio`
+  param; `src/admin/router.tsx:57` renders the editor unconditionally, and Tier 1
+  ships). I did not edit `CLAUDE.md` — it is the rule book and out of a scribe's
+  lane. **Someone with that lane should fix those two lines.** Everything else I
+  found stale in the same sweep was corrected here.
+- **Second known gap:** `Recently landed` holds **58** entries against the
+  protocol's "roughly ten". Archiving ~48 of them is a ~9,000-line move through
+  a file several agents append to concurrently, and folding it into a docs PR
+  would guarantee a merge collision and bury the actual correction. Left
+  deliberately undone and recorded here so it is a stated gap, not a silent one.
+  It wants its own PR, run when no other wave is in flight.
+- **Next step:** none for this entry. If you touch the style panel, close
+  Landmine 1; if you touch the store, close Landmine 2.
+- **Verification:** `bun test src/__tests__/architecture` — see the commit. No
+  source files changed, so build/lint are unaffected.
+- **Human action needed:** none.
+
+---
+
 ### parity-01 — Phase 0 + Band 1/2 of `STUDIO-FIGMA-PARITY-PLAN.md` executed by 13 parallel agents. **Uncommitted, in the working tree, awaiting human review.**
 - **Agent:** coordinator (13 specialist agents, 4 waves, disjoint file sets)
 - **Stage:** implementation complete for the dispatched scope; gates green except one in-flight lint fix. **NOTHING IS COMMITTED** — the human asked for a single review at the end.
