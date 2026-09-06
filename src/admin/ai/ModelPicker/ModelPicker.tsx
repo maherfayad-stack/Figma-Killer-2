@@ -77,6 +77,13 @@ interface ModelPickerProps {
   /** Required alongside `trailingLabel` — folded into the accessible name as `"<model>, <kind>: <trailingLabel>"`. */
   trailingLabelKind?: string
   /**
+   * Optional hover text for the trailing value itself, when the value has a
+   * REASON worth reading — AgentPanel's routed-effort chip explains which
+   * shape the server classified the turn as and why it picked that effort.
+   * Absent leaves the trigger's own tooltip as the only hover text.
+   */
+  trailingLabelTitle?: string
+  /**
    * Optional extra content appended to the SAME dropdown, after the model
    * groups — e.g. a nested "Effort ›" submenu. Receives the menu's own
    * close function so a pick inside this content can dismiss the whole
@@ -148,6 +155,7 @@ export function ModelPicker({
   searchThreshold = 8,
   trailingLabel,
   trailingLabelKind,
+  trailingLabelTitle,
   menuFooter,
 }: ModelPickerProps) {
   const baseId = useId()
@@ -384,7 +392,7 @@ export function ModelPicker({
           {activeLabel}
         </span>
         {variant === 'inline' && trailingLabel && (
-          <span className={styles.triggerTrailingLabel}>{trailingLabel}</span>
+          <span className={styles.triggerTrailingLabel} title={trailingLabelTitle}>{trailingLabel}</span>
         )}
         <ChevronDownIcon size={variant === 'field' ? 12 : 10} aria-hidden="true" />
       </Button>

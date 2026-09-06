@@ -192,22 +192,50 @@ describe('tryServeStudioReloadScope', () => {
     expect(body.narrow).toBe(false)
   })
 
-  it('widens for a project with Storybook stories — story routes record no parse-cache dependencies', async () => {
-    write('pages/Home.tsx', ['export default function Home() {', '  return <div>Home</div>', '}', ''].join('\n'))
-    write('components/Card.stories.tsx', [
-      "import Card from './Card'",
-      'export default { title: "Card", component: Card }',
-      'export const Basic = { args: { label: "Hi" } }',
-      '',
-    ].join('\n'))
-    write('components/Card.tsx', 'export default function Card({ label }: { label: string }) { return <div>{label}</div> }')
-    await loadStudioPages(wsDir)
+  describe('a project with Storybook stories — story routes record their own dependencies', () => {
+    beforeEach(async () => {
+      write('pages/Home.tsx', ['export default function Home() {', '  return <div>Home</div>', '}', ''].join('\n'))
+      write('components/Card.stories.tsx', [
+        "import Card from './Card'",
+        'export default { title: "Card", component: Card }',
+        'export const Basic = { args: { label: "Hi" } }',
+        '',
+      ].join('\n'))
+      write('components/Card.tsx', 'export default function Card({ label }: { label: string }) { return <div>{label}</div> }')
+      await loadStudioPages(wsDir)
+    })
 
-    // W5-3's story routes are a third producer that does not use
-    // `pageParseCache`, so a shared-component edit could leave a story frame
-    // stale with nothing for this route to see. Correct beats optimized.
-    const { body } = await reloadScope(wsDir, ['pages/Home.tsx'])
-    expect(body.narrow).toBe(false)
+    it('narrows an ordinary page edit — merely HAVING stories no longer widens the board', async () => {
+      const { body } = await reloadScope(wsDir, ['pages/Home.tsx'])
+      expect(body).toEqual({ ok: true, narrow: true, pageIds: ['home'] })
+    })
+
+    it('names the STORY\'s page for a component only a story renders', async () => {
+      // The case the blanket rule could not express: `Card.tsx` is rendered by
+      // the story and by no page, so the story's own frame is the honest —
+      // and complete — scope.
+      const { body } = await reloadScope(wsDir, ['components/Card.tsx'])
+      expect(body.narrow).toBe(true)
+      expect(body.pageIds).toEqual(['components-card-stories-basic'])
+    })
+
+    it('widens for an edit to the story FILE itself — a story frame can disappear', async () => {
+      const { body } = await reloadScope(wsDir, ['components/Card.stories.tsx'])
+      expect(body.narrow).toBe(false)
+    })
+
+    it('widens when a story file exists that no cached story route claims', async () => {
+      // Written after the load, so nothing has parsed it: the story-shaped
+      // version of "a discovered route with no cache entry".
+      write('components/Late.stories.tsx', [
+        "import Card from './Card'",
+        'export default { title: "Late", component: Card }',
+        'export const Basic = { args: { label: "Late" } }',
+        '',
+      ].join('\n'))
+      const { body } = await reloadScope(wsDir, ['pages/Home.tsx'])
+      expect(body.narrow).toBe(false)
+    })
   })
 
   it('widens for a file no cached route claims — deeper than one-level dependency tracking can see', async () => {

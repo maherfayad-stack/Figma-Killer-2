@@ -354,6 +354,47 @@ describe('AgentPanel', () => {
     })
   })
 
+  it('reports the routed effort on the model trigger when the user pinned none', async () => {
+    // The router's decision has to be visible or it is a silent one. With no
+    // pinned effort the trigger shows what the SERVER chose, and the reason
+    // it gave is the hover text.
+    installModelFetch(true)
+    renderAgentPanel({
+      agentActiveCredentialId: TEST_CREDENTIAL.id,
+      agentActiveModelId: 'model-1',
+      agentRoutedTurn: { mode: 'auto', effort: 'medium', shape: 'build', reason: 'a multi-file change' },
+    })
+
+    const trigger = await screen.findByRole('button', { name: 'OpenAI · Model 1, effort: auto · medium' })
+    expect(trigger.textContent).toContain('auto · medium')
+    expect(screen.getByTitle('build: a multi-file change')).toBeTruthy()
+  })
+
+  it('a pinned effort wins over the routed one, and carries no router tooltip', async () => {
+    installModelFetch(true)
+    renderAgentPanel({
+      agentActiveCredentialId: TEST_CREDENTIAL.id,
+      agentActiveModelId: 'model-1',
+      agentEffort: 'high',
+      agentRoutedTurn: { mode: 'pinned', effort: 'high', reason: 'pinned by the user' },
+    })
+
+    expect(await screen.findByRole('button', { name: 'OpenAI · Model 1, effort: High' })).toBeTruthy()
+    expect(screen.queryByTitle('pinned by the user')).toBeNull()
+  })
+
+  it('shows no effort at all before any turn has been routed', async () => {
+    // "Default" would claim a value the session does not have.
+    installModelFetch(true)
+    renderAgentPanel({
+      agentActiveCredentialId: TEST_CREDENTIAL.id,
+      agentActiveModelId: 'model-1',
+    })
+
+    await screen.findByLabelText('Message to AI assistant')
+    expect(screen.queryByRole('button', { name: /effort:/ })).toBeNull()
+  })
+
   it('autofocuses the composer when the open panel has no focused control', async () => {
     installModelFetch(true)
     renderAgentPanel({

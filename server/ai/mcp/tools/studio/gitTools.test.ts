@@ -5,8 +5,9 @@
  * the whole safety story: a tool that quietly rode `studio.write` would be
  * granted to every Admin and every connector that can edit a project at all.
  */
-import { afterAll, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { projectsRootDir } from '../../../../handlers/studioProjects'
 import { toolAllowedForCapabilities } from '../../../tools/capabilityGate'
@@ -15,9 +16,29 @@ import type { ToolContext } from '../../../runtime/types'
 
 const tool = studioGitMcpTools[0]!
 
-const created: string[] = []
+/**
+ * The fixture projects live in a REAL temp workspace, not in the developer's
+ * own `studio-workspace/`: the tool's guard only accepts a directory under
+ * `projectsRootDir()`, and pointing that at the checkout meant every run
+ * planted `__git_tool_test_*` folders the launcher listed as real projects —
+ * permanently, whenever a run was killed before `afterAll`. `realpathSync`
+ * because macOS's `/var/folders/…` tmpdir is a symlink and the guard resolves
+ * real paths on both sides.
+ */
+const workspaceRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-tool-')))
+const priorWorkspaceDir = process.env.STUDIO_WORKSPACE_DIR
+
+beforeAll(() => {
+  process.env.STUDIO_WORKSPACE_DIR = workspaceRoot
+})
+
 afterAll(() => {
-  for (const dir of created) fs.rmSync(dir, { recursive: true, force: true })
+  // Restored, not just deleted: `bun test` runs files in one process per
+  // worker, so leaving it set would relocate the workspace for whatever file
+  // runs next.
+  if (priorWorkspaceDir === undefined) delete process.env.STUDIO_WORKSPACE_DIR
+  else process.env.STUDIO_WORKSPACE_DIR = priorWorkspaceDir
+  fs.rmSync(workspaceRoot, { recursive: true, force: true })
 })
 
 async function git(cwd: string, args: string[]): Promise<number> {
@@ -27,11 +48,11 @@ async function git(cwd: string, args: string[]): Promise<number> {
   return proc.exited
 }
 
+/** One fixture project inside the temp workspace — `projectsRootDir()` is what the guard checks, so the test asks it rather than rebuilding the path. */
 function makeProject(): string {
-  fs.mkdirSync(projectsRootDir(), { recursive: true })
-  const dir = fs.mkdtempSync(path.join(projectsRootDir(), '__git_tool_test_'))
-  created.push(dir)
-  return dir
+  const root = projectsRootDir()
+  fs.mkdirSync(root, { recursive: true })
+  return fs.mkdtempSync(path.join(root, 'project_'))
 }
 
 async function makeRepo(dir: string): Promise<void> {

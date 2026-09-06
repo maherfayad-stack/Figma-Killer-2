@@ -67,6 +67,7 @@ import {
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { Project } from 'ts-morph'
+import { getCachedRouteParse, localSourceAbsFiles, setCachedRouteParse } from './pageParseCache'
 import type { RoutePageEntry } from './routePageEntry'
 import type { DiscoveredStory } from './storyDiscovery'
 
@@ -82,6 +83,33 @@ import type { DiscoveredStory } from './storyDiscovery'
 export const STORY_CALL_SITE_LOCK_REASON = 'a Storybook story, declared as args rather than placed as JSX'
 
 /**
+ * Marks a story's `pageParseCache` key so the route half of it stays tellable
+ * apart from a page route's. A page route's key half is the route file's
+ * project-relative path (`marketing/Landing.tsx`) or an App Router route path,
+ * both of which end in a file extension and neither of which can start with
+ * this prefix; a story's is its assigned `pageId`, which `reloadScope.ts` can
+ * therefore read straight back out instead of re-running discovery (which
+ * would mean re-parsing every story file to answer a question about which
+ * pages to reload).
+ */
+const STORY_ROUTE_KEY_PREFIX = 'story:'
+
+/** The `pageParseCache` key for one story — see {@link STORY_ROUTE_KEY_PREFIX}. */
+function storyCacheKey(dir: string, pageId: string): string {
+  return `${dir}::${STORY_ROUTE_KEY_PREFIX}${pageId}`
+}
+
+/**
+ * The story page id behind a `cachedRouteDependencies` key, or `null` when
+ * that key belongs to an ordinary page route. The inverse of
+ * {@link storyCacheKey}, and the only thing outside this module that needs to
+ * know the prefix exists.
+ */
+export function storyPageIdFromRoutePath(routePath: string): string | null {
+  return routePath.startsWith(STORY_ROUTE_KEY_PREFIX) ? routePath.slice(STORY_ROUTE_KEY_PREFIX.length) : null
+}
+
+/**
  * One `RoutePageEntry` per accepted story, in discovery order.
  *
  * `preferredKey`/`cssModuleClassMaps` are threaded through to a FRESH
@@ -93,6 +121,15 @@ export const STORY_CALL_SITE_LOCK_REASON = 'a Storybook story, declared as args 
  * declined, a `SourceFile` the project no longer holds) is SKIPPED rather than
  * emitted as an empty frame — an empty frame on the board is indistinguishable
  * from a broken one.
+ *
+ * Each built story is recorded in `pageParseCache` under
+ * {@link storyCacheKey}, with the same dependency set the other two producers
+ * record: its own file plus every local component it resolved. That buys the
+ * cheap half (a reopened board re-materializes only the stories whose inputs
+ * moved) and, the reason it was owed, the half `reloadScope.ts` needs — a
+ * story route with recorded dependencies is a route the narrow reload can
+ * REASON about, instead of the blanket "this project has stories, widen
+ * everything" it had to assume while stories recorded nothing.
  */
 export function buildStoryRouteEntries(
   dir: string,
@@ -100,20 +137,39 @@ export function buildStoryRouteEntries(
   stories: readonly DiscoveredStory[],
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
+  configHash: string,
 ): RoutePageEntry[] {
   const entries: RoutePageEntry[] = []
 
   for (const story of stories) {
-    const evalOptions: StaticEvalOptions = {
-      preferredKey,
-      pageBudget: createPageEvalBudget(),
-      workspaceRoot: dir,
-      cssModuleClassMaps,
+    const cacheKey = storyCacheKey(dir, story.summary.pageId)
+    const cached = getCachedRouteParse(cacheKey, configHash)
+    let built: BuiltStory | undefined
+    if (cached) {
+      built = { expanded: cached.expanded, componentSources: cached.componentSources }
+    } else {
+      const evalOptions: StaticEvalOptions = {
+        preferredKey,
+        pageBudget: createPageEvalBudget(),
+        workspaceRoot: dir,
+        cssModuleClassMaps,
+      }
+      built =
+        story.body.kind === 'jsx'
+          ? buildJsxStory(dir, project, story, story.body.fn, evalOptions)
+          : buildArgsStory(dir, project, story, story.body, evalOptions)
+      // A skipped story is deliberately NOT cached: "this produced nothing"
+      // is the one answer worth recomputing, since the file it depends on is
+      // exactly what a user fixes next.
+      if (built) {
+        setCachedRouteParse(
+          cacheKey,
+          configHash,
+          [story.absFile, ...localSourceAbsFiles(built.componentSources, dir)],
+          built,
+        )
+      }
     }
-    const built =
-      story.body.kind === 'jsx'
-        ? buildJsxStory(dir, project, story, story.body.fn, evalOptions)
-        : buildArgsStory(dir, project, story, story.body, evalOptions)
     if (!built) continue
 
     entries.push({

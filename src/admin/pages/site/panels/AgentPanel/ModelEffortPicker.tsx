@@ -5,7 +5,12 @@
  * {@link SharedModelPicker} — the single source of truth for "what models
  * exist" — and this file only supplies:
  *
- *   - the effort text folded into that SAME trigger, via `trailingLabel`
+ *   - the effort text folded into that SAME trigger, via `trailingLabel` —
+ *     the PINNED effort when there is one, otherwise the last turn's ROUTED
+ *     effort as the server reported it (`routedTurnLabel`, with the router's
+ *     reason as its hover text). One slot, because they are one answer to one
+ *     question; the chip is read-only either way, and the submenu below stays
+ *     the only way to change the value.
  *   - the "Effort ›" submenu appended to that SAME dropdown, via `menuFooter`
  *
  * Effort is a `claudeCli`-only knob (`--effort`); every other provider
@@ -19,7 +24,13 @@ import { useAgentStore } from '@admin/ai/useAgentStore'
 import { ModelPicker as SharedModelPicker } from '@admin/ai/ModelPicker'
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@ui/components/ContextMenu'
 import type { CredentialView } from '@admin/ai/api'
-import { fetchStudioAgentEffort, persistStudioAgentEffort, type AgentSlice } from '@site/agent'
+import {
+  fetchStudioAgentEffort,
+  persistStudioAgentEffort,
+  routedTurnLabel,
+  routedTurnTitle,
+  type AgentSlice,
+} from '@site/agent'
 import styles from './ModelEffortPicker.module.css'
 
 type AgentEffort = AgentSlice['agentEffort']
@@ -57,6 +68,7 @@ export function ModelEffortPicker({
   const setAgentProvider = useAgentStore((s) => s.setAgentProvider)
   const agentEffort = useAgentStore((s) => s.agentEffort)
   const setAgentEffort = useAgentStore((s) => s.setAgentEffort)
+  const agentRoutedTurn = useAgentStore((s) => s.agentRoutedTurn)
 
   const studioProjectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
 
@@ -101,10 +113,17 @@ export function ModelEffortPicker({
       value={value}
       onOpen={onRefreshCredentials}
       onChange={({ credentialId, modelId }) => void setAgentProvider(credentialId, modelId)}
-      // Only surface effort in the trigger once it's an explicit choice —
-      // showing a fabricated "Default" label would claim a specific value
-      // the session doesn't actually have.
-      trailingLabel={agentEffort ? currentEffortLabel : undefined}
+      // A pinned effort shows its own label; otherwise the LAST turn's routed
+      // effort, reported by the server (`auto · medium`). Both are the same
+      // slot because they answer the same question — what effort is this
+      // conversation running at — and only one of them can be true at a time.
+      // Neither fabricates: with no pin and no routed turn this stays
+      // undefined, because "Default" would claim a value the session doesn't
+      // have. `routedTurnTitle` carries the router's own reason on hover,
+      // which is what makes an automatic decision reviewable instead of
+      // silent.
+      trailingLabel={agentEffort ? currentEffortLabel : (routedTurnLabel(agentRoutedTurn) ?? undefined)}
+      trailingLabelTitle={agentEffort ? undefined : (routedTurnTitle(agentRoutedTurn) ?? undefined)}
       trailingLabelKind="effort"
       menuFooter={(closeMenu) => (
         <>

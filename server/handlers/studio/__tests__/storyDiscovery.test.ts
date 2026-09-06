@@ -19,17 +19,23 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createWorkspaceProject } from '@core/page-parser'
+import { cachedRouteDependencies, clearPageParseCache } from '../pageParseCache'
 import { discoverStories, storyFilesIn, type StoryRefusalReason } from '../storyDiscovery'
-import { buildStoryRouteEntries, STORY_CALL_SITE_LOCK_REASON } from '../storyPages'
+import { buildStoryRouteEntries, STORY_CALL_SITE_LOCK_REASON, storyPageIdFromRoutePath } from '../storyPages'
+
+/** Stands in for `loadStudioPages`' real workspace-config hash — these tests vary files, never framework/locale/class maps. */
+const CONFIG_HASH = 'story-tests'
 
 let tmpDir: string
 
 beforeEach(() => {
+  clearPageParseCache()
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'story-discovery-'))
 })
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
+  clearPageParseCache()
 })
 
 /** Writes `<tmpDir>/<relPath>`, creating parents. */
@@ -324,7 +330,7 @@ export const Critical = { args: { label: 'Danger', tone: 'critical' } }
 
     const project = createWorkspaceProject(tmpDir)
     const { stories } = discoverStories(tmpDir, project)
-    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined)
+    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)
 
     expect(entries).toHaveLength(1)
     const entry = entries[0]!
@@ -370,7 +376,7 @@ export const Declared = () => <Chip label="declared" />
 
     const project = createWorkspaceProject(tmpDir)
     const { stories } = discoverStories(tmpDir, project)
-    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined)
+    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)
 
     const entry = entries[0]!
     const rootId = entry.expanded.rootIds[0]!
@@ -381,5 +387,65 @@ export const Declared = () => <Chip label="declared" />
     expect(root.locked).toBe(false)
     expect(root.instanceOf?.componentName).toBe('Chip')
     expect(root.codeProps ?? []).toEqual([])
+  })
+
+  it('records the story file AND the components it renders as parse-cache dependencies', () => {
+    // What `reloadScope.ts` inverts. Without it a story route claimed nothing,
+    // and every save in a Storybook project had to widen to a full reload.
+    writeChipComponent()
+    write(
+      'src/Chip.stories.tsx',
+      `import { Chip } from './Chip'
+export default { title: 'Data/Chip', component: Chip }
+export const Critical = { args: { label: 'Danger' } }
+`,
+    )
+
+    const project = createWorkspaceProject(tmpDir)
+    const { stories } = discoverStories(tmpDir, project)
+    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)
+
+    const deps = cachedRouteDependencies(tmpDir)!
+    const routePath = [...deps.keys()].find((key) => storyPageIdFromRoutePath(key) === entries[0]!.pageId)!
+    expect(routePath).toBeDefined()
+    expect([...deps.get(routePath)!].sort()).toEqual(
+      [path.join(tmpDir, 'src', 'Chip.stories.tsx'), path.join(tmpDir, 'src', 'Chip.tsx')].sort(),
+    )
+  })
+
+  it('reuses a cached story parse until one of those dependencies changes', () => {
+    writeChipComponent()
+    write(
+      'src/Chip.stories.tsx',
+      `import { Chip } from './Chip'
+export default { title: 'Data/Chip', component: Chip }
+export const Critical = { args: { label: 'Before' } }
+`,
+    )
+
+    const build = () => {
+      const project = createWorkspaceProject(tmpDir)
+      const { stories } = discoverStories(tmpDir, project)
+      return buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)[0]!
+    }
+    const first = build()
+    expect(build().expanded).toBe(first.expanded) // same object — the cache answered
+
+    write(
+      'src/Chip.tsx',
+      `export function Chip({ label }: { label: string }) {
+  return <b>{label}</b>
+}
+`,
+    )
+    // The cache compares mtimes, and a rewrite inside the same millisecond
+    // can land on the identical one — stamp it forward so this asserts the
+    // invalidation rule rather than the filesystem's clock resolution.
+    const chipFile = path.join(tmpDir, 'src', 'Chip.tsx')
+    const future = new Date(Date.now() + 2_000)
+    fs.utimesSync(chipFile, future, future)
+
+    const afterComponentEdit = build()
+    expect(afterComponentEdit.expanded).not.toBe(first.expanded)
   })
 })
