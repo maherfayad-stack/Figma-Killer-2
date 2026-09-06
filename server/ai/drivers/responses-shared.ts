@@ -69,9 +69,9 @@ export type ResponsesTurn = ResponsesInputItem[]
 /**
  * Flatten the canonical `systemPrompt` array into the single Responses
  * `instructions` string. The 3-element cached form
- * `[prefix, BOUNDARY, suffix]` is joined into one block. OpenAI prompt caching
- * is automatic; callers can add `prompt_cache_key` through the adapter options
- * to improve routing for repeated prefixes.
+ * `[prefix, BOUNDARY, suffix]` is joined into one block. Prompt caching on this
+ * protocol is automatic — the explicit lever is `prompt_cache_key`, which every
+ * request carries (see {@link promptCacheKey}).
  */
 export function joinInstructions(systemPrompt: string[]): string {
   return systemPrompt
@@ -171,6 +171,39 @@ function buildResponsesTools(tools: AiStreamRequest['tools']): unknown[] {
     // is omitted on purpose; see the module header.
     parameters: t.inputSchema,
   }))
+}
+
+// ---------------------------------------------------------------------------
+// Prompt cache key
+// ---------------------------------------------------------------------------
+
+/**
+ * The `prompt_cache_key` every Responses request carries.
+ *
+ * Prefix caching on this wire protocol is automatic, but the cache is
+ * PARTITIONED by this key: requests sharing one route to the same partition and
+ * hit each other's prefixes. Studio's prefix is determined by the toolset (the
+ * instructions and the ~8–15K-token tool block move together), so the key is a
+ * stable hash of the tool names — every turn of every conversation using the
+ * same tools lands in the same partition.
+ *
+ * Shared by both Responses drivers rather than configured per driver: OpenRouter
+ * shipped without a key at all, which meant its requests were partitioned by
+ * OpenRouter's own default and got none of this.
+ */
+function promptCacheKey(req: AiStreamRequest): string {
+  const toolNames = req.tools.map((t) => t.name).sort().join(',')
+  return `studio:${stableHash(toolNames)}`
+}
+
+/** FNV-1a — a short, stable, dependency-free id. Not a security hash. */
+function stableHash(value: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +359,6 @@ interface ResponsesAdapterOptions {
   readonly label: string
   readonly endpoint: string
   buildHeaders(req: AiStreamRequest): Record<string, string>
-  promptCacheKey?: (req: AiStreamRequest) => string | null
 }
 
 /**
@@ -352,9 +384,8 @@ export function createResponsesAdapter(
         instructions: joinInstructions(req.systemPrompt),
         input: messages.flat(),
         stream: true,
+        prompt_cache_key: promptCacheKey(req),
       }
-      const promptCacheKey = opts.promptCacheKey?.(req)
-      if (promptCacheKey) body.prompt_cache_key = promptCacheKey
       if (req.tools.length > 0) body.tools = buildResponsesTools(req.tools)
       return body
     },

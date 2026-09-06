@@ -1,0 +1,61 @@
+/*
+ * PropertyList — the Fill / Stroke / Effects list shape.
+ *
+ * No header lives here (see PropertyList.tsx doc comment) — this is rows
+ * only, stacked with zero gap so a resting list of fills reads as one solid
+ * block, not a stack of separated cards. Row height is pinned to
+ * `--inspector-row-h` so a fill row, a stroke row, and an effect row are all
+ * the same height as every other inspector row.
+ *
+ * Panel-width floor: 260px. `.summary` is the only element allowed to shrink
+ * to zero and ellipsis; `.leading`, `.value`, and the trailing action buttons
+ * are fixed-width so they never get squeezed off the edge.
+ */
+
+.list {
+    display: flex;
+    flex-direction: column;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    min-height: var(--inspector-row-h);
+    padding-inline: var(--inspector-pad-x);
+    border-radius: var(--inspector-field-radius);
+    cursor: pointer;
+    color: var(--text);
+}
+
+.row:hover {
+    background: var(--inspector-field-bg-hover);
+}
+
+.row:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.leading {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.summary {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-xs);
+}
+
+.value {
+    flex-shrink: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+}

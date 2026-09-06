@@ -13,6 +13,7 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 ---
 
 ### panel-10 — a Tailwind/Sass project imported unstyled and nothing on screen said why
+### mcp-17 — the assistant loop paid for its whole context every round, ran its read batch one tool at a time, and captured five screens in five browser round trips
 
 - **Agent:** studio-implementer
 - **Stage:** done
@@ -142,6 +143,92 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
   `.studio/meta.json` should show `"styleCompilePromptDismissed": true` and
   NO `"trust"` key. Also confirm the banner never appears on a plain-CSS
   project or in CMS (non-studio) mode.
+- **Goal:** land the verified latency fixes in `server/ai/**` — prompt caching that
+  covers more than the system prefix, tool dispatch that isn't serial, and a
+  `studio_compare` that captures a batch as a batch.
+- **Scope:** `server/ai/drivers/{anthropic,anthropicWire,openai,openrouter,responses-shared}.ts`,
+  `server/ai/drivers/http/toolLoop.ts`, `server/ai/mcp/editorBridge.ts`,
+  `server/ai/mcp/tools/studio/compare.ts` + their tests,
+  `src/__tests__/ai/{toolLoop,anthropicMapping,responsesMapping}.test.ts`,
+  `docs/features/{agent,mcp-connectors}.md`, `docs/agent-refs/path-index.md`.
+  Nothing under `src/admin/` was touched.
+- **Done so far:**
+  - **The history is append-only now.** `applyHeavyElision` rewrote
+    `messages[index]` in place whenever a screenshot/HTML result was superseded,
+    which moved the cached prefix on every capture. It is now
+    `projectHeavyElision` (`http/toolLoop.ts:436`) — a projection computed per
+    POST and thrown away. Same wire output, but the array a later round appends
+    to is never edited, which is what makes the cache anchors below meaningful.
+  - **All four Anthropic `cache_control` breakpoints are spent**, not one:
+    static system prefix (unchanged), the LAST tool definition
+    (`buildToolDefinitions`, `anthropicWire.ts:87`), the end of the persisted
+    history, and the last message of the current request. The two message
+    anchors are chosen provider-agnostically by `messageCacheBreakpoints`
+    (`http/toolLoop.ts:497`) and expressed by `withMessageCacheBreakpoints`
+    (`anthropicWire.ts:110`); `ProviderAdapter.buildRequestBody` gained a third
+    `cacheBreakpoints` argument that the Responses/Ollama adapters ignore.
+  - **Read tools in one batch now run concurrently.** `groupToolCalls`
+    (`http/toolLoop.ts:322`) splits a turn's calls into ordered groups:
+    consecutive `mutates !== true` tools share a group and run under one
+    `Promise.all`; anything that mutates — or a name that resolves to no
+    registered tool — is a group of one. Emission order is still the model's
+    call order, so the transcript and the `tool_result` pairing are unchanged.
+  - **OpenRouter gets a `prompt_cache_key`.** It had none. The key moved out of
+    `openai.ts` into `responses-shared.ts:promptCacheKey` and is now
+    unconditional for both Responses drivers; `openai.ts`'s private
+    `stableHash` and the `promptCacheKey` adapter option are deleted.
+  - **`studio_compare` captures the batch as a batch.** `captureMissedPages`
+    (`compare.ts:226`) collects every cache-miss page and makes ONE
+    `studio_export_frames` call per distinct capture dpr, instead of one call
+    per page inside the result loop.
+  - **`awaitEditorBridgeForUser` drops to one wait window** when a bridge for
+    that `(userId, scope)` was live in the last 60s (`editorBridge.ts:80`) — the
+    `STREAM_LEASE_MS` teardown/reconnect case, where the second 4s window was
+    pure latency. A never-seen workspace keeps the full two-window patience.
+- **Next step:** none — merged behaviour is complete. If someone wants the next
+  increment: `studio_export_frames` takes ONE dpr per call, so a multi-reference
+  batch still splits; teaching the browser handler a per-page dpr would collapse
+  it to a single call.
+- **Decisions:**
+  - Parallelism is gated on `AiTool.mutates`, not on `execution`. A conservative
+    rule that keeps every read/write ordering the model expressed, documented at
+    `groupToolCalls`. Do not widen it to "everything at once" — a write batch is
+    order-dependent by construction.
+  - The two message cache anchors are "end of persisted history" + "end of this
+    request", NOT a sliding pair. The first is the one elision can never
+    disturb; the second is what makes round N+1 cheap.
+  - `anthropicWire.ts` is a new file rather than more mass in `anthropic.ts`
+    (648 lines, `CEILING` is 700) — and the block interfaces had to move with
+    the builders or `no-circular-dependencies` would have fired.
+- **Landmines:**
+  - **Do not `git stash` in this repo.** Worktrees share one stash stack. I
+    stashed to get a pre-change test baseline; between the push and the pop
+    another agent stashed and then popped, so I popped THEIR canvas/perf WIP
+    into this worktree and they popped mine into theirs. Recovered by hand from
+    the stash commit SHA. **`stash@{0}` is now
+    `RECOVERED-perf-canvas-wip-mispopped`** — that is the other agent's
+    canvas/perf work (`BreakpointFrame.tsx`, `NodeRenderer.tsx`,
+    `ProjectCssInjector.tsx`, `usePersistence.ts`, `store.ts`, plus 5 new test
+    files); pop it from the worktree that owns it.
+  - `executeAiTool` reads `toolContextBase.capabilities` and a `mutates` tool
+    needs `ai.tools.write`. A test fixture that omits `capabilities` makes the
+    gate throw, which the loop reports as a dead browser bridge. Cost me a
+    confusing red before I saw it.
+  - Anthropic caps `cache_control` at 4 per request. All four are now in use;
+    adding a fifth anywhere silently 400s the whole turn. The wire test in
+    `toolLoop.test.ts` asserts the count.
+- **Verification:**
+  - `bun run build` — pass (tsc + vite).
+  - `bun test src/__tests__/ai server/ai/mcp/editorBridge.test.ts server/ai/mcp/tools/studio/compare.test.ts` — pass.
+  - `bun run lint` — see the entry's commit; no new findings in the touched files.
+  - Pre-existing and NOT mine: `server/ai/drivers/claudeCli*.test.ts`,
+    `projectMcpServers.test.ts`, `registeredMcpServers.test.ts`,
+    `liveDigest.test.ts` — 53 failures, reproduced identically on a clean tree
+    before any of this landed.
+- **Human action needed:** dogfood one real agent turn. The observable wins are
+  (a) `cache_read_input_tokens` should now dominate `input_tokens` from round 2
+  onward in the context meter, and (b) a multi-screen `studio_compare` should
+  return in roughly a quarter of the time it used to.
 
 ---
 
@@ -1401,6 +1488,180 @@ Error messages are symmetric and leak nothing: a hostname-triggered block would 
 
 ---
 
+### panel-05 — inspector disclosure wave 2: Layout, Spacing, Size, Appearance, Typography, rotation
+
+Follows [`panel-04`](#panel-04). Plan: `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`.
+Branch `feat/inspector-progressive-disclosure`. **G6 (Fill), G7 (Stroke) and
+G8 (Effects) are NOT started** — they are the three `PropertyList` consumers.
+
+**Landed:** G3+G4 (one agent — they rewrite the same cluster), G2, G5, G9, and
+G10's missing rotation row. Measured/estimated at panel width 300: Layout
+≈440 → ≈176px, Spacing body ≈253 → ≈26px, Size 4 rows → 1 for a width-only
+element, Typography 8 grid entries → 4 rows.
+
+**Three judgement calls that are load-bearing — do not "simplify" them back.**
+
+1. **The layout settings ⚙ is RESIDENT, not inside the flex/grid block.**
+   `alignSelf` / `justifySelf` / `flex` / `gridColumn` / `gridRow` are
+   item-level: governed by the PARENT's display, which a class-style editor
+   cannot observe. The first implementation nested the trigger in the flex/grid
+   block, which made them unreachable on a plain `<div>` inside a flex row —
+   the most common node there is. Only container-level entries (`flexWrap`,
+   `rowGap`/`columnGap`) are mode-filtered. `propertiesPanel-redesign.test.tsx`
+   pins this by opening the trigger with no `display` set.
+2. **`SpacingBoxControl` was not deleted.** It moved behind the Spacing
+   section's "Box model" ⚙. It is the best control in the panel for "which side
+   is which"; it was only the wrong *default* at 253px resident.
+3. **Rotation writes the standalone `rotate` property, never a rewritten
+   `transform`.** Verified first that the publisher's gate is now permissive
+   (`isEmittableProperty`, not the old `ALLOWED_PROPS`) and that the canvas
+   imports the same `bagToCSS`. A `transform` already containing
+   `rotate()`/`rotateX()`/`rotate3d()` would silently compound, so that case
+   refuses and falls back to a raw row — the gradient/box-shadow rule.
+
+**`cssControlTypes.ts` was split.** It held how a property is CONTROLLED and how
+the panel is DIVIDED INTO SECTIONS; curating the typography long tail pushed it
+one line over the 700 budget. The registry is now `classStyleSections.ts`
+(`ClassStyleSectionDefinition`, `CLASS_STYLE_SECTIONS`,
+`getClassStyleSectionSetCounts`, `getActiveStyleTab`); six importers were
+repointed. 701 → 428 + 304.
+
+**A trap worth stating once.** G9 first reached eight typography properties via
+`as keyof CSSPropertyBag`. That cast is never cosmetic here: `keyof
+CSSPropertyBag` types the whole style pipeline, so a property that only reaches
+disk by defeating it is ALSO invisible to the section's search and its "N set"
+count — and after `panel-04`'s Law 1 that count is what decides whether a
+section may collapse and hide the user's own work. All eight are now real
+schema members and the casts are gone. **If a control needs a property the bag
+does not model, add it to the bag.**
+
+**`bun run icons:sync` cannot run in this environment** — `scripts/sync-icons.ts`
+reads sources from a sibling checkout of the PRIVATE upstream icons repo.
+Removing orphans by hand is equivalent to its step 4 (done for the three icons
+`alignmentOptions.tsx` orphaned). ADDING an icon needs someone with that
+checkout. Consequences: `RotateIcon` was hand-authored into
+`src/ui/components/InspectorIcons` (the sanctioned escape hatch), and
+**`AppearanceSection` stands in `ColorsSwatchSolidIcon` for Figma's droplet —
+vendor a real `droplet-solid` and swap it.**
+
+**MERGE HAZARD — a deliberate decision, recorded so it is not lost.**
+`feat/prototype-mode` is **20 commits / 592 files ahead of `main` and unmerged**,
+and already contains a **parent-aware** sizing model this branch cannot see:
+`elementSizing.ts` (172 lines), `useFrameParentLayout` in
+`useInspectComputedStyle.ts`, and a larger `SizeSection.tsx`. This branch was
+cut from `main`, so G2 wrote its own 84-line `elementSizing.ts` mapping Hug →
+`fit-content` and Fill → `100%` **without consulting the parent**. The user chose
+to stay on `main` and reconcile at merge. **At merge: keep prototype-mode's
+parent-aware `currentSizingMode`/`sizingPatch`/`useFrameParentLayout` and layer
+this branch's `AddablePropertyField` disclosure UI on top. Do not take this
+branch's `elementSizing.ts` wholesale — it is the weaker model.**
+
+**Verification:** `bun test src/__tests__/architecture` 511/511; `bun test src/ui
+src/admin src/__tests__/panels src/__tests__/fonts` 1179/1179; `bun run build`
+and `bun run lint` clean.
+
+**Human action needed — still not dogfooded end to end.** Per
+`dogfood-ui-before-gating`. Drive `:5173`: a plain `<div>` with no `display`
+should show the display switcher, a two-field padding row, a Clip content
+checkbox and a resident ⚙ — open it and confirm `alignSelf` is writable. Then
+`display: flex` → the 3×3 pad, gap, and container-only rows appear in the ⚙;
+`display: grid` → the inverse. Check Size shows one row for a width-only
+element and that "Add minimum width" writes nothing until you type. Check
+Typography is four rows and its ⚙ tabs. Check Position's rotation field, and
+that a node with `transform: translateX(20px)` keeps it.
+
+---
+
+### panel-04 — the inspector's progressive-disclosure pass: wave 1 (four primitives + three orders)
+
+**Branch:** `feat/inspector-progressive-disclosure`, off `main`. Plan:
+[`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`](STUDIO-INSPECTOR-DISCLOSURE-PLAN.md) —
+the second half of `STUDIO-FIGMA-PARITY-PLAN.md` §10 Track G. Track G's density
+passes shipped; **this is disclosure.** Figma's panel is not smaller because its
+controls are smaller — it is smaller because at rest it does not draw controls
+for things you have not used. The plan derives five laws from a 31-screenshot
+reference set and turns them into eleven work orders. Wave 1 landed seven of
+them in parallel; **G2, G3, G4, G5, G6, G7, G8, G9 are NOT started.**
+
+**Four new primitives, all unwired on purpose.** Later orders consume them; a
+wave-1 agent reaching into `LayoutSection` would have collided with the wave-4
+rewrite. Signatures are in each component's doc comment.
+- `InspectorPopover` (`src/ui/components/InspectorPopover/`) — the anchored
+  *panel* (not menu) behind Law 2. Presence-mounted like `ContextMenu`; no
+  `open` prop. **It also collapsed the duplicate positioning maths:**
+  `useAnchorPosition.ts` + `usePointPosition.ts` are DELETED, merged into
+  `src/ui/lib/useAnchoredFloating.ts`, and `ContextMenu` was rebuilt on it.
+  There is now exactly one copy in the tree.
+- `PropertyList` (Law 1's list shape) — renders `null` when empty; the header
+  and `+` stay in the caller's `Section`. The eye is opt-in via
+  `onToggleVisible` and **absent by default** (plan §8 decision 1: CSS has no
+  disabled declaration, so no storage model was invented).
+- `ExpandableFieldCluster` (Law 4) — `linked` is derived by the caller, never
+  stored; **expanding writes nothing**; sticky per cluster id.
+- `AddablePropertyField` + `RevealedField` (Law 3) — `onAdd(key)` *reveals*, and
+  is tested to write nothing.
+
+**Three orders landed.** `G1` (empty-section law) added
+`ClassStyleSectionDefinition.collapsedWhenEmpty` on background/border/effects/
+interaction/typography and collapses them to a one-line `[styles][+]` header;
+`G10` mounted `AlignBar` for single-node selection with honest-write resolution,
+moved distribute/tidy into an overflow menu, added F29 constraint side-pickers,
+and moved `zIndex` behind a settings trigger; `G3.3` built the `AlignGrid` 3×3
+pad (component only, not wired).
+
+**Three traps a future agent must not re-learn.**
+1. **Emptiness must be judged across contexts.** `G1` threads a new
+   `crossContextStyles` prop from `StyleRuleComposer` so a value set only on a
+   non-active breakpoint keeps its section open. Judging on the active tab alone
+   hides the user's own work behind a `+`. `InlineStyleComposer` deliberately
+   does NOT pass it — `style=""` has no context axis.
+2. **`Button` + `aria-expanded` + a closing overlay destroys the trigger node.**
+   `Tooltip.tsx` does `if (disabled) return children` vs mounting
+   `TooltipInner` — a different element type at the same tree position — so the
+   `aria-expanded` flip that closes an overlay makes React tear down and
+   recreate the `<button>`. A synchronous `triggerRef.current?.focus()` in a
+   close handler focuses a discarded node and focus lands on `<body>`. Defer one
+   rAF past cleanup and re-query the ref. `InspectorPopover` has a regression
+   test using the real `Button`+tooltip combo.
+3. **Portalled surfaces escape `data-field-skin="inspector"`.** The panel root
+   sets it and the cascade does the rest — but a portal renders outside that
+   subtree and would draw admin pill controls. `InspectorPopover` sets it on its
+   own root; anything portalled must.
+
+**Gate note.** The `AlignGrid` agent verified against four hand-picked
+architecture tests and shipped a real `admin-spacing-token-policy` failure
+(`gap: 2px`, `padding: 1px`). Its stated reason — that the clamp()-based
+`--space-*` scale would breach the pad's 48px budget — was false: `.grid` pins
+`width`/`height` with `box-sizing: border-box`, so gap and padding shrink the
+`1fr` cells, not the box. **Run the whole `src/__tests__/architecture` folder,
+not a subset.**
+
+**Verification at wave end:** `bun test src/__tests__/architecture` 511/511,
+`bun test src/ui src/admin src/__tests__/panels` 1060/1060, `bun run build`
+clean, `bun run lint` clean. No tokens added to `globals.css`; no `icons:sync`
+needed (`MinusIcon`'s new import in `AddablePropertyField` incidentally fixed a
+pre-existing `vendor-icons-fresh` orphan failure). Pre-existing unrelated
+failures remain in `cmsPlugins` / `exportDialog` / the plugin scheduler.
+
+**Known limitation, documented not fixed:** G10's constraint side-switch
+(`left`→`right`) correctly never leaves both properties set, but costs **two
+undo entries** — `onChange`/`onClearProperty` are single-property. A one-call
+multi-key commit needs a patch-shaped prop on `StyleSectionsEditor` /
+`StyleRuleComposer` / `InlineStyleComposer`.
+
+**Human action needed — nothing here has been dogfooded in a browser.** Per
+`dogfood-ui-before-gating`, green gates have given false confidence in this repo
+before. Drive `:5173`: (a) select a plain `<div>` with an empty class and
+confirm Background/Border/Effects/Interaction/Typography are single `+` lines
+while Position/Size/Layout/Spacing keep their controls; (b) set a value on a
+non-desktop breakpoint and confirm that section stays open with its dot lit on
+the Desktop tab; (c) select a div inside a flex row and confirm the align
+buttons that cannot write honestly are disabled *with a reason*; (d) set
+`position: absolute` and confirm the Left▾/Top▾ pickers move the value rather
+than duplicating it.
+
+---
+
 ### mcp-09 — the component API the extractor could not find was sitting in 29 Figma Code Connect files
 - **Agent:** mcp-tooling
 - **Stage:** done.
@@ -2053,6 +2314,52 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-10 — the repo importer was unreachable from the launcher; it is now a peer of "New project"
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** a user landing on `/admin/dashboard` can import an existing React repository (GitHub / `.zip` / local folder) without first scaffolding a throwaway project to reach the Studio toolbar.
+- **Scope:** `src/admin/pages/dashboard/DashboardPage.{tsx,module.css}`, `src/admin/pages/site/toolbar/ImportProjectButton.tsx`, moved `src/admin/pages/site/studio/ImportProjectDialog.{tsx,module.css}` → `src/admin/shared/dialogs/ImportProjectDialog/` (+ new `LazyImportProjectDialog.tsx`, `index.ts`), `docs/agent-refs/path-index.md`, `docs/editor.md`.
+- **Done so far:**
+  - `ImportProjectDialog` **moved** (not copied) to `src/admin/shared/dialogs/ImportProjectDialog/`. It imports its wire clients from `@site/studio/{importGithubProject,importUploadProject,studioWorkspaceDir}` — those stay put; only the dialog changed home. `src/admin/shared/` already imports from `@site/*` in nine other places, so this is the established direction.
+  - New `LazyImportProjectDialog.tsx` is the ONE `lazy()` boundary, exported through `index.ts` (which deliberately does NOT re-export `ImportProjectDialog` itself — that would pull its chunk back into both callers' eager graphs). Same pattern as `LazyModuleInserterDialog`.
+  - `DashboardPage.tsx:127-136` builds both CTAs once and renders them in two places: the toolbar row (`:152-153`) and the empty state's `action` slot (`:181-182`). `DashboardPage.tsx:219-223` mounts the dialog with `onImported={() => navigate('/admin/site')}`.
+  - `ImportProjectDialog`'s new optional `onImported` fires after `setStudioWorkspaceDir` + `requestCmsSiteReload`, before `onClose`. The toolbar omits it (already in the editor); the launcher passes the navigation.
+  - Loading state: a `.grid` of six `.cardSkeleton` tiles wrapping `<SkeletonBlock>` (was a bare `<p>Loading projects…</p>`). Empty state: `<EmptyState variant="centered" size="large">` with both CTAs, and a separate no-search-match variant (was a bare `<p>`). `.state` deleted from the CSS module.
+- **Next step:** none for this entry. If someone wants the launcher to also accept a drag-and-dropped `.zip`, `docs/audits/2026-08-06/07-drag-and-drop.md:404` already specs it against `importUploadProject.ts`.
+- **Decisions:**
+  - **`shared/dialogs/`, not `site/studio/`** — importing a repository is how a user *reaches* Studio, so the dialog cannot live inside the surface it is the entry to. `pages/dashboard/` would have been equally wrong in the other direction (the toolbar would then import from the dashboard).
+  - **`onImported` is optional, not required** — the toolbar has genuinely nothing to do after the dialog's own workspace switch. Passing it a no-op would be the shim, not the honest shape.
+  - **Kept the launcher's own toolbar row** rather than moving the CTAs into `AdminPageLayout`'s `actions` slot: the search field belongs beside them, and `actions` sits in the page header away from it.
+- **Landmines:**
+  - `AdminPageLayout`'s `loading` prop renders `SkeletonCards` *in place of children*, which would take the search field and both CTAs off screen during the fetch. The skeleton here is inline on purpose so the header stays stable.
+  - The project tiles are a bare `<button>` by design — `button-primitive-usage.test.ts`'s §8.11 allowlist entry covers `DashboardPage.tsx`. Do not "fix" it into a `Button`.
+- **Verification:** `bun run build` ✅ (tsc -b + vite, exit 0). `bun run lint` ✅ (exit 0). `bun test` → 10204 pass / 80 fail; all 80 are `standing-01`-class pre-existing (claudeCli driver suite, canvas/NodeRenderer/VC suites, `icon-catalog-integrity`'s `chevron-left` sample — the vendored `dist/icons` only carries the 244 synced icons). Confirmed pre-existing by re-running `icon-catalog-integrity` with my diff stashed: identical failure. `bun test src/__tests__/architecture` → 496 pass / 1 fail (that same icon gate). `bun test src/__tests__/architecture/bundle-size-budgets.test.ts` after a real build → 14 pass.
+- **Human action needed:** **dogfood.** Open `/admin/dashboard` and check: (1) both "Import project" and "New project" sit beside the search field; (2) with zero projects, the empty state shows both CTAs; (3) hard-reload and confirm the skeleton grid appears (throttle the network if the fetch is instant) with the header stable; (4) import a small GitHub repo from the launcher and confirm it lands you in `/admin/site` with that project open; (5) open a project, then import from the Studio toolbar and confirm it still swaps the workspace in place without navigating.
+### meta-07 — the first three screens a new user sees still spoke in the CMS's voice
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** nothing on a first-contact surface calls this product a CMS, or calls it "ALM Figma Killer". The product is **Studio**, and the thing that fails to load is the user's React project.
+- **Scope:** `src/admin/preauth/AdminPreAuthForm.tsx`, `src/admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx`, `src/admin/pages/site/toolbar/SettingsButton.tsx`, `src/admin/modals/{SiteImport/SiteImportModal,ImportHtml/ImportHtmlModal}.tsx`, `src/admin/shared/ExportDialog/ExportDialog.tsx`, `src/admin/spotlight/commands/help.ts`, `src/admin/AppLoadingScreen.tsx`, `src/ui/components/AlmLogo/AlmLogo.tsx`, `server/handlers/cms/me.ts`, `index.html`, `src/admin/pages/site/preferences/{catalog,editorPreferences}.ts`, `docs/design.md`, and the tests/e2e helpers that pinned the old strings.
+- **Done so far:**
+  - **Pre-auth** (`AdminPreAuthForm.tsx:41-42`): "Set Up CMS"/"Create Admin" → "Set up Studio"/"Create account"; "Admin Login"/"Sign In" → "Sign in to Studio"/"Sign in". `:128` brand fallback `'ALM Figma Killer'` → `'Studio'`.
+  - **Canvas load failure** (`AdminCanvasEditorBody.tsx:222`): "Could not load CMS site" → "Could not open this project". What failed is a directory of `.tsx` under `studio-workspace/`, not a CMS document.
+  - **Settings gear** (`SettingsButton.tsx:31`): `openSettings('general')` → `openSettings('preferences')`. 'general' is the CMS site's meta tags — site name, description, favicon. Both source-reading gates updated (`settingsModal.test.tsx`, `toolbar.test.ts`).
+  - **Product name unified to "Studio"** in four `eyebrow=` props, the spotlight "About …" command + its copied env-info block, `AlmLogo`'s `aria-label`, `AppLoadingScreen`'s label, `index.html`'s `<title>` and pre-hydration loader label, and the TOTP `issuer` in `server/handlers/cms/me.ts:188`.
+  - **Bonus, landed:** a third `theme` option, **System**. `catalog.ts:183` adds it; `editorPreferences.ts:260` adds `resolveEditorTheme(theme, prefersLight)` and a `matchMedia('(prefers-color-scheme: light)')` subscription, so `useEditorAppearancePreferences` now returns the RESOLVED theme.
+- **Next step:** none for this entry. The setup form's "Site name" field (and the `setupCms({ siteName })` call under it) is still CMS-shaped — left alone deliberately, it is a data-model question, not a copy one.
+- **Decisions:**
+  - **`resolveEditorTheme` collapses three states into two before the stamp.** `globals.css` gates the light palette on `[data-editor-theme='light']`, and `AdminPageLayout.tsx:125` / `AdminCanvasLayout.tsx:231` each mirror the same attribute onto their own roots. Stamping a literal `system` would match no token block anywhere. The raw preference is what gets persisted and what the Select shows; only the stamp is resolved.
+  - **Renamed the TOTP issuer.** The issuer is provisioning-time only — it is not an input to TOTP verification — so an already-enrolled authenticator entry keeps working; only new enrolments get the new label. Confirmed against `server/auth/mfa.ts:17-20`.
+  - **No identifier renames.** `AlmLogo`, `setupCms`, `loginCms`, `CMS_API_PREFIX` are untouched. This is user-facing voice, not a refactor.
+- **Landmines:**
+  - The pre-auth headings are **e2e selectors**, not just copy: `tests/e2e/helpers/auth.ts` drives setup and login by accessible name. Changing this copy without changing that helper silently breaks every authenticated e2e spec. Updated here (`accessibility.e2e.ts`, `auth.e2e.ts`, `helpers/auth.ts`) but **not run** — see `standing-02`.
+  - `resolveEditorTheme` deliberately falls back to dark for an unrecognised stored value. A newer build could write a theme this one has never heard of, and the old behaviour stamped it verbatim, which would have matched neither palette. Pinned by a test.
+  - `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx` is **timing-flaky**, not broken: consecutive runs of that one file gave 2 fails then 1 fail with an identical tree. Do not chase it as a regression.
+- **Verification:** `bun run lint` ✅ (exit 0). `tsc -b` ✅ (exit 0). `bun test` → 10209 pass / 80 fail; diffed the failing-test set against a run on `feat/dashboard-import-entry` — identical except the one flaky canvas-unroll case above. All are `standing-01`-class (claudeCli driver suite, canvas/NodeRenderer/VC suites, `icon-catalog-integrity`'s `chevron-left` sample). `bun test src/__tests__/{settings,toolbar,app,admin,spotlight}` → 289 pass / 0 fail after updating the three copy-pinning gates. **Playwright not run** (`standing-02`).
+- **Human action needed:** **dogfood.** (1) Log out and confirm the login heading reads "Sign in to Studio" and the button "Sign in"; on a fresh DB the setup screen reads "Set up Studio" / "Create account". (2) Click the toolbar gear and confirm it opens on **Preferences**, not General. (3) Settings → Preferences → Theme → **System**, then flip macOS between Light and Dark with the modal open and confirm the chrome repaints live, with no reload — and that reopening the modal still shows "System" selected. (4) Confirm the browser tab title reads "Studio". (5) If anyone has TOTP enrolled, confirm their existing code still verifies (it should — the issuer is not part of the algorithm).
+
 ### board-27c — canvas silently drops `color-mix()`, system colours, slash-alpha `rgb()` from a project's own CSS
 - **Agent:** studio-architect
 - **Stage:** design — **implemented, see `board-27e` below (this entry's design shipped unchanged from what's written here).**
@@ -2276,6 +2583,152 @@ Verified directly against the live iframe DOM (`class` attribute literally empty
 ---
 
 ## Recently landed
+
+### perf-03 — five measured hot-path fixes: the `frameId` branch nobody cached, per-frame CSS work that was frame-invariant, a frame memo that stopped one boundary too high, and an autosave that fired mid-word
+- **Agent:** perf-hunter
+- **Stage:** done (static gates green; **needs human dogfood** — see below)
+- **Updated:** 2026-09-06
+- **Goal:** remove per-node and per-frame work that repeats identical results, with a before/after number for each and a gate that fails if it comes back.
+- **Scope:** `src/admin/pages/site/store/store.ts` · `canvas/canvasVendorCss.ts` (new) · `canvas/ProjectCssInjector.tsx` · `canvas/canvasUserStylesheetCss.ts` (new) · `canvas/UserStylesheetInjector.tsx` · `canvas/BreakpointFrame.tsx` · `canvas/BoardFramesLayer/BoardFrameView.tsx` · `canvas/NodeRenderer.tsx` · `canvas/canvasFormPreview.ts` · `hooks/usePersistence.ts` · `scripts/bench/benches/agent-turn.ts`. **Deliberately untouched:** `panels/PropertiesPanel/**`, `property-controls/**`, `panels/selectorUsage.ts`, `studio/fsCodemodAdapter.ts`, `studio/styleRuleWriteback.ts`, `server/ai/**`.
+
+**Before / after — every number from a harness run against this branch, not a guess.**
+
+| What | Workload | Before | After |
+|---|---|---|---|
+| `selectCanvasPageFor` array comparisons per store commit | synthetic 40 pages / 40 frames / 6 on-screen / 804 live nodes (1,608 selector calls) | **36,180** | **0** |
+| …same, wall time per commit | " | **0.271 ms** | **0.043 ms** |
+| …same, with a locale-variant page actually fetched | " | 36,180 | **1,608** (the 1-element `boards.find` only) |
+| `UserStylesheetInjector` chain per recompute | real 178 KB project CSS corpus (`studio-workspace/test-3`), 6 frames at 3 widths | **71.97 ms** | **37.98 ms** |
+| `rewritePrefersColorScheme` on vendor CSS | real 121,756-byte `@alm-design/design-system` bundle, 6 frame mounts | **2.56 ms** (0.43 ms × 6) | **0.43 ms** (once) |
+| Form-preview resolvers per commit | 804 nodes, formless board, 1,608 resolver calls | **0.037 ms** | **0.010 ms** |
+| `NodeRenderer` store subscriptions per node | — | **13** | **11** |
+| `BreakpointFrame` body executions when its `BoardFrameView` re-renders | frame drag | **1 per re-render** | **0** |
+| Autosave during a 4-keystroke burst at 0.66 × delay | 60 ms delay | **fires mid-burst** | **1 save, after the burst** |
+| `bun run bench --only=agent-turn` | — | **crashes** (imports a deleted module) | runs (guide cold 27.95 ms / warm p50 545 µs) |
+
+**Mechanisms changed.**
+1. **`selectCanvasPageFor`'s `frameId` branch** (`store.ts`). The `pageId` lookup was memoised in `parity-01` C1; the later-added locale branch was not — `selectActiveBoard(s)?.frames.find(...)` is two uncached `Array.find`s, run twice per node per commit. Two changes: a `hasAnyKey(s.localizedPages)` guard that skips the branch entirely when no locale-variant page has been fetched (true on every board until someone duplicates a frame as a variant), and a `frames`-array-keyed `Map` memo for the frame → `axes.locale` lookup when it hasn't. Keyed on `frames`, not the board — `boardsModel.ts` reuses the `frames` reference for writes that don't touch a frame.
+2. **Vendor CSS** (`canvasVendorCss.ts`, new). The join + `rewritePrefersColorScheme` produce identical bytes in every iframe; now a single-slot memo on `projectVendorCss`. Its own module, not `ProjectCssInjector.tsx`, because a file that exports a component plus a plain function breaks Fast Refresh (`canvasFastRefreshBoundaries.test.ts` — found by lint, not by guessing).
+3. **User stylesheets** (`canvasUserStylesheetCss.ts`, new). The chain was `collect → resolveViewportUnits → rewritePrefersColorScheme`, which makes the scheme rewrite depend on the viewport and therefore uncacheable across frames. **Reordered** so the two frame-invariant steps run first (memoised once per `(site, scopeId, scopeTemplate)`), then the viewport resolution runs once per DISTINCT viewport, not per frame. The scope is keyed on its FIELDS, not the object — each injector instance has its own `useShallow` identity for the same two values.
+4. **`memo(BreakpointFrame)`** + `buildStudioBreakpoint` interned per width + `activatePageHandler` interned per page id (`BoardFrameView.tsx`). React Compiler exception #2, justified in a comment on each.
+5. **`NodeRenderer`**: three `activeInlineEdit` selectors → one `useShallow` subscription; both form-preview resolvers short-circuit when `formPreviewStates` is empty.
+6. **Autosave** (`usePersistence.ts`) is a real TRAILING debounce: the timer re-arms on `(s) => s.site` (Mutative mints a new document only when something actually changed), not just on the dirty false→true transition. Capped by `nextAutoSaveDelayMs` / `AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4`, so a continuous burst defers at most 4 × the idle delay (8 s in Studio) rather than forever.
+
+**Budgets added (all fail if the fix regresses — each was verified to fail against the pre-fix code):**
+- `src/__tests__/store/selectCanvasPageFor.test.ts` — "never touches board frames when no locale-variant page has been fetched" (`findCalls() === 0`), plus at-most-once-per-`(frames, frameId)`.
+- `src/__tests__/canvas/canvasUserStylesheetCss.test.ts` — collect/rewrite exactly 1× per board, viewport resolution 1× per distinct viewport; **plus a commute suite** proving the reorder is output-preserving on the shapes where it could plausibly not be.
+- `src/__tests__/canvas/projectCssInjector.test.tsx` — vendor rewrite runs once across 6 frame mounts.
+- `src/__tests__/canvas/breakpointFrameMemoBailout.test.tsx` — `useResolvedFrameAxes` call count unchanged across three frame drags. **Verified it fails without `memo()`** (5 vs 7).
+- `src/__tests__/canvas/canvasFormPreview.test.ts` — zero active-page resolutions across 100 nodes with no preview.
+- `src/__tests__/persistence/autoSaveTrailingDebounce.test.tsx` — no save mid-burst, one save after; starvation cap forces one through. **Verified it fails with the reschedule removed.**
+- `src/__tests__/architecture/per-node-selector-budget.test.ts` — `NodeRenderer`'s subscription count pinned at 11, from both sides.
+
+**Decisions.**
+- The `localizedPages`-empty guard runs BEFORE `selectActiveBoard`, not after — that ordering is the whole win, since the branch can only ever return something once a variant page exists.
+- `activatePageHandler` is interned at module level rather than left to the React Compiler. The compiler does not run under `bun test`, and the bailout it feeds is a documented compiler EXCEPTION; a memo whose key prop depends on the compiler is not a memo you can test.
+- Emptiness checks on the two hot records use `for…in` + early return, not `Object.keys(...).length` — the key array would be allocated once per node per commit.
+- `AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4` rather than a fixed millisecond cap, so the CMS's user-configured delay scales with it.
+- **`tests/e2e/studio-board-perf.e2e.ts` was NOT touched.** Its `BUDGET_ZOOM_WORST_FRAME_MS = 600` ratchet records the ~100-140 ms-per-frame-mount defect. Items 2 and 3 above shave real work off that path, but I cannot run Playwright here, so tightening a budget I did not measure would be exactly the unverifiable "optimization" this role is supposed to refuse. Re-measure it in a browser before lowering it.
+
+**Landmines.**
+- **`git stash` is NOT safe in this repo.** Worktrees share one stash stack. Mid-task, a concurrent worktree's `git stash pop` raced mine: my entire working tree was swapped for another agent's `server/ai/**` changes, and my stash entry was dropped from the list. Recovered via `git fsck --no-reflogs` → the dangling stash commit `3982af8` ("WIP on fix/canvas-hot-path-perf") → `git diff HEAD <sha> | git apply` + `git show <sha>^3:<path>` for untracked files. **Use `cp` to a `.tmp/` scratch file to A/B a change, never `git stash`.** The other agent's content was saved at `.tmp/perf/foreign-server-ai.patch` in this worktree and their dropped stash is recoverable the same way.
+- **The reorder in item 3, on its own, buys nothing.** Measured first: `rewritePrefersColorScheme` is 0.83 ms/call against `resolveViewportUnitsForCanvas`'s 10.95 ms on the same 178 KB input, so swapping the order changed 75.27 ms → 75.22 ms. The win is entirely from what the reorder makes CACHEABLE (collect + rewrite once per board, viewport once per distinct WIDTH). Do not repeat the reorder elsewhere expecting the reorder itself to be the fix.
+- `rewritePrefersColorScheme`'s cheap `/prefers-color-scheme/` short-circuit does NOT protect the vendor path: the real `@alm-design/design-system` bundle contains exactly one such query, so all 121 KB got walked, every mount.
+- Order-equivalence of the two CSS transforms was verified empirically over all **351** `.css` files in `studio-workspace/` at two viewports (0 mismatches) before the reorder landed — the argument alone was not treated as sufficient.
+- `inlineTextEditingWiring.test.ts` is a SOURCE-TEXT gate on `NodeRenderer.tsx`. Collapsing the three inline-edit selectors changed the spelling it matched (`s.activeInlineEdit.breakpointId` → `session.breakpointId`); the gate was updated to assert the same scoping in the new shape, in this commit.
+- The remaining `boards.find` in the locale-variant path (1,608 comparisons/commit over a 1-element array) was left alone on purpose: memoising `selectActiveBoard` would touch every board consumer for a negligible win.
+
+- **Verification:** `bun run build` → passes. `bun run lint` → **0 errors** (after moving `createVendorCssMemo` out of the component module). `bun test src/__tests__/{canvas,store,persistence,editor-store,architecture}` → **1784 pass / 11 fail**; all 11 match the pre-existing baseline measured on this same branch with the changes stashed out (5 × B3 NodeRenderer lock-down, `visual-component-ref inline base.body root`, `canvas body context menu`, `pin ⇄ unroll`, 2 × `selection does not leak between two board frames`, plus the `pixel-art-icons chevron-left` catalog gate). `bun run bench --only=agent-turn` → runs (it could not even import before).
+- **Human action needed: dogfood the canvas.** Open a board with **6+ frames at mixed widths** (`studio-workspace/test-3` has the 178 KB CSS corpus these numbers came from) at **~50% zoom**, then: (a) type into a text node and watch that the save status goes `unsaved` and stays there until you STOP typing — it should not flip to `saving` mid-word; (b) drag a frame by its header and watch that the other frames' content does not flicker/re-render; (c) zoom out past the virtualization boundary so 6 → 15 frames mount and see whether the stall is visibly shorter than the 290 ms `perf-01` recorded. (c) is the one number I could not measure here.
+### docs-01 — `PROJECT-BRIEF.md` re-verified against the shipped tree; 8 of its 10 "does NOT work" items had already landed
+- **Agent:** studio-scribe
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** the brief's two status lists describe the tree as it is, so a new agent
+  stops re-solving solved problems. Every claim checked against source, not
+  against another doc.
+- **Scope:** `PROJECT-BRIEF.md` (§2 diagram + invariant 1, §3 table + both status
+  lists, §6 trap 11), `README.md` (quick-start entry point),
+  `docs/e2e/agent-upgrade-dogfood.md` (A1's URL),
+  `STUDIO-FIGMA-PARITY-PLAN.md` (§1 header note only — the table body is left
+  as written, per §0a's own rule). No source files touched.
+- **Sources of truth used, in this order:** `STUDIO-FIGMA-PARITY-PLAN.md` §0a
+  (the per-track ledger) and `STATE.md`'s `parity-01`, then **every claim
+  re-read in the code** before it was written down. Two of the claims handed to
+  me did not survive that check — see Landmines.
+- **Corrected from "not built" to shipped** (each verified by reading the file):
+  - New-CSS creation — `src/core/css-codemods/insertRule.ts`,
+    `studioCssWriteback.ts`'s `op: 'insert'` / `op: 'create'` +
+    `ensureStylesheetImport` (the ts-morph half that wires the new stylesheet's
+    `import` into the page).
+  - Project-wide component catalog — `server/handlers/studio/components.ts`,
+    `studio/componentCatalog.ts`. Live consumers confirmed:
+    `InstanceCallSiteView.tsx:154` (swap candidates) and `SlotPicker.tsx:73`.
+  - Dependency install — `server/handlers/studio/installDeps.ts` +
+    `DependenciesPanel/useDependencyInstallJob.ts`. The `// TODO(Phase G)` stubs
+    the brief cited are gone; `DepsSection.tsx`'s own header records their
+    deletion.
+  - Scroll unrolling (`canvasScrollUnroll.ts` + `CanvasScrollUnrollInjector.tsx`),
+    frame multi-select and bulk actions (`boardFrameSelectionActions.ts`,
+    `BoardFramesLayer/useMarqueeSelection.ts`, `FrameBulkInspector.tsx`).
+  - Visual-audit MCP tools — 46 `studio_*` names counted in
+    `server/ai/mcp/tools/studio/`, incl. `studio_export_frames`,
+    `studio_diff_frames`, `studio_fidelity_report`, `studio_compare`,
+    `studio_quality_check`.
+  - Trust tiers — `server/handlers/studio/trustTier.ts`,
+    `studio/studioProjectTrust.ts`; invariant 1 in §2 rewritten, because it
+    still claimed the relaxation had not shipped.
+  - Class-to-source writes (`setJsxClassName.ts` + the `kind: 'class'` edit),
+    which the brief never mentioned at all and which is the only way to edit a
+    Tailwind element.
+- **Left listed as open, each re-confirmed in code:** CSS-in-JS is
+  detection-only (`styleToolchainDetect.ts:86`); reparent/duplicate/wrap still
+  refuse (`sourceStructure.ts:148-177`); JS-driven animation is not frozen
+  (`CanvasAnimationInjector.tsx:66` says so explicitly); Tailwind/Sass/PostCSS
+  compile needs Tier-1 promotion so a fresh import renders unstyled
+  (`styleCompile.ts:444`); the insert picker lists `registry.list()`, not the
+  catalog (`ModuleInserterDialog.tsx:118`); a package-sourced instance cannot be
+  detached (`detachComponent.ts:309`).
+- **Decisions:** the brief no longer tries to carry granular per-track status —
+  it now points at `STUDIO-FIGMA-PARITY-PLAN.md` §0a for that and keeps only the
+  orientation-level set. Two lists in one file was how this drifted in the first
+  place.
+- **Landmines — two claims I was handed that the code does not support:**
+  1. **Breakpoint-scoped CSS writes do NOT reach disk.** `insertRule` and both
+     the `insert`/`create` payload schemas take an `atMedia` query, but a
+     repo-wide grep finds **no producer**: `collectStyleRuleEdits`
+     (`styleRuleWriteback.ts:529-534`) still routes any real `@media` context to
+     `unwritableContexts`. The capability exists end-to-end below the editor and
+     is unreachable from it. Wiring one producer closes it.
+  2. **Trap 11 is half-fixed, not fixed.** `selectCanvasPageFor`'s `pageId`
+     lookup is memoised (`lookupCanvasPageById`, `store.ts:303`), but the
+     `frameId` branch added at `store.ts:344-350` does an uncached
+     `selectActiveBoard(s)?.frames.find(...)` — a scan over boards then frames —
+     ahead of the memo, on the same per-node path. The trap text now describes
+     that instead of the fixed half.
+  Also: `.module.scss`/`.sass`/`.less` are detected and warned about
+  (`styleCompile.ts:195`), not "undetected" as the brief said.
+- **Known gap, stated not hidden:** `CLAUDE.md` still carries two of the same
+  stale claims — "Studio mode is entered at `/admin/site?studio`" and the
+  parse-never-execute parenthetical "until that ships, it holds absolutely".
+  Both are false in this tree (there is no `studioMode.ts` and no `?studio`
+  param; `src/admin/router.tsx:57` renders the editor unconditionally, and Tier 1
+  ships). I did not edit `CLAUDE.md` — it is the rule book and out of a scribe's
+  lane. **Someone with that lane should fix those two lines.** Everything else I
+  found stale in the same sweep was corrected here.
+- **Second known gap:** `Recently landed` holds **58** entries against the
+  protocol's "roughly ten". Archiving ~48 of them is a ~9,000-line move through
+  a file several agents append to concurrently, and folding it into a docs PR
+  would guarantee a merge collision and bury the actual correction. Left
+  deliberately undone and recorded here so it is a stated gap, not a silent one.
+  It wants its own PR, run when no other wave is in flight.
+- **Next step:** none for this entry. If you touch the style panel, close
+  Landmine 1; if you touch the store, close Landmine 2.
+- **Verification:** `bun test src/__tests__/architecture` — see the commit. No
+  source files changed, so build/lint are unaffected.
+- **Human action needed:** none.
+
+---
 
 ### parity-01 — Phase 0 + Band 1/2 of `STUDIO-FIGMA-PARITY-PLAN.md` executed by 13 parallel agents. **Uncommitted, in the working tree, awaiting human review.**
 - **Agent:** coordinator (13 specialist agents, 4 waves, disjoint file sets)

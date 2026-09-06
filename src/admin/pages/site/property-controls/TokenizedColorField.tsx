@@ -3,7 +3,7 @@ import { generateFrameworkColorVariableSets } from '@core/framework'
 import { contrastLevel, contrastRatio, cssColorToRgb, type WcagContrastLevel } from '@core/design-tokens'
 import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
-import { ColorInput } from '@ui/components/ColorInput'
+import { ColorPickerPopover, isColorToken, type ColorPickerToken } from '@ui/components/ColorPickerPopover'
 import { Input } from '@ui/components/Input'
 import { cn } from '@ui/cn'
 import styles from './controls.module.css'
@@ -78,13 +78,37 @@ export function TokenizedColorField({
   const colorSettings = useEditorStore((state) => state.site?.settings.framework?.colors)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
-  const hiddenColorInputRef = useRef<HTMLInputElement>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const swatchButtonRef = useRef<HTMLButtonElement>(null)
   const variables = generateFrameworkColorVariableSets(colorSettings).light
     .filter((variable) => variable.tokenId !== excludeTokenId)
   const filteredVariables = computeFilteredVariables(value, variables)
-  const swatchValue = resolveTokenReferenceValue(value, variables) ?? value
+  const appliedVariable = resolveTokenReferenceVariable(value, variables)
+  const swatchValue = appliedVariable?.value ?? value
   const menuId = id ? `${id}-token-menu` : undefined
   const showMenu = open && !disabled && filteredVariables.length > 0
+
+  // ── ColorPickerPopover wiring (G6.2, `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`) ──
+  // The swatch button opens the real picker (SV square, hue/alpha rails,
+  // model select, eyedropper, contrast, Tabs) as an `InspectorPopover`
+  // anchored to itself — separate from `open` above, which still drives the
+  // inline type-ahead token listbox the TEXT field opens. Both can name the
+  // same token catalogue without duplicating it: `pickerTokens` is the same
+  // `variables` list the listbox filters, just reshaped to the primitive's
+  // generic `ColorPickerToken` shape (a `src/ui/` component must not know
+  // what a `FrameworkColorToken` is).
+  const pickerTokens: ColorPickerToken[] = variables.map((variable) => ({
+    id: `${variable.tokenId}-${variable.variantId}`,
+    name: variable.name,
+    value: variable.value,
+    meta: variable.variantName,
+  }))
+  const appliedTokenId = appliedVariable ? `${appliedVariable.tokenId}-${appliedVariable.variantId}` : undefined
+  // "On this page" (F14) — the honest version of this today: the project's
+  // own colour tokens plus whatever custom (non-token) value is currently
+  // set. Studio has no per-file colour-usage history to draw on yet.
+  const recentColors = computeRecentColors(variables, value)
+  const pickerId = id ? `${id}-picker` : `color-picker-${inputLabel}`
 
   // Reset the keyboard-highlight to the first option whenever `value` (and
   // therefore `filteredVariables`) changes. Done as a render-time
@@ -114,11 +138,6 @@ export function TokenizedColorField({
     setOpen(true)
   }
 
-  function handleSwatchChange(event: ChangeEvent<HTMLInputElement>) {
-    onSwatchChange(event.target.value)
-    setOpen(false)
-  }
-
   function commitToken(variable: ColorVariable) {
     onTokenPreviewClear?.()
     onTokenSelect(`var(${variable.name})`)
@@ -126,23 +145,35 @@ export function TokenizedColorField({
   }
 
   /**
-   * T8 (`STUDIO-FIGMA-PARITY-PLAN.md` §11) — the swatch used to BE a native
-   * `<input type="color">`: one click opened the OS colour dialog and wrote a
-   * raw hex on change, silently detaching the value from whatever token it
-   * held. The swatch now opens the same token menu the text field does;
-   * "Custom colour…" (below) is the only way to reach the native dialog.
+   * T8 (`STUDIO-FIGMA-PARITY-PLAN.md` §11) / G6.2
+   * (`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`) — the swatch used to be a native
+   * `<input type="color">` (no alpha, no eyedropper, no token awareness),
+   * then a token listbox with an escape hatch to that same native dialog.
+   * It now opens `ColorPickerPopover` directly — a real HSV picker with an
+   * alpha rail, plus a Tokens tab that replaces the old "Custom colour…"
+   * detour entirely.
    */
   function handleSwatchTriggerClick() {
-    if (!disabled) setOpen((wasOpen) => !wasOpen)
+    if (disabled) return
+    setOpen(false)
+    setPickerOpen((wasOpen) => !wasOpen)
   }
 
-  function openCustomColorPicker() {
-    onTokenPreviewClear?.()
-    setOpen(false)
-    // Defer past this click so the menu finishes closing before the native
-    // OS dialog steals focus — clicking the hidden input synchronously here
-    // can fire while the menu's own blur handling is still settling.
-    window.setTimeout(() => hiddenColorInputRef.current?.click(), 0)
+  /**
+   * The popover's single `onChange` covers three sources: a Custom-tab edit
+   * (hex/rgb()/hsl()), its raw-value fallback, a Tokens-tab pick, or an "On
+   * this page" swatch — the last two may themselves be `var(--…)`
+   * references, which routes to `onTokenSelect` instead of `onSwatchChange`
+   * so both existing commit paths (and their side effects) stay exactly as
+   * every other caller of this field already expects.
+   */
+  function handlePickerChange(next: string) {
+    if (isColorToken(next)) {
+      onTokenPreviewClear?.()
+      onTokenSelect(next)
+    } else {
+      onSwatchChange(next)
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -176,6 +207,7 @@ export function TokenizedColorField({
     <div className={styles.colorRow}>
       <div className={styles.colorField} data-color-field="true">
         <Button
+          ref={swatchButtonRef}
           type="button"
           variant="ghost"
           size="micro"
@@ -183,8 +215,8 @@ export function TokenizedColorField({
           disabled={disabled}
           onClick={handleSwatchTriggerClick}
           aria-label={swatchLabel}
-          aria-haspopup="listbox"
-          aria-expanded={showMenu}
+          aria-haspopup="dialog"
+          aria-expanded={pickerOpen}
           className={styles.colorSwatchTrigger}
         >
           <span
@@ -193,23 +225,22 @@ export function TokenizedColorField({
             aria-hidden="true"
           />
         </Button>
-        {/* The ONLY route to a raw, un-tokenized colour — reached exclusively
-            via "Custom colour…" below (`openCustomColorPicker`), never by a
-            direct click. Visually hidden, not `display:none` (a hidden input
-            can't be `.click()`-triggered reliably across browsers once
-            display is none). */}
-        <ColorInput
-          ref={hiddenColorInputRef}
-          id={id ? `${id}-swatch` : undefined}
-          value={swatchValue}
-          swatchValue={swatchValue}
-          disabled={disabled}
-          onChange={handleSwatchChange}
-          aria-hidden="true"
-          tabIndex={-1}
-          fieldSize="xs"
-          className={styles.hiddenColorInput}
-        />
+        {pickerOpen && (
+          <ColorPickerPopover
+            id={pickerId}
+            anchorRef={swatchButtonRef}
+            onClose={() => setPickerOpen(false)}
+            title={inputLabel}
+            value={swatchValue}
+            appliedTokenId={appliedTokenId}
+            onChange={handlePickerChange}
+            onPreview={onTokenPreview}
+            onClearPreview={onTokenPreviewClear}
+            tokens={pickerTokens}
+            recentColors={recentColors}
+            contrastAgainst={contrastAgainst}
+          />
+        )}
         <Input
           id={id}
           type="text"
@@ -286,18 +317,6 @@ export function TokenizedColorField({
                 )
               })}
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              menuItem
-              fullWidth
-              align="start"
-              className={styles.colorCustomAction}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={openCustomColorPicker}
-            >
-              Custom color…
-            </Button>
           </div>
         )}
       </div>
@@ -327,8 +346,26 @@ function tokenVariableMatches(variable: ColorVariable, query: string): boolean {
     (variable.variantName?.toLowerCase().includes(query) ?? false)
 }
 
-function resolveTokenReferenceValue(value: string, variables: ColorVariable[]): string | null {
+function resolveTokenReferenceVariable(value: string, variables: ColorVariable[]): ColorVariable | undefined {
   const variableName = /^var\(\s*(--[a-z0-9_-]+)\s*\)$/i.exec(value.trim())?.[1]
-  if (!variableName) return null
-  return variables.find((variable) => variable.name === variableName)?.value ?? null
+  if (!variableName) return undefined
+  return variables.find((variable) => variable.name === variableName)
+}
+
+/** "On this page" (F14) — see `ColorPickerPopover`'s doc for why this is honestly just the token catalogue plus whatever custom value is live. */
+function computeRecentColors(variables: ColorVariable[], value: string): string[] {
+  const seen = new Set<string>()
+  const recents: string[] = []
+  const trimmed = value.trim()
+  if (trimmed !== '' && !isColorToken(trimmed)) {
+    seen.add(trimmed)
+    recents.push(trimmed)
+  }
+  for (const variable of variables) {
+    if (recents.length >= 12) break
+    if (seen.has(variable.value)) continue
+    seen.add(variable.value)
+    recents.push(variable.value)
+  }
+  return recents
 }

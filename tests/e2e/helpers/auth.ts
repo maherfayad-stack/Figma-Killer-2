@@ -14,7 +14,7 @@ import { OWNER } from './constants'
  */
 export async function completeSetupOrLogin(page: Page): Promise<void> {
   await page.goto('/admin')
-  const setupHeading = page.getByRole('heading', { name: 'Set Up CMS' })
+  const setupHeading = page.getByRole('heading', { name: 'Set up Studio' })
   const onSetup = await setupHeading
     .waitFor({ state: 'visible', timeout: 15_000 })
     .then(() => true, () => false)
@@ -23,7 +23,7 @@ export async function completeSetupOrLogin(page: Page): Promise<void> {
     await page.getByLabel('Site name').fill(OWNER.siteName)
     await page.getByLabel('Email').fill(OWNER.email)
     await page.getByLabel('Password').fill(OWNER.password)
-    await page.getByRole('button', { name: 'Create Admin' }).click()
+    await page.getByRole('button', { name: 'Create account' }).click()
   } else {
     await login(page)
   }
@@ -42,10 +42,10 @@ export async function loginAs(
   password: string,
 ): Promise<void> {
   await page.goto('/admin')
-  await expect(page.getByRole('heading', { name: 'Admin Login' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in to Studio' })).toBeVisible()
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill(password)
-  await page.getByRole('button', { name: 'Sign In' }).click()
+  await page.getByRole('button', { name: 'Sign in' }).click()
   await expectLoggedIn(page)
 }
 
@@ -72,7 +72,7 @@ export async function completeStepUp(
 export async function logout(page: Page): Promise<void> {
   await page.getByTestId('account-menu-trigger').click()
   await page.getByTestId('account-menu-sign-out').click()
-  await expect(page.getByRole('heading', { name: 'Admin Login' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in to Studio' })).toBeVisible()
 }
 
 /** The owner is authenticated once the account menu trigger is on screen. */
