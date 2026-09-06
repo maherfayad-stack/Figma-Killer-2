@@ -76,6 +76,8 @@ import { SelectionToolbar } from './SelectionToolbar'
 import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
 import { CanvasNodeElementCache } from './canvasNodeLookup'
+import { CanvasResizeHandles } from './CanvasResizeHandles'
+import { isCanvasGestureActive } from './canvasGesture'
 import { InPlaceInspector } from './InPlaceInspector'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
 import {
@@ -242,6 +244,8 @@ export function BreakpointSelectionOverlay({
   const badgeRefs = useRef<Map<string, HTMLDivElement | null> | null>(null)
   if (badgeRefs.current === null) badgeRefs.current = new Map()
   const hoverRef = useRef<HTMLDivElement>(null)
+  // Filled by `CanvasResizeHandles`; read only by the RAF tick below.
+  const resizeFrameRef = useRef<HTMLDivElement | null>(null)
   // Container whose children are the orange selector-affinity rings. Their
   // count is driven by the live DOM (how many elements match the selector), so
   // they're created/positioned imperatively in the RAF tick rather than mapped
@@ -428,6 +432,14 @@ export function BreakpointSelectionOverlay({
 
     // ── Ring/badge WRITE phase ────────────────────────────────────────────
     for (const { ring, rect } of ringPlacements) positionOverlayElement(ring, rect)
+    // Resize handles ride the SAME measured rect as the ring, so they cannot
+    // drift off the box they belong to. WHETHER they exist at all is
+    // `canOfferResize`'s decision, made in `CanvasResizeHandles` against the
+    // node's module and its presented element — so there is no second gate
+    // here: a frame that should not be offered was never rendered, and
+    // re-deriving the rule in this tick is how the two get to disagree.
+    const soleRing = ringPlacements.length === 1 ? ringPlacements[0] : undefined
+    positionOverlayElement(resizeFrameRef.current, soleRing ? soleRing.rect : null)
     positionOverlayElement(hoverRef.current, hoverRect)
     syncSelectorHighlightRings(
       selectorHighlightRef.current,
@@ -442,6 +454,15 @@ export function BreakpointSelectionOverlay({
         positionNodeBadge(badge, rect, resolveNodeBadgeLabel(framePage, id, visualComponents))
       }
     }
+
+    // A pointer gesture that changes layout every frame (an element resize) is
+    // the one case this tick's cost model does not cover: the rect below would
+    // differ on EVERY frame, marking the anchor dirty and running the
+    // "expensive, rare" parent-doc measure session per pointermove. The rings
+    // above have already been positioned, so they keep tracking the element;
+    // the toolbar and inspector simply hold still until the drag ends, and
+    // `canvasGesture`'s settle pass recomputes them once. See `canvasGesture.ts`.
+    if (isCanvasGestureActive()) return
 
     // Content-reflow detection for the inspected node (see tick docblock,
     // point 2): compare THIS tick's already-measured cheap local rect against
@@ -555,6 +576,14 @@ export function BreakpointSelectionOverlay({
   // inside `CanvasTransformLayer`, so it was never subject to the
   // zoom-multiplied drift this work order fixes.
   const usingIframeOverlay = Boolean(overlayRoot)
+  // A SINGLE selection only: the drag writes an inline style to one element,
+  // so three selected elements would mean three edits behind one set of
+  // handles — a different feature, not a loop over this one. In-iframe only:
+  // the parent-document fallback positions from zoom-converted math
+  // (`standing-03`), and handles are far less forgiving of drift than a ring.
+  const resizeNodeId = usingIframeOverlay && showRings && selectedNodeIds.length === 1
+    ? (selectedNodeIds[0] ?? null)
+    : null
   const legacyRingClassName = (variant: 'selection' | 'hover') =>
     usingIframeOverlay ? undefined : cn(styles.ring, styles[variant])
   const legacyRingMode = usingIframeOverlay ? undefined : toolbarMode
@@ -613,6 +642,15 @@ export function BreakpointSelectionOverlay({
           data-canvas-ring-mode={legacyRingMode}
           data-canvas-hover-ring="true"
           data-canvas-overlay-node-id={hoverRingNodeId}
+        />
+      )}
+      {/* The one interactive thing in this click-through overlay — see
+          `CanvasResizeHandles`. */}
+      {resizeNodeId && (
+        <CanvasResizeHandles
+          nodeId={resizeNodeId}
+          iframeDoc={overlayRoot?.ownerDocument ?? null}
+          onFrameReady={(element) => { resizeFrameRef.current = element }}
         />
       )}
     </>

@@ -38,6 +38,7 @@ import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/typ
 import {
   type Page,
   type SiteDocument,
+  canWriteInlineStyleForModule,
   hasWritableSourceLocation,
   isPropWritableToSource,
   styleValueKey,
@@ -473,13 +474,13 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           }
         }
 
-        // Inline color/shadow edits write a `style={{}}` attribute onto the
-        // source element. Only safe for `base.*` nodes: their source element
-        // IS the host tag at this location, so a literal `style` prop lands
-        // where the editor expects it. `alm.*` design-system components may
-        // not forward a `style` prop to their root element at all — out of
-        // scope for source writeback this slice.
-        if (node.moduleId.startsWith('base.')) {
+        // Inline style edits (a colour, a shadow, a width dragged off a resize
+        // handle) write a `style={{}}` attribute onto the source element.
+        // `canWriteInlineStyleForModule` rather than a second inline copy of
+        // the rule: it is the one predicate every OFFER has to agree with
+        // (`StyleSurface`'s composer, `CanvasResizeHandles`'s handles), and S4
+        // is what happens when a copy drifts. See it for which modules qualify.
+        if (canWriteInlineStyleForModule(node.moduleId)) {
           const { changed, removed } = diffInlineStyles(node, baseline)
           if (Object.keys(changed).length > 0 || removed.length > 0) {
             edits.push({

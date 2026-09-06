@@ -1,4 +1,5 @@
 import { useEffect, type RefObject } from 'react'
+import { isCanvasGestureActive, onCanvasGestureSettle } from './canvasGesture'
 import { resolveCanvasFrameHeight } from './iframeFrameHeight'
 import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
 import { collectScrollDeficits, resolveFrameFitHeight } from './resolveFrameFitHeight'
@@ -104,10 +105,22 @@ export function useIframeFrameAutoHeight({
       selfResizes += 1
     }
     const scheduleMeasure = () => {
+      // While a pointer gesture is resizing something INSIDE the frame, the
+      // body's size changes every frame — and refitting here would resize the
+      // iframe element in the parent document and relayout the whole canvas,
+      // once per pointermove, with the frame visibly growing under the cursor
+      // the user is dragging. `canvasGesture`'s settle pass runs `measure`
+      // once when the drag ends, against the final content. See its docblock.
+      if (isCanvasGestureActive()) return
       if (rafId === null) rafId = requestAnimationFrame(measure)
     }
 
     measure()
+
+    // The settle pass is why the skip above is safe: the ResizeObserver will
+    // not necessarily fire again after a gesture, because the layout finished
+    // changing while its events were being ignored.
+    const releaseSettle = onCanvasGestureSettle(scheduleMeasure)
 
     const ro = new FrameResizeObserver(scheduleMeasure)
     ro.observe(observerBody)
@@ -136,6 +149,7 @@ export function useIframeFrameAutoHeight({
       scheduler.handle(records)
     })
     return () => {
+      releaseSettle()
       if (rafId !== null) cancelAnimationFrame(rafId)
       scheduler.dispose()
       ro.disconnect()

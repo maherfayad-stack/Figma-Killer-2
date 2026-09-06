@@ -12,9 +12,20 @@ describe('canWriteInlineStyleForModule', () => {
     expect(canWriteInlineStyleForModule('base.text')).toBe(true)
   })
 
-  it('is unwritable for pkg.*, alm.*, and studio.instance modules', () => {
+  it('is writable for alm.* design-system call sites, which forward rest props to their root', () => {
+    // `<Button style={{ width: '170px' }} />` is one honest target: one source
+    // location, one rendered element. Every component in that package spreads
+    // its rest props onto its root, which is the same bet
+    // `src/modules/alm/register.tsx` already makes when it passes the node's
+    // inline styles to the component for the CANVAS.
+    expect(canWriteInlineStyleForModule('alm.Button')).toBe(true)
+    expect(canWriteInlineStyleForModule('alm.card')).toBe(true)
+  })
+
+  it('is unwritable for pkg.* and studio.instance modules', () => {
+    // An arbitrary third-party package gives no basis for believing it
+    // forwards anything; a component call site renders no element at all.
     expect(canWriteInlineStyleForModule('pkg.acme-button')).toBe(false)
-    expect(canWriteInlineStyleForModule('alm.card')).toBe(false)
     expect(canWriteInlineStyleForModule('studio.instance')).toBe(false)
   })
 })
