@@ -33,6 +33,7 @@ import {
   updateConversationForUser,
 } from '../conversations/store'
 import { isConversationStreaming } from './chat'
+import { endClaudeCliConversation } from '../drivers/claudeCliWarmTurn'
 
 const CreateBodySchema = Type.Object({
   title: Type.Optional(Type.String()),
@@ -216,6 +217,10 @@ async function handleDelete(req: Request, db: DbClient, id: string): Promise<Res
 
   const ok = await softDeleteConversationForUser(db, userOrResponse.id, id)
   if (!ok) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  // A deleted conversation must not leave a `claude` subprocess (and its MCP
+  // children) running, nor a live connector token minted for it. Idempotent
+  // and a no-op for every other provider.
+  await endClaudeCliConversation(id)
   return jsonResponse({ ok: true })
 }
 
@@ -252,5 +257,11 @@ async function handleRestartSession(req: Request, db: DbClient, id: string): Pro
 
   const ok = await bumpSessionEpochForUser(db, userOrResponse.id, id)
   if (!ok) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  // The bumped epoch alone would already force a respawn — it changes the
+  // derived session id, which is part of the warm pool's reuse fingerprint —
+  // but killing the old process HERE is what makes "restart" mean restart:
+  // the user gets the config re-read they asked for immediately, rather than
+  // leaving a stale subprocess resident until the next turn or the idle timer.
+  await endClaudeCliConversation(id)
   return jsonResponse({ ok: true })
 }

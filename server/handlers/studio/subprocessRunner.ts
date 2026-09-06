@@ -85,14 +85,33 @@ export interface SpawnedProcessLike {
   readonly stderr: ReadableStream<Uint8Array> | null
   readonly exited: Promise<number>
   readonly pid?: number
+  /**
+   * Present only when the process was spawned with `stdin: 'pipe'` — a
+   * long-lived process the caller keeps writing to (`claudeCliWarmSession.ts`,
+   * which sends one NDJSON line per turn down a pipe that stays open for the
+   * life of a conversation). Absent for every one-shot caller, which either
+   * sends nothing or hands over its whole payload up front.
+   */
+  readonly stdin?: {
+    write(chunk: Uint8Array): void
+    flush?(): void
+    end(): void
+  }
   kill(): void
 }
 
 /**
- * `stdin` is `'ignore'` for every caller that has nothing to send, and a byte
- * payload for the one that does: `claudeCli.ts` writes the user's prompt here
- * rather than passing it as an argv positional. That is a correctness
- * requirement on Windows, not a preference — see `spawnClaudeCliNdjson`.
+ * `stdin` has three shapes because there are three honest things to do with a
+ * child's input:
+ *
+ * - `'ignore'` — the caller has nothing to send.
+ * - a byte payload — the caller has everything to send, now. `claudeCli.ts`'s
+ *   cold turn writes the user's prompt here rather than passing it as an argv
+ *   positional; that is a correctness requirement on Windows, not a
+ *   preference — see `spawnClaudeCliNdjson`.
+ * - `'pipe'` — the caller will keep sending, over time, and the returned
+ *   process exposes a writable `stdin` for it. This is what a warm `claude`
+ *   session uses to serve many turns from one process.
  */
 export type SubprocessSpawnFn = (
   argv: string[],
@@ -101,7 +120,7 @@ export type SubprocessSpawnFn = (
     env: Record<string, string>
     stdout: 'pipe'
     stderr: 'pipe'
-    stdin: 'ignore' | Uint8Array
+    stdin: 'ignore' | 'pipe' | Uint8Array
   },
 ) => SpawnedProcessLike
 

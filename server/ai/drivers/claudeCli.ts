@@ -52,21 +52,36 @@
  * when no workspace is open (or it fails containment), a chat turn falls back
  * to the config dir too, a documented degraded case, not a crash.
  *
- * ## Multi-turn continuity (WS-11 step 2)
+ * ## Multi-turn continuity: a WARM process, with the cold spawn as recovery
  *
- * `--input-format stream-json` exists (`--help` confirms it, plus
- * `--replay-user-messages` for exactly that mode) but its stdin JSON message
- * shape is NOT verified against the binary — establishing it with confidence
- * would mean sending a real paid turn, which this driver's tests must never
- * do. So this driver uses the CONFIRMED alternative instead:
- * `--session-id`/`--resume`, keyed by a UUID deterministically derived from
- * the Studio conversation id AND its `session_epoch` (`claudeCliSession.ts`)
- * — the same `(id, epoch)` pair always hashes to the same UUID, so there is
- * no separately-stored UUID, only the epoch counter itself (migration 021).
- * `req.messages` is still only consulted for the LATEST user message text
- * (the `-p` prompt); the CLI's own session file is what remembers the rest,
- * not a replayed `AiMessage[]` log the way every HTTP driver in this
- * directory does it.
+ * Every turn used to cold-spawn `claude` and re-handshake every MCP server
+ * attached to it — the largest fixed cost in a turn, paid identically for
+ * "change this padding" and "rebuild the checkout screen". WS-11 deferred the
+ * fix because `--input-format stream-json`'s stdin message shape "was never
+ * verified"; W4-2B verified it against the installed binary, and
+ * `claudeCliStdinProtocol.ts` records exactly what the spike established
+ * (envelope shape, turn boundaries, the measured 956 ms → 3 ms first-line
+ * difference, the fact that MCP servers initialize once, and the one hard
+ * rule: malformed stdin kills the process).
+ *
+ * So a conversation now keeps ONE subprocess alive across its turns
+ * (`claudeCliSessionPool.ts` decides which conversation gets which process and
+ * when one dies; `claudeCliWarmSession.ts` talks to it). A turn that cannot
+ * use a warm process — none compatible, spawn failed, or the process died
+ * before producing output — runs down the COLD path below, unchanged. That
+ * path is not legacy and not a shim: it is the crash-recovery mechanism, and
+ * deleting it would turn every wedged subprocess into a broken conversation.
+ *
+ * Both paths still pass `--session-id`/`--resume`, keyed by a UUID
+ * deterministically derived from the Studio conversation id AND its
+ * `session_epoch` (`claudeCliSession.ts`) — the same `(id, epoch)` pair always
+ * hashes to the same UUID, so there is no separately-stored UUID, only the
+ * epoch counter itself (migration 021). That is what lets a cold turn pick up
+ * the transcript a dead warm session left behind, instead of starting over.
+ * `req.messages` is still only consulted for the LATEST user message text; the
+ * CLI's own session (in memory when warm, its transcript file when cold) is
+ * what remembers the rest, not a replayed `AiMessage[]` log the way every HTTP
+ * driver in this directory does it.
  *
  * ## `req.systemPrompt`'s STATIC PREFIX is not forwarded — its DYNAMIC
  * SUFFIX is (the write-verification gate)
@@ -78,6 +93,14 @@
  * never hands it; the project's own generated `CLAUDE.md`, loaded for free
  * from the subprocess `cwd` (see the guide generation below), covers the same
  * ground in this driver's own vocabulary instead.
+ *
+ * On a WARM session the suffix cannot ride `--append-system-prompt` past the
+ * first turn — it is argv, fixed at spawn. A warm turn whose suffix has
+ * CHANGED therefore carries it inside the user message instead, and only when
+ * it changed (`WarmSessionLease.takeSystemState`): re-sending an unchanged
+ * board digest every turn would stack a fresh copy into the conversation's
+ * permanent history, which is the opposite of what the cache-stability
+ * reasoning below is protecting.
  *
  * The DYNAMIC SUFFIX (`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` onward — board state,
  * armed design references, per-page write/verify status, capability facts)
@@ -107,7 +130,7 @@
  * `--tools` below is a hard ceiling on native built-ins — at most `Task`/`Read`, never `Bash`/`Write`/`Edit`/`Glob`/`Grep`/`WebFetch`. Reasoning: `resolveNativeToolAllowlist`'s own doc comment (`claudeCliToolSurface.ts`).
  */
 
-import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type AiAuthMode, type AiContentBlock, type AiProviderId, type AiStreamEvent } from '../runtime/types'
+import type { AiAuthMode, AiContentBlock, AiProviderId, AiStreamEvent } from '../runtime/types'
 import type { AiProvider, AiResolvedCredential, AiStreamRequest } from './types'
 import { claudeCliCapabilities, CLAUDE_CLI_FALLBACK_MODELS } from './claudeCliModels'
 import { minimalSubprocessEnv, type SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
@@ -122,28 +145,24 @@ import {
 import { spawnClaudeCliNdjson, ClaudeCliSpawnError } from './claudeCliSpawn'
 import { resolveNativeToolAllowlist } from './claudeCliToolSurface'
 import { assertBypassCameFromRequest, resolvePermissionMode } from './claudeCliPermissionMode'
-import { createClaudeCliTurnState, parseClaudeCliLineValue, translateClaudeCliLine } from './claudeCliEvents'
+import { translateClaudeCliStream } from './claudeCliEvents'
 import { claudeCliSessionId, shouldEstablishClaudeCliSession } from './claudeCliSession'
-import {
-  mintClaudeCliSessionConnector,
-  revokeClaudeCliSessionConnector,
-  type ClaudeCliSessionConnector,
-} from '../mcp/sessionConnector'
-// Imported from the small, SDK-free `endpointPath.ts` module directly — NOT
-// the `../mcp` barrel, which also re-exports `handleMcpHttp` and would pull
-// `@modelcontextprotocol/sdk` into this driver's module graph transitively.
-import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
-import { PERMISSION_REQUEST_TOOL_NAME } from '../mcp/permissionGate'
-import { openTurnConnector } from './claudeCliTurnConnector'
+import { openTurnConnector, type MintConnector, type RevokeConnector } from './claudeCliConnector'
 import { approvedProjectMcpServers, type ProjectMcpServerDefinition } from './projectMcpServers'
 import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
-import { readServerConfig } from '../../config'
 import { generateStudioProjectGuide } from '../../handlers/studio/projectGuide'
 import { readTurnWriteLog, resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
 import { resolveTurnRouting } from '../routing/turnRouting'
-import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
-import { writeMcpConfigFile, cleanupMcpConfigFile, type McpConfigFile } from './claudeCliMcpConfigFile'
+import {
+  stageAttachments,
+  cleanupAttachments,
+  describeAttachmentsForPrompt,
+  ensureConversationAttachmentsRoot,
+} from './claudeCliAttachments'
+import { cleanupMcpConfigFile, tryWriteMcpConfigFile } from './claudeCliMcpConfigFile'
 import { clearCliNeedsAuthCache, recallCliSignIns } from '../credentials/cliMcpConnectionProbe'
+import { buildClaudeCliArgv, buildMcpConfig, dynamicSystemPromptSuffix } from './claudeCliArgv'
+import { runWarmTurn } from './claudeCliWarmTurn'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
@@ -200,7 +219,7 @@ export const claudeCliDriver: AiProvider = {
  * connector functions).
  */
 export interface StreamClaudeCliOptions {
-  /** Test seam — defaults to `Bun.spawn` via `claudeCliSpawn.ts`. */
+  /** Test seam — defaults to `Bun.spawn`. ONE seam for both paths: a warm session spawns with `stdin: 'pipe'`, a cold turn with the prompt bytes, and both go through here. */
   readonly spawn?: SubprocessSpawnFn
   /** Test seam — defaults to the real `process.platform` check. */
   readonly platformSupport?: ClaudeCliPlatformSupport
@@ -211,9 +230,15 @@ export interface StreamClaudeCliOptions {
   /** Test seam — defaults to `readServerConfig().port`. */
   readonly serverPort?: number
   /** Test seam — defaults to `mintClaudeCliSessionConnector`. */
-  readonly mintConnector?: typeof mintClaudeCliSessionConnector
+  readonly mintConnector?: MintConnector
   /** Test seam — defaults to `revokeClaudeCliSessionConnector`. */
-  readonly revokeConnector?: typeof revokeClaudeCliSessionConnector
+  readonly revokeConnector?: RevokeConnector
+  /**
+   * Force the warm path off for this turn. Set by the tests that exercise the
+   * cold path in isolation; production never sets it, because "warm, falling
+   * back to cold" is the whole behaviour, not an option.
+   */
+  readonly disableWarmSession?: boolean
   /** Test seam — defaults to `generateStudioProjectGuide` (the project's own generated `CLAUDE.md` + design-system references). */
   readonly generateGuide?: typeof generateStudioProjectGuide
   /** Test seam — defaults to `resolveMcpServerSecretsRoot()` (env-derived); where registered-server secret values are decrypted from. */
@@ -252,7 +277,13 @@ export async function* streamClaudeCli(
   // their paths; `null` when the turn has none (the common case), costing
   // nothing. Torn down unconditionally in the `finally` block below,
   // alongside connector revocation.
-  const attachmentStaging = stageAttachments(latestUserMessageContent(req.messages))
+  //
+  // Staged into the conversation's stable root rather than a bare temp
+  // directory, because a warm process can only ever read from directories that
+  // were on its argv at spawn — see `ensureConversationAttachmentsRoot`. The
+  // per-TURN directory beneath it, and its cleanup, are unchanged.
+  const attachmentsRoot = ensureConversationAttachmentsRoot(req.toolContextBase.conversationId)
+  const attachmentStaging = stageAttachments(latestUserMessageContent(req.messages), attachmentsRoot)
   const prompt = attachmentStaging ? promptText + describeAttachmentsForPrompt(attachmentStaging) : promptText
 
   // The real workspace root when one is open and passes containment; `null`
@@ -317,9 +348,16 @@ export async function* streamClaudeCli(
   // blocks the chat itself. Never attempted for the config-dir fallback (no
   // real project to profile there, and that dir must stay CLAUDE.md-free).
   const generateGuide = options.generateGuide ?? generateStudioProjectGuide
+  // The CLI reads `CLAUDE.md` ONCE, at startup, so a warm process keeps
+  // serving the guide it was born with. `generateStudioProjectGuide` is
+  // manifest-gated and returns an EMPTY `written` list on the overwhelmingly
+  // common turn where nothing changed — which makes "the guide was actually
+  // rewritten" a free, exact signal that the warm session is now stale and
+  // must be replaced rather than reused.
+  let guideRewritten = false
   if (workspaceCwd) {
     try {
-      generateGuide(workspaceCwd)
+      guideRewritten = generateGuide(workspaceCwd).written.length > 0
     } catch (err) {
       console.error('[ai/claudeCli] failed to generate the project guide — continuing without one:', err)
     }
@@ -346,28 +384,18 @@ export async function* streamClaudeCli(
     ...(req.credentials.apiKey ? { CLAUDE_CODE_OAUTH_TOKEN: req.credentials.apiKey } : {}),
   })
 
-  // Mints the turn's MCP token and binds both connector-id registries (the
-  // permission gate and the workspace this turn is about) — all three are
-  // acquired together and released together by `turn.close()` in the `finally`
-  // below. See `claudeCliTurnConnector.ts` for why they travel as one unit.
-  const turn = await openTurnConnector({
-    db: req.toolContextBase.db,
-    userId: req.toolContextBase.userId,
-    capabilities: req.toolContextBase.capabilities,
-    conversationId: req.toolContextBase.conversationId,
-    bridge: req.bridge,
-    workspaceDir: workspaceCwd ?? undefined,
-    ...(options.mintConnector ? { mintConnector: options.mintConnector } : {}),
-    ...(options.revokeConnector ? { revokeConnector: options.revokeConnector } : {}),
-  })
-  const connector = turn.connector
-
   const sessionId = await claudeCliSessionId(req.toolContextBase.conversationId, req.sessionEpoch ?? 0)
   // Whether the CLI already has a transcript for THIS uuid at THIS cwd — see
   // `shouldEstablishClaudeCliSession`'s own doc comment for why this replaced
   // the earlier message-count heuristic (it silently self-heals a bumped
   // `session_epoch`, a cleared config dir, and a server redeploy, none of
   // which a message count could ever detect).
+  //
+  // Read at SPAWN time only. A warm session establishes on its first turn and
+  // is `--resume`-able forever after, which is exactly what lets a cold
+  // fallback pick up where a dead warm process left off — but it also means
+  // this value flips after the first turn, so it must never enter the pool's
+  // reuse fingerprint or every second turn would respawn.
   const sessionFlag = shouldEstablishClaudeCliSession(configDir, cwd, sessionId) ? '--session-id' : '--resume'
 
   // Studio-registered project MCP servers (§ "the gap" in
@@ -376,7 +404,7 @@ export async function* streamClaudeCli(
   // decrypted here, right before the spawn, and never written to disk in
   // resolved form. Best-effort: a secret-store hiccup degrades this turn to
   // "no registered servers" rather than blocking the chat, same posture the
-  // connector mint above uses.
+  // connector mint below uses.
   let registeredServers: Record<string, ProjectMcpServerDefinition> = {}
   if (workspaceCwd) {
     try {
@@ -390,221 +418,142 @@ export async function* streamClaudeCli(
       console.error('[ai/claudeCli] failed to resolve registered MCP servers — continuing without them:', err)
     }
   }
+  const projectServers = workspaceCwd ? approvedProjectMcpServers(workspaceCwd) : {}
 
-  // The whole config (Studio's own entry, carrying this turn's connector
-  // bearer token, plus any approved project/registered servers, which may
-  // carry a decrypted secret header/env value) is written to a private,
-  // 0600 temp file rather than handed to the CLI as inline `--mcp-config`
-  // JSON — see `claudeCliMcpConfigFile.ts`'s doc comment for why: argv is
-  // world-readable (`ps -eo command`), so an inline secret there defeats the
-  // encrypted-at-rest secret store entirely. A write failure degrades this
-  // turn to "no MCP tools", the same fail-soft posture a connector-mint
-  // failure already gets, rather than aborting the whole turn.
-  let mcpConfigFile: McpConfigFile | null = null
-  if (connector) {
-    try {
-      mcpConfigFile = writeMcpConfigFile(
-        buildMcpConfig(
-          connector,
-          options.serverPort,
-          workspaceCwd ? approvedProjectMcpServers(workspaceCwd) : {},
-          registeredServers,
-        ),
-      )
-    } catch (err) {
-      console.error('[ai/claudeCli] failed to write the MCP config file — continuing without tools:', err)
-    }
-  }
-
-  const argv = [
-    'claude',
-    // `-p` with NO positional prompt: the prompt is piped on stdin instead.
-    // Mandatory on Windows — see `ClaudeCliSpawnOptions.stdin`.
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    // WS-12 §5.4 — required for the `stream_event`/`thinking_delta` events
-    // `claudeCliEvents.ts`'s translator watches for. Additive and low-risk:
-    // it only asks the CLI to also emit partial-message deltas alongside the
-    // existing `assistant`/`result` events already parsed; every event this
-    // driver doesn't recognise already falls through to a no-op default
-    // case, so an unexpected extra event type here cannot break the stream.
-    '--include-partial-messages',
-    '--model',
-    req.modelId,
-    '--effort',
+  // Everything below is shared by both paths — the ONLY difference between a
+  // warm session's argv and a cold turn's is `--input-format`
+  // (`claudeCliArgv.ts`).
+  const argvOptions = {
+    modelId: req.modelId,
     effort,
-    '--permission-mode',
     // Belt-and-braces at the point of maximum consequence — see
     // `assertBypassCameFromRequest`'s own doc comment.
-    assertBypassCameFromRequest(resolvedMode.mode, req.permissionMode),
-    // sec-XX (see "Native tool surface" above) — `files.length`, since a refusal-only staging result stages nothing on disk.
-    '--tools',
-    resolveNativeToolAllowlist(workspaceCwd, (attachmentStaging?.files.length ?? 0) > 0),
-    // Attachments are staged to an os.tmpdir() directory OUTSIDE the workspace
-    // cwd, so the CLI's own path-based permission check would otherwise stop to
-    // ask before reading them — "Claude requested permissions to read from
-    // …\attachment-1.jpg, but you haven't granted it yet." That prompt is
-    // nonsense to the user: THEY attached the file, in this turn, and Studio
-    // itself wrote it there. Consent is already unambiguous, so pre-authorise
-    // exactly the directory Studio created and nothing else. Turn-scoped and
-    // torn down in the `finally` below, so this widens access to a directory
-    // that only ever holds this turn's own attachments.
-    ...(attachmentStaging?.dir ? ['--add-dir', attachmentStaging.dir] : []),
-    // Project-declared MCP servers the user approved by name — how a project's
-    // own design-system or Figma server reaches the agent without dropping
-    // `--strict-mcp-config`. Empty unless explicitly approved; see
-    // `projectMcpServers.ts` for why consent is required. Studio-registered
-    // servers (added directly in Studio, never in the project's own
-    // `.mcp.json`) are merged in too, resolved above. The value is a PATH to
-    // a private 0600 temp file (`mcpConfigFile`, written above), never inline
-    // JSON — see `claudeCliMcpConfigFile.ts` for why.
-    ...(mcpConfigFile ? ['--mcp-config', mcpConfigFile.path] : []),
-    // Turns a headless dead end into a question. Without it the CLI has no TTY
-    // to prompt, so any tool needing permission is simply refused and the user
-    // is told to grant something with no way to grant it. With it, the request
-    // is relayed to the open chat as an Allow / Deny card. Only meaningful
-    // alongside a written config file — the tool lives on Studio's own MCP
-    // server, which is only reachable through that file.
-    ...(mcpConfigFile ? ['--permission-prompt-tool', `mcp__studio__${PERMISSION_REQUEST_TOOL_NAME}`] : []),
-    // Mandatory whether or not a connector was minted (WS-11 §4.0 trap #4) —
-    // without it the CLI merges the user's own ~/.claude.json and the
-    // project's .mcp.json and connects to whatever it finds there. Studio
-    // ships exactly the toolset it intends and no more.
-    '--strict-mcp-config',
-    // The write-verification gate — ONLY the dynamic suffix (never the static
-    // prefix CLAUDE.md already covers), and only when a real project is open. See
-    // this file's own doc comment, "req.systemPrompt's STATIC PREFIX...".
-    ...(workspaceCwd ? appendSystemPromptArgs(req.systemPrompt) : []),
+    permissionMode: assertBypassCameFromRequest(resolvedMode.mode, req.permissionMode),
+    // sec-XX (see "Native tool surface" above) — `files.length`, since a
+    // refusal-only staging result stages nothing on disk.
+    nativeTools: resolveNativeToolAllowlist(workspaceCwd, (attachmentStaging?.files.length ?? 0) > 0),
+    // The conversation's attachment ROOT, not this turn's directory beneath
+    // it, and granted unconditionally rather than only on turns that staged
+    // something. `--add-dir` is argv: a warm process can only ever read from
+    // directories it was told about at spawn, so a per-turn grant would mean
+    // the first attachment sent to an already-running session hits exactly the
+    // "you haven't granted it yet" dead end this pre-authorisation exists to
+    // prevent. It is not a widening worth worrying about — the directory holds
+    // nothing but files this conversation's own user attached, and `--tools`
+    // above remains the actual ceiling: without `Read` granted for THIS turn,
+    // an authorised directory buys the agent nothing.
+    addDirs: [attachmentsRoot],
     sessionFlag,
     sessionId,
-  ]
+    // The write-verification gate — ONLY the dynamic suffix (never the static
+    // prefix CLAUDE.md already covers), and only when a real project is open.
+    // See this file's own doc comment, "req.systemPrompt's STATIC PREFIX...".
+    systemPromptSuffix: workspaceCwd ? dynamicSystemPromptSuffix(req.systemPrompt) : null,
+  } as const
 
-  let sawTerminalEvent = false
-  // Turn-scoped, never module-scoped — see `ClaudeCliTurnState`.
-  const turnState = createClaudeCliTurnState()
+  // WS-12 §5.3 — staged attachments are turn-scoped working data, never left
+  // behind regardless of how the turn ended, which path served it, or whether
+  // the consumer abandoned the stream mid-reply. This wraps BOTH paths: the
+  // warm one returns early on success, so a cleanup living only in the cold
+  // path's own `finally` would silently leak every warm turn's attachments.
   try {
-    for await (const raw of spawnClaudeCliNdjson({
-      argv,
-      cwd,
-      env,
-      stdin: new TextEncoder().encode(prompt),
-      signal: req.signal,
-      spawn: options.spawn,
-    })) {
-      if (raw.kind === 'exit') {
-        if (!sawTerminalEvent) {
-          yield {
-            type: 'error',
-            message: claudeCliExitErrorMessage(raw.exitCode, raw.stderr, raw.timedOut),
-          }
-        }
+    // ---- warm path -----------------------------------------------------------
+    //
+    // A conversation keeps one `claude` process alive across its turns. When
+    // there is a compatible one, this turn costs a single line of NDJSON instead
+    // of a process start plus an MCP handshake with every attached server.
+    // Anything that goes wrong here falls through to the cold path below, which
+    // is the same code that used to run for every turn.
+    if (!options.disableWarmSession) {
+      const served = yield* runWarmTurn(req, options, {
+        argvOptions,
+        cwd,
+        env,
+        prompt,
+        projectServers,
+        registeredServers,
+        // The CLI reads `CLAUDE.md` once, at startup — a session that predates a
+        // rewrite is serving stale instructions and has to be replaced.
+        forceRespawn: guideRewritten,
+        workspaceDir: workspaceCwd ?? undefined,
+      })
+      if (served) return
+    }
+
+    // ---- cold path — also the crash-recovery path ----------------------------
+    //
+    // Reached when no warm session could be used: the warm path is disabled, the
+    // spawn failed, or the process died before this turn produced any output.
+    // Keeping it is not caution about a new feature — it is the recovery
+    // mechanism, and without it a single wedged subprocess would break a
+    // conversation permanently.
+    //
+    // Mints the turn's MCP token and binds both connector-id registries (the
+    // permission gate and the workspace this turn is about) — all three are
+    // acquired together and released together by `turn.close()` in the `finally`
+    // below. See `claudeCliConnector.ts` for why they travel as one unit.
+    const turn = await openTurnConnector({
+      db: req.toolContextBase.db,
+      userId: req.toolContextBase.userId,
+      capabilities: req.toolContextBase.capabilities,
+      conversationId: req.toolContextBase.conversationId,
+      bridge: req.bridge,
+      workspaceDir: workspaceCwd ?? undefined,
+      ...(options.mintConnector ? { mintConnector: options.mintConnector } : {}),
+      ...(options.revokeConnector ? { revokeConnector: options.revokeConnector } : {}),
+    })
+
+    // The whole config (Studio's own entry, carrying this turn's connector
+    // bearer token, plus any approved project/registered servers, which may
+    // carry a decrypted secret header/env value) is written to a private,
+    // 0600 temp file rather than handed to the CLI as inline `--mcp-config`
+    // JSON — see `claudeCliMcpConfigFile.ts`'s doc comment for why: argv is
+    // world-readable (`ps -eo command`), so an inline secret there defeats the
+    // encrypted-at-rest secret store entirely. A write failure degrades this
+    // turn to "no MCP tools", the same fail-soft posture a connector-mint
+    // failure already gets, rather than aborting the whole turn.
+    const mcpConfigFile = turn.connector
+      ? tryWriteMcpConfigFile(buildMcpConfig(turn.connector, options.serverPort, projectServers, registeredServers))
+      : null
+
+    try {
+      yield* translateClaudeCliStream(
+        spawnClaudeCliNdjson({
+          argv: buildClaudeCliArgv({ ...argvOptions, mcpConfigPath: mcpConfigFile?.path ?? null, inputFormat: 'text' }),
+          cwd,
+          env,
+          stdin: new TextEncoder().encode(prompt),
+          signal: req.signal,
+          spawn: options.spawn,
+        }),
+      )
+    } catch (err) {
+      if (err instanceof ClaudeCliSpawnError) {
+        yield { type: 'error', message: err.message }
         return
       }
-
-      const line = parseClaudeCliLineValue(raw.value)
-      if (!line) continue
-      const { events, turnComplete } = translateClaudeCliLine(line, turnState)
-      if (turnComplete) sawTerminalEvent = true
-      for (const event of events) yield event
+      throw err
+    } finally {
+      // Releases the permission gate and the workspace binding first, then
+      // revokes the token — so no prompt can be relayed down a bridge whose turn
+      // has already ended.
+      await turn.close()
+      // On the COLD path the plaintext config file (connector token, plus any
+      // resolved MCP server secrets) is turn-scoped working data and is never
+      // left behind, however the turn ended (success, error, or the subprocess
+      // killed on abort) — a leaked secret file on disk is a worse outcome than
+      // the inline-argv bug this replaced. A WARM session's config file is
+      // SESSION-scoped instead, for the same reason its token is, and is
+      // removed by that session's `dispose` (`createWarmSession`).
+      if (mcpConfigFile) {
+        cleanupMcpConfigFile(mcpConfigFile.dir)
+      }
     }
-  } catch (err) {
-    if (err instanceof ClaudeCliSpawnError) {
-      yield { type: 'error', message: err.message }
-      return
-    }
-    throw err
   } finally {
-    // Releases the permission gate and the workspace binding first, then
-    // revokes the token — so no prompt can be relayed down a bridge whose turn
-    // has already ended.
-    await turn.close()
-    // The plaintext config file (session connector token, plus any resolved
-    // MCP server secrets) is turn-scoped working data, same as the staged
-    // attachments below — never left behind regardless of how the turn ended
-    // (success, error, or the subprocess killed on abort). A leaked secret
-    // file on disk is a worse outcome than the inline-argv bug this replaced,
-    // so this runs unconditionally, in the same `finally` that already
-    // guarantees attachment/connector cleanup across every exit path.
-    if (mcpConfigFile) {
-      cleanupMcpConfigFile(mcpConfigFile.dir)
-    }
-    // WS-12 §5.3 — staged attachments are turn-scoped working data, never
-    // left behind regardless of how the turn ended (success, error, abort).
     if (attachmentStaging) {
       cleanupAttachments(attachmentStaging.dir)
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// MCP config
-// ---------------------------------------------------------------------------
-
-/**
- * Verified config shape (confirmed both from `--help`'s `claude mcp add
- * --transport http ... --header "Authorization: Bearer ..."` example and the
- * coordinator's own probe): one HTTP MCP server, pointed at Studio's own
- * endpoint on this same running process, carrying the turn-scoped
- * connector's bearer token. `127.0.0.1` (not a public hostname) — this is a
- * subprocess of THIS server talking back to itself.
- *
- * Returns the plain object, NOT a JSON string — the caller
- * (`writeMcpConfigFile`, `claudeCliMcpConfigFile.ts`) serialises it straight
- * to a private 0600 temp file. This function used to `JSON.stringify` its
- * own return value for passing as inline `--mcp-config` argv, which put
- * every secret it carries (this token, plus any resolved project/registered
- * server secret) into the world-readable process command line — fixed by
- * moving the secret off argv entirely, never by changing what this function
- * assembles.
- */
-function buildMcpConfig(
-  connector: ClaudeCliSessionConnector,
-  serverPort?: number,
-  projectServers: Record<string, unknown> = {},
-  registeredServers: Record<string, unknown> = {},
-): unknown {
-  const port = serverPort ?? readServerConfig().port
-  return {
-    mcpServers: {
-      // Project-declared (`.mcp.json`) servers first, then Studio-registered
-      // ones, then Studio's own entry LAST so it always wins a name
-      // collision against either source. `listProjectMcpServers` and
-      // `addRegisteredMcpServer` both already refuse an entry literally named
-      // `studio` (`RESERVED_SERVER_NAME`); this ordering means even a future
-      // gap in either guard still cannot let a project or a registered server
-      // redirect Studio's own tool calls.
-      ...projectServers,
-      ...registeredServers,
-      studio: {
-        type: 'http',
-        url: `http://127.0.0.1:${port}${MCP_ENDPOINT_PATH}`,
-        headers: { Authorization: `Bearer ${connector.token}` },
-      },
-    },
-  }
-}
-
-/**
- * `['--append-system-prompt', suffix]`, or `[]` when `systemPrompt` carries no
- * dynamic suffix worth sending (no boundary marker found, or the suffix is
- * empty/whitespace — the "project profile unavailable" degrade in
- * `buildStudioAgentSystemPrompt` is still real text, so this only skips a
- * GENUINELY empty suffix, never that fallback message).
- *
- * `systemPrompt` is `[staticPrefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
- * dynamicSuffix]` for every REAL Studio-project turn (`buildStudioAgentSystemPrompt`'s
- * own contract) — this driver only ever calls this when `workspaceCwd` is
- * set, which is exactly when the caller (`chat.ts` via `buildStudioProjectSystemPrompt`)
- * built it that way, so the boundary marker is always expected to be present
- * in practice; a missing marker degrades to `[]` rather than guessing.
- */
-function appendSystemPromptArgs(systemPrompt: readonly string[]): string[] {
-  const boundaryIndex = systemPrompt.indexOf(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
-  if (boundaryIndex === -1) return []
-  const suffix = systemPrompt.slice(boundaryIndex + 1).join('\n\n').trim()
-  return suffix.length > 0 ? ['--append-system-prompt', suffix] : []
 }
 
 // ---------------------------------------------------------------------------
@@ -638,18 +587,4 @@ function textOf(blocks: AiContentBlock[]): string | null {
     .map((block) => block.text)
     .join('\n')
   return text.length > 0 ? text : null
-}
-
-function claudeCliExitErrorMessage(exitCode: number | null, stderr: string, timedOut: boolean): string {
-  // Reached only after the CLI has gone completely silent for the whole idle
-  // window (see `idleTimeoutMs` in claudeCliSpawn.ts) — NOT because the turn
-  // took a long time. Say which, so the next person reading it in a toast
-  // doesn't go looking for a length limit that doesn't exist.
-  if (timedOut) return 'Claude CLI stopped responding — no output for 10 minutes. The turn was ended.'
-  const trimmedStderr = stderr.trim()
-  // WS-11 §4.0: stderr is empty on every non-crash path, so anything present
-  // here is a genuine crash — surface it verbatim (bounded by
-  // `pumpCapped`'s cap already).
-  if (trimmedStderr) return `Claude CLI crashed (exit ${exitCode ?? 'unknown'}): ${trimmedStderr}`
-  return `Claude CLI exited (${exitCode ?? 'unknown'}) without a result. Run "claude auth status" to check you're logged in.`
 }

@@ -8,10 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AiMessage } from '../runtime/types'
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type AiMessage } from '../runtime/types'
 import type { AiResolvedCredential, AiStreamRequest } from './types'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 import { claudeCliDriver, streamClaudeCli } from './claudeCli'
+import { endClaudeCliConversation } from './claudeCliWarmTurn'
 import { verifyClaudeCliCredential } from './claudeCliVerify'
 import {
   addRegisteredMcpServer,
@@ -22,6 +23,7 @@ import { setMcpServerSecret } from '../credentials/mcpServerSecretStore'
 import { claudeCliProjectDirName, claudeCliSessionId } from './claudeCliSession'
 import type { ClaudeCliSessionConnector } from '../mcp/sessionConnector'
 import { getPermissionGate } from '../mcp/permissionGate'
+import { disposeAllWarmSessions } from './claudeCliSessionPool'
 
 let dataRoot: string
 let projectsRoot: string
@@ -32,7 +34,13 @@ beforeEach(() => {
   projectDir = join(projectsRoot, 'my-project')
   mkdirSync(projectDir, { recursive: true })
 })
-afterEach(() => {
+afterEach(async () => {
+  // A warm session outlives the turn that created it — that is the point — so
+  // it also outlives the TEST that created it unless this runs. Without it,
+  // the next test reusing a conversation id would silently be served by the
+  // previous test's fake process, and every assertion about spawn arguments
+  // would be measuring the wrong turn.
+  await disposeAllWarmSessions()
   rmSync(dataRoot, { recursive: true, force: true })
   rmSync(projectsRoot, { recursive: true, force: true })
 })
@@ -54,18 +62,73 @@ interface FakeCliOptions {
   onSpawn?: (argv: string[], env: Record<string, string>, cwd: string, stdin: string) => void
 }
 
+/**
+ * A fake `claude` that answers BOTH ways the driver can talk to it, because
+ * production uses both: a warm session (`stdin: 'pipe'`, one NDJSON line per
+ * turn, process stays alive) and a cold turn (`stdin: <bytes>`, answer once,
+ * exit). Injecting one fake through the single `spawn` seam is what lets the
+ * suite below assert that argv, the MCP config, and the connector lifecycle
+ * are identical on both.
+ *
+ * `onSpawn`'s fourth argument is the PROMPT either way — extracted from the
+ * NDJSON envelope on the warm path — so every existing assertion about what
+ * the user's turn contained keeps meaning the same thing.
+ */
 function fakeCliSpawn(opts: FakeCliOptions): SubprocessSpawnFn {
+  const stdoutText = (): string => opts.stdoutLines.map((line) => JSON.stringify(line)).join('\n') + '\n'
   return (argv, options) => {
-    // The prompt is piped, never an argv positional — decode it so tests can
-    // assert on it the same way they used to assert on argv[2].
-    const stdin = options.stdin === 'ignore' ? '' : new TextDecoder().decode(options.stdin)
-    opts.onSpawn?.(argv, options.env, options.cwd, stdin)
-    const stdout = opts.stdoutLines.map((line) => JSON.stringify(line)).join('\n') + '\n'
+    if (options.stdin !== 'pipe') {
+      // Cold: the prompt is piped up front, never an argv positional.
+      const stdin = options.stdin === 'ignore' ? '' : new TextDecoder().decode(options.stdin)
+      opts.onSpawn?.(argv, options.env, options.cwd, stdin)
+      return {
+        stdout: streamFromString(stdoutText()),
+        stderr: streamFromString(opts.stderr ?? ''),
+        exited: Promise.resolve(opts.exitCode ?? 0),
+        kill: () => {},
+      }
+    }
+
+    // Warm: nothing is emitted until a user line arrives, exactly as the real
+    // binary behaves — a warm session discards anything queued before a turn
+    // starts, so a fake that answered eagerly would test nothing.
+    let stdoutController: ReadableStreamDefaultController<Uint8Array> | null = null
+    let exitProcess: (code: number) => void = () => {}
     const proc: SpawnedProcessLike = {
-      stdout: streamFromString(stdout),
+      stdout: new ReadableStream<Uint8Array>({
+        start(controller) {
+          stdoutController = controller
+        },
+      }),
       stderr: streamFromString(opts.stderr ?? ''),
-      exited: Promise.resolve(opts.exitCode ?? 0),
-      kill: () => {},
+      exited: new Promise<number>((resolve) => {
+        exitProcess = resolve
+      }),
+      stdin: {
+        write: (chunk) => {
+          const frame = JSON.parse(new TextDecoder().decode(chunk))
+          if (frame.type !== 'user') return
+          opts.onSpawn?.(argv, options.env, options.cwd, frame.message.content[0].text)
+          if ((opts.exitCode ?? 0) !== 0) {
+            // A CLI that dies instead of answering — the warm path must fall
+            // back to a cold spawn rather than surfacing a subprocess error.
+            stdoutController?.close()
+            exitProcess(opts.exitCode ?? 0)
+            return
+          }
+          stdoutController?.enqueue(new TextEncoder().encode(stdoutText()))
+        },
+        flush: () => {},
+        end: () => {},
+      },
+      kill: () => {
+        try {
+          stdoutController?.close()
+        } catch {
+          // Already closed.
+        }
+        exitProcess(143)
+      },
     }
     return proc
   }
@@ -148,6 +211,15 @@ async function collect(req: AiStreamRequest, opts: Parameters<typeof streamClaud
 /** Default test options: fake spawn/connectors always injected, real DB/binary never touched. */
 function testOptions(overrides: Partial<Parameters<typeof streamClaudeCli>[1]> = {}) {
   return {
+    // Injected, not inherited from the host. `claudeCliPlatformSupport()`
+    // disables this provider on macOS (the CLI keeps credentials in the
+    // Keychain, which `CLAUDE_CONFIG_DIR` cannot relocate), so on a macOS
+    // developer machine every test below used to assert against that one
+    // refusal event instead of the behaviour it names — 53 failures that said
+    // nothing about the driver and everything about the laptop running them.
+    // The refusal itself still has its own dedicated test, which injects an
+    // UNSUPPORTED result on purpose.
+    platformSupport: { supported: true as const },
     dataRoot,
     projectsRoot,
     serverPort: 3001,
@@ -201,6 +273,15 @@ describe('streamClaudeCli — happy path', () => {
     )
 
     expect(events).toEqual([
+      // Emitted before anything is spent, so the composer can show what the
+      // turn was routed to while it is still running (`turnRouting.ts`).
+      {
+        type: 'routing',
+        mode: 'auto',
+        effort: 'medium',
+        shape: 'build',
+        reason: 'Not clearly a question — routed up, because under-serving a build costs more than over-serving a question.',
+      },
       { type: 'text', text: 'Hi there.' },
       { type: 'context', promptTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
       { type: 'usage', promptTokens: 50, completionTokens: 10, costUsd: 0.002, cacheReadTokens: 0, cacheCreationTokens: 0 },
@@ -216,8 +297,16 @@ describe('streamClaudeCli — happy path', () => {
     const mcpConfigPath = capturedArgv[mcpConfigIndex + 1]!
     const argvWithoutMcpConfigValue = [...capturedArgv]
     argvWithoutMcpConfigValue[mcpConfigIndex + 1] = '<mcp-config-path>'
+    // Both temp paths are machine-specific; their SHAPE is asserted in the
+    // "in-chat permission prompts" block, so here they only need to not make
+    // this whole-argv comparison untestable.
+    argvWithoutMcpConfigValue[capturedArgv.indexOf('--add-dir') + 1] = '<attachments-root>'
     expect(argvWithoutMcpConfigValue).toEqual([
       'claude', '-p',
+      // A warm session's stdin is an NDJSON channel that stays open across
+      // turns (`claudeCliStdinProtocol.ts`). This is the ONE flag that differs
+      // from a cold turn, which passes `--input-format text`.
+      '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
@@ -227,6 +316,9 @@ describe('streamClaudeCli — happy path', () => {
       // A real project is open, no attachment on this turn: the file tools
       // (subagent dispatch) only, never Read/Bash/Write/Edit.
       '--tools', 'Read,Write,Edit,Glob,Grep,Task',
+      // The conversation's attachment staging root, granted at spawn so a
+      // LATER turn on this same process can attach a file at all.
+      '--add-dir', '<attachments-root>',
       '--mcp-config', '<mcp-config-path>',
       // Headless, the CLI has no TTY to prompt in; this routes a permission
       // request to the open chat instead of it being silently refused.
@@ -258,14 +350,20 @@ describe('streamClaudeCli — happy path', () => {
         },
       },
     })
-    // The file is gone by the time the turn has fully ended.
-    expect(existsSync(mcpConfigPath)).toBe(false)
+    // Still there once the turn has ended: this turn spawned a warm session,
+    // and the file is what its running process authenticated from. Its removal
+    // is pinned by the "MCP config file" block below, on both lifetimes.
+    expect(existsSync(mcpConfigPath)).toBe(true)
     expect(capturedEnv.CLAUDE_CONFIG_DIR).toBe(join(dataRoot, 'user-1'))
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe('token-abc')
     // A real chat turn spawns in the resolved WORKSPACE, not the config dir.
     expect(capturedCwd).toBe(projectDir)
 
-    // The session connector is revoked the instant the turn ends.
+    // The connector outlives the turn, because the warm process it
+    // authenticated is still running and will serve the next one. It is
+    // revoked when the SESSION ends — see the "MCP tool routing" block.
+    expect(revokedCalls).toEqual([])
+    await disposeAllWarmSessions()
     expect(revokedCalls).toEqual([{ connectorId: 'connector-1', userId: 'user-1' }])
   })
 
@@ -745,7 +843,7 @@ describe('streamClaudeCli — native tool surface', () => {
 })
 
 describe('streamClaudeCli — MCP tool routing (WS-11 step 3)', () => {
-  it('mints a connector with the caller\'s own capabilities and revokes it when the turn ends', async () => {
+  it('mints a connector with the caller\'s own capabilities, and revokes it when the SESSION ends', async () => {
     const mintCalls: Array<{ userId: string; capabilities: readonly string[]; conversationId: string }> = []
     const mint = async (
       _db: unknown,
@@ -764,7 +862,36 @@ describe('streamClaudeCli — MCP tool routing (WS-11 step 3)', () => {
       testOptions({ spawn, mintConnector: mint as never }),
     )
     expect(mintCalls).toEqual([{ userId: 'user-9', capabilities: ['ai.chat', 'site.read'], conversationId: 'conv-9' }])
+
+    // The token OUTLIVES the turn on purpose. The CLI authenticates its MCP
+    // clients once, at startup, so revoking here would leave the warm session
+    // holding a dead token and silently toolless for turn 2. Its life is the
+    // session's, and every path that ends a session revokes it — proven by
+    // ending one below.
+    expect(revokedCalls).toEqual([])
+
+    await disposeAllWarmSessions()
     expect(revokedCalls).toEqual([{ connectorId: 'connector-xyz', userId: 'user-9' }])
+  })
+
+  it('reuses one connector across turns instead of minting a fresh one per turn', async () => {
+    let mints = 0
+    const mint = async (): Promise<ClaudeCliSessionConnector> => {
+      mints += 1
+      return { connectorId: `connector-${mints}`, token: `tok-${mints}` }
+    }
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+    })
+    const request = baseRequest({
+      toolContextBase: { db: {} as never, userId: 'user-9', capabilities: ['ai.chat'], conversationId: 'conv-reuse', snapshot: null },
+    })
+
+    await collect(request, testOptions({ spawn, mintConnector: mint as never }))
+    await collect(request, testOptions({ spawn, mintConnector: mint as never }))
+
+    expect(mints).toBe(1)
+    expect(revokedCalls).toEqual([])
   })
 
   it('degrades to a tool-less turn (no --mcp-config) when minting fails, rather than failing the whole turn', async () => {
@@ -854,7 +981,7 @@ describe('streamClaudeCli — MCP config file (secret-exposure fix)', () => {
     expect(path.startsWith(projectDir)).toBe(false)
   })
 
-  it('deletes the MCP config file after a turn that completes normally', async () => {
+  it('keeps a warm session\'s config file for the life of the session, then deletes it', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
@@ -862,8 +989,27 @@ describe('streamClaudeCli — MCP config file (secret-exposure fix)', () => {
     })
     await collect(baseRequest(), testOptions({ spawn }))
     const path = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
+
+    // Session-scoped, exactly like the token inside it: the file is what the
+    // running process authenticated from, and a second turn must find the
+    // session it belongs to still valid.
+    expect(existsSync(path)).toBe(true)
+
+    await disposeAllWarmSessions()
     expect(existsSync(path)).toBe(false)
     // The whole containing temp directory goes with it — nothing orphaned.
+    expect(existsSync(join(path, '..'))).toBe(false)
+  })
+
+  it('deletes a COLD turn\'s config file as soon as that turn ends', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest(), testOptions({ spawn, disableWarmSession: true }))
+    const path = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
+    expect(existsSync(path)).toBe(false)
     expect(existsSync(join(path, '..'))).toBe(false)
   })
 
@@ -925,7 +1071,12 @@ describe('streamClaudeCli — MCP config file (secret-exposure fix)', () => {
       return proc
     }
 
+    // This fake models a one-shot process (no writable stdin), so the warm
+    // path refuses it and the turn runs cold — which is exactly the path whose
+    // turn-scoped config-file cleanup this test is about.
     const gen = streamClaudeCli(baseRequest(), testOptions({ spawn }))
+    // `routing` is emitted before anything is spent (`turnRouting.ts`).
+    expect((await gen.next()).value).toMatchObject({ type: 'routing' })
     const first = await gen.next()
     expect(first.done).toBe(false)
     expect(first.value).toEqual({ type: 'text', text: 'partial' })
@@ -968,10 +1119,147 @@ describe('streamClaudeCli — process exit with no result event', () => {
       stderr: 'Segmentation fault (core dumped)',
       exitCode: 139,
     })
+    // The warm session dies without answering, so this turn falls back to a
+    // cold spawn — which dies the same way and reports it. What the user must
+    // never see is the fallback itself: one honest error, not two.
     const events = await collect(baseRequest(), testOptions({ spawn }))
-    expect(events).toHaveLength(1)
-    expect(events[0]!.type).toBe('error')
-    expect((events[0] as { message: string }).message).toContain('Segmentation fault')
+    const substantive = events.filter((e) => e.type !== 'routing')
+    expect(substantive).toHaveLength(1)
+    expect(substantive[0]!.type).toBe('error')
+    expect((substantive[0] as { message: string }).message).toContain('Segmentation fault')
+  })
+})
+
+describe('streamClaudeCli — the warm session (W4-2B)', () => {
+  const answer = [
+    { type: 'assistant', message: { model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'ok' }] } },
+    { type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } },
+  ]
+
+  it('serves the second turn of a conversation without spawning a process', async () => {
+    let spawns = 0
+    const prompts: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: answer,
+      onSpawn: (_argv, _env, _cwd, prompt) => {
+        prompts.push(prompt)
+      },
+    })
+    const counting: SubprocessSpawnFn = (argv, opts) => {
+      spawns += 1
+      return spawn(argv, opts)
+    }
+
+    await collect(baseRequest({ messages: [userMessage('first')] }), testOptions({ spawn: counting }))
+    await collect(baseRequest({ messages: [userMessage('second')] }), testOptions({ spawn: counting }))
+
+    // The measurable claim of this whole workstream: turn 2 pays no process
+    // start and no MCP handshake.
+    expect(spawns).toBe(1)
+    expect(prompts).toEqual(['first', 'second'])
+  })
+
+  it('respawns when the turn is routed to a different effort, because --effort is argv-only', async () => {
+    let spawns = 0
+    const efforts: string[] = []
+    const spawn: SubprocessSpawnFn = (argv, opts) => {
+      spawns += 1
+      efforts.push(argv[argv.indexOf('--effort') + 1]!)
+      return fakeCliSpawn({ stdoutLines: answer })(argv, opts)
+    }
+
+    // A build-shaped prompt routes to `medium`; a plain question to `low`.
+    await collect(baseRequest({ messages: [userMessage('Build me a checkout screen')] }), testOptions({ spawn }))
+    await collect(baseRequest({ messages: [userMessage('what is a flexbox?')] }), testOptions({ spawn }))
+
+    expect(efforts).toEqual(['medium', 'low'])
+    expect(spawns).toBe(2)
+  })
+
+  it('respawns when the model changes, and never serves a turn from a process started for another one', async () => {
+    const models: string[] = []
+    const spawn: SubprocessSpawnFn = (argv, opts) => {
+      models.push(argv[argv.indexOf('--model') + 1]!)
+      return fakeCliSpawn({ stdoutLines: answer })(argv, opts)
+    }
+
+    await collect(baseRequest({ modelId: 'sonnet' }), testOptions({ spawn }))
+    await collect(baseRequest({ modelId: 'opus' }), testOptions({ spawn }))
+    await collect(baseRequest({ modelId: 'opus' }), testOptions({ spawn }))
+
+    expect(models).toEqual(['sonnet', 'opus'])
+  })
+
+  it('keeps conversations on separate processes', async () => {
+    let spawns = 0
+    const spawn: SubprocessSpawnFn = (argv, opts) => {
+      spawns += 1
+      return fakeCliSpawn({ stdoutLines: answer })(argv, opts)
+    }
+    const context = (conversationId: string) => ({
+      toolContextBase: { db: {} as never, userId: 'user-1', capabilities: ['ai.chat' as const], conversationId, snapshot: null },
+    })
+
+    await collect(baseRequest(context('conv-a')), testOptions({ spawn }))
+    await collect(baseRequest(context('conv-b')), testOptions({ spawn }))
+    await collect(baseRequest(context('conv-a')), testOptions({ spawn }))
+
+    expect(spawns).toBe(2)
+  })
+
+  it('falls back to a cold spawn — with no user-visible error — when the warm process is dead', async () => {
+    const inputFormats: string[] = []
+    let call = 0
+    const spawn: SubprocessSpawnFn = (argv, opts) => {
+      call += 1
+      inputFormats.push(argv[argv.indexOf('--input-format') + 1]!)
+      // The warm attempt dies without answering; the cold retry works.
+      return fakeCliSpawn({ stdoutLines: answer, exitCode: call === 1 ? 1 : 0 })(argv, opts)
+    }
+
+    const events = await collect(baseRequest(), testOptions({ spawn }))
+
+    expect(inputFormats).toEqual(['stream-json', 'text'])
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    expect(events.some((e) => e.type === 'text')).toBe(true)
+  })
+
+  it('carries a CHANGED board digest in the user message, and never re-sends an unchanged one', async () => {
+    const prompts: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: answer,
+      onSpawn: (_argv, _env, _cwd, prompt) => {
+        prompts.push(prompt)
+      },
+    })
+    const withState = (state: string, text: string) =>
+      baseRequest({
+        workspaceDir: projectDir,
+        systemPrompt: ['static prefix', SYSTEM_PROMPT_DYNAMIC_BOUNDARY, state],
+        messages: [userMessage(text)],
+      })
+
+    await collect(withState('board: 1 page', 'one'), testOptions({ spawn }))
+    await collect(withState('board: 1 page', 'two'), testOptions({ spawn }))
+    await collect(withState('board: 2 pages', 'three'), testOptions({ spawn }))
+
+    // Turn 1 got it as `--append-system-prompt` at spawn, so it must not be
+    // duplicated into the message; turn 2's is unchanged, so nothing is sent;
+    // turn 3's differs, so it rides along.
+    expect(prompts[0]).toBe('one')
+    expect(prompts[1]).toBe('two')
+    expect(prompts[2]).toContain('board: 2 pages')
+    expect(prompts[2]).toContain('three')
+    expect(prompts[2]).not.toContain('static prefix')
+  })
+
+  it('kills the conversation’s process, and revokes its token, when the conversation ends', async () => {
+    const spawn = fakeCliSpawn({ stdoutLines: answer })
+    await collect(baseRequest(), testOptions({ spawn }))
+
+    expect(revokedCalls).toEqual([])
+    await endClaudeCliConversation('conv-1')
+    expect(revokedCalls).toEqual([{ connectorId: 'connector-1', userId: 'user-1' }])
   })
 })
 
@@ -1085,7 +1373,7 @@ describe('streamClaudeCli — attachments (WS-12 §5.3)', () => {
     expect(capturedArgv.some((arg) => arg.includes('\n'))).toBe(false)
     expect(capturedArgv).not.toContain(multiline)
     // `-p` is immediately followed by a flag, never by prompt text.
-    expect(capturedArgv[capturedArgv.indexOf('-p') + 1]).toBe('--output-format')
+    expect(capturedArgv[capturedArgv.indexOf('-p') + 1]).toBe('--input-format')
   })
 })
 
@@ -1249,6 +1537,8 @@ describe('streamClaudeCli — a tool-using turn is visible as it happens', () =>
     const events = await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
 
     expect(events.map((e) => e.type)).toEqual([
+      // Emitted before anything is spent (`turnRouting.ts`).
+      'routing',
       'reasoning',
       'reasoning',
       'toolCall',
@@ -1258,7 +1548,8 @@ describe('streamClaudeCli — a tool-using turn is visible as it happens', () =>
       'usage',
       'done',
     ])
-    expect(events[2]).toEqual({
+    // Indices are offset by one: `routing` leads every turn.
+    expect(events[3]).toEqual({
       type: 'toolCall',
       toolCallId: 'toolu_01Fd',
       toolName: 'Read',
@@ -1267,7 +1558,7 @@ describe('streamClaudeCli — a tool-using turn is visible as it happens', () =>
     })
     // Paired across two different CLI lines, which is the whole reason the
     // translator carries per-turn state.
-    expect(events[3]).toMatchObject({ type: 'toolResult', toolCallId: 'toolu_01Fd', toolName: 'Read', ok: true })
+    expect(events[4]).toMatchObject({ type: 'toolResult', toolCallId: 'toolu_01Fd', toolName: 'Read', ok: true })
   })
 })
 
@@ -1343,11 +1634,18 @@ describe('streamClaudeCli — in-chat permission prompts', () => {
 
     const addDirIndex = capturedArgv.indexOf('--add-dir')
     expect(addDirIndex).toBeGreaterThan(-1)
-    // Exactly the directory Studio created for this turn, and nothing wider.
-    expect(capturedArgv[addDirIndex + 1]).toContain('studio-claude-cli-attachments-')
+    // The conversation's own staging ROOT, and nothing wider — the per-turn
+    // directory the attachment actually lands in is created beneath it. It has
+    // to be the root rather than the turn directory because `--add-dir` is
+    // argv: a warm process can only ever read from directories it was told
+    // about at spawn, and the second turn's attachments live in a directory
+    // that did not exist then.
+    expect(capturedArgv[addDirIndex + 1]).toContain('studio-claude-cli-session-')
+    // One grant, not one per turn.
+    expect(capturedArgv.filter((arg) => arg === '--add-dir')).toHaveLength(1)
   })
 
-  it('passes no --add-dir when the turn has no attachments', async () => {
+  it('grants the staging root even with no attachments, so a later turn on the same process can send one', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
@@ -1356,7 +1654,13 @@ describe('streamClaudeCli — in-chat permission prompts', () => {
 
     await collect(baseRequest(), testOptions({ spawn }))
 
-    expect(capturedArgv).not.toContain('--add-dir')
+    // Not a widening worth worrying about: the directory holds nothing but
+    // files this conversation's own user attached, and `--tools` is the real
+    // ceiling — without `Read` granted for the turn, an authorised directory
+    // buys the agent nothing. Asserted here so that reasoning stays visible.
+    const addDirIndex = capturedArgv.indexOf('--add-dir')
+    expect(capturedArgv[addDirIndex + 1]).toContain('studio-claude-cli-session-')
+    expect(capturedArgv).not.toContain('Read')
   })
 })
 

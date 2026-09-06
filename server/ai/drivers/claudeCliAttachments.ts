@@ -36,13 +36,26 @@
  * driver's own `finally` block alongside connector revocation. `os.tmpdir()`,
  * never inside `studio-workspace/` — an attachment is turn-scoped working
  * data, not project content, and does not belong committed to the user's repo.
+ *
+ * A WARM session (`claudeCliSessionPool.ts`) nests those per-turn directories
+ * under a session-stable `parentDir` instead of straight into `os.tmpdir()`.
+ * That is a hard requirement of the warm path, not tidiness: `--add-dir` is
+ * argv, so a process can only ever be told about directories that existed when
+ * it started, and a per-turn directory created later would hit exactly the
+ * "Claude requested permissions to read from …" dead end this module's
+ * pre-authorisation exists to prevent. Nesting keeps the per-TURN lifetime
+ * (each turn still creates and deletes its own directory) while giving the CLI
+ * one stable ancestor to have been granted at spawn.
  */
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AiContentBlock } from '../runtime/types'
 
 const ATTACHMENTS_DIR_PREFIX = 'studio-claude-cli-attachments-'
+/** Parent of a warm session's per-turn attachment directories — see `ensureConversationAttachmentsRoot`. */
+const SESSION_DIR_PREFIX = 'studio-claude-cli-session-'
 const STAGING_MODE = 0o700
 
 /** Decoded-byte cap for a text-ish file — generous for a spec/README/token export, bounded so a mislabeled large payload can't blow up a turn. Images have no separate cap here — they're already bounded upstream by `AI_USER_IMAGE_MAX_BASE64_CHARS` before this module ever sees them. */
@@ -102,7 +115,11 @@ export interface AttachmentStaging {
  * nothing else staged), so the refusal reaches the prompt. Never throws: a
  * single bad block is skipped, not fatal to the whole turn.
  */
-export function stageAttachments(content: readonly AiContentBlock[]): AttachmentStaging | null {
+export function stageAttachments(
+  content: readonly AiContentBlock[],
+  /** Where the per-turn directory is created. Defaults to `os.tmpdir()`; a warm session passes its own stable, already-`--add-dir`-authorised root — see the module doc. */
+  parentDir?: string,
+): AttachmentStaging | null {
   const candidateBlocks = content.filter(
     (b): b is Extract<AiContentBlock, { kind: 'image' }> => b.kind === 'image',
   )
@@ -137,7 +154,7 @@ export function stageAttachments(content: readonly AiContentBlock[]): Attachment
     }
 
     if (!dir) {
-      dir = mkdtempSync(join(tmpdir(), ATTACHMENTS_DIR_PREFIX))
+      dir = mkdtempSync(join(parentDir ?? tmpdir(), ATTACHMENTS_DIR_PREFIX))
       try {
         chmodSync(dir, STAGING_MODE)
       } catch {
@@ -162,6 +179,44 @@ export function stageAttachments(content: readonly AiContentBlock[]): Attachment
     return refused.length > 0 ? { dir: '', files: [], refused } : null
   }
   return { dir: dir!, files, refused }
+}
+
+/**
+ * The one stable directory a conversation's warm session stages every turn's
+ * attachments beneath, created if absent.
+ *
+ * Derived from the conversation id rather than handed out by the pool, because
+ * it is needed BEFORE a session exists: `--add-dir` and `--tools` are both
+ * argv, so the turn has to know where it will stage and whether it staged
+ * anything in order to build the command line that spawns the process. A pure
+ * function of the conversation id breaks that circularity without a lookup.
+ *
+ * Hashed, not the raw id: the id is a nanoid and would be a usable path
+ * segment, but a directory name in a world-readable `os.tmpdir()` is a public
+ * fact, and a conversation id is a capability-shaped identifier in this system
+ * (it addresses a conversation over the API). Hashing costs nothing and stops
+ * `ls /tmp` from enumerating them.
+ */
+export function ensureConversationAttachmentsRoot(conversationId: string): string {
+  const dir = conversationAttachmentsRootPath(conversationId)
+  mkdirSync(dir, { recursive: true, mode: STAGING_MODE })
+  try {
+    chmodSync(dir, STAGING_MODE)
+  } catch {
+    // Best-effort on platforms without POSIX mode bits (Windows) — same
+    // posture as the per-file staging below.
+  }
+  return dir
+}
+
+/** Remove a conversation's whole attachment root — called when its warm session is disposed, which is the only thing that owns this directory's lifetime. */
+export function removeConversationAttachmentsRoot(conversationId: string): void {
+  cleanupAttachments(conversationAttachmentsRootPath(conversationId))
+}
+
+function conversationAttachmentsRootPath(conversationId: string): string {
+  const digest = createHash('sha256').update(conversationId).digest('hex').slice(0, 32)
+  return join(tmpdir(), `${SESSION_DIR_PREFIX}${digest}`)
 }
 
 /** Torn down unconditionally at the end of every turn that staged one — never left behind. A no-op for a refusal-only result (`dir === ''`, nothing was ever created). */
