@@ -42,6 +42,30 @@
  * is what "stop at the last frame" means for a fade-out; `freezePoint:
  * 'start'` is the fix for exactly this case, per project.
  *
+ * A NUMBER between 0 and 1 (W5-5) is the third form: hold every animation at
+ * that fraction of its own timeline. `'start'` and `'end'` are the endpoints
+ * of the same axis, so this generalises them rather than sitting beside them —
+ * `0` shows what `'start'` shows and `1` shows what `'end'` shows.
+ *
+ * The mechanism is a negative delay on a paused animation, which is how CSS
+ * expresses "already this far in". A negative delay is measured against the
+ * DURATION, which differs per animation and which no `*` selector can read —
+ * so this rule also forces `animation-duration: 1s` on everything. That is not
+ * a visual change (a paused animation does not advance) and it is what makes
+ * one delay mean the same fraction for a 200 ms fade and a 4 s orbit alike.
+ * The cost is honest and small: an animation whose `animation-timing-function`
+ * is a `steps()` function lands on a step boundary rather than between two,
+ * which is what stepped motion means at any moment anyway.
+ *
+ * ## Scrubbing and playing back (`animationScrubStore.ts`)
+ *
+ * The two phases of a play-once — `'reset'` (take `animation` away so the next
+ * phase starts from the first keyframe) and `'playing'` (let each run once and
+ * settle) — arrive from `animationScrubStore.ts` rather than from a prop, so
+ * every frame on the board replays in step. See that module for why the phase
+ * machine lives there. When the store is idle and no scrub is set, the
+ * `freezePoint` prop decides, exactly as before.
+ *
  * `prefers-reduced-motion`
  * ────────────────────────
  * A well-behaved app gates its own motion behind `@media
@@ -91,35 +115,74 @@
  */
 
 import { useEffect } from 'react'
+import { useCanvasAnimationScrub, type AnimationPlayPhase } from './animationScrubStore'
 
 const STYLE_TAG_ID = 'studio-canvas-animation'
 
-/** See "Freeze point" in the module docblock. */
-export type CanvasAnimationFreezePoint = 'end' | 'start'
+/**
+ * See "Freeze point" in the module docblock. A number is a fraction of each
+ * animation's own timeline, clamped to 0…1 — `0` is `'start'` and `1` is
+ * `'end'`.
+ */
+export type CanvasAnimationFreezePoint = 'end' | 'start' | number
+
+/** The `animation-*` block for a given freeze point — see "Freeze point". */
+function animationFreezeDeclarations(freezePoint: CanvasAnimationFreezePoint): string {
+  if (typeof freezePoint === 'number') {
+    // Normalising the duration is what makes ONE delay mean the same fraction
+    // for every animation on the page; the animation is paused, so forcing it
+    // changes nothing anyone can see. See "Freeze point" for the full argument.
+    const progress = Math.min(1, Math.max(0, freezePoint))
+    return `animation-duration: 1s !important;
+  animation-delay: -${progress}s !important;
+  animation-iteration-count: 1 !important;
+  animation-fill-mode: both !important;
+  animation-play-state: paused !important;`
+  }
+  if (freezePoint === 'start') {
+    // Pausing wherever the animation currently is, mounted before the
+    // animation has had any real time to run, holds it at (or very near)
+    // its 0%/from keyframe — correct when the END state is the one that
+    // should stay hidden.
+    return `animation-play-state: paused !important;`
+  }
+  return `animation-iteration-count: 1 !important;
+  animation-fill-mode: forwards !important;`
+}
 
 /**
  * Module-scope: stable across renders, never captured into a closure.
  * `*::before` / `*::after` are listed explicitly because `*` does not match
  * pseudo-elements, and generated content is a common home for spinners and
  * shimmer overlays (the eSIM radar's orbiting dot is an `::before`).
+ *
+ * `transition: none` is dropped for the two play-once phases: a play-once is
+ * the one moment a design frame is deliberately being watched move, and a
+ * transition suppressed through it would make the preview lie about what a
+ * visitor sees. Everything else about the injector (media freezing, the
+ * `matchMedia` patch, smooth-scroll suppression) is unchanged by playback.
  */
-function buildAnimationRules(freezePoint: CanvasAnimationFreezePoint): string {
-  const animationFreeze =
-    freezePoint === 'start'
-      ? // Pausing wherever the animation currently is, mounted before the
-        // animation has had any real time to run, holds it at (or very near)
-        // its 0%/from keyframe — correct when the END state is the one that
-        // should stay hidden.
-        `animation-play-state: paused !important;`
-      : `animation-iteration-count: 1 !important;
+function buildAnimationRules(freezePoint: CanvasAnimationFreezePoint, phase: AnimationPlayPhase): string {
+  const animationRules =
+    phase === 'reset'
+      ? // One frame with no animation at all. This is what makes the next
+        // phase start from the first keyframe rather than continuing from
+        // wherever the previous rules had each animation parked.
+        `animation: none !important;`
+      : phase === 'playing'
+        ? `animation-play-state: running !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
   animation-fill-mode: forwards !important;`
+        : animationFreezeDeclarations(freezePoint)
+
+  const transitionRule = phase === 'idle' ? '\n  transition: none !important;' : ''
 
   return `
 *,
 *::before,
 *::after {
-  ${animationFreeze}
-  transition: none !important;
+  ${animationRules}${transitionRule}
   scroll-behavior: auto !important;
 }
 `.trim()
@@ -129,8 +192,10 @@ interface CanvasAnimationInjectorProps {
   /** The iframe document to inject the stylesheet into. */
   targetDocument: Document
   /**
-   * Which keyframe a looping/entrance animation settles on. Defaults to
-   * `'end'` (today's behaviour). See "Freeze point" above.
+   * Which keyframe a looping/entrance animation settles on — `'end'`,
+   * `'start'`, or a 0…1 fraction of its own timeline. Defaults to `'end'`.
+   * See "Freeze point" above. Overridden while the inspector's scrub is
+   * active (`animationScrubStore.ts`).
    */
   freezePoint?: CanvasAnimationFreezePoint
 }
@@ -139,6 +204,11 @@ export function CanvasAnimationInjector({
   targetDocument,
   freezePoint = 'end',
 }: CanvasAnimationInjectorProps) {
+  // A scrub set from the inspector overrides this frame's own freeze point;
+  // with none set, `freezePoint` decides exactly as it did before W5-5.
+  const { progress, phase } = useCanvasAnimationScrub()
+  const effectiveFreezePoint = progress === null ? freezePoint : progress
+
   // Stylesheet: animation freeze, transitions, smooth scroll.
   useEffect(() => {
     let styleEl = targetDocument.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
@@ -151,8 +221,8 @@ export function CanvasAnimationInjector({
       // equally-`!important` author rule of the same specificity.
       targetDocument.head.appendChild(styleEl)
     }
-    styleEl.textContent = buildAnimationRules(freezePoint)
-  }, [targetDocument, freezePoint])
+    styleEl.textContent = buildAnimationRules(effectiveFreezePoint, phase)
+  }, [targetDocument, effectiveFreezePoint, phase])
 
   // Remove on unmount / document swap. Captures the current doc so cleanup
   // always targets the document this effect installed into.

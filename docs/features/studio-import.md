@@ -927,6 +927,30 @@ Both surface as toasts on save. Silence is the one outcome that loses a user's w
 
 **A baseline never advances past a refusal (`style-02`).** `commitBaseline` ran unconditionally after every save, including the ones the server refused. The declaration never reached disk, but the baseline adopted it — so the user's obvious next move, typing the same value again, diffed as "no change", produced no edit, and was never attempted a second time. The refusal was reported once and then became permanent and invisible. `commitBaseline` now takes `refusedRuleIds` (joined from the save response's `refusals` through `StyleRuleEditPlan.ruleIdByNodeId`) and keeps those rules' previous baseline entry; the repeat TOAST is de-duplicated instead, in `refusalToasts.ts`. `commitClassIdsBaseline`'s `refusedNodeIds` is the same fix on the `className` side.
 
+#### `@keyframes` write-back (W5-5)
+
+A `@keyframes` block is a `StyleRule` like any other — `kind: 'ambient'`, `selector: '@keyframes fade-in'`, and the whole block verbatim in `rawCss` (`siteImport/keyframesToStyleRule.ts`) — so `studioCss.ts` maps it to a `(file, selector)` with no special case, and the Animations section can find it by name. What it does NOT have is a `CSSPropertyBag`: its body is a list of steps, not a property→value map, so the class diff above has nothing to compare and would emit nothing for it forever.
+
+`src/admin/pages/site/studio/keyframesWriteback.ts` is the second diff. It keys its own baseline on `rawCss`, parses BOTH sides with `readKeyframeSteps`, and compares **declaration by declaration** — the same shape `diffDeclarations` has, one field over. That is deliberate rather than convenient: sending the new block text and letting the server write it would be a rewrite, and every comment, blank line, and step this editor's parser did not understand would vanish on the first duration change.
+
+Three ops, matching the three the class path already has, with pure writers in `server/handlers/studioCssKeyframes.ts` (`studioCssWriteback.ts` keeps the containment guard, the editability check, and the single `writeFileSync`, which is why that module stays pure and the dependency stays one-way):
+
+| Op | Codemod | Notes |
+|---|---|---|
+| `keyframe-set` | `setDeclarationAtKeyframe` | Creates the step, and the whole block, if either is missing — `setDeclarationAtMedia`'s contract one scope over |
+| `keyframe-unset` | `removeDeclarationAtKeyframe` | Removes a step it empties, and the block if that was the last step |
+| `keyframes-insert` | `insertKeyframes` | A brand-new animation's first write. MERGES into an existing block of the same name rather than duplicating it |
+
+Adding or removing a whole STEP needs no op of its own and gets none: a step that appears contributes its declarations as `keyframe-set` edits, and a step that disappears contributes them as `keyframe-unset` edits. Two ops, four behaviours, no fourth code path to keep in agreement with the other three.
+
+The honest-target gate is `analyzeKeyframesTarget`, not `analyzeDeclarationTarget` — its four rules are about a selector's declarations in the cascade, and a keyframe step is neither. It needs only one rule, and it is stricter than the class one for a reason: a second `@keyframes` of the same name does not merge with the first the way two rules with the same selector do, it REPLACES it entirely.
+
+| Refusal | When |
+|---|---|
+| `duplicate-keyframes` | the file declares this animation name more than once (a `-webkit-` twin counts) — the last block wins entirely, so editing any one of them would change the file and change nothing on screen |
+
+**The one honest gap.** A brand-new animation in a project with NO editable stylesheet anywhere is reported, not written. The class path answers that case with `op: 'create'`, where the server invents a co-located stylesheet and wires its `import` into the page — machinery that exists to make a CLASS reachable from JSX, which no `className` ever needs for an at-rule. Rather than half-reuse it, the save says so; the first class the user creates in such a project creates the stylesheet, and the animation is writable from then on.
+
 ### `className` write-back (Track B2, `setJsxClassName`)
 
 The previous section rewrites a rule's *declaration* in its `.css` file. This one rewrites the *attribute* — an element's own `className` — and is the write path that makes a Tailwind element editable at all: a fill/spacing change on a Tailwind element is `bg-red-500` → `bg-blue-600`, a class-token swap on the element, not a stylesheet declaration, so it needs no mapped `.css` source and is not subject to the `unmapped` refusal above.
@@ -1276,4 +1300,8 @@ here once it is genuinely detectable.
 | Resolved text is editable at its origin, and nothing else is | `src/__tests__/studio/resolvedTextEditing.test.ts` |
 | CSS write-back: honest-target refusals | `src/core/css-codemods/__tests__/analyzeDeclarationTarget.test.ts` |
 | CSS write-back: the client diff + the synthetic `studio` breakpoint id | `src/__tests__/studio/styleRuleWriteback.test.ts` |
+| CSS write-back: the `@keyframes` codemods + the duplicate-block refusal | `src/core/css-codemods/__tests__/keyframes.test.ts` |
+| CSS write-back: the `@keyframes` client diff | `src/__tests__/studio/keyframesWriteback.test.ts` |
+| Animations section: shorthand/longhand resolution and its whole-value refusals | `src/admin/pages/site/panels/PropertiesPanel/__tests__/animationValue.test.ts` |
+| The canvas freeze-point axis, the scrub, and play-once | `src/__tests__/canvas/canvasAnimationScrub.test.tsx` |
 | CSS write-back: a real browser edit reaching a real `.css` file, and a real refusal | `tests/e2e/css-writeback.e2e.ts` |

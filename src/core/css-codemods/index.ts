@@ -19,6 +19,17 @@ export { setDeclaration, setDeclarationAtMedia, type SetDeclarationResult } from
 export { removeDeclaration, type RemoveDeclarationResult } from './removeDeclaration'
 export { insertRule, type InsertRuleResult, type InsertRuleOptions } from './insertRule'
 export {
+  analyzeKeyframesTarget,
+  insertKeyframes,
+  keyframesNameFromSelector,
+  readKeyframeSteps,
+  removeDeclarationAtKeyframe,
+  setDeclarationAtKeyframe,
+  type KeyframeStep,
+  type KeyframesTargetAnalysis,
+  type KeyframesTargetRefusal,
+} from './keyframes'
+export {
   analyzeDeclarationTarget,
   type DeclarationTargetAnalysis,
   type DeclarationTargetRefusal,

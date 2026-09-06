@@ -211,8 +211,31 @@ const CSSPropertyBagSchema = Type.Object({
   transformOrigin: Type.Optional(Type.String()),
 
   // Motion
+  //
+  // Both the shorthands and the `animation-*` longhands are real members of
+  // the bag (W5-5). happy-dom's CSSOM neither expands `animation:` into
+  // longhands nor collapses longhands into a shorthand — whichever the author
+  // wrote is what lands in `StyleRule.styles` — so a rule written the longhand
+  // way was already round-tripping through storage on the permissive
+  // `isEmittableProperty` gate while being invisible to `keyof
+  // CSSPropertyBag`: to the style search, to a section's "N set" count, and
+  // to every typed read. The Animations section owns both shapes and writes
+  // back into the one it found (`animationValue.ts`).
+  //
+  // The `transition-*` longhands are deliberately NOT here: nothing edits
+  // them, and adding a key the panel cannot control would put an empty row in
+  // the search results. They still round-trip as unknown properties, exactly
+  // as they did before.
   transition: Type.Optional(Type.String()),
   animation: Type.Optional(Type.String()),
+  animationName: Type.Optional(Type.String()),
+  animationDuration: Type.Optional(Type.String()),
+  animationTimingFunction: Type.Optional(Type.String()),
+  animationDelay: Type.Optional(Type.String()),
+  animationIterationCount: Type.Optional(Type.String()),
+  animationDirection: Type.Optional(Type.String()),
+  animationFillMode: Type.Optional(Type.String()),
+  animationPlayState: Type.Optional(Type.String()),
 
   // Interaction
   cursor: Type.Optional(Type.String()),
