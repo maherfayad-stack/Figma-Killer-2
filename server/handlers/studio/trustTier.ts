@@ -31,19 +31,13 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { projectsRootDir, resolveProjectDir } from '../studioProjects'
 import { isRealpathContained } from './workspacePackageResolve'
-import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta } from './studioMeta'
+import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta, TrustTierSchema } from './studioMeta'
 
 const ROUTE_PATH = '/admin/api/studio/trust-tier'
 
-const TrustTierValueSchema = Type.Union([
-  Type.Literal('static'),
-  Type.Literal('render-packages'),
-  Type.Literal('run-project'),
-])
-
 const TrustTierPostBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
-  trust: TrustTierValueSchema,
+  trust: TrustTierSchema,
 })
 export type TrustTierPostBody = Static<typeof TrustTierPostBodySchema>
 

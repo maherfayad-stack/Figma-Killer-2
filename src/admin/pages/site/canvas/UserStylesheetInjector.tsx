@@ -39,7 +39,11 @@
  * top-level reference changes on every site-touching mutation anywhere in the
  * document, so that chain re-ran on every keystroke, in every mounted iframe.
  * Now it follows `ClassStyleInjector.tsx`'s pattern: narrow selectors + an
- * effect-gated recompute. The CSS only depends on `site.files`, `site.runtime`
+ * effect-gated recompute, and the chain itself lives in
+ * `canvasUserStylesheetCss.ts`, memoised across frames (the collect + scheme
+ * rewrite are identical in every iframe; only the viewport-unit resolution
+ * genuinely varies, and only by frame WIDTH). The CSS only depends on
+ * `site.files`, `site.runtime`
  * (both selected directly — their references are structurally-shared-stable
  * across edits to node content, since Mutative only recreates the branch of
  * the tree actually touched), and — for per-page scope matching — the active
@@ -54,10 +58,9 @@ import { useEffect } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SiteFile } from '@core/files/schemas'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import { collectUserStylesheetCss } from '@core/publisher'
-import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
+import type { CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
-import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
+import { buildUserStylesheetCss } from './canvasUserStylesheetCss'
 
 const STYLE_TAG_ID = 'mc-user-styles'
 
@@ -122,22 +125,18 @@ export function UserStylesheetInjector({ targetDocument, viewport }: UserStylesh
     }
 
     // Concatenate the user stylesheets that target the active page, in
-    // cascade order. Delegates to `collectUserStylesheetCss` so the canvas
-    // loads the exact bytes the published page receives — scope, priority,
-    // and enable state all honoured. Viewport units are then pinned to the
-    // frame viewport (canvas-only) so authored `vh`/`vmax`/… can't make the
-    // grow-to-content iframe height explode.
+    // cascade order, then pin viewport units to the frame viewport
+    // (canvas-only) so authored `vh`/`vmax`/… can't make the grow-to-content
+    // iframe height explode. `buildUserStylesheetCss` owns that chain and
+    // memoises its frame-invariant half across every mounted frame — see that
+    // module's doc.
     //
     // The reactive deps above (`files`, `runtime`, `activePageScope`) decide
     // WHEN this recomputes; `site` itself is re-read fresh here (not
     // subscribed) purely to hand `collectUserStylesheetCss` its full
     // `SiteDocument` — that read does not add its own reactivity.
     const site = useEditorStore.getState().site
-    const collected = site && activePageScope
-      ? collectUserStylesheetCss(site, activePageScope)
-      : ''
-    const viewportResolved = viewport ? resolveViewportUnitsForCanvas(collected, viewport) : collected
-    const css = rewritePrefersColorScheme(viewportResolved)
+    const css = buildUserStylesheetCss(site, activePageScope, viewport)
 
     // Wrap in a named cascade layer so editor-chrome CSS (unlayered, from
     // EditorChromeInjector) always wins over user-authored stylesheets regardless

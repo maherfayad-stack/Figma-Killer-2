@@ -235,7 +235,17 @@ describe('canvasDnd', () => {
     // `previewStructuralMove` is consulted.
     expect(result.target).toBeNull()
     expect(result.invalid?.overId).toBe(inlinedB)
-    expect(result.invalid?.refusalMessage).toContain('shared component')
+    expect(result.invalid?.constraint?.explanation).toContain('shared component')
+    // The whole constraint, not just its sentence: the overlay shows the
+    // reason during the drag, and `origin`/`actions` are what any surface
+    // AFTER the drop needs to offer a way forward. Both trace to the DRAGGED
+    // element, not the candidate under the pointer — and for an inlined node
+    // that is the COMPONENT'S own file (`decodeSourceNodeId` reads a composite
+    // id's last segment), which is exactly where the user has to go to move
+    // this markup.
+    expect(result.invalid?.constraint?.scope).toBe('gesture')
+    expect(result.invalid?.constraint?.reason).toBe('shared-component')
+    expect(result.invalid?.constraint?.origin?.rel).toBe('ui/Card.tsx')
   })
 
   it('does not invent a refusal for an ordinary CMS (nanoid) node — refusal previews are studio-only', () => {

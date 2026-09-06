@@ -77,6 +77,7 @@ import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
 import { CanvasNodeElementCache } from './canvasNodeLookup'
 import { InPlaceInspector } from './InPlaceInspector'
+import { CanvasDropIndicators } from './CanvasDropIndicators'
 import {
   createCanvasOverlayMeasureSession,
   measureIframeLocalRect,
@@ -85,7 +86,6 @@ import {
 } from './canvasOverlayGeometry'
 import type { CanvasRectSource } from './canvasDomGeometry'
 import {
-  dropIndicatorStyle,
   hideOverlayElement,
   measureSelectorHighlightRects,
   positionInspector,
@@ -93,7 +93,6 @@ import {
   positionOverlayElement,
   positionToolbar,
   publishSelectionAnchor,
-  rectStyle,
   syncSelectorHighlightRings,
 } from './canvasSelectionOverlayPositioning'
 import styles from './BreakpointSelectionOverlay.module.css'
@@ -648,43 +647,11 @@ export function BreakpointSelectionOverlay({
 
   return (
     <>
-      {/* Drop indicators stay inside the breakpoint viewport — they only
-          appear transiently during a drag, and the transform-scaled
-          coordinate path is established for them via `dropIndicatorStyle`. */}
-      <div className={styles.overlayLayer}>
-        {reorderDrag.target && (
-          <div
-            className={styles.dropIndicator}
-            data-position={reorderDrag.target.position}
-            data-axis={reorderDrag.target.axis}
-            style={dropIndicatorStyle(reorderDrag.target)}
-            aria-hidden="true"
-          />
-        )}
-
-        {reorderDrag.invalid && (
-          <div
-            className={styles.invalidDropIndicator}
-            style={rectStyle(reorderDrag.invalid.rect)}
-            data-axis={reorderDrag.invalid.axis}
-            // G5 — present when this box means "this position would refuse
-            // the source write" (a real drop target the store's own gate
-            // would still reject — shared component, route chrome, …),
-            // distinct from an ordinary structural rejection (locked node,
-            // cycle) which carries no message. `reorderDrag.invalid.
-            // refusalMessage` holds the full sentence for a FUTURE
-            // cursor-following label — not wired up to a visible tooltip
-            // here: this element is `pointer-events: none` (so a native
-            // `title` would never fire) and a real label needs a small
-            // positioned component this pass didn't build. The red box
-            // itself is what ships today — previously this exact case
-            // (a structurally valid position the write would still refuse)
-            // rendered a confident VALID drop line instead.
-            data-refusal-reason={reorderDrag.invalid.refusalMessage ? 'source-writeback' : undefined}
-            aria-hidden="true"
-          />
-        )}
-      </div>
+      {/* Drop indicators (and the reason a position is refused) stay inside
+          the breakpoint viewport — they only appear transiently during a
+          drag, and the transform-scaled coordinate path is established for
+          them. See `CanvasDropIndicators`. */}
+      <CanvasDropIndicators target={reorderDrag.target} invalid={reorderDrag.invalid} />
       {canvasChrome && createPortal(canvasChrome, overlayRoot ?? portalTarget)}
       {toolbar && createPortal(toolbar, portalTarget)}
       {inspector && createPortal(inspector, portalTarget)}

@@ -287,7 +287,7 @@ export function ImportHtmlModal() {
       open={true}
       onClose={closeModal}
       title="Import HTML"
-      eyebrow="ALM Figma Killer"
+      eyebrow="Studio"
       size="lg"
       className={styles.dialog}
       bodyClassName={styles.dialogBody}

@@ -43,8 +43,18 @@ import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { ProjectProfileSchema } from './projectProfileSchema'
 import { RegisteredMcpServerSchema } from '@core/ai'
 
-/** The three trust tiers §0 of the V2 plan declares per project. Default: `'static'` (Tier 0 — nothing runs) for every fresh import. */
-const TrustTierSchema = Type.Union([
+/**
+ * The three trust tiers §0 of the V2 plan declares per project. Default:
+ * `'static'` (Tier 0 — nothing runs) for every fresh import.
+ *
+ * Exported so the routes that read/write this field (`trustTier.ts`,
+ * `styleCompileConsent.ts`) validate against the SAME schema this file
+ * persists, rather than each keeping its own copy of the three literals to
+ * drift from. (The browser keeps one more mirror — `studioProjectTrust.ts`'s
+ * `TrustTierSchema` — because it cannot import this Node-only module; that
+ * one only has to agree on the wire shape.)
+ */
+export const TrustTierSchema = Type.Union([
   Type.Literal('static'),
   Type.Literal('render-packages'),
   Type.Literal('run-project'),
@@ -109,6 +119,23 @@ export const StudioMetaSchema = Type.Object({
    */
   previewLocale: Type.Optional(Type.String({ minLength: 1 })),
   trust: Type.Optional(TrustTierSchema),
+  /**
+   * WS-2.1 consent — the user answered "not now" to the board's
+   * `StyleCompileConsentBanner`, the first-run prompt that offers to run this
+   * project's own Sass/PostCSS/Tailwind compiler (see
+   * `./styleCompileConsent.ts`).
+   *
+   * Records only a REFUSAL to be asked again, never consent: promoting the
+   * trust tier is `trust` above and nothing else. The two are deliberately
+   * separate fields — a user who dismisses the prompt and later promotes
+   * from somewhere else (the per-node package placeholder) must not have
+   * their dismissal read as the promotion, nor the promotion silently
+   * un-dismiss a prompt they closed.
+   *
+   * Per project and on disk, like every other Studio UI preference — the
+   * question is about THIS repository, so the answer belongs beside it.
+   */
+  styleCompilePromptDismissed: Type.Optional(Type.Boolean()),
   /**
    * Cached `ProjectProfile` probe result. A cache that no longer matches the
    * schema (an older profile shape, a hand-mangled file) fails validation and

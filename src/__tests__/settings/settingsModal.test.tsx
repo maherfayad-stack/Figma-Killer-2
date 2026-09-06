@@ -493,9 +493,10 @@ describe('SettingsButton + settingsSlice — section ID alignment (source enforc
   )
 
   it('SettingsButton dispatches a valid section ID', () => {
-    // 'general' is the first NAV_ITEMS entry after Pages/Viewports/Conditions
-    // were moved to their dedicated controls.
-    expect(btnSrc).toContain("openSettings('general')")
+    // 'preferences' — the gear belongs to the person clicking it. 'general'
+    // is the CMS site's meta tags, which is not what a design tool's settings
+    // cog should open on; see SettingsButton.tsx's own doc.
+    expect(btnSrc).toContain("openSettings('preferences')")
   })
 
   it('settingsSlice activeSection default is a valid section ID', () => {

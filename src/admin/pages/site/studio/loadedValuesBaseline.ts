@@ -169,15 +169,27 @@ export function collectClassIdsDrift(pages: readonly Page[]): ClassIdsDrift[] {
 }
 
 /**
- * Advances the `classIds` baseline to the CURRENT document — called
- * unconditionally on every `saveSite` (unlike `commitNodeValuesBaseline`,
- * there is no "did the write land" gate here, because there is nothing to
- * write: Studio has no `class` edit kind. This purely records "last
- * observed," so an already-toasted drift doesn't re-toast on the next 2s
- * tick if nothing has changed since.
+ * Advances the `classIds` baseline to the CURRENT document, EXCEPT for the
+ * nodes named in `refusedNodeIds`, whose previous entry is kept.
+ *
+ * `style-02`/`style-02` — Studio does have a real `class` edit kind now
+ * (`setJsxClassName`), so "last observed" is no longer the whole story: a
+ * drift whose token could not be resolved honestly, or whose write the server
+ * refused, never reached disk. Advancing past one of those was the same
+ * silent-loss shape `commitBaseline`'s `refusedRuleIds` fixes on the CSS
+ * side — the assignment was reported once and then became permanently
+ * invisible, because the very next diff saw "no change". Everything else
+ * still advances unconditionally, so an already-reported, genuinely
+ * unwritable drift (a `.map` row) does not re-toast every tick.
  */
-export function commitClassIdsBaseline(pages: readonly Page[]): void {
+export function commitClassIdsBaseline(pages: readonly Page[], refusedNodeIds: readonly string[] = []): void {
+  const previous = loadedClassIds
   loadedClassIds = snapshotClassIds(pages)
+  for (const nodeId of refusedNodeIds) {
+    const before = previous.get(nodeId)
+    if (before) loadedClassIds.set(nodeId, before)
+    else loadedClassIds.delete(nodeId)
+  }
 }
 
 /** One `(nodeId, key)` -> value pair whose write is known to have landed on disk — see `commitNodeValuesBaseline`. */

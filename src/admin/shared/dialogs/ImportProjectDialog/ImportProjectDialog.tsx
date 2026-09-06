@@ -21,6 +21,15 @@
  *
  * Formerly `ImportGithubDialog` (GitHub-only). Renamed because the GitHub
  * tab is now one of three, not the whole dialog.
+ *
+ * It lives under `@admin/shared/dialogs/` rather than `@site/studio/` because
+ * importing a repository is how a user *reaches* Studio, not something they do
+ * once already inside it: the dashboard launcher mounts it beside "New
+ * project", and the Studio toolbar mounts it too. Both go through the one lazy
+ * boundary in `LazyImportProjectDialog.tsx`. The import *clients* it calls
+ * (`importGithubProject`, `importUploadProject`, `studioWorkspaceDir`) stay in
+ * `@site/studio/` — those are the Studio workspace's wire contract, and this
+ * dialog is only their first caller.
  */
 import { useId, useRef, useState, type FormEvent, type CSSProperties } from 'react'
 import { Button } from '@ui/components/Button'
@@ -31,21 +40,29 @@ import { Tab, TabList, TabPanel, Tabs } from '@ui/components/Tabs'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
-import { importGithubProject } from './importGithubProject'
-import { pickedFolderName, uploadProjectArchive, type UploadProjectResult } from './importUploadProject'
-import { setStudioWorkspaceDir } from './studioWorkspaceDir'
+import { importGithubProject } from '@site/studio/importGithubProject'
+import { pickedFolderName, uploadProjectArchive, type UploadProjectResult } from '@site/studio/importUploadProject'
+import { setStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import dialogStyles from '@admin/shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
 import styles from './ImportProjectDialog.module.css'
 
 interface ImportProjectDialogProps {
   onClose: () => void
+  /**
+   * Fired after the imported project has been made the open workspace
+   * (`setStudioWorkspaceDir` + `requestCmsSiteReload`), before `onClose`.
+   * The Studio toolbar omits it — it is already showing the editor. The
+   * dashboard passes a navigation into the editor, so importing from the
+   * launcher lands the user in the project it just created.
+   */
+  onImported?: () => void
 }
 
 type ImportTab = 'github' | 'upload' | 'folder'
 
 const FORM_ID = 'studio-import-project-form'
 
-export function ImportProjectDialog({ onClose }: ImportProjectDialogProps) {
+export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialogProps) {
   const [tab, setTab] = useState<ImportTab>('github')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -90,6 +107,7 @@ export function ImportProjectDialog({ onClose }: ImportProjectDialogProps) {
           ? `${result.files} files imported, ${result.skipped} skipped.`
           : `${result.files} files imported.`,
     })
+    onImported?.()
     onClose()
   }
 

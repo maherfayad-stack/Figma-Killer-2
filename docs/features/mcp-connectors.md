@@ -259,6 +259,7 @@ buildMcpServer → getEditorBridgeForUser(userId, 'site')
 
 - Browser side: `useMcpWorkspaceBridge` opens the NDJSON stream, runs each `toolRequest` through the SAME dispatcher as the built-in agent panel, and POSTs the result back. It reconnects with backoff. `SitePage` flushes pending draft changes before reporting a successful tool result, so a follow-up headless read or `site_publish` sees the persisted edit immediately; a failed save makes the MCP tool fail instead of silently publishing stale data.
 - Server side: reuses the chat bridge machinery wholesale — `createBridge` issues the `AiBrowserBridge`, `resolveBridgeToolResult` settles it from the existing `/admin/api/ai/tool-result` endpoint.
+- **Waiting for a reconnect.** A tool that needs the bridge asks `awaitEditorBridgeForUser`, which does not fail the instant the registry is empty: the registry is in-memory and every stream is capped at `STREAM_LEASE_MS` (120s), so a healthy session drops and re-registers on its own schedule. It waits up to two ~4s windows for the browser's 3s reconnect — or **one** window when a bridge for that `(userId, scope)` was live within the last 60s, which is exactly the reconnect case one window already covers. The full patience is reserved for a workspace nothing is known to have opened, where a cold tab genuinely takes longer.
 
 This is why an open editor (yours, or one the agent opens) unlocks the full editing surface without reimplementing any tool.
 
