@@ -47,6 +47,7 @@ function stubLoadStream(pages: unknown[], meta: MetaOverrides = {}): void {
     componentSources: {},
     styleRules: {},
     styleRuleSources: {},
+    styledStyleRuleSources: {},
     conditions: [],
     vendorCss: '',
     authoredCss: '',

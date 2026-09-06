@@ -138,6 +138,7 @@ describe('saveSite → narrow board resync', () => {
             componentSources: {},
             styleRules: opts.reloadedRules ?? {},
             styleRuleSources: SOURCES,
+            styledStyleRuleSources: {},
             conditions: [],
             vendorCss: '',
             authoredCss: '',

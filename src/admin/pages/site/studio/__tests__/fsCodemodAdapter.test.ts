@@ -88,7 +88,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
           // here: a call site that does not care about CSS sources/raw CSS
           // should not have to name the field. A fixture that does care still
           // overrides.
-          { kind: 'meta', styleRuleSources: {}, authoredCss: '', ...meta, pageCount: pages.length },
+          { kind: 'meta', styleRuleSources: {}, styledStyleRuleSources: {}, authoredCss: '', ...meta, pageCount: pages.length },
           ...pages.map((page) => ({ kind: 'page', page })),
         ]
         return new Response(

@@ -61,6 +61,7 @@ import {
   setJsxTagName,
   setJsxText,
   setStringLiteral,
+  setStyledDeclaration,
   swapComponentInstance,
 } from '@core/ast-codemods'
 import { applyCssEdit } from './studioCssWriteback'
@@ -282,7 +283,21 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(ed
   const passthrough: T[] = []
   for (const edit of edits) {
     const loc = studioEditLocation(edit.nodeId)
-    if (!loc || edit.kind === 'insert' || edit.kind === 'insert-slot' || edit.kind === 'duplicate' || edit.kind === 'wrap') {
+    // `styled` (W4-4 Phase B) joins the exemption for the same reason
+    // `insert`/`insert-slot` are here: its identity is not the location alone.
+    // Every declaration in one template shares that template's `line:col`, so
+    // the generic key would collapse `color` and `padding` on one `styled.div`
+    // — and a `:hover` override onto its base rule — into whichever the batch
+    // listed last. Two styled edits can never be the SAME write either: the
+    // client emits at most one per (rule, media, property).
+    if (
+      !loc ||
+      edit.kind === 'insert' ||
+      edit.kind === 'insert-slot' ||
+      edit.kind === 'duplicate' ||
+      edit.kind === 'wrap' ||
+      edit.kind === 'styled'
+    ) {
       passthrough.push(edit)
       continue
     }
@@ -365,6 +380,26 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     case 'text':
       setJsxText({ ...loc, text: edit.text })
       return { applied: true }
+    case 'styled': {
+      // W4-4 Phase B. `loc` is the `styled.…` TAG, not a JSX element — the
+      // codemod re-finds the tagged template there and rewrites one
+      // declaration's value span inside its own quasi. It RETURNS its
+      // refusals (it is a leaf that knows nothing about this module), so they
+      // are translated here into the one refusal channel every kind shares.
+      const outcome = setStyledDeclaration({
+        ...loc,
+        className: edit.className,
+        selector: edit.selector,
+        property: edit.property,
+        value: edit.value,
+        ...(edit.atMedia ? { atMedia: edit.atMedia } : {}),
+      })
+      if (!outcome.ok) throw new StudioEditRefusalError(outcome.reason, outcome.message)
+      // `changed: false` means the template already says exactly this — the
+      // requested state IS the state on disk, so reporting a skip would toast
+      // the user about a no-op (`applyCssEdit`'s `unset` precedent).
+      return { applied: true }
+    }
     case 'style':
       // `style-03` — `JsxStyleTargetError` is a NAMED decision (a spread, a
       // non-object initializer, a shorthand key), not an unexpected failure.

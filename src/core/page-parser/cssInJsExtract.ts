@@ -59,6 +59,7 @@ import { createEvalScope, createPageEvalBudget, evaluateExpression } from './sta
 import type { EvalScope, StaticEvalOptions, StaticValue } from './staticEval'
 import {
   flattenTemplateCss,
+  isStatementPosition,
   sentinelDeclaration,
   unresolvedSentinel,
   type TemplateSentinel,
@@ -374,22 +375,6 @@ function substituteTemplate(
   }
 
   return { body, sentinels }
-}
-
-/**
- * True when the next thing written would start a STATEMENT rather than
- * continue a declaration's value — i.e. nothing since the last `;`/`{`/`}`
- * has opened a property with a `:`. That is the `${sharedMixin}` shape, and it
- * needs a whole valid declaration substituted rather than a bare word, or
- * postcss rejects the entire template.
- */
-function isStatementPosition(textSoFar: string): boolean {
-  let segment = textSoFar
-  for (const delimiter of [';', '{', '}']) {
-    const index = segment.lastIndexOf(delimiter)
-    if (index >= 0) segment = segment.slice(index + 1)
-  }
-  return !segment.includes(':')
 }
 
 /** Long enough to identify the interpolation in the source, short enough for a finding message and a toast. */

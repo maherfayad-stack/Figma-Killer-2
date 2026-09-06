@@ -243,6 +243,7 @@ describe('AdminCanvasLayout — Studio site hydration gate', () => {
           componentSources: {},
           styleRules: {},
           styleRuleSources: {},
+          styledStyleRuleSources: {},
           conditions: [],
           vendorCss: '',
           authoredCss: '',

@@ -248,7 +248,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       projectName,
       componentSources: sources,
       styleRules,
-      styleRuleSources: loadedStyleRuleSources,
+      styleRuleSources: loadedStyleRuleSources, styledStyleRuleSources: loadedStyledRuleSources,
       conditions,
       vendorCss: loadedVendorCss,
       authoredCss: loadedAuthoredCss,
@@ -268,7 +268,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
     // `pages` feeds `buildClassPageIndex`, which is how a new class gets
     // co-located with the page it is used on (`style-02`).
-    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules, { pages })
+    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules, { pages, styledSources: loadedStyledRuleSources })
     // WS-10 §4.4 (Phase 4) — a fresh project load (or a `requestCmsSiteReload()`
     // re-load) must not carry a locale-variant page, or its writeback
     // baseline, over from whatever project was open before: `pageId` is only
@@ -577,9 +577,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       const refusals = result.refusals ?? []
       reportEditRefusals(refusals)
       for (const refusal of refusals) {
-        if (refusal.kind === 'css') {
-          const ruleId = cssPlan.ruleIdByNodeId[refusal.nodeId]
-          if (ruleId) refusedRuleIds.add(ruleId)
+        if (refusal.kind === 'css' || refusal.kind === 'styled') {
+          for (const ruleId of cssPlan.ruleIdsByNodeId[refusal.nodeId] ?? []) refusedRuleIds.add(ruleId)
         }
         if (refusal.kind === 'class') refusedClassNodeIds.push(refusal.nodeId)
       }

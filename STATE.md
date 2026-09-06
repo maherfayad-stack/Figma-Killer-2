@@ -233,6 +233,146 @@ with exactly one stylesheet, and again in one with several.
   - **`studio-scribe`:** the 578-line `docs/features/studio-import.md` now carries the lifted refusals, but the two landmines above (the throwing locator, the inline whitespace hole) are worth a permanent home there.
 - **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` on every touched area ✅ (one pre-existing icon-catalog failure, plus the known canvas-iframe/step-up/cmsPlugins flakes in a full run).
 - **Human action needed:** dogfood the three gestures on an imported board; confirm the narrow reload brings the new element back selected-or-not as expected.
+
+---
+
+### style-05 — a styled-component's declarations write back; its class refuses (W4-4 Phase B)
+
+- **Agent:** studio-implementer (W4-4 Phase B, stacked on `parser-11`/PR #27)
+- **Stage:** built and gated. `bun run build`, `bun run lint` clean; suites below green. **Needs human dogfood** — measured on two OSS corpora, not driven in a browser.
+- **Updated:** 2026-09-06
+- **Branch:** `feat/css-in-js-writeback` off `main`.
+
+**What was wrong.** Phase A put a `styled.div` on the canvas and made every edit
+to it a lie or a dead end. Two distinct failures:
+
+1. **A class add/remove was a silent no-op** — Phase A's own landmine 1, routed
+   here. The synthetic class (`Card_sc__a1b2c3`) lives in `node.classIds` and
+   the DOM, and in NO `className` attribute: styled-components generates its
+   name at runtime. Removing it emitted a `kind: 'class'` edit whose token
+   `setJsxClassName` could not find — `{ ok: true }`, file untouched, canvas
+   showing it gone. Adding it wrote Studio's own hash into the user's JSX,
+   which is `style-02`'s CSS-Modules bug through a different door.
+2. **Every declaration edit was refused as unmapped**, because a styled rule
+   arrives through `extraCss` and gets no `StyleRuleSource`. Correct for Phase
+   A, wrong permanently: the declarations ARE hand-written, in a `.tsx` three
+   lines from where the user is looking.
+
+**The design decision that everything else follows from: ONE walk.**
+`cssInJsTemplate.ts` now has two readers — `flattenTemplateCss` (Phase A's
+rendering) and `flattenTemplateDeclarations` (per-declaration value spans) —
+off one `flattenToRules`. Re-deriving the `&`/pseudo/`@media` nesting rules in
+the codemod would be a second answer to "which element does this declaration
+style", and the day they disagreed the editor would write into a rule the
+canvas never showed. A dropped (interpolated) declaration is now KEPT in the
+walk and skipped at serialisation, flagged `interpolated: true`, so the write
+side can say "set from a `${…}`" instead of the useless "not written here".
+
+**Scope — every file touched.**
+
+- `src/core/ast-codemods/setStyledDeclaration.ts` *(new)* — ts-morph finds the
+  tagged template at the recorded `line:col`, assembles the body from each
+  quasi's **raw** text plus a segment map, matches one declaration, maps the
+  value span back to absolute file offsets, `replaceText`.
+- `src/core/page-parser/cssInJsTemplate.ts` — the two-reader refactor +
+  `containsUnresolvedSentinel`, and `isStatementPosition` moved here from
+  `cssInJsExtract.ts` (both sides must place a sentinel identically).
+- `server/handlers/studio/styledStyleRuleSources.ts` *(new)* — load-time
+  `StyleRule.id -> (file, line, col, className, componentName)`.
+- `server/handlers/studioEditSchemas.ts` — `StyledEditSchema` + `styled` in
+  `StudioEditRefusal['kind']`/`isRefusingEditKind`.
+- `server/handlers/studioWriteback.ts` — the `case 'styled'` dispatch, and
+  `styled` added to `dedupeStudioEdits`' passthrough.
+- `server/handlers/studioPageLoad.ts`, `server/handlers/studio.ts` — the map on
+  `StudioLoadResult` and both response shapes.
+- `src/admin/pages/site/studio/styledRuleSources.ts` *(new)* — the client
+  registry, the `StyledEditPayload`, and `styledClassRefusal`.
+- `src/admin/pages/site/studio/styleRuleBaseline.ts` *(new, extraction)* — see
+  "Two size-budget notes" below.
+- `styleRuleWriteback.ts` (styled branch + `ruleIdsByNodeId`),
+  `classNameWriteback.ts` (the class refusal), `refusalToasts.ts`,
+  `studioLoadStreamSchema.ts`, `studioLiveReloadFetch.ts`,
+  `fsCodemodAdapter.ts`, `studioEditPayload.ts`.
+- `panels/PropertiesPanel/classCssWritability.ts` + `StyleTargetChip.tsx` — a
+  `styled-template` tier that WRITES and does not lock.
+- Tests: `setStyledDeclaration.test.ts` (14), `styledRuleWriteback.test.ts`
+  (11). Docs: `studio-import.md`'s CSS-in-JS section, `studio-pipeline.md`,
+  `STUDIO-WAVE4-PLAN.md` §W4-4.
+
+**Decisions, and why.**
+
+| Question | Answer | Why |
+|---|---|---|
+| A new edit kind, or an `op` on `kind: 'css'`? | **New kind, `styled`, schema in `studioEditSchemas.ts` — NOT a sibling of `studioCssWriteback.ts`.** | `studioCssWriteback.ts` is its own module because a `css` edit shares nothing with its siblings: file+selector target, no decodable `nodeId`, postcss. A styled edit is the opposite on every count — its `nodeId` IS a `rel:line:col` (the `styled.…` tag), so it inherits `studioEditLocation`'s path guard, `studioEditFile`'s touched-file set and `orderStudioEditsForApply` for free. A sibling handler would have re-derived all three. |
+| Resolve interpolations on the write side, as Phase A does on the read side? | **No — every `${…}` is a hole here.** | `padding: ${SPACING.md}` has no value written in that template. Writing there would either clobber the interpolation or (worse) edit `SPACING` and change every other template reading the token. |
+| One map or two (`styleRuleSources` + `styledStyleRuleSources`)? | **Two.** | `.css` file + selector written by postcss vs `.tsx` file + `line:col` + synthetic class written by ts-morph. Every guard downstream (`.css` extension, `classifyStylesheetEditability`, `resolveContainedCssPath`) is right for one and wrong for the other. Two maps ⇒ no branch can pick the wrong engine. |
+| Lock the panel rows for a styled class? | **No.** | Value edits reach disk; the ones that do not (add/clear a declaration) refuse by name at save time naming the template. Greying the whole class would be a bigger lie than the one `classCssWritability.ts` was written to remove. |
+| `ruleIdByNodeId` → `ruleIdsByNodeId` (a LIST). | Every declaration in one template shares the template's node id. | One refused write there must hold back the base rule AND the `:hover` rule flattened from the same template — neither reached disk under that id. |
+
+**Measured** (every declaration Phase A put on the canvas, replayed through
+`setStyledDeclaration` with the value it already has — a true dry run,
+`changed: false`, no bytes written; both clones `git status`-clean afterwards.
+Cloned OUTSIDE the worktree, per the recorded `.tmp/`-breaks-ESLint landmine):
+
+| Repo | Declarations on canvas | Writable | Refused |
+|---|---|---|---|
+| `bchiang7/v4` | 907 | **871 (96.0%)** | 32 `interpolated-value`, 4 `unwritable-value` |
+| `react-boilerplate` | 137 | **103 (75.2%)** | 34 `declaration-not-in-template` |
+
+`react-boilerplate`'s refusals are ONE shape: `StyledButton` is
+``styled.button`${buttonStyles};` `` — all 34 declarations live in
+`buttonStyles.js`. The 4 `unwritable-value` cases are probe artifacts (three
+multi-line values replayed verbatim) except one genuine limit:
+`cursor: url("data:image/svg+xml;utf8,…")`, whose embedded `;` cannot be
+written into a template CSS value.
+
+**Landmines for whoever takes Phase C (or touches this).**
+
+1. **Raw quasi text, never cooked.** `getLiteralText()` resolves escapes, so
+   body offsets and file offsets drift by one character per escape and the
+   write lands sideways. `rawQuasiText` strips delimiters off `getText()`
+   instead; `declarationValueSpan` re-asserts `body.slice(...) === value` and
+   returns NO span when it fails. Do not "simplify" either.
+2. **Selector spelling differs between the two sides.** The client's selector
+   comes back through happy-dom's CSSOM (`cssToStyleRules`), which respaces
+   combinators; the codemod's is the flattener's own string. They are compared
+   on a normalised form (`normalizeSelector`), and `analyzeDeclarationTarget`
+   is then handed the CODEMOD's spelling, not the client's.
+3. **Only the `kind: 'class'` base rule is reachable from the class picker.**
+   A template's nested-selector rules become `kind: 'ambient'` rules that never
+   enter `node.classIds`, so today nothing in the panel can target
+   `.X:hover`. The codemod and the wire shape both handle it; the SURFACE does
+   not exist yet. That is the cheapest next win here.
+4. **`@keyframes` inside a template is still dropped, not hoisted** (Phase A's
+   choice — it declares a global name). W5-5's animation work will meet this.
+5. **Phase A landmines 2 and 3 are untouched** — transient props still reach
+   the DOM, `as` is still not honoured.
+
+**Two size-budget notes** (`module-size-budgets`, 700-line ceiling):
+
+- `styleRuleWriteback.ts` would have hit 778. The BASELINE half —
+  `baseline`/`contextBaseline`, `commitBaseline`, `setStudioStyleRuleSources`,
+  `effectiveStudioStyles`, `realContextIds`, `STUDIO_BREAKPOINT_ID` — moved
+  whole to `styleRuleBaseline.ts` (650 now), which is a real seam: "changed
+  since when" vs "which edits to send". Names are re-exported verbatim, so no
+  import site changed — the same arrangement `cssInsertDestination.ts` has.
+- `fsCodemodAdapter.ts` sat at 699 and is now 698. The styled registry is
+  installed through `setStudioStyleRuleSources`' options bag
+  (`{ styledSources }`) rather than a second call, so one function still
+  refreshes both maps and no code path can see one stale.
+
+**Verification.** `bun run build`, `bun run lint` clean.
+`bun test src/core/ast-codemods src/core/page-parser src/admin/pages/site/studio
+src/__tests__/studio src/__tests__/panels src/__tests__/architecture
+server/handlers` — green except two known pre-existing failures:
+`icon-catalog-integrity` (vendored icon file missing) and the documented
+`bun test server/handlers` batch flake (1 failure that vanishes on re-run).
+`src/__tests__/canvas` shows 11 failures on this branch AND on a clean one —
+the recorded canvas batch-isolation flake, untouched by this change. The
+class-refusal regression test was verified to FAIL when the refusal is reverted.
+
+---
+
 ### parser-11 — CSS-in-JS renders (W4-4 Phase A: extract, attach, report — no writeback)
 
 **What was wrong.** A `styled-components`/`emotion` repo was *detected* and

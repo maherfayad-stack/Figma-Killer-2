@@ -342,7 +342,9 @@ tag or the element is silently rewritten.
 ## Known non-imports (deliberate)
 
 CSS-in-JS beyond the TEMPLATE forms (`styled.x`/`styled(X)`/emotion `css` DO
-extract statically — `cssInJsExtract.ts`, W4-4 Phase A, read-only, no writeback;
+extract statically — `cssInJsExtract.ts`, W4-4 Phase A; a declaration's VALUE
+writes back into the template (`setStyledDeclaration.ts`, Phase B) and everything
+else about a styled rule refuses by name;
 stitches, emotion object styles, and a `ThemeProvider`-only theme value do not)
 · Transform effects (`applyTokens(svg)` loops — falls back to the markup handed
 in) · `.map` over props/state/fetch data · a multi-stage screen shows only the

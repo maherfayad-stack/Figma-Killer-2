@@ -30,6 +30,7 @@ function stubFetch(saveCalls: Array<{ body: unknown }>) {
         componentSources: {},
         styleRules: {},
         styleRuleSources: {},
+        styledStyleRuleSources: {},
         conditions: [],
         vendorCss: '',
         authoredCss: '',

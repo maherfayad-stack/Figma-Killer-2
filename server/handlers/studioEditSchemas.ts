@@ -130,6 +130,44 @@ const ClassEditSchema = Type.Object({
 })
 
 /**
+ * W4-4 Phase B — one declaration VALUE rewritten inside a
+ * `styled-components`/emotion tagged template (`setStyledDeclaration`,
+ * `@core/ast-codemods`).
+ *
+ * ## Why this lives here and not beside `CssEditSchema`
+ *
+ * `studioCssWriteback.ts` is its own module because a `kind: 'css'` edit is
+ * the one shape that shares nothing with its siblings: its target is a FILE +
+ * SELECTOR resolved at load time, it decodes no `nodeId`, and postcss — not
+ * ts-morph — does the writing. A styled edit is the opposite on every count.
+ * Its target IS a `rel:line:col` (the `styled.…` tag's own position), so it
+ * rides `studioEditLocation`'s path guard, `studioEditFile`'s touched-file
+ * collection, and `orderStudioEditsForApply`'s bottom-up ordering with no
+ * special case at all — the same deal `prop`/`text`/`style`/`literal` get. A
+ * sibling handler module would have had to re-derive all three.
+ *
+ * `className` is the synthetic class Phase A flattened this template's CSS
+ * under; `selector` is the flattened selector the declaration lives beneath
+ * (`.Card_sc__a1b2c3`, `.Card_sc__a1b2c3:hover`); `atMedia`, when present, is
+ * a nested `@media`'s query. Together they name exactly one declaration in one
+ * template — the codemod refuses, by name, if they name zero or two.
+ *
+ * There is no `op` here, and that is the scope statement: a styled edit only
+ * ever SETS an existing declaration's value. Adding a declaration, removing
+ * one, or renaming a property means restructuring a template the user wrote,
+ * which this pass refuses client-side before an edit is ever built.
+ */
+const StyledEditSchema = Type.Object({
+  kind: Type.Literal('styled'),
+  nodeId: Type.String(),
+  className: Type.String(),
+  selector: Type.String(),
+  atMedia: Type.Optional(Type.String()),
+  property: Type.String(),
+  value: Type.String(),
+})
+
+/**
  * One string-literal-in-place writeback — `setStringLiteral`.
  *
  * The odd one out: its target is not the JSX the node renders, but the literal
@@ -221,6 +259,7 @@ export const StudioEditSchema = Type.Union([
   TextEditSchema,
   StyleEditSchema,
   ClassEditSchema,
+  StyledEditSchema,
   LiteralEditSchema,
   TagEditSchema,
   AssetEditSchema,
@@ -298,6 +337,7 @@ export interface StudioEditRefusal {
     | 'css'
     | 'class'
     | 'style'
+    | 'styled'
     | 'insert-slot'
     | 'promote-component'
     | 'add-slot-prop'
@@ -317,6 +357,11 @@ export function isRefusingEditKind(kind: StudioEdit['kind']): kind is StudioEdit
     kind === 'css' ||
     kind === 'class' ||
     kind === 'style' ||
+    // W4-4 Phase B — every decline `setStyledDeclaration` makes is a named,
+    // expected outcome with a sentence for the user (an interpolated value, a
+    // covering shorthand, a declaration written in a spliced mixin), never a
+    // codemod exception.
+    kind === 'styled' ||
     isStructuralEditKind(kind) ||
     isSlotEditKind(kind)
   )

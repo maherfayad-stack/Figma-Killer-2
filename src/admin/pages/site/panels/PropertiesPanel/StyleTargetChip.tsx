@@ -72,6 +72,13 @@ export type ClassCssEditability =
   | { kind: 'will-create-new-stylesheet'; pageFile: string }
   | { kind: 'compiled'; reason: string }
   | { kind: 'unmapped'; reason?: string }
+  /**
+   * W4-4 Phase B — the class is a styled-component's own synthetic class. Its
+   * declarations ARE hand-written, in `file`, so VALUE edits write back; the
+   * things a `.css` rule also allows (a new declaration, a cleared one, adding
+   * the class to another element) do not, and refuse by name at save time.
+   */
+  | { kind: 'styled-template'; file: string; componentName: string }
 
 interface StyleTargetChipProps {
   /** Whether the inline "Element" section is currently expanded in the panel. */
@@ -97,7 +104,8 @@ function classWrites(editability: ClassCssEditability | undefined): boolean {
   return (
     editability?.kind === 'plain-css' ||
     editability?.kind === 'will-create-existing' ||
-    editability?.kind === 'will-create-new-stylesheet'
+    editability?.kind === 'will-create-new-stylesheet' ||
+    editability?.kind === 'styled-template'
   )
 }
 
@@ -113,6 +121,9 @@ function classTooltip(classSelector: string | undefined, editability: ClassCssEd
   }
   if (editability.kind === 'compiled') {
     return `${editability.reason} Style the element instead for changes that save to disk.`
+  }
+  if (editability.kind === 'styled-template') {
+    return `Saved to ${basename(editability.file)} — changing a value here rewrites ${editability.componentName}'s styled template. Adding or clearing a declaration does not.`
   }
   if (editability.kind === 'plain-css') {
     return `Saved to ${basename(editability.file)} — edits to this class write back to source.`

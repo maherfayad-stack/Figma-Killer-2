@@ -59,6 +59,10 @@ const REFUSAL_TITLES: Record<string, string> = {
   css: 'Style not saved to source',
   class: 'Class change not saved to source',
   style: 'Inline style not saved to source',
+  // W4-4 Phase B — a declaration edit that could not land inside a
+  // styled-component template (an interpolated value, a covering shorthand, a
+  // declaration written in a spliced mixin).
+  styled: 'Style not saved to source',
 }
 
 let seen = new Set<string>()

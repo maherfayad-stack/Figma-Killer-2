@@ -23,6 +23,17 @@ export type {
 } from './types'
 export { cssInJsStylesheet, extractCssInJs, mergeCssInJs } from './cssInJsExtract'
 export type { CssInJsFile, StyledBinding } from './cssInJsExtract'
+// W4-4 Phase B — the write side reads the SAME flattening the read side does,
+// so a value edit lands in the rule the canvas actually showed. See
+// `cssInJsTemplate.ts`'s "Two readers of one walk".
+export {
+  containsUnresolvedSentinel,
+  flattenTemplateDeclarations,
+  isStatementPosition,
+  sentinelDeclaration,
+  unresolvedSentinel,
+} from './cssInJsTemplate'
+export type { TemplateDeclarationSpan, TemplateSentinel } from './cssInJsTemplate'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,
   WORKSPACE_MAX_FILE_BYTES,
