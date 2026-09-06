@@ -71,13 +71,8 @@ import { ClassPropertyRow } from './ClassPropertyRow'
 import { StyleCategoryRail, MODULE_CATEGORY_ID } from './StyleCategoryRail'
 import { StyleTargetChip, type ClassCssEditability } from './StyleTargetChip'
 import { useScrollSpy } from './useScrollSpy'
-import {
-  ALL_CURATED_CSS_PROPERTIES,
-  CLASS_STYLE_SECTIONS,
-  getCSSPropertyDefaultValue,
-  getClassStyleSectionSetCounts,
-  getActiveStyleTab,
-} from './cssControlTypes'
+import { ALL_CURATED_CSS_PROPERTIES, getCSSPropertyDefaultValue } from './cssControlTypes'
+import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
 import {
   buildClassChain,
   buildStableProvenanceMap,

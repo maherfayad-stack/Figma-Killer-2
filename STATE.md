@@ -1268,6 +1268,180 @@ Error messages are symmetric and leak nothing: a hostname-triggered block would 
 
 ---
 
+### panel-05 — inspector disclosure wave 2: Layout, Spacing, Size, Appearance, Typography, rotation
+
+Follows [`panel-04`](#panel-04). Plan: `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`.
+Branch `feat/inspector-progressive-disclosure`. **G6 (Fill), G7 (Stroke) and
+G8 (Effects) are NOT started** — they are the three `PropertyList` consumers.
+
+**Landed:** G3+G4 (one agent — they rewrite the same cluster), G2, G5, G9, and
+G10's missing rotation row. Measured/estimated at panel width 300: Layout
+≈440 → ≈176px, Spacing body ≈253 → ≈26px, Size 4 rows → 1 for a width-only
+element, Typography 8 grid entries → 4 rows.
+
+**Three judgement calls that are load-bearing — do not "simplify" them back.**
+
+1. **The layout settings ⚙ is RESIDENT, not inside the flex/grid block.**
+   `alignSelf` / `justifySelf` / `flex` / `gridColumn` / `gridRow` are
+   item-level: governed by the PARENT's display, which a class-style editor
+   cannot observe. The first implementation nested the trigger in the flex/grid
+   block, which made them unreachable on a plain `<div>` inside a flex row —
+   the most common node there is. Only container-level entries (`flexWrap`,
+   `rowGap`/`columnGap`) are mode-filtered. `propertiesPanel-redesign.test.tsx`
+   pins this by opening the trigger with no `display` set.
+2. **`SpacingBoxControl` was not deleted.** It moved behind the Spacing
+   section's "Box model" ⚙. It is the best control in the panel for "which side
+   is which"; it was only the wrong *default* at 253px resident.
+3. **Rotation writes the standalone `rotate` property, never a rewritten
+   `transform`.** Verified first that the publisher's gate is now permissive
+   (`isEmittableProperty`, not the old `ALLOWED_PROPS`) and that the canvas
+   imports the same `bagToCSS`. A `transform` already containing
+   `rotate()`/`rotateX()`/`rotate3d()` would silently compound, so that case
+   refuses and falls back to a raw row — the gradient/box-shadow rule.
+
+**`cssControlTypes.ts` was split.** It held how a property is CONTROLLED and how
+the panel is DIVIDED INTO SECTIONS; curating the typography long tail pushed it
+one line over the 700 budget. The registry is now `classStyleSections.ts`
+(`ClassStyleSectionDefinition`, `CLASS_STYLE_SECTIONS`,
+`getClassStyleSectionSetCounts`, `getActiveStyleTab`); six importers were
+repointed. 701 → 428 + 304.
+
+**A trap worth stating once.** G9 first reached eight typography properties via
+`as keyof CSSPropertyBag`. That cast is never cosmetic here: `keyof
+CSSPropertyBag` types the whole style pipeline, so a property that only reaches
+disk by defeating it is ALSO invisible to the section's search and its "N set"
+count — and after `panel-04`'s Law 1 that count is what decides whether a
+section may collapse and hide the user's own work. All eight are now real
+schema members and the casts are gone. **If a control needs a property the bag
+does not model, add it to the bag.**
+
+**`bun run icons:sync` cannot run in this environment** — `scripts/sync-icons.ts`
+reads sources from a sibling checkout of the PRIVATE upstream icons repo.
+Removing orphans by hand is equivalent to its step 4 (done for the three icons
+`alignmentOptions.tsx` orphaned). ADDING an icon needs someone with that
+checkout. Consequences: `RotateIcon` was hand-authored into
+`src/ui/components/InspectorIcons` (the sanctioned escape hatch), and
+**`AppearanceSection` stands in `ColorsSwatchSolidIcon` for Figma's droplet —
+vendor a real `droplet-solid` and swap it.**
+
+**MERGE HAZARD — a deliberate decision, recorded so it is not lost.**
+`feat/prototype-mode` is **20 commits / 592 files ahead of `main` and unmerged**,
+and already contains a **parent-aware** sizing model this branch cannot see:
+`elementSizing.ts` (172 lines), `useFrameParentLayout` in
+`useInspectComputedStyle.ts`, and a larger `SizeSection.tsx`. This branch was
+cut from `main`, so G2 wrote its own 84-line `elementSizing.ts` mapping Hug →
+`fit-content` and Fill → `100%` **without consulting the parent**. The user chose
+to stay on `main` and reconcile at merge. **At merge: keep prototype-mode's
+parent-aware `currentSizingMode`/`sizingPatch`/`useFrameParentLayout` and layer
+this branch's `AddablePropertyField` disclosure UI on top. Do not take this
+branch's `elementSizing.ts` wholesale — it is the weaker model.**
+
+**Verification:** `bun test src/__tests__/architecture` 511/511; `bun test src/ui
+src/admin src/__tests__/panels src/__tests__/fonts` 1179/1179; `bun run build`
+and `bun run lint` clean.
+
+**Human action needed — still not dogfooded end to end.** Per
+`dogfood-ui-before-gating`. Drive `:5173`: a plain `<div>` with no `display`
+should show the display switcher, a two-field padding row, a Clip content
+checkbox and a resident ⚙ — open it and confirm `alignSelf` is writable. Then
+`display: flex` → the 3×3 pad, gap, and container-only rows appear in the ⚙;
+`display: grid` → the inverse. Check Size shows one row for a width-only
+element and that "Add minimum width" writes nothing until you type. Check
+Typography is four rows and its ⚙ tabs. Check Position's rotation field, and
+that a node with `transform: translateX(20px)` keeps it.
+
+---
+
+### panel-04 — the inspector's progressive-disclosure pass: wave 1 (four primitives + three orders)
+
+**Branch:** `feat/inspector-progressive-disclosure`, off `main`. Plan:
+[`STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`](STUDIO-INSPECTOR-DISCLOSURE-PLAN.md) —
+the second half of `STUDIO-FIGMA-PARITY-PLAN.md` §10 Track G. Track G's density
+passes shipped; **this is disclosure.** Figma's panel is not smaller because its
+controls are smaller — it is smaller because at rest it does not draw controls
+for things you have not used. The plan derives five laws from a 31-screenshot
+reference set and turns them into eleven work orders. Wave 1 landed seven of
+them in parallel; **G2, G3, G4, G5, G6, G7, G8, G9 are NOT started.**
+
+**Four new primitives, all unwired on purpose.** Later orders consume them; a
+wave-1 agent reaching into `LayoutSection` would have collided with the wave-4
+rewrite. Signatures are in each component's doc comment.
+- `InspectorPopover` (`src/ui/components/InspectorPopover/`) — the anchored
+  *panel* (not menu) behind Law 2. Presence-mounted like `ContextMenu`; no
+  `open` prop. **It also collapsed the duplicate positioning maths:**
+  `useAnchorPosition.ts` + `usePointPosition.ts` are DELETED, merged into
+  `src/ui/lib/useAnchoredFloating.ts`, and `ContextMenu` was rebuilt on it.
+  There is now exactly one copy in the tree.
+- `PropertyList` (Law 1's list shape) — renders `null` when empty; the header
+  and `+` stay in the caller's `Section`. The eye is opt-in via
+  `onToggleVisible` and **absent by default** (plan §8 decision 1: CSS has no
+  disabled declaration, so no storage model was invented).
+- `ExpandableFieldCluster` (Law 4) — `linked` is derived by the caller, never
+  stored; **expanding writes nothing**; sticky per cluster id.
+- `AddablePropertyField` + `RevealedField` (Law 3) — `onAdd(key)` *reveals*, and
+  is tested to write nothing.
+
+**Three orders landed.** `G1` (empty-section law) added
+`ClassStyleSectionDefinition.collapsedWhenEmpty` on background/border/effects/
+interaction/typography and collapses them to a one-line `[styles][+]` header;
+`G10` mounted `AlignBar` for single-node selection with honest-write resolution,
+moved distribute/tidy into an overflow menu, added F29 constraint side-pickers,
+and moved `zIndex` behind a settings trigger; `G3.3` built the `AlignGrid` 3×3
+pad (component only, not wired).
+
+**Three traps a future agent must not re-learn.**
+1. **Emptiness must be judged across contexts.** `G1` threads a new
+   `crossContextStyles` prop from `StyleRuleComposer` so a value set only on a
+   non-active breakpoint keeps its section open. Judging on the active tab alone
+   hides the user's own work behind a `+`. `InlineStyleComposer` deliberately
+   does NOT pass it — `style=""` has no context axis.
+2. **`Button` + `aria-expanded` + a closing overlay destroys the trigger node.**
+   `Tooltip.tsx` does `if (disabled) return children` vs mounting
+   `TooltipInner` — a different element type at the same tree position — so the
+   `aria-expanded` flip that closes an overlay makes React tear down and
+   recreate the `<button>`. A synchronous `triggerRef.current?.focus()` in a
+   close handler focuses a discarded node and focus lands on `<body>`. Defer one
+   rAF past cleanup and re-query the ref. `InspectorPopover` has a regression
+   test using the real `Button`+tooltip combo.
+3. **Portalled surfaces escape `data-field-skin="inspector"`.** The panel root
+   sets it and the cascade does the rest — but a portal renders outside that
+   subtree and would draw admin pill controls. `InspectorPopover` sets it on its
+   own root; anything portalled must.
+
+**Gate note.** The `AlignGrid` agent verified against four hand-picked
+architecture tests and shipped a real `admin-spacing-token-policy` failure
+(`gap: 2px`, `padding: 1px`). Its stated reason — that the clamp()-based
+`--space-*` scale would breach the pad's 48px budget — was false: `.grid` pins
+`width`/`height` with `box-sizing: border-box`, so gap and padding shrink the
+`1fr` cells, not the box. **Run the whole `src/__tests__/architecture` folder,
+not a subset.**
+
+**Verification at wave end:** `bun test src/__tests__/architecture` 511/511,
+`bun test src/ui src/admin src/__tests__/panels` 1060/1060, `bun run build`
+clean, `bun run lint` clean. No tokens added to `globals.css`; no `icons:sync`
+needed (`MinusIcon`'s new import in `AddablePropertyField` incidentally fixed a
+pre-existing `vendor-icons-fresh` orphan failure). Pre-existing unrelated
+failures remain in `cmsPlugins` / `exportDialog` / the plugin scheduler.
+
+**Known limitation, documented not fixed:** G10's constraint side-switch
+(`left`→`right`) correctly never leaves both properties set, but costs **two
+undo entries** — `onChange`/`onClearProperty` are single-property. A one-call
+multi-key commit needs a patch-shaped prop on `StyleSectionsEditor` /
+`StyleRuleComposer` / `InlineStyleComposer`.
+
+**Human action needed — nothing here has been dogfooded in a browser.** Per
+`dogfood-ui-before-gating`, green gates have given false confidence in this repo
+before. Drive `:5173`: (a) select a plain `<div>` with an empty class and
+confirm Background/Border/Effects/Interaction/Typography are single `+` lines
+while Position/Size/Layout/Spacing keep their controls; (b) set a value on a
+non-desktop breakpoint and confirm that section stays open with its dot lit on
+the Desktop tab; (c) select a div inside a flex row and confirm the align
+buttons that cannot write honestly are disabled *with a reason*; (d) set
+`position: absolute` and confirm the Left▾/Top▾ pickers move the value rather
+than duplicating it.
+
+---
+
 ### mcp-09 — the component API the extractor could not find was sitting in 29 Figma Code Connect files
 - **Agent:** mcp-tooling
 - **Stage:** done.

@@ -201,7 +201,7 @@ describe('section styles menu', () => {
   })
 
   it('gives a single-family section exactly one button', () => {
-    render(<SectionStylesMenu sectionId="background" nodeId={NODE_ID} assignedClassIds={[]} />)
+    render(<SectionStylesMenu sectionId="fill" nodeId={NODE_ID} assignedClassIds={[]} />)
 
     expect(screen.getAllByRole('button')).toHaveLength(1)
     openMenu(/apply background color styles/i)

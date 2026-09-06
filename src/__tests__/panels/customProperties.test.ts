@@ -22,7 +22,11 @@ describe('isCuratedProperty', () => {
 
   it('uncurated but valid props return false', () => {
     expect(isCuratedProperty('gridAutoFlow')).toBe(false)
-    expect(isCuratedProperty('fontFeatureSettings')).toBe(false)
+    // `fontFeatureSettings` used to stand here. It is CURATED now — the
+    // typography settings popover (G9 / Figma F26 "Details") owns it, so it
+    // must not fall through to the custom-properties editor. `willChange` is
+    // the replacement: still genuinely uncurated, still a valid CSS property.
+    expect(isCuratedProperty('willChange')).toBe(false)
     expect(isCuratedProperty('listStyleType')).toBe(false)
     expect(isCuratedProperty('--brand')).toBe(false)
   })
@@ -33,15 +37,16 @@ describe('getCustomProperties', () => {
     const styles = {
       fontSize: '16px',          // curated → excluded
       gridAutoFlow: 'dense',     // uncurated → included
-      fontFeatureSettings: '"liga"', // uncurated → included
+      fontFeatureSettings: '"liga"', // CURATED now (typography ⚙ Details) → excluded
+      willChange: 'transform',   // uncurated → included
       '--brand': '#2563eb',      // custom prop → included
       color: '',                 // empty → excluded even though curated
       listStyleType: '',         // empty → excluded
     }
     expect(getCustomProperties(styles)).toEqual([
       '--brand',
-      'fontFeatureSettings',
       'gridAutoFlow',
+      'willChange',
     ])
   })
 
