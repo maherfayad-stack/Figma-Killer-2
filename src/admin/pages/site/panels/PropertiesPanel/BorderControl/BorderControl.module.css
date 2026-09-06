@@ -1,11 +1,12 @@
 /*
- * BorderControl — visual per-side border editor + radius corner editor.
+ * BorderControl — visual per-side border editor.
  *
- * Two stacked groups (Sides, Radius) each pairing a clickable visual picker
- * with the value inputs, plus a trailing Outline pair. The pickers echo the
- * SpacingBoxControl visual language (achromatic box, accent highlight on the
- * active edge) but are simpler — borders only need edge/corner selection, not
- * the full box-model diagram.
+ * One group (Sides) pairing a clickable visual picker with the value inputs,
+ * plus a trailing Outline pair. The picker echoes the SpacingBoxControl
+ * visual language (achromatic box, accent highlight on the active edge) but
+ * is simpler — borders only need edge selection, not the full box-model
+ * diagram. The corner-radius picker that used to live here moved to
+ * `AppearanceSection` (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5).
  */
 
 .root {
@@ -42,8 +43,7 @@
     gap: var(--space-4xs);
 }
 
-.borderBody,
-.radiusBody {
+.borderBody {
     display: flex;
     align-items: flex-start;
     gap: var(--space-xl);
@@ -154,78 +154,6 @@
     top: 14px;
     bottom: 14px;
     width: 6px;
-}
-
-/* ── Corner picker (4 clickable dots) ────────────────────────────────────── */
-
-.cornerPicker {
-    flex: 0 0 auto;
-}
-
-.cornerBox {
-    position: relative;
-    width: 72px;
-    height: 72px;
-    border-radius: var(--radius);
-    background: var(--bg-surface);
-}
-
-.cornerDot {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--overlay-20);
-    background: transparent;
-    padding: 0;
-    margin: 0;
-    cursor: pointer;
-    transition: border-color 120ms ease;
-}
-
-.cornerDot:hover {
-    border-color: var(--overlay-30);
-}
-
-.cornerDotActive {
-    border-color: var(--overlay);
-}
-
-.cornerDotActive:hover {
-    border-color: var(--text-muted);
-}
-
-/* Each dot sits at its corner and rounds the OUTER corner so the curve
- * direction reads which corner it controls. */
-.cornerTopLeft {
-    top: 10px;
-    left: 10px;
-    border-right: none;
-    border-bottom: none;
-    border-top-left-radius: 8px;
-}
-
-.cornerTopRight {
-    top: 10px;
-    right: 10px;
-    border-left: none;
-    border-bottom: none;
-    border-top-right-radius: 8px;
-}
-
-.cornerBottomRight {
-    bottom: 10px;
-    right: 10px;
-    border-left: none;
-    border-top: none;
-    border-bottom-right-radius: 8px;
-}
-
-.cornerBottomLeft {
-    bottom: 10px;
-    left: 10px;
-    border-right: none;
-    border-top: none;
-    border-bottom-left-radius: 8px;
 }
 
 /* ── Outline pair ────────────────────────────────────────────────────────── */

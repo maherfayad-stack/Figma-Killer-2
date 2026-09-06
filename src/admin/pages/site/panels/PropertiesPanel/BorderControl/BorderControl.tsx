@@ -1,9 +1,9 @@
 /**
- * BorderControl — visual per-side border editor + radius corner editor.
+ * BorderControl — visual per-side border editor.
  *
  * Replaces the old stack of free-text shorthand rows (border / borderTop /
- * borderRight / … / borderRadius / outline) with a task-shaped widget that
- * mirrors how SpacingBoxControl handles padding & margin:
+ * borderRight / … / outline) with a task-shaped widget that mirrors how
+ * SpacingBoxControl handles padding & margin:
  *
  *   ┌─ Border ───────────────────────────────┐
  *   │  [⛓]   ┌───────┐    Width  [ 1px    ]   │
@@ -15,7 +15,6 @@
  *
  * Storage model — the per-side longhands are the canonical shape:
  *   borderTopWidth / borderTopStyle / borderTopColor (× right / bottom / left)
- *   borderTopLeftRadius / …RightRadius / …BottomRightRadius / …BottomLeftRadius
  *
  * The CSS shorthands (`border`, `borderTop`, …, `borderRadius`) are no longer
  * the control's source of truth — they live in an "Advanced" disclosure for
@@ -24,10 +23,16 @@
  * the `border:` shorthand at emit time is a follow-up cosmetic optimisation.
  *
  * Link/sync semantics match SpacingBoxControl: when "linked", a write applies
- * to all four sides (or corners); when unlinked, the user picks an active side
- * via the visual box and edits it alone. The control auto-relinks when external
+ * to all four sides; when unlinked, the user picks an active side via the
+ * visual box and edits it alone. The control auto-relinks when external
  * changes bring all sides back to a uniform value (React-19 render-time idiom,
  * no effect).
+ *
+ * Corner radius used to live here too (a second "Radius" group with its own
+ * 4-corner picker) — it moved to `AppearanceSection` as an `ExpandableFieldCluster`
+ * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5, F10/F11). What remains of this file
+ * is exactly the Sides group + the Outline pair described above; work order G7
+ * folds those into a stroke list and deletes this file.
  */
 
 import { useEffect, useState } from 'react'
@@ -40,7 +45,7 @@ import { handleNudgeKeydown, parseNudgeableValue } from '@site/property-controls
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
-import { StrokeWeightIcon, CornerRadiusIcon } from '@ui/components/InspectorIcons'
+import { StrokeWeightIcon } from '@ui/components/InspectorIcons'
 import { cn } from '@ui/cn'
 import { getEnumOptions } from '../cssControlTypes'
 import styles from './BorderControl.module.css'
@@ -52,17 +57,10 @@ import styles from './BorderControl.module.css'
 const SIDES = ['Top', 'Right', 'Bottom', 'Left'] as const
 type Side = (typeof SIDES)[number]
 
-const CORNERS = ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'] as const
-type Corner = (typeof CORNERS)[number]
-
 type BorderField = 'Width' | 'Style' | 'Color'
 
 function borderKey(side: Side, field: BorderField): keyof CSSPropertyBag {
   return `border${side}${field}` as keyof CSSPropertyBag
-}
-
-function radiusKey(corner: Corner): keyof CSSPropertyBag {
-  return `border${corner}Radius` as keyof CSSPropertyBag
 }
 
 interface BorderControlProps {
@@ -107,19 +105,6 @@ function readSideField(
   const anySet = values.some((v) => v !== '')
   const uniform = anySet && values.every((v) => v === values[0])
   return { perSide, uniform, anySet }
-}
-
-function readCorners(styles: Record<string, unknown>): {
-  perCorner: Record<Corner, string>
-  uniform: boolean
-  anySet: boolean
-} {
-  const perCorner = {} as Record<Corner, string>
-  for (const corner of CORNERS) perCorner[corner] = pickString(styles[radiusKey(corner)])
-  const values = CORNERS.map((c) => perCorner[c])
-  const anySet = values.some((v) => v !== '')
-  const uniform = anySet && values.every((v) => v === values[0])
-  return { perCorner, uniform, anySet }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,27 +182,6 @@ export function BorderControl({
 
   const styleOptions = getEnumOptions('borderTopStyle') ?? []
 
-  // ── Radius (per-corner) state ────────────────────────────────────────────
-  const radiusState = readCorners(storedStyles)
-  const radiusFallback = readCorners(currentStyles)
-  const [radiusLinked, setRadiusLinked] = useState<boolean>(
-    () => radiusState.uniform || !radiusState.anySet,
-  )
-  if (!radiusLinked && radiusState.uniform) setRadiusLinked(true)
-  const [activeCorner, setActiveCorner] = useState<Corner>('TopLeft')
-  const editCorner: Corner = radiusLinked ? 'TopLeft' : activeCorner
-
-  const writeRadius = (value: string | number | undefined) => {
-    const corners: Corner[] = radiusLinked ? [...CORNERS] : [editCorner]
-    for (const c of corners) onChange(radiusKey(c), value)
-  }
-
-  const clearRadius = () => {
-    for (const corner of CORNERS) onClearProperty(radiusKey(corner))
-  }
-
-  const radiusValue = radiusState.perCorner[editCorner]
-  const radiusPlaceholder = radiusFallback.perCorner[editCorner] || '0px'
   const widthPlaceholder = widthFallback.perSide[editSide] || '0px'
 
   return (
@@ -305,66 +269,6 @@ export function BorderControl({
                 onChange={(v) => writeSide('Color', v || undefined)}
                 onPreview={onPreview ? (v) => previewSide?.('Color', v || undefined) : undefined}
                 onClearPreview={onClearPreview}
-              />
-            </FieldRow>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Radius ──────────────────────────────────────────────────────── */}
-      <div className={styles.group}>
-        <div className={styles.groupHeader}>
-          <span className={styles.groupTitle}>Radius</span>
-          <div className={styles.groupActions}>
-            <Button
-              variant="ghost"
-              size="micro"
-              iconOnly
-              active={radiusLinked}
-              aria-label={radiusLinked ? 'Unlink corners' : 'Link all corners'}
-              tooltip={radiusLinked ? 'Editing all corners' : 'Editing one corner'}
-              onClick={() => setRadiusLinked((v) => !v)}
-            >
-              <LinkIcon size={14} aria-hidden="true" />
-            </Button>
-            {radiusState.anySet && (
-              <Button
-                variant="ghost"
-                size="micro"
-                iconOnly
-                aria-label="Clear radius"
-                tooltip="Clear radius"
-                onClick={clearRadius}
-              >
-                <CloseIcon size={14} aria-hidden="true" />
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <div className={styles.radiusBody}>
-          <CornerPicker
-            linked={radiusLinked}
-            activeCorner={activeCorner}
-            onSelectCorner={(corner) => {
-              setRadiusLinked(false)
-              setActiveCorner(corner)
-            }}
-          />
-          <div className={styles.fields}>
-            <FieldRow>
-              <Input
-                fieldSize="sm"
-                prefix={<CornerRadiusIcon size={13} aria-hidden="true" />}
-                value={radiusValue}
-                placeholder={radiusPlaceholder}
-                aria-label={`Border radius ${radiusLinked ? 'all corners' : cornerLabel(editCorner)}`}
-                onChange={(e) => writeRadius(e.target.value || undefined)}
-                onKeyDown={(e) =>
-                  handleNudgeKeydown(e, radiusValue, (next) => writeRadius(next), {
-                    emptyUnit: parseNudgeableValue(radiusPlaceholder ?? '')?.unit ?? 'px',
-                  })
-                }
               />
             </FieldRow>
           </div>
@@ -465,42 +369,3 @@ function SidePicker({ linked, activeSide, setSides, onSelectSide }: SidePickerPr
   )
 }
 
-// ---------------------------------------------------------------------------
-// CornerPicker — clickable 4-corner box
-// ---------------------------------------------------------------------------
-
-function cornerLabel(corner: Corner): string {
-  return corner.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
-}
-
-interface CornerPickerProps {
-  linked: boolean
-  activeCorner: Corner
-  onSelectCorner: (corner: Corner) => void
-}
-
-function CornerPicker({ linked, activeCorner, onSelectCorner }: CornerPickerProps) {
-  return (
-    <div className={styles.cornerPicker} role="group" aria-label="Border radius corner">
-      <div className={styles.cornerBox}>
-        {CORNERS.map((corner) => {
-          const isActive = linked || corner === activeCorner
-          return (
-            <button
-              key={corner}
-              type="button"
-              className={cn(
-                styles.cornerDot,
-                styles[`corner${corner}`],
-                isActive && styles.cornerDotActive,
-              )}
-              aria-label={`Edit ${cornerLabel(corner)} corner`}
-              aria-pressed={isActive}
-              onClick={() => onSelectCorner(corner)}
-            />
-          )
-        })}
-      </div>
-    </div>
-  )
-}

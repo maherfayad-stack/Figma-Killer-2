@@ -1,11 +1,12 @@
 /**
  * EffectsSection — compact editor for the `effects` section.
  *
- * Eight full-width captioned rows became five: `opacity` carries its own
- * half-filled-square mark and needs no caption, the two filters pair, the two
+ * Seven full-width captioned rows became four: the two filters pair, the two
  * transform properties pair, and the two timing properties pair. `boxShadow`
  * stays full width because its value is a comma-separated list that is
- * unreadable in half a panel.
+ * unreadable in half a panel. `opacity` moved to the `appearance` section
+ * (STUDIO-INSPECTOR-DISCLOSURE-PLAN §4 G5, F10) — it sits beside corner
+ * radius now, not among the effects.
  *
  * Layout spec over StackedPropertyGrid — what each cell draws is decided by
  * `ClassPropertyRow`, not here.
@@ -16,7 +17,6 @@ import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGri
 import type { PropertyProvenance } from './stylePropertyProvenance'
 
 const EFFECTS_SPEC: ReadonlyArray<StackedGridEntry> = [
-  'opacity',
   'boxShadow',
   ['filter', 'backdropFilter'],
   ['transform', 'transformOrigin'],
