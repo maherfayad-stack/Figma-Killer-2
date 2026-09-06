@@ -73,11 +73,19 @@ const TextEditSchema = Type.Object({
   text: Type.String(),
 })
 
-/** One `style={{ ... }}` merge writeback — `setJsxStyle`. */
+/**
+ * One `style={{ ... }}` merge writeback — `setJsxStyle`.
+ *
+ * `remove` (`style-03`) names camelCase properties to DELETE. Without it a
+ * cleared inline style reached no code path at all: the diff sent changed keys
+ * only and the codemod merged, so the declaration stayed on disk and came back
+ * on the next reload.
+ */
 const StyleEditSchema = Type.Object({
   kind: Type.Literal('style'),
   nodeId: Type.String(),
   style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
+  remove: Type.Optional(Type.Array(Type.String())),
 })
 
 /**
@@ -281,14 +289,37 @@ export interface StudioEditApplyOutcome {
  */
 export interface StudioEditRefusal {
   nodeId: string
-  kind: 'detach' | 'swap' | 'move' | 'delete' | 'insert' | 'css' | 'class' | 'insert-slot' | 'promote-component' | 'add-slot-prop'
+  kind:
+    | 'detach'
+    | 'swap'
+    | 'move'
+    | 'delete'
+    | 'insert'
+    | 'css'
+    | 'class'
+    | 'style'
+    | 'insert-slot'
+    | 'promote-component'
+    | 'add-slot-prop'
   reason: string
   message: string
 }
 
 /** The edit kinds whose refusal is a NAMED, expected outcome rather than a codemod exception. */
 export function isRefusingEditKind(kind: StudioEdit['kind']): kind is StudioEditRefusal['kind'] {
-  return kind === 'detach' || kind === 'swap' || kind === 'css' || kind === 'class' || isStructuralEditKind(kind) || isSlotEditKind(kind)
+  // `style` joined the list in `style-03`: `JsxStyleTargetError` is a named
+  // decision (a spread, a non-object initializer, a shorthand key), not an
+  // unexpected failure. It used to fall into the generic catch and reach the
+  // user as an unexplained skip with the PROP-binding sentence attached.
+  return (
+    kind === 'detach' ||
+    kind === 'swap' ||
+    kind === 'css' ||
+    kind === 'class' ||
+    kind === 'style' ||
+    isStructuralEditKind(kind) ||
+    isSlotEditKind(kind)
+  )
 }
 
 /**

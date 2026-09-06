@@ -33,6 +33,7 @@ export {
   isPropPatchWritableToSource,
   isStyleWritableToSource,
   isStylePatchWritableToSource,
+  STYLE_VALUE_PREFIX,
   styleValueKey,
   canWriteInlineStyleForModule,
 } from './sourceWritability'

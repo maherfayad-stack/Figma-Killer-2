@@ -58,6 +58,7 @@ const REFUSAL_TITLES: Record<string, string> = {
   swap: 'Swap refused',
   css: 'Style not saved to source',
   class: 'Class change not saved to source',
+  style: 'Inline style not saved to source',
 }
 
 let seen = new Set<string>()
@@ -118,6 +119,26 @@ export function reportUnmappedStyleRules(unmapped: readonly UnmappedStyleRule[])
         : `${entry.label} has no hand-editable CSS file in this project (a generated utility class, a compiled ` +
           'build artefact, or a stylesheet syntax Studio does not write), so this change stays on the canvas ' +
           'only and will be lost on reload. Style the element instead to write it to source.',
+    })
+  }
+}
+
+/**
+ * `style-03` — a context Studio genuinely cannot write. A breakpoint or a
+ * `kind: 'media'` condition now goes to disk through `setDeclarationAtMedia`;
+ * what is left is `@container` / `@supports`, which are a different at-rule
+ * entirely. Writing one as `@media` would put the declaration under a
+ * condition the user did not ask for — worse than saying so.
+ */
+export function reportUnwritableContexts(labels: readonly string[]): void {
+  for (const label of labels) {
+    toastOnce(`css-context::${label}`, {
+      kind: 'error',
+      title: 'Override not saved to source',
+      body:
+        `${label} changed under a container or feature query. Studio writes breakpoint overrides as @media ` +
+        'blocks, and cannot yet write @container or @supports, so this override stays on the canvas only and ' +
+        'will be lost on reload.',
     })
   }
 }

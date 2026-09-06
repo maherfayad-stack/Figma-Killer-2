@@ -115,6 +115,128 @@ new), `.../StyleSurface.tsx`, `.../ClassPropertyRow.{tsx,module.css}`,
 `src/__tests__/panels/classPicker.test.tsx`. **No new tokens** — the notice reuses
 `--warning-10` / `--warning-text` / `--warning`, the same pairing
 `SharedComponentNotice` uses for the other kind of before-you-edit consequence.
+### style-03 — a cleared declaration reached no code path at all, and every breakpoint override refused
+
+- **Agent:** parser-surgeon
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** the two remaining audit items after `style-02`: property REMOVAL
+  (CSS declarations and inline styles) never reaching disk, silently, and
+  per-breakpoint CSS writes refusing wholesale when the primitive for them had
+  existed unused since WS-6.3.
+- **Scope:** stacked on `style-02`'s branch (`fix/style-writeback-correctness`),
+  which it depends on for `collectStyleRuleEdits`' signature and
+  `refusalToasts.ts`.
+  - `src/core/css-codemods/`: **new** `removeDeclaration.ts`,
+    `analyzeDeclarationTarget.ts` (now `atMedia`-scoped), `index.ts`
+    (+ **new** `__tests__/removeDeclaration.test.ts`)
+  - `src/core/ast-codemods/setJsxStyle.ts` (+ its test)
+  - `src/core/page-tree/sourceWritability.ts`, `index.ts` — `STYLE_VALUE_PREFIX`
+    is now exported
+  - `server/handlers/`: `studioCssWriteback.ts`, `studioEditSchemas.ts`,
+    `studioWriteback.ts` (+ `studioWriteback.test.ts`)
+  - `src/admin/pages/site/studio/`: `styleRuleWriteback.ts`,
+    `loadedValuesBaseline.ts`, `fsCodemodAdapter.ts`, `refusalToasts.ts`,
+    `studioEditPayload.ts`
+  - `src/__tests__/studio/styleRuleWriteback.test.ts`
+  - `docs/features/studio-import.md`
+  - NOT touched: `panels/PropertiesPanel/**`, `property-controls/**`,
+    `usePersistence.ts`, `canvas/`, `store.ts`.
+
+**The two bugs.**
+
+1. **Removal was a silent no-op, twice over.** `collectStyleRuleEdits` iterated
+   only the properties a rule has NOW and `setDeclaration` only sets a value;
+   `fsCodemodAdapter`'s inline-style diff sent only CHANGED keys and
+   `setJsxStyle` only merged. So clearing a declaration — in a class or in a
+   `style={{…}}` — produced no edit at all. Canvas updated, save reported
+   success, file untouched, property back on the next reload, nothing said.
+2. **Every breakpoint override refused.** `setDeclarationAtMedia` had existed
+   and been tested since WS-6.3, and `insert`/`create` edits already carried
+   `atMedia`; only `CssSetEditSchema` lacked the field, so the whole path
+   ended at the "Studio can only write a class's default declarations" toast.
+
+- **Done so far:**
+  - `removeDeclaration(cssText, selector, property, { atMedia })` — a postcss
+    CST round-trip like its sibling. Drops a rule left with NO nodes (`.card {}`
+    is dead text) and the `@media` block if that emptied it; keeps a rule still
+    holding a comment. Absent property ⇒ `changed: false`, never an error.
+  - `analyzeDeclarationTarget` takes `atMedia` and scopes its ENTIRE analysis to
+    that block. Both directions matter: a duplicate inside the block is caught,
+    and an unrelated top-level duplicate no longer refuses a nested write.
+  - `op: 'unset'` on the CSS edit union, sharing the `set` path's gate.
+    `applied: true` for an already-absent property — reporting a skip would put
+    it in `unexplainedSkips` and toast the user about a no-op.
+  - `collectStyleRuleEdits` now diffs BOTH directions (`diffDeclarations`
+    returns `value: null` for a property that disappeared) and walks each real
+    context, resolving `contextId → mediaQuery` from `site.breakpoints` /
+    `site.conditions`. `@container`/`@supports` keep the refusal.
+  - `setJsxStyle` gained `remove: string[]`; removing the last property removes
+    the whole attribute. `diffInlineStyles` (in `loadedValuesBaseline.ts`)
+    computes both halves, and `dropNodeValuesBaseline` deletes the baseline
+    entries for the removed ones.
+  - `JsxStyleTargetError` is wrapped in `StudioEditRefusalError`
+    (`reason: 'style-target'`); `'style'` joined `isRefusingEditKind`.
+- **Next step:** none required. Optional follow-ups: (a) `@container`/
+  `@supports` need their own `setDeclarationAtContainer`/`AtSupports` writers
+  before that last refusal can go; (b) `applyCssEdit`'s remaining
+  `{applied:false}` paths (out-of-workspace / missing file) are still
+  reason-less on purpose — see Landmines.
+- **Decisions:**
+  - **A removal runs the SAME `analyzeDeclarationTarget` gate as a set.**
+    Removing the first of two duplicate declarations leaves the second in
+    effect — file changed, canvas unchanged, which is the exact outcome that
+    gate exists for. Not a separate, laxer analysis.
+  - **A brand-new rule's first write never carries removals.** There is nothing
+    on disk to remove FROM, so `insert`/`create` take only the set half of the
+    diff.
+  - **A context this document no longer defines is refused, not guessed.** An
+    orphan `contextStyles` key has no query, and inventing one would put the
+    declaration under a condition the user did not ask for.
+  - **`applied: true` for an already-absent property.** The requested state IS
+    the state on disk; `applied: false` would surface a no-op as an
+    unexplained skip.
+  - **A per-scope edit's `nodeId` carries the scope**
+    (`css:<file>#<selector>#<atMedia>#<property>`), so a base edit and a
+    breakpoint edit on the same property are distinct join keys — otherwise one
+    refusal would hold BOTH back through `style-02`'s `refusedRuleIds`.
+- **Landmines:**
+  - **`analyzeDeclarationTarget` without `atMedia` deliberately ignores rules
+    nested in at-rules.** The caller is asking about the unconditional cascade.
+    "Generalising" it to walk all rules would make an unrelated `@media` block
+    refuse every top-level write.
+  - **A removed inline style leaves NO trace on the node.** The only record it
+    ever existed is its `style:` key in `loadedValues` — which is why
+    `diffInlineStyles` reads the BASELINE's keys, and why
+    `dropNodeValuesBaseline` deletes rather than writing `undefined` (an
+    `undefined` value keeps the key, so the same removal re-emits forever).
+  - **`setJsxStyle` refuses to REMOVE a shorthand property** (`{ color }`) for
+    the same reason it refuses to overwrite one: deleting it drops a binding
+    whose value the codemod never read.
+  - **`isRefusingEditKind` now includes `'style'`.** Any surface that switches
+    on `StudioEditRefusal['kind']` has a new case; `REFUSAL_TITLES` in
+    `refusalToasts.ts` has the title.
+  - `fsCodemodAdapter.ts` sat one line over the 700-line ceiling again;
+    `diffInlineStyles` moved to `loadedValuesBaseline.ts` (which already owned
+    the baseline shape and `literalInlineStyles`) and the unwritable-context
+    toast to `refusalToasts.ts`.
+- **Verification:**
+  - `bun run build` — pass. `bun run lint` — clean.
+  - `bun test src/core/ast-codemods src/core/css-codemods src/__tests__/studio src/admin/pages/site/studio server/handlers/__tests__ src/__tests__/architecture`
+    — 1798 pass, 1 fail (the same pre-existing `pixel-art-icons` catalog gate
+    reading `node_modules`; no icon or vendor file is in the diff).
+  - New tests: 14 in `removeDeclaration.test.ts` (including the `@media`
+    scoping of the analyzer in both directions), 6 `setJsxStyle` removal cases,
+    10 collector cases in `styleRuleWriteback.test.ts`, 8 dispatcher cases in
+    `studioWriteback.test.ts`.
+  - NOT run: browser/e2e.
+- **Human action needed:** dogfood at `/admin/site?studio` — clear a
+  declaration on a class and an inline style and confirm both disappear from
+  disk and stay gone after a reload; then set a value on a `mobile` frame and
+  confirm an `@media (max-width: …)` block appears in the stylesheet.
+
+---
+
 ### style-02 — a class assignment wrote Studio's own hash into the user's JSX, and a refused write was silently adopted
 
 - **Agent:** parser-surgeon
