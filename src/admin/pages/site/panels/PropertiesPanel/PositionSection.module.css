@@ -87,3 +87,63 @@
     text-transform: uppercase;
     letter-spacing: 0.02em;
 }
+
+/* F1's third row — rotation. Same icon-cell shape as `constraintCell` /
+ * LayoutSection's `directionCell`: a leading mark, the field, and a
+ * hover-revealed clear button overlaid on the trailing edge. */
+.rotationCell {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: center;
+    color: var(--text);
+}
+
+.rotationInput {
+    min-width: 0;
+}
+
+.rotationClearBtn.rotationClearBtn {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-muted);
+    color: var(--text-muted);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition:
+        opacity 100ms ease,
+        background-color 100ms ease,
+        color 100ms ease;
+}
+
+.rotationCell:hover .rotationClearBtn,
+.rotationCell:focus-within .rotationClearBtn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.rotationClearBtn.rotationClearBtn:hover {
+    color: var(--text);
+}
+
+/* Refused state — rotation already lives inside `transform`. A short note
+ * plus the raw `transform` row, never a second, silently-compounding
+ * rotation. */
+.rotationFallback {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.rotationFallbackNote {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+}

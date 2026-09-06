@@ -278,3 +278,95 @@ describe('PositionSection — z-index settings affordance', () => {
     expect(screen.queryByText(/^z /)).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// 5. Rotation — F1's third row (G10 follow-up)
+// ---------------------------------------------------------------------------
+
+describe('PositionSection — rotation field', () => {
+  it('renders a resident rotation field with a 0deg placeholder when unset', () => {
+    renderPositionSection()
+    const field = screen.getByRole('textbox', { name: 'Rotation' })
+    expect(field.getAttribute('placeholder')).toBe('0deg')
+  })
+
+  it('commits a typed rotation value on blur, writing the standalone `rotate` property', () => {
+    let changed: [string, unknown] | null = null
+    renderPositionSection({
+      onChange: (p, v) => {
+        changed = [String(p), v]
+      },
+    })
+
+    const field = screen.getByRole('textbox', { name: 'Rotation' })
+    fireEvent.focus(field)
+    fireEvent.change(field, { target: { value: '45deg' } })
+    fireEvent.blur(field)
+
+    expect(changed).toEqual(['rotate', '45deg'])
+  })
+
+  it('shows a clear button once rotation is set, and clears the `rotate` property', () => {
+    let cleared: string | null = null
+    renderPositionSection({
+      storedStyles: { rotate: '45deg' },
+      currentStyles: { rotate: '45deg' },
+      onClearProperty: (p) => {
+        cleared = String(p)
+      },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear rotation' }))
+    expect(cleared).toBe('rotate')
+  })
+
+  it('preserves a pre-existing `transform` function — writing a rotation never touches `transform`', () => {
+    const calls: Array<{ fn: string; args: unknown[] }> = []
+    renderPositionSection({
+      storedStyles: { transform: 'translateX(10px)' },
+      currentStyles: { transform: 'translateX(10px)' },
+      onChange: (...args) => calls.push({ fn: 'onChange', args }),
+      onClearProperty: (...args) => calls.push({ fn: 'onClearProperty', args }),
+    })
+
+    const field = screen.getByRole('textbox', { name: 'Rotation' })
+    fireEvent.focus(field)
+    fireEvent.change(field, { target: { value: '30deg' } })
+    fireEvent.blur(field)
+
+    expect(calls).toContainEqual({ fn: 'onChange', args: ['rotate', '30deg'] })
+    // `translateX(10px)` was never touched — no call named `transform` at all.
+    expect(calls.some((c) => c.args[0] === 'transform')).toBe(false)
+  })
+})
+
+describe('PositionSection — rotation refuses when `transform` already has a rotate function', () => {
+  it('falls back to the raw `transform` row instead of the rotate field, with a reason', () => {
+    renderPositionSection({
+      storedStyles: { transform: 'rotate(30deg) translateX(10px)' },
+      currentStyles: { transform: 'rotate(30deg) translateX(10px)' },
+    })
+
+    expect(screen.queryByRole('textbox', { name: 'Rotation' })).toBeNull()
+    expect(screen.getByTestId('css-property-row-transform')).toBeTruthy()
+    expect(screen.getByText(/already set inside/i)).toBeTruthy()
+  })
+
+  it('recognizes every rotate-family transform function (rotateX/Y/Z, rotate3d)', () => {
+    for (const fn of ['rotateX(10deg)', 'rotateY(10deg)', 'rotateZ(10deg)', 'rotate3d(1,0,0,10deg)']) {
+      cleanup()
+      renderPositionSection({ storedStyles: { transform: fn }, currentStyles: { transform: fn } })
+      expect(screen.queryByRole('textbox', { name: 'Rotation' })).toBeNull()
+    }
+  })
+
+  it('does NOT refuse for translate/scale/skew/matrix — only an actual rotate function', () => {
+    renderPositionSection({
+      storedStyles: { transform: 'translateX(10px) scale(1.2)' },
+      currentStyles: { transform: 'translateX(10px) scale(1.2)' },
+    })
+
+    expect(screen.getByRole('textbox', { name: 'Rotation' })).toBeTruthy()
+    expect(screen.queryByTestId('css-property-row-transform')).toBeNull()
+  })
+})
