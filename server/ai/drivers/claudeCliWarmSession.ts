@@ -107,7 +107,6 @@ const defaultWarmSpawn: SubprocessSpawnFn = (argv, options) =>
   }) as unknown as WarmSpawnedProcess
 
 export class ClaudeCliWarmSession {
-  readonly startedAt = Date.now()
   private readonly proc: WarmSpawnedProcess
   private readonly idleTimeoutMs: number
   private readonly interruptGraceMs: number

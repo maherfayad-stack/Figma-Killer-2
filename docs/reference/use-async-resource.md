@@ -134,7 +134,7 @@ Example: `useSiteSummary` (`src/admin/state/useSiteSummary.ts`).
 
 Non-GET effects (WebSocket subscriptions, activation side-effects, plugin runtime initialization) are not load-then-done; they stay open for the lifetime of the component.
 
-Examples: `useInstalledEditorPlugins`, `AdminSectionNavigation`, `SpotlightRoot`.
+Examples: `useInstalledEditorPlugins`, `SpotlightRoot`.
 
 ### Non-fetch effects
 

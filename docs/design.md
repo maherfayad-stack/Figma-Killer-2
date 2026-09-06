@@ -584,7 +584,6 @@ Every interactive control in the admin and editor goes through a primitive from 
 | `ContextMenu`        | Right-click and `…` overflow menus.                                         |
 | `FilterBar`          | Compound filter row (type + folder + date + query).                         |
 | `TagPill`            | Compact tinted labels, selector chips, removable tag pills. It derives a token-backed tint from the first meaningful alphanumeric character. |
-| `FloatingActionBar`  | Multi-select bulk-action bar.                                               |
 | `EmptyState`         | Empty-list / empty-page placeholder.                                        |
 | `Alert`              | Inline non-blocking status/error message.                                   |
 | `Dialog`             | Modal dialog with a title and content.                                      |
@@ -593,7 +592,6 @@ Every interactive control in the admin and editor goes through a primitive from 
 | `DataTable`          | Token-backed table shell; callers own row state, sorting, and selection.    |
 | `Widget`, `WidgetSkeleton`, `WidgetList` | Borderless tile card and dashboard/widget list helpers. Accepts a `tint`. |
 | `Heading`, `Text`, `Code` | Typography primitives for host/admin and plugin UI.                   |
-| `Image`              | Image with built-in blurhash fallback.                                      |
 | `CanvasModulePlaceholder`| Diagonal-stripe placeholder for empty modules.                          |
 | `ErrorBoundary`      | Component-level error containment.                                          |
 | `SkeletonBlock`, `SkeletonCards`, `SkeletonRows`, `SkeletonTree` | Loading-state shimmer primitives. Four named shapes cover nearly every loading region. `SkeletonTree` renders depth-indented placeholder rows with cascading shimmer for tree panels (Layers, Selectors). Shimmer uses `--bg-surface-3/4` tokens. |

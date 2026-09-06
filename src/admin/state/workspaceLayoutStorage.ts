@@ -60,17 +60,12 @@ export interface StoredWorkspaceLayout {
   leftWidth?: number
   /** Right sidebar pixel width. */
   rightWidth?: number
-  /** Whether the left sidebar shows a panel (rail expanded). */
-  leftOpen?: boolean
   /** Whether the right sidebar is currently expanded. */
   rightOpen?: boolean
   /**
-   * Workspace-specific identifier of the panel that is open in the left
-   * sidebar. Each workspace uses its own id space:
-   *   - site:    'explorer' | 'selectors' | 'framework' | 'dependencies' | ...
-   *   - content: 'explorer' | 'agent'
-   *   - media:   'folders' | 'storage'
-   *   - data:    null (the data workspace has a single toggleable panel)
+   * Identifier of the panel open in the left sidebar:
+   * 'explorer' | 'selectors' | 'framework' | 'dependencies' | 'agent', or
+   * null when the rail is collapsed. Only the site workspace writes it.
    */
   activeLeftPanel?: string | null
 
@@ -112,7 +107,6 @@ const StoredWorkspaceLayoutSchema = Type.Object(
   {
     leftWidth: Type.Optional(Type.Number()),
     rightWidth: Type.Optional(Type.Number()),
-    leftOpen: Type.Optional(Type.Boolean()),
     rightOpen: Type.Optional(Type.Boolean()),
     activeLeftPanel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     activeEditorFileId: Type.Optional(Type.Union([Type.String(), Type.Null()])),

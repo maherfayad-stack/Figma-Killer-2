@@ -64,7 +64,7 @@ export function frameBoardRect(frame: BoardFrame): BoardRect {
  * mounted, an id that has gone stale, or a node that renders nothing at all.
  * Callers draw nothing rather than guessing at a position.
  */
-export function measureNodeFrameRect(nodeId: string): BoardRect | null {
+function measureNodeFrameRect(nodeId: string): BoardRect | null {
   const found = findCanvasNodeRectSource(nodeId, treeOwning(nodeId))
   if (!found) return null
 

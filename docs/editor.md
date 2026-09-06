@@ -182,7 +182,7 @@ The Content, Data, and Media workspaces used to share a third layout (`AdminWork
 
 The `adminUi` store (`src/admin/state/adminUi.ts`) is the small cross-shell state store: settings-modal open flag, site-import modal open flag, site name/favicon for the toolbar brand position, and `activeLivePath` — the public path the "Open live page" toolbar button opens. The toolbar renders a compact skeleton while the site identity is loading, then renders the configured site favicon when present; otherwise it shows the site name with the same compact bold typography as the admin navigation. The site name is exposed through the shared tooltip after identity loads. It lives outside `@site/` so `AdminPageLayout` can subscribe without pulling in the 165 KB editor graph. The editor's `settingsSlice` mirrors its state into `adminUi` via a registered bridge so both are always in sync.
 
-`src/admin/state/workspaceLayout.ts` (with persistence in `src/admin/state/workspaceLayoutStorage.ts` and `src/admin/state/useWorkspaceLayoutPersistence.ts`) was the sidebar-width / right-panel store shared by the now-deleted Content, Data, and Media canvas chrome. It survives only as a dependency of the shared `MediaSidebar` component (`src/admin/shared/media/components/MediaSidebar/`) used by media pickers embedded elsewhere — it is no longer backing a standalone workspace layout. Site editor layout remains site-only: `src/admin/pages/site/hooks/useEditorLayoutPersistence.ts` subscribes to the editor store and delegates the storage mapping to `src/admin/pages/site/layout/siteEditorLayoutPersistence.ts`.
+`src/admin/state/workspaceLayout.ts` was the sidebar-width / right-panel store shared by the now-deleted Content, Data, and Media canvas chrome, hydrated by a `useWorkspaceLayoutPersistence` hook. Both the hook and everything it drove (right-panel state, the data-workspace sidebar flag, `hydrateWorkspaceLayout`) are gone; what is left is one in-memory left-sidebar width, read by the shared `MediaSidebar` component (`src/admin/shared/media/components/MediaSidebar/`) inside the media picker. `src/admin/state/workspaceLayoutStorage.ts` remains as the `localStorage` layer — floating-panel positions plus the site workspace's own stored layout. Site editor layout is site-only: `src/admin/pages/site/hooks/useEditorLayoutPersistence.ts` subscribes to the editor store and delegates the storage mapping to `src/admin/pages/site/layout/siteEditorLayoutPersistence.ts`.
 
 `activeLivePath` is written by the active workspace and cleared on unmount. The Site editor is the only writer today: it delegates to `useActiveLivePath` (`src/admin/pages/site/hooks/useActiveLivePath.ts`) inside `AdminCanvasEditorBody` — it resolves templates to a routable path rather than their own (non-routable) slug: an everywhere template maps to the previewed page's path; a postTypes template maps to the previewed published row's permalink. Both resolutions follow the same selection as the `TemplateModeControl` preview dropdown so the button always opens what the canvas is showing. `AdminPageLayout` never writes it, so it stays `null` there naturally.
 
@@ -215,7 +215,7 @@ src/admin/
 │   └── useAdminNavigate.ts
 │
 ├── preauth/                    ← login / setup flows
-├── shared/                     ← StepUp, dialogs, AdminSectionNavigation, AdminContextMenuGuard, ...
+├── shared/                     ← StepUp, dialogs, AdminContextMenuGuard, ...
 ├── modals/                     ← workspace-level modals
 ├── plugin-host-hooks/          ← React hooks plugins call via the SDK
 ├── plugin-host-ui/             ← Host UI primitives plugins call via the SDK
@@ -234,9 +234,8 @@ The Content, Data, Media, and AI page folders that used to live here were delete
 ### Cross-page primitives
 
 - **`SpotlightRoot`** — Cmd+K command palette. Owns its own command registry (`spotlight/commands/`), provider runner (`providers/`), scopes, keybindings, recents, telemetry. Available from every workspace.
-- **`AdminSectionNavigation`** — top-of-screen workspace switcher.
 - **`AccountMenuButton`** — top-right avatar / account menu.
-- **`Panel`, `PanelHeader`, `SidebarResizeHandle`** — generic floating-panel chrome reused across the editor, content, and data workspaces.
+- **`Panel`, `PanelHeader`, `SidebarResizeHandle`** — generic floating-panel chrome reused across the editor and the media picker's sidebar.
 - **`StepUp`** — re-auth dialog gating sensitive actions.
 - **`AdminContextMenuGuard`** (`src/admin/shared/AdminContextMenuGuard/`) — mounted at root level in `main.tsx` alongside the router. Intercepts every native `contextmenu` event on the document. If the event was already `preventDefault`-ed by an app context menu (or fired inside a `[role="menu"]` element), the guard is silent. Otherwise it prevents the native browser menu and shows a small animated danger flash at the cursor to signal "no context menu here." App context menus (e.g. `DataRowContextMenu`, `DataTableContextMenu`) call `preventDefault()` at their source, so the guard only fires for truly unhandled right-clicks.
 - **`useAsyncResource`** (`src/admin/lib/useAsyncResource.ts`) — canonical hook for single-resource async loads. Runs `loader` on mount and whenever `deps` change, tracks `{ data, loading, error }`, discards superseded responses, and exposes a stable `refresh()`. The loader receives an `AbortSignal` for in-flight cancellation. Reach for this first when a screen loads one resource. For the full decision guide — when to use it and what patterns intentionally don't use it (optimistic collections, multi-fetch orchestrators, module-level cached loads, non-fetch effects) — see [`docs/reference/use-async-resource.md`](reference/use-async-resource.md).
@@ -706,7 +705,11 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the plugin S
 3. Add a `<Route>` in `src/admin/router.tsx` and a `<AdminEntry section="X">`.
 4. Add a `prewarmedLazy(...)` import in `src/admin/AuthenticatedAdmin.tsx` and append the new page to the `ALL_WORKSPACE_PAGES` array so the idle-callback scheduler pre-warms it after first paint.
 5. Create `src/admin/pages/<workspace>/<Workspace>Page.tsx` with a named export.
-6. Add the workspace to `AdminSectionNavigation`.
+
+There is no section-navigation component to register with — the top-of-screen
+workspace switcher was deleted along with the Content / Data / Media routes.
+Reaching a new workspace means giving it an entry point of its own (a toolbar
+control, a Spotlight command, or a link from the Overview launcher).
 
 ## Adding a new editor mutation
 
