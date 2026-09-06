@@ -23,9 +23,20 @@ import { mergeStudioMeta, readStudioMeta, writeStudioMeta, type StudioMeta } fro
  * `studio-workspace/` IS a project — hand-authored or GitHub-imported, they
  * all live in the same place. There is no single "default workspace" anymore;
  * the container itself is never a project.
+ *
+ * `STUDIO_WORKSPACE_DIR` relocates that root, read per call so it can be set
+ * for the duration of one test file. It exists because this directory is the
+ * anchor of every containment guard in the feature (`assertWithinWorkspace`,
+ * `isRealpathContained`, git's `GIT_CEILING_DIRECTORIES`), so a test that
+ * needs a project the guards accept would otherwise have to create it inside
+ * the developer's OWN workspace — where a killed run leaves the fixture
+ * behind and the launcher lists it as a real project. Tests point it at an OS
+ * temp dir instead; unset (every normal run, dev or deployed) it is
+ * `<cwd>/studio-workspace` exactly as before.
  */
 export function projectsRootDir(): string {
-  return join(process.cwd(), 'studio-workspace')
+  const override = process.env.STUDIO_WORKSPACE_DIR
+  return override ? resolve(override) : join(process.cwd(), 'studio-workspace')
 }
 
 /**

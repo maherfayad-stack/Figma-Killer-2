@@ -46,10 +46,20 @@
  * 2. **Incomplete cache coverage widens.** If any route `discoverPageFiles` /
  *    `discoverAppRouterRoutes` finds has NO cache entry, that route could
  *    depend on a touched file in a way this map cannot see. (This is also
- *    what catches a brand-new page file that no load has parsed yet.) A
- *    project with any Storybook story file widens for the same reason — W5-3's
- *    `storyPages.ts` is a third route producer and does not use the parse
- *    cache, so its routes record no dependencies at all.
+ *    what catches a brand-new page file that no load has parsed yet.)
+ *    Storybook's routes — W5-3's `storyPages.ts`, the third producer — record
+ *    their parses too, so the same rule applies to them and takes the same
+ *    shape: a story FILE on disk that no cached story route claims widens,
+ *    because it is either unparsed or produced no accepted story, and either
+ *    way this map cannot speak for it.
+ * 2b. **A touched STORY file widens.** Not for lack of dependency data — the
+ *    story routes are in the map — but because a story frame can DISAPPEAR:
+ *    `buildStoryRouteEntries` skips a story whose materialization degrades to
+ *    nothing, which an edit to its file can cause and no page file can. That
+ *    is a change of board shape, and this route only ever authorises a page
+ *    patch. Everything else about a Storybook project now narrows: the common
+ *    case, an edit to a component several stories render, names exactly those
+ *    stories' pages.
  * 3. **A touched file no cached route claims widens.** This is the rule that
  *    covers `pageParseCache.ts`'s documented ONE-LEVEL-DEEP limitation: a
  *    component three levels down a nested composition appears in no route's
@@ -92,6 +102,7 @@ import {
 import { assignAppRouterPageIds, assignPageIds } from '../studioPageIds'
 import { readStudioMeta, type StudioMeta } from './studioMeta'
 import { storyFilesIn } from './storyDiscovery'
+import { storyPageIdFromRoutePath } from './storyPages'
 import { cachedRouteDependencies } from './pageParseCache'
 import { isRealpathContained } from './workspacePackageResolve'
 
@@ -138,22 +149,46 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
   const depsByRoutePath = cachedRouteDependencies(dir)
   if (!depsByRoutePath) return null
 
-  // Rule 2, the Storybook half. W5-3 added a THIRD producer of route entries
-  // (`storyPages.ts`), and it does not go through `pageParseCache` — so a
-  // story route records no dependencies, and a story renders the project's
-  // own components. A shared-component edit could leave a story frame stale
-  // with nothing here able to see it. Any story file at all therefore widens.
-  // Lifting this means having `buildStoryRouteEntries` record its parses in
-  // the cache like the other two producers do; until then, correct beats
-  // optimized.
   const meta = readStudioMeta(dir)
-  if (meta.stories?.enabled !== false && storyFilesIn(dir).length > 0) return null
-
+  const storiesEnabled = meta.stories?.enabled !== false
+  // The Storybook half of the map. A story route's cache key CARRIES its page
+  // id (`storyPageIdFromRoutePath`), so the ids below stay byte-identical to a
+  // full load's without re-running discovery — which would mean re-parsing
+  // every story file to answer a question about which pages to reload.
+  const storyRoutePaths = new Set<string>()
   const idByRoutePath = pageIdByRoutePath(meta, pagesDir)
+  for (const routePath of depsByRoutePath.keys()) {
+    const storyPageId = storyPageIdFromRoutePath(routePath)
+    if (storyPageId === null) continue
+    storyRoutePaths.add(routePath)
+    // With stories turned off no story route exists any more, so a cache
+    // entry left over from before the toggle names a page that is gone. It
+    // stays OUT of the id map, so anything that depends on it hits rule 4's
+    // "no page id for a cached route" branch and widens.
+    if (storiesEnabled) idByRoutePath.set(routePath, storyPageId)
+  }
+
   // Rule 2 — a route with no cache entry could depend on a touched file in a
   // way this map cannot see. Also how a brand-new, never-parsed page widens.
   for (const routePath of idByRoutePath.keys()) {
     if (!depsByRoutePath.has(routePath)) return null
+  }
+
+  const storyAbsFiles = new Set(
+    storiesEnabled ? storyFilesIn(dir).map((relPath) => join(dir, ...relPath.split('/'))) : [],
+  )
+  if (storyAbsFiles.size > 0) {
+    // Rule 2, stories: every story file on disk must be claimed by a cached
+    // story route. One that isn't was never parsed in this process, or its
+    // stories were all refused — the story-shaped version of "a discovered
+    // route with no cache entry".
+    const claimed = new Set<string>()
+    for (const routePath of storyRoutePaths) {
+      for (const depFile of depsByRoutePath.get(routePath) ?? []) claimed.add(depFile)
+    }
+    for (const storyFile of storyAbsFiles) {
+      if (!claimed.has(storyFile)) return null
+    }
   }
 
   const pageIds = new Set<string>()
@@ -161,6 +196,8 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
     // Never trust an unvalidated path into `join` — see this module's doc.
     if (!isWritableSourceRel(relToDir)) return null
     const absFile = join(dir, ...relToDir.split(/[\\/]+/))
+    // Rule 2b — editing a story file can remove its frame entirely.
+    if (storyAbsFiles.has(absFile)) return null
     let dependents = 0
     for (const [routePath, deps] of depsByRoutePath) {
       if (!deps.has(absFile)) continue

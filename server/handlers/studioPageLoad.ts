@@ -75,7 +75,12 @@ import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles, type StyleRuleSource } from './studioCss'
 import { probeProject } from './studio/projectProbe'
-import { getCachedRouteParse, hashWorkspaceConfig, setCachedRouteParse } from './studio/pageParseCache'
+import {
+  getCachedRouteParse,
+  hashWorkspaceConfig,
+  localSourceAbsFiles,
+  setCachedRouteParse,
+} from './studio/pageParseCache'
 import { resolveModuleId, resolveTextProp } from './studio/moduleMapping'
 import { compileProjectStyles } from './studio/styleCompile'
 import { readStudioMeta } from './studio/studioMeta'
@@ -213,15 +218,6 @@ export interface StudioLoadResult {
    * every story as an ordinary page).
    */
   stories: StorySummary[]
-}
-
-/** Absolute file paths of every `kind: 'local'` entry in `sources`, deduplicated — see `pageParseCache.ts`'s "one level deep" limitation. */
-function localSourceAbsFiles(sources: Record<string, ComponentSource>, dir: string): string[] {
-  const files = new Set<string>()
-  for (const source of Object.values(sources)) {
-    if (source.kind === 'local') files.add(join(dir, ...source.file.split('/')))
-  }
-  return [...files]
 }
 
 /**
@@ -540,7 +536,7 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   // page ids are deduped against the page ids already in hand — the two
   // producers derive ids from different rules and could otherwise collide.
   const stories = discoverProjectStories(dir, project, pageEntries, meta.stories?.enabled !== false)
-  const storyEntries = buildStoryRouteEntries(dir, project, stories, preferredKey, compiledStyles.moduleClassMaps)
+  const storyEntries = buildStoryRouteEntries(dir, project, stories, preferredKey, compiledStyles.moduleClassMaps, configHash)
   const routeEntries = [...pageEntries, ...storyEntries]
 
   const componentSources: Record<string, ComponentSource> = {}

@@ -280,6 +280,119 @@ Verified directly against the live iframe DOM (`class` attribute literally empty
 
 **Verification (this addendum):** `bun test src/core/page-parser src/core/ast-codemods src/__tests__/studio src/__tests__/base-modules.test.ts src/__tests__/canvas src/core/studio-sync` → 1447 pass / 9 fail, all 9 the same documented pre-existing set as `board-27f`'s own first verification pass (the 2 MutationObserver flake tests happened not to fire this particular run — see the flake-rate comparison above for why that is not informative on its own). `npx tsc -b` clean repo-wide. `npx eslint` clean on every touched file. `fidelityCodes.test.ts` (gates the "What still does not import" table/registry parity) still 4/4 pass — the new `—`-coded row needed no registry entry. Line budgets: `SvgEditor.tsx` 68, `canvasScrollUnroll.ts` 380, `CanvasScrollUnrollInjector.tsx` 387 — all well under 700.
 
+### server-19 — the wave train's four deferred fixlets, closed together (W6-4)
+
+- **Agent:** studio-implementer
+- **Stage:** verifying — built, gated, PR open for review
+- **Updated:** 2026-09-06
+- **Branch:** `chore/wave-cleanup-fixlets`, from `origin/main` at `4d43677`
+- **Goal:** close the four small debts PRs #19/#20/#22/#32 recorded as deferred
+  cleanup, in one coherent chore PR. Done means each is fixed at the source or
+  honestly reported as not-applicable.
+- **Scope:** `server/handlers/studioProjects.ts`, `server/handlers/studioPageLoad.ts`,
+  `server/handlers/studio/{pageParseCache,storyPages,reloadScope}.ts`,
+  `src/core/page-tree/styleRule.ts`, `src/admin/ai/ModelPicker/ModelPicker.tsx`,
+  `src/admin/pages/site/panels/AgentPanel/ModelEffortPicker.tsx`,
+  tests `server/ai/mcp/tools/studio/gitTools.test.ts`,
+  `server/handlers/__tests__/reloadScope.test.ts`,
+  `server/handlers/studio/__tests__/storyDiscovery.test.ts`,
+  `src/__tests__/panels/agentPanel.test.tsx`, doc `docs/features/studio-import.md`.
+
+**1 — git-tool test debris.** No `__git_tool_test_*` directory was ever
+COMMITTED (checked `git ls-files` and the whole history); the debt was the
+leak, not a tracked folder. `gitTools.test.ts` created its fixture projects
+under `projectsRootDir()` because that path anchors every containment guard in
+the feature (`assertWithinWorkspace`, `isRealpathContained`,
+`GIT_CEILING_DIRECTORIES`) — so a killed run left folders in the developer's
+own `studio-workspace/`, which the launcher then lists as real projects.
+`projectsRootDir()` now honours **`STUDIO_WORKSPACE_DIR`**, read per call; the
+test sets it to a `realpathSync`'d OS temp dir in `beforeAll` and restores it
+in `afterAll`. Unset (every normal run) the root is `<cwd>/studio-workspace`,
+byte-identical to before.
+
+**2 — Storybook routes now record parse-cache dependencies.**
+`buildStoryRouteEntries` takes the load's `configHash` and reads/writes
+`pageParseCache` under the key `${dir}::story:<pageId>`, depending on the story
+file plus its resolved local components. `localSourceAbsFiles` moved out of
+`studioPageLoad.ts` into `pageParseCache.ts` so all three route producers
+derive that set identically. `reloadScope.ts` drops the blanket "this project
+has stories → widen"; two narrower rules replace it (a story file no cached
+story route claims widens; a touched story FILE widens, because a story frame
+can disappear when its materialization degrades to nothing, which is board
+shape, not a page patch). Net effect: an ordinary save in a Storybook project
+narrows, and a component only a story renders narrows to that story's frame.
+
+**3 — the routed-effort chip renders.** `ModelEffortPicker` passes
+`trailingLabel={agentEffort ? currentEffortLabel : routedTurnLabel(agentRoutedTurn) ?? undefined}`,
+exactly the wiring `mcp-16`'s handoff prescribed. The router's reason needed
+somewhere to live, so the shared `ModelPicker` gained one optional prop,
+`trailingLabelTitle`, which titles the trailing span only.
+
+**4 — `StyleRule.name`'s three meanings are documented** on the field in
+`src/core/page-tree/styleRule.ts` (class-as-written · compiled CSS-Modules
+class, with the source name on `displayName` · synthetic
+`<Component>_sc__<hash>` for a styled template, which appears nowhere in
+source), with the rule that follows: anything writing a class name into source
+branches on the rule's SOURCE MAP (`styleRuleSources` vs
+`styledStyleRuleSources`), never on the shape of `name`. One paragraph added
+to `docs/features/studio-import.md`'s `className` write-back section.
+
+- **Decisions:**
+  - **An env override, not a test-only setter, for the workspace root** —
+    because the root is real deployment configuration (`STATIC_DIR`,
+    `RUNTIME_CACHE_DIR`, `UPLOADS_DIR` set the precedent) and a `set…ForTests`
+    hook in production code would be the band-aid version of the same seam.
+    It is deliberately NOT in `readServerConfig`: that returns a boot-time
+    snapshot, and `projectsRootDir()` is called per request.
+  - **A touched story file still widens.** Narrowing it would mean proving the
+    story set is unchanged, which needs a re-parse — the exact work the narrow
+    path exists to avoid. Everything else about a Storybook project narrows.
+  - **A skipped story is not cached.** "This produced nothing" is the one
+    answer worth recomputing.
+- **Landmines:**
+  - The story cache key's route half is `story:<pageId>`, and `reloadScope`
+    reads the page id straight back out of it. That is deliberate: deriving it
+    honestly would mean re-running `discoverStories`, i.e. re-parsing every
+    story file to answer a question about which pages to reload. If you change
+    `STORY_ROUTE_KEY_PREFIX`, `storyPageIdFromRoutePath` is its only reader.
+  - With stories DISABLED (`meta.stories.enabled === false`) a stale story
+    cache entry names a page that no longer exists; it is kept out of the id
+    map on purpose, so anything depending on it hits rule 4 and widens.
+  - `bun run build` cannot complete in a worktree — `scripts/vite.ts` resolves
+    `../../node_modules/vite/bin/vite.js`, and a worktree's `node_modules` is
+    empty. Its `tsc -b` half runs (bun walks up to the primary checkout's
+    `node_modules`) and is clean. Verified separately with the PINNED compiler
+    per `standing-08`, not `npx tsc`.
+  - Three test files still create fixtures inside `projectsRootDir()`
+    (`referenceUpload`, `sharePublic`, `reloadScope`). They clean up per-test,
+    so they were left alone — but `STUDIO_WORKSPACE_DIR` is now the seam if
+    anyone wants them out of the developer's workspace too.
+- **Verification:** `./node_modules/.bin/tsc -b` (6.0.3, pinned) clean ·
+  `bun run lint` clean · `bun test server/handlers/studio server/handlers/__tests__ server/ai/mcp/tools/studio`
+  → 1650 pass / 10 fail, all 10 environmental (`projectSeed`/`componentBundle`/
+  `projectGuide` read Studio's own `node_modules`, empty in a worktree) ·
+  `bun test src/__tests__/architecture` → 478 pass / 18 fail, all 18 the
+  pre-existing icon-catalog gate · `bun test src/__tests__/studio src/core/page-tree`
+  → 268/0 · `bun test src/__tests__/panels/agentPanel.test.tsx` → 26/0 (3 new) ·
+  `bun test server/handlers/studio/__tests__/storyDiscovery.test.ts` → 19/0
+  (2 new) · `bun test server/handlers/__tests__/reloadScope.test.ts` → 21/0
+  (the old "widens for a project with Storybook stories" test is replaced by
+  four that pin the new rules) · `bun test server/ai/mcp/tools/studio/gitTools.test.ts`
+  → 12/0, with `studio-workspace/` untouched afterwards. **Full `bun test`** →
+  **11333 pass / 54 fail / 1 skip** across 1056 files (343 s); all 54 are the
+  documented pre-existing clusters — 18 icon-catalog gate, ~14 canvas
+  batch-isolation (B3 NodeRenderer lock-down, selection leak, pin⇄unroll,
+  breakpoint activation, body context menu, form controls, inline text edit,
+  VC ref), 9 that read Studio's own `node_modules` (`applyProjectSeed`,
+  `componentBundle`, `projectGuide`, the dev-launcher gate), and the headless
+  capture / `studio_compare` set that needs a real browser. Not one is in a
+  file this change touches.
+- **Next step:** review + merge the PR. Nothing is stacked on it.
+- **Human action needed:** dogfood the routed-effort chip — open the AgentPanel
+  against a `claudeCli` credential with no pinned effort, send a turn, and
+  confirm the model trigger reads `<model> auto · <effort>` with the router's
+  reason on hover.
+
 ---
 
 ## Blocked

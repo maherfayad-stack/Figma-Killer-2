@@ -40,6 +40,7 @@
  * warrant one yet.
  */
 import { statSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ComponentSource, ParsedPage } from '@core/page-parser'
 
 export interface CachedRouteParse {
@@ -102,6 +103,22 @@ export function setCachedRouteParse(
     if (mtime !== null) depMtimes[absFile] = mtime
   }
   cache.set(cacheKey, { configHash, depMtimes, result })
+}
+
+/**
+ * Absolute file paths of every `kind: 'local'` entry in `sources`,
+ * deduplicated — the dependency half every route producer records alongside
+ * the route's own file (see the "one level deep" limitation above). Lives here
+ * rather than beside one producer because all three of them
+ * (`parseStandardRouteEntry`, `parseAppRouterRouteEntry`,
+ * `buildStoryRouteEntries`) must derive the same set the same way.
+ */
+export function localSourceAbsFiles(sources: Record<string, ComponentSource>, dir: string): string[] {
+  const files = new Set<string>()
+  for (const source of Object.values(sources)) {
+    if (source.kind === 'local') files.add(join(dir, ...source.file.split('/')))
+  }
+  return [...files]
 }
 
 /** Test-only: drop every cached entry so a test doesn't leak state into the next one. */

@@ -64,6 +64,32 @@ export type CSSDeclarationPriorityBag = Static<typeof CSSDeclarationPriorityBagS
 
 export const StyleRuleSchema = Type.Object({
   id: Type.String(),
+  /**
+   * The class the DOM carries — always. What it means in the USER'S SOURCE
+   * depends on where the rule came from, and the three answers are different:
+   *
+   *   - **Hand-authored `.css`, or created in the editor** — `name` is the
+   *     class as written in the stylesheet. The honest answer everywhere.
+   *   - **Imported from a `*.module.css`** — `name` is the COMPILED class
+   *     (`styleCompile.ts`'s `<fileBase>_<local>__<hash>`); the source spells
+   *     the LOCAL name, which is on {@link StyleRuleSchema}'s `displayName`.
+   *     A `:global(.foo)` inside a module file is the exception: it has a
+   *     module source but no `displayName`, because the compiler never renames
+   *     it, so `name` is literal there.
+   *   - **Flattened out of a `styled.…`/`css` template** (W4-4) — `name` is a
+   *     class **Studio invented** (`cssInJsExtract.ts`'s
+   *     `<Component>_sc__<hash>`) so the canvas could render the template.
+   *     styled-components computes its own name at runtime and the `.tsx`
+   *     contains neither.
+   *
+   * So: anything that writes a class name INTO source must branch on the
+   * rule's SOURCE — `styleRuleSources` (a `.css` file + selector) vs
+   * `styledStyleRuleSources` (a `.tsx` file + `line:col`) — never on the shape
+   * of `name`. Writing `name` for the second case put a build artefact in the
+   * user's JSX; writing it for the third produced a token `setJsxClassName`
+   * could not find. Both are fixed and both are regression-tested; the field
+   * itself still carries all three meanings, which is why this comment exists.
+   */
   name: Type.String(),
   /**
    * What a HUMAN should see instead of `name`, when the two differ.
