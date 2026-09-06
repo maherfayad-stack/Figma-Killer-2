@@ -295,3 +295,45 @@
     box-shadow: inset 0 0 0 1px var(--danger);
     background: var(--danger-10);
 }
+
+/* Reason-on-drag. A zero-size anchor pinned to the refused rect's top-left,
+   counter-scaled out of the canvas transform so the sentence is the same
+   physical size at every zoom (the same trick `CommentPin` uses). The label
+   itself hangs above the anchor, so it never covers the element the user is
+   pointing at. */
+.dropRefusalChip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y)) scale(calc(1 / var(--canvas-zoom)));
+    transform-origin: 0 0;
+}
+
+.dropRefusalChipLabel {
+    position: absolute;
+    bottom: var(--space-3xs);
+    left: 0;
+    width: max-content;
+    max-width: 260px;
+    padding: var(--space-3xs) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    /* Opaque editor chrome, not a tinted wash: this floats over the USER's
+       page, whose background could be anything, and amber-on-amber would be
+       unreadable over a light one. Warning is carried by the text and the
+       hairline, which is where state colour belongs. */
+    background: var(--bg-body);
+    box-shadow: inset 0 0 0 1px var(--warning-30);
+    color: var(--warning-text);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    line-height: 1.35;
+    /* Cap at three lines — the engine's sentences are one or two, and a
+       runaway one must not curtain the frame it is explaining. */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
