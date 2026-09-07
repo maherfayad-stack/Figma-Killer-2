@@ -21,6 +21,34 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### class-toast — the save toast accused you of class changes you never made
+- **Agent:** store-engineer · **Stage:** done (targeted suites + `tsc -p tsconfig.app.json --noEmit` + eslint green; draft PR open) — **needs dogfood**
+- **Branch:** `fix/spurious-class-change-notice` off `origin/main` (`5605811`).
+- **User report (with screenshot):** editing a Border value on one element fired a warning toast — *"Class change won't be saved — Container (added statusBar); Text (added time); Container (added islandSpacer); and 5 more. This element has no single place in your source to write a class change to…"*. `statusBar`/`time`/`islandSpacer` are `components/IOSStatusBar.module.css` locals in `studio-workspace/test4`; the eight names are exactly the eight elements of `IOSStatusBar.tsx`, inlined into a page. The user changed no classes on any of them.
+
+**Root cause — two independent defects, both in the save-time class diff.**
+
+1. **A missing baseline entry was read as "the user added every class this node has."** `loadedValuesBaseline.ts`'s `snapshotClassIds` only stored nodes WITH classes, and `collectClassIdsDrift` did `loadedClassIds.get(node.id) ?? []` — so "observed with no classes" and "never observed at all" were the same value. Every node that enters the document after the load-time snapshot then reports a pure ADD of everything it arrived carrying: a `cloneSubtree` duplicate/paste (mints a fresh `nanoid()` and COPIES `classIds` — `src/core/page-tree/mutations.ts:249,306`), an optimistically inserted subtree still waiting for its structural commit's reload, or a node whose `line:col` id moved under it. All-added, never-removed, whole subtree at once — the exact signature in the screenshot. (The paired REMOVE is invisible even when there is one: `classNameWriteback.ts`'s `displayNames` filters out any id no longer in `styleRules`.)
+2. **"Unwritable" and "not our business" were collapsed into one question.** `collectClassNameEdits` asked only `hasWritableSourceLocation(nodeId)`, which is `false` both for a `.map` row (studio-imported, genuinely refused) and for an id the importer never minted (a clone's nanoid, a CMS node). `sourceNodeId.ts:100-104` states the rule this violated in as many words: *"The complement of `hasWritableSourceLocation`, not a weaker version of it … callers must not treat it as unwritable, only as 'not our business'."* So a clone landed in the honesty toast that exists for `.map` rows.
+
+**Fix, at the source.** (1) The `classIds` baseline records an entry for EVERY observed node, empty array included; `undefined` now means "never observed" and `collectClassIdsDrift` skips those. The next `commitClassIdsBaseline` — every save runs one — adopts them, so a later genuine edit on the same node still diffs. (2) `collectClassNameEdits` asks `isSourceDerivedNodeId`/`isStudioPageRootId` before it can report anything; a `.map` row and an imported page's synthetic `<pageId>:body` root still warn, everything else is skipped in silence. No new state, no new selector, no mutation and therefore no coalesce key — this is the save-diff seam only.
+
+**Slices touched.** None. Both files are store-agnostic leaves under `studio/`: `loadedValuesBaseline.ts` (module-level baseline maps) and `classNameWriteback.ts` (pure function over `pages`). No selector added; `collectClassIdsDrift` stays one pass over the document with an O(1) map read per node, one `Map.get` cheaper than before.
+
+**Failing-test-first evidence.** New `src/admin/pages/site/studio/__tests__/classDriftFalsePositives.test.ts` — 3 of its 7 cases fail on `origin/main` and pass after. The clone case reproduces the user's payload verbatim (`unwritable: [{ addedClassNames: ["card"], … }]`). Four fixtures in `fsCodemodAdapter.test.ts` were loading `pages: []` and then saving a site whose node carried `classIds` — i.e. they encoded the bug as the contract; they now load the page with the node on it and no classes, which is what a real session looks like, and still assert the same write/refusal behaviour.
+
+**NOT fixed — the Fill padlock (cut, with evidence).** The class target for these rules is NOT locked and never was: `server/handlers/studioCss.ts` maps every `IOSStatusBar.module.css` rule to `{ file, selector }` (verified by parsing the real workspace: `sc-6bf240399b` → `components/IOSStatusBar.module.css .statusBar`), so `classCssWritability.ts` resolves `plain-css` → `classCssWriteLockReason` returns `null`. The padlock in the second screenshot is a different, honest mechanism — `property-controls/CodeValueControl.tsx:93` (a code-valued property, from `node.codeProps`) or `InlineStyleComposer.tsx:123`'s locked-property notice — and shares no code with the class diff. Confirming WHICH of the two, from the live UI, is the dogfood step below.
+
+**Dogfood checklist (human).**
+1. Open `test4` at `/admin/site`, select any element, change a Border value, wait for autosave: **no** "Class change won't be saved" toast.
+2. Duplicate (⌘D) or paste an element that carries classes, wait 2s: no toast, and the duplicate's own class assignment still writes after its reload.
+3. Assign a class to an ordinary element and to an element inside `IOSStatusBar` (an inlined component): both still reach disk — check the `.tsx`.
+4. Assign a class to a `.map` row: the honest "won't be saved" toast still fires.
+5. Screenshot the Fill padlock with the element selected and say which element it was — that decides whether `CodeValueControl` is naming a genuinely code-valued fill or there is a second bug behind it.
+
+**Files touched.** `src/admin/pages/site/studio/loadedValuesBaseline.ts`, `src/admin/pages/site/studio/classNameWriteback.ts`, `src/admin/pages/site/studio/__tests__/classDriftFalsePositives.test.ts` (new), `src/admin/pages/site/studio/__tests__/loadedValuesBaseline.test.ts`, `src/admin/pages/site/studio/__tests__/fsCodemodAdapter.test.ts`, `docs/features/studio-import.md`.
+
+**Verification.** `bun test src/admin/pages/site/studio src/__tests__/editor src/admin/pages/site/panels src/__tests__/architecture/{no-vc-mode-branches-in-mutations,centralized-site-mutation-history}.test.ts` → 1235 pass, 0 fail. `node_modules/.bin/tsc -p tsconfig.app.json --noEmit` clean. `bunx eslint` on the changed files clean.
 ### canvas-red-tests — the last three DOM reds: a GC ate happy-dom's MutationObservers, and a portal swap remounted the toolbar mid-click
 - **Agent:** canvas-engineer · **Stage:** done (targeted suites + full `src/__tests__` + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **one dogfood item below**
 - **Branch:** `fix/canvas-pin-unroll-and-toolbar-tests` off `origin/main` (`5605811`, i.e. after `test-03`/PR #85 landed).

@@ -78,6 +78,18 @@ describe('loadedValuesBaseline — classIds drift (0.6)', () => {
     resetLoadedValues([pageWithNode('n1', ['card'])])
     expect(getLoadedClassIds('n1')).toEqual(['card'])
     resetLoadedValues([pageWithNode('n1', [])])
-    expect(getLoadedClassIds('n1')).toBeUndefined()
+    // `class-toast` — OBSERVED with no classes is an empty array, not an
+    // absent entry: `undefined` is reserved for a node the baseline has never
+    // seen, and that distinction is what stops a clone/re-addressed node from
+    // reporting every class it arrived with as freshly added.
+    expect(getLoadedClassIds('n1')).toEqual([])
+  })
+
+  it('a node the baseline never saw reads as unobserved, and produces no drift', () => {
+    resetLoadedValues([pageWithNode('n1', [])])
+    expect(getLoadedClassIds('n2')).toBeUndefined()
+    // `n2` arrives carrying classes (a `cloneSubtree` duplicate/paste, an
+    // optimistic insert, a re-addressed id) — not a user assignment.
+    expect(collectClassIdsDrift([pageWithNode('n1', []), pageWithNode('n2', ['card'])])).toEqual([])
   })
 })

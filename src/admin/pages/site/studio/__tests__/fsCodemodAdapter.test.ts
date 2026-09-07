@@ -724,16 +724,20 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       return latest
     }
 
+    function pageWithClassIds(classIds: string[]) {
+      return makePage({
+        rootNodeId: 'root',
+        nodes: {
+          root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1'] }),
+          'pages/Home.tsx:3:1': makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.container', label: 'Card', classIds }),
+        },
+      })
+    }
+
     function siteWithClassIds(classIds: string[]) {
       return makeSite({
         styleRules: { 'class-1': { id: 'class-1', name: 'card', kind: 'class', styles: {}, contexts: {} } as never },
-        pages: [makePage({
-          rootNodeId: 'root',
-          nodes: {
-            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1'] }),
-            'pages/Home.tsx:3:1': makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.container', label: 'Card', classIds }),
-          },
-        })],
+        pages: [pageWithClassIds(classIds)],
       })
     }
 
@@ -748,7 +752,14 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
         '/admin/api/studio/load': {
           dir: '/tmp/studio-test',
           projectName: 'studio-test',
-          pages: [],
+          // `class-toast` — the page is LOADED with the node on it and no
+          // classes, because that is what the user's session looks like: they
+          // assign a class to an element the load-time baseline has already
+          // observed. A node the baseline never saw is deliberately NOT a
+          // class change (a clone/paste, an optimistic insert, a re-addressed
+          // id all carry classes they were born with) — see
+          // `classDriftFalsePositives.test.ts`.
+          pages: [pageWithClassIds([])],
           componentSources: {},
           styleRules: {},
           styleRuleSources: { 'class-1': { file: 'pages/Home.css', selector: '.card' } },
@@ -814,7 +825,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
         '/admin/api/studio/load': {
           dir: '/tmp/studio-test',
           projectName: 'studio-test',
-          pages: [],
+          pages: [pageWithClassIds([])],
           componentSources: {},
           styleRules: {},
           styleRuleSources: { 'class-1': { file: 'pages/Home.css', selector: '.card' } },
@@ -863,21 +874,36 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     // `#2` marks this as a `.map` iteration — `hasWritableSourceLocation`
     // reports `false` for it (one piece of source JSX renders every row), so
     // there is genuinely nowhere honest for `setJsxClassName` to write.
+    function unwritablePage(classIds: string[]) {
+      return makePage({
+        rootNodeId: 'root',
+        nodes: {
+          root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1#2'] }),
+          'pages/Home.tsx:3:1#2': makeNode({ id: 'pages/Home.tsx:3:1#2', moduleId: 'base.container', label: 'Card', classIds }),
+        },
+      })
+    }
+
+    /** `class-toast` — the row is on the board BEFORE the user assigns a class to it, so the drift is a real gesture and not an unobserved node arriving with classes. */
+    function loadUnwritableRow() {
+      stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test', projectName: 'studio-test',
+          pages: [unwritablePage([])],
+          componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
+        },
+      })
+    }
+
     function siteWithUnwritableClassIds(classIds: string[]) {
       return makeSite({
         styleRules: { 'class-1': { id: 'class-1', name: 'card', kind: 'class', styles: {}, contexts: {} } as never },
-        pages: [makePage({
-          rootNodeId: 'root',
-          nodes: {
-            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1#2'] }),
-            'pages/Home.tsx:3:1#2': makeNode({ id: 'pages/Home.tsx:3:1#2', moduleId: 'base.container', label: 'Card', classIds }),
-          },
-        })],
+        pages: [unwritablePage(classIds)],
       })
     }
 
     it('assigning a class produces exactly ONE warning toast naming the node and class, and sends no edit', async () => {
-      stubFetch()
+      loadUnwritableRow()
       await loadThenResetCalls()
 
       await fsCodemodAdapter.saveSite(siteWithUnwritableClassIds(['class-1']))
@@ -892,7 +918,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     })
 
     it('does NOT re-toast on the next save tick when nothing further changed', async () => {
-      stubFetch()
+      loadUnwritableRow()
       await loadThenResetCalls()
 
       await fsCodemodAdapter.saveSite(siteWithUnwritableClassIds(['class-1']))
