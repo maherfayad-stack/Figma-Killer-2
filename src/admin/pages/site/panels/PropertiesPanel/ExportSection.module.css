@@ -30,3 +30,14 @@
         transform: rotate(360deg);
     }
 }
+
+/* The ⌘⇧C hint on the "Copy as PNG" menu entry. Pushed to the trailing edge
+   so the labels stay left-aligned, and toned down because it documents the
+   row rather than being part of its name. */
+.menuShortcut {
+    margin-inline-start: auto;
+    padding-inline-start: var(--inspector-caption-gap);
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    white-space: nowrap;
+}

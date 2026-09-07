@@ -12,6 +12,7 @@
  *   3. A node with no class does not get an invented selector.
  */
 import { describe, expect, it } from 'bun:test'
+import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import {
   collectNodeCssDeclarations,
   exportFileName,
@@ -44,12 +45,13 @@ const PNG_2X: NodeExportRow = { id: 'r1', format: 'png', scale: 2 }
 const SVG_ROW: NodeExportRow = { id: 'r2', format: 'svg', scale: 1 }
 
 describe('the typed + menu', () => {
-  it('offers the three PNG densities, SVG, and the two code copies', () => {
+  it('offers the three PNG densities, SVG, and the three copies', () => {
     expect(NODE_EXPORT_MENU.map((entry) => entry.id)).toEqual([
       'png-1x',
       'png-2x',
       'png-3x',
       'svg',
+      'copy-png',
       'copy-css',
       'copy-jsx',
     ])
@@ -59,8 +61,19 @@ describe('the typed + menu', () => {
     const kinds = new Map(NODE_EXPORT_MENU.map((entry) => [entry.id, entry.action.kind]))
     expect(kinds.get('png-2x')).toBe('add-row')
     expect(kinds.get('svg')).toBe('add-row')
+    expect(kinds.get('copy-png')).toBe('copy-png')
     expect(kinds.get('copy-css')).toBe('copy-css')
     expect(kinds.get('copy-jsx')).toBe('copy-jsx')
+  })
+
+  // The menu entry is the discoverable half of the ⌘⇧C shortcut, so it has to
+  // resolve a hint from the keybindings registry — a `commandId` that no
+  // binding answers would render "Copy as PNG" with no key beside it.
+  it('points Copy as PNG at a real keybinding, at the shortcut\'s own density', () => {
+    const entry = NODE_EXPORT_MENU.find((candidate) => candidate.id === 'copy-png')
+    expect(entry?.commandId).toBe('export.copySelectionPng')
+    expect(getKeybindingForCommand('export.copySelectionPng')).toBeDefined()
+    expect(entry?.action).toEqual({ kind: 'copy-png', scale: 2 })
   })
 })
 

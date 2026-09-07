@@ -21,6 +21,143 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### png-export — PNG export stopped refusing to photograph a screen it could see, and ⌘⇧C copies it
+- **Agent:** panel-designer · **Stage:** done (targeted tests + both tsconfigs + eslint + architecture gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/png-export-settle-and-copy-shortcut` off `origin/main` (`c068b3d`).
+
+**Two user asks, one PR.**
+
+**1. Bug, verbatim: "fix this error when exporting the page or element as png".**
+The toast read `PNG export failed — "onboarding" did not finish rendering within
+20000ms — its preview data, fonts, or images never settled.`
+
+**Root cause — the settle predicate had no bounded phases and no honest failure mode.**
+`CaptureFrame.tsx`'s `waitForFrameSettled` looped `previewReadiness.waitUntilIdle
+→ waitForDocumentQuiet → fonts.ready → waitForDocumentQuiet`, every wait
+unbounded, with ONE 20 s `AbortController` over the whole thing. Any wait that
+never resolved rode that abort and the frame reported `ok: false` — a REFUSAL,
+which `exportNodePng` turned into a failed export. The screen was fully painted
+on the canvas at the time.
+
+Evidence gathered, and what it ruled out:
+- **Not a hanging image.** Probed real Chromium (`chromium_headless_shell-1234`)
+  against a 404 image and an unroutable host: both report `complete: true,
+  naturalWidth: 0` after `load`. Nothing in the old loop waited on images at
+  all — the error message named "images" without ever checking one.
+- **Not `document.fonts.ready`.** Same probe with a `@font-face` pointing at a
+  404: `fonts.ready` resolved in 0 ms. `studio-workspace/test4` has no
+  `@font-face` and no `fonts.googleapis.com` link at all — its type stack is
+  `'Open Sans', system-ui, sans-serif`, all system fallbacks.
+- **The remaining phase is `waitForDocumentQuiet`,** which requires 32 ms with
+  ZERO attribute/childList/characterData mutation anywhere under
+  `documentElement`. Several injectors write into that document on a settle
+  cadence (`CanvasScrollUnrollInjector`'s `data-studio-unroll` tagging,
+  `useIframeFrameAutoHeight`'s `body.style.height` pin ⇄ `ResizeObserver`
+  refit). On `Onboarding.tsx` — an `<img>` from an asset import, four
+  `dangerouslySetInnerHTML` SVGs, and a `pkg.*` package component that the
+  capture page never registers (`useRegisterProjectModules` is mounted by the
+  EDITOR, not by `CaptureApp`) — that document does not go quiet inside the
+  budget. **Not reproduced end-to-end**: `playwright-core@1.63` on this machine
+  wants `chromium_headless_shell-1243` and only 1208–1234 are installed, so the
+  headless driver cannot launch here. See "cut" below.
+
+**Fix (the honest one, not a bigger timeout).** One shared, phase-bounded settle
+machine — `settleCaptureDocument` in
+`src/admin/pages/site/canvas/canvasCaptureSettle.ts` — replaces THREE hand-rolled
+copies of the same loop (`CaptureFrame.tsx`, `AgentSnapshotFrame.tsx`,
+`studioExportFrames.ts` — the headless page, the CMS snapshot frame, and the
+live-bridge path all carried the identical defect).
+- **A resource that will never load has already settled.** New
+  `waitForImagesSettled`: an `<img>` is settled the moment it is `complete`, and
+  an `error` event ends the wait exactly like `load`. Broken images are COUNTED
+  and reported (`"2 images failed to load and are missing from this capture."`).
+- Every phase gets its own 5 s bound inside the 20 s outer bound: images, fonts
+  (`fonts.ready` raced, not awaited), DOM quiet. Preview data gets the remainder.
+- **An expired bound is a WARNING on a successful capture, never a refusal.**
+  `CaptureFrame` now always measures and reports the frame; `ok: false` is
+  reserved for a frame that measured 0×0. The result names `stalledPhase`
+  (`dom-quiet` / `images` / `fonts` / `preview-data`) instead of listing all
+  three and shrugging.
+- Removed the effect-level `setTimeout(() => controller.abort(), 20_000)` in
+  `CaptureSettleReporter`: with the deadline now inside the settle function, that
+  abort would have withheld the frame's report entirely and hung the run until
+  the driver's longer `readyTimeoutMs`.
+
+**2. Feature: "allow me to click ctrl + shift + C to copy as png".**
+- New keybinding `export.copySelectionPng` (⌘⇧C / Ctrl+Shift+C, scope `canvas`,
+  `ignoreInEditableField`). **`layers.copy` (⌘C) now rejects Shift** — it did
+  not, so ⌘⇧C would have fired BOTH commands.
+- `useCopyAsPngShortcut.ts` — a document-level listener (the
+  `useBoardSelectAllShortcut` shape: scoped by intent, not focus, so it works
+  while the caret is in the Properties panel), mounted from `CanvasRoot`. Stands
+  down on `defaultPrevented`, `activeInlineEdit`, `hasPendingTextEdit(target)`
+  (PR #77's rule, same as ⌘Z) and `isTextInputTarget`. One capture in flight at
+  a time.
+- `resolveCopyAsPngTarget` (`copyAsPngTarget.ts`) is the pure routing: selected
+  node → that element; exactly one selected board frame → that frame; nothing
+  selected → the open screen. Refuses a multi-frame selection, an empty board,
+  and a Visual Component document by name.
+- `POST /admin/api/studio/node-png` now takes `nodeId` as OPTIONAL — omitted
+  returns the whole frame uncropped. A page has no addressable root element
+  (`page.rootNodeId` is a `base.body` node whose children ARE the iframe body),
+  so there is nothing to crop to for the nothing-selected case.
+- `copyPngToClipboard` in `nodeExportClient.ts`
+  (`navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])`),
+  built on a new shared `fetchNodePngBlob` that `downloadNodePng` now also uses.
+  Feature-detects and refuses by name rather than throwing a bare `TypeError`.
+- Discoverability: a **Copy as PNG** entry in the Export section's `+` menu,
+  carrying the ⌘⇧C hint resolved from the keybindings registry. The Shortcuts
+  help sheet renders from that registry, so it picks the row up for free.
+
+**Files touched.** `src/admin/pages/site/canvas/canvasCaptureSettle.ts`
+(rewritten), `copyAsPngTarget.ts` + `useCopyAsPngShortcut.ts` (new),
+`CanvasRoot.tsx`, `src/admin/agentCapture/CaptureFrame.tsx`,
+`canvas/AgentSnapshotFrame.tsx`, `agent/studioExportFrames.ts`,
+`spotlight/keybindings.ts`, `panels/PropertiesPanel/{ExportSection.tsx,
+ExportSection.module.css, nodeExportClient.ts, nodeExportModel.ts}`,
+`server/handlers/studio/{nodeExportRoutes.ts, nodeExportCapture.ts}`.
+Tests: `canvas/__tests__/{canvasCaptureSettle,copyAsPngTarget}.test.ts` (new, 26
+cases), updated `nodeExportModel.test.ts` + `nodeExportRoutes.test.ts`.
+Docs: `docs/features/mcp-connectors.md` (the settle table + the phase bounds),
+`docs/features/inspector-disclosure.md` §G11.
+**Tokens added to `globals.css`: none** — the one new rule (`.menuShortcut`)
+uses existing `--text-subtle`, `--text-2xs`, `--inspector-caption-gap`.
+
+**Cuts, named:**
+- **No end-to-end reproduction of the 20 s timeout against `test4/onboarding`.**
+  This machine's playwright browser revision does not match `playwright-core`,
+  so the headless driver cannot launch (`bunx playwright install chromium` would
+  fix it; not run — it mutates a cache shared with other agents). The root cause
+  above is from a Chromium probe of the individual primitives plus static
+  analysis of the loop, not from a captured failure. The fix is
+  cause-independent: whichever phase stalls, the export now succeeds with that
+  phase named.
+- **No fix for whatever keeps that document mutating.** Making the injectors
+  converge is a separate change with a separate blast radius; this PR makes a
+  non-converging document produce a picture instead of an error.
+- **CSS `background-image` is not waited on**, only `<img>`. Nothing waited on
+  it before either, and it cannot stall the capture.
+- **Copy as PNG is fixed at @2×**, matching the Export section's default. No
+  density submenu on the shortcut.
+- **`server/ai/mcp/capture/` had 8 pre-existing failures** on `origin/main`
+  (`c068b3d`) and still has exactly 8 — verified against a clean detached
+  worktree. Same for `direct-icon-imports`' `chevron-left` catalog case. Neither
+  is mine.
+
+**Human action needed (dogfood at these four selection states):**
+1. **`test4` → `onboarding`, select the `.hero` `<img>` element** → Export
+   section `+` → PNG @2× → run. It must DOWNLOAD, not toast "did not finish
+   rendering". If the screen was still settling the file still arrives.
+2. **Same screen, nothing selected, press ⌘⇧C** → toast "Copied as PNG ·
+   Onboarding @2×", then ⌘V into Figma/Slack and confirm the whole screen
+   pasted.
+3. **Select one element, press ⌘⇧C** → only that element's rectangle is on the
+   clipboard, and the layer clipboard is UNCHANGED (⌘V on the canvas afterwards
+   must not paste a duplicated node — that is the `layers.copy` Shift guard).
+4. **Click into a Properties-panel field, type a value WITHOUT pressing Enter,
+   press ⌘⇧C** → nothing copies (the draft owns the keystroke), and the field
+   keeps its text.
+
 ### store-07 — "ctrl z doesn't work": two root causes, both in the panel, plus one half-revert
 - **Agent:** store-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
 - **Branch:** `fix/undo-after-wave7` off `origin/main` (`71060a8`). User report, verbatim: "ctrl z ... doesn't work properly" / "if ctrl z it doesn't work" — nothing changes when the key is pressed.

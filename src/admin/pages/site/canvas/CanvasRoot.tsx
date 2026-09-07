@@ -62,6 +62,7 @@ import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
+import { useCopyAsPngShortcut } from './useCopyAsPngShortcut'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
 import { useTemplatePreviewContext } from '@site/hooks/useTemplatePreviewContext'
@@ -390,6 +391,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   // ⌘/Ctrl+A selects every frame on the active board (board-02).
   useBoardSelectAllShortcut(editable, isLive)
+  // Not gated on `editable`: copying a screen as an image reads the board, it
+  // never writes to it, so a read-only board is still worth photographing.
+  useCopyAsPngShortcut(isLive)
 
   // ─── Enter / Escape: the whole selection ladder ────────────────────────────
   // Enter steps into a `studio.instance` (instance-ui-01); Escape steps back

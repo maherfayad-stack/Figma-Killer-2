@@ -40,6 +40,7 @@ import { PropertyList, type PropertyListEntry } from '@ui/components/PropertyLis
 import { Section } from '@ui/components/Section'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { formatShortcut, getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { ArrowBarDownIcon } from 'pixel-art-icons/icons/arrow-bar-down'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { Image2SolidIcon } from 'pixel-art-icons/icons/image-2-solid'
@@ -56,9 +57,16 @@ import {
   type NodeExportMenuEntry,
   type NodeExportRow,
 } from './nodeExportModel'
-import { copyTextToClipboard, downloadNodePng, downloadNodeSvg, readNodeJsxSource } from './nodeExportClient'
+import { copyPngToClipboard, copyTextToClipboard, downloadNodePng, downloadNodeSvg, readNodeJsxSource } from './nodeExportClient'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './ExportSection.module.css'
+
+/** The platform-correct keyboard hint for a menu entry, straight from the registry. */
+function menuEntryShortcut(entry: NodeExportMenuEntry): string | null {
+  if (!entry.commandId) return null
+  const binding = getKeybindingForCommand(entry.commandId)
+  return binding ? formatShortcut(binding.shortcut) : null
+}
 
 interface ExportSectionProps {
   nodeId: string
@@ -103,11 +111,30 @@ export function ExportSection({
       setRows((current) => [...current, row])
       return
     }
+    if (entry.action.kind === 'copy-png') {
+      void copyPng(entry.action.scale)
+      return
+    }
     if (entry.action.kind === 'copy-css') {
       void copyCss()
       return
     }
     void copyJsx()
+  }
+
+  /**
+   * The clickable twin of ⌘⇧C. Same endpoint, same density, same toast — the
+   * menu entry exists so the shortcut is DISCOVERABLE, not so there are two
+   * implementations of copying a PNG.
+   */
+  async function copyPng(scale: 1 | 2 | 3) {
+    try {
+      await copyPngToClipboard({ pageId, nodeId, scale })
+      pushToast({ kind: 'success', title: 'Copied as PNG', body: `${nodeLabel} @${scale}×` })
+    } catch (err) {
+      console.error('[ExportSection] copy as PNG failed:', err)
+      pushToast({ kind: 'error', title: 'Copy as PNG failed', body: getErrorMessage(err, 'Unknown export error') })
+    }
   }
 
   async function copyCss() {
@@ -193,6 +220,9 @@ export function ExportSection({
           {NODE_EXPORT_MENU.map((entry) => (
             <ContextMenuItem key={entry.id} onClick={() => handleMenuEntry(entry)}>
               {entry.label}
+              {menuEntryShortcut(entry) ? (
+                <span className={styles.menuShortcut}>{menuEntryShortcut(entry)}</span>
+              ) : null}
             </ContextMenuItem>
           ))}
         </ContextMenu>

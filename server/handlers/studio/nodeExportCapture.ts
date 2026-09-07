@@ -28,7 +28,8 @@
  * achieved so the caller can be honest about it.
  *
  * This module owns the capture → crop → bytes path only. Its HTTP surface is
- * `nodeExportRoutes.ts`.
+ * `nodeExportRoutes.ts`. A request with no `nodeId` skips the crop entirely and
+ * returns the frame — see `ExportNodePngInput.nodeId`.
  */
 import sharp from 'sharp'
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
@@ -135,7 +136,12 @@ export interface ExportNodePngInput {
   userId: string
   dir: string
   pageId: string
-  nodeId: string
+  /**
+   * The node to cut out. OMITTED means the whole frame, uncropped — the
+   * "nothing selected" case of Copy as PNG, where the page has no addressable
+   * root element to crop to (see `nodeExportRoutes.ts`).
+   */
+  nodeId?: string
   /** Requested pixel density; the capture pipeline may clamp it (see module doc). */
   scale: number
 }
@@ -186,6 +192,21 @@ export async function exportNodePng(
   const image = (outcome.output.images ?? [])[frame.imageIndex]
   if (!image) return { ok: false, error: 'The capture reported an image this server did not receive.' }
 
+  const source = Buffer.from(image.data, 'base64')
+  const meta = await sharp(source).metadata()
+
+  // No `nodeId` — the whole frame IS the export. Nothing to crop, and nothing
+  // to refuse: the capture already succeeded.
+  if (input.nodeId === undefined) {
+    return {
+      ok: true,
+      png: source,
+      width: meta.width ?? 0,
+      height: meta.height ?? 0,
+      imageScale: frame.imageScale ?? 1,
+    }
+  }
+
   const rect = frame.nodeRects?.find((entry) => entry.nodeId === input.nodeId)
   if (!rect) {
     return {
@@ -194,8 +215,6 @@ export async function exportNodePng(
     }
   }
 
-  const source = Buffer.from(image.data, 'base64')
-  const meta = await sharp(source).metadata()
   const crop = resolveNodeCropBox({
     rect,
     imageScale: frame.imageScale ?? 1,
