@@ -21,6 +21,25 @@
  * reference` already uses for the stylesheet half — no second colour-matching
  * or contrast implementation.
  *
+ * ## Creative substance (W9-3, `STUDIO-WAVE7-PLAN.md`)
+ *
+ * Everything above is COMPLIANCE — "this hex should be a token". A screen can
+ * satisfy all of it and still be template-y: three stacked grey boxes, one
+ * type size, two of the design system's forty-two components. Two further
+ * rule families grade that, and both cost nothing new (same token index, same
+ * already-read files):
+ *
+ *   - `design-system-coverage-low`, in `auditPageSourceQuality`, graded
+ *     against the SAME `DesignSystemGuide` (`resolveDesignSystemGuide`) that
+ *     `projectGuide.ts` renders into this project's own `CLAUDE.md` decision
+ *     table — resolved here once per call, so the finding can only ever name
+ *     components the agent was actually offered.
+ *   - `off-scale-spacing` / `off-scale-type-size` / `flat-type-hierarchy`, in
+ *     `auditCompositionQuality`, run ONCE per page over the page's whole
+ *     stylesheet set rather than per file (a type hierarchy computed inside
+ *     one `.module.css` measures a fragment) and as aggregates rather than
+ *     per declaration (which would double-report every `raw-px-length`).
+ *
  * A fourth `.tsx` check — flagging hand-built markup for a role the
  * generated `CLAUDE.md` decision table maps to a real component (the
  * `BottomSheet` failure in the diagnosed run) — was prototyped as a
@@ -73,7 +92,8 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
-import { auditPageSourceQuality, auditStylesheetQuality, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
+import { auditCompositionQuality, auditPageSourceQuality, auditStylesheetQuality, type DesignSystemCatalog, type PageStylesheetText, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
+import { resolveDesignSystemGuide } from '../../../../handlers/studio/projectGuide'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { auditFontAvailability, collectFontAvailability } from './fontAvailability'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -115,7 +135,7 @@ export const studioQualityCheckTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Reference-free quality signals for one or more screens you built WITHOUT a design to measure against — studio_compare and studio_measure_reference both need a registered reference; this needs none. Statically scans each screen\'s own .css/.module.css (and any inlined local component\'s) AND its own .tsx. Stylesheet checks: raw-hex-color / raw-px-length — a literal value where the project already declares a var(--token) close enough that it is almost certainly the one you meant, so you know exactly which var() to swap in — and low-contrast-pair — a single rule that declares both color and a background whose WCAG contrast falls under the 4.5:1 AA-normal-text floor (this cannot see font-size/font-weight, so a genuinely large/bold rule may still pass WCAG AA\'s looser 3:1 large-text threshold in practice; the finding says so). Page-source checks, the ones that catch the agent hand-rolling something the design system already provides, or shipping an icon that is simply absent: unresolved-asset-import — a `?raw` import naming a file that is NOT on disk, so the element renders empty while still typechecking and still holding its box (the one finding here no screenshot and no `tsc` run will ever tell you); hand-authored-vector-path — a literal <svg> containing a hand-written <path d="..."> instead of a real icon; hardcoded-inline-sizing — style={{ width: 24 }} patching layout inline instead of in the stylesheet (does not flag the legitimate style={{ \'--x\': value }} dynamic-custom-property case, or any genuinely computed value); design-system-unused — this screen imports nothing at all from the project\'s configured design-system package(s), worth checking even though a legitimately plain screen can have zero imports; font-not-available — the FIRST family in a font-family stack that this project cannot load (no @font-face anywhere it can see, no Google Fonts link, no next/font/google import, no matching font file on disk), so the browser silently renders the screen in a fallback face whose metrics differ and every font-size you then tune against a screenshot is tuned against the wrong typeface. Each finding carries a file:line and a message naming the exact fix. Name screens the way you named the files ("Checkout"), or pass several at once to audit a whole flow in one call, or omit `pages` to audit every screen in the project. This complements studio_screenshot, it does not replace it — a clean audit here says nothing about whether the screen LOOKS right, only whether its source follows the project\'s own rules. Returns { results[] }, each { ok, page, findings[], findingCount, filesScanned, rulesScanned, truncated } — a page whose own source location can\'t be decoded becomes an ok:false entry rather than failing the whole call.',
+    'Reference-free quality signals for one or more screens you built WITHOUT a design to measure against — studio_compare and studio_measure_reference both need a registered reference; this needs none. Statically scans each screen\'s own .css/.module.css (and any inlined local component\'s) AND its own .tsx. Stylesheet checks: raw-hex-color / raw-px-length — a literal value where the project already declares a var(--token) close enough that it is almost certainly the one you meant, so you know exactly which var() to swap in — and low-contrast-pair — a single rule that declares both color and a background whose WCAG contrast falls under the 4.5:1 AA-normal-text floor (this cannot see font-size/font-weight, so a genuinely large/bold rule may still pass WCAG AA\'s looser 3:1 large-text threshold in practice; the finding says so). Page-source checks, the ones that catch the agent hand-rolling something the design system already provides, or shipping an icon that is simply absent: unresolved-asset-import — a `?raw` import naming a file that is NOT on disk, so the element renders empty while still typechecking and still holding its box (the one finding here no screenshot and no `tsc` run will ever tell you); hand-authored-vector-path — a literal <svg> containing a hand-written <path d="..."> instead of a real icon; hardcoded-inline-sizing — style={{ width: 24 }} patching layout inline instead of in the stylesheet (does not flag the legitimate style={{ \'--x\': value }} dynamic-custom-property case, or any genuinely computed value); design-system-unused — this screen imports nothing at all from the project\'s configured design-system package(s), worth checking even though a legitimately plain screen can have zero imports; design-system-coverage-low — this screen DOES use the design system but renders fewer than 4 distinct components from it while the catalog offers 8 or more, and the finding NAMES the ones it did not take (the diagnosed failure: a shipped screen used 2 of 42 available components and hand-rolled the rest, which no other check here can see); font-not-available — the FIRST family in a font-family stack that this project cannot load (no @font-face anywhere it can see, no Google Fonts link, no next/font/google import, no matching font file on disk), so the browser silently renders the screen in a fallback face whose metrics differ and every font-size you then tune against a screenshot is tuned against the wrong typeface. Composition checks, page-wide aggregates rather than one finding per declaration, each graded ONLY against the project\'s own declared tokens (a project that declares no spacing tokens gets no spacing rule, never an invented 4px default): off-scale-spacing — how many padding/margin/gap values are not multiples of the step this project\'s own spacing tokens are built on, with each offender\'s file:line; off-scale-type-size — font-size values sitting on no step of the project\'s type scale, with the scale listed; flat-type-hierarchy — the screen\'s largest type divided by its most common (body) size is under 1.6, i.e. nothing leads and the screen reads as a list of equals. Each finding carries a file:line and a message naming the exact fix. Name screens the way you named the files ("Checkout"), or pass several at once to audit a whole flow in one call, or omit `pages` to audit every screen in the project. This complements studio_screenshot, it does not replace it — a clean audit here says nothing about whether the screen LOOKS right, only whether its source follows the project\'s own rules. Returns { results[] }, each { ok, page, findings[], findingCount, filesScanned, rulesScanned, truncated } — a page whose own source location can\'t be decoded becomes an ok:false entry rather than failing the whole call.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pages: requested } = input as { dir?: string; pages?: string[] }
@@ -144,9 +164,18 @@ export const studioQualityCheckTool: AiTool = {
     // profile call, rather than resolving the profile a second time.
     let cssSources: string[] = []
     let componentPackages: string[] = []
+    let catalog: DesignSystemCatalog | undefined
     try {
       const profile = resolveProjectProfile(dir)
       componentPackages = profile.componentPackages
+      // The SAME guide `projectGuide.ts` renders into this project's own
+      // CLAUDE.md decision table — so the coverage finding can only ever name
+      // components the agent was actually offered. Resolved once per call,
+      // like the token index below it; `undefined` for a project whose
+      // package ships neither docs nor readable type declarations, which
+      // correctly disables the coverage rule rather than inventing a catalog.
+      const guide = resolveDesignSystemGuide(dir, profile)
+      if (guide) catalog = { packageName: guide.packageName, componentNames: guide.components.map((c) => c.name) }
       const compiled = await compileProjectStyles(dir, profile)
       cssSources = [compiled.styles.vendorCss, compiled.styles.css]
     } catch (err) {
@@ -197,7 +226,7 @@ export const studioQualityCheckTool: AiTool = {
         // resolution a second, drifting way.
         const sourceFile = project.getSourceFile(absPageFile)
         const deadImports = sourceFile ? unresolvedRawTextImports(sourceFile, dir) : []
-        const pageResult = auditPageSourceQuality(pageText, relFile, componentPackages, deadImports)
+        const pageResult = auditPageSourceQuality(pageText, relFile, componentPackages, deadImports, catalog)
         rulesScanned += pageResult.rulesScanned
         findings.push(...pageResult.findings)
         if (pageResult.truncated) truncated = true
@@ -222,11 +251,8 @@ export const studioQualityCheckTool: AiTool = {
 
       findings.push(...auditFontAvailability(sheets, fonts))
 
+      const sheetTexts: PageStylesheetText[] = []
       for (const sheet of sheets) {
-        if (findings.length >= MAX_FINDINGS_PER_PAGE) {
-          truncated = true
-          break
-        }
         let text: string
         try {
           text = readFileSync(sheet.absPath, 'utf8')
@@ -234,11 +260,24 @@ export const studioQualityCheckTool: AiTool = {
           console.error(`[studio_quality_check] could not read ${sheet.relPath}:`, err)
           continue
         }
+        sheetTexts.push({ relFile: sheet.relPath, cssText: text })
+        if (findings.length >= MAX_FINDINGS_PER_PAGE) {
+          truncated = true
+          continue
+        }
         const result = auditStylesheetQuality(text, sheet.relPath, tokens)
         rulesScanned += result.rulesScanned
         findings.push(...result.findings)
         if (result.truncated) truncated = true
       }
+
+      // Composition runs over the page's WHOLE stylesheet set, not per file:
+      // a screen's type scale lives across every sheet it imports, so a
+      // per-file "largest / body" ratio measures a fragment. At most three
+      // findings — see `auditCompositionQuality`'s doc.
+      const composition = auditCompositionQuality(sheetTexts, tokens)
+      rulesScanned += composition.rulesScanned
+      findings.push(...composition.findings)
 
       const bounded = findings.slice(0, MAX_FINDINGS_PER_PAGE)
       truncated = truncated || findings.length > MAX_FINDINGS_PER_PAGE

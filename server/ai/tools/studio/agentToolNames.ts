@@ -68,6 +68,14 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // stylesheet for one-off values a project token already covers and for
   // same-rule colour pairs that fail WCAG AA contrast.
   'studio_quality_check',
+  // W9-3's creative half. The prompt can ASK for three variants; it cannot
+  // make them different — a model given one brief three times returns the
+  // same composition three times, because nothing in the second prompt
+  // differs from the first. These generate the difference outside the model,
+  // from the project's own token space, and record it so "make B but
+  // tighter" is an edit rather than a re-roll.
+  'studio_plan_variants',
+  'studio_list_variant_sets',
   // The ONE verification studio_compare/studio_screenshot cannot give: does
   // the code the agent just wrote actually compile. Runs the PROJECT's own
   // tsc — see systemPrompt.ts's "not done until it both compares clean AND
@@ -81,6 +89,15 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // 0.12). Without it, a `studio_compare` region with no obvious CSS
   // explanation has no path to "why", only more pixel-guessing.
   'studio_fidelity_report',
+  // W9-4 — the whole "a Figma link arrived" ritual in one call: register the
+  // export as a strict spec reference, ingest the variables, and size the
+  // board frame to the Figma frame's own absoluteBoundingBox. Offered ABOVE
+  // the individual register/ingest tools deliberately: the six-step ordering
+  // was the thing the model got wrong, and the frame-sizing step (the one it
+  // skipped most) is what makes every later studio_compare exact instead of
+  // silently resampled. The individual tools stay for the cases this one does
+  // not cover (an image that is not a Figma frame, a second variable table).
+  'studio_import_figma_frame',
   'studio_register_design_reference',
   'studio_list_design_references',
   'studio_read_design_reference',

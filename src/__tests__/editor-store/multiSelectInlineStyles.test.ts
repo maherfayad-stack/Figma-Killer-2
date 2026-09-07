@@ -137,3 +137,71 @@ describe('setNodesInlineStyles', () => {
     expect(useEditorStore.getState()._historyPast.length).toBe(historyBefore)
   })
 })
+
+/**
+ * setNodesInlineStylesPerNode — the per-node sibling (W8-3 phase 3 / G6.4).
+ *
+ * Selection colours is what needs a DIFFERENT patch per node: the same swatch
+ * can be `color` on one layer and `borderTopColor` on another. The undo
+ * contract is the one that matters — recolouring is one entry, or a Ctrl+Z
+ * hands the user back half a colour.
+ */
+describe('setNodesInlineStylesPerNode', () => {
+  it('writes each node its own patch', () => {
+    const [a, b] = seedNodes(2)
+
+    useEditorStore.getState().setNodesInlineStylesPerNode([
+      { nodeId: a, patch: { color: '#222' } },
+      { nodeId: b, patch: { borderTopColor: '#222' } },
+    ])
+
+    expect(inlineStylesOf(a)).toEqual({ color: '#222' })
+    expect(inlineStylesOf(b)).toEqual({ borderTopColor: '#222' })
+  })
+
+  it('is ONE undo step across every node it touched', () => {
+    const [a, b] = seedNodes(2)
+    useEditorStore.getState().setNodeInlineStyles(a, { color: '#111' })
+    useEditorStore.getState().setNodeInlineStyles(b, { borderTopColor: '#111' })
+
+    useEditorStore.getState().setNodesInlineStylesPerNode([
+      { nodeId: a, patch: { color: '#222' } },
+      { nodeId: b, patch: { borderTopColor: '#222' } },
+    ])
+    useEditorStore.getState().undo()
+
+    expect(inlineStylesOf(a)).toEqual({ color: '#111' })
+    expect(inlineStylesOf(b)).toEqual({ borderTopColor: '#111' })
+  })
+
+  it('coalesces a burst on the same key into one entry, and starts a new one on a different key', () => {
+    const [a] = seedNodes(1)
+    useEditorStore.getState().setNodeInlineStyles(a, { color: '#111' })
+    const before = useEditorStore.getState()._historyPast.length
+
+    const write = (value: string, key: string) =>
+      useEditorStore
+        .getState()
+        .setNodesInlineStylesPerNode([{ nodeId: a, patch: { color: value } }], {
+          coalesceKey: key,
+        })
+
+    write('#222', 'selection-color:#111')
+    write('#333', 'selection-color:#111')
+    expect(useEditorStore.getState()._historyPast.length).toBe(before + 1)
+
+    write('#444', 'selection-color:#333')
+    expect(useEditorStore.getState()._historyPast.length).toBe(before + 2)
+  })
+
+  it('ignores a stale id rather than aborting the rest', () => {
+    const [a] = seedNodes(1)
+
+    useEditorStore.getState().setNodesInlineStylesPerNode([
+      { nodeId: 'gone', patch: { color: '#222' } },
+      { nodeId: a, patch: { color: '#222' } },
+    ])
+
+    expect(inlineStylesOf(a)).toEqual({ color: '#222' })
+  })
+})

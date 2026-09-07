@@ -294,10 +294,25 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   edit skips the refusing node and still lands on the rest, because leaving
   N-1 nodes half-written is worse than skipping one. The panel names the
   skipped properties instead of leaving the refusal silent
-  (`MultiInlineStyleComposer`). Only inline styles are bulk-editable — class
-  targets are W8-3 phase 3; see
+  (`MultiInlineStyleComposer`), and each row states how far its own edit
+  reaches ("writes to 3 of 5") through the three-state
+  `StyleWriteLockContext`. A class target is reachable too, once the user
+  clears the "used by N other elements" gate — but a class edit is an
+  ordinary `updateClassStyles`, not a bulk write, because the class IS the one
+  honest target. See
   [`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
   §9.
+- **Per-node bulk inline-style edit (W8-3 phase 3, G6.4):**
+  `setNodesInlineStylesPerNode(patches, { coalesceKey })` takes a DIFFERENT
+  patch per node and still writes them in ONE history transaction. Selection
+  colours needs it: recolouring one swatch rewrites `color` on one layer and
+  `borderTopColor` on another, and those must undo together. Same per-node
+  skip rules as `setNodesInlineStyles`, same all-or-nothing-per-node
+  `isStylePatchWritableToSource` gate. Its coalesce key is
+  `selection-color:<the colour being replaced>` — a burst on one swatch is one
+  undo entry; a second swatch starts a new one. `mutateTreesForNodeIds` grew
+  an optional `{ coalesceKey }` for it, forwarded to `runHistoricMutation` on
+  both its single-tree and cross-page paths.
 
 ## Adding state — checklist
 

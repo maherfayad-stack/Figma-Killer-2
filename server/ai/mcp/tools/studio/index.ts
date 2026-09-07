@@ -10,6 +10,7 @@ import { studioReferenceMcpTools } from './referenceRender'
 import { studioDiffMcpTools } from './diffFrames'
 import { studioDesignReferenceMcpTools } from './designReferenceTools'
 import { studioDesignVariableMcpTools } from './designVariableTools'
+import { studioImportFigmaFrameMcpTools } from './importFigmaFrame'
 import { studioUploadAssetMcpTools } from './uploadAssetTool'
 import { studioFrameAxesMcpTools } from './frameAxesTools'
 import { studioComputedStylesMcpTools } from './computedStyles'
@@ -24,6 +25,7 @@ import { studioCompareMcpTools } from './compare'
 import { studioMeasureReferenceMcpTools } from './measureReference'
 import { studioExtractReferenceAssetMcpTools } from './extractReferenceAsset'
 import { studioQualityCheckMcpTools } from './qualityCheck'
+import { studioVariantMcpTools } from './variantTools'
 import { studioTypecheckMcpTools } from './typecheck'
 import { studioCommentMcpTools } from './commentTools'
 import { studioGitMcpTools } from './gitTools'
@@ -35,6 +37,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioMeasureReferenceMcpTools,
   ...studioMeasureElementMcpTools,
   ...studioQualityCheckMcpTools,
+  ...studioVariantMcpTools,
   ...studioTypecheckMcpTools,
   ...studioExtractReferenceAssetMcpTools,
   ...studioProjectMcpTools,
@@ -45,6 +48,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioDiffMcpTools,
   ...studioDesignReferenceMcpTools,
   ...studioDesignVariableMcpTools,
+  ...studioImportFigmaFrameMcpTools,
   ...studioUploadAssetMcpTools,
   ...studioFrameAxesMcpTools,
   ...studioComputedStylesMcpTools,

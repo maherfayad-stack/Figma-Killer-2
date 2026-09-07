@@ -4,6 +4,7 @@
  */
 
 import { SegmentedControl } from '@ui/components/SegmentedControl'
+import type { Mixed } from '@ui/components/MixedValue'
 import { ArrowRightIcon } from 'pixel-art-icons/icons/arrow-right'
 import { ArrowLeftIcon } from 'pixel-art-icons/icons/arrow-left'
 import { ArrowDownIcon } from 'pixel-art-icons/icons/arrow-down'
@@ -11,7 +12,8 @@ import { ArrowUpIcon } from 'pixel-art-icons/icons/arrow-up'
 import { LabeledControl } from './LabeledControl'
 
 interface FlexDirectionControlProps {
-  value: string | undefined
+  /** `MIXED` when the selection's members disagree — see `SegmentedControl`. */
+  value: string | Mixed | undefined
   isSet: boolean
   onChange: (value: string) => void
   onClear: () => void

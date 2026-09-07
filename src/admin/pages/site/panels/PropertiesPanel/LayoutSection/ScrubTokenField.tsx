@@ -30,6 +30,12 @@ import styles from './ScrubTokenField.module.css'
 interface ScrubTokenFieldProps {
   value: string | undefined
   placeholder?: string
+  /**
+   * W8-3 — the selection driving this field disagrees here. The field shows
+   * the shared "Mixed" placeholder instead of its own; typing commits one
+   * value to every selected node, exactly as `Input`'s `mixed` documents.
+   */
+  mixed?: boolean
   tokens: ReadonlyArray<Token>
   /** Draggable, `aria-hidden` mark — a letterform ("H", "T") or a glyph. */
   prefix: ReactNode
@@ -53,6 +59,7 @@ interface ScrubTokenFieldProps {
 export function ScrubTokenField({
   value,
   placeholder,
+  mixed,
   tokens,
   prefix,
   'aria-label': ariaLabel,
@@ -90,6 +97,7 @@ export function ScrubTokenField({
       aria-label={ariaLabel}
       value={scrub.dragValue ?? value}
       placeholder={placeholder}
+      mixed={mixed}
       tokens={tokens}
       disabled={disabled}
       className={className}

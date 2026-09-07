@@ -477,8 +477,14 @@ function resolveCatalogDesignSystemGuide(appRootAbs: string, pkg: string): Desig
  * for); every declared package, including ones this pass didn't pick, is
  * still fully queryable at runtime via `studio_list_components`/
  * `studio_find_component` (see the note `buildGuide` prints next to it).
+ *
+ * Exported because `studio_quality_check`'s component-coverage rule
+ * (`design-system-coverage-low`, W9-3) has to grade a screen against exactly
+ * what the generated decision table OFFERED it — resolving the catalog a
+ * second way there would let the finding name components the project's own
+ * `CLAUDE.md` never mentioned, which is worse than no finding.
  */
-function resolveDesignSystemGuide(dir: string, profile: ProjectProfile): DesignSystemGuide | undefined {
+export function resolveDesignSystemGuide(dir: string, profile: ProjectProfile): DesignSystemGuide | undefined {
   const appRootAbs = joinAppRoot(dir, profile.appRoot)
   for (const pkg of profile.componentPackages) {
     const pkgDir = join(appRootAbs, 'node_modules', ...pkg.split('/'))
