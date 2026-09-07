@@ -28,6 +28,7 @@ import type {
 import type { FontEntry, FontToken } from '@core/fonts'
 import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
+import type { BoardsFile } from '@core/studio-board'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
 import type { SlotOwnerEntry } from './nodeIndex'
@@ -134,7 +135,11 @@ type UpdateFontTokenPatch = Partial<{
  * - `inverse` reverts the transaction (applied on undo).
  * - `forward` re-applies it (applied on redo).
  * - `coalesceKey` carries the in-progress input-burst identity so consecutive
- *   per-keystroke edits fold into a single entry (see `commitHistory`).
+ *   per-keystroke edits fold into a single entry (see `commitHistoryEntry`).
+ *
+ * An entry may ALSO (or instead) carry `board` — the board domain's state pair
+ * (`store-09`). One stack, two domains: ⌘Z undoes the last thing the user did,
+ * whether it lived in the `.tsx` or in `.studio/boards.json`.
  */
 export interface HistoryEntry {
   inverse: Patches
@@ -149,6 +154,43 @@ export interface HistoryEntry {
    * the opposite, and the next reparse silently wins.
    */
   structural?: StructuralHistory
+  /**
+   * `store-09` — present when this transaction changed BOARD state (frames,
+   * sticky notes, doc cards, guides, board CRUD). See `BoardHistory`.
+   */
+  board?: BoardHistory
+}
+
+/**
+ * The board-domain fields one transaction changed, before and after.
+ *
+ * SNAPSHOT PAIRS, NOT PATCHES — and deliberately so. Every board mutation is a
+ * pure `Board -> Board` transform re-published through `upsertBoard`, so
+ * `boards` is already a persistent immutable structure: a "snapshot" is two
+ * object references that share everything the mutation did not touch. Storing
+ * them is O(1), restoring them is O(1), and there is no patch path to go stale
+ * when a board index shifts. Patches buy nothing here that structural sharing
+ * has not already bought.
+ *
+ * Correctness rests on undo being strictly LIFO: the stack is only ever read
+ * from the top, so the state at the moment of undo is exactly this entry's
+ * `after`, and assigning `before` is exact rather than approximate. The one
+ * way that can break is a board mutation that does NOT go through the history
+ * stack (a fresh `.studio/boards.json` read) — which is why `loadBoards` and
+ * `markBoardsLoadFailed` purge board entries outright. See `boardHistory.ts`.
+ *
+ * `activeBoardId` rides along because `addBoard`/`removeBoard` change it in
+ * the same gesture, and undoing "create board" without returning to the board
+ * you were on leaves you staring at a board you did not choose.
+ */
+export interface BoardHistorySnapshot {
+  boards: BoardsFile
+  activeBoardId: string | null
+}
+
+export interface BoardHistory {
+  before: BoardHistorySnapshot
+  after: BoardHistorySnapshot
 }
 
 /** One end of a re-issuable structural gesture: "put this node here". */

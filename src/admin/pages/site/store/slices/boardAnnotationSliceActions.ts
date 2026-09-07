@@ -47,6 +47,7 @@ import {
   type DocBlock,
   type StickyNote,
 } from '@core/studio-board'
+import { boardCoalesceKey, commitBoardChange } from './boardHistory'
 import * as annotations from './boardAnnotationActions'
 
 /** A snapshot of copied annotations. See the module doc for why this holds values rather than refs. */
@@ -94,14 +95,22 @@ type Set = Parameters<EditorStoreSliceCreator<EditorStore>>[0]
 type Get = Parameters<EditorStoreSliceCreator<EditorStore>>[1]
 
 export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
-  /** Apply a pure transform to the active board. `null`/absent board = no-op, so `boardsDirty` never flips for nothing. */
-  const withBoard = (transform: (board: Board) => Board | null) => {
+  /**
+   * Apply a pure transform to the active board and record ONE undo entry for
+   * it. `null`/absent board = no-op, so `boardsDirty` never flips for nothing.
+   *
+   * `store-09` — `coalesceKey` is what makes a drag (which calls `moveNote` on
+   * every pointermove) and a typing burst in a note each ONE ⌘Z. A discrete
+   * action (add, delete, recolor, reorder) passes `null` and gets its own
+   * entry. See `boardHistory.ts`.
+   */
+  const withBoard = (coalesceKey: string | null, transform: (board: Board) => Board | null) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     const next = transform(board)
     if (!next) return
-    set({ boards: upsertBoard(boards, next), boardsDirty: true })
+    commitBoardChange(set, get, coalesceKey, upsertBoard(boards, next))
   }
 
   /**
@@ -131,18 +140,25 @@ export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
   }
 
   return {
-    addNote: (x, y) => withBoard((board) => annotations.addNote(board, x, y)),
-    moveNote: (noteId, x, y) => withBoard((board) => annotations.moveNote(board, noteId, x, y)),
-    updateNoteText: (noteId, text) => withBoard((board) => annotations.updateNoteText(board, noteId, text)),
-    setNoteColor: (noteId, color) => withBoard((board) => annotations.setNoteColor(board, noteId, color)),
-    removeNote: (noteId) => withBoard((board) => annotations.removeNote(board, noteId)),
+    addNote: (x, y) => withBoard(null, (board) => annotations.addNote(board, x, y)),
+    moveNote: (noteId, x, y) =>
+      withBoard(boardCoalesceKey.annotationMove('note', noteId), (board) => annotations.moveNote(board, noteId, x, y)),
+    updateNoteText: (noteId, text) =>
+      withBoard(boardCoalesceKey.noteText(noteId), (board) => annotations.updateNoteText(board, noteId, text)),
+    setNoteColor: (noteId, color) => withBoard(null, (board) => annotations.setNoteColor(board, noteId, color)),
+    removeNote: (noteId) => withBoard(null, (board) => annotations.removeNote(board, noteId)),
 
-    addDoc: (x, y) => withBoard((board) => annotations.addDoc(board, x, y)),
-    moveDoc: (docId, x, y) => withBoard((board) => annotations.moveDoc(board, docId, x, y)),
-    updateDocHtml: (docId, html) => withBoard((board) => annotations.updateDocHtml(board, docId, html)),
-    removeDoc: (docId) => withBoard((board) => annotations.removeDoc(board, docId)),
+    addDoc: (x, y) => withBoard(null, (board) => annotations.addDoc(board, x, y)),
+    moveDoc: (docId, x, y) =>
+      withBoard(boardCoalesceKey.annotationMove('doc', docId), (board) => annotations.moveDoc(board, docId, x, y)),
+    updateDocHtml: (docId, html) =>
+      withBoard(boardCoalesceKey.docHtml(docId), (board) => annotations.updateDocHtml(board, docId, html)),
+    removeDoc: (docId) => withBoard(null, (board) => annotations.removeDoc(board, docId)),
 
-    resizeAnnotation: (ref, rect) => withBoard((board) => annotations.resizeAnnotation(board, ref, rect)),
+    resizeAnnotation: (ref, rect) =>
+      withBoard(boardCoalesceKey.annotationResize(ref.kind, ref.id), (board) =>
+        annotations.resizeAnnotation(board, ref, rect),
+      ),
 
     selectAnnotation: (ref, mode = 'replace') => {
       const { selectedAnnotations } = get()
@@ -165,7 +181,7 @@ export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
 
     deleteSelectedAnnotations: () => {
       const refs = get().selectedAnnotations
-      withBoard((board) => annotations.removeAnnotations(board, refs))
+      withBoard(null, (board) => annotations.removeAnnotations(board, refs))
       if (refs.length > 0) set({ selectedAnnotations: [] })
     },
 
@@ -178,7 +194,11 @@ export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
       // Select the COPIES: a duplicate leaves you holding what you just made,
       // so a second Cmd+D walks diagonally instead of stacking clones on one
       // spot.
-      set({ boards: upsertBoard(boards, result.board), boardsDirty: true, selectedAnnotations: result.created })
+      commitBoardChange(set, get, null, upsertBoard(boards, result.board), {
+        also: (state) => {
+          state.selectedAnnotations = result.created
+        },
+      })
     },
 
     copySelectedAnnotations: () => {
@@ -208,22 +228,22 @@ export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
       const offset = annotations.ANNOTATION_CLONE_OFFSET * (annotationPasteCount + 1)
       const result = annotations.pasteAnnotations(board, annotationClipboard, offset)
       if (!result) return
-      set({
-        boards: upsertBoard(boards, result.board),
-        boardsDirty: true,
-        selectedAnnotations: result.created,
-        annotationPasteCount: annotationPasteCount + 1,
+      commitBoardChange(set, get, null, upsertBoard(boards, result.board), {
+        also: (state) => {
+          state.selectedAnnotations = result.created
+          state.annotationPasteCount = annotationPasteCount + 1
+        },
       })
     },
 
     nudgeSelectedAnnotations: (dx, dy) => {
       const refs = get().selectedAnnotations
-      withBoard((board) => annotations.nudgeAnnotations(board, refs, dx, dy))
+      withBoard(boardCoalesceKey.annotationNudge(), (board) => annotations.nudgeAnnotations(board, refs, dx, dy))
     },
 
     reorderSelectedAnnotations: (to) => {
       const refs = get().selectedAnnotations
-      withBoard((board) => annotations.reorderAnnotations(board, refs, to))
+      withBoard(null, (board) => annotations.reorderAnnotations(board, refs, to))
     },
 
     clearAllSelections: () => {

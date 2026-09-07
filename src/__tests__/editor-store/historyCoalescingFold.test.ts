@@ -1,7 +1,7 @@
 /**
  * History coalescing fold — per-path patch dedup inside a typing burst.
  *
- * `commitHistory` folds consecutive same-`coalesceKey` entries into the top
+ * `commitHistoryEntry` folds consecutive same-`coalesceKey` entries into the top
  * history entry. The fold must keep AT MOST one inverse and one forward patch
  * per touched path (oldest inverse wins, newest forward value wins) instead of
  * accumulating 2K patch pairs over a K-keystroke burst — while keeping

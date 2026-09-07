@@ -167,6 +167,9 @@ function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
     // `textContent`, hence the fallback.)
     const el = e.currentTarget
     updateNoteText(note.id, el.innerText ?? el.textContent ?? '')
+    // `store-09` — one editing session is one undo entry; closing the burst
+    // here makes the next session its own ⌘Z step.
+    useEditorStore.getState().endBoardGesture()
     setIsEditing(false)
   }
 
@@ -176,6 +179,7 @@ function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
       e.stopPropagation()
       if (textRef.current) textRef.current.textContent = preEditTextRef.current
       updateNoteText(note.id, preEditTextRef.current)
+      useEditorStore.getState().endBoardGesture()
       setIsEditing(false)
       return
     }

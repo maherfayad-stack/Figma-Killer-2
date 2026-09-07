@@ -9,10 +9,15 @@
  * `Board`, no store), this module is just the uniform `set`/`get` shell
  * around all six of them, and `boardSlice.ts` composes it and stays the
  * board/frame slice its name promises.
+ *
+ * `store-09` — all six are discrete commits (a panel field, a menu item), so
+ * each records ONE undo entry with a `null` coalesce key. Nothing here is a
+ * continuous gesture. See `boardHistory.ts`.
  */
 import type { EditorStore } from '@site/store/types'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveBoard, upsertBoard } from '@core/studio-board'
+import { commitBoardChange } from './boardHistory'
 import * as bulk from './boardBulkFrameActions'
 
 type BulkFrameActions = Pick<
@@ -35,7 +40,7 @@ export function createBulkFrameActions(
       const board = getActiveBoard(boards, activeBoardId)
       const nextBoard = board && bulk.setSelectedFramesSize(board, selectedFrameIds, width, height)
       if (!nextBoard) return
-      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+      commitBoardChange(set, get, null, upsertBoard(boards, nextBoard))
     },
 
     applyWidthToAllFrames: (width) => {
@@ -43,7 +48,13 @@ export function createBulkFrameActions(
       const board = getActiveBoard(boards, activeBoardId)
       const nextBoard = board && bulk.applyWidthToAllFrames(board, width)
       if (!nextBoard) return
-      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true, frameDefaults: { ...frameDefaults, width } })
+      commitBoardChange(set, get, null, upsertBoard(boards, nextBoard), {
+        // The per-project default mirror is editor-local, not board state —
+        // applied live, not recorded. See `BoardCommitExtras.also`.
+        also: (state) => {
+          state.frameDefaults = { ...frameDefaults, width }
+        },
+      })
     },
 
     setFrameHeights: (heightsByPageId) => {
@@ -51,7 +62,7 @@ export function createBulkFrameActions(
       const board = getActiveBoard(boards, activeBoardId)
       const nextBoard = board && bulk.setFrameHeights(board, heightsByPageId)
       if (!nextBoard) return
-      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+      commitBoardChange(set, get, null, upsertBoard(boards, nextBoard))
     },
 
     alignSelectedFrames: (edge) => {
@@ -59,7 +70,7 @@ export function createBulkFrameActions(
       const board = getActiveBoard(boards, activeBoardId)
       const nextBoard = board && bulk.alignSelectedFrames(board, selectedFrameIds, edge)
       if (!nextBoard) return
-      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+      commitBoardChange(set, get, null, upsertBoard(boards, nextBoard))
     },
 
     distributeSelectedFrames: (axis) => {
@@ -67,7 +78,7 @@ export function createBulkFrameActions(
       const board = getActiveBoard(boards, activeBoardId)
       const nextBoard = board && bulk.distributeSelectedFrames(board, selectedFrameIds, axis)
       if (!nextBoard) return
-      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+      commitBoardChange(set, get, null, upsertBoard(boards, nextBoard))
     },
 
     tidySelectedFrames: () => {
@@ -75,7 +86,7 @@ export function createBulkFrameActions(
       const board = getActiveBoard(boards, activeBoardId)
       const nextBoard = board && bulk.tidySelectedFrames(board, selectedFrameIds)
       if (!nextBoard) return
-      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+      commitBoardChange(set, get, null, upsertBoard(boards, nextBoard))
     },
   }
 }

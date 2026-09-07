@@ -244,11 +244,18 @@ and structural node id. `historySurvivesReload` is still the fallback for
 anything the walk can't match. Both run in `loadSite` AND `patchPages`. Do not
 add a third reload path without them.
 
-**Board state is not undoable at all.** Frame move/resize, board CRUD, guides,
-annotations and prototype links live outside `site`, and history records only
-`site`-scoped patches. Named gap, not an oversight — see
-[`docs/reference/editor-history.md`](../reference/editor-history.md) → "What is
-NOT undoable".
+**Board state is undoable, on the SAME stack (`store-09`).** Frame
+move/resize/membership, board CRUD, guides and annotations (sticky notes, doc
+cards) live outside `site`, so they record a board STATE PAIR
+(`HistoryEntry.board`) instead of Mutative patches — `boardHistory.ts`'s
+`commitBoardChange` is the board-side counterpart to `runHistoricMutation`.
+Continuous gestures coalesce per entity (`boardCoalesceKey`) and close on
+pointer-up via `endBoardGesture`, so one drag is one ⌘Z. A `.tsx` reparse that
+invalidates the site stack KEEPS board entries; a fresh `.studio/boards.json`
+read DROPS them. Still not undoable: `prototypeSlice` links (each op is a
+server round trip). See
+[`docs/reference/editor-history.md`](../reference/editor-history.md) → "Board
+history".
 
 ---
 

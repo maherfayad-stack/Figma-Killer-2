@@ -9,10 +9,11 @@ Every undoable mutation captures a `HistoryEntry` — a pair of Mutative patch a
 ## TL;DR
 
 - History is `_historyPast: HistoryEntry[]` and `_historyFuture: HistoryEntry[]` on the editor store. Max depth: `MAX_HISTORY` (50).
-- Each `HistoryEntry` holds `{ inverse, forward, coalesceKey }` — patch arrays, not full-site clones — plus an optional `structural` tag for a gesture that also wrote MARKUP to the user's source.
-- `runHistoricMutation` is the single entry point. All seven `mutate*` helpers delegate to it.
-- Continuous-input bursts (per-keystroke text/number edits) fold into one entry via `commitHistory` coalescing.
+- Each `HistoryEntry` holds `{ inverse, forward, coalesceKey }` — patch arrays, not full-site clones — plus an optional `structural` tag for a gesture that also wrote MARKUP to the user's source, and an optional `board` state pair for a gesture in the BOARD domain.
+- `runHistoricMutation` is the single entry point for `site`; `commitBoardChange` is its board-domain counterpart. Both push through `commitHistoryEntry` (`historyStack.ts`), the sole writer of the stacks.
+- Continuous-input bursts (per-keystroke text/number edits) fold into one entry via `commitHistoryEntry` coalescing.
 - Patches are scoped to `site` (`state.site.*`) — editor-local state (selection, zoom, panel visibility) is not undoable.
+- **One stack, two domains** (`store-09`). Board state (`boards` / `activeBoardId`, persisted to `.studio/boards.json`) records a before/after SNAPSHOT PAIR on the same stack instead of patches — `boardHistory.ts`. ⌘Z gives back the last thing the user did, whether it was a style value, a structural move, a frame drag or a sticky-note move.
 - History is in-memory session state — never serialized.
 - A **structural** entry (a move/delete written to the `.tsx`) is undone by RE-ISSUING the gesture, never by replaying its patches. See "Structural undo" below.
 - A reparse that renumbers `rel:line:col` node ids **re-addresses** the stack (`historyNodeIdRemap.ts`); wiping is the fallback, not the default.
@@ -50,6 +51,24 @@ export interface HistoryEntry {
   coalesceKey: string | null
   /** Set when this transaction also wrote STRUCTURE to the user's source. */
   structural?: StructuralHistory
+  /** Set when this transaction changed BOARD state (`store-09`). */
+  board?: BoardHistory
+}
+
+/**
+ * Board state before/after. Snapshots, not patches: every board mutation is a
+ * pure transform republished through `upsertBoard`, so a pair is two
+ * references over a persistent structure — O(1) to store and to restore, with
+ * no patch path that goes stale when a board or frame index shifts.
+ */
+export interface BoardHistorySnapshot {
+  boards: BoardsFile
+  activeBoardId: string | null
+}
+
+export interface BoardHistory {
+  before: BoardHistorySnapshot
+  after: BoardHistorySnapshot
 }
 
 export type StructuralHistory =
@@ -94,7 +113,7 @@ function runHistoricMutation(recipe, coalesceKey) {
   set(state => {
     // Apply all changed fields to the live store (site + any editor fields)
     for (const key of touched) live[key] = produced[key]
-    if (siteForward.length > 0) commitHistory(state, { inverse: siteInverse, forward: siteForward, coalesceKey })
+    if (siteForward.length > 0) commitHistoryEntry(state, { inverse: siteInverse, forward: siteForward, coalesceKey })
     state.hasUnsavedChanges = true
   })
 }
@@ -124,7 +143,7 @@ All seven helpers in `SiteSliceHelpers` delegate to `runHistoricMutation`:
 
 ## Coalescing
 
-Per-keystroke mutations (text edits, number sliders) pass a stable `coalesceKey` such as `props:<nodeId>:<prop>`. While the incoming key matches `_historyCoalesceKey`, `commitHistory` folds the new entry into the existing top entry **per patch path** (`foldIntoCoalescedEntry` in `helpers.ts`):
+Per-keystroke mutations (text edits, number sliders) pass a stable `coalesceKey` such as `props:<nodeId>:<prop>`. While the incoming key matches `_historyCoalesceKey`, `commitHistoryEntry` folds the new entry into the existing top entry **per patch path** (`foldIntoCoalescedEntry` in `historyStack.ts`):
 
 - **inverse**: the OLDEST patch per path wins (undo restores the pre-burst value); new paths append.
 - **forward**: the NEWEST patch's value per path wins (redo replays the final value), preserving the oldest patch's op (an `add` stays an `add` so redo works from the post-undo state where the prop is absent).
@@ -132,6 +151,10 @@ Per-keystroke mutations (text edits, number sliders) pass a stable `coalesceKey`
 A whole typing burst becomes one undo step holding at most one inverse + one forward patch per touched path — a 2,000-keystroke burst retains 2 paths' worth of patches, not 4,000 progressively-longer string snapshots.
 
 Any non-coalescing mutation, `undo`, `redo`, or a site (re)load resets `_historyCoalesceKey` to `null`.
+
+A board entry folds the same way, by domain: the burst keeps its ORIGINAL
+`board.before` and takes the newest `board.after`. That is what makes one
+pointer drag exactly one undo entry — see "Board history" below.
 
 ---
 
@@ -196,6 +219,86 @@ set(state => {
 ```
 
 `redo` is symmetric: pops from `_historyFuture`, applies `entry.forward`, pushes back onto `_historyPast`.
+
+A board-only entry (`isBoardOnlyEntry`) takes `runBoardStep` instead, which
+needs no `site` at all — hence the `site` guard sits BELOW the board branch. An
+entry carrying both domains restores both halves in the same `set`.
+
+---
+
+## Board history — the second domain
+
+`store-09`. User report, verbatim: *"when moving sticky notes, and elements in
+the canvas and click ctrl + z it doesn't get back to that position"*, against
+the standing rule *"it should work on every action"*.
+
+**What is recorded.** Everything in `boardSlice.ts` +
+`boardFrameSliceActions.ts` + `boardAnnotationSliceActions.ts` +
+`boardBulkFrameSliceActions.ts` + `boardFrameSelectionActions.ts` that changes
+`boards`: frame move / resize / rect / membership / axes / "duplicate as
+variant", board create / rename / delete, ruler guides, sticky notes and doc
+cards (add, move, resize, text, color, delete, duplicate, paste, nudge,
+reorder), and every bulk frame action.
+
+**How.** `commitBoardChange(set, get, coalesceKey, nextBoards, extras)` in
+`boardHistory.ts`. The pure `@core/studio-board` transforms are untouched; this
+only owns the store write, and it applies the mutation AND records the entry in
+one `set`. `extras.also` writes editor-local fields (selection, clipboard,
+frame defaults) live WITHOUT recording them — the same rule
+`runHistoricMutation` applies to the editor fields a site recipe touches.
+
+**One entry per drag.** A frame drag calls `setFramePosition` on every
+`pointermove` and an annotation drag calls `moveNote`/`moveDoc` the same way
+(that position is real board state the snap guides and the autosave read, so it
+cannot be deferred to pointer-up). Each tick commits, so every continuous
+gesture passes a key from `boardCoalesceKey`, scoped to the ENTITY:
+
+| Gesture | Key | Closed by |
+|---|---|---|
+| Frame move drag | `board:frame-move:<frameId>` | `endBoardGesture` on pointer-up |
+| Frame resize drag | `board:frame-rect:<frameId>` | `endBoardGesture` on pointer-up |
+| Frame arrow-nudge | `board:frame-nudge` | `endBoardGesture` on `keyup` |
+| Note/doc move drag | `board:annotation-move:<kind>:<id>` | `endBoardGesture` on pointer-up |
+| Note/doc resize drag | `board:annotation-resize:<kind>:<id>` | `endBoardGesture` on pointer-up |
+| Note/doc arrow-nudge | `board:annotation-nudge` | `endBoardGesture` on `keyup` |
+| Sticky-note text session | `board:note-text:<noteId>` | `endBoardGesture` on blur/Escape |
+| Doc rich-text session | `board:doc-html:<docId>` | `endBoardGesture` on session end |
+| Guide drag | `board:guide-move:<guideId>` | `endBoardGesture` on pointer-up |
+
+Everything else (add, delete, rename, recolor, reorder, every bulk action)
+passes `null` — a discrete commit is its own entry.
+
+`endBoardGesture()` is what makes the SECOND drag of the same thing a second
+undo step. Without it the key would still match and both drags would fold into
+one entry.
+
+**Persistence.** Board state is Studio's own state on disk, never the user's
+`.tsx`, so undo is plain state replay plus a re-persist: `restoreBoardSnapshot`
+re-raises `boardsDirty` (the signal `AdminCanvasLayout`'s 800ms autosave
+watches) and re-raises `boardsPendingExplicitRemoval` when the restore shrinks
+the frame set — without which `boardsSaveGuard.ts` would refuse the save that
+lands the undo.
+
+**Reload boundaries — opposite answers, on purpose.**
+
+- A **site** reload/patch that fails `historySurvivesReload` now calls
+  `retainBoardOnlyEntries` instead of `= []`. A `.tsx` reparse says nothing
+  about `.studio/boards.json`; wiping a sticky-note move because a page's line
+  numbers shifted is exactly the bug `store-08` fixed for the site domain.
+  `remapHistoryEntries` passes board entries through untouched (they carry no
+  patch paths and no structural tag).
+- A **boards** read (`loadBoards`, `markBoardsLoadFailed`) calls
+  `dropBoardHistory`. A stored snapshot references the object graph the store
+  held at the time; once the server hands back a different graph, replaying it
+  would not undo the last gesture, it would resurrect a whole boards file.
+  Entries that also carry site patches keep those and lose only their board half.
+
+**Why LIFO makes whole-file snapshots exact.** The stack is only ever read from
+the top, so at the moment of undo the live state IS this entry's `after` and
+assigning `before` is exact rather than approximate. The only way that breaks is
+a board mutation that bypasses the history stack — which is why the two boards
+READ paths purge, and why `seedFramesForActiveBoard` (the one-time default-board
+hydration, not a gesture) is deliberately not recorded.
 
 ---
 
@@ -268,13 +371,18 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 ## What is NOT undoable
 
 - Selection, hover, zoom, pan — editor-local UI state, not in the `site` document.
-- **Everything in `boardSlice.ts`** — frame position/size (`setFramePosition`,
-  `setFrameSize`, `setFrameRect`), board create/rename/delete, guides,
-  annotations, and the prototype links in `prototypeSlice.ts`. All of it lives
-  outside `site` (in `boards`/`prototype` state persisted to `.studio/`), and
-  `runHistoricMutation` records only `site`-scoped patches. Undoing a board
-  frame move would need a second history domain; there is no partial version of
-  that worth shipping.
+- **Prototype links** (`prototypeSlice.ts` / `prototypeActions.ts`). Unlike
+  board state, every link op is a SERVER round trip
+  (`applyPrototypeOp` → `adoptPrototype`), so undo would have to re-issue an
+  async write and handle its failure — the shape `structuralHistory.ts` uses for
+  moves, not the shape `boardHistory.ts` uses for boards. Named gap.
+- **`seedFramesForActiveBoard`** — the one-time default-board hydration
+  `useStudioDefaultBoardSeed` runs at load. Deliberate: it is not a gesture, and
+  recording it would put an undo entry on the stack before the user has touched
+  anything.
+- **Board/annotation SELECTION, `activeBoardId` on its own, snap guides,
+  `frameDefaults`** — editor-local, same rule as node selection. (Undo does
+  PRUNE an annotation selection that points at something the restore removed.)
 - **Undo of a source `delete`, `duplicate`, `wrap` or `insert`.** `duplicate`,
   `wrap` and `insert` do not mutate the tree at all on a studio-imported board
   (the source grows and the board re-reads), so they never produce a history
@@ -294,7 +402,9 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 
 ## Related
 
-- `src/admin/pages/site/store/slices/site/helpers.ts` — `runHistoricMutation`, `commitHistory`, all six `mutate*` helpers
+- `src/admin/pages/site/store/slices/site/helpers.ts` — `runHistoricMutation`, all six `mutate*` helpers
+- `src/admin/pages/site/store/slices/site/historyStack.ts` — `commitHistoryEntry`, `foldIntoCoalescedEntry` (the sole writer of the stacks)
+- `src/admin/pages/site/store/slices/boardHistory.ts` — `commitBoardChange`, `restoreBoardSnapshot`, `boardCoalesceKey`, `retainBoardOnlyEntries`, `dropBoardHistory`
 - `src/admin/pages/site/store/slices/site/undoRedoActions.ts` — `undo`, `redo`, `runStructuralStep`
 - `src/admin/pages/site/store/slices/site/structuralHistory.ts` — `tagStructuralGesture`, `captureMoveOrigin`, `reissueStructuralMove`
 - `src/admin/pages/site/store/slices/site/historyNodeIdRemap.ts` — `buildReparseNodeIdRemap`, `remapHistoryEntries`
@@ -306,6 +416,7 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 - Gate tests:
   - `src/__tests__/architecture/centralized-site-mutation-history.test.ts`
   - `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`
+- `src/__tests__/editor-store/boardUndo.test.ts` — board undo/redo, one-entry-per-drag, two-domain interleaving, reload boundaries
   - `src/__tests__/editor-store/undo-redo.test.ts`
   - `src/__tests__/editor-store/structuralMoveUndo.test.ts`
   - `src/__tests__/editor-store/structuralReloadHistoryPreservation.test.ts`
