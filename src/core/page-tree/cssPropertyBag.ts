@@ -210,6 +210,18 @@ const CSSPropertyBagSchema = Type.Object({
   transform: Type.Optional(Type.String()),
   transformOrigin: Type.Optional(Type.String()),
 
+  // The standalone individual-transform properties. `rotate` and `scale` are
+  // separate declarations from `transform`, applied BEFORE it, which is what
+  // lets the Position section's rotation field and its flip buttons write one
+  // honest value each instead of parsing and rewriting a `transform` function
+  // list (`RotationRow.tsx`). Both are edited by real controls, so they are
+  // full bag members and claimed by the `position` section — the reason the
+  // `transition-*` longhands below are deliberately absent is precisely that
+  // nothing edits those. `translate` is NOT here: no control writes it, and a
+  // key the panel cannot control is an empty row in the style search.
+  rotate: Type.Optional(Type.String()),
+  scale: Type.Optional(Type.String()),
+
   // Motion
   //
   // Both the shorthands and the `animation-*` longhands are real members of

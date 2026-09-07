@@ -87,6 +87,13 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'bottom',
       'left',
       'zIndex',
+      // F1's third row (G10): the standalone individual-transform properties
+      // the rotation field and the flip pair write (`RotationRow.tsx`).
+      // Claimed here so a style search finds them and the section's "N set"
+      // dot counts them — a property the panel edits must not read as
+      // "custom".
+      'rotate',
+      'scale',
     ],
   },
   {
@@ -173,6 +180,10 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     icon: PaintBucketSolidIcon,
     collapsedWhenEmpty: true,
     properties: [
+      // G9's completion: a text node's `color` IS its fill, and Figma shows
+      // it in Fill, not in the type block. It sits first because it is the
+      // topmost paint — text renders over the box's own background.
+      'color',
       'backgroundColor',
       'background',
       'backgroundImage',
@@ -229,6 +240,10 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     // property listed twice would be counted twice and shown twice.
     properties: [
       'boxShadow',
+      // G9's completion: a text shadow is a shadow. It was resident on
+      // Typography's own rows only because Effects did not exist yet when
+      // that section shipped.
+      'textShadow',
       'filter',
       'backdropFilter',
       'transform',
@@ -274,8 +289,12 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'textDecoration',
       'textTransform',
       'whiteSpace',
-      'color',
-      'textShadow',
+      // `color` moved to `fill` and `textShadow` to `effects` — G9's target
+      // shape, finished once those two sections existed to receive them
+      // (docs/features/inspector-disclosure.md §4 G9). A property is claimed
+      // by exactly ONE section: this array drives the "N set" count and the
+      // style search, so leaving either listed here as well would count it
+      // twice and show it twice.
       // Reached through the section's settings popover (G9 / Figma F25-F27),
       // not as resident rows. Listed here so a style search still finds them
       // and so they count toward the section's "N set" indicator — a property

@@ -43,11 +43,12 @@
  * `textAlign`. `SETTINGS_ONLY_PROPERTIES` is that list; `showSettingsTrigger`
  * below is the gate.
  *
- * `color` and `textShadow` stay resident here rather than moving to
- * Fill/Effects the way the plan's target eventually wants — see the G9
- * handoff in STATE.md: G6 (Fill) and G8 (Effects) haven't run yet, and
- * moving them now would delete the only way to reach them. That is the one
- * way this section is not literally four rows today.
+ * `color` and `textShadow` are NOT here. They moved to Fill and Effects
+ * respectively (G9's target shape, finished in W8-1) once those two sections
+ * existed to receive them — a text node's colour is its fill, and a text
+ * shadow is a shadow. `classStyleSections.ts` is where that ownership is
+ * declared, and a property may be claimed by exactly one section. This
+ * section is now literally F23's four rows.
  */
 
 import { useRef, useState } from 'react'
@@ -80,10 +81,6 @@ const TOP_SPEC: ReadonlyArray<StackedGridEntry> = [
   ['fontWeight', 'fontSize'],
   ['lineHeight', 'letterSpacing'],
 ]
-
-// `color` / `textShadow` — see this file's header doc for why they're still
-// here instead of Fill / Effects.
-const BOTTOM_SPEC: ReadonlyArray<StackedGridEntry> = ['color', 'textShadow']
 
 /** See this file's "SEARCH REACHABILITY" doc. */
 const SETTINGS_ONLY_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
@@ -211,8 +208,6 @@ export function TypographySection({
           )}
         </div>
       )}
-
-      <StackedPropertyGrid spec={BOTTOM_SPEC} visibleProperties={visibleProperties} {...gridProps} />
 
       {settingsOpen && (
         <TypographySettings

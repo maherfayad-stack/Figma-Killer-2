@@ -251,8 +251,9 @@ NAMING A CSS-MODULE CLASS AS A PLAIN STRING. Two className conventions live side
   RIGHT:   <div className={styles.row}>
   ALSO OK: <button className="btn btn--primary">   /* a real global design-system class */
 
-PASTING A SECOND SCREEN'S COMP WITHOUT SAYING WHICH PAGE IT IS. An image pasted straight into chat is armed as a design reference automatically — but only for the page that was ACTIVE on the board when you pasted it. Paste screen 2's comp while screen 1 is still open, or while no page is open at all, and it registers unscoped: studio_compare on screen 1 can then silently start measuring against screen 2's design instead of refusing. Before pasting a comp for a screen that is not yet open, switch the board to that page (or create it) FIRST, then paste. If you cannot tell which page an already-armed reference is scoped to, call studio_list_design_references and check its pageId before trusting studio_compare's verdict.
-  WRONG:   <user pastes SignUp comp, agent builds SignUp> ... <user pastes VerifyEmail comp while SignUp is still the open page> ... studio_compare pageId:'sign-up'   /* now silently scored against VerifyEmail's design */
+LETTING A PASTED IMAGE STAND IN FOR THE DESIGN. Every image pasted into chat is kept as a design reference with role "context", scoped to the page that was ACTIVE on the board when it was pasted. Context is not the spec: it is used only when the page has no registered design and no other candidate. A design you register yourself — studio_register_design_reference, role "spec" by default — always wins, and a page left holding two equally-ranked candidates is REFUSED by name, not guessed. So a refusal naming two ids is not a bug and not a reason to skip measuring: read the ids, pick the one that is actually the design, and pass it as referenceId. When you paste-and-build, switch the board to the target page FIRST so the reference registers scoped to it, and register the real export as a spec as soon as you have it.
+  WRONG:   <studio_compare refuses: "sms has no registered design, and 2 images from this conversation could stand in"> -> report the screen as done by eye
+  RIGHT:   studio_list_design_references pageId:'sms' -> the 375x800 is the comp, the 943x294 is a question screenshot -> studio_compare pageId:'sms' referenceId:'<the 375x800 id>'
   RIGHT:   <user pastes VerifyEmail comp> -> open/create the VerifyEmail page FIRST, so it is active when the reference registers -> studio_compare pageId:'verify-email'
 
 GIVING UP ON A REFERENCE BECAUSE THE IMAGE IS ONLY INLINE. An image a Figma tool rendered into your context is a picture you can SEE, not bytes you can re-emit — there is no route from it into imageBase64, and a url you construct against api.figma.com returns 404 because it needs a token Studio does not have. Neither fact means you are stuck. DOWNLOAD the export to disk, then register the file by path. The same move gets you the real photos and logos the design uses instead of placeholder boxes. Asking the user to attach a PNG by hand is the last resort, not the first.
@@ -271,7 +272,7 @@ SHAPING A LOGO OUT OF CSS. A gradient is not a logo and a hand-written path is n
   WRONG:   .googleGlyph { background: conic-gradient(from -45deg, #ea4335 25%, …); }
   RIGHT:   download the real mark (Assets, step 2), or leave a neutral box and NAME it as a gap in your reply.
 
-TREATING A DISCONNECTED BOARD AS A DEAD END. studio_screenshot and studio_compare drive the live board in the user's browser. The tab reconnects by itself within a few seconds of any interruption, and the tool already waits through two full reconnect windows internally before it answers — so if it STILL reports no connected board, the project is genuinely not open. Say so in one sentence, and do not write a pile of files you have no way to verify. Do not call it again expecting a different answer when nothing else has changed.
+TREATING A DISCONNECTED BOARD AS A DEAD END. studio_screenshot and studio_compare do NOT need the user's tab: they render the pages off disk in a server-side headless browser first, and only fall back to relaying to an open board when that cannot run. A result carrying capturedVia:"headless" never involved a tab at all. If one of them fails, read WHICH half failed — "capture-unavailable" names both, and a headless failure is usually a missing Chromium (bunx playwright install chromium), which is a thing to report, not a board problem. The tools that genuinely require the open board are studio_computed_styles and studio_page_diagnostics, because they read the live frames. Those wait for a reconnecting tab internally before answering — one reconnect window when a board was live moments ago, two when nothing is known to be reconnecting — so if one still reports no connected board, the project is genuinely not open. Say so in one sentence, and do not write a pile of files you have no way to verify. Do not call it again expecting a different answer when nothing else has changed.
 
 Others, without examples: surveying the repository before writing anything; re-reading a file you just wrote; asking a question the reference image already answers; reporting progress in place of a passing studio_compare; restyling a user's imported screen toward your own habits.
 
@@ -409,15 +410,22 @@ function buildLiveDigestLines(live: StudioLiveDigest): string[] {
   // means studio_compare passes" rule in the static prefix has something
   // concrete to point at instead of being conditional on a discovery the
   // agent had no way to make. See `StudioLiveDigest.designReferences`.
+  // Each entry carries its ROLE, because the roles are what decide which one a
+  // comparison actually uses: a `spec` (a design you or the user deliberately
+  // registered) outranks every `context` image (anything attached to chat), and
+  // a page left with two equally-ranked candidates is refused by name rather
+  // than guessed. Listing them without the roles is how a pasted "why does this
+  // look wrong?" screenshot came to shadow a page's real Figma frame for an
+  // entire project.
   lines.push(
     live.designReferences.length > 0
-      ? `Design references registered (measure with studio_compare — this is what DONE means here): ${boundedList(
+      ? `Design references registered (measure with studio_compare — this is what DONE means here; "spec" is a design to match and always wins, "context" is an image from the conversation and is only used when it is the page's only candidate): ${boundedList(
           live.designReferences.map(
-            (r) => `${r.id}${r.pageId ? `→${r.pageId}` : ''} ${r.width}x${r.height}${r.label ? ` "${r.label}"` : ''}`,
+            (r) => `${r.id}${r.pageId ? `→${r.pageId}` : ''} ${r.width}x${r.height} ${r.role}${r.label ? ` "${r.label}"` : ''}`,
           ),
           8,
         )}`
-      : 'Design references registered: (none) — nothing to measure against yet, so do not report a match you cannot measure. Arm one yourself before you build: download the design export to disk (a connected Figma connector\'s asset-download tool writes real files) and pass studio_register_design_reference its path. An image the user attaches to chat is registered automatically and also lands on this line.',
+      : 'Design references registered: (none) — nothing to measure against yet, so do not report a match you cannot measure. Arm one yourself before you build: download the design export to disk (a connected Figma connector\'s asset-download tool writes real files) and pass studio_register_design_reference its path. An image the user attaches to chat is registered automatically too, but as "context" — kept and addressable, never assumed to be the design you are matching.',
   )
   // What the LAST turn wrote and whether it was ever measured — see
   // `StudioLiveDigest.pageWriteVerification`'s own doc for why this is "last

@@ -21,6 +21,79 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-13 — W8-1: one field model for every number in the inspector
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `fix/inspector-field-ergonomics` off `origin/main`, merged forward
+  to `f65c4ef`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-1, all six items, one PR. Nothing from
+  W8-2/3/4 — they own overlapping files and must not run beside this.
+- **What landed, per item:**
+  1. **The bare-number bug (correctness).** `ScrubInput.commit()` wrote raw
+     text, so typing `50` into Width emitted `width: 50` — not a declaration;
+     the browser drops it and the user's stylesheet keeps a dead line. Commit
+     now goes through `resolveCommitValue` (`scrubMath.ts`): keyword →
+     untouched, number/arithmetic → evaluated and given the field's own `unit`,
+     **anything else → the literal, unchanged**. `unit=''` means a genuinely
+     unitless field (`FrameBulkInspector`, the frame W/H inputs).
+  2. **One nudge model.** `numericNudge.ts` is now the only place the numbers
+     live: 1 / 10 / 0.1, Alt beating Shift. The ±8 "8px design scale" variant
+     and `FrameSizePanel`'s hand-rolled ±8 ladder are gone; `RotationRow` and
+     the gradient angle dropped their bespoke ±15. `isLengthNudgeProp` →
+     **`isNudgeableProp`** (the set is no longer only lengths) and gained
+     `opacity` + `zIndex`, whose empty-field unit is `''` so a nudge cannot
+     invent `opacity: 1px`.
+  3. **Maths.** New `src/ui/components/ScrubInput/numericExpression.ts` — a
+     recursive-descent evaluator for `100/2`, `100+8`, `100*2`, `(80+20)/2`,
+     TypeBox-validated on the way out. `scrubMath`, `numericNudge` and
+     `tokenUtils.resolveTokenValue` all call it, so one grammar serves every
+     numeric field. It **refuses** mixed units (`100px + 8em`) and division by
+     zero rather than guessing, and every refusal keeps the literal.
+  4. **Enter keeps focus** in all three field kinds (`ScrubInput`,
+     `TokenAwareInput`, `FrameSizePanel`), re-selecting the text. Found and
+     fixed a real latent bug on the way: Escape's `blur()` fires before React
+     re-renders the reverted draft, so the blur handler committed the very text
+     Escape discarded. Both fields now guard it with a `revertingRef`. (It was
+     invisible to tests because `fireEvent.focus` never sets `activeElement`,
+     so the `.blur()` raised no event.)
+  5. **Flip H/V** on the rotation row, writing the standalone `scale` property
+     (`flipValue.ts`) for the same reason rotation writes standalone `rotate`.
+     Two refusals, both disabled-with-a-reason: `transform` already carrying a
+     scale-family function, and a `scale` outside the plain-number space
+     (`50%`, `var()`, a z component). Rotation stays live through both.
+  6. **G9 finished.** `color` → Fill (a new **Text** row, topmost, plus an "Add
+     text colour" header button); `textShadow` → Effects (rows through the same
+     `boxShadowLayers.ts` parser under a new `TEXT_SHADOW_GRAMMAR` — three
+     lengths, no `inset` — and `EffectEditorPopover`'s `variant: 'text'`, which
+     omits Spread and Inset). `TypographySection` is now literally F23's four
+     rows.
+- **Two things worth knowing:**
+  - `rotate` and `scale` are now **real `CSSPropertyBag` members** and claimed
+    by the `position` section. `RotationRow` had been writing `rotate` through
+    an `as keyof CSSPropertyBag` cast, which left it invisible to the style
+    search and counted as a "custom property".
+  - `FillSection.tsx` hit the 700-line ceiling, so it split three ways:
+    `FillSection.tsx` (which rows exist), `FillSectionParts.tsx` (swatches +
+    popover bodies, components-only for `react-refresh`), `fillModel.ts` (the
+    pure value model).
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — the
+  only failures left are the two documented pre-existing ones (icon-catalog
+  `chevron-left`; the canvas + headless-capture batch-isolation cluster, which
+  passes per-file) plus a `flowRouting.ts` module-resolution error that is on
+  `main` and untouched by this diff. New tests:
+  `numericExpression.test.ts` (evaluator + commit coercion), `flipValue.test.ts`,
+  the `TEXT_SHADOW_GRAMMAR` block in `boxShadowLayers.test.ts`, and the Text
+  fill entry in `fillSection.test.tsx`.
+- **Docs:** `docs/features/inspector-disclosure.md` gained **§5 "The field
+  model"** — written into the previously-empty §5 slot precisely so no existing
+  number moved (~50 files cite these by number) — plus G9.4, G10.2 and a
+  refreshed status table. `STUDIO-FIGMA-PARITY-PLAN.md` §0a has a new
+  "Waves 7–10" table with the W8-1 row.
+- **Next step:** W8-2 (scrub unification + the look pass) is unblocked and is
+  the natural follow-on — it wires scrubbing into every numeric this PR taught
+  to nudge and do maths. W8-3 and W8-4 also list W8-1 as their blocker.
+
 ### panel-12 — W7-1: the launcher sorts, fails, and redraws honestly
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open)
@@ -166,6 +239,36 @@ are the remaining WS-2 items, not yet dispatched. See
   - **The compare numbers are for a 5-page batch of SMALL screens on one machine.** They are a floor, not a budget — nothing gates on them yet, and nobody should turn them into a gate without a second machine's run.
 - **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — see the entry's PR body for the run; failures are the standing pre-existing set (`standing-01`), none in `scripts/`.
 - **Human action needed:** none. Re-run `bun run bench:agent-turn` after W9-2/W9-5 land and diff against the table above.
+
+### mcp-20 — W9-1(1): a pasted screenshot was silently the design spec; references now have roles, and an ambiguous page is refused
+- **Agent:** studio-implementer (resumed — the first agent was killed on a session limit near the end; its uncommitted worktree was picked up, not redone)
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `fix/design-reference-resolution`, merged up to `origin/main` (#43/#44/#45 fast-forwarded in clean, then #46/#47).
+- **Goal:** W9-1 item 1 exactly — labelled/explicit references beat chat attachments, an ambiguous page is refused instead of guessed, a chat image is *context* until an explicit gesture promotes it, and `mode`/`passScore`/`maxRegionCoverage` land on the persisted shape for W9-2 to consume.
+- **Scope:** `server/ai/mcp/tools/studio/{referenceResolve.ts,referenceResolve.test.ts (new),designReferenceTools.ts}`, `server/handlers/studio/{designReferenceSchema.ts,designReferenceStore.ts,turnDesignReferences.ts,referenceUpload.ts,pageWriteVerification.ts}` + their tests, `server/ai/tools/studio/{liveDigest.ts,systemPrompt.ts}`, `src/core/ai/{designReferenceImage.ts,toolSchemas.ts,designReferenceToolSchemas.ts (new),index.ts}`, `docs/features/{agent.md,mcp-connectors.md}`.
+- **The bug, concretely:** `resolveDesignReference` picked the most recently registered reference while `registerTurnDesignReferences` registered EVERY chat-attached image durably. A screenshot pasted to ask a question outranked the Figma frame the page was built from. Live in `studio-workspace/test4`: the `sms` page's 375x800 frame is shadowed by a 943x294 chat crop, so `studio_compare` refuses on aspect ratio and the Stop gate can never pass again — the real design still on disk, correct, unreachable.
+- **Done so far:**
+  - **`role` on the persisted shape** (`designReferenceSchema.ts`): `'spec' | 'context'`, optional. `designReferenceRole()` derives it from `source` for rows written before the field (`chat-attachment` → `context`, anything else → `spec`). **No rewrite pass runs** — a row gains an explicit role only when next written. `CHAT_ATTACHMENT_REFERENCE_SOURCE` moved here from `turnDesignReferences.ts`: reading a legacy row's role back is a property of the persisted shape, not of the turn pipeline.
+  - **Four-tier precedence, role first** (`referenceResolve.ts`): page-scoped `spec` → unscoped `spec` → page-scoped `context` → unscoped `context`. First non-empty tier decides; **>1 candidate in it is a refusal naming every id, its dimensions and label**, plus the `referenceId` argument that ends it. A reference scoped to a *different* page is never a candidate and gets its own message. Failures are now typed (`ResolveReferenceFailure`: `unknown-id`/`ambiguous`/`other-pages-only`/`none`).
+  - **A chat attachment registers `role:'context'`**; the composer's DESIGN REFERENCE upload route and `studio_register_design_reference` both default to `'spec'`.
+  - **The write-verification gate stopped giving the wrong instruction.** An ambiguous page resolves to no reference, so it used to fall into `describeUnverifiedPage`'s unarmed branch — the Stop hook blocked the turn and told the agent to *register* a design, i.e. add a third candidate to a set it already could not choose from. `PageWriteVerificationEntry.referenceAmbiguity` carries the refusal, and `describeUnverifiedPage` has a third branch ending in `studio_compare({pages:[…], referenceId:"…"})`. Same sentence in the gate and the digest, as before.
+  - **`mode`/`passScore`/`maxRegionCoverage`** added to `DesignReferenceSchema`, the `@core/ai` mirror, the register tool schema and the upload route (which converts and *rejects* an unparseable numeric multipart field rather than coercing to `NaN`). Nothing reads them yet — that is W9-2.
+  - **The digest and system prompt carry the role** on every `Design references registered:` entry, because the roles are what decide which entry a comparison would use. `figmaReferenceNudge` now checks for a page-scoped **spec**, not merely "a reference" — a pasted crop no longer suppresses the nudge on exactly the pages that need it.
+  - Reads that must not be truncated (`resolveDesignReference`, `findDesignReferenceByContentHash`, the digest) go through the new uncapped `readAllDesignReferences`; `listDesignReferences`' cap exists to bound a tool RESULT and was silently bounding decisions.
+- **Next step:** none for this entry. W9-1 item 4 (docs/hygiene) landed separately as #46.
+- **Decisions:**
+  - **Role outranks page scope.** Scope says which screen an image is ABOUT; role says whether it is a design at all. The composer's DESIGN REFERENCE control registers unscoped by design, so scope-first would make the deliberate control lose to any crop that happened to name the page.
+  - **Ambiguity is a refusal, not a tie-break.** "Newest" is precisely the rule that shipped this bug; "oldest" fails the user who registers a corrected export. The agent holds the fact that settles it, and the refusal costs one tool call against a whole project measured against the wrong picture.
+  - **A lone `context` image still resolves.** Demoting attachments must not un-arm the ruler for the paste-a-comp-and-build flow `turnDesignReferences.ts` exists to serve. What it can no longer do is outrank a spec or win a page silently.
+  - **No durable "promote to spec" tool was added.** The two gestures that exist — a `referenceId` argument per call, and registering as `role:'spec'` — cover the plan's requirement, and `studio_delete_design_reference` clears a crowded page. A promote-in-place tool is a real gap only if refusals turn out to repeat across turns; deferred rather than guessed at.
+  - **`toolSchemas.ts` was split, not grandfathered.** The new optional fields pushed it to 705 lines (ceiling 700). The design-reference family moved to `src/core/ai/designReferenceToolSchemas.ts` — that file documents itself as "site WRITE-tool input schemas" and these are headless server tools, so the split is by responsibility, not by line count. `DIR_INPUT_DESCRIPTION` is exported (not re-exported from the barrel) so `dir` means one thing on every Studio tool.
+- **Landmines:**
+  - **`registerDesignReference` is NOT idempotent** — only `registerTurnDesignReferences` de-dupes, by content hash, before calling it. Registering the same bytes twice through the tool creates a second entry and therefore an ambiguous page. This is why the ambiguity message names `studio_delete_design_reference`'s subject matter rather than suggesting a re-register.
+  - **`role` is optional on disk on purpose.** An entry with no `role` is exactly the legacy shape the derivation reads; writing a speculative `'spec'` default at registration would erase the distinction. `designReferenceStore.test.ts` pins the omission.
+  - **The list and read tools project `designReferenceRole(r)` onto every returned entry** so `role` is never missing in a tool result. Do not "simplify" that away — a listing showing role on some rows and not others reads as "unknown" rather than the settled fact it is.
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` → 11467 pass / 29 fail before the split, all pre-existing (`standing-01`): the `icon-catalog-integrity` `chevron-left` case, the seven `captureFramesHeadless` + two `studio_compare` browser tests ("No Chromium available"), the canvas batch-isolation cluster, and a `flowRouting.ts` `routePrototypeLinks` export error from a parallel session. The one failure that WAS mine — `module-size-budgets` at 705 lines — is fixed by the split above; re-run green. `bun test src/core/ai src/__tests__/architecture server/handlers/studio/{designReferenceStore,pageWriteVerification}.test.ts server/ai/mcp/tools/studio/referenceResolve.test.ts` → 550 pass / 1 fail (`chevron-left`). `entryStylesheetCache.test.ts` passes in isolation, confirming its batch failure is the known flake.
+- **Human action needed:** **dogfood.** Open `test4` at `/admin/site`, ask the agent to compare the `sms` page, and confirm it now measures against the 375x800 Figma frame rather than refusing on the 943x294 chat crop's aspect ratio. Then paste a second screenshot on a page with no registered design and confirm the refusal names both ids instead of picking one.
 
 ### struct-07 — W6-5: the code the wave train orphaned is deleted
 - **Agent:** studio-implementer
@@ -636,6 +739,21 @@ here **verbatim**, so archiving buries no dogfood step.
 
 ### Still in "Recently landed" below — the entry carries the full script
 
+- **`panel-13` — W8-1 inspector field ergonomics** (in `## Now`, not yet landed
+  to `main`). Open the Properties panel on a text node in `studio-workspace/test4`
+  and, in one pass: (1) type `50` into Width, press **Enter** — the field must
+  read `50px`, keep focus, and have its text selected; (2) type `100/2` into
+  Height and Tab out — `50px`; (3) Shift+↑ on any length (should step 10, not 8),
+  then Alt+↑ (0.1), then Shift+Alt+↑ (0.1 — Alt wins); (4) ↑ on **Opacity** and
+  **Z-index**, which had no keyboard step at all before — confirm no `px` is
+  appended; (5) Escape mid-edit — the old value must come back, and must NOT be
+  overwritten by the blur; (6) the two **Flip** buttons beside Rotation — flip
+  H, flip V, flip both, then flip back and confirm the `scale` declaration is
+  removed from the file rather than left as `scale: 1 1`; then set
+  `transform: scale(2)` by hand and confirm both buttons go disabled with a
+  reason on hover; (7) **Fill** now carries a **Text** row for `color` and an
+  "Add text colour" `+`, and **Effects** carries **Text shadow** rows with no
+  Spread/Inset fields — check both write to the real `.tsx`/CSS on disk.
 - **`panel-12` — W7-1 launcher polish** (in `## Now`, not yet landed to `main`).
   Card scale + hover lift in both themes, the rename-then-sort fix, the failed-
   listing retry, and the post-delete refetch. Five-step script in the entry.
@@ -863,6 +981,94 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### docs-06 — W9-1.4: prose for every agent tool, plus three comment-truth fixes
+- **Agent:** studio-scribe
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `docs/agent-tool-prose` off `origin/main` (`f65c4ef`). Note: the
+  branch NAME was already checked out by another worktree, so the commit was
+  made on this worktree's own branch and pushed to `docs/agent-tool-prose` on
+  the remote. Nothing was lost — the local branch of that name held zero
+  commits ahead of `origin/main`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W9-1 item 4, all four parts. Docs + the test
+  fix + comment truth only; deliberately zero behaviour change.
+- **Scope:** `docs/features/agent.md`,
+  `server/handlers/studio/{projectMcpApprovals.ts,projectMcpApprovals.test.ts,remoteAssetFetch.ts}`,
+  `server/ai/tools/studio/systemPrompt.ts` (one prompt paragraph), `STATE.md`.
+- **Done so far:**
+  - **The "19 of 31" is exactly right, and the 31 is `STUDIO_AGENT_TOOL_NAMES`,**
+    not the MCP registry (which is 48 `studio_*` + `get_context` + 2 `mcp_*` +
+    the 35 CMS `site_*`). The 19 with zero mentions in `agent.md` were:
+    `computed_styles`, `page_diagnostics`, `quality_check`, `typecheck`,
+    `fidelity_report`, `list_design_references`, `read_design_reference`,
+    `ingest_design_variables`, `list_design_variables`,
+    `read_design_variable_set`, `set_frames`, `list_comments`, `reply_comment`,
+    `resolve_comment`, `project_profile`, `list_pages`, `list_tokens`,
+    `find_component`, `install_status`.
+  - `agent.md` gained a **Studio tool index** (all 31, with where each runs and
+    its capability gate) + a registry-only table (17 more) + a paragraph on
+    `get_context` / `mcp_list_project_servers` / `mcp_propose_server` /
+    `site_read_styles` / `site_publish`, then seven new prose sections covering
+    all 19. Every claim was read out of the tool's own source, not its name.
+  - **`projectMcpApprovals.test.ts` fixed properly, not shimmed.** It imported
+    `assertKnownAgentTools` + two others from `./agentRosterMcpTools`, a module
+    deleted with the subagent roster. The two survivors moved to
+    `./projectMcpApprovals`; the roster gate did not survive and has nothing
+    left to gate, so its `describe` block, the `StudioAgentDef` import and the
+    `agentDef` helper were deleted rather than resurrected. 7 tests pass.
+  - **`remoteAssetFetch.ts:210` corrected.** It claimed Figma's Dev Mode server
+    at `127.0.0.1:3845` is "the ONLY Figma server a Studio agent gets
+    (`BUILT_IN_MCP_SERVERS`)". False since `figma` moved to the remote endpoint:
+    `BUILT_IN_MCP_SERVERS` now ships exactly `https://mcp.figma.com/mcp`. The
+    loopback escape hatch is still real and still needed — it just serves a
+    server the *user* registers, which is precisely why it stays an env var.
+  - **`systemPrompt.ts:274` had drifted twice.** It told the agent
+    `studio_screenshot`/`studio_compare` "drive the live board in the user's
+    browser" — untrue since W4-2A: `captureFrames` renders headless off disk
+    FIRST and only falls back to the tab. And "waits through two full reconnect
+    windows" is only true outside `RECENT_BRIDGE_MS` (60 s); inside it,
+    `awaitEditorBridgeForUser` deliberately waits ONE. Rewritten to point the
+    agent at `capturedVia`/`capture-unavailable` and to name
+    `studio_computed_styles` + `studio_page_diagnostics` as the tools that
+    genuinely need the board.
+  - **Two more stale claims found and fixed in `agent.md` while there** (item 5):
+    its `studio_screenshot` step 3 said "relay to the browser-side
+    `studio_export_frames` handler over the live editor bridge", and
+    `studio_compare` said it "captures through the live bridge". Both predate
+    W4-2A's headless-first routing. Nothing describes a removed tool, and the
+    "6 server-side / 29 browser-bridged" CMS counts were re-counted and are
+    correct.
+- **Next step:** none for this entry. If someone picks up `agent.md` again, the
+  real remaining problem is length — see Landmines.
+- **Decisions:** the registry-only tools got table rows with a sourced sentence
+  each rather than 17 more prose sections — the doc's own established shape for
+  a tool surface you reach for rather than live in, and the alternative would
+  have doubled an already-oversized file. The 19 agent tools all got real prose,
+  which is what the work order asked for.
+- **Landmines:**
+  - `docs/CONVENTIONS.md` caps a doc at ~600 lines. `agent.md` was **1226**
+    before this and is **1370** after. Splitting it (the Studio tool surface
+    wants to be its own doc) is a genuine follow-up, deliberately not bundled
+    into a docs-accuracy PR. Do not treat the cap as satisfied.
+  - `CONVENTIONS.md` rule 7 says "no history, no *we used to*". `agent.md`
+    ignores that throughout, on purpose — the causal "this exists because X
+    failed" framing is what stops an agent re-breaking a constraint. New
+    sections match the file's voice, not the generic rule. Do not "fix" one
+    without the other 1200 lines.
+  - `bun run build` cannot complete in an agent worktree: `node_modules/vite`
+    is absent, so `tsc -b` passes and the vite step dies on a missing module.
+    Not a code failure — run the bundle half in the primary checkout.
+- **Verification:** `bun test server/handlers/studio/projectMcpApprovals.test.ts
+  server/ai/tools/studio/systemPrompt.test.ts
+  server/handlers/studio/remoteAssetTools.test.ts` → 26 pass / 0 fail.
+  `bun test src/__tests__/architecture` → 478 pass / 18 fail, **all 18 the
+  known pre-existing icon-catalog `Gate 1`/`Gate 2` cluster** (`chevron-left`,
+  `plus`, `undo`, …), none in a file this touched. `bun run lint` → clean.
+  `bunx tsc -b` → exit 0. `bun run build`'s vite half not run (see Landmines).
+- **Human action needed:** none. No UI and no behaviour changed; the one
+  runtime-visible edit is a paragraph of the agent's system prompt, whose new
+  claims were each read off `captureFrames.ts` and `editorBridge.ts`.
 
 ### docs-05 — W6-4: sweep `docs/` to describe the current tree
 

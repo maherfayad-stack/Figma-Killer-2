@@ -97,19 +97,31 @@
     font-weight: 500;
 }
 
-/* F1's third row — rotation. Same icon-cell shape as `constraintCell` /
- * LayoutSection's `directionCell`: a leading mark, the field, and a
- * hover-revealed clear button overlaid on the trailing edge. */
+/* F1's third row — the rotation field, then Figma's flip pair. The field
+ * grows; the two flip toggles keep their intrinsic width at the trailing
+ * edge, the same [field] […] shape as `rotationSettingsRow` above. */
 .rotationCell {
-    position: relative;
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
     align-items: center;
+    gap: var(--inspector-field-gap);
     color: var(--text);
+}
+
+/* The field's own positioning context, so the hover-revealed clear button
+ * overlays the INPUT's trailing edge rather than the flip buttons' — same
+ * icon-cell shape as `constraintCell` / LayoutSection's `directionCell`. */
+.rotationField {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .rotationInput {
     min-width: 0;
+}
+
+.rotationFlipBtn {
+    flex: 0 0 auto;
 }
 
 .rotationClearBtn.rotationClearBtn {
@@ -131,8 +143,8 @@
         color 100ms ease;
 }
 
-.rotationCell:hover .rotationClearBtn,
-.rotationCell:focus-within .rotationClearBtn {
+.rotationField:hover .rotationClearBtn,
+.rotationField:focus-within .rotationClearBtn {
     opacity: 1;
     pointer-events: auto;
 }

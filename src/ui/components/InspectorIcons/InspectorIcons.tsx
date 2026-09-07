@@ -315,3 +315,27 @@ export function RotateIcon(props: IconProps) {
     />
   )
 }
+
+/**
+ * Flip horizontal / vertical — a dashed mirror axis with a stepped wedge on
+ * each side, the same shape Figma uses. The two are exact transposes of each
+ * other so the pair reads as one control; each wedge is three 2px-tall
+ * blocks rather than a triangle, which is how this set draws a diagonal.
+ */
+export function FlipHorizontalIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M11 3h2v2h-2V3Zm0 4h2v2h-2V7Zm0 4h2v2h-2v-2Zm0 4h2v2h-2v-2Zm0 4h2v2h-2v-2ZM8 5h2v14H8V5ZM6 7h2v10H6V7ZM4 9h2v6H4V9Zm10-4h2v14h-2V5Zm2 2h2v10h-2V7Zm2 2h2v6h-2V9Z"
+    />
+  )
+}
+
+export function FlipVerticalIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M3 11h2v2H3v-2Zm4 0h2v2H7v-2Zm4 0h2v2h-2v-2Zm4 0h2v2h-2v-2Zm4 0h2v2h-2v-2ZM5 8h14v2H5V8ZM7 6h10v2H7V6ZM9 4h6v2H9V4Zm-4 10h14v2H5v-2Zm2 2h10v2H7v-2Zm2 2h6v2H9v-2Z"
+    />
+  )
+}
