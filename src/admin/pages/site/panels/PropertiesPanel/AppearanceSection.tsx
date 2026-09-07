@@ -47,6 +47,7 @@ import { useRef, useState } from 'react'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { resolveStylePlaceholder } from './stylePlaceholder'
+import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import { hasStyleValue, pickMixedString, plainString, readString } from './styleValueUtils'
 import { isMixed, MIXED, type Mixed } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
@@ -246,6 +247,7 @@ export function AppearanceSection({
 
   const collapsedValue = cornerValue('TopLeft')
   const collapsedPlaceholder = cornerPlaceholder('TopLeft')
+  const collapsedDisplay = radiusDisplay(collapsedValue, collapsedPlaceholder)
 
   /*
    * All five radius fields are `ScrubInput`s: the corner glyph they already
@@ -265,8 +267,9 @@ export function AppearanceSection({
       key="radius-all"
       fieldSize="sm"
       label={<CornerRadiusIcon size={13} aria-hidden="true" />}
-      value={collapsedValue}
-      placeholder={collapsedPlaceholder}
+      value={collapsedDisplay.value}
+      placeholder={collapsedDisplay.placeholder}
+      inherited={collapsedDisplay.inherited}
       unit={parseNudgeableValue(collapsedPlaceholder)?.unit ?? 'px'}
       min={0}
       aria-label="Corner radius, all corners"
@@ -278,15 +281,16 @@ export function AppearanceSection({
   )
 
   const expandedFields = CORNERS.map((corner) => {
-    const value = cornerValue(corner)
     const placeholder = cornerPlaceholder(corner)
+    const display = radiusDisplay(cornerValue(corner), placeholder)
     return (
       <ScrubInput
         key={corner}
         fieldSize="sm"
         label={<CornerRadiusIcon size={13} aria-hidden="true" />}
-        value={value}
-        placeholder={placeholder}
+        value={display.value}
+        placeholder={display.placeholder}
+        inherited={display.inherited}
         unit={parseNudgeableValue(placeholder)?.unit ?? 'px'}
         min={0}
         aria-label={`Border radius, ${cornerLabel(corner)}`}
@@ -342,4 +346,21 @@ export function AppearanceSection({
       </div>
     </div>
   )
+}
+
+/**
+ * The `value` / `placeholder` / `inherited` trio for one corner-radius field,
+ * from the one display rule (`styleFieldDisplay.ts`): the declared radius,
+ * else the radius the element actually renders (muted), else nothing.
+ */
+function radiusDisplay(stored: string | Mixed, current: string): { value: string | Mixed | undefined; placeholder: string | undefined; inherited: boolean } {
+  const display = resolveStyleFieldDisplay({
+    storedValue: isMixed(stored) ? undefined : stored,
+    currentValue: current,
+  })
+  return {
+    value: isMixed(stored) ? stored : display.value,
+    placeholder: display.placeholder,
+    inherited: !isMixed(stored) && display.inherited,
+  }
 }

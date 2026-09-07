@@ -38,6 +38,10 @@ export function GapInput({ value, isSet, mixed, onChange, onPreview, onClearPrev
         value={value}
         placeholder="0px"
         mixed={mixed}
+        // The caller already hands this field the CURRENT gap, so it is
+        // prefilled by construction; this flag is what draws it one tone down
+        // while nothing declares it here (`styleFieldDisplay.ts`).
+        inherited={!isSet && value !== undefined && value !== ''}
         prefix={<GapIcon size={13} aria-hidden="true" />}
         tokens={tokens}
         min={0}

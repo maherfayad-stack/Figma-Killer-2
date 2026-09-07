@@ -97,6 +97,14 @@ export interface ScrubInputProps {
   min?: number
   max?: number
   placeholder?: string
+  /**
+   * The displayed `value` is what the element actually renders, not something
+   * the field's own target declares — the panel's prefill state (see
+   * `styleFieldDisplay.ts` in the Properties panel). Presentation only: the
+   * field is fully live, and committing over the value writes it for real.
+   * Renders one text tone down so "shown" is never mistaken for "set here".
+   */
+  inherited?: boolean
   disabled?: boolean
   fieldSize?: FieldSize
   className?: string
@@ -116,6 +124,7 @@ export function ScrubInput({
   min,
   max,
   placeholder,
+  inherited = false,
   disabled = false,
   fieldSize = 'sm',
   className,
@@ -252,6 +261,7 @@ export function ScrubInput({
       data-testid={dataTestId}
       data-dragging={scrub.isDragging ? 'true' : undefined}
       data-state={mixed ? 'mixed' : undefined}
+      data-inherited={inherited ? 'true' : undefined}
     >
       <span
         className={cn(styles.label, disabled && styles.labelDisabled)}
@@ -264,7 +274,7 @@ export function ScrubInput({
         ref={inputRef}
         type="text"
         inputMode="text"
-        className={cn(styles.input, showingKeyword && styles.keyword)}
+        className={cn(styles.input, showingKeyword && styles.keyword, inherited && styles.inherited)}
         value={draft}
         placeholder={mixed ? 'Mixed' : placeholder}
         disabled={disabled}

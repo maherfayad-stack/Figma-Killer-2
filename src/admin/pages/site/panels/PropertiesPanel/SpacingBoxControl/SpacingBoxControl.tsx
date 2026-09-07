@@ -49,6 +49,8 @@ import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import { useSpacingTokens, type Token } from '@site/property-controls/tokenUtils'
+import { resolveStyleFieldDisplay } from '../styleFieldDisplay'
+import { plainString } from '../styleValueUtils'
 import styles from './SpacingBoxControl.module.css'
 
 // ---------------------------------------------------------------------------
@@ -479,6 +481,16 @@ function SideInput({
 }: SideInputProps) {
   const inputId = useId()
 
+  // The one display rule (`styleFieldDisplay.ts`): a side with nothing stored
+  // shows the margin/padding the element ACTUALLY has, muted, rather than an
+  // empty box behind a grey hint. `data-state` on the segment is still what
+  // says whether this side is declared here.
+  const display = resolveStyleFieldDisplay({
+    storedValue: value,
+    currentValue: placeholder,
+    fallback: '0',
+  })
+
   // The label segment provides the broad click/focus hit area while the input
   // itself remains the semantic text control. The whole token-autocomplete
   // behaviour — draft state, suggestion filtering, commit, hover/typed
@@ -496,8 +508,8 @@ function SideInput({
     >
       <TokenAwareInput
         id={inputId}
-        value={value}
-        placeholder={placeholder || '0'}
+        value={plainString(display.value)}
+        placeholder={display.placeholder}
         tokens={tokens}
         fieldSize="xs"
         overlay

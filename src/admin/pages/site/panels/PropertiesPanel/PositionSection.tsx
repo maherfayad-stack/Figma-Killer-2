@@ -84,7 +84,8 @@ import { ArrowBarLeftIcon } from 'pixel-art-icons/icons/arrow-bar-left'
 import { DropdownSwitcher } from './DropdownSwitcher'
 import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
 import { useSpacingTokens, type Token } from '@site/property-controls/tokenUtils'
-import { hasStyleValue, readString } from './styleValueUtils'
+import { plainString, readString } from './styleValueUtils'
+import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import { isMixed, MIXED } from '@ui/components/MixedValue'
 import { SingleNodeAlignRow } from './SingleNodeAlignRow'
 import { PositionConstraints } from './PositionConstraints'
@@ -324,16 +325,17 @@ function DirectionInput({
   onPreview,
   onClearPreview,
 }: DirectionInputProps) {
-  // W8-3 — `hasStyleValue` is true for the MIXED Symbol, so without this the
-  // field would `String()` the sentinel straight into the input.
-  const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
-  const isSet = !mixed && hasStyleValue(storedValue)
-  const placeholder =
-    mixed || isSet
-      ? undefined
-      : hasStyleValue(currentValue)
-        ? String(currentValue)
-        : 'auto'
+  // The one display rule (`styleFieldDisplay.ts`): the stored value, else the
+  // inset the element actually renders (muted), else `auto` as a hint. W8-3 —
+  // `hasStyleValue` is true for the MIXED Symbol, which the resolver catches
+  // before anything `String()`s the sentinel into the input.
+  const display = resolveStyleFieldDisplay({
+    storedValue,
+    currentValue,
+    fallback: 'auto',
+  })
+  const mixed = isMixed(display.value)
+  const isSet = display.isSet
 
   return (
     <div
@@ -343,9 +345,10 @@ function DirectionInput({
     >
       <ScrubTokenField
         aria-label={ariaLabel}
-        value={isSet ? String(storedValue) : undefined}
-        placeholder={placeholder}
+        value={plainString(display.value) || undefined}
+        placeholder={display.placeholder}
         mixed={mixed}
+        inherited={display.inherited}
         prefix={<DirectionIcon size={14} />}
         tokens={tokens}
         onCommit={(resolved) => onChange(property, resolved)}

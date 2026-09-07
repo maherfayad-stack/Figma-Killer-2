@@ -246,7 +246,10 @@
 }
 
 .segment[data-state="unset"] .sideInput.sideInput {
-    color: var(--text-subtle);
+    /* Prefilled with the spacing the element actually has, not empty
+       (`styleFieldDisplay.ts`) — a real value, drawn one tone down because
+       this side declares nothing of its own. */
+    color: var(--text-muted);
 }
 
 .sideInput.sideInput::placeholder {

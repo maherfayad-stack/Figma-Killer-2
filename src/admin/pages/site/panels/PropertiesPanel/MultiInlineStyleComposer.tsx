@@ -50,6 +50,7 @@ import { StyleSectionsEditor } from './StyleSectionsEditor'
 import { buildClassChain } from './stylePropertyProvenance'
 import { buildMultiSelectStyleBags, type MultiSelectStyleNode } from './multiSelectStyleBags'
 import { resolveSelectedNodes } from './multiSelectNodes'
+import { isTextSelection } from './styleSectionOrder'
 import { StyleWriteLockContext } from './StyleWriteLockContext'
 import { blockedProperties, buildInlineStyleWriteReach } from './styleWriteReach'
 import noticeStyles from './SharedComponentNotice.module.css'
@@ -177,6 +178,7 @@ export function MultiInlineStyleComposer({
           // Hover-preview is class-keyed in the store; skip it for inline editing.
           onPreview={noop}
           onClearPreview={noop}
+          textFirst={isTextSelection(nodes)}
         />
       </StyleWriteLockContext.Provider>
     </TokenCatalogProvider>
