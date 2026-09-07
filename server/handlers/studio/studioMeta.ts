@@ -204,6 +204,19 @@ export const StudioMetaSchema = Type.Object({
   /** WS-12 §5.1 — see `AgentSessionSchema` above. */
   agentSession: Type.Optional(AgentSessionSchema),
   /**
+   * W7-2 — epoch ms of the last time the editor loaded this project
+   * (`GET /admin/api/studio/load`, the one request that means "this project is
+   * open on the board"). Written by `recordProjectOpened`.
+   *
+   * A FACT about the project, recorded where every other per-project fact
+   * lives, and deliberately not a per-user one: it exists so W7-5's onboarding
+   * checklist can tick "open it on the board" from something that actually
+   * happened, rather than from a flag the checklist set itself. Absent means
+   * the project has never been opened since this field shipped — which reads
+   * the same as "never opened", and is the honest answer either way.
+   */
+  lastOpenedAt: Type.Optional(Type.Number()),
+  /**
    * W5-4 — the most recent preview deploy for this project: which provider,
    * how it ended, the URL, and the branch/dirty state it shipped. Written by
    * `deployJobs.ts` at the start and the end of every deploy, and the reason
@@ -379,4 +392,22 @@ export function mergeStudioMeta(dir: string, patch: Partial<StudioMeta>): Studio
   const merged: StudioMeta = { ...readStudioMeta(dir), ...patch }
   writeStudioMeta(dir, merged)
   return merged
+}
+
+/**
+ * Stamps `lastOpenedAt` with the current time. Called from
+ * `GET /admin/api/studio/load` — the request that means "the editor is showing
+ * this project" — so the fact is recorded by the thing that happened, not by
+ * the UI that wants to read it later.
+ *
+ * Best-effort by design: a project directory that has become unwritable is a
+ * problem for a SAVE, and taking the board's load down over a timestamp would
+ * be the wrong trade. The failure is logged and the load continues.
+ */
+export function recordProjectOpened(dir: string): void {
+  try {
+    mergeStudioMeta(dir, { lastOpenedAt: Date.now() })
+  } catch (err) {
+    console.error('[studio:studioMeta] could not record lastOpenedAt', err)
+  }
 }

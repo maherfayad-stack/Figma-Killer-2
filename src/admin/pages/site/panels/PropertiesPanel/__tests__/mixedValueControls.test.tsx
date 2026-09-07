@@ -190,10 +190,12 @@ describe('ClassPropertyRow — MIXED cell', () => {
   })
 
   it('marks a text-typed property mixed', () => {
+    // `cursor` is text-typed and carries no in-field glyph, so it takes the
+    // plain `TextControl` branch rather than the scrub field.
     render(
-      <ClassPropertyRow property="lineHeight" value={MIXED} onChange={noop} onRemove={noop} />,
+      <ClassPropertyRow property="cursor" value={MIXED} onChange={noop} onRemove={noop} />,
     )
-    const field = screen.getByLabelText('Line height') as HTMLInputElement
+    const field = screen.getByLabelText('Cursor') as HTMLInputElement
     expect(field.getAttribute('data-mixed')).toBe('true')
     expect(field.value).toBe('')
   })
@@ -201,10 +203,21 @@ describe('ClassPropertyRow — MIXED cell', () => {
   it('reports one real value to onChange on the first edit', () => {
     const onChange = mock((_p: unknown, _v: unknown) => {})
     render(
-      <ClassPropertyRow property="lineHeight" value={MIXED} onChange={onChange} onRemove={noop} />,
+      <ClassPropertyRow property="cursor" value={MIXED} onChange={onChange} onRemove={noop} />,
     )
-    fireEvent.change(screen.getByLabelText('Line height'), { target: { value: '1.5' } })
-    expect(onChange).toHaveBeenCalledWith('lineHeight', '1.5')
+    fireEvent.change(screen.getByLabelText('Cursor'), { target: { value: 'pointer' } })
+    expect(onChange).toHaveBeenCalledWith('cursor', 'pointer')
+  })
+
+  it('hands the scrub field the Mixed placeholder too', () => {
+    // A glyph-bearing numeric property renders as `ScrubInput`, which takes no
+    // `mixed` flag of its own — the row states it through the placeholder.
+    render(
+      <ClassPropertyRow property="lineHeight" value={MIXED} onChange={noop} onRemove={noop} />,
+    )
+    expect(
+      (screen.getByLabelText('Line height') as HTMLInputElement).getAttribute('placeholder'),
+    ).toBe('Mixed')
   })
 })
 

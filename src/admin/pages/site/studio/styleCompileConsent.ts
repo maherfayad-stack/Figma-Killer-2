@@ -24,7 +24,8 @@ const ROUTE = '/admin/api/studio/style-compile-consent'
 /**
  * A styling toolchain that can only be compiled by running the workspace's
  * own code. Mirrors `CompilableStyleToolchain` in
- * `server/handlers/studio/styleCompile.ts` — this file runs in the browser,
+ * `server/handlers/studio/projectProfileSchema.ts` — this file runs in the
+ * browser,
  * so (same reasoning as `studioProjectTrust.ts`'s `TrustTierSchema`) it only
  * needs to agree on the wire shape, not import the Node-only server module.
  */

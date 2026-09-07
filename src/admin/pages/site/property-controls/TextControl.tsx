@@ -4,18 +4,30 @@ import type { TextControlNormalize } from '@core/module-engine'
 import { normalizeIdentifierInput, normalizeIdentifierValue } from '@core/utils/identifier'
 import { Input } from '@ui/components/Input'
 import { ControlRow } from '@ui/components/ControlRow'
+import { resolveCommitValue } from '@ui/components/ScrubInput'
 import { handleNudgeKeydown } from './numericNudge'
 
 interface TextControlProps extends ControlProps<string> {
   placeholder?: string
   normalize?: TextControlNormalize
   /**
-   * When set, the field supports arrow-key nudging of its numeric value
-   * (±1 / ±8 Shift / ±0.1 Alt), and an empty field starts from `0` with
-   * this unit (e.g. `'px'`). Omit for non-numeric text props (the default),
-   * which leaves arrow keys as plain caret movement.
+   * Marks the field as holding a SINGLE NUMBER in this unit — the §5 field
+   * model, minus the drag gesture (this control draws no mark to drag).
+   * Setting it turns on both halves at once:
+   *
+   *   - arrow-key nudging (±1 / ±10 Shift / ±0.1 Alt), with an empty field
+   *     starting from `0` in this unit;
+   *   - commit coercion on blur: a bare number is given this unit and
+   *     arithmetic is evaluated, through the same `resolveCommitValue` every
+   *     other numeric field uses. Without it, typing `100/2` into a
+   *     border-width row wrote the literal `100/2` and typing `50` wrote the
+   *     invalid declaration `border-width: 50`.
+   *
+   * Pass `''` for a genuinely unitless number (`opacity`, `zIndex`) so a bare
+   * number stays bare. Omit for non-numeric text props (the default), which
+   * leaves arrow keys as plain caret movement and commits the literal.
    */
-  nudgeEmptyUnit?: string
+  numericUnit?: string
   /**
    * Mark rendered inside the field's leading edge, standing in for the label
    * — the inspector's way of naming a value without spending a row on it.
@@ -33,7 +45,7 @@ export function TextControl({
   label,
   placeholder,
   normalize,
-  nudgeEmptyUnit,
+  numericUnit,
   prefix,
   isOverride,
   disabled,
@@ -45,9 +57,14 @@ export function TextControl({
   }
 
   function handleBlur(nextValue: string) {
-    if (normalize !== 'identifier') return
-    const normalized = normalizeIdentifierValue(nextValue)
-    if (normalized !== value) onChange(propKey, normalized)
+    if (normalize === 'identifier') {
+      const normalized = normalizeIdentifierValue(nextValue)
+      if (normalized !== value) onChange(propKey, normalized)
+      return
+    }
+    if (numericUnit === undefined) return
+    const resolved = resolveCommitValue(nextValue, numericUnit)
+    if (resolved !== nextValue) onChange(propKey, resolved)
   }
 
   return (
@@ -73,8 +90,21 @@ export function TextControl({
         onChange={(e) => handleChange(e.target.value)}
         onBlur={(e) => handleBlur(e.target.value)}
         onKeyDown={
-          nudgeEmptyUnit !== undefined
-            ? (e) => handleNudgeKeydown(e, value ?? '', (next) => onChange(propKey, next), { emptyUnit: nudgeEmptyUnit })
+          numericUnit !== undefined
+            ? (e) => {
+                if (e.key === 'Enter') {
+                  // Figma: Enter commits and KEEPS focus, re-selecting the
+                  // value so the next keystroke replaces it (§5.4).
+                  e.preventDefault()
+                  const input = e.currentTarget
+                  handleBlur(input.value)
+                  requestAnimationFrame(() => input.select())
+                  return
+                }
+                handleNudgeKeydown(e, value ?? '', (next) => onChange(propKey, next), {
+                  emptyUnit: numericUnit,
+                })
+              }
             : undefined
         }
       />

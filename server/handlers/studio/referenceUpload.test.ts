@@ -38,10 +38,11 @@ async function pngFile(name: string, width = 10, height = 10): Promise<File> {
   return new File([bytes], name, { type: 'image/png' })
 }
 
-async function post(dirValue: string, file: File): Promise<Response> {
+async function post(dirValue: string, file: File, fields: Record<string, string> = {}): Promise<Response> {
   const form = new FormData()
   form.set('dir', dirValue)
   form.set('file', file)
+  for (const [key, value] of Object.entries(fields)) form.set(key, value)
   const res = await tryServeStudioReferenceUpload(
     new Request(ROUTE_URL, { method: 'POST', body: form }),
     new URL(ROUTE_URL),
@@ -78,6 +79,38 @@ describe('tryServeStudioReferenceUpload', () => {
     expect(body.reference.width).toBe(12)
     expect(body.reference.height).toBe(9)
     expect(fs.existsSync(path.join(dir, '.studio', 'references', `${body.reference.id}.png`))).toBe(true)
+  })
+
+  it('POST lands a spec — the DESIGN REFERENCE control IS the explicit gesture', async () => {
+    // A file a human picked through this control is a design they nominated,
+    // so it outranks every image that merely got pasted into the conversation
+    // (those arrive via registerTurnDesignReferences as `context`).
+    const res = await post(dir, await pngFile('hero.png'))
+    const body = await res.json() as { reference: { role?: string } }
+    expect(body.reference.role).toBe('spec')
+  })
+
+  it('POST carries the optional fidelity fields through to the manifest', async () => {
+    const res = await post(dir, await pngFile('hero.png'), {
+      pageId: 'sms',
+      mode: 'strict',
+      passScore: '99',
+      maxRegionCoverage: '0.5',
+    })
+    const body = await res.json() as {
+      reference: { pageId?: string; mode?: string; passScore?: number; maxRegionCoverage?: number }
+    }
+    expect(body.reference.pageId).toBe('sms')
+    expect(body.reference.mode).toBe('strict')
+    expect(body.reference.passScore).toBe(99)
+    expect(body.reference.maxRegionCoverage).toBe(0.5)
+  })
+
+  it('POST rejects an unparseable threshold instead of silently dropping it', async () => {
+    // A dropped threshold is a comparison quietly held to the default bar —
+    // the exact class of quiet wrong answer this route must not produce.
+    const res = await post(dir, await pngFile('hero.png'), { passScore: 'very high' })
+    expect(res.status).toBeGreaterThanOrEqual(400)
   })
 
   it('GET returns null when nothing has been uploaded yet, then the most recent upload', async () => {

@@ -19,3 +19,18 @@
 .handle:hover {
     color: var(--text);
 }
+
+/* Mid-gesture the mark stays lit even if the pointer has strayed off it —
+ * pointer capture keeps the drag live, so the affordance has to as well.
+ * Mirrors ScrubInput.module.css's `[data-dragging='true']` treatment. */
+.handle[data-dragging='true'] {
+    color: var(--text-bright);
+}
+
+/* A glyph mark (corner radius, gap, the direction arrows) instead of a
+ * letterform. `block` kills the inline-baseline gap that would otherwise push
+ * the field taller than the number beside it. */
+.handle svg {
+    display: block;
+    flex: 0 0 auto;
+}

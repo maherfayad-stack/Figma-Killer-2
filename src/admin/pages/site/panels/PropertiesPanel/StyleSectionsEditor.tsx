@@ -285,6 +285,26 @@ function StyleSectionGroup({
   // sections, whose behaviour this work order does not touch.
   const displaySetCount = isCollapsible ? setCountEverywhere : setCount
 
+  /*
+   * The write every header "+" makes, plus the reveal that goes with it.
+   *
+   * Law 1's empty state is not a disclosure (see `Section`'s `empty` prop):
+   * there is no chevron to open, so the ONLY thing that can put a section's
+   * body on screen is the first value landing in it. `setCountEverywhere`
+   * turns positive on the next render and drops the static header, but the
+   * body it is replaced by would then honour the `propertiesSectionsExpanded`
+   * preference — i.e. a user who keeps sections collapsed would click "+",
+   * write a real fill, and be shown a closed section. Revealing on the same
+   * gesture is what makes "add" mean "add AND show me what I added".
+   */
+  const addAndReveal = (
+    property: keyof CSSPropertyBag,
+    value: string | number | undefined,
+  ) => {
+    onReveal(section.id)
+    onChange(property, value)
+  }
+
   const stylesMenu = styleTarget && (
     <SectionStylesMenu
       sectionId={section.id}
@@ -308,7 +328,7 @@ function StyleSectionGroup({
       storedStyles={storedStyles}
       currentStyles={currentStyles}
       activeTab={activeTab}
-      onChange={onChange}
+      onChange={addAndReveal}
       onRemove={onRemove}
       onPreview={onPreview}
       onClearPreview={onClearPreview}
@@ -319,7 +339,7 @@ function StyleSectionGroup({
   //  `PropertyList` renders nothing when empty (Law 1), so a bare reveal would
   //  open an empty section. Once a fill exists, `setCountEverywhere > 0` opens
   //  the section on its own — no `onReveal` needed.
-  const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={onChange} />
+  const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={addAndReveal} />
 
   //  Animations' "+" is a typed menu too (Animation / Transition), and like
   //  Effects' it has to be reachable at the one-line Law-1 rest state, since
@@ -328,7 +348,7 @@ function StyleSectionGroup({
   //  so its first write can be co-located with that node's page — hence
   //  `styleTarget`, the same prop the section styles menu already uses.
   const animationsActions = (
-    <AnimationsSectionActions storedStyles={storedStyles} onChange={onChange} styleTarget={styleTarget} />
+    <AnimationsSectionActions storedStyles={storedStyles} onChange={addAndReveal} styleTarget={styleTarget} />
   )
 
   const sectionActions =
@@ -360,6 +380,12 @@ function StyleSectionGroup({
   // user hasn't clicked "+" yet for this selection — one header line, no
   // body. This is independent of the `propertiesSectionsExpanded`
   // preference: an empty collapsible section stays one line either way.
+  //
+  // `empty` also takes the DISCLOSURE away, not just the body. The section
+  // used to keep its chevron and its toggle here, so pointing at an empty
+  // Fill offered to open it and clicking spent a click growing the header by
+  // an empty 10px box. There is nothing behind the chevron until something
+  // is applied; the header earns its disclosure at that point and not before.
   const showsAsEmptyHeader =
     isCollapsible && setCountEverywhere === 0 && !hasActiveQuery && !revealed
 
@@ -368,9 +394,8 @@ function StyleSectionGroup({
       <Section
         title={section.title}
         icon={section.icon}
-        defaultOpen={false}
+        empty
         flush
-        children={null}
         actions={
           <>
             {stylesMenu}

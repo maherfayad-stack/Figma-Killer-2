@@ -54,14 +54,19 @@ Figma's Fill, Stroke and Effects sections are *lists*. Empty list ⇒ a title an
 `+`.
 
 **Rule:** a section with zero set properties and no mandatory control renders as
-`▸ Title  [+]` and nothing more.
+`Title  [+]` and nothing more — **and it is not a disclosure**. No chevron, no
+toggle, no body: there is nothing behind the chevron, so offering one is a lie
+that costs a click and grows the header by an empty box. The header earns its
+accordion the moment something is applied.
 
 Implemented as `collapsedWhenEmpty` on `ClassStyleSectionDefinition`
 (`classStyleSections.ts`), applied by `StyleSectionGroup` in
-`StyleSectionsEditor.tsx`, gated by `__tests__/emptySectionLaw.test.tsx`.
-Emptiness is judged **across every context**, not just the active breakpoint — a
-value living on another tab is still the user's own work and must never be
-hidden behind a `+`. Search must not defeat the law either
+`StyleSectionsEditor.tsx` through the `Section` primitive's **`empty`** prop,
+gated by `__tests__/emptySectionLaw.test.tsx`. Callers pass the fact
+("nothing is applied"), never the presentation — no section special-cases its
+own header. Emptiness is judged **across every context**, not just the active
+breakpoint — a value living on another tab is still the user's own work and must
+never be hidden behind a `+`. Search must not defeat the law either
 (`StyleRuleComposer.tsx`).
 
 ### Law 2 — Rare options live in a popover anchored to the thing they modify (F5, F8, F17, F21, F25–F27)
@@ -131,7 +136,8 @@ The Fill / Stroke / Effects list shape (F13, F14, F16, F20). One component,
 three consumers.
 
 - Empty ⇒ renders **nothing but its header's `+`** (Law 1). The header is the
-  existing `Section` with `actions`.
+  existing `Section` with `actions` and `empty` — the second is what takes the
+  chevron and the toggle away, not just the body.
 - Non-empty ⇒ a row per entry: `[leading] [summary] [value] [👁] [−]`.
 
 ### §3.3 `ExpandableFieldCluster` — used by G4, G5, G7
@@ -166,8 +172,13 @@ unset companion property, then any project-token apply action.
 
 > **Figma:** F13. Fill, Stroke and Effects on a plain frame are three lines total.
 
-A section marked `collapsedWhenEmpty` with nothing set renders as `▸ Title [+]`
-and nothing more; `+` reveals the body for that selection only. The flag is set
+A section marked `collapsedWhenEmpty` with nothing set renders as `Title [+]`
+and nothing more — a static header, not a collapsed accordion (`Section`'s
+`empty` prop; see Law 1). `+` reveals the body for that selection only, and a
+`+` that writes a real value (Fill's colour, Effects' shadow, Animations')
+reveals in the same gesture — otherwise a user who keeps
+`propertiesSectionsExpanded` off would add a fill and be shown a closed
+section. The flag is set
 on `spacing`, `fill`, `border`, `effects`, `animations`, `interaction`,
 `typography` — and **not** on `position`, `size`, `layout`, `appearance`, which
 keep their controls always present (`position`/`size`/`layout` are Figma's
@@ -364,9 +375,9 @@ The three kinds, and the one module each rule lives in:
 
 | Field kind | Where | Used for |
 |---|---|---|
-| `ScrubInput` | `src/ui/components/ScrubInput/` | Drag-the-label numerics: W/H, rotation, shadow offsets, stroke weight |
-| `TokenAwareInput` | `src/admin/pages/site/property-controls/` | Length fields with token autocomplete (padding, margin, `fontSize`) |
-| `TextControl` / the frame W-H inputs | `property-controls/`, `FrameSizePanel.tsx` | The generic property row, and a board frame's own size |
+| `ScrubInput` | `src/ui/components/ScrubInput/` | Drag-the-label numerics with no token scale: W/H, rotation, corner radii, shadow offsets, stroke weight, `opacity`/`zIndex`/`lineHeight`/`letterSpacing` |
+| `ScrubTokenField` / `TokenAwareInput` | `PropertiesPanel/LayoutSection/`, `property-controls/` | Length fields with token autocomplete: padding, margin, `gap`, the insets, `fontSize`. `ScrubTokenField` IS `TokenAwareInput` plus the scrub gesture — not a fourth field kind |
+| `TextControl` / the frame W-H inputs | `property-controls/`, `FrameSizePanel.tsx` | The generic property row that has no mark to drag, and a board frame's own size |
 
 ### §5.1 Commit coerces; it never writes what CSS rejects
 
@@ -376,6 +387,18 @@ A typed value goes through one coercion on commit (blur / Enter / Tab):
 same order: a recognised keyword (`auto`/`fill`/`hug`) passes through; a number
 or an arithmetic expression is evaluated and given **the field's own unit**
 when it carries none; anything else is kept as the user's literal text.
+
+**The field's own unit** is one value, resolved once per row (`fieldUnit`,
+`ClassPropertyRow.tsx`), and it drives all three of the commit coercion, the
+empty-field nudge, and the empty-field drag — so those cannot disagree.
+`isUnitlessNumberProp` (`cssControlTypes.ts`) names the three properties whose
+unit is `''`: `opacity` and `zIndex`, which are unitless by type, and
+`lineHeight`, which is not — it accepts lengths, but its idiomatic value is the
+ratio `1.5`, and `1.5px` is a *different declaration*, not a tidier spelling of
+it. Everything else is a length and takes the computed placeholder's unit when
+it carries one (so a `rem`-based stylesheet keeps scrubbing in `rem`), else
+`px`. `letter-spacing: 1.5` is invalid CSS, so `letterSpacing` is deliberately
+not in the unitless set.
 
 The bug this closes: typing `50` into Width used to emit `width: 50`, which is
 not a declaration — the browser drops it, and the user's stylesheet now
@@ -404,9 +427,15 @@ tempting behaviour is to produce *something*.
 ### §5.3 One nudge model: 1 / 10 / 0.1
 
 Plain ↑/↓ is ±1, Shift is ±10, Alt is ±0.1, and **Alt beats Shift** when both
-are held (the more specific request wins). `numericNudge.ts` owns the numbers;
-`nudgeStepFor` is the only resolver. Drag-scrub uses the same three magnitudes
-as its per-pixel scale.
+are held (the more specific request wins). `nudgeStepFor` is the only resolver,
+and drag-scrub calls it too, so the ladder is one function rather than one
+function plus a hand-written `altKey ? 0.1 : shiftKey ? 10 : 1` in the gesture.
+
+The three magnitudes are **defined** in `scrubMath.ts` and re-exported from
+`numericNudge.ts`, which is still the module whose header explains them. They
+had to move down: `src/ui` cannot import from `src/admin`, and W8-2 put the
+drag gesture in `src/ui`, so leaving the numbers in admin would have guaranteed
+a second copy — which is exactly how the ±8 drift happened the first time.
 
 Before W8-1 there were three ladders — ±10 in `ScrubInput`, ±8 in
 `numericNudge` ("an 8px design scale"), and a hand-rolled ±8 in
@@ -434,6 +463,62 @@ re-rendered the reverted draft, so both `ScrubInput` and `TokenAwareInput` set
 a flag that makes that one blur discard instead of commit — otherwise Escape
 writes the very value it was pressed to abandon.
 
+### §5.5 One scrub engine, and the mark is the handle
+
+Drag-a-number is one interaction, so it is one module: `useScrubDrag`
+(`src/ui/components/ScrubInput/useScrubDrag.ts`). It owns the whole state
+machine — the keyword/token refusal, the 1/10/0.1 per-pixel ladder, `min`/`max`
+clamping, the empty-field unit, the rAF-coalesced preview channel, the
+click-with-no-movement fallthrough to focusing the field, and the final value
+computed fresh from `pointerup`'s own `clientX`.
+
+`ScrubInput` and `ScrubTokenField` both call it. They could not share the
+gesture by one rendering the other — a token-aware field is an `Input` plus an
+autocomplete dropdown, so a component that renders `ScrubInput` cannot also be
+`TokenAwareInput` — and before W8-2 they therefore each carried their own copy.
+The copies had drifted: the token-aware one had no rAF coalescing (a fast
+padding drag fired one editor-store write per `pointermove` instead of one per
+frame), no `min`/`max`, and its own inline ladder. What the two field kinds
+share is the state machine, not the markup, so that is what was extracted.
+
+**A numeric field scrubs when, and only when, it draws a mark.** The mark IS
+the drag handle — the letterform (`W`, `H`, `L`) or the glyph inside the
+field's leading edge. This is why `PROPERTY_FIELD_GLYPHS` (`cssPropertyIcons.ts`)
+is now load-bearing beyond looks: `ClassPropertyRow` renders a nudgeable
+property that has a glyph as a scrub field and one that has none as a plain
+typed field, because a row whose only visible name is a caption in a column the
+row does not own has nothing honest to drag. Adding a property to that map
+therefore gives it the gesture, for free — which is the intended path for the
+rows the look pass will convert. `fontSize` got its mark in W8-2 for exactly
+this reason: it was the one length in the typography block with nothing to grab.
+
+Every numeric in the panel now scrubs: the TRBL insets and the constraint
+offsets (their direction arrow moved from a column beside the field into the
+field, where it is both the name and the handle), `gap`, all five corner radii,
+`opacity`, `zIndex`, `fontSize`, `lineHeight`, `letterSpacing`, padding and
+margin, W/H, rotation, stroke weight, the shadow offsets.
+
+Two deliberate exclusions, both the same rule — *a single number is not the
+whole value*:
+
+- **Grid track templates.** `GridTrackControl` writes `repeat(N, 1fr)` from a
+  segmented count picker, and its custom field holds a free-form template
+  (`200px 1fr 200px`). There is no single number to scrub, and scrubbing one
+  term of a multi-term value would be rewriting CSS we only partly understood
+  (§5.1's third branch). `NUDGE_PROPS` has excluded grid templates since W8-1
+  for the same reason; W8-2 did not change that.
+- **`aspectRatio`, `flex`, `transform`, shadows.** Same argument. Shadows are
+  reached instead through `EffectEditorPopover`, where each *term* is its own
+  `ScrubInput` and each one does have a single number.
+
+`opacity` is scrubbable and clamped to `0..1`, but its field is unitless
+`0`–`1` rather than Figma's `0`–`100%`, so at the shared 1-unit-per-pixel base
+step a plain drag saturates immediately and only Alt (0.1) is fine enough to be
+useful. The fix is the percentage *presentation*, not a bespoke ladder — this
+section's whole point is that a field may not re-decide the model — and that
+presentation belongs to the look pass. Recorded here so it reads as a known
+edge, not an oversight.
+
 ---
 
 ## §6. The measurement gate
@@ -454,6 +539,30 @@ verify rather than trust them.
 Position, Layout, Appearance, Typography, Fill, Stroke and Effects all present,
 fits in **one 900px viewport with no scroll**. Write it as a real test: render
 the panel for the text fixture, assert `scrollHeight <= clientHeight`.
+
+**The width invariant.** Height is what §6 was written to measure, but the panel
+failed on the other axis first. The category rail is a real grid column
+(`--inspector-rail-w`, `minmax(0, 1fr)` beside it) — it does not float over the
+sections — yet the scroll container clips on x at the *panel* edge, so any
+section whose intrinsic width beat its column painted straight across the rail's
+icons. Measured at a 260px panel (`SIDEBAR_MIN_WIDTH`, the narrowest the panel
+can be dragged to): Spacing 379px of content in a 217px column, Layout 347px,
+Stroke 295px, with the margin cluster's gear and the section-header actions
+landing on the rail.
+
+The cause is one CSS fact, not four bugs: a grid track sized `auto` takes its
+minimum from its items, and a grid item's own minimum is its content unless it
+says `min-width: 0`. The clamp is declared once per intrinsic-sizing wrapper —
+`Section.module.css`'s `.sectionBody` (and its children), `LayoutSection`'s and
+`SpacingSection`'s own grids, and `ExpandableFieldCluster`'s `.root`, which is
+the widest block in the panel and is mounted by both padding and margin.
+`.surfaceContent` carries `overflow-x: clip` as the standing guarantee that the
+next one degrades to a truncated control instead of an unusable rail.
+
+**The rule:** every control in the panel shrinks or truncates. Nothing in a
+section body may establish a min-content floor — assert
+`scrollWidth === clientWidth` for every `[data-style-section]` at 260px before
+calling a section done.
 
 Secondary budgets, at rest, panel width 300:
 
