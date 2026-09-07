@@ -69,6 +69,24 @@ export const DesignReferenceMetaSchema = Type.Object({
   /** Human-readable name — this browser path uploads the picked file's own name here. */
   label: Type.Optional(Type.String({ minLength: 1 })),
   source: Type.Optional(Type.String({ minLength: 1 })),
+  /**
+   * `spec` — the design this page is supposed to match — or `context`, an
+   * image that arrived in the conversation and was never nominated as the
+   * thing to match. Server-derived from `source` when a manifest entry
+   * predates the field, so a browser never has to reason about the legacy
+   * shape. Optional here for the same reason it is optional there.
+   */
+  role: Type.Optional(Type.Union([Type.Literal('spec'), Type.Literal('context')])),
+  /** Per-reference fidelity mode. Plumbing for the fidelity-modes work; nothing reads it yet. */
+  mode: Type.Optional(Type.Union([
+    Type.Literal('creative'),
+    Type.Literal('balanced'),
+    Type.Literal('strict'),
+  ])),
+  /** Overall similarity percentage a comparison against THIS reference must reach. Plumbing; nothing reads it yet. */
+  passScore: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+  /** Largest share of the frame (percent) one differing region may cover and still pass, for THIS reference. Plumbing; nothing reads it yet. */
+  maxRegionCoverage: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
 })
 export type DesignReferenceMeta = Static<typeof DesignReferenceMetaSchema>
 

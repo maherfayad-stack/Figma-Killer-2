@@ -67,7 +67,9 @@ import {
   EMPTY_DESIGN_REFERENCE_MANIFEST,
   isDesignReferenceExt,
   type DesignReference,
+  type DesignReferenceFidelityMode,
   type DesignReferenceManifest,
+  type DesignReferenceRole,
 } from './designReferenceSchema'
 
 /** A hand-edited `manifest.json` is untrusted input (same trust level as `.studio/meta.json`) — `readDesignReferenceBytes` re-derives the real file path from `id`+`ext` rather than the manifest's own `relPath` string, so this pattern is what actually gates filesystem access. */
@@ -102,6 +104,17 @@ export interface RegisterDesignReferenceMeta {
   pageId?: string
   label?: string
   source?: string
+  /**
+   * `spec` (the design to match) or `context` (an image from the
+   * conversation). Omitted means "let `designReferenceRole` derive it from
+   * `source`", which is what every caller that has no opinion should do —
+   * writing an explicit `spec` on a path whose source already says so buys
+   * nothing.
+   */
+  role?: DesignReferenceRole
+  mode?: DesignReferenceFidelityMode
+  passScore?: number
+  maxRegionCoverage?: number
 }
 
 export type RegisterDesignReferenceResult =
@@ -166,6 +179,10 @@ export async function registerDesignReference(
     ...(meta.pageId ? { pageId: meta.pageId } : {}),
     ...(meta.label ? { label: meta.label } : {}),
     ...(meta.source ? { source: meta.source } : {}),
+    ...(meta.role ? { role: meta.role } : {}),
+    ...(meta.mode ? { mode: meta.mode } : {}),
+    ...(meta.passScore !== undefined ? { passScore: meta.passScore } : {}),
+    ...(meta.maxRegionCoverage !== undefined ? { maxRegionCoverage: meta.maxRegionCoverage } : {}),
   }
 
   const manifest = readManifest(dir)
@@ -188,13 +205,27 @@ export interface ListDesignReferencesResult {
   omittedCount: number
 }
 
+/**
+ * Every registered reference, uncapped, in registration order.
+ *
+ * The uncapped read is the point. `listDesignReferences` exists to bound a
+ * TOOL RESULT's size; a decision — which reference is this page's spec
+ * (`resolveDesignReference`), have I already registered these bytes
+ * (`findDesignReferenceByContentHash`) — must never be made from a truncated
+ * view, or a project with 60 references silently stops being able to see its
+ * own Figma frame.
+ */
+export function readAllDesignReferences(dir: string): DesignReference[] {
+  return readManifest(dir).references
+}
+
 /** Capped, never a silent drop — `truncated`/`omittedCount` are always honest. */
 export function listDesignReferences(
   dir: string,
   pageId: string | undefined,
   limit: number | undefined,
 ): ListDesignReferencesResult {
-  const all = readManifest(dir).references.filter((r) => !pageId || r.pageId === pageId)
+  const all = readAllDesignReferences(dir).filter((r) => !pageId || r.pageId === pageId)
   const cap = Math.max(1, Math.min(limit ?? DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT))
   const shown = all.slice(0, cap)
   return {
@@ -226,7 +257,7 @@ export function getDesignReference(dir: string, referenceId: string): DesignRefe
  * 50 entries would re-register the oldest references forever.
  */
 export function findDesignReferenceByContentHash(dir: string, contentHash: string): DesignReference | null {
-  return readManifest(dir).references.find((r) => r.contentHash === contentHash) ?? null
+  return readAllDesignReferences(dir).find((r) => r.contentHash === contentHash) ?? null
 }
 
 /**
