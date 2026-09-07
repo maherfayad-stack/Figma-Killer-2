@@ -42,7 +42,7 @@
 
 import { useRef, useState, type ReactNode } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
-import type { Mixed } from '@ui/components/MixedValue'
+import { isMixed, MIXED, MIXED_PLACEHOLDER, type Mixed } from '@ui/components/MixedValue'
 import {
   AddablePropertyField,
   RevealedField,
@@ -141,7 +141,7 @@ function sizingModes(axisNoun: 'width' | 'height'): AddablePropertyFieldMode[] {
       value: option.value,
       label: `Fixed ${axisNoun}`,
       activeLabel: (value: string | Mixed | undefined) =>
-        `Fixed ${axisNoun} (${typeof value === 'string' && value !== '' ? value : '—'})`,
+        `Fixed ${axisNoun} (${isMixed(value) ? MIXED_PLACEHOLDER : typeof value === 'string' && value !== '' ? value : '—'})`,
     }
   })
 }
@@ -218,13 +218,18 @@ export function SizeSection({
   ) => {
     const storedValue = storedStyles[property]
     const currentValue = currentStyles[property]
-    const mode = currentSizingMode(storedValue)
-    const isSet = hasStyleValue(storedValue)
-    const placeholder = !isSet
-      ? hasStyleValue(currentValue)
-        ? String(currentValue)
-        : String(getCSSPropertyDefaultValue(property))
-      : undefined
+    // W8-3 — `hasStyleValue` is true for the MIXED Symbol, so a selection
+    // that disagrees must be caught before `String(storedValue)` prints the
+    // sentinel into the field. `AddablePropertyField` takes `MIXED` directly.
+    const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
+    const mode = mixed ? 'fixed' : currentSizingMode(storedValue)
+    const isSet = !mixed && hasStyleValue(storedValue)
+    const placeholder =
+      mixed || isSet
+        ? undefined
+        : hasStyleValue(currentValue)
+          ? String(currentValue)
+          : String(getCSSPropertyDefaultValue(property))
 
     const additions: AddablePropertyFieldAddition[] = CONSTRAINTS.filter(
       (c) => c.axis === property && !isRevealed(c.prop),
@@ -236,7 +241,7 @@ export function SizeSection({
           name={ariaLabel}
           label={fieldMark}
           aria-label={ariaLabel}
-          value={isSet ? String(storedValue) : undefined}
+          value={mixed ? MIXED : isSet ? String(storedValue) : undefined}
           placeholder={placeholder}
           onChange={(next) => onChange(property, next)}
           onPreview={previewProperty ? (next) => previewProperty(property, next) : undefined}
@@ -268,19 +273,21 @@ export function SizeSection({
   const revealedRow = (spec: ConstraintSpec) => {
     const storedValue = storedStyles[spec.prop]
     const currentValue = currentStyles[spec.prop]
-    const isSet = hasStyleValue(storedValue)
-    const placeholder = !isSet
-      ? hasStyleValue(currentValue)
-        ? String(currentValue)
-        : String(getCSSPropertyDefaultValue(spec.prop))
-      : undefined
+    const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
+    const isSet = !mixed && hasStyleValue(storedValue)
+    const placeholder =
+      mixed || isSet
+        ? undefined
+        : hasStyleValue(currentValue)
+          ? String(currentValue)
+          : String(getCSSPropertyDefaultValue(spec.prop))
 
     return (
       <RevealedField
         key={spec.prop}
         label={spec.icon}
         ariaLabel={spec.ariaLabel}
-        value={isSet ? String(storedValue) : undefined}
+        value={mixed ? MIXED : isSet ? String(storedValue) : undefined}
         placeholder={placeholder}
         onChange={(resolved) => onChange(spec.prop, resolved)}
         onPreview={previewProperty ? (resolved) => previewProperty(spec.prop, resolved) : undefined}
@@ -386,18 +393,20 @@ function GenericSizeRow({
   onClearPreview,
 }: GenericSizeRowProps) {
   const storedValue = storedStyles[property]
-  const isSet = hasStyleValue(storedValue)
   const currentValue = currentStyles[property]
-  const fallbackValue = hasStyleValue(currentValue)
-    ? currentValue
-    : getCSSPropertyDefaultValue(property)
+  // W8-3 — MIXED reaches `ClassPropertyRow` as a value (it renders the word);
+  // it must never reach `placeholder`, which would stringify the Symbol.
+  const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
+  const isSet = !mixed && hasStyleValue(storedValue)
+  const fallbackValue =
+    !mixed && hasStyleValue(currentValue) ? currentValue : getCSSPropertyDefaultValue(property)
 
   return (
     <ClassPropertyRow
       key={`${activeTab}-${String(property)}`}
       property={property}
-      value={isSet ? (storedValue as string | number) : undefined}
-      placeholder={!isSet ? fallbackValue : undefined}
+      value={mixed ? MIXED : isSet ? (storedValue as string | number) : undefined}
+      placeholder={!isSet && !mixed ? fallbackValue : undefined}
       isSet={isSet}
       onChange={onChange}
       onRemove={onRemove}

@@ -57,6 +57,7 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
+import { isMixed, MIXED } from '@ui/components/MixedValue'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { AlignStartVerticalSolidIcon } from 'pixel-art-icons/icons/align-start-vertical-solid'
 import { AlignCenterVerticalSolidIcon } from 'pixel-art-icons/icons/align-center-vertical-solid'
@@ -136,7 +137,14 @@ export function TypographySection({
   const textAlignOptions = getIconEnumOptions('textAlign') ?? []
   const storedTextAlign = storedStyles.textAlign
   const verticalAvailability = resolveVerticalAlignAvailability(currentStyles)
-  const currentVerticalEdge = verticalAlignFromAlignItems(storedStyles.alignItems)
+  // W8-3 — both alignment groups are driven by a raw cell that can be the
+  // multi-selection MIXED sentinel; `SegmentedControl` takes it directly and
+  // renders indeterminate rather than pressing one member's value.
+  const textAlignMixed = isMixed(storedTextAlign)
+  const verticalAlignMixed = isMixed(storedStyles.alignItems)
+  const currentVerticalEdge = verticalAlignMixed
+    ? undefined
+    : verticalAlignFromAlignItems(storedStyles.alignItems)
 
   const gridProps = {
     currentStyles,
@@ -161,9 +169,11 @@ export function TypographySection({
                 aria-label="Text align"
                 data-testid="typography-text-align"
                 value={
-                  typeof storedTextAlign === 'string' && storedTextAlign !== ''
-                    ? storedTextAlign
-                    : undefined
+                  textAlignMixed
+                    ? MIXED
+                    : typeof storedTextAlign === 'string' && storedTextAlign !== ''
+                      ? storedTextAlign
+                      : undefined
                 }
                 options={textAlignOptions.map((option) => ({
                   value: option.value,
@@ -178,7 +188,7 @@ export function TypographySection({
                 aria-label="Vertical align"
                 data-testid="typography-vertical-align"
                 disabled={!verticalAvailability.available}
-                value={currentVerticalEdge}
+                value={verticalAlignMixed ? MIXED : currentVerticalEdge}
                 options={VERTICAL_ALIGN_EDGES.map(({ edge, icon: EdgeIcon, label }) => ({
                   value: edge,
                   icon: <EdgeIcon size={14} aria-hidden="true" />,

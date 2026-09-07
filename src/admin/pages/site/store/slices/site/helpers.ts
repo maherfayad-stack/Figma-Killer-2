@@ -649,18 +649,19 @@ export function buildSiteHelpers(
   function mutateTreesForNodeIds(
     nodeIds: string[],
     fn: (tree: NodeTree<PageNode>, idsOnThisTree: string[]) => SiteMutationResult,
+    opts?: { coalesceKey?: string },
   ): boolean {
     const cur = get()
     const target = resolveActiveTreeTarget(cur)
     if (!target || target.vc) {
-      return mutateActiveTree((tree) => fn(tree, nodeIds))
+      return mutateActiveTree((tree) => fn(tree, nodeIds), opts)
     }
 
     const idsByPage = groupNodeIdsByPage(cur, nodeIds)
     if (idsByPage.size <= 1) {
       // Every id is on the active page (or unindexed) — the common,
       // single-frame case stays on the plain single-tree path.
-      return mutateActiveTree((tree) => fn(tree, nodeIds))
+      return mutateActiveTree((tree) => fn(tree, nodeIds), opts)
     }
 
     return runHistoricMutation((draft) => {
@@ -673,7 +674,7 @@ export function buildSiteHelpers(
         if (fn(page, idsOnThisPage) !== false) mutatedAny = true
       }
       return mutatedAny
-    }, null)
+    }, opts?.coalesceKey ?? null)
   }
 
   return {

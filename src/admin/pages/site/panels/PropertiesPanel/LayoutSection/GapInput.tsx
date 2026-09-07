@@ -21,13 +21,15 @@ import { ScrubTokenField } from './ScrubTokenField'
 interface GapInputProps {
   value: string | undefined
   isSet: boolean
+  /** W8-3 — the selection disagrees on `gap`; the field reads "Mixed". */
+  mixed?: boolean
   onChange: (value: string | undefined) => void
   /** Hover / as-you-type preview of the resolved gap value (token-aware). */
   onPreview?: (value: string | undefined) => void
   onClearPreview?: () => void
 }
 
-export function GapInput({ value, isSet, onChange, onPreview, onClearPreview }: GapInputProps) {
+export function GapInput({ value, isSet, mixed, onChange, onPreview, onClearPreview }: GapInputProps) {
   const tokens = useSpacingTokens()
   return (
     <LabeledControl isSet={isSet}>
@@ -35,6 +37,7 @@ export function GapInput({ value, isSet, onChange, onPreview, onClearPreview }: 
         aria-label="Gap"
         value={value}
         placeholder="0px"
+        mixed={mixed}
         prefix={<GapIcon size={13} aria-hidden="true" />}
         tokens={tokens}
         min={0}

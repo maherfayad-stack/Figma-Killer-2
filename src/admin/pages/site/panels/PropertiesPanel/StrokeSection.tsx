@@ -82,7 +82,8 @@ import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGrid'
 import { getEnumOptions } from './cssControlTypes'
-import { hasStyleValue } from './styleValueUtils'
+import { hasStyleValue, pickMixedString, plainString } from './styleValueUtils'
+import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StrokeSection.module.css'
 
@@ -98,22 +99,18 @@ function sideKey(side: Side, field: SideField): keyof CSSPropertyBag {
   return `border${side}${field}` as keyof CSSPropertyBag
 }
 
-function pickString(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number') return `${value}px`
-  return ''
-}
-
 interface SideFieldState {
-  perSide: Record<Side, string>
+  perSide: Record<Side, string | Mixed>
   uniform: boolean
   anySet: boolean
 }
 
 /** Read every side's value for one field; report whether all four agree. */
 function readSideField(bag: Record<string, unknown>, field: SideField): SideFieldState {
-  const perSide = {} as Record<Side, string>
-  for (const side of SIDES) perSide[side] = pickString(bag[sideKey(side, field)])
+  // `pickMixedString` keeps W8-3's MIXED sentinel intact — see
+  // `AppearanceSection.readCorners`, which this mirrors exactly.
+  const perSide = {} as Record<Side, string | Mixed>
+  for (const side of SIDES) perSide[side] = pickMixedString(bag[sideKey(side, field)])
   const values = SIDES.map((s) => perSide[s])
   const anySet = values.some((v) => v !== '')
   const uniform = anySet && values.every((v) => v === values[0])
@@ -206,8 +203,12 @@ export function StrokeSection({
   const [customSidesRequested, setCustomSidesRequested] = useState(false)
   const showCustomSides = customSidesRequested || !widthLinked
 
+  // A width WRITTEN to every side has to be one real value — never the
+  // sentinel — so a mixed top width falls through to the effective one.
   const representativeWidth =
-    widthState.perSide.Top || pickString(currentStyles[sideKey('Top', 'Width')]) || '1px'
+    plainString(widthState.perSide.Top) ||
+    plainString(pickMixedString(currentStyles[sideKey('Top', 'Width')])) ||
+    '1px'
 
   function writeAllWidths(value: string | undefined) {
     for (const side of SIDES) onChange(sideKey(side, 'Width'), value)
@@ -244,7 +245,9 @@ export function StrokeSection({
 
   // ── PropertyList entry (Row 1) ──────────────────────────────────────────
   const colorValue = colorState.perSide.Top
-  const colorPlaceholder = pickString(currentStyles[sideKey('Top', 'Color')]) || 'transparent'
+  const colorMixed = isMixed(colorValue)
+  const colorPlaceholder =
+    plainString(pickMixedString(currentStyles[sideKey('Top', 'Color')])) || 'transparent'
 
   const entries: PropertyListEntry[] = anyStrokeSet
     ? [
@@ -254,7 +257,8 @@ export function StrokeSection({
           summary: (
             <ColorValueInput
               id="stroke-color"
-              value={colorValue}
+              value={plainString(colorValue)}
+              mixed={colorMixed}
               ariaLabel="Stroke color"
               swatchLabel="Stroke color swatch"
               placeholder={colorPlaceholder}
@@ -279,7 +283,8 @@ export function StrokeSection({
     : []
 
   // ── Row 2 controls ───────────────────────────────────────────────────────
-  const boxSizingValue = pickString(storedStyles.boxSizing)
+  const boxSizingCell = pickMixedString(storedStyles.boxSizing)
+  const boxSizingValue = plainString(boxSizingCell)
 
   const weightField = (
     <ScrubInput
@@ -287,7 +292,7 @@ export function StrokeSection({
       label={<StrokeWeightIcon size={13} aria-hidden="true" />}
       aria-label="Stroke weight, all sides"
       value={widthState.perSide.Top}
-      placeholder={widthFallback.perSide.Top || '0px'}
+      placeholder={plainString(widthFallback.perSide.Top) || '0px'}
       data-testid="stroke-weight-all"
       onChange={(next) => writeAllWidths(next || undefined)}
     />
@@ -299,7 +304,7 @@ export function StrokeSection({
       label={<StrokeWeightIcon size={13} aria-hidden="true" />}
       aria-label={`Stroke weight, ${side.toLowerCase()}`}
       value={widthState.perSide[side]}
-      placeholder={widthFallback.perSide[side] || '0px'}
+      placeholder={plainString(widthFallback.perSide[side]) || '0px'}
       data-testid={`stroke-weight-${side.toLowerCase()}`}
       onChange={(next) => onChange(sideKey(side, 'Width'), next || undefined)}
     />
@@ -312,7 +317,8 @@ export function StrokeSection({
   const [sidesMenuOpen, setSidesMenuOpen] = useState(false)
   const sidesMenuTriggerRef = useRef<HTMLButtonElement>(null)
 
-  const styleValue = styleState.perSide.Top
+  const styleCell = styleState.perSide.Top
+  const styleValue = plainString(styleCell)
   const styleOptions = getEnumOptions('borderStyle') ?? []
 
   return (
@@ -324,6 +330,7 @@ export function StrokeSection({
           fieldSize="sm"
           className={styles.position}
           value={boxSizingValue}
+          mixed={isMixed(boxSizingCell)}
           aria-label="Stroke position"
           data-testid="stroke-position"
           onChange={(e) => onChange('boxSizing', e.target.value || undefined)}
@@ -391,6 +398,7 @@ export function StrokeSection({
               <Select
                 fieldSize="sm"
                 value={styleValue}
+                mixed={isMixed(styleCell)}
                 aria-label="Stroke style"
                 data-testid="stroke-style"
                 onChange={(e) => writeAllStyles(e.target.value || undefined)}
