@@ -312,3 +312,90 @@ describe('orphan satellites', () => {
     expect(backgroundModelPatch(insertBackgroundLayer(model, 0, GRADIENT_A)).backgroundSize).toBe('cover, contain')
   })
 })
+
+// ---------------------------------------------------------------------------
+// The image-fill shape: a `url()` layer carrying size / position / repeat
+// ---------------------------------------------------------------------------
+
+describe('a url() image layer with its own size, position and repeat', () => {
+  const stored = {
+    backgroundImage: `${URL_LAYER}, ${GRADIENT_A}`,
+    backgroundSize: 'cover, auto',
+    backgroundPosition: 'center center, 0% 0%',
+    backgroundRepeat: 'no-repeat, repeat',
+  }
+
+  it('parses into two layers whose satellites stay aligned to their own layer', () => {
+    const model = parseBackgroundLayers(stored)
+    expect(layersOf(stored)).toEqual([URL_LAYER, GRADIENT_A])
+    expect(backgroundLayerSatellite(model, 'backgroundSize', 0)).toEqual({
+      kind: 'value',
+      value: 'cover',
+      shared: false,
+    })
+    expect(backgroundLayerSatellite(model, 'backgroundPosition', 0)).toEqual({
+      kind: 'value',
+      value: 'center center',
+      shared: false,
+    })
+    expect(backgroundLayerSatellite(model, 'backgroundRepeat', 1)).toEqual({
+      kind: 'value',
+      value: 'repeat',
+      shared: false,
+    })
+  })
+
+  it('serialises back byte-for-byte', () => {
+    const patch = backgroundModelPatch(parseBackgroundLayers(stored))
+    expect(patch.backgroundImage).toBe(stored.backgroundImage)
+    expect(patch.backgroundSize).toBe(stored.backgroundSize)
+    expect(patch.backgroundPosition).toBe(stored.backgroundPosition)
+    expect(patch.backgroundRepeat).toBe(stored.backgroundRepeat)
+  })
+
+  it('writes a fit change to ONLY the image layer, leaving the gradient at its own values', () => {
+    let model = parseBackgroundLayers(stored)
+    model = setBackgroundLayerSatellite(model, 'backgroundSize', 0, 'contain')
+    model = setBackgroundLayerSatellite(model, 'backgroundRepeat', 0, 'no-repeat')
+    const patch = backgroundModelPatch(model)
+    expect(patch.backgroundSize).toBe('contain, auto')
+    expect(patch.backgroundRepeat).toBe('no-repeat, repeat')
+    expect(patch.backgroundImage).toBe(stored.backgroundImage)
+  })
+
+  it('writes a 9-grid position to ONLY the image layer', () => {
+    const model = setBackgroundLayerSatellite(
+      parseBackgroundLayers(stored),
+      'backgroundPosition',
+      0,
+      'right bottom',
+    )
+    expect(backgroundModelPatch(model).backgroundPosition).toBe('right bottom, 0% 0%')
+  })
+
+  it('drops the whole declaration when every layer is back at the CSS initial', () => {
+    let model = parseBackgroundLayers({
+      backgroundImage: URL_LAYER,
+      backgroundSize: 'cover',
+      backgroundRepeat: 'no-repeat',
+    })
+    // Picking "Tile" writes the initial pair, which collapses to no declaration
+    // at all rather than leaving `auto` / `repeat` behind in the user's file.
+    model = setBackgroundLayerSatellite(model, 'backgroundSize', 0, 'auto')
+    model = setBackgroundLayerSatellite(model, 'backgroundRepeat', 0, 'repeat')
+    const patch = backgroundModelPatch(model)
+    expect(patch.backgroundSize).toBeUndefined()
+    expect(patch.backgroundRepeat).toBeUndefined()
+    expect(patch.backgroundImage).toBe(URL_LAYER)
+  })
+
+  it('inserts an image layer at the top of an existing stack, satellites shifting with it', () => {
+    const model = parseBackgroundLayers({
+      backgroundImage: `${GRADIENT_A}, ${GRADIENT_B}`,
+      backgroundSize: 'cover, contain',
+    })
+    const patch = backgroundModelPatch(insertBackgroundLayer(model, 0, URL_LAYER))
+    expect(patch.backgroundImage).toBe(`${URL_LAYER}, ${GRADIENT_A}, ${GRADIENT_B}`)
+    expect(patch.backgroundSize).toBe('auto, cover, contain')
+  })
+})

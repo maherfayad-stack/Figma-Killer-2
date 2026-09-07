@@ -353,6 +353,64 @@ element with no image is the exact defect this page exists to prevent.
     changed is the layer list, not the fact that CSS has no honest way to store
     a hidden-but-present paint.
 
+- **G6.6 — Image fill, from the project's own files.** The Fill header has two
+  "add a layer" buttons: a paint bucket (gradient) and an image. The image one
+  opens `ImageSourcePicker` — three sources, in the order a designer reaches for
+  them:
+  1. **This project** — every image already on disk in the open workspace, from
+     `GET /admin/api/studio/project-assets` (`server/handlers/studio/projectAssets.ts`),
+     a `readdir` filtered to image extensions. `node_modules`, `.git`, `dist`,
+     `.studio` and Studio's own `prototype/` scaffold are never offered.
+  2. **Upload** — lands a file into the project through the existing
+     `POST /admin/api/studio/asset-upload` pipeline (magic-number sniffing,
+     symlink-aware containment on the real path, collision-safe naming, SVG
+     sanitisation). No CMS media library is involved: Studio's assets live on
+     disk, in the user's repo.
+  3. **URL** — written verbatim, for a CDN image.
+
+  Nothing is written until a source is chosen — the button never inserts a
+  speculative `url('')` into the user's source.
+
+  **Which URL gets written is the load-bearing decision** (`imageFillValue.ts`).
+  It is never Studio's own `/admin/api/studio/asset?dir=…` endpoint — that is an
+  admin-origin URL, meaningless in the user's repo, and pasting it into their
+  stylesheet would be exactly the lying edit this product refuses. It is the URL
+  *their* build resolves. Only one form is unconditionally correct for a CSS
+  `background-image` across Vite, Next and CRA: a file under the public root
+  (`public/`, or the `static/` spelling), referenced root-relatively — copied
+  verbatim to the site root by all three, so it works in dev and in a production
+  build, from an inline `style` attribute and from a CSS file alike. That is why
+  **uploads target `public/`**.
+
+  A file elsewhere (`src/assets/hero.png`, reached through an `import` in the
+  user's code) still gets a root-relative URL, because it is the only thing that
+  can work at all and it *does* work on their dev server — but the picker labels
+  that tile **"dev only"** and says why in its tooltip, rather than quietly
+  shipping a background that 404s after `npm run build`. The admin previews it
+  through the authenticated read endpoint; the reverse mapping URL → file is
+  resolved against the KNOWN asset list, never guessed from the path.
+
+  An image layer's popover then carries the two Figma controls, both pure sugar
+  over satellites the rows underneath still show:
+  - **Fit** — Cover / Contain / Stretch / Tile, writing `background-size` +
+    `background-repeat` as a pair. A pair matching no preset selects **no**
+    segment (`custom`) instead of being snapped to the nearest one, and an
+    *unset* pair reads as **Tile**, because that is what the browser is
+    genuinely doing. Choosing Tile writes the CSS initials, which collapse the
+    declarations away entirely rather than leaving `auto, repeat` behind.
+  - **Position** — the 3×3 keyword puck over `background-position`. Selection is
+    exact: `50% 50%` lights the centre cell, `12px 40%` lights nothing.
+
+  Either control disappears when its property was refused per-layer — that
+  property's whole-declaration raw field with its reason is already there, and a
+  friendly control on top of it would write the very per-layer value the parse
+  refused to invent.
+
+  **Cut in this pass:** the canvas does not rewrite a project-relative `url()`
+  to the asset endpoint, so an image fill previews in the inspector (row swatch,
+  layer thumbnail, picker grid) but not yet on the canvas frame itself. Apply-
+  variable (PR #75) on the URL field is also not wired.
+
 ### G7 — Stroke (F16–F19)
 
 Rebuilt on `PropertyList` (empty ⇒ one line), colour row on G6's picker, weight

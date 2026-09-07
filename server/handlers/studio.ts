@@ -132,6 +132,12 @@
  *       symlinks, walking to the nearest existing ancestor for a target
  *       directory that does not exist yet.
  *
+ *   GET  /admin/api/studio/project-assets     → `studio/projectAssets.ts`
+ *       The READ side of the inspector's image-fill picker: every image file
+ *       already in the workspace, as workspace-relative paths. `readdir`
+ *       only — the bytes are still served one at a time by
+ *       `/admin/api/studio/asset`, which owns the adversarial path guard.
+ *
  *   POST/GET/DELETE /admin/api/studio/reference-upload → `studio/referenceUpload.ts`
  *       The durable design-reference store's browser HTTP surface — lands a
  *       lossless design comp (typically a Figma export) into
@@ -278,6 +284,7 @@ import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 import { tryServeStudioLocalizedPage } from './studio/localizedPage'
 import { tryServeStudioComponents } from './studio/components'
 import { tryServeStudioIcons } from './studio/iconCatalog'
+import { tryServeStudioProjectAssets } from './studio/projectAssets'
 import { tryServeStudioTranslations } from './studio/translations'
 import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
@@ -328,6 +335,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioLocalizedPage,
   tryServeStudioComponents,
   tryServeStudioIcons,
+  tryServeStudioProjectAssets,
   tryServeStudioTranslations,
   tryServeStudioI18nSetup,
   tryServeStudioReloadScope,
