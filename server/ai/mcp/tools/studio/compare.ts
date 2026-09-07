@@ -30,7 +30,7 @@
  * `studio_screenshot` established first (`resolveRequestedPages`,
  * `MAX_BATCH_PAGES` in `pageNameMatch.ts`). Per-page work (resolve the
  * reference, pick the dpr, diff) happens in a loop; per-batch work (board sync,
- * page load, the live-reload wait, and — see `captureMissedPages` — the CAPTURE
+ * page load, and — see `captureMissedPages` — the CAPTURE
  * itself) happens ONCE ahead of it, the same split `screenshot.ts` uses for its
  * own `canonicalProject`. One page failing to resolve or having no armed
  * reference never fails the batch — it becomes a `results[]` entry with
@@ -117,7 +117,6 @@ import type { DesignReference } from '../../../../handlers/studio/designReferenc
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { resolveDesignReference } from './referenceResolve'
 import { captureFrames } from '../../capture/captureFrames'
-import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 import {
@@ -257,6 +256,8 @@ async function captureMissedPages(
       // a reason that does not apply here (A2). Model visibility is decided
       // separately by `includeImages`.
       purpose: 'measurement',
+      // Only the live-bridge FALLBACK pays this wait — see `captureFrames`.
+      reloadBeforeLiveFallback: { boardsChanged: true },
       ...(signal ? { signal } : {}),
     })
     if (captured.source !== 'none') source = captured.source
@@ -421,16 +422,11 @@ export const studioCompareTool: AiTool = {
     let captures = new Map<string, PageCapture>()
     let capturedVia: 'headless' | 'live' | 'none' = 'none'
     if (captureTargets.length > 0) {
-      // The live-reload push only matters to an OPEN tab (it is what makes the
-      // live capture path photograph the files as they are NOW). The headless
-      // path re-parses from disk on every navigation, so it is already current
-      // — but this is awaited before the capture either way, since the routing
-      // decision belongs to `captureFrames` and a tab may still answer.
-      await awaitStudioLiveReload(ctx.userId, {
-        dir,
-        pageIds: captureTargets.map((t) => t.pageId),
-        boardsChanged: true,
-      })
+      // W9-5 lever 2 — the live-reload wait is NOT paid here. It only ever
+      // mattered to an open tab, and the headless path (the default, and what
+      // answers every capture on a host with Chromium) re-parses from disk on
+      // every navigation. `captureFrames` now owns it and pays it only when it
+      // actually falls back to the live bridge — see `reloadBeforeLiveFallback`.
       const captured = await captureMissedPages(ctx.userId, dir, captureTargets, ctx.signal)
       captures = captured.captures
       capturedVia = captured.source

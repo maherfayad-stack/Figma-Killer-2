@@ -12,6 +12,13 @@ for everything else.
 ```
 GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
    └─ loadStudioPages()                          studioPageLoad.ts
+        0. workspace fingerprint memo (W9-5)     studio/studioLoadMemo.ts
+           Whole-result memo per `dir`, keyed on a `relPath:size:mtimeMs`
+           signature of every source-relevant file (plus `.studio/meta.json`,
+           which `listWorkspaceFiles` excludes). A hit skips steps 1-9
+           entirely: ~26 ms → ~2.5 ms on a 36-page project, which is what an
+           agent turn's 4+ redundant loads used to cost. Narrowed loads
+           (`options.pageIds`) are served from it but never stored.
         1. discoverPageFiles(pagesDir)           studioProjects.ts
         1b. discoverStories + buildStoryRouteEntries
                                                  studio/story{Discovery,Pages}.ts
