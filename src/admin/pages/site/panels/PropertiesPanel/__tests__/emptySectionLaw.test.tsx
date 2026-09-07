@@ -9,13 +9,20 @@
  * always-present sections (position / size / layout / spacing) are untouched
  * by this law and keep their controls resident regardless of whether anything
  * is set.
+ *
+ * An empty section is also not a DISCLOSURE — no chevron, no toggle, nothing
+ * to open. The header earns its accordion when the first value lands in it.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { StyleSectionsEditor } from '../StyleSectionsEditor'
+import { setEditorPreference } from '@site/preferences/editorPreferences'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  setEditorPreference('propertiesSectionsExpanded', true)
+})
 
 function noop() {}
 
@@ -105,5 +112,75 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
     expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /add typography/i }))
     expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
+  })
+
+  it('(e) an empty section is NOT a disclosure — no chevron, no toggle, no body', () => {
+    renderEditor()
+
+    const typography = document.querySelector('[data-style-section="typography"]')!
+    // The disclosure toggle is the only control in a Section header that
+    // carries `aria-expanded` for the section itself. Typography's empty
+    // header offers a plain "+" and nothing else, so the whole subtree has
+    // no expandable control and no body element to expand into.
+    expect(typography.querySelectorAll('[aria-expanded]')).toHaveLength(0)
+    expect(typography.querySelector('svg')).not.toBeNull() // the section's own icon survives
+    expect(typography.textContent).toContain('Typography')
+  })
+
+  it('(f) a filled section IS a disclosure — the accordion comes back with content', () => {
+    renderEditor({ storedStyles: { fontFamily: 'Inter' } })
+
+    const typography = document.querySelector('[data-style-section="typography"]')!
+    const toggle = typography.querySelector('[aria-expanded]')
+    expect(toggle).not.toBeNull()
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('(g) adding the first value opens the section, even with sections collapsed by default', () => {
+    // With the preference off, a section that stops being empty would open at
+    // the user's collapsed default — "+ Fill" would write a fill and show a
+    // closed header. The add gesture reveals as well as writes.
+    setEditorPreference('propertiesSectionsExpanded', false)
+
+    const written: Array<[string, unknown]> = []
+    const { rerender } = render(
+      <StyleSectionsEditor
+        storedStyles={{}}
+        currentStyles={{}}
+        sectionKey="base"
+        styleQuery=""
+        onChange={(property, value) => written.push([String(property), value])}
+        onRemove={noop}
+        onClearProperty={noop}
+        onClearProperties={noop}
+        onPreview={noop}
+        onClearPreview={noop}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /add solid color fill/i }))
+    expect(written).toHaveLength(1)
+    expect(written[0]![0]).toBe('backgroundColor')
+
+    // The store round-trip the real panel does: the written value comes back
+    // as `storedStyles`, and the section must now be showing its body rather
+    // than sitting closed behind the collapsed-by-default preference.
+    rerender(
+      <StyleSectionsEditor
+        storedStyles={{ backgroundColor: String(written[0]![1]) }}
+        currentStyles={{}}
+        sectionKey="base"
+        styleQuery=""
+        onChange={noop}
+        onRemove={noop}
+        onClearProperty={noop}
+        onClearProperties={noop}
+        onPreview={noop}
+        onClearPreview={noop}
+      />,
+    )
+
+    const fill = document.querySelector('[data-style-section="fill"]')!
+    expect(fill.querySelector('[aria-expanded="true"]')).not.toBeNull()
   })
 })

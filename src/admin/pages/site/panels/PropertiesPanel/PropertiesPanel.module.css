@@ -172,7 +172,7 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 32px;
+    grid-template-columns: minmax(0, 1fr) var(--inspector-rail-w);
     gap: var(--space-3xs);
     min-width: 0;
     overflow: hidden;

@@ -15,6 +15,12 @@
  * carries a value (set in an earlier session, or on a different breakpoint)
  * is revealed automatically — reveal state only matters for the empty case.
  *
+ * W and H are two equal halves of one `1fr 1fr` row, and the mode chevron is
+ * drawn INSIDE each field's trailing edge rather than beside it
+ * (`AddablePropertyField.module.css`) — an in-flow chevron spent ~20px of an
+ * ~82px cell on chrome, which is what made these read as unequal against the
+ * padding row Layout draws directly underneath.
+ *
  * Mode legibility without a menu (F4's `H 325 Hug`): while an axis's mode is
  * `Hug` or `Fill` the field shows the mode's word instead of a number
  * (`AddablePropertyField`'s own `word` behaviour) AND a small `Fixed / Hug /
