@@ -10,6 +10,7 @@
  * returned MIME type before treating the bytes as a zip.
  */
 import { apiBlobRequest, type FetchLike } from '@core/http'
+import { saveBlobAsFile } from '@admin/shared/saveBlobAsFile'
 
 interface DownloadStudioCodeOptions {
   /** Server default workspace when omitted. */
@@ -34,16 +35,5 @@ export async function readStudioCodeZip(options: DownloadStudioCodeOptions = {})
 /** Start a native browser download of the workspace source zip. */
 export async function downloadStudioCode(options: DownloadStudioCodeOptions = {}): Promise<void> {
   const blob = await readStudioCodeZip(options)
-  const objectUrl = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = objectUrl
-  link.download = 'studio-workspace.zip'
-  link.hidden = true
-  document.body.append(link)
-  try {
-    link.click()
-  } finally {
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
-  }
+  saveBlobAsFile(blob, 'studio-workspace.zip')
 }
