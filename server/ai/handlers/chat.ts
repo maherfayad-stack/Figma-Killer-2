@@ -22,6 +22,9 @@
  *      OWN, separate validation before using it as a subprocess `cwd` — this
  *      handler's validation is for tool/prompt selection only, not a trust
  *      decision claudeCli.ts can skip re-making.
+ *   4b. Scopes the turn to a project: the validated dir's project key must
+ *      match the conversation's stamped one (409 if it does not), and stamps
+ *      an as-yet-unscoped conversation with it (migration 022).
  *   5. Builds an `AiStreamRequest` (system prompt + tools + history).
  *      Write tools are filtered out unless the caller has `ai.tools.write`.
  *   6. Persists the user message, then runs `runChat({ ... })`.
@@ -46,6 +49,7 @@ import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import { createAuditEvent } from '../../repositories/audit'
 import {
+  adoptConversationProjectKey,
   appendMessage,
   listMessagesForConversation,
   readConversationForUser,
@@ -53,6 +57,7 @@ import {
   deriveConversationTitle,
   DEFAULT_CONVERSATION_TITLE,
 } from '../conversations/store'
+import { projectKeyForValidatedDir } from '../conversations/projectScope'
 import {
   buildMessageHistory,
   projectUserImagesForModel,
@@ -141,6 +146,34 @@ async function handleAiChat(
   const conversation = await readConversationForUser(db, user.id, conversationId)
   if (!conversation) {
     return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  }
+
+  // A conversation belongs to one project (migration 022). The one-honest-
+  // target invariant, applied to threads: a thread carrying project A's key
+  // must never take a turn against project B — its transcript, its warm CLI
+  // session, its `--session-id` and its cached board state all describe A,
+  // and continuing it against B would silently mix two projects into one
+  // history. Refused (409), never quietly re-pointed.
+  //
+  // Only a genuine disagreement refuses. A turn with NO project open
+  // (`validatedWorkspaceDir === null`) cannot contradict a stamped thread —
+  // it has no project of its own to contradict it with — and passes through
+  // on the CMS toolset exactly as before.
+  const turnProjectKey = validatedWorkspaceDir ? projectKeyForValidatedDir(validatedWorkspaceDir) : null
+  if (conversation.projectKey && turnProjectKey && conversation.projectKey !== turnProjectKey) {
+    return jsonResponse(
+      {
+        error: `This conversation belongs to the project "${conversation.projectKey}" and cannot be continued from "${turnProjectKey}". Start a new chat for this project.`,
+      },
+      { status: 409 },
+    )
+  }
+  // First use adopts: a thread started before this column existed, or before
+  // a project was open, becomes this project's from here on. Conditional in
+  // SQL (`project_key is null`), so two tabs racing cannot double-stamp.
+  if (!conversation.projectKey && turnProjectKey) {
+    await adoptConversationProjectKey(db, user.id, conversation.id, turnProjectKey)
+      .catch((err: unknown) => { console.error('[ai/chat] project-key adoption failed:', err) })
   }
   if (!conversation.credentialId) {
     return jsonResponse(

@@ -152,6 +152,7 @@ import { approvedProjectMcpServers, type ProjectMcpServerDefinition } from './pr
 import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { generateStudioProjectGuide } from '../../handlers/studio/projectGuide'
 import { readTurnWriteLog, resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
+import { STUDIO_AGENT_USER_KEY_ENV, studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 import { resolveTurnRouting } from '../routing/turnRouting'
 import {
   stageAttachments,
@@ -282,7 +283,10 @@ export async function* streamClaudeCli(
   // directory, because a warm process can only ever read from directories that
   // were on its argv at spawn — see `ensureConversationAttachmentsRoot`. The
   // per-TURN directory beneath it, and its cleanup, are unchanged.
-  const attachmentsRoot = ensureConversationAttachmentsRoot(req.toolContextBase.conversationId)
+  const attachmentsRoot = ensureConversationAttachmentsRoot(
+    req.toolContextBase.userId,
+    req.toolContextBase.conversationId,
+  )
   const attachmentStaging = stageAttachments(latestUserMessageContent(req.messages), attachmentsRoot)
   const prompt = attachmentStaging ? promptText + describeAttachmentsForPrompt(attachmentStaging) : promptText
 
@@ -302,7 +306,8 @@ export async function* streamClaudeCli(
   // Auto-routing needs to know whether the LAST turn wrote anything, so this
   // reads the turn-write log BEFORE `resetTurnWriteLog` clears it for this
   // turn (a few lines below, right before spawn). Zero when no project is open.
-  const previousTurnWriteCount = workspaceCwd ? readTurnWriteLog(workspaceCwd).length : 0
+  const agentUserKey = studioAgentUserKey(req.toolContextBase.userId)
+  const previousTurnWriteCount = workspaceCwd ? readTurnWriteLog(workspaceCwd, agentUserKey).length : 0
   const routing = resolveTurnRouting({
     requestedEffort: req.effort,
     signals: {
@@ -367,7 +372,7 @@ export async function* streamClaudeCli(
     // every native `Write`/`Edit`, and a `Stop` hook that reads it back — see
     // `turnWriteLog.ts`'s "turn boundary" note for why the reset has to
     // happen HERE, right before spawn, and not inside either hook.
-    resetTurnWriteLog(workspaceCwd)
+    resetTurnWriteLog(workspaceCwd, agentUserKey)
   }
 
   // The CLI caches "this server needs authentication" per config dir and a
@@ -381,6 +386,12 @@ export async function* streamClaudeCli(
 
   const env = minimalSubprocessEnv([], {
     CLAUDE_CONFIG_DIR: configDir,
+    // Inherited by every hook the CLI spawns (`recordToolWrite`,
+    // `stopGateCheck`), which is how a hook subprocess learns WHOSE turn it
+    // is running inside — the generated hook command cannot carry it, because
+    // one project's `.claude/settings.local.json` is shared by every user of
+    // that project. Non-identifying by construction. See `agentUserScope.ts`.
+    [STUDIO_AGENT_USER_KEY_ENV]: agentUserKey,
     ...(req.credentials.apiKey ? { CLAUDE_CODE_OAUTH_TOKEN: req.credentials.apiKey } : {}),
   })
 

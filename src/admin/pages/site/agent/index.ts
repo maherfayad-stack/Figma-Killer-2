@@ -40,6 +40,11 @@ export { renderMarkdownToHtml } from './markdown'
 // Store handle wiring.
 export { setAgentStoreApi } from './storeRef'
 
+// The one client-side answer to "which project is this tab's agent in" (W10)
+// — the conversation stamp, the chat turn, and the browser bridge all derive
+// their project from here so they cannot disagree.
+export { agentProjectDir } from './agentProjectDir'
+
 // Session controls — the composer's permission-mode trigger reads the initial
 // state back so its project-switch reset can never drift from the initializer.
 // `routedTurnLabel`/`routedTurnTitle` render the read-only routed-effort chip

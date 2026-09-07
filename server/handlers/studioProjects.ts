@@ -31,6 +31,7 @@ import {
   type ProjectFramework,
 } from './studio/projectProfileSchema'
 import { PROJECTS_TRASH_DIR_NAME } from './studio/projectTrash'
+import { isRealpathContainedAllowingMissing } from './studio/workspacePackageResolve'
 
 /**
  * Root that holds every studio project. Each immediate subfolder of
@@ -54,15 +55,76 @@ export function projectsRootDir(): string {
 }
 
 /**
+ * Thrown by {@link resolveProjectDir} for a `dir` that resolves outside
+ * `projectsRootDir()`. Named (not a bare `Error`) so callers — and the
+ * router's own catch, which turns it into a 404 rather than a 500 — can tell
+ * "you asked for somewhere you may not go" apart from any other failure.
+ */
+export class ProjectDirOutsideWorkspaceError extends Error {
+  /** The offending path, as the caller wrote it. Carried as a FIELD, never in `message`: a route-local catch-all that renders `err.message` into a body would otherwise echo a prober's own path back at it. The router logs this; nothing sends it. */
+  readonly path: string
+
+  constructor(path: string) {
+    super('Requested project directory is outside the Studio workspace root.')
+    this.name = 'ProjectDirOutsideWorkspaceError'
+    this.path = path
+  }
+}
+
+/**
+ * Re-throw the containment refusal, and only it. Call this FIRST in any
+ * `catch` that turns an unknown error into a `Response`.
+ *
+ * Those catch-alls exist to keep an unexpected failure from taking the server
+ * down, and they are right to do that — but a `dir` outside the workspace is
+ * not an unexpected failure, it is a client asking for somewhere it may not
+ * go, and the answer to that is decided in exactly one place: the router's
+ * flat 404 (`server/router.ts`). Without this guard each route would flatten
+ * the refusal into its own 404-or-500, which is how "one refusal, one answer"
+ * quietly becomes thirty slightly different answers.
+ */
+export function rethrowProjectDirRefusal(err: unknown): void {
+  if (err instanceof ProjectDirOutsideWorkspaceError) throw err
+}
+
+/**
  * Resolves the on-disk directory a studio request operates on. An explicit
  * `dir` (a project the client already knows about, always an immediate
- * subfolder of `studio-workspace/` in normal use) is resolved as-is. When no
- * `dir` is supplied we fall back to the first project on disk (or the root
- * itself when none exist yet, which simply yields an empty page list) so a
- * fresh session still lands somewhere real.
+ * subfolder of `studio-workspace/` in normal use) is resolved and
+ * containment-checked. When no `dir` is supplied we fall back to the first
+ * project on disk (or the root itself when none exist yet, which simply
+ * yields an empty page list) so a fresh session still lands somewhere real.
+ *
+ * ## Containment (W10, sec)
+ *
+ * `dir` is client input on ~70 routes and every Studio MCP tool, and for most
+ * of that surface this function is the ONLY thing standing between the string
+ * and a filesystem read or write. A bare `resolve()` — what this did — let an
+ * agent working in project A pass any absolute path at all and read or write
+ * project B, or `~/.ssh`, with every call succeeding.
+ *
+ * So the resolved path must sit at or under `projectsRootDir()`, with
+ * symlinks resolved on BOTH sides (`isRealpathContainedAllowingMissing`) —
+ * containment on the textual path alone is bypassable by a symlink inside a
+ * GitHub-imported repo, the failure mode `workspacePackageResolve.ts` was
+ * written for. "Allowing missing" is what keeps the scaffold/import routes
+ * working: a project directory that does not exist YET is checked against its
+ * deepest existing ancestor, so a not-yet-created project inside the root
+ * passes while `..`/symlink escapes still cannot.
+ *
+ * Callers do NOT each catch this. It throws, and the router's top-level
+ * studio catch answers 404 — a refusal a caller cannot forget to make is
+ * worth more than a per-route error branch, and every route on this surface
+ * already answers 404 for a dir it will not serve.
  */
 export function resolveProjectDir(requested: string | null | undefined): string {
-  if (requested) return resolve(requested)
+  if (requested) {
+    const resolved = resolve(requested)
+    if (!isRealpathContainedAllowingMissing(resolved, projectsRootDir())) {
+      throw new ProjectDirOutsideWorkspaceError(requested)
+    }
+    return resolved
+  }
   const root = projectsRootDir()
   return listStudioProjects(root)[0]?.dir ?? root
 }

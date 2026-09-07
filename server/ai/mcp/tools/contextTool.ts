@@ -14,7 +14,7 @@ import { Type } from '@core/utils/typeboxHelpers'
 import type { CoreCapability } from '@core/capabilities'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { getDraftSite } from '../../../repositories/site'
-import { hasEditorBridge } from '../editorBridge'
+import { editorBridgeScope, getMostRecentEditorBridgeForUser, hasEditorBridge } from '../editorBridge'
 
 const CONTEXT_READ_CAPS: readonly CoreCapability[] = [
   'site.read',
@@ -78,7 +78,12 @@ export const contextMcpTools: AiTool[] = [
       const result: Record<string, unknown> = {
         site: site ? { name: site.name } : null,
         editor: {
-          siteConnected: hasEditorBridge(ctx.userId, 'site'),
+          // "Is a board open for the project this turn is about" when a
+          // project is bound; for an unbound external client, "is any board
+          // open" — the same question its browser tools are routed by.
+          siteConnected: ctx.workspaceDir
+            ? hasEditorBridge(ctx.userId, editorBridgeScope(ctx.workspaceDir))
+            : getMostRecentEditorBridgeForUser(ctx.userId) !== null,
         },
         templates,
       }

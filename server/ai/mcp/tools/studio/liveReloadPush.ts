@@ -6,14 +6,17 @@
  * instead of leaving the canvas silently stale until the next manual reload.
  *
  * "No open board" is a NORMAL, supported case — a headless MCP connector with
- * no browser attached — not an error condition. `hasEditorBridge` exists for
- * exactly this (`editorBridge.ts`'s own doc), so this function is a pure
- * no-op when it returns false: no promise constructed, nothing to await,
- * nothing to fail.
+ * no browser attached — not an error condition. A missing bridge for this
+ * project's scope makes this function a pure no-op: no promise constructed,
+ * nothing to await, nothing to fail.
+ *
+ * The bridge is looked up by `editorBridgeScope(push.dir)` (W10), so a tab
+ * open on a DIFFERENT project is not merely told to ignore the push — it is
+ * never sent one.
  *
  * Rides the SAME `toolRequest`/`toolResult` transport every browser-executed
  * `AiTool` uses (`editorBridge.ts` + `SitePage.tsx`'s
- * `useMcpWorkspaceBridge('site', executeAgentTool, ...)`), but
+ * `useMcpWorkspaceBridge(studioWriteDir, executeAgentTool, ...)`), but
  * `STUDIO_LIVE_RELOAD_TOOL_NAME` is deliberately NOT a registered `AiTool`:
  * it is never listed in `tools/list` (`server/ai/mcp/server.ts` only ever
  * advertises `mcpToolsForCapabilities`'s registry), so no model can call it
@@ -28,7 +31,7 @@
  * closed mid-flight, browser navigated away) is caught and logged here, never
  * propagated into the calling tool's `AiToolOutput`.
  */
-import { getEditorBridgeForUser, hasEditorBridge } from '../../editorBridge'
+import { editorBridgeScope, getEditorBridgeForUser } from '../../editorBridge'
 
 /** Never advertised, never discoverable — see this module's doc. */
 export const STUDIO_LIVE_RELOAD_TOOL_NAME = 'studio_live_reload'
@@ -67,7 +70,7 @@ export async function awaitStudioLiveReload(userId: string, push: StudioReloadPu
   const boardsChanged = push.boardsChanged ?? false
   const commentsChanged = push.commentsChanged ?? false
   if (pageIds.length === 0 && !boardsChanged && !commentsChanged) return
-  const bridge = hasEditorBridge(userId, 'site') ? getEditorBridgeForUser(userId, 'site') : null
+  const bridge = getEditorBridgeForUser(userId, editorBridgeScope(push.dir))
   if (!bridge) return
   try {
     await bridge.callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged, commentsChanged })
@@ -81,9 +84,10 @@ export function pushStudioLiveReload(userId: string, push: StudioReloadPush): vo
   const boardsChanged = push.boardsChanged ?? false
   const commentsChanged = push.commentsChanged ?? false
   if (pageIds.length === 0 && !boardsChanged && !commentsChanged) return
-  if (!hasEditorBridge(userId, 'site')) return // no open board — normal for a headless MCP connector, never an error
-
-  const bridge = getEditorBridgeForUser(userId, 'site')
+  // No bridge for THIS project — either no board open at all (normal for a
+  // headless MCP connector, never an error) or the user's open tab is on a
+  // different project, which must not be nudged about a write it did not make.
+  const bridge = getEditorBridgeForUser(userId, editorBridgeScope(push.dir))
   if (!bridge) return
   bridge
     .callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged, commentsChanged })

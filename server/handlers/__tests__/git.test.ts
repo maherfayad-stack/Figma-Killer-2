@@ -27,6 +27,8 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioGit } from '../studio/git'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -262,19 +264,20 @@ describe('git routes — rejections', () => {
     expect(await tryServeStudioGit(req, url, pathname)).toBeNull()
   })
 
-  it('404s every route for a dir outside studio-workspace/', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-outside-'))
-    created.push(outside)
-    await makeRepo(outside)
-    const q = encodeURIComponent(outside)
+  it('refuses every route for a dir outside studio-workspace/', async () => {
+    await withOutsideWorkspaceDir('studio-git-outside', async (outside) => {
+      await makeRepo(outside)
+      const q = encodeURIComponent(outside)
+      const refused = (p: Promise<unknown>) => expect(p).rejects.toThrow(ProjectDirOutsideWorkspaceError)
 
-    expect((await call(`/admin/api/studio/git/status?dir=${q}`)).status).toBe(404)
-    expect((await call(`/admin/api/studio/git/log?dir=${q}`)).status).toBe(404)
-    expect((await call(`/admin/api/studio/git/diff?dir=${q}&file=pages%2FHome.tsx`)).status).toBe(404)
-    expect((await call('/admin/api/studio/git/commit', post({ dir: outside, message: 'x', files: ['a.txt'] }))).status).toBe(404)
-    expect((await call('/admin/api/studio/git/push', post({ dir: outside }))).status).toBe(404)
-    expect((await call('/admin/api/studio/git/branch', post({ dir: outside, create: 'x' }))).status).toBe(404)
-    expect((await call('/admin/api/studio/git/init', post({ dir: outside, confirm: true }))).status).toBe(404)
+      await refused(call(`/admin/api/studio/git/status?dir=${q}`))
+      await refused(call(`/admin/api/studio/git/log?dir=${q}`))
+      await refused(call(`/admin/api/studio/git/diff?dir=${q}&file=pages%2FHome.tsx`))
+      await refused(call('/admin/api/studio/git/commit', post({ dir: outside, message: 'x', files: ['a.txt'] })))
+      await refused(call('/admin/api/studio/git/push', post({ dir: outside })))
+      await refused(call('/admin/api/studio/git/branch', post({ dir: outside, create: 'x' })))
+      await refused(call('/admin/api/studio/git/init', post({ dir: outside, confirm: true })))
+    })
   })
 
   it('never operates on Studio\'s own repository via a project that has no .git', async () => {
@@ -408,9 +411,13 @@ describe('git routes — rejections', () => {
   it('labels files the agent wrote this turn, and only those', async () => {
     fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'agent wrote this\n')
     fs.writeFileSync(path.join(dir, 'pages', 'ByHand.tsx'), 'a human wrote this\n')
-    fs.mkdirSync(path.join(dir, '.studio', 'cache'), { recursive: true })
+    // The log is per (project, account) since W10, and this marker is
+    // deliberately read across EVERY account: "an agent wrote this file" is a
+    // fact about the working tree, not about who is looking at it.
+    const agentCache = path.join(dir, '.studio', 'cache', 'agent', 'a1b2c3d4e5f60718')
+    fs.mkdirSync(agentCache, { recursive: true })
     fs.writeFileSync(
-      path.join(dir, '.studio', 'cache', 'turnWrites.json'),
+      path.join(agentCache, 'turnWrites.json'),
       JSON.stringify([{ file: 'pages/Home.tsx', atMs: Date.now() }]),
     )
 

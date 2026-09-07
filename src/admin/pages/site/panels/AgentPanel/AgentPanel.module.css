@@ -665,6 +665,15 @@
   flex: 1 1 auto;
 }
 
+/* Count beside the collapsed "Not in this project" group header — how many
+   unscoped threads are hidden behind the chevron. */
+.historyGroupCount {
+  margin-inline-start: auto;
+  color: var(--text-disabled);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
 .historyItemMeta {
   display: inline-flex;
   align-items: center;

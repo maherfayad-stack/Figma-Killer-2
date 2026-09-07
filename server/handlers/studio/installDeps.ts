@@ -104,7 +104,7 @@ import { join, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { isSafePackageName } from '@core/site-dependencies/packageNames'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
+import { projectsRootDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import { captureSubprocess, minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from './installJobStore'
@@ -643,6 +643,7 @@ export async function tryServeStudioInstall(req: Request, url: URL, pathname: st
       if (!isDirWithinWorkspace(dir)) return new Response('Not found', { status: 404 })
       return jsonResponse(probeInstallStatus(dir))
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:install]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -659,6 +660,7 @@ export async function tryServeStudioInstall(req: Request, url: URL, pathname: st
       const jobId = startInstallJob(dir, {}, mutationOrRefusal)
       return jsonResponse({ jobId })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:install]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

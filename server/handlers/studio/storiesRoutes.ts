@@ -22,14 +22,14 @@
  * filter over the directory walk, and the expensive `createWorkspaceProject`
  * below only happens once it matches something.
  *
- * Same containment posture as every other project-scoped route:
- * `resolveProjectDir` + `isRealpathContained(dir, projectsRootDir())`.
+ * Containment is `resolveProjectDir`'s, once for every project-scoped route:
+ * a `dir` outside `studio-workspace/` throws there and the router answers 404,
+ * so this handler never sees one.
  */
 import { createWorkspaceProject } from '@core/page-parser'
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import { discoverStories, storyFilesIn } from './storyDiscovery'
 
@@ -47,7 +47,6 @@ export async function tryServeStudioStories(req: Request, url: URL, pathname: st
   if (req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
       const enabled = readStudioMeta(dir).stories?.enabled !== false
       const files = storyFilesIn(dir)
@@ -56,6 +55,7 @@ export async function tryServeStudioStories(req: Request, url: URL, pathname: st
       const { stories, refusals } = discoverStories(dir, createWorkspaceProject(dir), files)
       return jsonResponse({ enabled, files, stories: stories.map((story) => story.summary), refusals })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:stories]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -66,12 +66,12 @@ export async function tryServeStudioStories(req: Request, url: URL, pathname: st
       const body = await readValidatedBody(req, StoriesPostBodySchema)
       if (!body) return badRequest('invalid stories body')
       const dir = resolveProjectDir(body.dir)
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
       const existing = readStudioMeta(dir).stories ?? {}
       mergeStudioMeta(dir, { stories: { ...existing, enabled: body.enabled } })
       return jsonResponse({ ok: true, enabled: body.enabled })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:stories]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

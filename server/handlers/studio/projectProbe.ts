@@ -69,7 +69,7 @@ import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
 import { Type } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readTextCapped } from './cappedFileRead'
 import { DEPENDENCIES_NOT_INSTALLED, detectComponentPackages } from './componentPackageDetect'
 import { detectDesignSystems } from './designSystemDetect'
@@ -643,6 +643,7 @@ export async function tryServeStudioProbe(req: Request, url: URL, pathname: stri
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       return jsonResponse({ profile: resolveProjectProfile(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio/projectProbe]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -655,6 +656,7 @@ export async function tryServeStudioProbe(req: Request, url: URL, pathname: stri
       const dir = resolveProjectDir(body.dir)
       return jsonResponse({ profile: reprobeProjectProfile(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio/projectProbe]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

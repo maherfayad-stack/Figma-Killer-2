@@ -10,6 +10,8 @@ import * as path from 'node:path'
 import { readStudioMeta } from '../studio/studioMeta'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioPreviewAxes } from '../studio/previewAxes'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
   const url = new URL(`http://localhost${pathAndQuery}`)
@@ -47,14 +49,10 @@ describe('tryServeStudioPreviewAxes', () => {
   })
 
   it('GET rejects a dir outside studio-workspace/', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-axes-outside-'))
-    try {
+    await withOutsideWorkspaceDir('preview-axes-outside', async (outside) => {
       const { req, url, pathname } = makeRequest(`/admin/api/studio/preview-axes?dir=${encodeURIComponent(outside)}`)
-      const res = await tryServeStudioPreviewAxes(req, url, pathname)
-      expect(res!.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+      await expect(tryServeStudioPreviewAxes(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
   })
 
   it('POST persists a partial patch and preserves other meta.json fields', async () => {
@@ -99,18 +97,14 @@ describe('tryServeStudioPreviewAxes', () => {
   })
 
   it('POST rejects a dir outside studio-workspace/ without writing anything', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-axes-outside-'))
-    try {
+    await withOutsideWorkspaceDir('preview-axes-outside', async (outside) => {
       const { req, url, pathname } = makeRequest(
         '/admin/api/studio/preview-axes',
         postBody({ dir: outside, previewAxes: { direction: 'rtl' } }),
       )
-      const res = await tryServeStudioPreviewAxes(req, url, pathname)
-      expect(res!.status).toBe(404)
+      await expect(tryServeStudioPreviewAxes(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
       expect(fs.existsSync(path.join(outside, '.studio'))).toBe(false)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+    })
   })
 
   // WS-10 §4.2 (Phase 3) — `locale` joined the wire schema, replacing the old

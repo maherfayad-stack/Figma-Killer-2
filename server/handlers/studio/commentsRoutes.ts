@@ -30,7 +30,7 @@ import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { requireAuthenticatedUser } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import { Type } from '@core/utils/typeboxHelpers'
-import { resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import {
   CommentOpSchema,
   applyCommentOp,
@@ -59,6 +59,7 @@ export async function tryServeStudioComments(
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       return jsonResponse({ dir, comments: readCommentsFile(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
   }
@@ -89,6 +90,7 @@ export async function tryServeStudioComments(
       if (result.changed) writeCommentsFile(dir, result.file)
       return jsonResponse({ ok: true, changed: result.changed, comments: result.file })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
   }

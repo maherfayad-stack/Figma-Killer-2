@@ -193,6 +193,14 @@ const ConversationViewSchema = Type.Object({
   cacheCreationTokensTotal: Type.Number(),
   /** Current-context snapshot for the composer meter (latest turn). */
   contextTokens: Type.Number(),
+  /**
+   * Which Studio project this thread belongs to (W10), or `null` for one
+   * that belongs to none — started before project scoping existed, or with
+   * no project open. A LISTING for a project only ever contains this
+   * project's rows and null ones, so `projectKey !== null` in a scoped list
+   * reads as "this project's", with no need for the client to know the key.
+   */
+  projectKey: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
   updatedAt: Type.String(),
 })
@@ -372,8 +380,14 @@ export async function clearDefault(): Promise<void> {
 // Endpoints — conversations
 // ---------------------------------------------------------------------------
 
-export async function listConversations(): Promise<ConversationView[]> {
-  const body = await apiRequest('/admin/api/ai/conversations', {
+/**
+ * `dir` scopes the listing to one Studio project (W10): the server returns
+ * that project's threads plus the unscoped ones, never another project's.
+ * `null` (no project open) lists everything, as this route always did.
+ */
+export async function listConversations(dir: string | null): Promise<ConversationView[]> {
+  const query = dir ? `?dir=${encodeURIComponent(dir)}` : ''
+  const body = await apiRequest(`/admin/api/ai/conversations${query}`, {
     schema: ConversationListResponseSchema,
   })
   return body.conversations

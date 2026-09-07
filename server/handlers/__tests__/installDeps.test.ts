@@ -29,6 +29,8 @@ import {
 } from '../studio/installDeps'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from '../studio/installJobStore'
 import { projectsRootDir } from '../studioProjects'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
 // Fake spawn / fake process helpers — no real subprocess, no real timers.
@@ -640,31 +642,21 @@ describe('tryServeStudioInstall', () => {
   })
 
   it('rejects install/status for a dir outside studio-workspace/', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'installdeps-outside-'))
-    try {
+    await withOutsideWorkspaceDir('installdeps-outside', async (outside) => {
       const { req, url, pathname } = makeRequest(`/admin/api/studio/install/status?dir=${encodeURIComponent(outside)}`)
-      const res = await tryServeStudioInstall(req, url, pathname)
-      expect(res).not.toBeNull()
-      expect(res!.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+      await expect(tryServeStudioInstall(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
   })
 
   it('rejects POST /install for a dir outside studio-workspace/ without starting a job', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'installdeps-outside-post-'))
-    try {
+    await withOutsideWorkspaceDir('installdeps-outside-post', async (outside) => {
       const { req, url, pathname } = makeRequest('/admin/api/studio/install', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ dir: outside }),
       })
-      const res = await tryServeStudioInstall(req, url, pathname)
-      expect(res).not.toBeNull()
-      expect(res!.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+      await expect(tryServeStudioInstall(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
   })
 
   it('accepts install/status for a dir actually inside studio-workspace/', async () => {

@@ -45,6 +45,7 @@ interface ConversationRow {
   cache_creation_tokens_total: number | string
   context_tokens: number | string
   session_epoch: number | string
+  project_key: string | null
   created_at: Date | string
   updated_at: Date | string
   deleted_at: Date | string | null
@@ -86,6 +87,7 @@ function conversationRowToRecord(row: ConversationRow): ConversationRecord {
     cacheCreationTokensTotal: toNumber(row.cache_creation_tokens_total),
     contextTokens: toNumber(row.context_tokens),
     sessionEpoch: toNumber(row.session_epoch),
+    projectKey: row.project_key ?? null,
     createdAt: isoDateOrNull(row.created_at)!,
     updatedAt: isoDateOrNull(row.updated_at)!,
     deletedAt: isoDateOrNull(row.deleted_at),
@@ -142,6 +144,7 @@ export function toConversationView(record: ConversationRecord): ConversationView
     cacheReadTokensTotal: record.cacheReadTokensTotal,
     cacheCreationTokensTotal: record.cacheCreationTokensTotal,
     contextTokens: record.contextTokens,
+    projectKey: record.projectKey,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }
@@ -191,20 +194,46 @@ export function toConversationDetailView(
 
 /**
  * List non-deleted conversations for one user, newest activity first.
- * Served by the `ai_conv_user_scope_idx` index (still keyed on the
- * vestigial `scope` column — see `LEGACY_SCOPE_COLUMN` — but a single-value
- * leading-column index still serves a `user_id` + `order by updated_at`
- * query well at self-hosted scale).
+ *
+ * With a `projectKey`, the list is what THIS project's history should show:
+ * conversations stamped with that key, plus the unscoped (`project_key is
+ * null`) ones — every conversation that predates migration 022, and every
+ * conversation started with no project open. Unscoped rows are deliberately
+ * NOT hidden: they belong to no project, so hiding them would make a user's
+ * own history vanish the day this shipped. Another project's conversations
+ * are excluded — that is the whole point of the scope.
+ *
+ * Without one (no project open), every conversation is listed, exactly as
+ * before.
+ *
+ * The filtered form is served by `ai_conv_user_project_updated_idx`
+ * (migration 022); the unfiltered one by the older `ai_conv_user_scope_idx`,
+ * still keyed on the vestigial `scope` column (see `LEGACY_SCOPE_COLUMN`).
  */
 export async function listConversationsForUser(
   db: DbClient,
   userId: string,
+  projectKey?: string | null,
 ): Promise<ConversationRecord[]> {
+  if (projectKey) {
+    const { rows } = await db<ConversationRow>`
+      select id, user_id, title, credential_id, model_id,
+             prompt_tokens_total, completion_tokens_total,
+             cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
+             context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
+      from ai_conversations
+      where user_id = ${userId}
+        and deleted_at is null
+        and (project_key = ${projectKey} or project_key is null)
+      order by updated_at desc
+    `
+    return rows.map(conversationRowToRecord)
+  }
   const { rows } = await db<ConversationRow>`
     select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
     from ai_conversations
     where user_id = ${userId}
       and deleted_at is null
@@ -226,7 +255,7 @@ export async function readConversationForUser(
     select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
     from ai_conversations
     where id = ${conversationId}
       and user_id = ${userId}
@@ -313,18 +342,46 @@ export async function createConversationForUser(
   const title = (input.title ?? '').trim() || DEFAULT_CONVERSATION_TITLE
   const { rows } = await db<ConversationRow>`
     insert into ai_conversations (
-      id, user_id, scope, title, credential_id, model_id
+      id, user_id, scope, title, credential_id, model_id, project_key
     )
     values (
       ${id}, ${userId}, ${LEGACY_SCOPE_COLUMN}, ${title},
-      ${input.credentialId}, ${input.modelId}
+      ${input.credentialId}, ${input.modelId}, ${input.projectKey ?? null}
     )
     returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
   `
   return conversationRowToRecord(rows[0]!)
+}
+
+/**
+ * Stamp an UNSCOPED conversation with the project its first real turn ran
+ * against — the `project_key is null` predicate lives in the UPDATE, not in a
+ * preceding read, so a conversation can never be re-pointed at a second
+ * project by a racing tab. Returns true when this call is the one that
+ * adopted it.
+ *
+ * Called by `chat.ts` on every turn with a validated workspace dir; a no-op
+ * for a conversation that already carries a key (that case is the 409 the
+ * handler raises before it ever gets here, or the same key again).
+ */
+export async function adoptConversationProjectKey(
+  db: DbClient,
+  userId: string,
+  conversationId: string,
+  projectKey: string,
+): Promise<boolean> {
+  const result = await db`
+    update ai_conversations
+    set project_key = ${projectKey}
+    where id = ${conversationId}
+      and user_id = ${userId}
+      and deleted_at is null
+      and project_key is null
+  `
+  return result.rowCount > 0
 }
 
 /**
@@ -355,7 +412,7 @@ export async function updateConversationForUser(
     returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
   `
   return rows[0] ? conversationRowToRecord(rows[0]) : null
 }

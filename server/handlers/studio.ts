@@ -238,7 +238,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
-import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody } from '../http'
 import { GithubImportError, parseGithubRepoUrl, runGithubImport } from './studioGithubImport'
 import {
@@ -246,6 +245,7 @@ import {
   projectDisplayName,
   resolveProjectDir,
   writeProjectMeta,
+  rethrowProjectDirRefusal,
 } from './studioProjects'
 import { readStudioMeta, recordProjectOpened, DEFAULT_TRUST_TIER } from './studio/studioMeta'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
@@ -253,7 +253,7 @@ import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
-import { applyStudioEditBatch, StudioEditSchema } from './studioWriteback'
+import { applyStudioEditBatch } from './studioWriteback'
 import { probeProject, tryServeStudioProbe } from './studio/projectProbe'
 import { mergeStudioMeta } from './studio/studioMeta'
 import { tryServeStudioInstall } from './studio/installDeps'
@@ -294,6 +294,14 @@ import type { DbClient } from '../db/client'
  * change has to touch, and it grows without bound. Each entry returns `null`
  * for a path it does not own, so ordering here is not load-bearing.
  */
+import {
+  BoardsPostBodySchema,
+  FrameDefaultsBodySchema,
+  FrameworkPostBodySchema,
+  GithubImportBodySchema,
+  SaveBodySchema,
+} from './studio/studioRouteBodies'
+
 const STUDIO_SUB_ROUTERS = [
   tryServeStudioProbe,
   tryServeStudioInstall,
@@ -330,71 +338,15 @@ const STUDIO_SESSION_SUB_ROUTERS = [
   tryServeStudioNodeExport,
 ] as const
 
-/** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
-const SaveBodySchema = Type.Object({
-  dir: Type.Optional(Type.String()),
-  edits: Type.Optional(Type.Array(StudioEditSchema)),
-})
-
 /**
- * Body of POST /admin/api/studio/boards. `boards` stays `Unknown` at the
- * boundary because `parseBoardsFile` is the real validator — it defensively
- * coerces any payload into a well-formed BoardsFile — so there is no parallel
- * TypeBox mirror of the board model to drift.
+ * The answer every route in this file gives to a failure it did not expect —
+ * except a project-dir refusal, which is not this file's to answer: it belongs
+ * to the router's single 404 (`rethrowProjectDirRefusal`).
  */
-const BoardsPostBodySchema = Type.Object({
-  dir: Type.Optional(Type.String()),
-  boards: Type.Unknown(),
-})
-
-/**
- * Body of POST /admin/api/studio/framework. `framework` stays `Unknown` at
- * the boundary because `writeStudioFrameworkFile` is the real validator (via
- * `FrameworkSettingsSchema`) — no parallel mirror to drift.
- */
-const FrameworkPostBodySchema = Type.Object({
-  dir: Type.Optional(Type.String()),
-  framework: Type.Unknown(),
-})
-
-/**
- * Body of POST /admin/api/studio/frame-defaults (WS-7.2 — "apply to all
- * pages"). Both fields optional: a bulk width-only apply must be able to
- * merge without touching a previously-saved default height.
- */
-const FrameDefaultsBodySchema = Type.Object({
-  dir: Type.Optional(Type.String()),
-  width: Type.Optional(Type.Number({ minimum: 1 })),
-  height: Type.Optional(Type.Number({ minimum: 1 })),
-})
-
-/**
- * Body of POST /admin/api/studio/import-github (Phase 7B).
- *
- * Deliberately has NO `dir` field. `runGithubImport` clears its target
- * directory before repopulating it, so a caller-supplied target would be an
- * arbitrary recursive-delete primitive driven by a request body. The import
- * target is therefore always derived server-side from the parsed repo
- * (`studio-workspace/<owner>-<repo>`); `runGithubImport`'s `dir`
- * option stays internal (tests only) and is never sourced from the wire.
- *
- * `token`, when present, is forwarded as a Bearer credential and never logged
- * or echoed back.
- *
- * `pagesDir`, when present, is NOT forwarded to `runGithubImport` at all — it
- * has nothing to do with fetching/writing the repo. It's persisted to the
- * freshly-imported project's `.studio/meta.json` afterwards (§1.1's
- * `pagesDir` override) so a repo whose screens don't live at the
- * hand-authored default of `<dir>/pages` (e.g. `src/screens`) is discoverable
- * without restructuring the imported source.
- */
-const GithubImportBodySchema = Type.Object({
-  url: Type.String(),
-  ref: Type.Optional(Type.String()),
-  subdir: Type.Optional(Type.String()),
-  token: Type.Optional(Type.String()),
-  pagesDir: Type.Optional(Type.String()),
-})
+function studioRouteFailure(err: unknown): Response {
+  rethrowProjectDirRefusal(err)
+  return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+}
 
 export async function tryServeStudio(
   req: Request,
@@ -485,7 +437,7 @@ export async function tryServeStudio(
         missingPageIds,
       })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -497,6 +449,7 @@ export async function tryServeStudio(
       const response = await resolveStudioAssetResponse(dir, rawPath, req)
       return response ?? new Response('Not found', { status: 404 })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -545,7 +498,7 @@ export async function tryServeStudio(
         touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
       })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -558,7 +511,7 @@ export async function tryServeStudio(
       const boards = existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
       return jsonResponse({ dir, boards })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -574,7 +527,7 @@ export async function tryServeStudio(
       writeFileSync(file, serializeBoardsFile(boards))
       return jsonResponse({ ok: true, boards })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -588,7 +541,7 @@ export async function tryServeStudio(
       const frameDefaults = readStudioMeta(dir).frameDefaults ?? {}
       return jsonResponse({ dir, frameDefaults })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -600,7 +553,7 @@ export async function tryServeStudio(
       const frameDefaults = mergeProjectFrameDefaults(dir, { width: body.width, height: body.height })
       return jsonResponse({ ok: true, frameDefaults })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -613,7 +566,7 @@ export async function tryServeStudio(
       const framework = readStudioFrameworkFile(dir)
       return jsonResponse({ framework })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -626,7 +579,7 @@ export async function tryServeStudio(
       if (!result.ok) return badRequest(result.message)
       return jsonResponse({ ok: true, framework: result.value })
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return studioRouteFailure(err)
     }
   }
 
@@ -675,6 +628,7 @@ export async function tryServeStudio(
       }
       return jsonResponse({ ok: true, ...result })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       if (err instanceof GithubImportError) {
         return jsonResponse({ error: err.message }, { status: err.status })
@@ -691,6 +645,7 @@ export async function tryServeStudio(
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       return buildStudioDownloadResponse(dir)
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

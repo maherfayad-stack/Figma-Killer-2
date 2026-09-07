@@ -309,3 +309,27 @@ if (typeof (globalThis as { EventSource?: unknown }).EventSource === 'undefined'
     document.getElementById('toast-root')?.remove()
   })
 }
+
+// ---------------------------------------------------------------------------
+// The Studio workspace root, for the whole suite.
+//
+// `resolveProjectDir` containment-checks every client-supplied `dir` against
+// `projectsRootDir()` (W10) — the guard that stops an agent in project A from
+// naming project B, `~/.ssh`, or anywhere else on disk. Roughly fifty server
+// test files build their fixture project with `mkdtempSync(join(tmpdir(),
+// …))`, i.e. a project that is its own root, with no `studio-workspace/`
+// above it — so without this every one of them would be refused.
+//
+// Declaring the fact ONCE, here, says the true thing: in this suite the
+// studio workspace root IS the OS temp directory. The alternative is fifty
+// copies of the same `process.env` dance, which is fifty chances to write it
+// slightly differently and one more thing every new fixture has to remember.
+//
+// A file that needs its own root (a multi-project fixture, or one asserting
+// the containment refusal itself) still sets `STUDIO_WORKSPACE_DIR` in its
+// own `beforeAll` and restores it after — `projectsRootDir()` re-reads the
+// variable on every call precisely so that works.
+{
+  const { tmpdir } = await import('node:os')
+  process.env.STUDIO_WORKSPACE_DIR ??= tmpdir()
+}
