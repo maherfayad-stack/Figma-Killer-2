@@ -21,6 +21,124 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### perf-04 — W9-5: speed levers 1-3 (one load per turn, no live-reload wait on headless captures, Chromium prewarm)
+- **Agent:** perf-hunter · **Stage:** done (typecheck + touched tests + architecture gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07 · **Branch:** `perf/agent-loop-speed-levers` off `origin/main` at `b56ff12`.
+
+**Before/after — real numbers.** Fixture: `studio-workspace/__canonical-fixture`
+scaled to **36 pages / 100 fingerprinted files**, copied to a temp dir, measured in
+one Bun process (the same process shape the admin server has). Cold Chromium
+measured separately with `playwright-core` on this machine.
+
+| Measurement | Before | After |
+|---|---|---|
+| `loadStudioPages` cold (first call in the process) | 515 ms | 509 ms |
+| `loadStudioPages` **repeat, nothing changed** | 24–32 ms (5 runs, avg 27.5) | **2.3–3.0 ms (avg 2.5)** |
+| `loadStudioPages` after ONE page file edited | 163 ms | 174 ms (memo miss → full recompute; unchanged in substance) |
+| workspace fingerprint check (the memo's own cost) | — | 0.7 ms / 100 files |
+| `structuredClone` of a 36-page load result | — | 1.8 ms |
+| live-reload bridge round trips per `studio_screenshot` / `studio_compare` / `studio_measure_element` when headless answers | **1** | **0** |
+| Chromium launch paid by the first capture of a session | 251–281 ms warm-page-cache, **1486 ms** truly cold | 0 (paid on project open instead) |
+
+**Mechanisms changed (three, one per lever):**
+1. **`server/handlers/studio/studioLoadMemo.ts` (new).** A whole-result memo in
+   front of `loadStudioPages`, keyed on a `relPath:size:mtimeMs` fingerprint of
+   every source-relevant file `listWorkspaceFiles` walks, plus `.studio/meta.json`
+   (which `EXCLUDED_WORKSPACE_DIR_NAMES` hides from that walk). `pageParseCache.ts`
+   already cached the per-route ts-morph parse; this caches everything AROUND it —
+   `createWorkspaceProject`, `compileProjectStyles`, the page/story directory
+   walks, `loadStudioStyles`' site-wide registry, the per-page convert — which is
+   the ~26 ms an agent turn was paying 4+ times over (live digest, `studio_compare`,
+   `studio_screenshot`, `studio_quality_check`, the fidelity tools). Results are
+   `structuredClone`d in and out: two tools holding the same `Page` graph would be
+   a correctness bug, and 1.8 ms is an order of magnitude under what it saves.
+   A **narrowed** load (`options.pageIds`) is served from a stored full result by
+   filtering, but never stored.
+2. **The live-reload wait moved to where it is actually needed.**
+   `awaitStudioLiveReload` was awaited up front by `compare.ts`, `screenshot.ts`
+   and `measureElement.ts` on every call. It only ever mattered to an open editor
+   tab, and headless (the default since W4-2A) re-parses from disk on every
+   navigation. `capture/captureFrames.ts` now owns it and pays it ONLY in the
+   live-bridge fallback, behind the caller's `reloadBeforeLiveFallback` flag —
+   never on the headless path and never for an explicit `source: 'live'` capture,
+   whose whole point is the tab as it stands (unsaved edits included).
+   `studio_measure_element` dropped it outright: `inspectFrameHeadless` has no
+   live path at all, so the round trip was pure waste.
+3. **`prewarmCaptureBrowser()` in `capture/browserPool.ts`,** called from
+   `GET /admin/api/studio/load` (full loads only — a targeted reload is not a
+   project opening). Fire-and-forget, at most one in-flight launch, skipped when
+   already warm or when `rememberedLaunchFailure()` is fresh, and it arms the same
+   `BROWSER_IDLE_MS` teardown a real capture does.
+
+**Budgets added (tests, not comments):**
+- `server/handlers/studio/studioLoadMemo.test.ts` — 9 cases pinning INVALIDATION:
+  edited page, added page, deleted page, edited local component (the case
+  `pageParseCache`'s documented one-level limit misses), changed
+  `.studio/meta.json` `pagesDir`, caller mutation not leaking, and a narrowed load
+  neither poisoning nor being poisoned by the memo.
+- `server/ai/mcp/capture/captureFrames.test.ts` — three new cases pinning that the
+  reload wait is `[]` on headless and on `source: 'live'`, and exactly one call on
+  the live fallback.
+- `server/ai/mcp/capture/browserPool.test.ts` (new) — prewarm launches at most one
+  browser, the following capture reuses it, and a launch failure is swallowed +
+  memoized so a host with no Chromium loads the board unchanged.
+- `measureElement.test.ts`'s ritual test now asserts `reloadCalls` is **empty** —
+  that zero is the thing that would silently regress.
+
+**Structural change that came with it:** `StudioLoadResult`/`StudioLoadOptions`
+moved to `server/handlers/studio/studioLoadContract.ts` (re-exported from
+`studioPageLoad.ts`). Without it the memo and the pipeline import each other and
+`no-circular-dependencies.test.ts` fails; it also put `studioPageLoad.ts` back
+under the 700-line `module-size-budgets` ceiling (722 → 650).
+
+**CUT — named, not forgotten:**
+- **Lever 4 (live-reload nudge from the `PostToolUse` hook).** Needs a new
+  loopback endpoint, a per-turn token mint/validate/expire lifecycle, and a new
+  env var carrying origin + token into every hook subprocess — a genuine auth
+  surface, not a perf tweak. `recordToolWrite.ts` has no HTTP convention to
+  borrow: `stopGateCheck.ts` makes no requests either. Screens still appear at
+  turn end, as before.
+- **Lever 5 (warm-session effort pin)** and **lever 6 (cross-project DS guide
+  cache + `DS_FILE_MAX_BYTES`)** — neither was trivially cheap; not started.
+- **On-disk parse cache for the Stop-hook subprocess.** The hook is a separate
+  process, so it pays the full 509 ms cold load and the in-process memo cannot
+  help it. Explicitly optional in the plan row ("cut if slow"); it is the highest
+  remaining win in this row.
+
+**Landmines / what did NOT help:**
+- **The memo does not help the "one file just changed" case, and cannot.** 163 ms
+  before → 174 ms after. That path is a genuine recompute; the +11 ms is the
+  fingerprint plus the clone. Do not try to make the memo partial — a per-page
+  merge would have to re-derive the site-wide class-id registry, which is exactly
+  the `canvas-14` failure.
+- **`awaitStudioLiveReload` was already free when NO tab is open** (it returns
+  early on a null bridge). The win in lever 2 is entirely in the dogfood case
+  where the human HAS the board open — which is also the only case where the
+  agent's captures were mysteriously slow. Reported as a round-trip count, not a
+  millisecond number: putting a duration on a browser round trip needs a browser,
+  and agents do not run Playwright for this.
+- **Chromium cold launch is bimodal:** 1486 ms on a genuinely cold binary, then
+  251–281 ms once the OS page cache is warm. Quote the range, not one number.
+- **Batch-run test isolation:** `compare.test.ts` run ALONE fails on
+  `SyntaxError: Export named 'editorBridgeScope' not found` — its
+  `mock.module('../../editorBridge')` factory omits that export and only a sibling
+  file's mock supplies it in a batch. Pre-existing on `origin/main`; verified by
+  running the same file in a clean `origin/main` worktree.
+- **22 failures in `bun test server/handlers/studio server/ai/mcp/capture
+  server/ai/tools/studio server/ai/mcp/tools/studio` are identical, test-for-test,
+  on `origin/main`.** Mine adds 15 passes and 0 failures. Do not chase them.
+
+**Dogfood script (human, ~5 min):** `bun run dev`, open a project with ≥10 screens
+at `/admin/site`. (1) Watch the server log/process list right after the board
+loads — a `chromium` process should appear within a second or two and disappear
+about five minutes later if you never capture. (2) Ask the agent to screenshot a
+screen: the first capture should feel immediate rather than pausing ~1.5 s before
+anything happens. (3) With the board OPEN, ask the agent for a `studio_compare` on
+2–3 screens — the canvas should NOT flicker/re-read on the way into the capture
+any more (that flicker was the live-reload push). (4) Then edit a file yourself
+outside Studio and ask the agent to screenshot it — the new content must appear,
+which is the memo invalidation working. If it shows the OLD content, that is the
+fingerprint and it is a correctness bug, not a perf one: reproduce and file it.
 ### panel-19 — W8-4: Hug/Fill stops writing `100%` into a flex row
 - **Agent:** panel-designer (`hug-fill`) · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs human dogfood**
 - **Branch:** `fix/inspector-parent-aware-sizing`, off `origin/main` at `b56ff12`.

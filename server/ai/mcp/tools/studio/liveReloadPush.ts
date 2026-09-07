@@ -55,11 +55,16 @@ export interface StudioReloadPush {
 }
 
 /**
- * The AWAITED variant, for the one caller that must not race it:
- * `studio_screenshot` reconciles the board with disk, then captures the live
- * DOM. Capturing before the canvas has re-read the files it is about to
- * photograph would return the previous frame — a stale screenshot is worse
- * than no screenshot, because it looks like evidence.
+ * The AWAITED variant, for the one path that must not race it: a capture that
+ * has FALLEN BACK to the live editor tab (`capture/captureFrames.ts`'s
+ * `reloadBeforeLiveFallback`). Photographing a tab before it has re-read the
+ * files it is about to photograph returns the previous frame — a stale
+ * screenshot is worse than no screenshot, because it looks like evidence.
+ *
+ * W9-5 lever 2: it is NOT awaited on the headless capture path, which is the
+ * default and re-parses from disk on every navigation. Paying a full browser
+ * round trip to make a renderer current that already was is the cost this
+ * single caller exists to avoid spreading.
  *
  * Same fail-soft contract as {@link pushStudioLiveReload} otherwise: no open
  * board resolves immediately, and a bridge rejection is logged and swallowed

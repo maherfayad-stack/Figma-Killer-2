@@ -18,20 +18,24 @@
  *      frame for every page file that does not have one. Additive and
  *      idempotent: an existing frame keeps its position and size, and a frame
  *      whose file was deleted is left alone.
- *   2. **Wait for the canvas to re-read** (`awaitStudioLiveReload`) — awaited,
- *      not fire-and-forget, because capturing first would photograph the
- *      previous version of the file.
- *   3. **Capture** — hand the resolved page ids to `capture/captureFrames.ts`,
+ *   2. **Capture** — hand the resolved page ids to `capture/captureFrames.ts`,
  *      which renders them in a server-side headless browser and, only if that
  *      cannot run, falls back to relaying to the open editor tab. Return the
  *      PNGs as MCP image blocks.
  *
- * Step 3 stopped needing an open browser tab in W4-2A. That matters most
- * exactly here: steps 1 and 2 have just made DISK the source of truth, and
- * this tool exists to look at files the agent itself wrote — so the honest
- * renderer is the one that reads those files, not the one that happens to be
- * mounted in someone's tab. It also means a capture no longer scrolls, zooms,
- * or re-pages a canvas the user is working in.
+ * Step 2 stopped needing an open browser tab in W4-2A. That matters most
+ * exactly here: step 1 has just made DISK the source of truth, and this tool
+ * exists to look at files the agent itself wrote — so the honest renderer is
+ * the one that reads those files, not the one that happens to be mounted in
+ * someone's tab. It also means a capture no longer scrolls, zooms, or re-pages
+ * a canvas the user is working in.
+ *
+ * W9-5 lever 2 — waiting for the canvas to re-read (`awaitStudioLiveReload`)
+ * used to be its own step between the two above, paid on EVERY call. It is
+ * meaningless to the headless renderer, which re-parses from disk on every
+ * navigation, so `captureFrames` now owns it and pays it only on the live-tab
+ * fallback (`reloadBeforeLiveFallback`) — where a stale photograph really
+ * would read as evidence.
  *
  * `studio_export_frames` still exists and still does step 3 alone; it stays in
  * the MCP registry for external clients that manage their own board. It is
@@ -53,7 +57,6 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { captureFrames } from '../../capture/captureFrames'
-import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 
@@ -128,19 +131,18 @@ export const studioScreenshotTool: AiTool = {
       }
     }
 
-    // 2. Awaited, so the capture below photographs the files as they are NOW.
-    await awaitStudioLiveReload(ctx.userId, { dir, pageIds: ids, boardsChanged: placed.length > 0 })
-
-    // 3. Capture — headless first, the live editor tab as fallback. The
+    // 2. Capture — headless first, the live editor tab as fallback. The
     // routing lives in `capture/captureFrames.ts`; this tool is indifferent to
     // which path answered beyond reporting it, because both produce the same
     // frames from the same parse output. Headless is the RIGHT default here
-    // specifically because steps 1 and 2 just made disk the source of truth:
-    // this tool exists to look at files the agent has already written.
+    // specifically because step 1 just made disk the source of truth: this
+    // tool exists to look at files the agent has already written. Only the
+    // live-tab fallback pays the live-reload wait (`reloadBeforeLiveFallback`).
     const captured = await captureFrames({
       userId: ctx.userId,
       dir,
       pageIds: ids,
+      reloadBeforeLiveFallback: { boardsChanged: placed.length > 0 },
       ...(dpr === undefined ? {} : { dpr }),
       ...(axes === undefined ? {} : { axes }),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
