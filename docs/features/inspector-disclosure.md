@@ -226,6 +226,40 @@ control folds into the field's own dropdown.
 *Shipped deviation:* `aspectRatio` and `boxSizing` went into a **Size** `⚙`
 popover, not the Layout `⚙`.
 
+#### Hug/Fill is resolved against the real parent (W8-4)
+
+`Fixed`/`Hug`/`Fill` are **intents**, and the CSS that expresses an intent
+depends entirely on how the element's parent lays it out. `elementSizing.ts`
+classifies each axis against the parent's *computed* `display`/`flex-direction`
+(`sizingAxisRole`) and writes accordingly:
+
+| Parent / axis | Fill | Hug |
+|---|---|---|
+| flex, **main** axis | `flex: 1 1 0` (clears the axis length) | `width\|height: fit-content` + `flex: 0 0 auto` |
+| flex, **cross** axis | `align-self: stretch` (clears the axis length) | `width\|height: fit-content` |
+| grid | `justify-self` (inline) / `align-self` (block) `: stretch`, clears the axis length | `width\|height: fit-content` |
+| block | `width\|height: 100%` | `width\|height: fit-content` |
+
+The earlier model wrote `fit-content`/`100%` unconditionally. `100%` on a flex
+child resolves against the container's content box and ignores `gap`, so a
+"Fill" item in a gapped row **overflowed the row and shoved its siblings out** —
+the control claimed one thing and the source did another.
+
+**Read-back mirrors the write.** `currentSizingMode` asks the same role
+question and looks for the same marker `sizingPatch` would have left, so the
+picker always reflects what is really in the source. A `width: 100%` on a flex
+child reads as **Fixed** — there it *is* just a literal length.
+
+**No parent layout ⇒ no Hug/Fill.** When the element's parent can't be resolved
+(its parent is a JSX call site in another file, nothing has rendered it on the
+canvas yet, or it has no parent node), the axis stays on `Fixed` and the Hug /
+Fill menu rows render **disabled with a named reason as their tooltip**
+(`AddablePropertyFieldMode.disabledReason`) rather than disappearing. The parent
+layout comes from `useSizingParentLayout` — a live `getComputedStyle` read of
+the parent's rendered element, the same source `SingleNodeAlignRow` uses for
+G10; a stored declaration cannot tell you what the cascade resolved `display`
+to.
+
 ### G3 — Layout: the settings popover (F3–F8)
 
 A `⚙` opens a mode-filtered *Layout settings* popover holding `alignSelf` /
