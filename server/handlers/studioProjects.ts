@@ -30,7 +30,8 @@ import {
   type CompilableStyleToolchain,
   type ProjectFramework,
 } from './studio/projectProfileSchema'
-import { PROJECTS_TRASH_DIR_NAME } from './studio/projectTrash'
+import { PROJECTS_TRASH_DIR_NAME } from './studio/projectDirGuard'
+import { readProjectThumbnailStat } from './studio/projectThumbnailFile'
 
 /**
  * Root that holds every studio project. Each immediate subfolder of
@@ -236,6 +237,19 @@ export interface StudioProjectSummary {
    * parent). A project with no pages dir reports its folder's mtime.
    */
   editedAt: number
+  /**
+   * W7-3 — whether `.studio/thumbnail.png` exists. The card renders the folder
+   * glyph placeholder when it doesn't, and the listing route enqueues a
+   * capture for exactly these projects (`studio/projectThumbnailQueue.ts`).
+   */
+  hasThumbnail: boolean
+  /**
+   * The thumbnail's mtime (epoch ms), absent when there is none. The card
+   * carries it in the image URL so a NEW capture is fetched immediately
+   * instead of waiting for the browser to revalidate a cached one — a
+   * conditional GET the listing has already answered.
+   */
+  thumbnailUpdatedAt?: number
 }
 
 /** `statSync(path).mtimeMs`, or 0 for anything unreadable (a race with a delete, a permission error). Never throws — a listing must not fail on one file. */
@@ -293,6 +307,7 @@ export function studioProjectSummary(dir: string): StudioProjectSummary {
   const meta = readStudioMeta(dir)
   const framework = meta.profile?.framework
   const { pageCount, editedAt } = projectPageFacts(dir, framework)
+  const thumbnail = readProjectThumbnailStat(dir)
   return {
     dir,
     name: meta.displayName ?? basename(dir) ?? dir,
@@ -302,6 +317,8 @@ export function studioProjectSummary(dir: string): StudioProjectSummary {
     trust: meta.trust ?? DEFAULT_TRUST_TIER,
     styleToolchains: meta.profile ? compilableStyleToolchains(meta.profile) : [],
     editedAt,
+    hasThumbnail: thumbnail !== null,
+    ...(thumbnail !== null ? { thumbnailUpdatedAt: thumbnail.mtimeMs } : null),
   }
 }
 

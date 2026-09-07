@@ -31,14 +31,13 @@
  *
  * ## Containment
  *
- * Same posture as `./projectTrash.ts`, and for the same reason: `requestedDir`
- * is caller-supplied. The resolved directory's PARENT must be the projects
- * root itself, which rejects `..` traversal, a nested path like
- * `<project>/pages`, and the workspace root in one check, and cannot be fooled
- * by a sibling root whose name merely shares a prefix.
+ * Delegated to `resolveWorkspaceProjectDir` (`./projectDirGuard.ts`) — the
+ * single rule this route shares with `/delete` and `/thumbnail`, all three of
+ * which take a caller-supplied `dir`. See that module for why the check
+ * compares the resolved PARENT rather than testing a prefix.
  */
-import { cpSync, existsSync, statSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { cpSync, existsSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import {
   listStudioProjects,
@@ -48,14 +47,14 @@ import {
 } from '../studioProjects'
 import { generateStudioProjectGuide } from './projectGuide'
 import { mergeStudioMeta } from './studioMeta'
-import { PROJECTS_TRASH_DIR_NAME } from './projectTrash'
+import { resolveWorkspaceProjectDir, type ProjectDirRejection } from './projectDirGuard'
 
 /**
  * Why a project could not be duplicated. The route maps `not-found` to 404,
  * `not-a-project` to 400, and `name-taken` to 409 — three different bugs on
  * the caller's side, and the last one is recoverable by typing another name.
  */
-export type ProjectDuplicateFailure = 'not-a-project' | 'not-found' | 'name-taken'
+export type ProjectDuplicateFailure = ProjectDirRejection | 'name-taken'
 
 export class ProjectDuplicateError extends Error {
   // Declared and assigned rather than written as a constructor parameter
@@ -116,20 +115,9 @@ export function duplicateStudioProject(
   requestedName?: string,
 ): StudioProjectSummary {
   const root = resolve(projectsRoot)
-  const source = resolve(requestedDir)
-
-  if (dirname(source) !== root) {
-    throw new ProjectDuplicateError(
-      'not-a-project',
-      'Only a project directly inside the workspace can be duplicated.',
-    )
-  }
-  if (basename(source) === PROJECTS_TRASH_DIR_NAME) {
-    throw new ProjectDuplicateError('not-a-project', 'The trash is not a project.')
-  }
-  if (!existsSync(source) || !statSync(source).isDirectory()) {
-    throw new ProjectDuplicateError('not-found', 'Project not found.')
-  }
+  const resolved = resolveWorkspaceProjectDir(root, requestedDir, 'duplicated')
+  if (!resolved.ok) throw new ProjectDuplicateError(resolved.reason, resolved.message)
+  const source = resolved.dir
 
   const trimmed = requestedName?.trim()
   let displayName: string

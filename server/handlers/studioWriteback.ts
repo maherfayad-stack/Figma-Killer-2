@@ -74,6 +74,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { applyStructuralEdit, isStructuralEditKind } from './studioStructuralWriteback'
+import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
   isRefusingEditKind,
   type StudioEdit,
@@ -635,6 +636,16 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
       break
     }
   }
+
+  // W7-3 — the project's launcher preview is now out of date. Debounced and
+  // fire-and-forget: `refreshAfterSave` returns immediately and the capture
+  // happens ~15s after the last write in this project, so an editing burst
+  // costs one screenshot rather than one per keystroke-driven save. Hooked
+  // HERE rather than on the `/save` route because this function is the single
+  // engine BOTH the route and the MCP `studio_apply_edits` tool run through —
+  // and the agent's writes are the ones most likely to change what a screen
+  // looks like.
+  if (written > 0) projectThumbnailQueue.refreshAfterSave(dir)
 
   return {
     written,

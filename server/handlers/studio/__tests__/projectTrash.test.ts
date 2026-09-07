@@ -11,7 +11,8 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { listStudioProjects } from '../../studioProjects'
-import { PROJECTS_TRASH_DIR_NAME, ProjectTrashError, trashStudioProject } from '../projectTrash'
+import { PROJECTS_TRASH_DIR_NAME } from '../projectDirGuard'
+import { ProjectTrashError, trashStudioProject } from '../projectTrash'
 
 let root: string
 
