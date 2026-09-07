@@ -9,10 +9,20 @@
     margin-bottom: var(--space-xs);
 }
 
-/* F29 — the absolute/fixed constraint block: one row per axis, each a side
- * picker + value field. */
+/* F29 — the absolute/fixed constraint block: the two axis rows (each a side
+ * picker + value field) on the left, Figma's crosshair diagram on the right.
+ * The stack takes the remaining width and is allowed to shrink (`minmax(0,
+ * 1fr)`), so the fixed-size diagram never pushes a field out of the panel. */
 .constraintGrid {
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.constraintAxisStack {
+    display: grid;
+    min-width: 0;
     gap: var(--space-xs);
 }
 

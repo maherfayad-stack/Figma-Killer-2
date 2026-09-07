@@ -2032,6 +2032,70 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### inspector-w8-4-constraints — Figma's crosshair, over mappings that refuse when they'd lie
+- **Agent:** panel-designer · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-constraints` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W8-4 **Constraints row only**.
+- **Shipped:**
+  - `constraintMapping.ts` — a pure module owning BOTH directions (style bag →
+    current constraint per axis; constraint choice + bag → one CSS patch, or a
+    named refusal). 46 unit tests in `constraintMapping.test.ts`, written
+    before the UI. Mappings: start/end = one inset, opposite cleared; stretch =
+    both insets, size cleared; **Scale = `%` insets** derived from the measured
+    containing block; **Centre = `50%` + a `-50%` pull-back**.
+  - Centring writes the **standalone `translate` property**, not
+    `transform: translateX(-50%)` — same reasoning as `RotationRow`'s `rotate`
+    and `flipValue.ts`'s `scale`. Two refusals, both named in the disabled
+    control's tooltip: a `transform` already carrying a translate-family
+    function, and a `translate` component on this axis that is somebody else's
+    real value (`10px`, `calc()`, `var()`, a 3D third component). Leaving
+    centre releases only a `-50%` this control itself wrote.
+  - Scale refuses without a measurement (no live frame, or `position: fixed`
+    whose containing block is the viewport this read does not measure) rather
+    than inventing a percentage.
+  - `resolvePositionedContext` gates the whole cluster: `fixed` ok, `absolute`
+    ok only when the element's own parent IS its containing block (computed
+    `position !== static`, or a `transform`), unverifiable → disabled with
+    "Can't verify…" — `resolveAlignWrite`'s posture, reused not re-derived.
+  - `ConstraintsDiagram.tsx` + `.module.css` — the crosshair: two nested 3×3
+    grids, four edge bars and one centring line per axis, all `Button`
+    primitives, tokens only, Figma's own toggle semantics
+    (`nextModeForEdgeToggle`: second pin → stretch, un-pinning the last pin →
+    Scale). Scale is drawn as dashed box edges so it is distinguishable from
+    "no constraint". Mounted to the RIGHT of the existing side pickers, which
+    are unchanged and still the substance.
+  - Docs: `docs/features/inspector-disclosure.md` **§G10.3** (new; existing
+    numbering untouched).
+- **CUT — named:** (a) no drag-to-reposition inside the diagram (Figma lets you
+  drag the inner box); (b) the diagram does not surface a per-axis text caption
+  — the mode is in the group's `aria-label` and each control's tooltip only;
+  (c) `position: fixed` gets no Scale (the viewport is not measured); (d) one
+  crosshair click still lands as 2–3 undo entries — the panel's commit channel
+  is per-property, and widening it means touching
+  `StyleSectionsEditor`/`StyleRuleComposer`/`InlineStyleComposer`, which are
+  other agents' territory this wave.
+- **Files touched:** `src/admin/pages/site/panels/PropertiesPanel/` →
+  `constraintMapping.ts` (new), `constraintMapping.test.ts` (new),
+  `ConstraintsDiagram.tsx` (new), `ConstraintsDiagram.module.css` (new),
+  `PositionConstraints.tsx`, `PositionSection.module.css`,
+  `__tests__/positionSection.test.tsx`. **No new tokens added to
+  `globals.css`** — the widget is built from `--overlay-*`,
+  `--inspector-field-bg`, `--text-subtle`/`--text`/`--text-bright`,
+  `--radius-sm`, `--space-xs`, `--inspector-field-gap`.
+- **Human action needed (dogfood):** open the Position section with a node at
+  `position: absolute` inside a `position: relative` parent, on a live canvas
+  frame, and check: (1) the crosshair's pressed bars match the insets the side
+  pickers show; (2) clicking the right bar while Left is pinned gives Left+Right
+  and clears `width`; (3) the centring line writes `left: 50%` + `translate:
+  -50%` and moves the element on canvas; (4) with `transform: translateX(4px)`
+  already on the node, the centring line is disabled and its tooltip names that
+  transform; (5) select a node whose parent is `position: static` — the whole
+  crosshair should dim and every tooltip should say the parent isn't
+  positioned; (6) at the panel's narrowest, confirm the 76px diagram has not
+  squeezed the `Left ▾` + offset row into an unusable width (it is
+  `minmax(0, 1fr) auto` — this is the one layout risk I could not check
+  without a browser).
+
 ### inspector-w8-3-p1 — multi-select edits inline styles across N nodes, with Mixed
 - **Agent:** studio-implementer · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-07
 - **Branch:** `feat/multi-select-inline-bulk-edit` off `origin/main`. Goal:
