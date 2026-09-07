@@ -573,7 +573,13 @@ normally. **Native** listeners on the parent `window`/`document` never see ifram
 events. Four cases are bridged explicitly:
 
 1. **Wheel** — re-dispatched on the iframe element so pan/zoom works.
-2. **Pointer** — forwarded during space-pan and active reorder drags.
+2. **Pointer** — forwarded during space-pan and active reorder drags. The one
+   pointer event that is deliberately NOT forwarded is the `pointerdown` that
+   STARTS a body drag: a reorder drag that begins on an element inside a frame
+   is opened by `useCanvasReorderDrag`'s own native capture listener on that
+   frame's `contentDocument`, which then translates the iframe-local point into
+   parent client coordinates itself (`iframeLocalPointToParentClientPoint`).
+   Only the moves that follow ride the relay. See `docs/reference/canvas-dnd.md`.
 3. **Keyboard** — a cloned `keydown` is dispatched on the **parent `document`**
    (not the iframe element — that would double-fire the canvas-root handler that
    already gets it via fiber bubbling). `Tab` is blocked, never forwarded.

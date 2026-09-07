@@ -52,6 +52,17 @@ interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'prefix
    */
   trailingSlot?: ReactNode
   /**
+   * Optional INTERACTIVE content on the leading edge, before `prefix`.
+   *
+   * Distinct from `prefix`, which is decorative: `prefix` is `aria-hidden`
+   * and `pointer-events: none` because it is the field's in-field label
+   * (`W`, `$`). `leadingSlot` is for a control that lives inside the field
+   * and must stay reachable — today, the bound-variable chip
+   * (`VariableField`), which the user clicks to enter edit mode and whose
+   * detach button is a real focus stop.
+   */
+  leadingSlot?: ReactNode
+  /**
    * When true (default for `type="number"`), the native browser spinner is
    * hidden and a pair of compact `▲ / ▼` buttons is rendered inside the
    * trailing edge of the input. The buttons inherit the input's `step`,
@@ -95,6 +106,7 @@ export function Input({
   prefix,
   unit,
   trailingSlot,
+  leadingSlot,
   numberSpinner,
   mixed = false,
   type,
@@ -108,7 +120,8 @@ export function Input({
   // The trailing slot is suppressed for number inputs so it cannot collide
   // with the spinner column (number inputs own that real estate).
   const showTrailingSlot = !isNumber && trailingSlot != null
-  const hasAffix = Boolean(prefix) || Boolean(unit) || showSpinner || showTrailingSlot
+  const hasAffix =
+    Boolean(prefix) || Boolean(unit) || showSpinner || showTrailingSlot || Boolean(leadingSlot)
 
   const localRef = useRef<HTMLInputElement | null>(null)
   const setRef = (node: HTMLInputElement | null) => {
@@ -166,6 +179,7 @@ export function Input({
       data-disabled={props.disabled ? 'true' : undefined}
     >
       {prefix && <span className={styles.prefix} aria-hidden="true">{prefix}</span>}
+      {leadingSlot && <span className={styles.leadingSlot}>{leadingSlot}</span>}
       {inputElement}
       {unit && <span className={styles.unit} aria-hidden="true">{unit}</span>}
       {showTrailingSlot && (

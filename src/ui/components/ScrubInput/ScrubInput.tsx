@@ -50,6 +50,11 @@ import {
   type ReactNode,
 } from 'react'
 import { cn } from '@ui/cn'
+import {
+  LENGTH_VARIABLE_KINDS,
+  useVariableAffordance,
+  type VariableKind,
+} from '@ui/components/VariableField'
 import { MIXED, isMixed, type Mixed } from '../MixedValue'
 import { applyKeyboardStep, isScrubKeyword, parseScrubValue, resolveCommitValue } from './scrubMath'
 import { useScrubDrag } from './useScrubDrag'
@@ -107,6 +112,13 @@ export interface ScrubInputProps {
   inherited?: boolean
   disabled?: boolean
   fieldSize?: FieldSize
+  /**
+   * Which project-variable kinds this field may be bound to — the filter
+   * behind the hover-revealed "Apply variable" button. Defaults to lengths
+   * and bare numbers, which is what a scrub field holds. Pass `[]` for a
+   * field that must never take a `var()` (there are none today).
+   */
+  variableKinds?: readonly VariableKind[]
   className?: string
   'data-testid'?: string
 }
@@ -127,17 +139,44 @@ export function ScrubInput({
   inherited = false,
   disabled = false,
   fieldSize = 'sm',
+  variableKinds = LENGTH_VARIABLE_KINDS,
   className,
   'data-testid': dataTestId,
 }: ScrubInputProps) {
   const mixed = isMixed(value)
-  const display = mixed ? '' : (value ?? '')
 
-  const [draft, setDraft] = useState(display)
   const [isEditing, setIsEditing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   /** Set by Escape so the blur it triggers discards instead of committing — see `handleInputBlur`. */
   const revertingRef = useRef(false)
+
+  // The "Apply variable" affordance. It owns what the field DISPLAYS while a
+  // binding is shown as a chip (an empty string, so the raw `var(--x)` never
+  // competes with the chip), which is why it is read before `display`.
+  //
+  // Scrubbing needs no extra gate here: `useScrubDrag` already refuses any
+  // baseline that is not a bare `<number><unit>`, and while bound the
+  // baseline is the empty display string.
+  const variable = useVariableAffordance({
+    value: mixed ? undefined : value,
+    accept: variableKinds,
+    onCommit: (next) => {
+      setDraft(next)
+      onChange(next)
+    },
+    fieldLabel: ariaLabel,
+    mixed,
+    disabled,
+    editing: isEditing,
+    onEnterEdit: () => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    },
+  })
+
+  const display = mixed ? '' : (variable.displayValue ?? '')
+
+  const [draft, setDraft] = useState(display)
 
   // The one scrub engine. `MIXED` disables it outright: a multi-selection whose
   // values disagree has no single baseline to drag from.
@@ -184,6 +223,11 @@ export function ScrubInput({
    */
   function commit(raw: string): string {
     onClearPreview?.()
+    // A bound field shows an EMPTY input (the chip carries the name), so a
+    // click-away that typed nothing must not read as "the user cleared this"
+    // — that would silently destroy the binding on every stray focus. The
+    // explicit ways out are typing a literal (below) and the chip's detach ×.
+    if (variable.bound && raw.trim() === '') return raw
     const next = resolveCommitValue(raw, unit)
     if (next !== draft) setDraft(next)
     if (next !== display) onChange(next)
@@ -262,6 +306,9 @@ export function ScrubInput({
       data-dragging={scrub.isDragging ? 'true' : undefined}
       data-state={mixed ? 'mixed' : undefined}
       data-inherited={inherited ? 'true' : undefined}
+      /* Scopes the hover-reveal rule for the trailing variable button — see
+       * VariableField.module.css's `[data-variable-host]` selector. */
+      data-variable-host=""
     >
       <span
         className={cn(styles.label, disabled && styles.labelDisabled)}
@@ -270,6 +317,7 @@ export function ScrubInput({
       >
         {label}
       </span>
+      {variable.chip}
       <input
         ref={inputRef}
         type="text"
@@ -291,6 +339,7 @@ export function ScrubInput({
         onKeyDown={handleKeyDown}
         data-testid={dataTestId ? `${dataTestId}-field` : undefined}
       />
+      {variable.trigger}
     </div>
   )
 }

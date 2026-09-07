@@ -156,7 +156,7 @@ multi-property gesture one property at a time is what turns one click into N
 undo steps. The Properties panel routes those through a single
 `onChangeMany(patch)` — see
 [`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
-§10.2.
+§11.2.
 
 ---
 

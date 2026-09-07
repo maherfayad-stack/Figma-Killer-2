@@ -48,7 +48,7 @@
  * nobody typed AND pushed an undo entry that reverts nothing visible — which
  * is what the "Ctrl+Z does nothing" report turned out to be. Any new field
  * primitive that renders a prefilled value must compare before it commits;
- * `docs/features/inspector-disclosure.md` §10.1 and
+ * `docs/features/inspector-disclosure.md` §11.1 and
  * `src/__tests__/panels/prefilledFieldCommitGuard.test.tsx` are the record.
  */
 

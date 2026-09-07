@@ -102,7 +102,7 @@ interface StyleSectionsEditorProps {
    * multi-property gesture (Width -> Fill, the align 3x3, a layout mode
    * switch, an animation edit) is ONE undo entry instead of 2-8. `null`
    * clears. Not a substitute for `onClearProperties`, which on a class target
-   * purges base + every context override — see `docs/features/inspector-disclosure.md` §10.
+   * purges base + every context override — see `docs/features/inspector-disclosure.md` §11.
    */
   onChangeMany: (patch: Record<string, string | number | null>) => void
   onPreview: (patch: Partial<CSSPropertyBag>) => void
