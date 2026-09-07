@@ -31,7 +31,12 @@ interface UseCanvasTreeLadderOverlayArgs {
   breakpointId: string
   iframeElement: HTMLIFrameElement | null
   canvasRoot: HTMLElement | null
-  portalTarget: HTMLElement
+  /**
+   * `null` while the overlay is waiting for the canvas root ref — see
+   * `BreakpointSelectionOverlay`'s `portalTarget` for why a temporary
+   * `document.body` target is worse than rendering nothing for one frame.
+   */
+  portalTarget: HTMLElement | null
   portalMode: CanvasOverlayPortalMode
   show: boolean
   hoveredNodeId: string | null
@@ -297,7 +302,7 @@ export function useCanvasTreeLadderOverlay({
     }
   }, [canvasRoot, iframeElement, showTreeLadder, treeLadderKey])
 
-  const portal = showTreeLadder ? createPortal(
+  const portal = showTreeLadder && portalTarget ? createPortal(
     <div
       ref={treeLadderRef}
       role="group"
