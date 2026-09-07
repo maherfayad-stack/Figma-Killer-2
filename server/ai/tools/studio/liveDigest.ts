@@ -42,6 +42,7 @@ import { join } from 'node:path'
 import { studioSnapshotStaleness, STALE_NODE_IDS_WARNING, type StalenessTracker } from './staleness'
 import type { StudioAgentSnapshot } from './snapshot'
 import { computePageWriteVerification, type PageWriteVerificationEntry } from '../../../handlers/studio/pageWriteVerification'
+import { studioAgentUserKey } from '../../../handlers/studio/agentUserScope'
 
 export interface StudioLiveDigest {
   readonly board: { readonly activeBoardId: string | null; readonly frames: ReadonlyArray<{ pageId: string; title: string; x: number; y: number; width?: number; height?: number }> }
@@ -420,7 +421,7 @@ export async function buildStudioLiveDigest(
 
   let pageWriteVerification: readonly PageWriteVerificationEntry[] = []
   try {
-    pageWriteVerification = computePageWriteVerification(dir, pages)
+    pageWriteVerification = computePageWriteVerification(dir, studioAgentUserKey(options.userId), pages)
   } catch (err) {
     console.error('[ai/liveDigest] page write verification failed — continuing without it:', err)
   }

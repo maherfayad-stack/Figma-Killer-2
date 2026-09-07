@@ -13,13 +13,25 @@
  * `mode` (`--permission-mode`) is deliberately NEVER accepted by this route
  * — see `AgentSessionSchema`'s own doc comment for why Bypass's "never
  * persists" guard rail requires there be nowhere to write it at all.
+ *
+ * W10 — the value is stored per (project, ACCOUNT): the route reads and
+ * writes `agentSession.byUser[<studioAgentUserKey>]`, falling back to the
+ * pre-`byUser` project-wide value for an account that has never saved one.
+ * Effort is a preference about how a person likes to work, and two people in
+ * one project were overwriting each other's on every change.
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import { resolveProjectDir } from '../../handlers/studioProjects'
-import { mergeStudioMeta, readStudioMeta } from '../../handlers/studio/studioMeta'
+import {
+  mergeStudioMeta,
+  readAgentSessionEffort,
+  readStudioMeta,
+  withAgentSessionEffort,
+} from '../../handlers/studio/studioMeta'
+import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 
 const ROUTE_PATH = '/admin/api/ai/studio-session'
 
@@ -45,23 +57,27 @@ async function handleStudioAgentSession(req: Request, db: DbClient): Promise<Res
   const userOrResponse = await requireCapability(req, db, 'ai.chat')
   if (userOrResponse instanceof Response) return userOrResponse
 
+  const userKey = studioAgentUserKey(userOrResponse.id)
+
   if (req.method === 'GET') {
     const url = new URL(req.url)
     const dirParam = url.searchParams.get('dir')
     if (!dirParam) return badRequest('missing dir')
     const dir = resolveProjectDir(dirParam)
-    const effort = readStudioMeta(dir).agentSession?.effort ?? null
-    return jsonResponse({ effort })
+    return jsonResponse({ effort: readAgentSessionEffort(readStudioMeta(dir), userKey) })
   }
 
   if (req.method === 'POST') {
     const body = await readValidatedBody(req, PostBodySchema)
     if (!body) return badRequest('invalid studio-session body')
     const dir = resolveProjectDir(body.dir)
+    // Read-modify-write of the whole `agentSession` object, because
+    // `mergeStudioMeta` merges one level deep — patching `byUser` directly
+    // would drop every other account's entry.
     const meta = mergeStudioMeta(dir, {
-      agentSession: body.effort ? { effort: body.effort } : {},
+      agentSession: withAgentSessionEffort(readStudioMeta(dir), userKey, body.effort),
     })
-    return jsonResponse({ effort: meta.agentSession?.effort ?? null })
+    return jsonResponse({ effort: readAgentSessionEffort(meta, userKey) })
   }
 
   return jsonResponse({ error: 'Method not allowed' }, { status: 405 })

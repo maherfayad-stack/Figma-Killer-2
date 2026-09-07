@@ -1151,4 +1151,17 @@ export const sqliteMigrations: Migration[] = [
       alter table ai_conversations add column session_epoch integer not null default 0;
     `,
   },
+  {
+    // W10 — a conversation belongs to (account, project), not to the account
+    // alone. See `migrations-pg.ts`'s copy of this migration for the full
+    // reasoning; the DDL is dialect-identical (SQLite accepts a nullable
+    // `text` column and a `desc` index column just as Postgres does).
+    id: '022_ai_conversation_project_key',
+    sql: `
+      alter table ai_conversations add column project_key text;
+
+      create index if not exists ai_conv_user_project_updated_idx
+        on ai_conversations (user_id, project_key, updated_at desc);
+    `,
+  },
 ]

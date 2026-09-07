@@ -5,6 +5,7 @@ import { useEditorStore } from '@site/store/store'
 import { useMcpWorkspaceBridge } from '@admin/ai/useMcpWorkspaceBridge'
 import { executeAgentTool } from './agent'
 import { flushEditorSave } from './hooks/editorSaveRef'
+import { studioWriteDir } from './studio/studioWorkspaceDir'
 
 async function flushPendingSiteDraft(): Promise<void> {
   if (useEditorStore.getState().hasUnsavedChanges) await flushEditorSave()

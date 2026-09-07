@@ -25,16 +25,21 @@
  *
  * ## Where it lives
  *
- * `.studio/cache/` — deliberately, not `.studio/references/` or
- * `.studio/boards.json`'s durable tier. Every entry here is fully
+ * `.studio/cache/agent/<userKey>/` — deliberately, not `.studio/references/`
+ * or `.studio/boards.json`'s durable tier. Every entry here is fully
  * regenerable (re-run `studio_compare`) and gitignored the same way
  * `styleCompile.ts`'s compiled-CSS cache already is (the `.studio/cache/`
  * glob in `.gitignore`) — no new ignore rule needed.
+ *
+ * Per ACCOUNT, because the gate it feeds is: user A's passing compare must
+ * not satisfy user B's Stop gate for a page B just rewrote. See
+ * `agentUserScope.ts`.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
+import { agentCacheDir } from './agentUserScope'
 
 const PageVerificationEntrySchema = Type.Object({
   /** When this page last had a PASSING `studio_compare` verdict, epoch ms. */
@@ -63,37 +68,43 @@ function emptyStore(): PageVerificationStore {
   return { version: 1, pages: {} }
 }
 
-function storeFile(dir: string): string {
-  return join(dir, '.studio', 'cache', 'pageVerification.json')
+function storeFile(dir: string, userKey: string): string {
+  return join(agentCacheDir(dir, userKey), 'pageVerification.json')
 }
 
-function readStore(dir: string): PageVerificationStore {
-  const file = storeFile(dir)
+function readStore(dir: string, userKey: string): PageVerificationStore {
+  const file = storeFile(dir, userKey)
   if (!existsSync(file)) return emptyStore()
   const raw = readFileSync(file, 'utf8')
   return parseJsonWithFallback(raw, PageVerificationStoreSchema, emptyStore())
 }
 
-function writeStore(dir: string, store: PageVerificationStore): void {
-  const file = storeFile(dir)
+function writeStore(dir: string, userKey: string, store: PageVerificationStore): void {
+  const file = storeFile(dir, userKey)
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, JSON.stringify(store, null, 2))
 }
 
 /** Records `pageId` as passing right now — called by `studio_compare`'s handler for every result that came back `pass: true`, cache hit or fresh capture alike (a cache hit still means the page's CURRENT on-disk bytes pass, since the cache is itself mtime-gated). Never throws; a write failure is logged and dropped — a missed record just means the next Stop-hook check treats the page as unverified, which is the safe direction to fail in. */
-export function recordPassingCompare(dir: string, pageId: string, referenceId: string, atMs: number = Date.now()): void {
+export function recordPassingCompare(
+  dir: string,
+  userKey: string,
+  pageId: string,
+  referenceId: string,
+  atMs: number = Date.now(),
+): void {
   try {
-    const store = readStore(dir)
-    writeStore(dir, { ...store, pages: { ...store.pages, [pageId]: { passedAtMs: atMs, referenceId } } })
+    const store = readStore(dir, userKey)
+    writeStore(dir, userKey, { ...store, pages: { ...store.pages, [pageId]: { passedAtMs: atMs, referenceId } } })
   } catch (err) {
     console.error('[pageVerificationStore] failed to record a passing compare — continuing:', err)
   }
 }
 
 /** The last passing-compare record for `pageId`, or `null` if it has never passed (or the store is unreadable). Never throws. */
-export function readPassingCompare(dir: string, pageId: string): PageVerificationEntry | null {
+export function readPassingCompare(dir: string, userKey: string, pageId: string): PageVerificationEntry | null {
   try {
-    return readStore(dir).pages[pageId] ?? null
+    return readStore(dir, userKey).pages[pageId] ?? null
   } catch (err) {
     console.error('[pageVerificationStore] failed to read — treating as unverified:', err)
     return null

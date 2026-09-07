@@ -71,14 +71,15 @@ export async function* runWarmTurn(
   options: WarmTurnSeams,
   ctx: WarmTurnContext,
 ): AsyncGenerator<AiStreamEvent, boolean, void> {
-  const conversationId = req.toolContextBase.conversationId
-  if (ctx.forceRespawn) await disposeWarmSessionsForConversation(conversationId)
+  const { conversationId, userId } = req.toolContextBase
+  if (ctx.forceRespawn) await disposeWarmSessionsForConversation(userId, conversationId)
 
   let lease: WarmSessionLease
   try {
     lease = await acquireWarmSession({
+      userId,
       conversationId,
-      fingerprint: warmSessionFingerprint(ctx),
+      fingerprint: warmSessionFingerprint(userId, ctx),
       create: () => createWarmSession(req, options, ctx),
     })
   } catch (err) {
@@ -134,9 +135,17 @@ const STUDIO_STATE_PREAMBLE = 'Updated Studio board state for this turn:'
  * The MCP servers are fingerprinted by DEFINITION, not by the config file's
  * bytes: the file also carries a freshly-minted bearer token, which differs on
  * every mint and would make every session look incompatible with itself.
+ *
+ * `userId` leads it (W10). The pool key already carries the user, so this is
+ * belt and braces — but the fingerprint is the thing that answers "may this
+ * process honestly serve this turn", and a process started with another
+ * user's config dir, connector token and capabilities may not, whatever the
+ * key says. Stating it here means the answer does not depend on the key's
+ * construction staying correct.
  */
-function warmSessionFingerprint(ctx: WarmTurnContext): string {
+function warmSessionFingerprint(userId: string, ctx: WarmTurnContext): string {
   return JSON.stringify([
+    userId,
     ctx.argvOptions.modelId,
     ctx.argvOptions.effort,
     ctx.argvOptions.permissionMode,
@@ -223,7 +232,7 @@ function revokeWarmConnector(
  * the same directory, including the cold turn that a just-discarded warm
  * session falls back to.
  */
-export async function endClaudeCliConversation(conversationId: string): Promise<void> {
-  await disposeWarmSessionsForConversation(conversationId)
-  removeConversationAttachmentsRoot(conversationId)
+export async function endClaudeCliConversation(userId: string, conversationId: string): Promise<void> {
+  await disposeWarmSessionsForConversation(userId, conversationId)
+  removeConversationAttachmentsRoot(userId, conversationId)
 }

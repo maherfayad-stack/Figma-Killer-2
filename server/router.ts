@@ -3,6 +3,7 @@ import { handleMcpHttp, MCP_ENDPOINT_PATH } from './ai/mcp'
 import { tryServeAgentCapture } from './ai/mcp/capture/captureRoute'
 import { handleCmsRequest } from './handlers/cms'
 import { tryServeStudio } from './handlers/studio'
+import { ProjectDirOutsideWorkspaceError } from './handlers/studioProjects'
 import { tryServeSharePublic } from './handlers/studio/sharePublic'
 import { tryServeDesignImport } from './handlers/designImport'
 import type { DbClient } from './db/client'
@@ -124,9 +125,25 @@ export async function handleServerRequest(
   const url = new URL(req.url)
   const { pathname } = url
 
-  for (const route of routes) {
-    const response = await route(req, runtime, url, pathname)
-    if (response) return response
+  try {
+    for (const route of routes) {
+      const response = await route(req, runtime, url, pathname)
+      if (response) return response
+    }
+  } catch (err) {
+    // A `dir` that resolves outside `studio-workspace/` (`resolveProjectDir`'s
+    // containment guard, W10). Caught HERE, once, rather than in each of the
+    // ~70 studio routes that take a `dir`: the guard throws precisely so a
+    // route cannot forget to make the refusal, and this is the one place that
+    // knows how to turn it into an HTTP answer. 404 — the same answer every
+    // one of those routes already gives for a dir it will not serve, and it
+    // tells a prober nothing about what does exist. The path is logged, never
+    // echoed.
+    if (err instanceof ProjectDirOutsideWorkspaceError) {
+      console.error('[router] refused an out-of-workspace project dir:', err.path)
+      return jsonResponse({ error: 'Not found' }, { status: 404 })
+    }
+    throw err
   }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })

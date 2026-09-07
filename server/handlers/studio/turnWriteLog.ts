@@ -28,6 +28,15 @@
  * precisely what `pageWriteVerification.ts` wants to report in next turn's
  * digest ("what did the model just do, unverified").
  *
+ * ## Per account
+ *
+ * The log lives under `.studio/cache/agent/<userKey>/` — one per account, not
+ * one per project. Two people driving the agent in the same project were
+ * otherwise writing into each other's turn: see `agentUserScope.ts` for the
+ * full account of it. `readAllTurnWrites` unions every account's log for the
+ * one consumer whose question is genuinely about the FILE rather than about a
+ * session (the git panel's agent-authored marker).
+ *
  * ## Format
  *
  * A flat JSON array, not JSONL — turns write at most a few dozen files, so
@@ -39,6 +48,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
+import { agentCacheDir, listAgentCacheUserKeys } from './agentUserScope'
 
 const TurnWriteEntrySchema = Type.Object({
   /** Workspace-relative, POSIX-separated — the same convention `resolvePageSourceFile` returns. */
@@ -51,14 +61,14 @@ export type TurnWriteEntry = Static<typeof TurnWriteEntrySchema>
 /** A single turn writes at most a few dozen files in the observed failure case (58 writes across 4 screens); capped generously above that so a pathological loop can't grow this file unbounded before the Stop hook ever gets a chance to intervene. */
 const MAX_ENTRIES = 500
 
-function logFile(dir: string): string {
-  return join(dir, '.studio', 'cache', 'turnWrites.json')
+function logFile(dir: string, userKey: string): string {
+  return join(agentCacheDir(dir, userKey), 'turnWrites.json')
 }
 
 /** Clears the log for a fresh turn. Never throws — a failure here just means the upcoming turn's write tracking degrades to "nothing recorded", the same as a project with no writes at all. */
-export function resetTurnWriteLog(dir: string): void {
+export function resetTurnWriteLog(dir: string, userKey: string): void {
   try {
-    const file = logFile(dir)
+    const file = logFile(dir, userKey)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, '[]')
   } catch (err) {
@@ -66,16 +76,28 @@ export function resetTurnWriteLog(dir: string): void {
   }
 }
 
-/** Every file written so far in the current turn (or the last-completed one, once `resetTurnWriteLog` has not yet run for the next). `[]` on any read failure — never throws. */
-export function readTurnWriteLog(dir: string): TurnWriteEntry[] {
+/** Every file this ACCOUNT wrote so far in the current turn (or the last-completed one, once `resetTurnWriteLog` has not yet run for the next). `[]` on any read failure — never throws. */
+export function readTurnWriteLog(dir: string, userKey: string): TurnWriteEntry[] {
   try {
-    const file = logFile(dir)
+    const file = logFile(dir, userKey)
     if (!existsSync(file)) return []
     return parseJsonWithFallback(readFileSync(file, 'utf8'), TurnWriteLogSchema, [])
   } catch (err) {
     console.error('[turnWriteLog] failed to read — treating as empty:', err)
     return []
   }
+}
+
+/**
+ * Every file ANY account's agent wrote in its latest turn against this
+ * project. For the git panel's "agent-authored" marker only: that flag is a
+ * fact about the file in the working tree, so answering it from just the
+ * viewer's own log would mark a colleague's agent-written file as
+ * hand-written. Never used by the verification gate, which is per-session by
+ * design.
+ */
+export function readAllTurnWrites(dir: string): TurnWriteEntry[] {
+  return listAgentCacheUserKeys(dir).flatMap((userKey) => readTurnWriteLog(dir, userKey))
 }
 
 /**
@@ -90,18 +112,23 @@ export function readTurnWriteLog(dir: string): TurnWriteEntry[] {
  * Called from `hooks/recordToolWrite.ts` — the ONLY writer into this log.
  * Never throws.
  */
-export function appendTurnWrite(dir: string, absOrRelFilePath: string, atMs: number = Date.now()): void {
+export function appendTurnWrite(
+  dir: string,
+  userKey: string,
+  absOrRelFilePath: string,
+  atMs: number = Date.now(),
+): void {
   try {
     const rel = relative(dir, absOrRelFilePath)
     if (rel.startsWith('..') || rel.split(sep).includes('..')) return
     const normalized = rel.split(sep).join('/')
     if (normalized.length === 0) return
 
-    const entries = readTurnWriteLog(dir)
+    const entries = readTurnWriteLog(dir, userKey)
     entries.push({ file: normalized, atMs })
     const capped = entries.length > MAX_ENTRIES ? entries.slice(entries.length - MAX_ENTRIES) : entries
 
-    const file = logFile(dir)
+    const file = logFile(dir, userKey)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify(capped))
   } catch (err) {
