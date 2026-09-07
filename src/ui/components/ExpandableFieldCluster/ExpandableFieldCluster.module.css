@@ -3,11 +3,21 @@
  * single toggle that never moves or changes shape between the two.
  */
 
+/*
+ * `min-width: 0` matters here more than anywhere else in the panel. `.row`
+ * and `.cell` below already carry it, but that only frees them to shrink
+ * INSIDE this box — it does not stop this box from reporting its fields'
+ * combined intrinsic width (two token inputs, ~339px) as its own minimum to
+ * whatever sizes it. Padding and margin both mount this cluster, so without
+ * this line the Layout and Spacing sections each widened the panel's content
+ * column past the category rail. See `Section.module.css`'s `.sectionBody`.
+ */
 .root {
     display: flex;
     align-items: center;
     gap: var(--inspector-field-gap);
     width: 100%;
+    min-width: 0;
 }
 
 /* Collapsed: 1–2 fields in a single row, each sharing the available width. */

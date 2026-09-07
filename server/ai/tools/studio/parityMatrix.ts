@@ -76,6 +76,16 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
     status: { kind: 'tool', toolNames: ['studio_measure_reference'] },
   },
   {
+    // The canvas's own ruler/measure affordance, and the third leg beside the
+    // two rows above: `studio_measure_reference` reads the design, this reads
+    // the OUTPUT's rendered boxes and the gaps between them. Without it,
+    // spacing was the one dimension the agent could only estimate off a
+    // picture — `studio_computed_styles` had already removed the equivalent
+    // guesswork for type.
+    action: "Measure the rendered geometry of a screen's own elements (boxes, padding, gaps to siblings)",
+    status: { kind: 'tool', toolNames: ['studio_measure_element'] },
+  },
+  {
     action: 'Upload a new asset (image) into the project',
     status: { kind: 'tool', toolNames: ['studio_upload_asset'] },
   },

@@ -2,9 +2,18 @@
  * "Box model" diagram behind a ⚙). Same vertical rhythm as
  * Section.module.css's .sectionBody (8px gap). */
 
+/* `min-width: 0` on the grid AND its items — see `Section.module.css`'s
+ * `.sectionBody`. The margin cluster is the widest intrinsic block in the
+ * panel (measured 379px against a 217px column at a 260px panel), and it was
+ * this section that put the box-model gear on top of the category rail. */
 .spacingSection {
     display: grid;
     gap: var(--space-s);
+    min-width: 0;
+}
+
+.spacingSection > * {
+    min-width: 0;
 }
 
 /* Margin cluster + the Box model settings trigger, one row. */

@@ -48,7 +48,7 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 | Primitive          | When to use                                                          | Key props                                                  |
 |--------------------|----------------------------------------------------------------------|------------------------------------------------------------|
 | `Stack`            | Small vertical / horizontal flex layouts, especially plugin admin UI  | `direction`, `gap`, `align`, `justify`, `wrap`, `height`   |
-| `Section`          | Collapsible titled section inside a panel (accordion)                | `title`, `children`, `defaultOpen`, `icon`, `meta`, `indicator`, `forceOpen`, `flush` |
+| `Section`          | Collapsible titled section inside a panel (accordion)                | `title`, `children`, `defaultOpen`, `icon`, `meta`, `indicator`, `forceOpen`, `empty`, `flush` |
 | `ControlRow`       | Label + control row in property panels                               | `label`, `description`, `children`                         |
 | `Separator`        | Visual divider between sections                                      | `orientation: 'horizontal' \| 'vertical'`                  |
 | `Card`             | Token-backed panel surface for plugin/admin grouped content          | `padding`, `bordered`                                      |
@@ -433,7 +433,9 @@ For searchable submenus that host a non-menuitem widget (e.g. a search input), p
 
 Layout primitives for property panels.
 
-`Section` is a collapsible accordion block. Each instance manages its own open/closed state via `defaultOpen` (the initial value). `forceOpen` overrides local state and keeps the section always open. The `flush` prop removes the section's own vertical padding so spacing comes entirely from the parent container's grid gap — used by the Properties panel (1px-gap card pattern). The `indicator` prop renders a small green dot next to the title to signal active state (e.g. properties are set in this section).
+`Section` is a collapsible accordion block. Each instance manages its own open/closed state via `defaultOpen` (the initial value). `forceOpen` overrides local state and keeps the section always open. `empty` does the opposite and more: it says the section has nothing to disclose, so the header renders alone — no chevron, no toggle, no body, `children` ignored — leaving whatever `actions` supplies (Law 1 of the inspector's disclosure rules; an accordion over an empty body is an affordance that lies). The `flush` prop removes the section's own vertical padding so spacing comes entirely from the parent container's grid gap — used by the Properties panel (1px-gap card pattern). The `indicator` prop renders a small green dot next to the title to signal active state (e.g. properties are set in this section).
+
+`.sectionBody` (exported from the same module's CSS) is the grid wrapper for a section's rows. It clamps itself and its children to `min-width: 0`: a panel that can be dragged to 260px has no room for a control that refuses to shrink, and the properties panel's scroll container clips on x, so an over-wide section draws across the category rail instead of scrolling.
 
 ```tsx
 import { Section } from '@ui/components/Section'

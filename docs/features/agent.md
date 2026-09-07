@@ -348,7 +348,7 @@ The dynamic suffix carries the project profile, trust tier, the live board/selec
 
 `studioAgentTools` is an explicit **subset** of the MCP registry — `STUDIO_AGENT_TOOL_NAMES` (`agentToolNames.ts`) currently names 31 tools, not the full registry plus the entire CMS `site_*` set. The list has grown since it was first curated (screenshot/compare/measure, computed-styles and page-diagnostics readbacks, typecheck, a fidelity report, design-reference and design-variable ingestion, board/frame geometry, board comments, project/component orientation, and asset/dependency tools — see `agentToolNames.ts`'s own inline comments for why each one is there and what it replaced). Two things were wrong with serving everything: most of what stayed excluded is dead weight (every tool that existed only because the agent had no filesystem is strictly slower than the native equivalent), and a large toolset is itself a latency and accuracy cost — definitions are re-sent every turn, and a model choosing among too many tools explores instead of acting.
 
-What survives is what the filesystem cannot do: see the canvas (`studio_screenshot`), measure the output against the design (`studio_compare`) and the design itself (`studio_measure_reference`), change board geometry and per-frame axes, read the project's tokens and component catalog, install dependencies behind the trust-tier gate, and pull assets in — including cutting them out of the supplied design (`studio_extract_reference_asset`). The list is written out by name in `agentToolNames.ts` so adding a tool to the registry does not silently widen the agent's surface; `index.ts` throws at module load if a name no longer resolves.
+What survives is what the filesystem cannot do: see the canvas (`studio_screenshot`), measure the output against the design (`studio_compare`), the design itself (`studio_measure_reference`), and the output's OWN resolved styles and rendered geometry (`studio_computed_styles`, `studio_measure_element`), change board geometry and per-frame axes, read the project's tokens and component catalog, install dependencies behind the trust-tier gate, and pull assets in — including cutting them out of the supplied design (`studio_extract_reference_asset`). The list is written out by name in `agentToolNames.ts` so adding a tool to the registry does not silently widen the agent's surface; `index.ts` throws at module load if a name no longer resolves.
 
 `mcpToolsForStudioWorkspace` (`server/ai/mcp/registry.ts`) applies the same subset at the MCP server: a connector **bound** to a Studio project (`connectorWorkspace.ts` — in practice the per-turn connector `claudeCli.ts` mints) sees only `studioAgentTools`. An unbound connector — a plain external MCP client — still sees the full registry, including the AST edit tools it genuinely needs.
 
@@ -475,6 +475,75 @@ The tool takes rectangles in the reference image's own pixels and returns, per r
 Colours are grouped into buckets so antialiasing cannot push a flat fill out of the ranking, but each group **reports the modal exact colour inside it**, never the bucket's rounded centre — `#0c9ab0` must not come back as `#1098b0`, an error introduced by the instrument meant to remove it. Token matching is perceptual (CIE76 ΔE over CIELAB, `colorMath.ts`), because RGB distance calls two near-blacks adjacent and two different mid-greens close. When nothing is within range the response says so — that is the one case the prompt allows a raw value, and the agent can now tell the two apart.
 
 Tokens come from `projectTokenIndex.ts`, which scans the **same CSS the canvas gets** (`compileProjectStyles`'s `vendorCss` + `css`). A token that is not in the CSS the canvas loads is not a token the agent can use, so indexing anything else would produce confident advice that renders as nothing. `.studio/framework.json` is deliberately not a source: it holds Studio's own generated scale, and offering both would answer "which token is this" with two names from two systems.
+
+### `studio_computed_styles` and `studio_measure_element` — reading your OWN numbers
+
+`server/ai/mcp/tools/studio/{computedStyles,measureElement}.ts`, over
+`server/ai/mcp/capture/headlessFrameInspect.ts` and the shared reader
+`@core/studio-capture`'s `inspectFrameDocument`.
+
+`studio_measure_reference` reads the DESIGN's numbers; these two read the
+build's. Both close the same shape of failure — a difference the agent could
+see in a picture but not name, so it "fixed" a value that was already correct:
+
+- **`studio_computed_styles`** reports, per node, the resolved font-size and
+  line-height in px, the weight, the colour and background as rgb, and the
+  family the text is genuinely SET IN. That last one is the load-bearing
+  field: `getComputedStyle().fontFamily` echoes the declared STACK, so a stack
+  whose first family never loaded is indistinguishable from one that did, and
+  the fallback face makes correct px read as the wrong size. Walking the stack
+  against `document.fonts.check` reports the family actually in use. Per NODE
+  rather than per component, so it needs no catalogue of what `size="default"`
+  means and covers buttons, inputs, labels and containers identically.
+- **`studio_measure_element`** reports each element's rendered box, its own
+  padding/margin/border, and the measured gap to the elements beside it —
+  **next to the parent's declared `row-gap`/`column-gap`**. That pair is the
+  diagnosis rather than merely a number: agreeing means the gap value is what
+  is wrong; disagreeing means a margin is in play, and no edit to the gap will
+  ever close it. Every capture already computed `nodeRects` and threw the
+  surrounding arithmetic away, which is why spacing was the last dimension
+  still being estimated off a screenshot.
+
+**W9-6 — neither needs a browser tab.** `studio_computed_styles` shipped as
+`execution: 'browser'`, so a project with no editor open spent ~8s in the bridge
+and then refused — on a question whose whole subject matter is what is on disk.
+Both now render the screen on the same headless capture substrate
+`studio_screenshot` uses. `studio_computed_styles` keeps the live tab as its
+fallback (authoritative for an unsaved in-progress edit, and what an install
+with no Chromium degrades to; `readVia` says which answered);
+`studio_measure_element` has none, because it measures a screen the agent itself
+just wrote.
+
+**One reader, two documents.** The live-tab fallback runs the exact same
+`inspectFrameDocument` against its board-frame iframe. Two readers would mean
+the number depends on which path answered, and a fidelity loop whose
+measurement moves is not a measurement.
+
+### `studio_set_frame_axes` / `studio_duplicate_frame_as_variant` — board state is file state
+
+`server/ai/mcp/tools/studio/frameAxesTools.ts`.
+
+Both were browser tools wrapping `EditorStore.setFrameAxes` /
+`duplicateFrameAsVariant`, because that is where the toolbar's own preview-axes
+and duplicate-as-variant controls call them from. The reasoning did not survive
+one question: where does the result LIVE? Not in the store — a frame's axes
+override and a variant frame are `.studio/boards.json`, which the store holds a
+copy of and POSTs back when `boardsDirty` next flushes. The browser path was a
+round trip through a mutable copy in order to write a file the server already
+owns, and it refused outright whenever no tab was open.
+
+W9-6 makes both `execution: 'server'`. They write through `boardFrames.ts`'s
+`readBoardsFile`/`writeBoardsFile` — the module whose stated reason to exist is
+that every server-side write to the board's frame list has one owner — then push
+a live-reload with `boardsChanged: true`, so an open board re-reads the file and
+the user watching sees the frame flip exactly as before. The variant's placement
+(`x = source.x + width + VARIANT_GAP`, same `y`) now comes from a single
+`VARIANT_GAP` in `@core/studio-board`, shared with `boardSlice.ts`, so the
+toolbar and the tool cannot drift apart.
+
+`studio_upload_asset` deliberately did NOT move. It posts real `FormData` as the
+signed-in user, and that endpoint's authority is the operator's session — the
+one thing a server-side tool has no honest way to hold.
 
 ### `studio_extract_reference_asset` — artwork that exists only in the comp
 
@@ -703,15 +772,17 @@ Two consequences worth knowing. `StudioCapabilityDigest.figma.status` gained **`
 
 `server/ai/tools/studio/parityMatrix.ts` is the enforcement mechanism for "the agent can do what you can do in the canvas" — not documentation. Every real editor action resolves to exactly one status: a real tool (name-checked against the live registry), an explicitly withheld action (a stated reason — undo/redo, viewport pan/zoom, trust promotion, project deletion, a shell tool, a raw file-overwrite), or a confirmed gap. `parityMatrix.test.ts` gates all of it, including the inverse direction (every registered mutating tool is referenced by at least one row — an orphaned tool is itself a finding), plus a regression test pinning the current gap count so a future "missing" row silently downgraded to "withheld" fails loudly.
 
-**The three gaps the matrix found are now closed** — each is a thin `execution: 'browser', scope: 'site'` wrapper (`server/ai/mcp/tools/studio/browserBridgeTools.ts` declares them; `src/admin/pages/site/agent/studioBrowserBridgeTools.ts` runs them) over the SAME verb the canvas UI already calls, dispatched through `executor.ts` exactly like `studio_export_frames`:
+**The three gaps the matrix found are now closed.** All three shipped as thin `execution: 'browser', scope: 'site'` wrappers over the SAME verb the canvas UI already calls; W9-6 then moved two of them server-side, because only one of the three was ever actually about the user's browser:
 
-| Editor action | Tool | Wraps |
+| Editor action | Tool | Where it runs, and why |
 |---|---|---|
-| Upload a new image asset into the project | `studio_upload_asset` | `POST /admin/api/studio/asset-upload` — decodes the agent's base64 into a `Blob`, posts real `FormData`; every validation (magic-number sniffing, containment) happens server-side exactly as it does for a human upload. |
-| Set a board frame's preview axes (direction/locale/color-scheme) | `studio_set_frame_axes` | `EditorStore.setFrameAxes` — the same action the toolbar's own preview-axes control calls. |
-| Duplicate a board frame as a variant | `studio_duplicate_frame_as_variant` | `EditorStore.duplicateFrameAsVariant` — the side-by-side comparison verb. |
+| Upload a new image asset into the project | `studio_upload_asset` | **Browser** (`server/ai/mcp/tools/studio/uploadAssetTool.ts` declares it; `src/admin/pages/site/agent/studioUploadAsset.ts` runs it). Decodes the agent's base64 into a `Blob` and posts real `FormData` to `POST /admin/api/studio/asset-upload` **as the signed-in user** — that endpoint's authority is the operator's session, the one thing a server-side tool cannot honestly stand in for. Every validation (magic-number sniffing, containment) happens server-side exactly as for a human upload. |
+| Set a board frame's preview axes (direction/locale/color-scheme) | `studio_set_frame_axes` | **Server** (`frameAxesTools.ts`). Writes `.studio/boards.json` and pushes a live reload. |
+| Duplicate a board frame as a variant | `studio_duplicate_frame_as_variant` | **Server** (`frameAxesTools.ts`). Same file, same push; the variant lands beside its source at the shared `VARIANT_GAP`. |
 
-Both new tools address a frame by `pageId` (the id every other Studio tool already returns) with an optional `frameId` to disambiguate when a page has more than one frame on the active board — no existing tool exposes a raw `frameId` for an agent to pass in otherwise, so `pageId` + "first match on the active board" is the default resolution rule.
+Both frame tools address a frame by `pageId` (the id every other Studio tool already returns) with an optional `frameId` to disambiguate when a page has more than one — no existing tool exposes a raw `frameId` for an agent to pass in otherwise. The client resolved that against the ACTIVE board; the server has no such notion, so the rule is the first board carrying a frame for that page, else the first board — the same fallback `autoPlaceBoardFrame` documents, and the same answer in every single-board project.
+
+**W9-6 also added a fourth row**, `studio_measure_element` — the canvas's own ruler, and the missing third leg beside `studio_compare` (which rectangle is wrong) and `studio_measure_reference` (what the design says): the rendered geometry of the screen's own elements. See its section above.
 
 The matrix now has **zero `missing` rows** — every editor action a Studio project agent needs is either a real tool or explicitly, permanently withheld with a stated reason (trust-tier promotion, undo/redo, viewport pan/zoom/marquee, project deletion, a raw shell command, a full-file overwrite — see the six `withheld` rows in `parityMatrix.ts` for why each one stays that way on purpose).
 

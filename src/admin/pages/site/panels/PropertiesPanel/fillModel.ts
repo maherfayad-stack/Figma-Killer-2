@@ -1,7 +1,7 @@
 /**
- * fillModel — the Fill section's pure value model: which properties belong to
- * which fill channel, the defaults its `+` buttons write, and the gradient
- * edit transforms `GradientEditor` applies.
+ * fillModel — the Fill section's pure COLOUR-channel model: the defaults its
+ * `+` buttons write, the content-fit pair, and the gradient edit transforms
+ * `GradientEditor` applies.
  *
  * Split out of `FillSection.tsx` when G9's text-fill row landed and that file
  * reached the repo's 700-line module ceiling
@@ -9,10 +9,13 @@
  * line count: everything here is a pure function of values, testable without
  * a DOM, while `FillSection.tsx` decides which ROWS exist and
  * `FillSectionParts.tsx` draws them.
+ *
+ * The `background-image` LAYER STACK — parsing the comma list, its per-layer
+ * satellites, and the refusals that keep the round trip byte-identical — is
+ * `backgroundLayers.ts`, not this file. Two models, two reasons to change.
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
-import { hasStyleValue } from './styleValueUtils'
 import type { ParsedGradient, GradientStop } from './gradientValue'
 
 // ---------------------------------------------------------------------------
@@ -20,22 +23,14 @@ import type { ParsedGradient, GradientStop } from './gradientValue'
 // ---------------------------------------------------------------------------
 
 /**
- * `background-image: none` and `''` both mean "no image" — `hasStyleValue`
- * alone can't tell, since `'none'` is itself a non-empty string.
+ * `object-fit` / `object-position` are NOT background properties: they size an
+ * `<img>`/`<video>`'s OWN replaced content, which paints above the element's
+ * background entirely. They used to ride along with the image fill's
+ * satellites, which conflated two unrelated things — the per-layer background
+ * satellites now live in `backgroundLayers.ts` and these two get their own
+ * "Content fit" row, shown only when one of them is set.
  */
-export function isBackgroundImageSet(value: string | undefined): boolean {
-  return hasStyleValue(value) && value!.trim().toLowerCase() !== 'none'
-}
-
-/**
- * The image fill's satellite properties. They live ONLY inside the image
- * entry's popover — drawing five rows for an element with no image is the
- * exact defect `docs/features/inspector-disclosure.md` exists to prevent.
- */
-export const IMAGE_SATELLITE_PROPS: ReadonlyArray<keyof CSSPropertyBag> = [
-  'backgroundSize',
-  'backgroundRepeat',
-  'backgroundPosition',
+export const CONTENT_FIT_PROPS: ReadonlyArray<keyof CSSPropertyBag> = [
   'objectFit',
   'objectPosition',
 ]

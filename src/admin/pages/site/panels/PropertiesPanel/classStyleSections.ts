@@ -187,9 +187,19 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'backgroundColor',
       'background',
       'backgroundImage',
+      // The per-layer satellites of `background-image` (G6.5). They never draw
+      // a top-level row — each one is edited inside its own layer's popover —
+      // but they are claimed here because this array drives the section's
+      // "N set" dot and the style search, and a property claimed by no section
+      // is unreachable by both.
       'backgroundSize',
       'backgroundPosition',
       'backgroundRepeat',
+      'backgroundAttachment',
+      'backgroundOrigin',
+      'backgroundClip',
+      'backgroundBlendMode',
+      // The element's own replaced content, not a background layer.
       'objectFit',
       'objectPosition',
     ],

@@ -406,6 +406,7 @@ meaning comes from a glyph inside it.
 | `--inspector-group-gap` | 8px | Between caption groups |
 | `--inspector-caption-gap` | 3px | Caption to the field it names |
 | `--inspector-label-w` | 68px | The remaining text-label column |
+| `--inspector-rail-w` | 32px | The category rail's grid column |
 | `--inspector-field-radius` | 5px | Field corner |
 | `--inspector-field-bg` / `-hover` | overlay 5% / 10% | Field fill |
 | `--inspector-divider` | overlay 10% | The hairline between sections |
@@ -458,7 +459,16 @@ diagonals as staircases).
 **Sections** are separated by a hairline and nothing else: no chip, no fill, no
 radius. The title doubles as the disclosure toggle, with the chevron sharing the
 section icon's 16px box and appearing only on hover. `Section`'s `actions` slot
-carries the icon buttons Figma puts flush right of a title.
+carries the icon buttons Figma puts flush right of a title. A section with
+nothing in it is *not* a disclosure — `Section`'s `empty` prop drops the
+chevron, the toggle and the body, because there is nothing behind them; the
+header earns its accordion when the first value lands in it.
+
+The panel is resizable down to 260px and is heading for a 290px default, so
+**every control in it shrinks or truncates**. Nothing in a section body may
+establish a min-content floor: the category rail is a grid column
+(`--inspector-rail-w`) beside a `minmax(0, 1fr)` content column, and a section
+that refuses to shrink does not push the rail aside — it draws across it.
 
 **Progressive disclosure — the five laws.** Density is settled; what keeps the
 panel short now is *not drawing* what you have not used. The rules, and the
@@ -467,8 +477,9 @@ Figma behaviour each one mirrors, are in
 which also carries the ten goals (G1–G10) the panel source cites by number:
 
 1. **An unused section costs one line.** A section marked `collapsedWhenEmpty`
-   in `CLASS_STYLE_SECTIONS` with nothing set renders as a header plus a `+`.
-   Emptiness is judged **across every context**, not just the active
+   in `CLASS_STYLE_SECTIONS` with nothing set renders as a header plus a `+`,
+   with no disclosure affordance at all. Emptiness is judged **across every
+   context**, not just the active
    breakpoint — a value living on another tab is still the user's own work and
    must never be hidden behind a `+`. Position, Size, Layout and Spacing are
    always-present and never collapse.

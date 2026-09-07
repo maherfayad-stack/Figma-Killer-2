@@ -109,7 +109,15 @@ const ENUM_OPTIONS = new Map<keyof CSSPropertyBag, string[]>([
   ['overflow',         ['visible', 'hidden', 'scroll', 'auto']],
   ['overflowX',        ['visible', 'hidden', 'scroll', 'auto']],
   ['overflowY',        ['visible', 'hidden', 'scroll', 'auto']],
-  ['backgroundRepeat', ['no-repeat', 'repeat', 'repeat-x', 'repeat-y']],
+  // `background-*` per-layer satellites. These reach a plain select only
+  // through the generic fallback row and the style search — the Fill section
+  // edits each one PER LAYER inside its own layer popover (see
+  // `backgroundLayers.ts`), where a whole-declaration write would be wrong.
+  ['backgroundRepeat', ['no-repeat', 'repeat', 'repeat-x', 'repeat-y', 'space', 'round']],
+  ['backgroundAttachment', ['scroll', 'fixed', 'local']],
+  ['backgroundOrigin', ['padding-box', 'border-box', 'content-box']],
+  ['backgroundClip',   ['border-box', 'padding-box', 'content-box', 'text']],
+  ['backgroundBlendMode', BLEND_MODE_KEYWORDS],
   ['objectFit',        ['cover', 'contain', 'fill', 'none', 'scale-down']],
   ['pointerEvents',    ['auto', 'none']],
   ['scrollBehavior',   ['auto', 'smooth']],
@@ -221,6 +229,35 @@ export function isNudgeableProp(prop: keyof CSSPropertyBag): boolean {
 }
 
 /**
+ * Single-number properties whose value is legal CSS as a BARE number, so the
+ * field's unit is `''` and typing / scrubbing / nudging must never append one.
+ *
+ * `opacity` and `zIndex` are here because they are unitless by type
+ * (`NUMBER_TYPED_PROPS`). `lineHeight` is here for a different and easier-to-
+ * miss reason: it is a *string* in the bag and it accepts lengths (`24px`), but
+ * its idiomatic form is the unitless ratio `1.5` — which is not `1.5px`, and
+ * not even equivalent to it (the ratio couples to `font-size`, the length does
+ * not; `DEFAULT_CSS_VALUES` has carried that note since before this field
+ * model existed). Coercing a typed `1.5` to `1.5px` would silently break every
+ * ratio line-height in the user's stylesheet, so `lineHeight` is a unitless
+ * field that also happens to accept units — a typed `24px` still passes
+ * through untouched, because coercion only ever ADDS a unit to a bare number.
+ *
+ * `letterSpacing` is deliberately NOT here: `letter-spacing: 1.5` is invalid
+ * CSS, so a bare number there genuinely does need `px`.
+ */
+const UNITLESS_NUMBER_PROPS = new Set<keyof CSSPropertyBag>([
+  'opacity',
+  'zIndex',
+  'lineHeight',
+])
+
+/** True when a bare number is already a valid value for `prop` — see above. */
+export function isUnitlessNumberProp(prop: keyof CSSPropertyBag): boolean {
+  return UNITLESS_NUMBER_PROPS.has(prop)
+}
+
+/**
  * Per-property default values for the add-property search.
  *
  * Implements the per-property lookup table from UX Reviewer Contribution #677 (accepted,
@@ -302,6 +339,10 @@ const DEFAULT_CSS_VALUES: Partial<Record<keyof CSSPropertyBag, string | number>>
   backgroundSize:    'auto',
   backgroundPosition:'0% 0%',
   backgroundRepeat:  'repeat',
+  backgroundAttachment: 'scroll',
+  backgroundOrigin:  'padding-box',
+  backgroundClip:    'border-box',
+  backgroundBlendMode: 'normal',
   objectFit:         'cover',
   objectPosition:    'center center',
   opacity:           1,              // number (CSSPropertyBag.opacity?: number); 1 = fully opaque
