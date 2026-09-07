@@ -26,7 +26,7 @@ bun run bench:db            # SQLite performance
 bun run bench:plugin        # QuickJS sandbox boot / hostCall / dispose
 bun run bench:footprint     # repo / node_modules / SLOC stats
 bun run bench:health        # fallow + jscpd + madge snapshot
-bun run bench:agent-turn    # subagent roster generation cold/warm + resolveProjectProfile
+bun run bench:agent-turn    # chat-turn server cost: guide, first stream line, MCP, capture, compare
 bun run bench:browser       # real Chromium via Playwright — opt-in
 bun run bench:browser:install   # one-time Chromium download (~92 MiB)
 ```
@@ -134,12 +134,16 @@ Aggregates external static-analysis tools:
 Each tool runs in its own subprocess with a generous timeout. If a tool is missing, the row notes "unavailable" rather than crashing the suite.
 
 ### agent-turn
-Measures the server-side cost paid before every real Studio chat turn's `claude` subprocess even spawns — `server/ai/drivers/claudeCli.ts` calls `generateStudioAgentRoster(dir)` synchronously, on the critical path, before every real turn against an open project. No subprocess, no HTTP, no database. Scenarios:
-- **`generateStudioAgentRoster` cold vs. warm** — cold is the first-ever call for a project (no `.claude/` roster, no design-system digest cache, no persisted `ProjectProfile`); warm is every call after that with nothing changed — the case every turn after the first pays.
-- **`resolveProjectProfile` uncached vs. cached** — uncached is a project with no persisted profile in `.studio/meta.json` (common for anything imported without a `package.json`, e.g. the design-token wizard); cached is after something has persisted one.
-- **`getOrBuildDesignSystemDigest` warm** — the stat-based cache-key scan (readdir + stat per CSS file) plus a cache-file read, with the digest cache already built.
+Everything a Studio chat turn costs **on the server** — the guide it regenerates before the subprocess exists, the latency to its first stream line, the MCP handshakes it attaches, and the capture/compare loop the agent runs to check its own work. Four groups, in the order a turn pays for them:
 
-Fixture: a fresh copy of `studio-workspace/untitled` (falls back to `studio-workspace/__canonical-fixture`) into `.tmp/benchmarks/` — **never** mutates the real fixture under `studio-workspace/`. Self-skips with an `unavailable` row if neither exists.
+- **Project guide** — `server/ai/drivers/claudeCli.ts` calls `generateStudioProjectGuide(dir)` synchronously, on the critical path, on every real turn against an open project. Cold is the first-ever call (no `.claude/`, no design-system digest cache, no persisted `ProjectProfile`); warm is every call after it with nothing changed — the case every turn after the first pays, forever. Plus `resolveProjectProfile` uncached vs. cached, and `getOrBuildDesignSystemDigest` warm (the stat-based cache-key scan plus a cache-file read).
+- **Turn → first stream line** — the real `streamClaudeCli` with a **fake `claude`** at its `spawn` seam (`lib/fakeClaudeCli.ts`), cold-spawned vs. served from the warm session pool. The fake answers instantly, so what is left in the number is Studio's own pre-spawn work: containment + turn routing, config dir, session-id derivation and the transcript probe, connector mint, MCP config file, argv. Read it as *"how much of a turn Studio pays for before the model has said a word"* — never as *"how long a turn takes"*.
+- **MCP attachment per turn** — spawns, connector mints, MCP config writes and servers-per-config, counted off the real `--mcp-config` file each spawn was handed. Every server in that file is one `initialize` + `tools/list` handshake at CLI startup, so `spawns × servers` is the per-turn MCP round-trip count — the number the warm session pool exists to drive to zero. The Studio tool surface (tool count + total schema bytes) is the `tools/list` payload each handshake pays for.
+- **Headless capture + `studio_compare`** — the innermost loop of the agent's fix-verify cycle, run for real: a real Chromium against the real `/admin/agent-capture` route, a real ts-morph parse behind the payload, real `sharp` clamping, real `pixelmatch` diffing. Single frame, five-page batch, then a five-page `studio_compare` with the verdict cache bypassed and served.
+
+Groups 1–3 are offline and deterministic: no network, no browser, no database, no real `claude` binary. Group 4 needs a built `dist/` (for the capture entry) and a Chromium Playwright can launch, and the capture routes are served **in-process** (`lib/captureHost.ts`) because a capture grant lives in the memory of the process that minted it. Without either, group 4 reports `skipped` with the reason instead of failing the suite — `bun run build` provides the `dist/`, `bun run bench:browser:install` the browser.
+
+Fixture: a fresh copy of `studio-workspace/__canonical-fixture` into `.tmp/benchmarks/` — **never** mutates anything under `studio-workspace/`. Self-skips with an `unavailable` row if it does not exist.
 
 ### browser (opt-in)
 Boots the production server, spawns Chromium via Playwright (uses Playwright's pinned chromium-headless-shell — install once with `bun run bench:browser:install`), then runs a battery of cold-load and interactive scenarios. Authenticated admin scenarios run only when `STUDIO_BENCH_ADMIN_EMAIL` and `STUDIO_BENCH_ADMIN_PASSWORD` are set; without them the bench records the login-screen load and unauthenticated idle frame stability.

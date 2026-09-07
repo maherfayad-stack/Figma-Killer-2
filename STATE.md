@@ -21,6 +21,152 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-12 — W7-1: the launcher sorts, fails, and redraws honestly
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-06
+- **Branch:** `fix/launcher-polish` off `origin/main` (`8c41a40`).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W7-1 exactly — the launcher's correctness
+  bugs and its look, nothing from W7-2..W7-5. It unblocks the rest of W7, which
+  all edit the same three files.
+- **Scope:** `server/handlers/studioProjects.ts` (+ `server/handlers/__tests__/studio.test.ts`),
+  `src/admin/pages/dashboard/{DashboardPage.tsx,DashboardPage.module.css,DashboardPage.test.tsx,hooks/useStudioProjects.ts}`,
+  `src/styles/globals.css`, `docs/{design.md,reference/design-tokens.md,reference/use-async-resource.md}`.
+- **Done so far:**
+  - **Sort bug.** `listStudioProjects` sorted the *dirents* by folder slug and
+    then mapped them to `displayName`. Rename a project and it sorts under its
+    original slug forever. Now it maps first and sorts the summaries by
+    `name` — the string the launcher actually renders. New test:
+    "sorts by display name, not by folder slug".
+  - **Infinite skeleton.** `useStudioProjects` returned `StudioProject[] | null`
+    with `swallowErrors: true`, so a failed fetch rendered six skeletons
+    forever. It now returns `{ projects, loading, error, refresh }`, errors are
+    not swallowed, and the page renders an `EmptyState role="alert"` naming the
+    failure with a "Try again" button on `refresh`. Skeletons 6 → 3.
+  - **Refetch handle.** `DashboardPage`'s `created[]`/`removed[]` optimistic
+    reconciliation is gone; delete awaits the server and calls `refresh()`.
+    `deleteStudioProject` now resolves `void` (it still validates the
+    `{ projects }` envelope) — the list on screen has exactly one origin.
+  - **Look.** `.cardMeta` `--text-disabled` → `--text-subtle` (the old value is
+    ~2.3:1 on `--bg-surface-2`, and it is the card's only metadata).
+    `.cardName` `--text-m` → `--text-xl` + `--text-bright`. Grid track
+    `minmax(200px → 240px, 1fr)`; tile padding `--space-l` → `--space-3xl`;
+    hardcoded `16px` radii → `--card-radius`. Hover gains a real lift
+    (`translateY(-2px)` + new `--shadow-card-hover` token, both themes) on top
+    of the `-2 → -3` tone step, with `:active` putting it back down.
+  - **a11y.** `aria-live="polite"` + `aria-label="Projects"` on the grid, so a
+    create/import/delete redraw is announced.
+- **Next step:** W7-2 (card data + project verbs). It owns the same launcher
+  files plus `projectRoutes`, so it must not run beside another W7 task.
+- **Decisions:**
+  - **`refresh()` after delete, not the delete response's list.** The endpoint
+    answers with the refreshed listing and that answer is still schema-validated,
+    but handing it back to the caller invites a second, parallel copy of the
+    truth — precisely the shape W7-1 was sent to delete. One extra directory
+    read is cheaper than two lists that can disagree.
+  - **The error state replaces the grid only when there is nothing to show**
+    (`projects === null && error !== null`). A refresh that fails while a list is
+    already on screen keeps the stale list rather than blanking it.
+  - **New `--shadow-card-hover` token rather than a raw shadow.** Module CSS
+    cannot carry rgb/hex, and `--shadow-panel-drop` is tuned for a panel
+    floating far above the surface. Light theme re-tunes it: the `--scrim-*`
+    family stays pure black in both themes, and 0.4-alpha black under a white
+    card is a smudge. Documented in `docs/design.md` §1 and the token catalog.
+- **Landmines:**
+  - `DashboardPage.test.tsx`'s `useStudioProjects` stand-in is now a **real hook**
+    (it holds `useState` for the redraw). A constant-returning mock cannot
+    exercise a page that redraws by refetching — if you replace it with one, the
+    delete test will pass for the wrong reason and then rot.
+  - **The worktree had no `node_modules`.** `bun run build` and the whole
+    `icon-catalog-integrity` gate fail wholesale before `bun install` — the gate
+    resolves `node_modules/pixel-art-icons/dist/icons`, not `vendor/`. 18
+    "failures" evaporated after installing. Do not diagnose that as icon drift.
+- **Verification:** `bun run build` ✅ (after `bun install`). `bun run lint` ✅.
+  `bun test` → **11445 pass / 28 fail**, every failure in the two clusters
+  `STUDIO-WAVE7-PLAN.md`'s global rules name as pre-existing: the
+  headless-capture / canvas batch-isolation group (`captureFramesHeadless`,
+  NodeRenderer VC lock-down, breakpoint activation, pin⇄unroll, `studio_compare`
+  5-page) and `icon-catalog-integrity`'s `chevron-left` sample. Nothing under
+  `dashboard/` or `studioProjects` fails. Targeted:
+  `bun test src/admin/pages/dashboard/DashboardPage.test.tsx` → 6 pass;
+  `bun test server/handlers/__tests__/studio.test.ts` → 81 pass.
+- **Human action needed:** **dogfood — every change here is visual and e2e
+  covers none of it.** At `/admin/dashboard`: (1) confirm the cards are visibly
+  larger and the name reads as a title, not panel chrome; (2) hover a card and
+  check the 2px rise + shadow reads as pickable without feeling springy, in BOTH
+  themes (the light-theme shadow is a separate value); (3) rename a project from
+  the Studio toolbar, return to the launcher, and confirm it now sorts under its
+  new name; (4) stop the server (or block `/admin/api/studio/projects` in
+  devtools) and reload — you should get "Could not load your projects." with a
+  working "Try again", never a shimmering grid; (5) delete a project and confirm
+  the tile leaves after the refetch and a screen reader announces the change.
+### mcp-18 — W9-1(2): `studio_computed_styles` read the frame HOST, so it returned zero rows in every real canvas
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-06
+- **Branch:** `fix/computed-styles-iframe` off fresh `origin/main`.
+- **Goal:** the tool the system prompt calls the arithmetic half of the fidelity loop actually returns rows.
+- **Scope:** `src/admin/pages/site/agent/studioComputedStyles.ts`, `src/admin/pages/site/agent/studioComputedStyles.test.ts`. Nothing else — the schema, the executor dispatch and the MCP bridge definition were already correct.
+- **Done so far:**
+  - The executor now resolves `frame.querySelector('iframe')?.contentDocument` and queries `[data-node-id]` on THAT document, and calls `getComputedStyle` on the iframe's own `defaultView`. It previously ran `frame.querySelectorAll` on the host element and read `frame.ownerDocument` — the host holds no page nodes at all, so every call since the tool shipped returned `nodeCount: 0`.
+  - A missing/unmounted iframe document is now its own honest refusal ("has not finished mounting its document yet … this is NOT an empty page. Take a studio_screenshot to force the frame to settle"), in the same shape as `studio_page_diagnostics`'s `no-frame`/`no-collector` notes.
+  - The test suite mounts a REAL iframe and puts the fixture nodes in its `contentDocument`. One new case (`reads the nodes inside the frame iframe, not the host document`) also plants a decoy `[data-node-id]` in the HOST viewport and asserts it is not reported; a second new case pins the not-ready refusal.
+- **Next step:** none for this entry. W9-1's other three items (reference drift, the bench harness, the docs/hygiene sweep) are separate PRs.
+- **Decisions:**
+  - **`getComputedStyle` comes from the IFRAME's window, not the host's.** Not cosmetic: `resolvedFontFamily` walks the stack against `doc.fonts.check`, and the admin document knows nothing about the fonts the user's project loaded. Reading fonts off the host would report "Open Sans did not load" for a page where it did.
+  - **Kept synchronous.** `waitForAgentRenderFrame` exists and polls, but this tool is dispatched synchronously from `executor.ts:669` and the caller already has `studio_screenshot` as the settle gesture. An honest refusal beats a silent 5s stall.
+  - **No `studio_page_diagnostics`-style shared iframe helper was extracted.** Two call sites, three lines each, and the two want different things out of the iframe (a `contentWindow` for the buffer vs. a `contentDocument` + `defaultView` pair for measurement). `captureAgentRenderSnapshot` in `renderEvidence.ts` is a third, with its own `doc.body` readiness rule.
+- **Landmines:**
+  - **The old test passed because its fixture had no iframe** — it mounted `data-page-id > data-breakpoint-id > [data-node-id]` directly, a shape that exists nowhere in the product. Verified the rewritten suite FAILS against the unfixed executor first: **8 of 9 fail, every failure a zero-row read.** Any future fixture in this folder must mount an iframe; `studioPageDiagnostics.test.ts` was already doing it right and is the model.
+  - `bun test src/__tests__/architecture` is 18 red on this base — all of them the pre-existing `icon-catalog-integrity` cluster (`standing-01`), untouched by this diff.
+- **Verification:** `bunx tsc -b` ✅ exit 0 (`bun run build`'s vite half cannot run in a worktree — `standing-08`). `bun run lint` ✅ clean. `bun test src/admin/pages/site/agent` → 18 pass / 0 fail. `bun test src/__tests__/ai src/__tests__/agent` → 488 pass / 0 fail. `bun test src/__tests__/architecture` → 478 pass / 18 fail, all `icon-catalog-integrity`.
+- **Human action needed:** **dogfood.** Open a project at `/admin/site`, ask the agent to call `studio_computed_styles` on a page with a board frame, and confirm it now reports real `fontSizePx`/`fontFamily` rows instead of `nodeCount: 0`. (Same-origin access is not the risk — `renderEvidence.ts` and `studioPageDiagnostics.ts` already read the same `srcDoc` iframe in production. What only a browser can show is whether the frame is settled at the moment the agent calls, i.e. how often the new not-ready refusal fires in practice.)
+### test-02 — W9-1.3: `bench:agent-turn` measured one function against a fixture that no longer exists; it now measures the whole turn
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; PR open as draft)
+- **Updated:** 2026-09-06
+- **Branch:** `test/agent-turn-bench` off `origin/main` (`8c41a40`).
+- **Goal:** W9-1 item 3 — three shipped agent optimisations (warm CLI session pool, headless capture, the compare verdict cache) had no after-number. Extend the bench to warm-vs-cold turn, capture latency, a 5-page compare, and the per-turn MCP round-trip count, and record baselines here.
+- **The corpus drift, concretely:** the bench preferred `studio-workspace/untitled` and fell back to `studio-workspace/__canonical-fixture`. `untitled` was deleted some waves ago, so every run since has silently measured the fallback while the module doc, the headline and `scripts/bench/README.md` all described the other project. The README additionally still named `generateStudioAgentRoster`, a function deleted with the subagent roster. Both are corrected; `__canonical-fixture` is now the only fixture and is named as such.
+- **Scope:** `scripts/bench/benches/agent-turn.ts` (rewritten), `scripts/bench/lib/fakeClaudeCli.ts` (new), `scripts/bench/lib/captureHost.ts` (new), `scripts/bench/README.md`, `eslint.config.js`.
+- **What it measures now, in the order a turn pays for it:**
+  1. **Project guide** — `generateStudioProjectGuide` cold/warm, `resolveProjectProfile` uncached/cached, the design-system digest warm (unchanged from before, minus the drift).
+  2. **Turn → first stream line** — the REAL `streamClaudeCli` with a fake `claude` at its `spawn` seam, cold-spawned vs. served from the warm pool.
+  3. **MCP attachment per turn** — spawns, connector mints, config writes and servers-per-config, read off the real `--mcp-config` file each spawn was handed, at spawn time (the driver deletes it in its own `finally`).
+  4. **Headless capture + `studio_compare`** — real Chromium, real capture route, real ts-morph parse, real `sharp` clamp, real `pixelmatch` diff.
+- **BASELINE, 2026-09-06, darwin arm64 Apple M1 Pro, Bun 1.3.13, full (non-`--quick`) run, 14.4s wall:**
+
+  | measurement | value |
+  |---|---|
+  | `generateStudioProjectGuide` cold | mean 24.96ms · p50 25.98ms · p95 29.53ms (n=5) |
+  | `generateStudioProjectGuide` warm | mean 653µs · p50 526µs · p95 963µs (n=30) |
+  | `resolveProjectProfile` uncached → cached | p50 ~3.4ms → ~35µs |
+  | design-system digest warm | p50 ~320µs |
+  | turn → first stream line, **cold** | mean 2.93ms · p50 1.91ms · p95 7.06ms (n=12) |
+  | turn → first stream line, **warm** | mean 1.10ms · p50 930µs · p95 1.53ms (n=12) — **2.1x** |
+  | warm session's own spawning turn | 3.03ms (paid once per conversation) |
+  | MCP handshakes/turn, cold → warm | **3.00 → 0.23** (3 servers: `studio`, `design-system`, `figma`; 12 spawns/12 turns → 1 spawn/13 turns) |
+  | Studio tool surface per `tools/list` | 47 tools · 103.7 KB of schema |
+  | capture, first call (5 frames @dpr2, incl. Chromium launch) | 2.19s |
+  | capture, single frame, warm browser | mean 465ms · p50 456ms (n=5) |
+  | capture, 5-page batch, warm browser | mean 749ms · p50 751ms (n=5) → **150ms/frame** |
+  | `studio_compare` 5 pages, cache bypassed | mean 1.69s · p50 1.67s (n=3) |
+  | `studio_compare` 5 pages, verdict cache | mean 7.55ms · p50 7.77ms (n=3) — **~215x** |
+
+- **Decisions:**
+  - **The turn number is Studio's overhead, not a turn's wall time, and the module says so twice.** A fake CLI answers instantly, so what is left is guide regeneration, containment + turn routing, config dir, session-id derivation and the transcript probe, connector mint, MCP config file and argv. The real cold-path costs a fake cannot model — process startup and N MCP handshakes — are exactly what section 3 counts instead of pretending to time.
+  - **"Per-turn MCP round-trip count" is measured as `spawns x servers-per-config`, off the real config file.** Standing up a real MCP client to count JSON-RPC frames would need a real connector token and a real DB for a number that is already determined by those two integers.
+  - **Capture and compare run with a REAL browser or not at all.** A fake rasteriser (what `headlessCapture.test.ts` injects) would have made the section always-on and its numbers meaningless — the browser is most of what is being measured. Without `dist/agent-capture.html` or a launchable Chromium the two sections report `skipped` with the reason, the posture `benches/browser.ts` and `studioBoard.bench.ts` already take. Groups 1–3 stay fully offline.
+  - **The capture route is served IN-PROCESS (`lib/captureHost.ts`), not by a spawned server.** A capture grant lives in the memory of the process that minted it, so a token minted by the bench is a bare 404 to a separately spawned server. One `Bun.serve` hands the capture namespace to the real `tryServeAgentCapture` and serves `dist/` for the entry's assets.
+  - **The five compare references are sized from a probe capture, not from authored geometry.** A frame renders to its CONTENT height (390x500 authored → 390x900 rendered), and a reference of the wrong aspect makes `studio_compare` refuse the page on aspect instead of measuring it — which is what the first working draft did, five errors and zero timings.
+  - **The references are solid white, so all five pages legitimately FAIL.** That is deliberate: a failing page walks the whole diff + region-scoring + worst-region path. `errorCount` is the number that must stay 0, and the report says so.
+- **Landmines / handed on:**
+  - **`bun run bench:agent-turn` needs `bun run build` and `bun run bench:browser:install` for its last two sections.** This machine had Playwright's chromium-headless-shell **1223** missing (1208/1228/1234 were present) — the pinned build is exact, so `bunx playwright install chromium` is a real prerequisite, not a formality.
+  - **`.tmp` was not in eslint's `globalIgnores`, and running any bench then `bun run lint` failed on the FIXTURE's source.** `__canonical-fixture` contains `Math.random()` in a render path on purpose (it is what the parser's auto-select branch is tested against), and copying it into `.tmp/benchmarks/` made it lintable. `.tmp` + `.tmp-lint` are now ignored for the same reason `studio-workspace` and `.data` already are.
+  - **The compare numbers are for a 5-page batch of SMALL screens on one machine.** They are a floor, not a budget — nothing gates on them yet, and nobody should turn them into a gate without a second machine's run.
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — see the entry's PR body for the run; failures are the standing pre-existing set (`standing-01`), none in `scripts/`.
+- **Human action needed:** none. Re-run `bun run bench:agent-turn` after W9-2/W9-5 land and diff against the table above.
+
 ### struct-07 — W6-5: the code the wave train orphaned is deleted
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; PR open as draft)
@@ -490,6 +636,9 @@ here **verbatim**, so archiving buries no dogfood step.
 
 ### Still in "Recently landed" below — the entry carries the full script
 
+- **`panel-12` — W7-1 launcher polish** (in `## Now`, not yet landed to `main`).
+  Card scale + hover lift in both themes, the rename-then-sort fix, the failed-
+  listing retry, and the post-delete refetch. Five-step script in the entry.
 - **`style-04` — Animations section.** Three things first: (1) an edited imported
   `@keyframes` renders from `ClassStyleInjector`'s overlay while
   `AuthoredCssInjector` still holds the on-disk snapshot — for `@keyframes` the

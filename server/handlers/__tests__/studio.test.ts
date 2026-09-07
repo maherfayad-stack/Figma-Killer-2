@@ -517,6 +517,17 @@ describe('listStudioProjects', () => {
     ])
   })
 
+  it('sorts by display name, not by folder slug', () => {
+    // `zebra` renamed to "Aardvark" from the toolbar: `.studio/meta.json`
+    // changes and the folder never does. Sorting the dirents would pin it
+    // under `z` forever, while the launcher renders it as `A…`.
+    write('studio-workspace/zebra/.studio/meta.json', JSON.stringify({ displayName: 'Aardvark' }))
+    write('studio-workspace/zebra/pages/Home.tsx', 'x')
+    write('studio-workspace/acme/pages/Home.tsx', 'x')
+
+    expect(listStudioProjects(projectsRoot).map((p) => p.name)).toEqual(['Aardvark', 'acme'])
+  })
+
   it('reports pageCount 0 for a project folder with no pages/ dir', () => {
     fs.mkdirSync(path.join(projectsRoot, 'empty'), { recursive: true })
 

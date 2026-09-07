@@ -21,36 +21,56 @@
     justify-content: center;
 }
 
+/* Wider tracks than the editor's own lists: this is the home surface, and it
+ * gets a calmer, larger scale than the tool chrome around a canvas. */
 .grid {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: var(--space-m);
 }
 
 /* Card-style project tile — the whole surface opens the project (see the
  * §8.11 button-primitive allowlist entry). Borderless tile: a lifted surface
- * on the page background, 16px radius, hover raises the surface tone rather
- * than recoloring a border. */
+ * on the page background, `--card-radius`, hover raises the surface tone
+ * rather than recoloring a border. */
 .card {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-2xs);
     width: 100%;
-    padding: var(--space-l);
+    padding: var(--space-3xl);
     background: var(--bg-surface-2);
     border: 0;
-    border-radius: 16px;
+    border-radius: var(--card-radius);
     cursor: pointer;
     text-align: left;
-    transition: background 120ms ease;
+    transition:
+        background 120ms ease,
+        transform 120ms ease,
+        box-shadow 150ms ease;
 }
 
+/*
+  Tone lift per the borderless-card rule, plus a real lift: surface-2 →
+  surface-3 alone is a ~2% step that most displays swallow, so a tile the
+  pointer is over was nearly indistinguishable from its neighbours. The 2px
+  rise and the contact shadow are what make the card read as pickable — still
+  no border, still achromatic.
+*/
 .card:hover {
     background: var(--bg-surface-3);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card-hover);
+}
+
+/* Press puts it back down, so the click has somewhere to land. */
+.card:active {
+    transform: translateY(0);
+    box-shadow: none;
 }
 
 .card:focus-visible {
@@ -61,9 +81,9 @@
 /* Loading placeholder tile — same surface, radius and padding as `.card`, so
  * the grid doesn't reflow when the real project tiles replace it. */
 .cardSkeleton {
-    padding: var(--space-l);
+    padding: var(--space-3xl);
     background: var(--bg-surface-2);
-    border-radius: 16px;
+    border-radius: var(--card-radius);
 }
 
 .cardIcon {
@@ -72,20 +92,26 @@
     margin-bottom: var(--space-2xs);
 }
 
+/* The project's name is the largest thing on the home surface — at `--text-m`
+ * it read like the panel chrome inside the editor rather than the title of a
+ * document you are about to open. */
 .cardName {
-    font-size: var(--text-m);
+    font-size: var(--text-xl);
     font-weight: 600;
-    color: var(--text);
+    color: var(--text-bright);
     max-width: 100%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
+/* `--text-subtle`, not `--text-disabled`: this is the card's only metadata,
+ * and disabled-grey on `--bg-surface-2` is around 2.3:1 — unreadable, and
+ * semantically wrong for a line that is neither disabled nor decorative. */
 .cardMeta {
     font-family: var(--font-mono);
     font-size: var(--text-2xs);
-    color: var(--text-disabled);
+    color: var(--text-subtle);
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }

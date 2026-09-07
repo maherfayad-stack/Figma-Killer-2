@@ -97,6 +97,13 @@ const { data: stats } = useAsyncResource(
 )
 ```
 
+Only for a *secondary* surface — one tile among many, where a stale or absent
+number costs the user nothing. **Never for a screen's primary content.** A
+swallowed error there makes "loading" and "broken" the same picture, and only
+one of them ever ends: the launcher's project grid shimmered forever on a failed
+fetch until W7-1 dropped this flag (`useStudioProjects`). Primary content
+surfaces `error` and offers `refresh` as a retry.
+
 ---
 
 ## When NOT to use it

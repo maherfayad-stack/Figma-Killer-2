@@ -264,6 +264,10 @@
         0 0 5px rgba(0, 0, 0, 0.24);
     --shadow-tooltip:
         0 4px 16px var(--scrim-50), inset 0 1px 0 var(--overlay-5);
+    /* Contact shadow under a borderless tile card the pointer is over. Much
+       tighter than `--shadow-panel-drop`, which is tuned for a panel floating
+       far above the surface; a card lifts a couple of pixels off it. */
+    --shadow-card-hover: 0 2px 4px var(--scrim-30), 0 8px 20px var(--scrim-40);
 
     /* Keycap */
     --kbd-face-top: #434343; /* between surface-3 and surface-4 */
@@ -622,6 +626,10 @@
     /* Shadows and focus */
     --shadow-panel-inset-bottom: inset 0 -1px 0 var(--overlay-10);
     --shadow-panel-drop: 0 16px 42px rgba(15, 23, 42, 0.18);
+    /* Re-tuned for light: the scrims stay pure black in both themes, and a
+       0.4-alpha black under a white card is a smudge, not a lift. */
+    --shadow-card-hover:
+        0 2px 4px rgba(15, 23, 42, 0.06), 0 8px 20px rgba(15, 23, 42, 0.1);
     --shadow-input-focus:
         inset 0 0 4px rgba(15, 23, 42, 0.06),
         inset 0 -4px 8px rgba(15, 23, 42, 0.08),

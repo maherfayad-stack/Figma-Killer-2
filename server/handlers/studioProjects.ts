@@ -356,8 +356,14 @@ export function projectPreviewLocale(dir: string): string | undefined {
  * yields an empty list. Only real directories are considered: a stray file
  * sitting directly in the root is skipped, and the shared
  * `EXCLUDED_WORKSPACE_DIR_NAMES` walk policy keeps this in lockstep with every
- * other place a studio directory tree gets walked. Entries are sorted by
- * directory name for a deterministic response.
+ * other place a studio directory tree gets walked.
+ *
+ * Entries are sorted by DISPLAY name — the same string the launcher renders —
+ * so the order a user reads matches the order they were promised. Sorting the
+ * dirents by folder slug instead (what this did until W7-1) is wrong the
+ * moment a project is renamed: `.studio/meta.json`'s `displayName` changes and
+ * the folder never does, so a project renamed "Zebra" sorts under its original
+ * slug forever.
  */
 export function listStudioProjects(projectsRoot: string): StudioProjectSummary[] {
   if (!existsSync(projectsRoot) || !statSync(projectsRoot).isDirectory()) return []
@@ -372,11 +378,11 @@ export function listStudioProjects(projectsRoot: string): StudioProjectSummary[]
         entry.name !== PROJECTS_TRASH_DIR_NAME &&
         !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name),
     )
-    .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => {
       const dir = join(projectsRoot, entry.name)
       return { dir, name: projectDisplayName(dir), pageCount: pageCountFor(dir) }
     })
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /**

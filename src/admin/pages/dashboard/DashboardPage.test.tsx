@@ -1,26 +1,50 @@
 /**
- * DashboardPage — the delete flow's UI wiring.
+ * DashboardPage — the delete flow's UI wiring, and what the page does when the
+ * listing itself fails.
  *
  * `projectTrash.test.ts` proves the files survive; these tests prove the user
  * cannot reach that code by accident. The case that matters most is the second
  * one: pressing Delete on a tile must open a question, not delete a project.
+ *
+ * The `useStudioProjects` stand-in is a real hook, not a constant: the page now
+ * redraws by calling `refresh()` rather than by splicing a local copy, so a
+ * mock that cannot re-render cannot exercise the flow. `server` is the fixture
+ * standing in for what the next listing would return.
  */
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 const ALPHA = { dir: '/ws/alpha', name: 'alpha', pageCount: 2 }
 const BETA = { dir: '/ws/beta', name: 'beta', pageCount: 1 }
 
 const deleteCalls: string[] = []
+const refreshCalls: string[] = []
+
+/** What the (stubbed) server would answer with right now. */
+const server: { projects: typeof ALPHA[] | null; error: string | null } = {
+  projects: [ALPHA, BETA],
+  error: null,
+}
 
 const studioProjects = await import('./hooks/useStudioProjects')
 mock.module('./hooks/useStudioProjects', () => ({
   ...studioProjects,
-  useStudioProjects: () => [ALPHA, BETA],
+  useStudioProjects: () => {
+    const [, redraw] = useState(0)
+    return {
+      projects: server.projects,
+      loading: false,
+      error: server.error,
+      refresh: () => {
+        refreshCalls.push('refresh')
+        redraw((n) => n + 1)
+      },
+    }
+  },
   deleteStudioProject: async (dir: string) => {
     deleteCalls.push(dir)
-    return [BETA]
+    server.projects = (server.projects ?? []).filter((p) => p.dir !== dir)
   },
 }))
 
@@ -53,6 +77,9 @@ const { DashboardPage } = await import('./DashboardPage')
 
 afterEach(() => {
   deleteCalls.length = 0
+  refreshCalls.length = 0
+  server.projects = [ALPHA, BETA]
+  server.error = null
   cleanup()
 })
 
@@ -83,10 +110,12 @@ describe('DashboardPage delete flow', () => {
     fireEvent.click(await screen.findByRole('button', { name: /delete project/i }))
 
     await waitFor(() => expect(deleteCalls).toEqual([ALPHA.dir]))
-    // The launcher subtracts it locally — `useStudioProjects` has no refetch.
+    // The tile goes because the launcher refetched, not because it spliced its
+    // own copy of the list — that is the whole point of the refresh handle.
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Delete alpha' })).toBeNull()
     })
+    expect(refreshCalls.length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Delete beta' })).toBeTruthy()
   })
 
@@ -101,5 +130,35 @@ describe('DashboardPage delete flow', () => {
     })
     expect(deleteCalls).toEqual([])
     expect(screen.getByRole('button', { name: 'Delete beta' })).toBeTruthy()
+  })
+})
+
+/**
+ * A failed listing used to leave six skeleton tiles shimmering forever: the
+ * hook swallowed the error, so "loading" and "broken" were the same screen and
+ * only one of them ever ended.
+ */
+describe('DashboardPage failed listing', () => {
+  it('says the listing failed instead of shimmering forever', async () => {
+    server.projects = null
+    server.error = 'Network request failed'
+
+    render(<DashboardPage />)
+
+    expect(await screen.findByText('Could not load your projects.')).toBeTruthy()
+    // The reason survives to the screen — not just "something went wrong".
+    expect(screen.getByText('Network request failed')).toBeTruthy()
+    expect(screen.queryByLabelText('Loading projects')).toBeNull()
+  })
+
+  it('retries the listing from the failure state', async () => {
+    server.projects = null
+    server.error = 'Network request failed'
+
+    render(<DashboardPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /try again/i }))
+
+    expect(refreshCalls.length).toBe(1)
   })
 })

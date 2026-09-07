@@ -38,7 +38,15 @@ export default defineConfig([
   // `server.ts` failed `bun run lint` for a change that never touched it.
   // Same reasoning as `studio-workspace` above — Studio does not author,
   // build, or lint what lives there.
-  globalIgnores(['dist', '.worktrees', '.claude', '.data', 'design-system', 'studio-workspace']),
+  //
+  // `.tmp/` is the git-ignored scratch root every script and bench writes into
+  // — including `bench:agent-turn`, which copies `studio-workspace/`'s fixture
+  // project there to measure against it. Copying a file out of an ignored tree
+  // must not make it lintable: without this, running a bench and then `bun run
+  // lint` fails on the FIXTURE's source (`Math.random()` in a render path is
+  // deliberate there — it is what the parser's auto-select branch is tested
+  // against). Same reasoning as `studio-workspace` and `.data` above.
+  globalIgnores(['dist', '.worktrees', '.claude', '.data', '.tmp', '.tmp-lint', 'design-system', 'studio-workspace']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
