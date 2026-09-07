@@ -50,9 +50,8 @@ import { badRequest, jsonResponse, readValidatedBody } from '../../../http'
 import { requireCapability } from '../../../auth/authz'
 import { expectedOrigin } from '../../../auth/security'
 import type { DbClient } from '../../../db/client'
-import { projectsRootDir, resolveProjectDir } from '../../../handlers/studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../../../handlers/studioProjects'
 import { claudeCliPlatformSupport, resolveClaudeCliConfigDir, resolveClaudeCliDataRoot } from '../../../handlers/studio/claudeCliEnv'
-import { isRealpathContained } from '../../../handlers/studio/workspacePackageResolve'
 import { mergeStudioMeta, readStudioMeta } from '../../../handlers/studio/studioMeta'
 import { listRegisteredMcpServers, recordBuiltInSignIn, registeredMcpServerProjectKey } from '../../drivers/registeredMcpServers'
 import {
@@ -160,17 +159,15 @@ type Resolved =
   | { ok: false; response: Response }
 
 /**
- * Resolve `(dir, name)` to a registered http/sse server's URL, with the same
- * containment check every other project-scoped route uses. A stdio server has
+ * Resolve `(dir, name)` to a registered http/sse server's URL. Containment is
+ * `resolveProjectDir`'s, for every route at once — see its own doc. A stdio
+ * server has
  * no OAuth story at all — it is a local command, and its credentials are
  * environment variables — so it is refused here rather than silently treated
  * as unsupported.
  */
 function resolveServer(dirParam: string | null, name: string): Resolved {
   const dir = resolveProjectDir(dirParam)
-  if (!isRealpathContained(dir, projectsRootDir())) {
-    return { ok: false, response: new Response('Not found', { status: 404 }) }
-  }
   const server = listRegisteredMcpServers(dir).find((s) => s.name === name)
   if (!server) {
     return { ok: false, response: jsonResponse({ error: `No MCP server named "${name}" is registered for this project.` }, { status: 404 }) }
@@ -265,6 +262,7 @@ async function handleStart(req: Request, db: DbClient): Promise<Response> {
       authorizeUrl: buildAuthorizeUrl({ metadata, clientId, redirectUri, state, codeChallenge: pkce.challenge }),
     })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     // A closed allow-list is the provider forbidding Studio, not a bad gateway
     // and not a bad request — so it answers 403, which is the one status the
     // panel can act on without reading the message text. Remembered too: the

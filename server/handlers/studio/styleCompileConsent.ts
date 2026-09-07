@@ -34,19 +34,19 @@
  * decide whether it warns or compiles — so the prompt can never offer a
  * compile the compiler would decline to do, or stay silent about one it would.
  *
- * Same containment posture as every other project-scoped route:
- * `resolveProjectDir` + `isRealpathContained(dir, projectsRootDir())`.
+ * Containment is `resolveProjectDir`'s, once for every project-scoped route:
+ * a `dir` outside `studio-workspace/` throws there and the router answers 404,
+ * so this handler never sees one.
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { joinAppRoot } from './appRoot'
 import { resolveProjectProfile } from './projectProbe'
 import { compilableStyleToolchains } from './projectProfileSchema'
 import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta } from './studioMeta'
-import { isRealpathContained } from './workspacePackageResolve'
 
 const ROUTE_PATH = '/admin/api/studio/style-compile-consent'
 
@@ -81,9 +81,9 @@ export async function tryServeStudioStyleCompileConsent(req: Request, url: URL, 
   if (req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       return jsonResponse(readConsentStatus(dir))
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:styleCompileConsent]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -94,11 +94,11 @@ export async function tryServeStudioStyleCompileConsent(req: Request, url: URL, 
       const body = await readValidatedBody(req, DismissBodySchema)
       if (!body) return badRequest('invalid style-compile-consent body')
       const dir = resolveProjectDir(body.dir)
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
       mergeStudioMeta(dir, { styleCompilePromptDismissed: true })
       return jsonResponse({ ok: true })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:styleCompileConsent]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

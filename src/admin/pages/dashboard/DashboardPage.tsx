@@ -57,6 +57,7 @@
  */
 import { useState } from 'react'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
+import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
 import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
@@ -75,6 +76,8 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { setStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
+import type { ImportSummary } from '@site/studio/importSummary'
+import { LazyImportSummaryDialog } from '@admin/shared/dialogs/ImportProjectDialog'
 import type { ProjectPlatform } from '@core/studio-board'
 import {
   createSampleStudioProject,
@@ -89,9 +92,17 @@ import { useOnboardingFacts } from './hooks/useOnboardingFacts'
 import { OnboardingPanel, type OnboardingAction } from './OnboardingPanel'
 import { dismissOnboarding, isOnboardingDismissed } from './onboardingDismissal'
 import { isOnboardingComplete } from './onboardingSteps'
+import {
+  purgeTrashedProject,
+  restoreTrashedProject,
+  useProjectTrash,
+  type TrashedProject,
+} from './hooks/useProjectTrash'
 import { NewProjectDialog } from './NewProjectDialog'
 import { DeleteProjectDialog } from './DeleteProjectDialog'
+import { LauncherDropZone } from './LauncherDropZone'
 import { ProjectCard } from './ProjectCard'
+import { TrashDialog } from './TrashDialog'
 import styles from './DashboardPage.module.css'
 
 // Placeholder tiles shown while the project list is in flight — enough to
@@ -115,6 +126,7 @@ export function DashboardPage() {
   // W7-5's onboarding checklist. Read here with the page's other resources;
   // everything derived from it is in the one block further down.
   const { facts: onboardingFacts } = useOnboardingFacts()
+  const { trashed, error: trashError, refresh: refreshTrash } = useProjectTrash()
 
   const [query, setQuery] = useState('')
   const [onboardingDismissed, setOnboardingDismissed] = useState(() =>
@@ -125,6 +137,10 @@ export function DashboardPage() {
   const [importOpen, setImportOpen] = useState(false)
   // The project awaiting confirmation. `null` closes `DeleteProjectDialog`.
   const [pendingDelete, setPendingDelete] = useState<StudioProject | null>(null)
+  const [trashOpen, setTrashOpen] = useState(false)
+  // The finished import awaiting its summary step. Set by the drop zone; the
+  // Import dialog runs its own copy of this step internally.
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null)
 
   // Before the first successful load there is nothing to draw: either the
   // request is still out (skeletons) or it failed (the retry state below).
@@ -176,11 +192,12 @@ export function DashboardPage() {
     try {
       await deleteStudioProject(project.dir)
       refresh()
+      refreshTrash()
       setPendingDelete(null)
       pushToast({
         kind: 'success',
         title: `Moved “${project.name}” to the trash`,
-        body: 'The folder is in studio-workspace/.trash/ — move it back to restore it.',
+        body: 'Nothing was erased — restore it from Trash whenever you like.',
       })
     } catch (err) {
       console.error('[DashboardPage] delete project failed:', err)
@@ -255,6 +272,60 @@ export function DashboardPage() {
     } finally {
       setBusy(false)
     }
+  }
+
+  // Deleting a project MOVES it into the trash, so the count beside the Trash
+  // button has to change in the same beat as the grid.
+  async function handleRestore(project: TrashedProject) {
+    if (busy) return
+    setBusy(true)
+    try {
+      const restored = await restoreTrashedProject(project.entry)
+      refresh()
+      refreshTrash()
+      pushToast({ kind: 'success', title: `Restored “${restored.name}”` })
+    } catch (err) {
+      console.error('[DashboardPage] restore project failed:', err)
+      // A 409's message names the live project standing in the way, which is
+      // the one thing the user needs in order to fix it.
+      pushToast({
+        kind: 'error',
+        title: 'Could not restore project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handlePurge(project: TrashedProject) {
+    if (busy) return
+    setBusy(true)
+    try {
+      await purgeTrashedProject(project.entry)
+      refreshTrash()
+      pushToast({ kind: 'success', title: `Deleted “${project.name}” forever` })
+    } catch (err) {
+      console.error('[DashboardPage] purge project failed:', err)
+      pushToast({
+        kind: 'error',
+        title: 'Could not delete project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * A dropped import lands in the launcher immediately, and the summary step
+   * decides whether the board opens. The grid refreshes either way — the
+   * project exists on disk from the moment the upload returned, and a user who
+   * dismisses the summary should still see it.
+   */
+  function handleDropImported(summary: ImportSummary) {
+    refresh()
+    setImportSummary(summary)
   }
 
   const newProjectButton = (
@@ -346,6 +417,11 @@ export function DashboardPage() {
           aria-label="Search projects"
           className={styles.search}
         />
+        {trashed !== null && trashed.length > 0 && (
+          <Button variant="secondary" onClick={() => setTrashOpen(true)} disabled={busy}>
+            <TrashSolidIcon size={12} aria-hidden="true" /> Trash ({trashed.length})
+          </Button>
+        )}
         {importProjectButton}
         {newProjectButton}
       </div>
@@ -421,6 +497,33 @@ export function DashboardPage() {
           ))}
         </ul>
       )}
+
+      {/* Drop a folder or .zip anywhere on the launcher. Renders nothing until
+          a drag carrying files enters the window. */}
+      <LauncherDropZone onImported={handleDropImported} disabled={busy} />
+
+      <TrashDialog
+        open={trashOpen}
+        trashed={trashed}
+        error={trashError}
+        busy={busy}
+        onClose={() => setTrashOpen(false)}
+        onRestore={(project) => void handleRestore(project)}
+        onPurge={(project) => void handlePurge(project)}
+      />
+
+      {/* The drop path's post-import step. The Import dialog shows its own,
+          because it owns the form the summary replaces. */}
+      <LazyImportSummaryDialog
+        summary={importSummary}
+        onClose={() => setImportSummary(null)}
+        onOpen={(summary) => {
+          setImportSummary(null)
+          requestCmsSiteReload()
+          setStudioWorkspaceDir(summary.dir)
+          navigate('/admin/site')
+        }}
+      />
 
       <DeleteProjectDialog
         project={pendingDelete}

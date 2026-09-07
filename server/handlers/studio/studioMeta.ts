@@ -68,6 +68,15 @@ const FrameDefaultsSchema = Type.Object({
   height: Type.Optional(Type.Number({ minimum: 1 })),
 })
 
+const AgentEffortSchema = Type.Union([
+  Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
+])
+
+/** One account's session controls for this project. Grows with any future per-user control (fidelity mode is the next candidate) — the map below is the shape those arrive into. */
+const AgentSessionForUserSchema = Type.Object({
+  effort: Type.Optional(AgentEffortSchema),
+})
+
 /**
  * WS-12 §5.1 — session controls that persist PER PROJECT, so reopening a
  * project restores the reasoning effort you were using. `mode`
@@ -76,13 +85,51 @@ const FrameDefaultsSchema = Type.Object({
  * rail is "it never persists", and that only holds if there is nowhere for
  * it to be written in the first place. Model selection already persists
  * through the existing credential/model-default mechanism, not this file.
+ *
+ * W10 — and per ACCOUNT within the project, under `byUser`, keyed by
+ * `studioAgentUserKey` (`agentUserScope.ts`). Effort is a preference about
+ * how one person likes to work, not a property of the project: two people in
+ * one project were previously overwriting each other's choice on every
+ * change, and the loser only found out by watching their next turn run at
+ * somebody else's setting.
+ *
+ * The bare `effort` field is what every project written before this change
+ * carries. It is READ as the project-wide default for an account that has no
+ * entry of its own yet, and never written again — the first save any account
+ * makes lands in `byUser`, leaving the old value as the fallback it now is.
+ * Not a migration: an unread legacy field costs a few bytes on disk and is
+ * the honest answer for a project whose users have not each chosen yet.
  */
 const AgentSessionSchema = Type.Object({
-  effort: Type.Optional(Type.Union([
-    Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
-  ])),
+  effort: Type.Optional(AgentEffortSchema),
+  byUser: Type.Optional(Type.Record(Type.String(), AgentSessionForUserSchema)),
 })
 export type AgentSession = Static<typeof AgentSessionSchema>
+export type AgentSessionEffort = Static<typeof AgentEffortSchema>
+
+/** This account's persisted effort for a project: its own entry, else the pre-`byUser` project-wide value, else none. */
+export function readAgentSessionEffort(meta: StudioMeta, userKey: string): AgentSessionEffort | null {
+  const session = meta.agentSession
+  return session?.byUser?.[userKey]?.effort ?? session?.effort ?? null
+}
+
+/**
+ * The `agentSession` patch that records ONE account's effort, preserving
+ * every other account's entry. `mergeStudioMeta` merges shallowly (by design
+ * — it is one `{...a, ...b}`), so the whole `agentSession` object has to be
+ * rebuilt here rather than half-written by the caller.
+ */
+export function withAgentSessionEffort(
+  meta: StudioMeta,
+  userKey: string,
+  effort: AgentSessionEffort | null,
+): AgentSession {
+  const session = meta.agentSession ?? {}
+  const byUser = { ...(session.byUser ?? {}) }
+  if (effort) byUser[userKey] = { effort }
+  else delete byUser[userKey]
+  return { ...session, byUser }
+}
 
 /**
  * WS-10 Phase 1/3 — the board-global preview axes a user has explicitly set,

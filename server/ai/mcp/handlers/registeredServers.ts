@@ -41,8 +41,7 @@ import {
 import { badRequest, jsonResponse, readValidatedBody } from '../../../http'
 import { requireCapability } from '../../../auth/authz'
 import type { DbClient } from '../../../db/client'
-import { projectsRootDir, resolveProjectDir } from '../../../handlers/studioProjects'
-import { isRealpathContained } from '../../../handlers/studio/workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../../../handlers/studioProjects'
 import { listProjectMcpServers, approveProjectMcpServer, revokeProjectMcpServer } from '../../drivers/projectMcpServers'
 import {
   listRegisteredMcpServers,
@@ -65,14 +64,6 @@ export function tryHandleAiMcpProjectServers(
 ): Promise<Response> | null {
   if (pathname !== BASE && !pathname.startsWith(`${BASE}/`)) return null
   return handle(req, db, url, pathname)
-}
-
-function resolveContainedDir(dirParam: string | null): { ok: true; dir: string } | { ok: false; response: Response } {
-  const dir = resolveProjectDir(dirParam)
-  if (!isRealpathContained(dir, projectsRootDir())) {
-    return { ok: false, response: new Response('Not found', { status: 404 }) }
-  }
-  return { ok: true, dir }
 }
 
 async function handle(req: Request, db: DbClient, url: URL, pathname: string): Promise<Response> {
@@ -101,18 +92,17 @@ async function handleList(req: Request, db: DbClient, url: URL): Promise<Respons
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  const resolved = resolveContainedDir(url.searchParams.get('dir'))
-  if (!resolved.ok) return resolved.response
+  const dir = resolveProjectDir(url.searchParams.get('dir'))
 
-  const projectServers: ProjectMcpServerView[] = listProjectMcpServers(resolved.dir).map((s) => ({
+  const projectServers: ProjectMcpServerView[] = listProjectMcpServers(dir).map((s) => ({
     name: s.name,
     source: 'project',
     approved: s.approved,
     summary: s.summary,
   }))
 
-  const projectKey = registeredMcpServerProjectKey(resolved.dir)
-  const registeredServers: ProjectMcpServerView[] = listRegisteredMcpServers(resolved.dir).map((s) => ({
+  const projectKey = registeredMcpServerProjectKey(dir)
+  const registeredServers: ProjectMcpServerView[] = listRegisteredMcpServers(dir).map((s) => ({
     name: s.name,
     source: 'registered',
     approved: s.approved,
@@ -133,12 +123,12 @@ async function handleAdd(req: Request, db: DbClient): Promise<Response> {
   const body = await readValidatedBody(req, AddRegisteredMcpServerBodySchema)
   if (!body) return badRequest('Invalid request body.')
 
-  const resolved = resolveContainedDir(body.dir ?? null)
-  if (!resolved.ok) return resolved.response
+  const dir = resolveProjectDir(body.dir ?? null)
 
   try {
-    addRegisteredMcpServer(resolved.dir, { name: body.name, definition: body.definition })
+    addRegisteredMcpServer(dir, { name: body.name, definition: body.definition })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     if (err instanceof ReservedMcpServerNameError) {
       return jsonResponse({ error: err.message }, { status: 400 })
     }
@@ -146,7 +136,7 @@ async function handleAdd(req: Request, db: DbClient): Promise<Response> {
   }
 
   if (body.secrets) {
-    const projectKey = registeredMcpServerProjectKey(resolved.dir)
+    const projectKey = registeredMcpServerProjectKey(dir)
     for (const [fieldName, value] of Object.entries(body.secrets)) {
       if (value.length === 0) continue
       await setMcpServerSecret(userOrResponse.id, projectKey, body.name, fieldName, value)
@@ -160,10 +150,9 @@ async function handleRemove(req: Request, db: DbClient, url: URL, name: string):
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  const resolved = resolveContainedDir(url.searchParams.get('dir'))
-  if (!resolved.ok) return resolved.response
+  const dir = resolveProjectDir(url.searchParams.get('dir'))
 
-  removeRegisteredMcpServer(userOrResponse.id, resolved.dir, name)
+  removeRegisteredMcpServer(userOrResponse.id, dir, name)
   return jsonResponse({ ok: true })
 }
 
@@ -174,15 +163,14 @@ async function handleSetApproval(req: Request, db: DbClient, name: string, appro
   const body = await readValidatedBody(req, SetMcpServerApprovalBodySchema)
   if (!body) return badRequest('Invalid request body.')
 
-  const resolved = resolveContainedDir(body.dir ?? null)
-  if (!resolved.ok) return resolved.response
+  const dir = resolveProjectDir(body.dir ?? null)
 
   if (body.source === 'project') {
-    if (approve) approveProjectMcpServer(resolved.dir, name)
-    else revokeProjectMcpServer(resolved.dir, name)
+    if (approve) approveProjectMcpServer(dir, name)
+    else revokeProjectMcpServer(dir, name)
   } else {
-    if (approve) approveRegisteredMcpServer(resolved.dir, name)
-    else revokeRegisteredMcpServer(resolved.dir, name)
+    if (approve) approveRegisteredMcpServer(dir, name)
+    else revokeRegisteredMcpServer(dir, name)
   }
 
   return jsonResponse({ ok: true, name, approved: approve })

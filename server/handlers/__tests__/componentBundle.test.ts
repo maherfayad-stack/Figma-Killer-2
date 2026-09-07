@@ -8,11 +8,11 @@
  * skips resolving anything named in `external` entirely.
  *
  * `tryServeStudioComponentBundle`'s own tests use a fixture dir created
- * INSIDE `projectsRootDir()` (`studio-workspace/`) — the route's own
- * containment guard (`isRealpathContained(dir, projectsRootDir())`, same
- * primitive `installDeps.test.ts` relies on for its own route tests) rejects
- * anything outside it, same as production. Only the temp folder each test
- * itself creates is ever removed — never a sibling real project.
+ * INSIDE the repo's `studio-workspace/` — `resolveProjectDir` refuses
+ * anything outside the workspace root, same as production, and the React
+ * version checks need a `node_modules` above the fixture to resolve against.
+ * Only the temp folder each test itself creates is ever removed — never a
+ * sibling real project.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
@@ -20,9 +20,10 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { probeProject } from '../studio/projectProbe'
 import { mergeStudioMeta } from '../studio/studioMeta'
-import { projectsRootDir } from '../studioProjects'
 import { runComponentBundleTask } from '../studio/componentBundleWorker'
 import { computeBundleCacheKey, sanitizePackageName, tryServeStudioComponentBundle } from '../studio/componentBundle'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 function write(dir: string, relPath: string, contents: string): string {
   const full = path.join(dir, ...relPath.split('/'))
@@ -166,15 +167,24 @@ describe('sanitizePackageName', () => {
 
 describe('tryServeStudioComponentBundle', () => {
   let wsDir: string
+  const previousRoot = process.env.STUDIO_WORKSPACE_DIR
 
   beforeEach(() => {
-    const root = projectsRootDir()
+    // This describe's fixture must live inside the REPO's own
+    // `studio-workspace/`, not the suite-wide temp root: the React-version
+    // checks resolve `react` by walking up from the project, and only inside
+    // the repo is there a `node_modules` to find. So the workspace root is
+    // pointed back at the real one for these cases, and restored after.
+    const root = path.join(process.cwd(), 'studio-workspace')
+    process.env.STUDIO_WORKSPACE_DIR = root
     fs.mkdirSync(root, { recursive: true })
     wsDir = fs.mkdtempSync(path.join(root, '__component_bundle_test_'))
   })
 
   afterEach(() => {
     fs.rmSync(wsDir, { recursive: true, force: true })
+    if (previousRoot === undefined) delete process.env.STUDIO_WORKSPACE_DIR
+    else process.env.STUDIO_WORKSPACE_DIR = previousRoot
   })
 
   function writePackageJson(fields: Record<string, unknown> = {}): void {
@@ -207,14 +217,14 @@ describe('tryServeStudioComponentBundle', () => {
   })
 
   it('rejects a dir outside studio-workspace/ without doing any work', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'component-bundle-outside-'))
-    try {
+    // The refusal is `resolveProjectDir`'s, raised before the handler does
+    // anything and answered once by the router (W10) — so what a route-level
+    // test asserts is the throw, not a status this handler chose.
+    await withOutsideWorkspaceDir('component-bundle-outside', async (outside) => {
       const { req, url, pathname } = makeRequest('/admin/api/studio/component-bundle', postBody({ dir: outside }))
-      const res = await tryServeStudioComponentBundle(req, url, pathname)
-      expect(res!.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+      await expect(tryServeStudioComponentBundle(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+      expect(fs.existsSync(path.join(outside, '.studio'))).toBe(false)
+    })
   })
 
   it('is a no-op success when no component package is demanded', async () => {

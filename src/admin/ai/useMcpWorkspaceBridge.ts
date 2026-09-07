@@ -1,6 +1,15 @@
 /**
  * Keep one workspace-scoped MCP browser bridge open while its editor is
  * mounted.
+ *
+ * The bridge is registered server-side under `site:${projectKey}` (W10), so
+ * the connection has to say WHICH project this tab is showing — otherwise two
+ * tabs on two projects share one slot and the agent's tool calls reach
+ * whichever registered last. The dir is read through a getter, not passed as
+ * a value: `studioWriteDir()` is module state that settles after the first
+ * load completes, and every other Studio client call reads it the same way
+ * at call time. Each reconnect (≤120s, the server's stream lease) therefore
+ * picks up the current project without this hook needing to be reactive.
  */
 import { useEffect } from 'react'
 import { Type } from '@core/utils/typeboxHelpers'
@@ -25,7 +34,12 @@ const BridgeEventSchema = Type.Union([
   }),
 ])
 
-export type McpWorkspaceScope = 'site'
+/** The workspace KIND. The project half of the server-side scope is derived from the dir this hook sends. */
+const WORKSPACE_KIND = 'site'
+
+/** Reads the project dir this tab currently has open, at connect time. `null` before any project has loaded — the bridge simply waits and retries. */
+export type McpWorkspaceDirResolver = () => string | null
+
 export type McpToolDispatcher = (
   toolName: string,
   input: unknown,
@@ -63,17 +77,24 @@ type McpBridgeConnectionOutcome = 'auth' | 'transient'
  * now instead of hanging until its 90-second timeout.
  */
 export async function runMcpWorkspaceBridgeConnection(
-  scope: McpWorkspaceScope,
+  projectDir: string | null,
   dispatchTool: McpToolDispatcher,
   afterSuccessfulTool: McpAfterSuccessfulTool | undefined,
   lifecycleSignal: AbortSignal,
 ): Promise<McpBridgeConnectionOutcome> {
+  // No project open yet (a tab that has not finished its first load). The
+  // server would refuse the connection anyway — it will not register a bridge
+  // on a guessed project — so wait for the next retry instead of spending a
+  // request to be told so.
+  if (!projectDir) return 'transient'
+
   const connectionController = new AbortController()
   const signal = AbortSignal.any([lifecycleSignal, connectionController.signal])
   let bridgeId = ''
 
   try {
-    const res = await fetch(`${MCP_BRIDGE_PATH}?scope=${scope}`, {
+    const query = `scope=${WORKSPACE_KIND}&dir=${encodeURIComponent(projectDir)}`
+    const res = await fetch(`${MCP_BRIDGE_PATH}?${query}`, {
       method: 'GET',
       credentials: 'same-origin',
       headers: { Accept: 'application/x-ndjson' },
@@ -86,7 +107,7 @@ export async function runMcpWorkspaceBridgeConnection(
       signal.throwIfAborted()
       if (event.type === 'bridgeReady') {
         bridgeId = event.bridgeId
-        console.info(`[mcp-workspace-bridge:${scope}] connected`)
+        console.info(`[mcp-workspace-bridge:${WORKSPACE_KIND}] connected`)
         continue
       }
 
@@ -105,7 +126,7 @@ export async function runMcpWorkspaceBridgeConnection(
 }
 
 export function useMcpWorkspaceBridge(
-  scope: McpWorkspaceScope,
+  resolveProjectDir: McpWorkspaceDirResolver,
   dispatchTool: McpToolDispatcher,
   afterSuccessfulTool?: McpAfterSuccessfulTool,
 ): void {
@@ -119,7 +140,7 @@ export function useMcpWorkspaceBridge(
     // ready. Unmount is the only permanent stop condition.
     async function connectOnce(): Promise<McpBridgeConnectionOutcome> {
       return runMcpWorkspaceBridgeConnection(
-        scope,
+        resolveProjectDir(),
         dispatchTool,
         afterSuccessfulTool,
         lifecycleController.signal,
@@ -134,7 +155,7 @@ export function useMcpWorkspaceBridge(
           if (outcome === 'auth') delay = AUTH_RETRY_DELAY_MS
         } catch (err) {
           if (stopped || lifecycleController.signal.aborted) break
-          console.error(`[mcp-workspace-bridge:${scope}] stream error (will retry):`, err)
+          console.error(`[mcp-workspace-bridge:${WORKSPACE_KIND}] stream error (will retry):`, err)
         }
         if (stopped) break
         await new Promise<void>((resolve) => {
@@ -150,5 +171,5 @@ export function useMcpWorkspaceBridge(
       if (reconnectTimer) clearTimeout(reconnectTimer)
       lifecycleController.abort()
     }
-  }, [scope, dispatchTool, afterSuccessfulTool])
+  }, [resolveProjectDir, dispatchTool, afterSuccessfulTool])
 }

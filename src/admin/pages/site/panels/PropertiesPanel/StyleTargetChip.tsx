@@ -92,6 +92,18 @@ interface StyleTargetChipProps {
   /** See module doc — only read when `classSelector` is present. */
   classCssEditability?: ClassCssEditability
   disabled?: boolean
+  /**
+   * W8-3 phase 1 — the surface has pinned the write target to Element and
+   * this string says WHY. Set only by the multi-selection inspector, where a
+   * class edit's blast radius reaches elements outside the selection and so
+   * cannot be offered honestly yet (see `MultiInlineStyleComposer`'s doc).
+   *
+   * With it, Element reads as the active target and the class rows state the
+   * reason instead of a per-class write-back outcome that would not apply.
+   * The chip never invents this state on its own: absent the prop the chip
+   * behaves exactly as it did before.
+   */
+  lockedToElementReason?: string
 }
 
 /** The basename of a workspace-relative path — `src/screens/Home.css` -> `Home.css`. */
@@ -144,27 +156,37 @@ export function StyleTargetChip({
   classSelector,
   classCssEditability,
   disabled = false,
+  lockedToElementReason,
 }: StyleTargetChipProps) {
   const classWritable = classWrites(classCssEditability)
+  // Pinned-to-Element mode: Element is the target, and every other row states
+  // the one reason rather than a write-back outcome that cannot be reached.
+  const pinnedToElement = lockedToElementReason !== undefined
 
   return (
-    <div className={styles.row} data-testid="style-target-chip">
+    <div
+      className={styles.row}
+      data-testid="style-target-chip"
+      data-pinned-target={pinnedToElement ? 'element' : undefined}
+    >
       <span className={styles.editingLabel}>Editing</span>
       <div className={styles.chips} role="group" aria-label="Style edit targets">
         <Button
           variant="secondary"
           size="xs"
-          pressed={elementVisible}
-          disabled={disabled || !onToggleElement}
-          onClick={onToggleElement}
+          pressed={pinnedToElement || elementVisible}
+          disabled={disabled || pinnedToElement || !onToggleElement}
+          onClick={pinnedToElement ? undefined : onToggleElement}
           className={styles.chip}
           data-testid="style-target-chip-element"
           tooltip={
-            onToggleElement
-              ? elementVisible
-                ? 'Writes to this element’s own style="" attribute — click to hide'
-                : 'Style this element directly — writes to style=""'
-              : (elementDisabledReason ?? 'Remove the assigned class to style this element directly')
+            pinnedToElement
+              ? lockedToElementReason
+              : onToggleElement
+                ? elementVisible
+                  ? 'Writes to this element’s own style="" attribute — click to hide'
+                  : 'Style this element directly — writes to style=""'
+                : (elementDisabledReason ?? 'Remove the assigned class to style this element directly')
           }
         >
           Element
@@ -177,15 +199,22 @@ export function StyleTargetChip({
           case" affordance. `Tooltip` still surfaces the write-back outcome
           on hover without adding one.
         */}
-        <Tooltip content={classTooltip(classSelector, classCssEditability)} disabled={disabled}>
+        <Tooltip
+          content={lockedToElementReason ?? classTooltip(classSelector, classCssEditability)}
+          disabled={disabled}
+        >
           <span
-            data-active={classSelector ? 'true' : 'false'}
-            data-writable={classWritable ? 'true' : 'false'}
-            className={cn(styles.chip, styles.chipStatic, disabled && styles.chipDisabled)}
+            data-active={!pinnedToElement && classSelector ? 'true' : 'false'}
+            data-writable={!pinnedToElement && classWritable ? 'true' : 'false'}
+            className={cn(
+              styles.chip,
+              styles.chipStatic,
+              (disabled || pinnedToElement) && styles.chipDisabled,
+            )}
             data-testid="style-target-chip-class"
           >
-            {classSelector ?? 'No class'}
-            {classSelector && !classWritable && (
+            {pinnedToElement ? 'Class' : (classSelector ?? 'No class')}
+            {!pinnedToElement && classSelector && !classWritable && (
               <WarningDiamondSolidIcon size={11} aria-hidden="true" className={styles.warningIcon} />
             )}
           </span>
@@ -194,9 +223,14 @@ export function StyleTargetChip({
             structurally different edit from a declaration inside a class
             already assigned; see module doc for why this is informational,
             never a value-editing target. */}
-        <Tooltip content={CLASS_ASSIGNMENT_TOOLTIP} disabled={disabled}>
+        <Tooltip content={lockedToElementReason ?? CLASS_ASSIGNMENT_TOOLTIP} disabled={disabled}>
           <span
-            className={cn(styles.chip, styles.chipStatic, styles.chipInfo, disabled && styles.chipDisabled)}
+            className={cn(
+              styles.chip,
+              styles.chipStatic,
+              styles.chipInfo,
+              (disabled || pinnedToElement) && styles.chipDisabled,
+            )}
             data-testid="style-target-chip-assign"
           >
             Assign class

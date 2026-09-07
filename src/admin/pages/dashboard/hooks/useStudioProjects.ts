@@ -52,7 +52,7 @@ export type ProjectFramework = Static<typeof ProjectFrameworkSchema>
  * `platform` and `framework` are genuinely optional on the wire (an import has
  * no recorded platform; an unprobed project has no framework), and the card
  * renders no badge for an absent one rather than guessing. `trust`,
- * `styleToolchains` and `editedAt` are always sent.
+ * `styleToolchains`, `editedAt` and `hasThumbnail` are always sent.
  */
 const StudioProjectSchema = Type.Object(
   {
@@ -66,6 +66,10 @@ const StudioProjectSchema = Type.Object(
     styleToolchains: Type.Array(CompilableStyleToolchainSchema),
     /** Epoch ms of the newest file under the project's pages dir — see the server-side field doc. */
     editedAt: Type.Number(),
+    /** W7-3 — whether the server has a `.studio/thumbnail.png` for this project. False means "the capture is queued", not "there will never be one". */
+    hasThumbnail: Type.Boolean(),
+    /** The thumbnail's mtime (epoch ms), absent when there is none. Carried in the image URL so a new capture is fetched rather than revalidated. */
+    thumbnailUpdatedAt: Type.Optional(Type.Number()),
   },
   { additionalProperties: true },
 )

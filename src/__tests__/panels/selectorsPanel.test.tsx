@@ -303,7 +303,11 @@ describe('SelectorsPanel', () => {
     const panel = screen.getByTestId('selectors-panel')
     fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.hero-title/i }))
     expect(useEditorStore.getState().selectedSelectorClassIds).toEqual(['hero-title'])
-    expect(screen.getByText(/1 class selected/i)).toBeDefined()
+    // W8-3: a MULTI-selection needs two members. One checked box opens the
+    // ordinary single-selector inspector — the same surface a row click
+    // reaches — not a bulk action bar over a one-row list.
+    expect(screen.queryByText(/1 class selected/i)).toBeNull()
+    expect(within(screen.getByTestId('properties-panel')).getByText('.hero-title')).toBeDefined()
 
     fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.cta-button/i }))
     expect(useEditorStore.getState().selectedSelectorClassIds).toEqual(['hero-title', 'cta-button'])
@@ -330,7 +334,9 @@ describe('SelectorsPanel', () => {
     )
 
     const panel = screen.getByTestId('selectors-panel')
+    // Two boxes: the bulk surface only appears for a real multi-selection (W8-3).
     fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.cta-button/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.unused-card/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     fireEvent.click(within(propertiesPanel).getByRole('button', { name: /^apply$/i }))
@@ -350,8 +356,10 @@ describe('SelectorsPanel', () => {
 
     const panel = screen.getByTestId('selectors-panel')
     // text-m is a locked generated utility — "locked" must not block applying it
-    // to an element (applying utilities is their whole purpose).
+    // to an element (applying utilities is their whole purpose). The second box
+    // is what makes this a multi-selection at all (W8-3).
     fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.text-m/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.unused-card/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     const apply = within(propertiesPanel).getByRole('button', { name: /^apply$/i }) as HTMLButtonElement
@@ -433,6 +441,31 @@ describe('SelectorsPanel', () => {
 
   it('disables bulk delete and duplicate for locked utility selectors', () => {
     loadSiteWithSelectors()
+    // A SECOND locked utility, added only for this test: the bulk inspector
+    // needs a set of two (W8-3 — one checkbox opens the single-selector
+    // inspector instead), and the "nothing in this set is editable" state
+    // needs every member of that set locked. Added here rather than in the
+    // shared fixture, which several sibling tests assert exact contents of.
+    const current = useEditorStore.getState().site!
+    useEditorStore.setState({
+      site: makeSite({
+        pages: current.pages,
+        styleRules: {
+          ...current.styleRules,
+          'text-l': makeClass('text-l', 'text-l', { fontSize: '20px' }, {
+            generated: {
+              origin: 'framework',
+              family: 'typography',
+              sourceId: 'group-1',
+              generatorId: 'gen-1',
+              tokenName: 'text',
+              step: 'l',
+              locked: true,
+            },
+          }),
+        },
+      }),
+    } as Parameters<typeof useEditorStore.setState>[0])
     render(
       <>
         <SelectorsPanel variant="docked" />
@@ -441,8 +474,9 @@ describe('SelectorsPanel', () => {
     )
 
     const panel = screen.getByTestId('selectors-panel')
-    // text-m is a locked generated utility — neither delete nor duplicate applies.
+    // Both are locked generated utilities — neither delete nor duplicate applies.
     fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.text-m/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.text-l/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     // These buttons carry a tooltip, so the Button primitive uses aria-disabled
@@ -457,11 +491,12 @@ describe('SelectorsPanel', () => {
     expect(deleteBtn().getAttribute('aria-disabled')).toBeNull()
     expect(duplicateBtn().getAttribute('aria-disabled')).toBeNull()
 
-    // Deleting only removes the editable one; the locked utility survives.
+    // Deleting only removes the editable one; the locked utilities survive.
     fireEvent.click(deleteBtn())
     const rules = useEditorStore.getState().site!.styleRules
     expect(rules['cta-button']).toBeUndefined()
     expect(rules['text-m']).toBeDefined()
+    expect(rules['text-l']).toBeDefined()
   })
 
   it('bulk-deletes selected selectors', () => {

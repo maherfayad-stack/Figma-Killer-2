@@ -33,7 +33,13 @@ import { CloseIcon } from 'pixel-art-icons/icons/close'
 import styles from './MultiSelectorInspector.module.css'
 
 interface MultiSelectorInspectorProps {
-  /** Checkbox multi-selection set from the Selectors panel. Contains 1+ ids. */
+  /**
+   * Checkbox multi-selection set from the Selectors panel. Contains 2+ ids —
+   * a single checked selector opens the ordinary single-selector inspector
+   * instead (`usePropertiesPanelData`'s `isSelectorMultiSelect`, W8-3), since
+   * a bulk action bar offering to delete "1 class" is a worse surface for
+   * that selection than the one a row click already reaches.
+   */
   selectedSelectorClassIds: string[]
 }
 

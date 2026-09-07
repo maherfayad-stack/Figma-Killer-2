@@ -21,8 +21,7 @@
  */
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { Type } from '@core/utils/typeboxHelpers'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { PrototypeOpSchema, applyPrototypeOp, readPrototypeFile, writePrototypeFile } from './prototypeStore'
 import { readCodeFlow } from './prototypeCodeFlow'
 
@@ -43,9 +42,9 @@ export async function tryServeStudioPrototype(
     if (req.method !== 'GET') return null
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       return jsonResponse({ dir, flow: readCodeFlow(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:prototype]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -56,9 +55,9 @@ export async function tryServeStudioPrototype(
   if (req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       return jsonResponse({ dir, prototype: readPrototypeFile(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:prototype]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -69,7 +68,6 @@ export async function tryServeStudioPrototype(
       const body = await readValidatedBody(req, PrototypePostBodySchema)
       if (!body) return badRequest('invalid prototype body')
       const dir = resolveProjectDir(body.dir)
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
       // Read-apply-write, so a concurrent writer merges instead of being
       // silently discarded.
@@ -79,6 +77,7 @@ export async function tryServeStudioPrototype(
       if (result.changed) writePrototypeFile(dir, result.file)
       return jsonResponse({ ok: true, changed: result.changed, prototype: result.file })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:prototype]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

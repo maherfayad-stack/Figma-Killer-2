@@ -59,7 +59,7 @@
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse } from '../../http'
 import { ArchiveIngestError, readFormDataWithLimit } from './archiveIngest'
-import { resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { landAssetBytes } from './assetLanding'
 
 /** Per-file cap for an asset upload — tighter than the general archive-import cap; a single image has no business exceeding this. */
@@ -127,6 +127,7 @@ export async function tryServeStudioAssetUpload(
 
     return jsonResponse({ ok: true, relPath: landed.relPath })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio]', err)
     if (err instanceof ArchiveIngestError) {
       return jsonResponse({ error: err.message }, { status: err.status })

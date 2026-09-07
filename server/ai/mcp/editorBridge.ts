@@ -16,17 +16,47 @@
  *
  * Security: the registry is keyed by `userId` + workspace scope, so an MCP
  * connector can only ever reach the open workspace of its OWN owner.
+ *
+ * ## The scope is per PROJECT (W10)
+ *
+ * The scope used to be the bare literal `'site'` — one bridge slot per user,
+ * whatever they had open. Two tabs on two projects were therefore ONE slot,
+ * and "newest instance of this workspace wins" quietly meant last-registered
+ * wins: a tool call meant for project A was relayed into project B's tab,
+ * which executed it against its own live store. Nothing reported a mismatch,
+ * because as far as either side could tell the call had reached "the" editor.
+ *
+ * A scope is now `site:${projectKey}` — `registeredMcpServerProjectKey(dir)`,
+ * the same key conversations, MCP OAuth sessions and registered-server
+ * secrets are scoped by. Two projects are two independently addressable
+ * bridges; two tabs on the SAME project still collapse to one slot, which is
+ * the case "newest wins" was written for and remains correct for.
  */
 import type { AiBrowserBridge, AiStreamEvent } from '../runtime/types'
 import { createBridge, encodeStreamEvent } from '../runtime'
+import { registeredMcpServerProjectKey } from '../drivers/registeredMcpServers'
 
 interface EditorBridgeEntry {
   bridgeId: string
   bridge: AiBrowserBridge
   destroy: () => void
+  /** When this entry was registered — the tiebreak `getMostRecentEditorBridgeForUser` needs, and nothing else reads. */
+  readonly registeredAt: number
 }
 
-export type EditorBridgeScope = 'site'
+/**
+ * `site:<projectKey>` — the Site editor open on one specific Studio project.
+ * Built only by {@link editorBridgeScope}, never spelled out by hand: the key
+ * has exactly one derivation, and a second one would be a second definition
+ * of "this project".
+ */
+export type EditorBridgeScope = `site:${string}`
+
+/** The bridge scope for a Studio project directory. The dir must already be validated — this derives a key, it does not vouch for a path. */
+export function editorBridgeScope(projectDir: string): EditorBridgeScope {
+  return `site:${registeredMcpServerProjectKey(projectDir)}`
+}
+
 const STREAM_LEASE_MS = 120_000
 
 const byUser = new Map<string, Map<EditorBridgeScope, EditorBridgeEntry>>()
@@ -56,6 +86,26 @@ export function getEditorBridgeForUser(
 
 export function hasEditorBridge(userId: string, scope: EditorBridgeScope): boolean {
   return byUser.get(userId)?.has(scope) ?? false
+}
+
+/**
+ * The user's most recently registered live bridge, whichever project it is
+ * on. The ONE caller is an UNBOUND connector — an external MCP client
+ * (Claude Code, a remote agent) with no open editor tab of its own and so no
+ * project to address a scope with. Its browser tool calls have always been
+ * relayed to "whatever this user has open", and that is still the only honest
+ * answer available for them.
+ *
+ * Never used by the in-canvas agent: a bound connector knows exactly which
+ * project its turn is about, and routing it by recency instead is precisely
+ * the cross-project misdelivery this module's scope exists to end.
+ */
+export function getMostRecentEditorBridgeForUser(userId: string): AiBrowserBridge | null {
+  let newest: EditorBridgeEntry | undefined
+  for (const entry of byUser.get(userId)?.values() ?? []) {
+    if (!newest || entry.registeredAt > newest.registeredAt) newest = entry
+  }
+  return newest?.bridge ?? null
 }
 
 /**
@@ -217,7 +267,7 @@ export function createEditorBridgeStream(
       const userBridges = byUser.get(userId) ?? new Map<EditorBridgeScope, EditorBridgeEntry>()
       const previous = userBridges.get(scope)
       if (previous) previous.destroy()
-      userBridges.set(scope, { bridgeId, bridge: created.bridge, destroy: destroyBridge })
+      userBridges.set(scope, { bridgeId, bridge: created.bridge, destroy: destroyBridge, registeredAt: Date.now() })
       byUser.set(userId, userBridges)
       markBridgeLive(userId, scope)
 

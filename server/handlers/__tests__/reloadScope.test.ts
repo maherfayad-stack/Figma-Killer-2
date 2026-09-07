@@ -22,6 +22,8 @@ import { projectsRootDir } from '../studioProjects'
 import { loadStudioPages } from '../studioPageLoad'
 import { tryServeStudioReloadScope } from '../studio/reloadScope'
 import { tryServeStudio } from '../studio'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
   const url = new URL(`http://localhost${pathAndQuery}`)
@@ -65,15 +67,11 @@ describe('tryServeStudioReloadScope', () => {
     expect(await tryServeStudioReloadScope(req, url, pathname)).toBeNull()
   })
 
-  it('rejects a dir outside studio-workspace/ with 404', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'reload-scope-outside-'))
-    try {
+  it('rejects a dir outside studio-workspace/', async () => {
+    await withOutsideWorkspaceDir('reload-scope-outside', async (outside) => {
       const { req, url, pathname } = makeRequest('/admin/api/studio/reload-scope', postBody({ dir: outside, files: ['pages/Home.tsx'] }))
-      const res = await tryServeStudioReloadScope(req, url, pathname)
-      expect(res!.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+      await expect(tryServeStudioReloadScope(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
   })
 
   it('is not-narrow (widens) with an empty files list', async () => {

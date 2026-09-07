@@ -45,8 +45,7 @@ import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse } from '../../http'
 import { DESIGN_REFERENCE_MAX_BYTES } from '@core/ai'
 import { ArchiveIngestError, readFormDataWithLimit } from './archiveIngest'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { getMostRecentDesignReference, registerDesignReference, removeDesignReference } from './designReferenceStore'
 
 const ROUTE_PATH = '/admin/api/studio/reference-upload'
@@ -90,12 +89,6 @@ function numberField(form: FormData, name: string): number | undefined {
   return raw === undefined ? undefined : Number(raw)
 }
 
-/** `resolveProjectDir` accepts any absolute path — re-check it lands under `studio-workspace/` before this route does anything with it, the same extra guard `trustTier.ts` applies. */
-function resolveContainedProjectDir(requested: string | null | undefined): string | null {
-  const dir = resolveProjectDir(requested)
-  return isRealpathContained(dir, projectsRootDir()) ? dir : null
-}
-
 export async function tryServeStudioReferenceUpload(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (pathname !== ROUTE_PATH) return null
 
@@ -112,8 +105,7 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
       })
       if (!parsedFields.ok) return badRequest('invalid reference-upload body')
 
-      const dir = resolveContainedProjectDir(parsedFields.value.dir)
-      if (!dir) return badRequest('invalid project directory')
+      const dir = resolveProjectDir(parsedFields.value.dir)
 
       const file = form.get('file')
       if (!(file instanceof File)) return badRequest('no file was uploaded')
@@ -151,6 +143,7 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
 
       return jsonResponse({ ok: true, reference: result.reference })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:referenceUpload]', err)
       if (err instanceof ArchiveIngestError) {
         return jsonResponse({ error: err.message }, { status: err.status })
@@ -161,10 +154,10 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
 
   if (req.method === 'GET') {
     try {
-      const dir = resolveContainedProjectDir(url.searchParams.get('dir'))
-      if (!dir) return new Response('Not found', { status: 404 })
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
       return jsonResponse({ ok: true, reference: getMostRecentDesignReference(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:referenceUpload]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -172,14 +165,14 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
 
   if (req.method === 'DELETE') {
     try {
-      const dir = resolveContainedProjectDir(url.searchParams.get('dir'))
-      if (!dir) return badRequest('invalid project directory')
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
       const id = url.searchParams.get('id')
       if (!id) return badRequest('missing id')
       removeDesignReference(dir, id)
       // Always `{ ok: true }` — see `removeDesignReference`'s idempotency doc.
       return jsonResponse({ ok: true })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:referenceUpload]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

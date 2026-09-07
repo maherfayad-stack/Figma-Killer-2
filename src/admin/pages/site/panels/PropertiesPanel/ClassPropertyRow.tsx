@@ -46,6 +46,7 @@ import type { Token } from '@site/property-controls/tokenUtils'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
+import { isMixed, MIXED, MIXED_PLACEHOLDER, type Mixed } from '@ui/components/MixedValue'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import {
   getCSSPropertyControlType,
@@ -90,7 +91,14 @@ function PropertyGlyph({ icon: Mark }: { icon: IconComponent }) {
 
 interface ClassPropertyRowProps {
   property: keyof CSSPropertyBag
-  value: string | number | undefined
+  /**
+   * `MIXED` (`@ui/components/MixedValue`) when the row is driven by a
+   * multi-selection whose members disagree on this property — see W8-3 and
+   * `multiSelectStyleBags.ts`. It is normalized to `undefined` before it
+   * reaches any control, with the fact carried by the `mixed` flag the
+   * controls render as an empty field + "Mixed" placeholder.
+   */
+  value: string | number | Mixed | undefined
   placeholder?: string | number
   fontFamilyValue?: unknown
   isSet?: boolean
@@ -146,7 +154,7 @@ interface ClassPropertyRowProps {
 
 export function ClassPropertyRow({
   property,
-  value,
+  value: rawValue,
   placeholder,
   fontFamilyValue,
   isSet = true,
@@ -157,6 +165,13 @@ export function ClassPropertyRow({
   onClearPreview,
   provenance,
 }: ClassPropertyRowProps) {
+  // W8-3 — a multi-selection hands this row `MIXED` for a property its members
+  // disagree on. Normalized once, here: every control below already renders an
+  // empty field for `undefined`, and `mixed` is what turns that blank into the
+  // stated "Mixed" rather than a silent "unset". The first edit commits one
+  // value, which the caller writes to the whole selection.
+  const mixed = isMixed(rawValue)
+  const value = mixed ? undefined : (rawValue as string | number | undefined)
   // Pre-flight: why an edit to the enclosing style target can't reach the
   // user's source, or `null` when it can. See this file's doc.
   const writeLockReason = useStyleWriteLock()
@@ -198,7 +213,16 @@ export function ClassPropertyRow({
     FieldGlyph && resolvedLayout !== 'inline'
       ? <PropertyGlyph icon={FieldGlyph} />
       : undefined
-  const placeholderText = placeholder !== undefined ? String(placeholder) : undefined
+  // A mixed row's hint IS "Mixed", ahead of any per-property placeholder the
+  // caller computed: with several values in the selection there is no single
+  // one to hint at. Stated here rather than per control so the surfaces that
+  // take no `mixed` flag of their own (the scrub token field, the font-family
+  // and background-image controls) still say it.
+  const placeholderText = mixed
+    ? MIXED_PLACEHOLDER
+    : placeholder !== undefined
+      ? String(placeholder)
+      : undefined
 
   /*
    * The field's own unit — the one number the whole §5 field model turns on.
@@ -348,6 +372,7 @@ export function ClassPropertyRow({
       <TokenAwareInput
         aria-label={label}
         value={value !== undefined ? String(value) : undefined}
+        mixed={mixed}
         placeholder={placeholderText}
         tokens={tokens}
         disabled={writeLocked}
@@ -376,7 +401,13 @@ export function ClassPropertyRow({
       <ControlRow propKey={String(property)} label={label} layout={resolvedLayout} disabled={writeLocked}>
         <SegmentedControl
           disabled={writeLocked}
-          value={value !== undefined && value !== '' ? String(value) : undefined}
+          value={
+            mixed
+              ? MIXED
+              : value !== undefined && value !== ''
+                ? String(value)
+                : undefined
+          }
           options={iconEnumOptions.map((option) => ({
             value: option.value,
             icon: option.icon ? <option.icon size={14} aria-hidden="true" /> : undefined,
@@ -414,6 +445,7 @@ export function ClassPropertyRow({
           key={`${String(property)}-${String(value ?? '')}`}
           propKey={String(property)}
           value={String(value ?? '')}
+          mixed={mixed}
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
@@ -434,6 +466,7 @@ export function ClassPropertyRow({
         <SelectControl
           propKey={String(property)}
           value={String(value ?? '')}
+          mixed={mixed}
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
@@ -488,6 +521,7 @@ export function ClassPropertyRow({
         <TextControl
           propKey={String(property)}
           value={String(value ?? '')}
+          mixed={mixed}
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}

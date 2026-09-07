@@ -1,0 +1,48 @@
+/* TrashDialog — one row per deleted project, identity left, verbs right. */
+
+.rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+/* Borderless rows on a 1px grid gap over a darker parent — the same surface
+   pattern the launcher's own tiles use, one level in. */
+.row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-m);
+    flex-wrap: wrap;
+    padding: var(--space-m) var(--space-l);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius);
+}
+
+.identity {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    min-width: 0;
+}
+
+.name {
+    font-size: var(--text-s);
+    color: var(--text-bright);
+    overflow-wrap: anywhere;
+}
+
+.meta {
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-s);
+    flex-shrink: 0;
+}

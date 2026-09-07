@@ -390,9 +390,9 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
     })
     const res = await serve(zipUploadRequest(rootName, zip))
     expect(res).not.toBeNull()
-    const body = (await res!.json()) as { ok: boolean; files: number }
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number } }
     expect(body.ok).toBe(true)
-    expect(body.files).toBe(1)
+    expect(body.summary.files).toBe(1)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
     // The traversal target must not exist anywhere reachable from the temp root.
     expect(fs.existsSync(path.join(projectsRoot, '.ssh'))).toBe(false)
@@ -407,9 +407,9 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
       'root/..\\..\\windows\\system32\\evil.dll': strToU8('MZ'),
     })
     const res = await serve(zipUploadRequest(rootName, zip))
-    const body = (await res!.json()) as { ok: boolean; files: number }
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number } }
     expect(body.ok).toBe(true)
-    expect(body.files).toBe(1)
+    expect(body.summary.files).toBe(1)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
   })
 
@@ -463,9 +463,9 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
       'root/assets/huge.bin': oversized,
     })
     const res = await serve(zipUploadRequest(rootName, zip))
-    const body = (await res!.json()) as { ok: boolean; files: number; skipped: number }
-    expect(body.files).toBe(1)
-    expect(body.skipped).toBe(1)
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number; skipped: number } }
+    expect(body.summary.files).toBe(1)
+    expect(body.summary.skipped).toBe(1)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
     expect(fs.existsSync(path.join(dir, 'assets', 'huge.bin'))).toBe(false)
   })
@@ -478,8 +478,8 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
       'someuser-somerepo-abc123/package.json': strToU8('{}'),
     })
     const res = await serve(zipUploadRequest(rootName, zip))
-    const body = (await res!.json()) as { ok: boolean; files: number }
-    expect(body.files).toBe(2)
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number } }
+    expect(body.summary.files).toBe(2)
     // The shared root was stripped — files land directly under the target, not nested one level deeper.
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
     expect(fs.existsSync(path.join(dir, 'someuser-somerepo-abc123'))).toBe(false)
@@ -493,8 +493,8 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
       'package.json': strToU8('{}'),
     })
     const res = await serve(zipUploadRequest(rootName, zip))
-    const body = (await res!.json()) as { ok: boolean; files: number }
-    expect(body.files).toBe(2)
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number } }
+    expect(body.summary.files).toBe(2)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
     expect(fs.existsSync(path.join(dir, 'package.json'))).toBe(true)
   })
@@ -506,11 +506,11 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
     form.append('file', new File([zip], 'upload.zip'))
     const req = new Request('http://localhost/admin/api/studio/import-upload', { method: 'POST', body: form })
     const res = await serve(req)
-    const body = (await res!.json()) as { ok: boolean; dir: string }
+    const body = (await res!.json()) as { ok: boolean; summary: { dir: string } }
     expect(body.ok).toBe(true)
-    expect(body.dir.startsWith(projectsRoot)).toBe(true)
-    expect(fs.existsSync(body.dir)).toBe(true)
-    expect(fs.existsSync(path.join(body.dir, '.studio', 'meta.json'))).toBe(true)
+    expect(body.summary.dir.startsWith(projectsRoot)).toBe(true)
+    expect(fs.existsSync(body.summary.dir)).toBe(true)
+    expect(fs.existsSync(path.join(body.summary.dir, '.studio', 'meta.json'))).toBe(true)
   })
 
   it('directory upload: rejects a traversal-shaped filename and imports the rest', async () => {
@@ -523,8 +523,8 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
     form.append('file', new File([strToU8('evil')], 'ignored'), '../../.ssh/config')
     const req = new Request('http://localhost/admin/api/studio/import-upload', { method: 'POST', body: form })
     const res = await serve(req)
-    const body = (await res!.json()) as { ok: boolean; files: number }
-    expect(body.files).toBe(1)
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number } }
+    expect(body.summary.files).toBe(1)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
   })
 
@@ -538,8 +538,8 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
     form.append('file', new File([strToU8('evil')], 'ignored'), '..\\..\\windows\\system32\\evil.dll')
     const req = new Request('http://localhost/admin/api/studio/import-upload', { method: 'POST', body: form })
     const res = await serve(req)
-    const body = (await res!.json()) as { ok: boolean; files: number }
-    expect(body.files).toBe(1)
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number } }
+    expect(body.summary.files).toBe(1)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
   })
 
@@ -553,8 +553,8 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
     form.append('file', new File([strToU8('{}')], 'ignored'), 'package.json')
     const req = new Request('http://localhost/admin/api/studio/import-upload', { method: 'POST', body: form })
     const res = await serve(req)
-    const body = (await res!.json()) as { ok: boolean; files: number }
-    expect(body.files).toBe(2)
+    const body = (await res!.json()) as { ok: boolean; summary: { files: number } }
+    expect(body.summary.files).toBe(2)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
     expect(fs.existsSync(path.join(dir, 'package.json'))).toBe(true)
   })

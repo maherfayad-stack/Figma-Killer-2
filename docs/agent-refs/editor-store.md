@@ -283,6 +283,21 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   transaction across every touched page — a cross-frame bulk action is still
   ONE undo step. A shared/composed node id (Next.js route chrome) is mutated
   on every page copy it appears on, matching the save route's own dedup.
+- **Bulk inline-style edit (W8-3 phase 1):** `setNodesInlineStyles(nodeIds,
+  patch)` is the third rider on `mutateTreesForNodeIds`, and the write behind
+  the multi-selection inspector's style sections. It shares
+  `applyInlineStylePatch` with the single-node `setNodeInlineStyles`, so
+  merge/clear semantics (a `null`/`''` value clears; an emptied bag drops
+  `inlineStyles` entirely) cannot drift between the two. Unlike the
+  single-node action it does NOT throw on a missing id and does not abort the
+  whole patch when one node's `isStylePatchWritableToSource` says no: a bulk
+  edit skips the refusing node and still lands on the rest, because leaving
+  N-1 nodes half-written is worse than skipping one. The panel names the
+  skipped properties instead of leaving the refusal silent
+  (`MultiInlineStyleComposer`). Only inline styles are bulk-editable — class
+  targets are W8-3 phase 3; see
+  [`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+  §9.
 
 ## Adding state — checklist
 

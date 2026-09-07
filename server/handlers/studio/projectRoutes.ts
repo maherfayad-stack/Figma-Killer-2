@@ -7,7 +7,18 @@
  *
  *   GET  /admin/api/studio/projects
  *       Lists every on-disk studio project the Overview launcher can open.
- *       Read-only — never creates, clears, or writes a directory.
+ *       Read-only — never creates, clears, or writes a directory. It DOES
+ *       enqueue a preview capture for every project that has no thumbnail yet
+ *       (W7-3), fire-and-forget: the queue serialises them and the response
+ *       never waits on one. See `./projectThumbnailQueue.ts`.
+ *
+ *   GET  /admin/api/studio/thumbnail?dir=<abs>
+ *       That preview: `<dir>/.studio/thumbnail.png`, with mtime-based
+ *       validators and a 304 on a matching `If-None-Match`. Lives here rather
+ *       than in its own sub-router because it answers the same question every
+ *       route in this file answers — "describe this project to the launcher" —
+ *       and shares `./projectDirGuard.ts` with `/delete` and `/duplicate`. The
+ *       serving itself is `./projectThumbnailRoute.ts`.
  *
  *   POST /admin/api/studio/create   body: { name? }
  *       Scaffolds a new project: one slugified folder under
@@ -18,6 +29,15 @@
  *       Renames a project's DISPLAY name — never touches the folder (a
  *       stable identifier assigned once at creation). Just rewrites
  *       `.studio/meta.json`.
+ *
+ *   POST /admin/api/studio/pages-dir   body: { dir, pagesDir }
+ *       Records which directory holds this project's screens, as
+ *       `.studio/meta.json`'s `pagesDir` override. The post-import summary
+ *       step's picker calls this when the probe had to GUESS — the ranked
+ *       `pagesDirCandidates` it offers are the probe's own, and this is the
+ *       one route that writes the answer back. `dir` is required for the same
+ *       reason `/delete`'s is: pointing this at "whichever project is first
+ *       on disk" would rewrite an unrelated project's page discovery.
  *
  *   DELETE /admin/api/studio/page   body: { dir?, pageId }
  *       Deletes a page for real — its source file, a stylesheet nothing else
@@ -85,11 +105,14 @@ import { ProjectTrashError, trashStudioProject } from './projectTrash'
 import { ProjectDuplicateError, duplicateStudioProject } from './projectDuplicate'
 import { SampleProjectError, createSampleProject } from './sampleProject'
 import { readOnboardingFacts } from './onboardingFacts'
+import { serveProjectThumbnail } from './projectThumbnailRoute'
+import { projectThumbnailQueue } from './projectThumbnailQueue'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
 import { createScaffoldedPage } from './pageScaffold'
 import { detectPageTemplateKit, starterPage } from './pageTemplates'
+import { isSafePagesDirOverride } from './studioMeta'
 import {
   listStudioProjects,
   nextProjectName,
@@ -98,8 +121,10 @@ import {
   renameProjectDisplayName,
   resolveProjectDir,
   safeProjectFolderName,
+  setProjectPagesDir,
   studioProjectSummary,
   writeProjectMeta,
+  rethrowProjectDirRefusal,
 } from '../studioProjects'
 
 /**
@@ -160,6 +185,18 @@ const DeletePageBodySchema = Type.Object({
   pageId: Type.String(),
 })
 
+/**
+ * Body of POST /admin/api/studio/pages-dir. `dir` is required — see the module
+ * doc. `pagesDir` is a project-relative directory; `isSafePagesDirOverride`
+ * rejects an absolute path or any `..` segment before it is written, and
+ * `projectPagesDir` re-checks containment on the joined path every time it
+ * reads the value back.
+ */
+const PagesDirBodySchema = Type.Object({
+  dir: Type.String(),
+  pagesDir: Type.String(),
+})
+
 /** Body of POST /admin/api/studio/delete. `dir` is required — see the module doc. */
 const DeleteProjectBodySchema = Type.Object({
   dir: Type.String(),
@@ -184,9 +221,16 @@ const DuplicateProjectBodySchema = Type.Object({
 export async function tryServeStudioProjectRoutes(
   req: Request,
   runtime: { db: DbClient },
-  _url: URL,
+  url: URL,
   pathname: string,
 ): Promise<Response | null> {
+  // The launcher tile's preview image. Read-only and synchronous — the CAPTURE
+  // that produces the file is a background job (`./projectThumbnailQueue.ts`),
+  // never something an image request waits on.
+  if (pathname === '/admin/api/studio/thumbnail' && req.method === 'GET') {
+    return serveProjectThumbnail(req, url.searchParams.get('dir'))
+  }
+
   // Delete a PROJECT — recoverably. Nothing is erased: the folder is moved
   // into `studio-workspace/.trash/`, because `studio-workspace/<project>/` is
   // the user's own repository with no other copy. See `./projectTrash.ts`.
@@ -205,6 +249,7 @@ export async function tryServeStudioProjectRoutes(
       trashStudioProject(projectsRootDir(), requested)
       return jsonResponse({ projects: listStudioProjects(projectsRootDir()) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       if (err instanceof ProjectTrashError) {
         return jsonResponse({ error: err.message }, { status: err.reason === 'not-found' ? 404 : 400 })
       }
@@ -269,8 +314,17 @@ export async function tryServeStudioProjectRoutes(
   if (pathname === '/admin/api/studio/projects' && req.method === 'GET') {
     try {
       const projects = listStudioProjects(projectsRootDir())
+      // W7-3's lazy backfill. Every project without a preview is enqueued and
+      // the response goes out immediately — the queue is serialised, skips a
+      // project whose capture already failed this process, and short-circuits
+      // on the boards-file read for a project that has no frames to
+      // photograph, so this stays a handful of `stat`s in the common case.
+      for (const project of projects) {
+        if (!project.hasThumbnail) projectThumbnailQueue.backfill(project.dir)
+      }
       return jsonResponse({ projects })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -322,6 +376,7 @@ export async function tryServeStudioProjectRoutes(
       generateStudioProjectGuide(dir)
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -342,6 +397,34 @@ export async function tryServeStudioProjectRoutes(
       renameProjectDisplayName(dir, displayName)
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Record where this project's screens live. The post-import summary step's
+  // picker is the only caller: it is the one place a human sees the probe's
+  // ranked `pagesDirCandidates` and can answer the question the heuristic had
+  // to guess at. Writing the override (rather than re-probing) is deliberate
+  // — the user knows something the probe's ranking does not.
+  if (pathname === '/admin/api/studio/pages-dir' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, PagesDirBodySchema)
+      if (!body) return badRequest('invalid pages-dir body')
+      const requested = body.dir.trim()
+      if (!requested) return badRequest('pages-dir requires an explicit project dir')
+      const pagesDir = body.pagesDir.trim()
+      if (!isSafePagesDirOverride(pagesDir)) {
+        return badRequest('pagesDir must be a relative directory inside the project')
+      }
+      const dir = resolveProjectDir(requested)
+      if (!existsSync(dir)) return jsonResponse({ error: 'Project not found.' }, { status: 404 })
+      setProjectPagesDir(dir, pagesDir)
+      // The refreshed summary carries the page count the new directory
+      // actually yields — the number the summary step was asking about.
+      return jsonResponse({ project: studioProjectSummary(dir) })
+    } catch (err) {
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -360,6 +443,7 @@ export async function tryServeStudioProjectRoutes(
       if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
       return jsonResponse(result)
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -377,6 +461,7 @@ export async function tryServeStudioProjectRoutes(
       if (!result.ok) return jsonResponse({ error: result.notFound }, { status: 404 })
       return jsonResponse(result)
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

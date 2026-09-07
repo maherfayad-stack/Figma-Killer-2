@@ -15,8 +15,14 @@
  * and always exits 0 with no stdout — a tracking hook must never block a
  * tool call, must never show noise in the transcript, and a failure here
  * degrades to "this write was not tracked", never to a broken turn.
+ *
+ * WHOSE log it appends to comes from the `STUDIO_AGENT_USER_KEY` environment
+ * variable the CLI inherited from `claudeCli.ts` and passes down to every
+ * hook it spawns — see `agentUserScope.ts` for why the account cannot come
+ * from the generated hook command instead.
  */
 import { appendTurnWrite } from '../turnWriteLog'
+import { studioAgentUserKeyFromEnv } from '../agentUserScope'
 
 interface PostToolUseInput {
   readonly tool_input?: { readonly file_path?: string }
@@ -30,7 +36,7 @@ async function main(): Promise<void> {
     const filePath = input.tool_input?.file_path
     const dir = input.cwd
     if (!filePath || !dir) return
-    appendTurnWrite(dir, filePath)
+    appendTurnWrite(dir, studioAgentUserKeyFromEnv(), filePath)
   } catch (err) {
     console.error('[studio/hooks/recordToolWrite]', err)
   }

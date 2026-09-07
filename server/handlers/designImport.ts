@@ -38,7 +38,7 @@ import { dirname, join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../http'
 import { isSafeRelPath } from './studio/archiveIngest'
-import { resolveProjectDir, safeProjectFolderName } from './studioProjects'
+import { resolveProjectDir, safeProjectFolderName, rethrowProjectDirRefusal } from './studioProjects'
 import { fetchGithubCssSource } from './designImport/githubSource'
 import { fetchNpmCssSource } from './designImport/npmSource'
 import { buildTokenCandidates } from './designImport/parseCssTokens'
@@ -94,6 +94,7 @@ export async function tryServeDesignImport(
         otherCount: candidates.otherCount,
       })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[designImport]', err)
       if (err instanceof DesignImportError) {
         return jsonResponse({ error: err.message }, { status: err.status })
@@ -125,6 +126,7 @@ export async function tryServeDesignImport(
 
       return jsonResponse({ ok: true, dir: destRoot, written, skipped })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[designImport]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

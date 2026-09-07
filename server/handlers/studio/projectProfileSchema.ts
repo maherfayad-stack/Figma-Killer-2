@@ -35,7 +35,12 @@ const ProbeWarningSchema = Type.Object({
 })
 export type ProbeWarning = Static<typeof ProbeWarningSchema>
 
-const FrameworkSchema = Type.Union([
+/**
+ * The frameworks the probe can recognise. Exported (rather than inlined into
+ * `ProjectProfileSchema`) because the post-import summary reports the same
+ * vocabulary on its own wire shape — see `importSummary.ts`.
+ */
+export const ProjectFrameworkSchema = Type.Union([
   Type.Literal('vite'),
   Type.Literal('next-app'),
   Type.Literal('next-pages'),
@@ -139,7 +144,7 @@ const LocalesCapabilitySchema = Type.Object({
 })
 export type LocalesCapability = Static<typeof LocalesCapabilitySchema>
 
-const PagesDirCandidateSchema = Type.Object({
+export const PagesDirCandidateSchema = Type.Object({
   /** Repo-relative POSIX directory path. */
   dir: Type.String(),
   /** (files whose default export returns JSX) / (total code files) in that directory, 0–1. */
@@ -195,7 +200,7 @@ export const PROBE_VERSION = 2
 export const ProjectProfileSchema = Type.Object({
   /** See {@link PROBE_VERSION}. Absent means "written before probe versioning existed" — treated as version 1, i.e. stale. */
   probeVersion: Type.Optional(Type.Number()),
-  framework: FrameworkSchema,
+  framework: ProjectFrameworkSchema,
   /**
    * Project-relative POSIX path to the app's own root — the nearest directory
    * (project dir itself, an immediate child, or a grandchild) containing a

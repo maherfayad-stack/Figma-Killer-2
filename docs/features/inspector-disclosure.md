@@ -34,7 +34,7 @@ open workstreams in
 
 | Open | What is missing |
 |---|---|
-| **G6.4 — Selection colours** | Listing every distinct colour across a multi-node selection and rewriting all of them from one edit. Deferred at `FillSection.tsx` — it needs store-side multi-select style editing that does not exist yet. |
+| **G6.4 — Selection colours** | Listing every distinct colour across a multi-node selection and rewriting all of them from one edit. Deferred at `FillSection.tsx`. Its blocker — store-side multi-select style editing — is gone as of W8-3 phase 1 (`setNodesInlineStyles`, §9); what remains is the aggregation UI and the class-target half, which is W8-3 phase 3. |
 | **§6 — The measurement gate** | No `scrollHeight <= clientHeight` test exists, and no height baseline was ever recorded in `docs/audits/`. The budgets in §6 are therefore unenforced. |
 
 One goal was superseded rather than shipped as written: **G8.4** moved
@@ -722,6 +722,105 @@ kept because the alternatives are the part that does not survive in the diff.
 4. **§8.4 — vertical align (G9.2):** disabled-with-a-reason, or absent? Disabled
    rows cost height, which is what a density pass is spending. **Resolved:
    disabled-with-a-reason** (`verticalAlignWrite.ts`).
+
+---
+
+## §9. Multi-selection — the Mixed contract
+
+Select two or more layers and the inspector shows the same sections it shows
+for one, with **Mixed** wherever the selection disagrees; the first edit writes
+one value to all of them. Phase 1 of W8-3 shipped this for the **Element
+(inline)** target only.
+
+### §9.1 One patch, one undo step
+
+`setNodesInlineStyles(nodeIds, patch)`
+(`store/slices/site/nodeActions.ts`) is the write. It runs over
+`mutateTreesForNodeIds`, so a selection spanning several board frames writes
+each frame's own page tree inside ONE history transaction — an N-node edit is
+one Ctrl+Z, the same contract `deleteNodes` / `wrapNodes` already carry. It
+shares its merge/clear semantics with the single-node `setNodeInlineStyles`
+through `applyInlineStylePatch`, so "clear this property" cannot mean two
+things. A node that individually refuses the write — a stale id, or a
+`style:<prop>` this node resolved from an expression in source — is skipped
+without aborting the rest; `MultiInlineStyleComposer` names those properties
+above the sections so the refusal is never silent.
+
+### §9.2 Two collapsed bags, no new section tree
+
+`StyleSectionsEditor` is already target-agnostic — it renders whatever
+`storedStyles` / `currentStyles` pair it is handed. Multi-select therefore adds
+no second copy of the section tree, only `buildMultiSelectStyleBags`
+(`multiSelectStyleBags.ts`), which collapses N nodes into that same pair using
+`collapseValues` from `@ui/components/MixedValue`:
+
+- **`storedStyles`** — the inline editing target. A property is present when at
+  least one selected node sets it inline; its value is the shared value when
+  every node agrees and `MIXED` otherwise. "Set on one, absent on another" is a
+  disagreement, not a value to prefer.
+- **`currentStyles`** — the effective/placeholder layer. Per node this is the
+  provenance winner across its class chain plus inline
+  (`resolvePropertyProvenance`), collapsed the same way.
+
+`hasStyleValue(MIXED)` is true, so a mixed property counts as SET everywhere
+the editor asks that question — Law 1's disclosure, the indicator dot, the "N
+set" meta. There is no `getComputedStyle` layer here: that hook reads ONE
+mounted element, and provenance runs with `computedValue: undefined`, which
+means an ambiguous multi-class cascade crowns nobody rather than guessing.
+
+### §9.3 Mixed rendering
+
+The sentinel lives in the bags; the WORD lives in five control surfaces, all
+reading one constant (`MIXED_PLACEHOLDER`, next to the sentinel):
+
+| Surface | Mixed rendering |
+|---|---|
+| `SegmentedControl` | No segment pressed, `data-mixed="true"` (dashed track), and `(mixed)` appended to the group's accessible name — so blank ≠ unset |
+| `Select` | "Mixed" in the trigger, no leading icon, no option claimed |
+| `Input` | "Mixed" placeholder over an empty field, `data-mixed="true"` |
+| `TokenAwareInput` | Empty draft + "Mixed" placeholder; a token pick or typed value commits normally |
+| `ColorValueInput` | "Mixed" replaces the colour-format hint |
+
+`ClassPropertyRow` normalizes `MIXED` to `undefined` once and passes the fact
+down as the shared `ControlProps.mixed` flag, so no control ever stringifies a
+Symbol. `resolveStylePlaceholder` is the single place that turns a `MIXED`
+*effective* value into the word, which is why every section that routes its
+placeholders through it (including `StackedPropertyGrid`, and therefore the
+bespoke sections built on it) gets Mixed placeholders for free.
+
+**Known phase-1 gap:** a bespoke section that reads a raw cell through
+`readString` sees `undefined` for `MIXED` and renders its ordinary *unset*
+state — an empty field or an unpressed toggle group, which is visually right
+but does not say the word. The primitives above already accept `mixed`, so
+wiring each section is a one-line change per field; it is deliberately not done
+here because five of those sections were being rewritten in parallel.
+
+### §9.4 The target is pinned to Element, and says so
+
+A class edit from a multi-selection has a blast radius the panel cannot state
+honestly yet: the N nodes rarely share one class, the classes they do share are
+usually also on elements *outside* the selection, and several are
+compiled/unmapped so the write would not reach disk at all. That is the "one
+honest target" invariant, so phase 1 pins the write target to Element and shows
+why: `StyleTargetChip` takes `lockedToElementReason`, renders Element as the
+active non-switchable target, and states *"Bulk edits write inline styles —
+class edits need a single selection"* on the Element, Class and Assign rows.
+Inline styles carry no such ambiguity — `style=""` belongs to exactly one
+element, so N inline writes touch exactly the N elements selected.
+
+Phase 2 (`StyleWriteLockContext` carrying a COUNT — "writes to 3 of 5, 2 are
+compiled" — instead of a boolean) and phase 3 (class-target bulk behind an
+explicit "this class is used by N other elements — continue?" gate, plus G6.4's
+Selection colours) are not in this pass.
+
+### §9.5 A multi-selection needs two members
+
+Both halves of the panel now agree on the bar. `isSelectorMultiSelect`
+(`usePropertiesPanelData.ts`) is `> 1`, matching `isMultiSelect`; one ticked
+checkbox in the Selectors panel opens the ordinary single-selector inspector,
+resolved from the checkbox set because `toggleSelectorMultiSelect` clears
+`selectedSelectorClassId`. Before this, one checkbox produced a bulk action bar
+offering to delete "1 class" over a one-row list.
 
 ---
 

@@ -24,6 +24,16 @@
     width: 100%;
 }
 
+/* Mixed — the control is driven by a multi-selection whose values disagree.
+ * No segment is pressed (the same rest state as "unset"), so the track itself
+ * carries the difference: a dashed border reads as indeterminate rather than
+ * empty. The accessible name says "mixed" too — this is the visual half of
+ * that statement, never its only carrier. */
+.group[data-mixed="true"] {
+    border-style: dashed;
+    border-color: var(--overlay-30);
+}
+
 /* Each segment fills available width and uses a smaller radius so it nests
  * cleanly inside the 10px track. The doubled `.group .segment.segment`
  * selector lifts specificity above Button.module.css's `.btn.variant-X`

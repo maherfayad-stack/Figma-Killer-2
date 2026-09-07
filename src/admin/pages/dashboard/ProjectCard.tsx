@@ -1,8 +1,20 @@
 /**
  * ProjectCard — one project tile on the Overview launcher.
  *
- * The card answers three questions before the project is opened, and offers
+ * The card answers four questions before the project is opened, and offers
  * every verb that acts on it.
+ *
+ * **What does it look like?** The tile leads with a 4:3 preview of the
+ * project's first screen, captured server-side (W7-3 —
+ * `server/handlers/studio/projectThumbnail.ts`). This is the Figma-file-tile
+ * shape and it is the reason the shape changed: a launcher whose whole job is
+ * "choose a project" was showing the one fact that distinguishes two design
+ * projects — what they look like — nowhere at all. Until the image lands the
+ * area is a `--bg-surface-3` plate with the folder glyph, and it swaps in when
+ * `useProjectThumbnail` reports the `<img>` decoded. The name consequently
+ * drops from `--text-xl` back to a label scale: W7-1 made it the largest thing
+ * on the surface because nothing else on the tile could be, and now the
+ * picture is.
  *
  * **What is this project?** `.studio/meta.json` already carried the platform,
  * the cached probe's framework and the trust tier, and `listStudioProjects`
@@ -44,6 +56,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/componen
 import { Input } from '@ui/components/Input'
 import { styleToolchainLabel } from '@site/studio/styleCompileConsent'
 import { formatEditedAgo } from './editedAgo'
+import { useProjectThumbnail } from './hooks/useProjectThumbnail'
 import type { ProjectFramework, StudioProject } from './hooks/useStudioProjects'
 import styles from './ProjectCard.module.css'
 
@@ -90,6 +103,7 @@ export function ProjectCard({ project, busy, onOpen, onRename, onDuplicate, onDe
   const [menu, setMenu] = useState<MenuPlacement | null>(null)
   const [draft, setDraft] = useState<string | null>(null)
   const menuButtonRef = useRef<HTMLButtonElement | null>(null)
+  const thumbnail = useProjectThumbnail(project)
   // Enter blurs the field to commit, so without this latch the blur handler
   // would run the same commit a second time. Same guard, same reason, as
   // `StudioProjectLabel`'s `committingRef`.
@@ -125,6 +139,29 @@ export function ProjectCard({ project, busy, onOpen, onRename, onDuplicate, onDe
     setMenu({ kind: 'point', x: event.clientX, y: event.clientY })
   }
 
+  /*
+    The `<img>` is present but transparent until it decodes, so a 404 (the
+    capture has not run yet) or a slow load never shows a broken-image icon —
+    the glyph plate underneath is what the user sees the whole time. `alt=""`
+    because the project's name is right below it: a screen reader announcing
+    the picture as well would say the same thing twice.
+  */
+  const preview = (
+    <span className={styles.preview}>
+      <FolderGlyphIcon size={22} aria-hidden="true" />
+      {thumbnail.src && (
+        <img
+          className={styles.previewImage}
+          src={thumbnail.src}
+          alt=""
+          data-loaded={thumbnail.loaded}
+          onLoad={thumbnail.onLoad}
+          onError={thumbnail.onError}
+        />
+      )}
+    </span>
+  )
+
   const badges = (
     <span className={styles.badges}>
       {project.platform && <span className={styles.badge}>{PLATFORM_LABELS[project.platform]}</span>}
@@ -154,36 +191,36 @@ export function ProjectCard({ project, busy, onOpen, onRename, onDuplicate, onDe
         // HTML, and the whole surface being a click target would swallow the
         // caret placement anyway.
         <div className={styles.card}>
-          <span className={styles.cardIcon}>
-            <FolderGlyphIcon size={22} aria-hidden="true" />
+          {preview}
+          <span className={styles.cardBody}>
+            <Input
+              autoFocus
+              className={styles.renameInput}
+              value={draft}
+              aria-label={`Rename ${project.name}`}
+              onChange={(event) => setDraft(event.target.value)}
+              onFocus={(event) => event.currentTarget.select()}
+              onBlur={() => void commitRename()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+                else if (event.key === 'Escape') {
+                  committingRef.current = true
+                  setDraft(null)
+                }
+              }}
+            />
+            {badges}
+            {meta}
           </span>
-          <Input
-            autoFocus
-            className={styles.renameInput}
-            value={draft}
-            aria-label={`Rename ${project.name}`}
-            onChange={(event) => setDraft(event.target.value)}
-            onFocus={(event) => event.currentTarget.select()}
-            onBlur={() => void commitRename()}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur()
-              else if (event.key === 'Escape') {
-                committingRef.current = true
-                setDraft(null)
-              }
-            }}
-          />
-          {badges}
-          {meta}
         </div>
       ) : (
         <button type="button" className={styles.card} onClick={() => onOpen(project)}>
-          <span className={styles.cardIcon}>
-            <FolderGlyphIcon size={22} aria-hidden="true" />
+          {preview}
+          <span className={styles.cardBody}>
+            <span className={styles.cardName}>{project.name}</span>
+            {badges}
+            {meta}
           </span>
-          <span className={styles.cardName}>{project.name}</span>
-          {badges}
-          {meta}
         </button>
       )}
 

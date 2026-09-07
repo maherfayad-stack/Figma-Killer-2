@@ -45,6 +45,12 @@ server/handlers/
     ├── sampleProject.ts   — POST /admin/api/studio/sample: copies `examples/studio-sample-project/` in
     ├── onboardingFacts.ts — GET /admin/api/studio/onboarding: the launcher checklist's five live facts
     └── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
+    ├── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
+    ├── projectDirGuard.ts — the ONE containment rule for a caller-supplied `dir` (delete / duplicate / thumbnail)
+    ├── projectThumbnailFile.ts  — where `.studio/thumbnail.png` lives + its stat (leaf: no capture deps)
+    ├── projectThumbnail.ts      — captures the launcher preview headlessly and writes that file
+    ├── projectThumbnailQueue.ts — serialises captures, debounces after a save, remembers failures
+    └── projectThumbnailRoute.ts — GET /admin/api/studio/thumbnail, mtime validators + 304
 
 examples/studio-sample-project/  — a three-page React repo (plain JSX, co-located CSS Modules,
                                    `react` as its only dependency) offered as a third way to start
@@ -105,7 +111,11 @@ src/admin/pages/site/canvas/
 
 ## Project configuration — `.studio/meta.json`
 
-Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
+Sits alongside the existing `.studio/boards.json`, `.studio/framework.json` and
+`.studio/thumbnail.png` (W7-3 — the launcher tile's 4:3 preview, captured
+headlessly by `studio/projectThumbnail.ts`; it lives in the project's own
+sidecar rather than a server cache so a duplicated, moved or un-trashed project
+carries its picture with it).
 
 ```json
 {
@@ -126,6 +136,34 @@ Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
 | `stories` | W5-3 — Storybook import state. `enabled: false` is the explicit off switch (stories are still globbed, never parsed or placed). `boardId` names the board `syncStoryBoardFrames` created for them; once it no longer resolves, nothing is ever placed again. `placedPageIds` is every story frame ever placed, so a deleted frame stays deleted while a new story still appears. |
 
 Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorted POSIX paths, and skips `EXCLUDED_WORKSPACE_DIR_NAMES` (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`). Both `.tsx` and `.jsx` are page files.
+
+### How a project gets in, and what it reports on the way (W7-4)
+
+Three entry paths, two routes, one aftermath:
+
+| Path | Route | Transport |
+|---|---|---|
+| GitHub URL | `POST /admin/api/studio/import-github` → `{ jobId }`, then poll `GET .../import-github/status` | zipball fetch, phases reported (`downloading` with a byte count, `unpacking`, `probing`) |
+| `.zip` / picked folder / **folder dropped on the launcher** | `POST /admin/api/studio/import-upload` | multipart XHR (upload progress) |
+
+A dropped folder is not a fourth path. `src/admin/pages/site/studio/droppedFolderWalk.ts`
+walks the `DataTransfer` entry tree (`webkitGetAsEntry()`, paging `readEntries`
+to exhaustion), prunes `EXCLUDED_WORKSPACE_DIR_NAMES` before descending, and
+renames each `File` to its path relative to the dropped folder — which is
+exactly what the folder picker's client already produces, so a drop and a pick
+send byte-identical requests. It **refuses a drop whole** past a shared cap
+(8,000 files / 200 MB) rather than importing a truncated project, and skips
+individual files over 5 MB.
+
+Both routes end on the same `ImportSummary`
+(`server/handlers/studio/importSummary.ts`): framework, pages dir, page count,
+transfer counts, and the probe's ranked `pagesDirCandidates`. The launcher
+shows it as a step **before** the board opens, because the two ways an import
+silently produces an empty canvas — an unrecognised framework, and a pages
+directory the heuristic guessed at — are both knowable the moment the probe
+finishes. When `pagesDirCandidates` is non-empty the step renders a picker,
+and the choice is written through `POST /admin/api/studio/pages-dir`, the one
+route that sets `.studio/meta.json`'s `pagesDir` override.
 
 ### The app root is not always the project directory (`approot-01`)
 
