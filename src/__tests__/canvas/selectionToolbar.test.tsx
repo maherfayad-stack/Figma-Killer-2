@@ -400,8 +400,18 @@ describe('canvas selection toolbar', () => {
 
     render(<Harness />)
 
+    // The toolbar is portaled into the canvas root, and this Harness mounts
+    // that root in the SAME commit as the frame — so the root's ref is not
+    // attached yet when the overlay first renders, and the overlay renders no
+    // chrome at all until it resolves (one rAF later). It deliberately does
+    // NOT fall back to `document.body` in the meantime: that would swap the
+    // portal container a frame later, which remounts the toolbar and throws
+    // away the very dialog this test is about. See `portalTarget` in
+    // `BreakpointSelectionOverlay`.
+    const insertButton = await screen.findByRole('button', { name: 'Insert module' })
+
     act(() => {
-      fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
+      fireEvent.click(insertButton)
     })
 
     expect(backgroundClicks).toBe(0)
@@ -544,7 +554,7 @@ describe('canvas selection toolbar', () => {
     }
   })
 
-  it('auto-pans the canvas when a handle drag moves near the canvas edge', () => {
+  it('auto-pans the canvas when a handle drag moves near the canvas edge', async () => {
     const { page, rootId, firstId, secondId, thirdId } = createSortableTextPage()
     const restoreRects = installCanvasRects({
       [rootId]: { x: 0, y: 0, width: 400, height: 300 },
@@ -567,8 +577,14 @@ describe('canvas selection toolbar', () => {
         </CanvasActionsTestProvider>,
       )
 
+      // Under a viewport context the toolbar waits for the canvas root ref
+      // rather than mounting into `document.body` and relocating a frame later
+      // (see `portalTarget` in `BreakpointSelectionOverlay`) — and this
+      // provider mounts that root in the SAME commit as the frame, so the
+      // toolbar appears one real rAF later. Wait for it BEFORE swapping in the
+      // manual rAF queue, which only ever flushes the drag's own frames.
+      const handle = await screen.findByRole('button', { name: 'Drag selected layers' })
       raf = installRafQueue()
-      const handle = screen.getByRole('button', { name: 'Drag selected layers' })
       act(() => {
         fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 32, clientY: 64 })
         fireEvent.pointerMove(window, { pointerId: 1, clientX: 196, clientY: 100 })

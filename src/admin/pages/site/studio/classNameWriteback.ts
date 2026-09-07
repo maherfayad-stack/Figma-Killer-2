@@ -26,6 +26,20 @@
  * — `isSharedSourceNodeId` (kind-agnostic on the id shape) already tells the
  * save route to reload afterwards for it, same as it always has.
  *
+ * ## "Unwritable" and "not ours" are two questions, not one
+ *
+ * `class-toast` — this loop asked only `hasWritableSourceLocation`, which is
+ * `false` for BOTH a `.map` row (ours, and genuinely refused) and a node id
+ * the studio importer never minted at all (a `nanoid()` from `cloneSubtree`'s
+ * duplicate/paste, an optimistically inserted node, a CMS node). Warning
+ * about the second kind is a claim about the user's source that their source
+ * never made: nothing about that node is on disk yet, so there is no class
+ * change to lose. `sourceNodeId.ts` says this in as many words — "callers
+ * must not treat it as unwritable, only as 'not our business'" — and names
+ * `isSourceDerivedNodeId` as the second question. Both get asked here now:
+ * a `.map` row and an imported page's synthetic `<pageId>:body` root still
+ * warn, everything else is skipped in silence.
+ *
  * ## A pure reorder writes nothing
  *
  * Class token ORDER inside a `className` attribute has no effect on the
@@ -54,6 +68,8 @@ import {
   hasWritableSourceLocation,
   isGeneratedClass,
   isImportedStyleRuleId,
+  isSourceDerivedNodeId,
+  isStudioPageRootId,
   type Page,
   type SiteDocument,
   type StyleRule,
@@ -228,6 +244,12 @@ export function collectClassNameEdits(
 
   for (const drift of collectClassIdsDrift(pages)) {
     if (drift.addedClassIds.length === 0 && drift.removedClassIds.length === 0) continue // reorder-only — nothing the cascade cares about
+
+    // Not a studio-imported node at all (see this module's "two questions"):
+    // no source location has ever existed for it, so neither an edit nor a
+    // refusal is honest. Checked BEFORE the label is resolved — nothing
+    // downstream needs it.
+    if (!isSourceDerivedNodeId(drift.nodeId) && !isStudioPageRootId(drift.nodeId)) continue
 
     const nodeLabel = getNodeDisplayName(drift.node, registry.get(drift.node.moduleId), visualComponents)
 
