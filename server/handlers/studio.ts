@@ -69,8 +69,8 @@
  *   POST   /admin/api/studio/page   body: { dir?, name? }
  *   DELETE /admin/api/studio/page   body: { dir?, pageId }
  *
- * Routes owned by `studio/trashRoutes.ts` (also called outside the uniform
- * loop, for the same capability reason):
+ * Routes owned by `studio/trashRoutes.ts` (a `STUDIO_SESSION_SUB_ROUTERS`
+ * entry — its two writes are capability-gated, so it needs the `DbClient`):
  *
  *   GET  /admin/api/studio/trash
  *   POST /admin/api/studio/trash/restore  body: { entry }
@@ -224,11 +224,13 @@
  *   GET/POST /admin/api/studio/comments        → `studio/commentsRoutes.ts`
  *       Review threads pinned to the board (`.studio/comments.json`). POST
  *       carries ONE `CommentOp`, not the whole file, because comments are
- *       multi-writer where board geometry is not. The only studio route that
- *       requires a session: a comment has a byline, and the server is the
- *       only party that can honestly supply one. Called outside the
- *       sub-router loop below because it is the only one needing the
- *       `DbClient`.
+ *       multi-writer where board geometry is not. Requires a session — a
+ *       comment has a byline, and the server is the only party that can
+ *       honestly supply one — so it rides `STUDIO_SESSION_SUB_ROUTERS`.
+ *
+ *   POST /admin/api/studio/node-{png,jsx}      → `studio/nodeExportRoutes.ts`
+ *       W8-4 — the inspector's Export section: a PNG of one node cut out of a
+ *       capture of its page, and that node's own JSX read verbatim off disk.
  *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
@@ -276,6 +278,7 @@ import { tryServeStudioTrashRoutes } from './studio/trashRoutes'
 import { tryServeStudioGithubImport } from './studio/githubImportRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
+import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
 import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
@@ -318,6 +321,19 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioGit,
   tryServeStudioDeploy,
   tryServeStudioStories,
+] as const
+
+/**
+ * The same, for sub-routers that additionally need the `DbClient` because
+ * each acts ON BEHALF OF a signed-in user (a byline, a public share link, a
+ * capture, a file's contents) rather than merely reading a project directory.
+ */
+const STUDIO_SESSION_SUB_ROUTERS = [
+  tryServeStudioComments,
+  tryServeStudioProjectRoutes,
+  tryServeStudioTrashRoutes,
+  tryServeStudioShares,
+  tryServeStudioNodeExport,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
@@ -370,30 +386,10 @@ export async function tryServeStudio(
     if (response) return response
   }
 
-  // Called outside the loop above because it needs the `DbClient` to resolve
-  // the session into a comment's byline — the one studio route that has an
-  // author. See `studio/commentsRoutes.ts`'s module doc.
-  const commentsResponse = await tryServeStudioComments(req, runtime, url, pathname)
-  if (commentsResponse) return commentsResponse
-
-  const projectResponse = await tryServeStudioProjectRoutes(req, runtime, url, pathname)
-  if (projectResponse) return projectResponse
-
-  // Same exception again: restoring or purging a trashed project is gated on
-  // `studio.write`, so this sub-router needs the `DbClient` the uniform
-  // signature does not carry. See `studio/trashRoutes.ts`.
-  const trashResponse = await tryServeStudioTrashRoutes(req, runtime, url, pathname)
-  if (trashResponse) return trashResponse
-
-  // Same exception as comments, for the same reason: share management acts on
-  // behalf of a signed-in user (creating one publishes designs to anyone with
-  // the URL; the capture it drives runs on that user's behalf), so it needs
-  // the `DbClient` the uniform sub-router signature does not carry. The
-  // PUBLIC half of this feature is not here at all — it lives on `/share/*`
-  // in `server/router.ts`, outside `/admin` entirely. See
-  // `studio/shareRoutes.ts` and `studio/sharePublic.ts`.
-  const sharesResponse = await tryServeStudioShares(req, runtime, url, pathname)
-  if (sharesResponse) return sharesResponse
+  for (const subRouter of STUDIO_SESSION_SUB_ROUTERS) {
+    const response = await subRouter(req, runtime, url, pathname)
+    if (response) return response
+  }
 
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {

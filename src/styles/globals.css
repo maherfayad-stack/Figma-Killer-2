@@ -233,6 +233,12 @@
     --inspector-caption-gap: 3px;
     /* The remaining text-label column, for rows with no honest glyph. */
     --inspector-label-w: 68px;
+    /* The vertical category rail's column. The content column beside it is
+       sized `minmax(0, 1fr)` against this, so the rail is reserved space in
+       the grid rather than a strip floating over the sections — the two
+       surfaces that draw the rail (`StyleSurface`, `SelectorInspector`)
+       read the same number instead of repeating a literal 32. */
+    --inspector-rail-w: 32px;
     /* Inspector fields are filled rectangles, not the admin's pill outline —
        the border only appears on hover/focus, so a column of unset fields
        reads as one quiet block instead of a ladder of outlines. */

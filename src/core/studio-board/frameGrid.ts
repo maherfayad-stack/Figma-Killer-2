@@ -17,6 +17,15 @@ export const FRAME_GAP = 80
 export const GRID_COLUMNS = 2
 
 /**
+ * WS-10 Phase 2 — horizontal gap between a source frame and its "duplicate as
+ * variant" sibling. Here rather than in `boardSlice.ts`, where it started,
+ * because W9-6 moved `studio_duplicate_frame_as_variant` server-side: the
+ * toolbar and the tool must place the variant in the same spot, and two copies
+ * of the number is exactly how they would stop.
+ */
+export const VARIANT_GAP = 48
+
+/**
  * Smallest a frame may be resized to, in board units, on either axis. Lives
  * here with the other frame-size constants rather than beside the resize
  * geometry (`@site/canvas/rectResize.ts`), which is now shared with notes and

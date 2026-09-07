@@ -11,13 +11,42 @@
  */
 import { useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
+import type { IconComponent } from 'pixel-art-icons/types'
 import { Button } from '@ui/components/Button'
 import { Select } from '@ui/components/Select'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
-import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
+import { ArrowBarUpIcon } from 'pixel-art-icons/icons/arrow-bar-up'
+import { ArrowBarRightIcon } from 'pixel-art-icons/icons/arrow-bar-right'
+import { ArrowBarDownIcon } from 'pixel-art-icons/icons/arrow-bar-down'
+import { ArrowBarLeftIcon } from 'pixel-art-icons/icons/arrow-bar-left'
 import type { Token } from '@site/property-controls/tokenUtils'
+import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
 import { hasStyleValue } from './styleValueUtils'
 import posStyles from './PositionSection.module.css'
+
+/**
+ * The offset field's in-field mark, which is also its scrub handle. It tracks
+ * the side the picker beside it currently anchors to — dragging "Right 24px"
+ * has to look like it belongs to `right`, not to whichever side the row
+ * started on.
+ */
+const SIDE_ICONS: Record<'left' | 'right' | 'top' | 'bottom', IconComponent> = {
+  top: ArrowBarUpIcon,
+  right: ArrowBarRightIcon,
+  bottom: ArrowBarDownIcon,
+  left: ArrowBarLeftIcon,
+}
+
+/**
+ * The glyph is a component VALUE looked up per render, so it is rendered
+ * through this module-scope wrapper rather than inline — an inline component
+ * value resets its state on every pass (`react-hooks/static-components`).
+ * Same shape as `ClassPropertyRow`'s `PropertyGlyph`; the local is `Mark`, not
+ * `Icon`, because `direct-icon-imports.test.ts` scans for that literal tag.
+ */
+function SideGlyph({ icon: Mark }: { icon: IconComponent }) {
+  return <Mark size={13} />
+}
 
 interface PositionConstraintsProps {
   storedStyles: Record<string, unknown>
@@ -152,15 +181,17 @@ function ConstraintAxisField({
         <option value={sideA}>{sideALabel}</option>
         <option value={sideB}>{sideBLabel}</option>
       </Select>
-      <TokenAwareInput
+      <ScrubTokenField
         aria-label={`${axisLabel} offset (${effectiveSide})`}
         value={isSet ? String(storedValue) : undefined}
         placeholder={placeholder}
+        prefix={<SideGlyph icon={SIDE_ICONS[effectiveSide]} />}
         tokens={tokens}
         onCommit={(resolved) => onChange(effectiveSide, resolved)}
         onPreview={onPreview ? (resolved) => onPreview(effectiveSide, resolved) : undefined}
         onClearPreview={onClearPreview}
         className={posStyles.constraintInput}
+        data-testid={`css-constraint-input-${sideA}-${sideB}`}
       />
       {isSet && (
         <Button

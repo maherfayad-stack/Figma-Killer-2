@@ -58,8 +58,9 @@ function trashErrorResponse(err: ProjectTrashError): Response {
 
 /**
  * `runtime` is here for the two write routes' capability checks, which is why
- * this sub-router is called outside `studio.ts`'s plain `(req, url, pathname)`
- * loop — the same exception `tryServeStudioProjectRoutes` already is.
+ * this rides `STUDIO_SESSION_SUB_ROUTERS` rather than the plain
+ * `(req, url, pathname)` loop — the same list `tryServeStudioProjectRoutes`
+ * is on, for the same reason.
  */
 export async function tryServeStudioTrashRoutes(
   req: Request,

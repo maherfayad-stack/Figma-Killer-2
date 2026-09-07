@@ -238,11 +238,18 @@ tracks. Every numeric in the panel scrubs, nudges, and does math identically.
 - Extend `PROPERTY_FIELD_GLYPHS` (`cssPropertyIcons.ts:119-127`, currently 5
   properties) so in-field glyphs replace caption-above-field as the default row
   form — Figma's rows carry almost no captions; each caption costs ~19px.
-- Persistent chevron for collapsed `collapsedWhenEmpty` sections (disclosure
-  state is currently invisible at rest — hover-only cross-fade).
+- Persistent chevron for a collapsed section that HAS content (disclosure state
+  is otherwise invisible at rest — hover-only cross-fade). Scoped down from
+  "collapsed `collapsedWhenEmpty` sections": an EMPTY one is no longer a
+  disclosure at all — no chevron, no toggle, no body (Law 1, shipped) — so
+  there is nothing there for a persistent chevron to describe.
 - THEN: a **measurement gate test** — `scrollHeight <= clientHeight` for a text
   node's panel at 900px viewport + per-section height budgets, so W8's geometry
-  can't silently regress.
+  can't silently regress. Pair it with the width invariant already documented
+  in `docs/features/inspector-disclosure.md` §6:
+  `scrollWidth === clientWidth` for every `[data-style-section]` at the 260px
+  panel minimum, so a control that refuses to shrink can't put itself back on
+  top of the category rail.
 
 ## W8-3 Multi-select (L — the engine spine, serialise: phase 1 → 2 → 3)
 

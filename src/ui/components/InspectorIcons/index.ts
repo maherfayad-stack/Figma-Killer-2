@@ -7,6 +7,7 @@ export {
   TextStrikethroughIcon,
   NoneSlashIcon,
   LineHeightIcon,
+  FontSizeIcon,
   LetterSpacingIcon,
   FlowRowIcon,
   FlowRowReverseIcon,

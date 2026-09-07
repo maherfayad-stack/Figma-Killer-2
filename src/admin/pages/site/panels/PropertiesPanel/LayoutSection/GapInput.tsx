@@ -2,18 +2,21 @@
  * GapInput — token-aware text input for `gap` (writes the unified shorthand).
  *
  * Promotes the `gap` row out of the fallback list and into the flex / grid
- * blocks where it belongs (right below Justify). Backed by `TokenAwareInput`
+ * blocks where it belongs (right below Justify). Backed by `ScrubTokenField`
  * so users get framework spacing variable autocomplete as they type — same
- * vocabulary as the SpacingBoxControl side inputs.
+ * vocabulary as the SpacingBoxControl side inputs — AND the drag gesture every
+ * other length in the panel has.
  *
  * The two-panels-with-a-channel mark rides inside the field, so the row costs
- * one line rather than a line plus a caption. `aria-label` still says "Gap".
+ * one line rather than a line plus a caption, and doubles as the scrub handle.
+ * `aria-label` still says "Gap". `min: 0` because a negative gap is not a CSS
+ * value — the drag stops at zero rather than emitting one.
  */
 
-import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import { useSpacingTokens } from '@site/property-controls/tokenUtils'
 import { GapIcon } from '@ui/components/InspectorIcons'
 import { LabeledControl } from './LabeledControl'
+import { ScrubTokenField } from './ScrubTokenField'
 
 interface GapInputProps {
   value: string | undefined
@@ -28,15 +31,17 @@ export function GapInput({ value, isSet, onChange, onPreview, onClearPreview }: 
   const tokens = useSpacingTokens()
   return (
     <LabeledControl isSet={isSet}>
-      <TokenAwareInput
+      <ScrubTokenField
         aria-label="Gap"
         value={value}
         placeholder="0px"
         prefix={<GapIcon size={13} aria-hidden="true" />}
         tokens={tokens}
+        min={0}
         onCommit={onChange}
         onPreview={onPreview}
         onClearPreview={onClearPreview}
+        data-testid="css-gap-input"
       />
     </LabeledControl>
   )

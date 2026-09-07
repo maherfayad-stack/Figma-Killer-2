@@ -46,13 +46,23 @@ export function boardsFilePath(dir: string): string {
 }
 
 /** Read the project's boards, or a fresh empty file when none exists yet. */
-function readBoardsFile(dir: string): BoardsFile {
+export function readBoardsFile(dir: string): BoardsFile {
   const file = boardsFilePath(dir)
   return existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
 }
 
-/** Persist a boards file, creating `.studio/` if this is the project's first board write. */
-function writeBoardsFile(dir: string, next: BoardsFile): void {
+/**
+ * Persist a boards file, creating `.studio/` if this is the project's first
+ * board write.
+ *
+ * Exported alongside {@link readBoardsFile} for the board-mutating MCP tools
+ * (`studio_set_frames`, `studio_set_frame_axes`,
+ * `studio_duplicate_frame_as_variant`), which had each grown their own copy of
+ * these four lines. This module's whole reason to exist is that every
+ * server-side write to the board's frame list has one owner — a private write
+ * helper here plus two more elsewhere was that ownership in name only.
+ */
+export function writeBoardsFile(dir: string, next: BoardsFile): void {
   const file = boardsFilePath(dir)
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, serializeBoardsFile(next))

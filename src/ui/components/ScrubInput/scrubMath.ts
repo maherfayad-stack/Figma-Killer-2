@@ -28,6 +28,55 @@ export interface ParsedScrubValue {
   unit: string
 }
 
+// ---------------------------------------------------------------------------
+// The one nudge ladder — 1 / 10 / 0.1
+//
+// These numbers used to live in `numericNudge.ts` (admin), which cannot be
+// imported from `src/ui`. That left the drag gesture free-handing its own
+// `altKey ? 0.1 : shiftKey ? 10 : 1` ladder beside the keyboard one — two
+// copies of the same three magnitudes, one of which had already drifted to 8
+// once before (see `numericNudge.ts`'s header). They live here now, at the
+// bottom of the dependency graph, and `numericNudge.ts` re-exports them so
+// admin code keeps importing the model from the module that documents it.
+// ---------------------------------------------------------------------------
+
+/** Plain arrow nudge / plain drag: one unit per press, one unit per pixel. */
+export const BASE_NUDGE = 1
+/** Shift — the "big" step. */
+export const SHIFT_NUDGE = 10
+/** Alt — the fine step. Beats Shift when both are held. */
+export const FINE_NUDGE = 0.1
+
+/** Keyboard/pointer modifiers that select which step magnitude applies. */
+export interface NudgeModifiers {
+  shiftKey: boolean
+  altKey: boolean
+}
+
+/**
+ * Per-field widening of the ladder. A caller may widen the model for a value
+ * space where 1 is meaningless (`AnimationEditorPopover` steps milliseconds by
+ * 10); it may not re-decide it — there is no override for the Alt step,
+ * because "finer than the base step" is the whole meaning of Alt.
+ */
+export interface NudgeStepOverrides {
+  step?: number
+  shiftStep?: number
+}
+
+/**
+ * The step magnitude for a modifier state: Alt → 0.1, Shift → 10, else 1.
+ * Alt beats Shift because the more specific request wins.
+ */
+export function nudgeStepFor(
+  { shiftKey, altKey }: NudgeModifiers,
+  { step, shiftStep }: NudgeStepOverrides = {},
+): number {
+  if (altKey) return FINE_NUDGE
+  if (shiftKey) return shiftStep ?? SHIFT_NUDGE
+  return step ?? BASE_NUDGE
+}
+
 const NUMERIC_LENGTH_RE = /^(-?\d*\.?\d+)([a-z%]*)$/i
 
 /** The Figma-style layout keywords a size/dimension field may hold instead of a length. */
