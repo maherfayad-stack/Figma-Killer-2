@@ -36,8 +36,10 @@ export {
 export type { TemplateDeclarationSpan, TemplateSentinel } from './cssInJsTemplate'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,
+  PROTOTYPE_SHELL_DIR,
   WORKSPACE_MAX_FILE_BYTES,
   WORKSPACE_MAX_FILES,
+  isPrototypeShellPath,
   listWorkspaceFiles,
 } from './workspaceFiles'
 export { createWorkspaceProject, resolveComponentSources, resolveExportedDeclaration } from './componentSources'

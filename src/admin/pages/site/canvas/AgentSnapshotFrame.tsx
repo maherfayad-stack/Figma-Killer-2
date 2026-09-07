@@ -29,7 +29,7 @@ import {
   createCanvasPreviewReadiness,
   type CanvasPreviewReadiness,
 } from './CanvasPreviewReadiness'
-import { waitForDelay, waitForDocumentQuiet, waitForPromise } from './canvasCaptureSettle'
+import { settleCaptureDocument } from './canvasCaptureSettle'
 import styles from './AgentSnapshotFrame.module.css'
 
 interface AgentSnapshotFrameProps {
@@ -122,31 +122,12 @@ async function markAgentSnapshotFrameReady(
   previewReadiness: CanvasPreviewReadiness,
   signal: AbortSignal,
 ): Promise<void> {
-  // Let descendant effects register their first data/media requests before an
-  // initially-idle tracker can be mistaken for a finished preview.
-  if (!await waitForDelay(0, signal)) return
-
-  while (!signal.aborted) {
-    if (!await previewReadiness.waitUntilIdle(signal)) return
-    const settledRevision = previewReadiness.revision()
-    if (!await waitForDocumentQuiet(iframeDocument, signal)) return
-    if (
-      previewReadiness.pendingCount() !== 0 ||
-      previewReadiness.revision() !== settledRevision
-    ) continue
-
-    const fonts = iframeDocument.fonts
-    if (fonts?.status === 'loading' && !await waitForPromise(fonts.ready, signal)) return
-    if (!await waitForDocumentQuiet(iframeDocument, signal)) return
-    // A settled data request can add more asynchronous preview work during the
-    // resource phase. Restart so the final committed DOM is included as well.
-    if (
-      previewReadiness.pendingCount() === 0 &&
-      previewReadiness.revision() === settledRevision
-    ) break
-  }
-
-  if (signal.aborted) return
+  // One shared, bounded settle — see `canvasCaptureSettle.ts`. A frame whose
+  // images 404 or whose fonts never arrive is READY, not broken: those pixels
+  // are final, and the snapshot consumer needs a marked frame far more than it
+  // needs a perfect one. Only a caller-side abort withholds the marker.
+  const settle = await settleCaptureDocument({ document: iframeDocument, previewReadiness, signal })
+  if (settle.aborted || signal.aborted) return
   // Readiness metadata belongs to editor chrome, not authored <html>/<body>.
   // User selectors therefore see exactly the DOM that will publish.
   iframe.dataset.agentSnapshotReady = requestId

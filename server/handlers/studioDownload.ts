@@ -9,6 +9,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { listWorkspaceFiles, WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES } from '@core/page-parser'
+import { ensurePrototypeShell } from './studio/prototypeShell'
 import { jsonResponse } from '../http'
 import { binaryResponse } from '../binary'
 
@@ -93,6 +94,14 @@ export function buildStudioDownloadResponse(dir: string): Response {
   if (!existsSync(dir)) {
     return jsonResponse({ error: `Workspace directory not found: ${dir}` }, { status: 404 })
   }
+
+  // Regenerate the preview shell's `.generated` half FIRST, so the zip carries
+  // the boards as they are right now rather than as they were when the project
+  // was last opened. `.studio/` is excluded from the download by design, so
+  // `registry.generated.jsx` is the only copy of the board layout that reaches
+  // the export — and a board created since the load memo was warmed would
+  // otherwise be missing from it entirely. Never throws.
+  ensurePrototypeShell(dir)
 
   const files = collectWorkspaceFiles(dir)
   const zipInput: Record<string, Uint8Array> = {}

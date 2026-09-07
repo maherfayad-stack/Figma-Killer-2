@@ -40,7 +40,7 @@ import {
   createCanvasPreviewReadiness,
   type CanvasPreviewReadiness,
 } from '@site/canvas/CanvasPreviewReadiness'
-import { waitForDelay, waitForDocumentQuiet, waitForPromise } from '@site/canvas/canvasCaptureSettle'
+import { CAPTURE_SETTLE_TIMEOUT_MS, settleCaptureDocument } from '@site/canvas/canvasCaptureSettle'
 import type { AgentCaptureFrameReport, AgentCaptureNodeRect } from '@core/studio-capture'
 import { AGENT_CAPTURE_FRAME_ATTR } from '@core/studio-capture'
 import { registerSettledFrameDocument } from './frameInspectBridge'
@@ -55,12 +55,17 @@ const STUDIO_BREAKPOINT_BASE = {
 } as const
 
 /**
- * A frame that never settles must not hold the whole batch hostage — it
- * reports itself as a per-frame failure and lets the other frames answer. The
- * server's own `readyTimeoutMs` is longer, so this fires first and produces a
- * NAMED failure rather than an opaque driver timeout.
+ * A frame that never settles must not hold the whole batch hostage. The
+ * server's own `readyTimeoutMs` is longer, so this bound fires first and the
+ * frame reports itself with a NAMED reason rather than producing an opaque
+ * driver timeout.
+ *
+ * It is the OUTER bound only — `settleCaptureDocument` bounds each phase
+ * (images, fonts, DOM quiet) well inside it and turns an expired phase into a
+ * warning on an otherwise-good capture. Reaching this ceiling no longer fails
+ * the frame; see `settleAndReport`.
  */
-const FRAME_SETTLE_TIMEOUT_MS = 20_000
+const FRAME_SETTLE_TIMEOUT_MS = CAPTURE_SETTLE_TIMEOUT_MS
 
 interface CaptureFrameProps {
   page: Page
@@ -99,11 +104,16 @@ export function CaptureFrame({ page, width, onSettled }: CaptureFrameProps) {
 /**
  * Waits for this frame to be genuinely finished, then measures it.
  *
- * The wait is `AgentSnapshotFrame`'s, for the same reason it exists there: a
- * first React commit is not a finished screen. Preview data requests can still
- * be in flight, web fonts change every glyph's metrics after they load, and
- * images reflow the layout around them. Capturing before all three settle
- * produces an image that looks like evidence and is not.
+ * The wait is `settleCaptureDocument`'s, for the reason it exists: a first
+ * React commit is not a finished screen. Preview data requests can still be in
+ * flight, web fonts change every glyph's metrics after they load, and images
+ * reflow the layout around them. Capturing before all three settle produces an
+ * image that looks like evidence and is not.
+ *
+ * The `AbortController` here is ONLY unmount/cancellation. The settle deadline
+ * belongs to `settleCaptureDocument`, which returns a bounded result instead of
+ * being cut off — an abort would leave this frame with no entry at all, and the
+ * capture run would hang until the driver's own (longer) ready timeout.
  */
 function CaptureSettleReporter({
   pageId,
@@ -119,13 +129,8 @@ function CaptureSettleReporter({
   useEffect(() => {
     if (!iframeDocument) return
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), FRAME_SETTLE_TIMEOUT_MS)
     void settleAndReport(pageId, iframeDocument, previewReadiness, controller.signal, onSettled)
-      .finally(() => { clearTimeout(timeout) })
-    return () => {
-      clearTimeout(timeout)
-      controller.abort()
-    }
+    return () => { controller.abort() }
   }, [iframeDocument, pageId, previewReadiness, onSettled])
 
   return null
@@ -141,53 +146,30 @@ async function settleAndReport(
   signal: AbortSignal,
   onSettled: (report: AgentCaptureFrameReport) => void,
 ): Promise<void> {
-  const settled = await waitForFrameSettled(iframeDocument, previewReadiness, signal)
-  if (!settled) {
-    onSettled({
-      pageId,
-      ok: false,
-      error: `"${pageId}" did not finish rendering within ${FRAME_SETTLE_TIMEOUT_MS}ms — its preview data, fonts, or images never settled.`,
-    })
+  const settle = await settleCaptureDocument({
+    document: iframeDocument,
+    previewReadiness,
+    signal,
+    timeoutMs: FRAME_SETTLE_TIMEOUT_MS,
+  })
+  // An ABORT is the caller going away (unmount, a superseded run) — there is
+  // nobody left to report to, and reporting a failure would poison a batch the
+  // driver has already stopped reading.
+  if (settle.aborted) return
+
+  // A frame that did not fully settle is still PHOTOGRAPHED. A 404 image and a
+  // font that never arrives will not change these pixels again, and a document
+  // that never stops mutating has no "after" to wait for — so the honest answer
+  // is the image the user is looking at, plus the named reason it is imperfect.
+  // Refusing here is what turned one broken asset into "PNG export failed".
+  // See `canvasCaptureSettle.ts`'s module doc.
+  registerSettledFrameDocument(pageId, iframeDocument)
+  const report = measureFrame(pageId, iframeDocument)
+  if (!report.ok || settle.warnings.length === 0) {
+    onSettled(report)
     return
   }
-  // Registered only on the settled path: `studio_computed_styles` and
-  // `studio_measure_element` read this document AFTER the readiness report
-  // flips, and a mid-layout frame would hand them fonts that had not loaded
-  // and boxes about to move.
-  registerSettledFrameDocument(pageId, iframeDocument)
-  onSettled(measureFrame(pageId, iframeDocument))
-}
-
-/** `AgentSnapshotFrame`'s settle loop: preview-data idle → DOM quiet → fonts → DOM quiet again, restarting if new work appeared. */
-async function waitForFrameSettled(
-  iframeDocument: Document,
-  previewReadiness: CanvasPreviewReadiness,
-  signal: AbortSignal,
-): Promise<boolean> {
-  // Let descendant effects register their first data/media requests before an
-  // initially-idle tracker can be mistaken for a finished preview.
-  if (!await waitForDelay(0, signal)) return false
-
-  while (!signal.aborted) {
-    if (!await previewReadiness.waitUntilIdle(signal)) return false
-    const settledRevision = previewReadiness.revision()
-    if (!await waitForDocumentQuiet(iframeDocument, signal)) return false
-    if (
-      previewReadiness.pendingCount() !== 0 ||
-      previewReadiness.revision() !== settledRevision
-    ) continue
-
-    const fonts = iframeDocument.fonts
-    if (fonts?.status === 'loading' && !await waitForPromise(fonts.ready, signal)) return false
-    if (!await waitForDocumentQuiet(iframeDocument, signal)) return false
-    // A settled data request can add more asynchronous preview work during the
-    // resource phase. Restart so the final committed DOM is included as well.
-    if (
-      previewReadiness.pendingCount() === 0 &&
-      previewReadiness.revision() === settledRevision
-    ) return true
-  }
-  return false
+  onSettled({ ...report, warnings: [...report.warnings, ...settle.warnings] })
 }
 
 /**
