@@ -72,7 +72,10 @@ describe('node-png body contract', () => {
 
   it('rejects a missing or empty page/node id', () => {
     expect(safeParseValue(NodePngBodySchema, { nodeId: 'n', scale: 1 }).ok).toBe(false)
-    expect(safeParseValue(NodePngBodySchema, { pageId: 'p', scale: 1 }).ok).toBe(false)
+    // `nodeId` is OPTIONAL — omitted means "the whole frame", the
+    // nothing-selected half of Copy as PNG. Present-but-empty is still a
+    // malformed request.
+    expect(safeParseValue(NodePngBodySchema, { pageId: 'p', scale: 1 }).ok).toBe(true)
     expect(safeParseValue(NodePngBodySchema, { pageId: '', nodeId: 'n', scale: 1 }).ok).toBe(false)
     expect(safeParseValue(NodePngBodySchema, { pageId: 'p', nodeId: '', scale: 1 }).ok).toBe(false)
   })

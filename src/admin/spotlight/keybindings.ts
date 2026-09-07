@@ -200,7 +200,11 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   {
     commandId: 'layers.copy',
     shortcut: { mac: '⌘C', win: 'Ctrl+C' },
-    match: (e) => (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c',
+    // `!e.shiftKey` is load-bearing, not tidying: ⌘⇧C is `export.copySelectionPng`
+    // below, and without this guard the same keystroke ALSO copied the node to
+    // the layer clipboard — two commands, one press, in an order decided by
+    // whichever listener happened to be registered first.
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'c',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -416,6 +420,26 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: 'C', win: 'C' },
     ariaKeyshortcuts: 'C',
     match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // ── Export (copy the selection as an image) ──────────────────────
+  // ⌘⇧C / Ctrl+Shift+C — Figma's own "copy as PNG". Virtual id: exporting the
+  // selection is a canvas gesture with a live target, not an argument-free
+  // palette action, so `displayName` is the help-screen label and
+  // `useCopyAsPngShortcut` owns the handler.
+  //
+  // It shares a letter with `layers.copy` (⌘C) and with `tools.comment` (bare
+  // `c`), and the three are separated by modifiers ALONE — which is why
+  // `layers.copy`'s match now rejects Shift above. `tools.comment` already
+  // rejects every modifier.
+  {
+    commandId: 'export.copySelectionPng',
+    displayName: 'Copy as PNG',
+    shortcut: { mac: '⌘⇧C', win: 'Ctrl+Shift+C' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+Shift+C' : 'Control+Shift+C',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
