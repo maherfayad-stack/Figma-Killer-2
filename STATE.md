@@ -21,6 +21,147 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-15 — W8-2 (scrub half): one scrub engine, every numeric scrubs
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-scrub-everywhere` off `origin/main` (`0d05e1c`,
+  i.e. on top of `panel-13`/PR #47).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-2, the *Scrub unification* paragraph
+  ONLY. The look pass (panel width 290, Button/Select inspector skins, fixed
+  `--inspector-*` spacing, `PROPERTY_FIELD_GLYPHS` extension) is the other half
+  of W8-2 and is **not** in this PR.
+
+**1. One scrub engine.** `useScrubDrag`
+(`src/ui/components/ScrubInput/useScrubDrag.ts`, new) is now the whole gesture:
+the keyword/token refusal, the 1/10/0.1 per-pixel ladder resolved through
+`nudgeStepFor`, `min`/`max`, the empty-field unit, rAF-coalesced previews, the
+unmount cancel, click-with-no-movement → focus the field, and the final value
+computed fresh from `pointerup`'s `clientX`. `ScrubInput` and `ScrubTokenField`
+both call it.
+
+**Why a hook and not "ScrubTokenField renders a ScrubInput"** (the work order's
+literal wording): a token-aware field is an `Input` **plus an autocomplete
+dropdown**, so a component that renders `ScrubInput` cannot also be
+`TokenAwareInput`. The two field kinds share the state machine, not the markup.
+Extracting the markup-shaped thing would have meant either killing token
+autocomplete on padding/margin/gap/insets or growing `ScrubInput` a
+`renderField` slot — a thin adapter hiding the wrong seam. **If you revisit
+this, revisit it here; do not "finish the job" by making one render the other.**
+
+`ScrubTokenField` lost ~55 lines of drifted copy in the process: it had **no
+rAF coalescing** (a fast padding drag fired one editor-store write per
+`pointermove`, i.e. per breakpoint-iframe style re-derivation, instead of one
+per frame), no `min`/`max`, and its own inline `altKey ? 0.1 : shiftKey ? 10 : 1`.
+
+**2. The ladder moved down one layer.** `BASE_NUDGE`/`SHIFT_NUDGE`/`FINE_NUDGE`
+and `nudgeStepFor` are now DEFINED in `scrubMath.ts` and re-exported from
+`numericNudge.ts` (whose header still explains them). Forced: `src/ui` cannot
+import `src/admin`, and the gesture lives in `src/ui` — leaving the numbers in
+admin guaranteed a second copy, which is precisely how the ±8 drift happened
+the first time. Admin call sites are unchanged.
+
+**3. The rule that decides which fields scrub: THE MARK IS THE HANDLE.** A
+numeric row draws a scrub field when it has an in-field glyph/letterform, and a
+plain typed field when it does not — because a row whose only visible name is a
+caption in a column the row does not own has nothing honest to drag (and
+`ControlRow` is off-limits this PR). Consequence worth knowing: **adding a
+property to `PROPERTY_FIELD_GLYPHS` now gives it the scrub gesture for free** —
+that is the look pass's glyph-extension task delivering scrub as a side effect,
+by design, not by accident.
+
+**4. What gained the gesture.** TRBL insets (`PositionSection`), constraint
+offsets (`PositionConstraints`), `gap`, all five corner radii
+(`AppearanceSection`), `opacity`, `zIndex`, `fontSize`, `lineHeight`,
+`letterSpacing` (`ClassPropertyRow`). `fontSize` needed a mark to grab, so it
+got one: `FontSizeIcon` (new `InspectorIcons` glyph) registered in
+`PROPERTY_FIELD_GLYPHS`. The TRBL/constraint direction arrows **moved from a
+column beside the field into the field** — one fewer grid column, and the arrow
+is now both the name and the handle (`LayoutSection.module.css`'s
+`.directionIcon` and its two `data-state` rules are gone with it).
+
+**5. Two correctness bugs found and fixed on the way** — these are the reason
+to read this entry even if you don't care about scrubbing:
+  - **`line-height: 1.5` was about to become `1.5px`.** Routing the generic
+    numeric row through `resolveCommitValue` with a `px` default would have
+    silently rewritten every ratio line-height in the user's stylesheet into a
+    *different declaration* (a ratio couples to `font-size`; a length does
+    not). New `isUnitlessNumberProp` (`cssControlTypes.ts`) names the three
+    properties whose field unit is `''`: `opacity`, `zIndex` and `lineHeight`.
+    `letterSpacing` is deliberately NOT one — `letter-spacing: 1.5` is invalid
+    CSS. This also fixes a pre-existing W8-1 hole where nudging an empty
+    `lineHeight` produced `1px`.
+  - **Glyphless numeric rows never coerced at all.** `TextControl` committed
+    raw text, so typing `50` into a border-width row emitted the invalid
+    `border-width: 50` and `100/2` was written literally — the exact bug W8-1
+    fixed for `ScrubInput` but not for this path. `nudgeEmptyUnit` is now
+    `numericUnit`, and it drives both the nudge and a `resolveCommitValue` on
+    blur, plus Enter-keeps-focus. One prop, both halves of §5.
+
+**6. Deliberate non-implementations** (say so rather than leaving a silent gap):
+  - **Grid tracks do NOT scrub.** `GridTrackControl` is a segmented count
+    picker writing `repeat(N, 1fr)`, and its custom field holds a free-form
+    template (`200px 1fr 200px`). A single number is not the whole value, and
+    scrubbing one term of a multi-term value is rewriting CSS we only partly
+    understood. `NUDGE_PROPS` has excluded grid templates since W8-1 for the
+    same reason; W8-2 did not change that. Documented in §5.5.
+  - **`opacity`'s drag saturates.** It is clamped to `0..1` (an improvement —
+    it was unbounded), but the field is unitless `0`–`1` rather than Figma's
+    `0`–`100%`, so at the shared 1-per-pixel base step a plain drag hits an end
+    stop immediately; only Alt (0.1) is fine enough to be useful. The honest
+    fix is the **percentage presentation**, which the look pass owns — not a
+    bespoke ladder for one field, which is the thing §5.3 forbids. Flagged in
+    §5.5.
+
+- **Docs:** `docs/features/inspector-disclosure.md` §5 — §-numbers unchanged;
+  §5.1 gained the `fieldUnit` paragraph, §5.3 the "where the numbers live" note,
+  and a **new §5.5** ("One scrub engine, and the mark is the handle") sits after
+  §5.4 and before §6. `STUDIO-FIGMA-PARITY-PLAN.md` §0a has a W8-2 row.
+- **Tests:** `src/__tests__/panels/scrubTokenField.test.tsx` (11, new — real
+  `PointerEvent`s against the wrapper: ladder, Alt-beats-Shift, min/max, empty
+  start unit, token refusal, click-to-focus, no-op round trip, live display,
+  rAF coalescing) and `src/__tests__/panels/inspectorNumericFields.test.tsx`
+  (18, new — the commit path of every previously-unscrubbed field; `opacity`
+  and `zIndex` are asserted to commit as **unitless numbers**, `lineHeight`'s
+  ratio to survive, `letterSpacing` to still get `px`).
+  `appearanceSection.test.tsx` was updated, not patched around: the radius DOM
+  genuinely changed shape. **Convention worth knowing before you write the next
+  panel test** — `ScrubInput` puts `data-testid` on the field WRAPPER (the shell
+  that also carries the draggable mark), and gives the `<input>` `-field` and
+  the mark `-label`. `Input` puts it straight on the `<input>`. So converting a
+  row from `Input` to `ScrubInput` moves every existing test id up one element,
+  and the edit itself now needs a blur/Enter because a scrub field commits on
+  commit, not per keystroke (§5.4).
+- **Verification:** `bun run build` ✅, `bun test` ✅ apart from the documented
+  pre-existing set. **Two triage notes for whoever runs the gates next:**
+  `no-circular-dependencies` FAILS as a 60s **timeout**, not a cycle — `bun x
+  madge --circular …` run directly on this branch prints *"No circular
+  dependency found"* after **82s** on this machine, i.e. the test's hang guard
+  is now under the real cost of a 3 494-file graph. Not caused by this PR
+  (+2 files) but it will keep firing; someone should raise the budget.
+  `no-core-barrel-deep-imports` times out only inside a 163-file parallel run
+  and passes on its own. Plus the known `chevron-left` icon-catalog failure.
+- **NEEDS HUMAN DOGFOOD** (no e2e; happy-dom has no layout engine, so nothing
+  here proves the fields *look* right). Script, ~4 minutes at `/admin/site`:
+  1. Select any element. In **Position**, set `position: relative`, then drag
+     the ▲/▶/▼/◀ arrow inside each inset field — the number should track the
+     pointer 1:1, the canvas should follow smoothly (not stutter), and ONE undo
+     should take back the whole gesture.
+  2. Switch to `position: absolute` — the X/Y constraint rows appear. Drag the
+     arrow in each; flip the side picker (Left→Right) and confirm the arrow
+     glyph flips with it and the value MOVES rather than duplicating.
+  3. **Appearance**: drag the corner-radius mark left past zero — it must stop
+     at `0px`, never go negative. Expand to four corners; each drags too.
+  4. **Layout**: drag the gap mark; same zero floor.
+  5. **Typography**: drag `fontSize`'s new "Aa" mark, and `lineHeight` /
+     `letterSpacing`. Then TYPE `1.5` into line-height and confirm the
+     stylesheet gets `line-height: 1.5` — **not** `1.5px`. Type `100/2` into
+     letter-spacing and confirm `50px`.
+  6. Type `50` into a border-width row (Stroke → advanced) and confirm `50px`.
+  7. Anywhere: hold **Shift** while dragging (10x), then **Alt** (0.1x), then
+     both (Alt should win). Press **Enter** in any field — the caret must stay
+     put with the text re-selected.
+  8. Multi-select two nodes and confirm a `Mixed` field still refuses to drag.
 ### mcp-20 — W9-6: the last three bridge-bound tools go headless, and the agent gets a ruler
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open)
