@@ -115,6 +115,10 @@ diff and already carried them at `ee5bc9c`; another agent owns it.
    should offer only colour variables, each with a swatch.
 8. Confirm no inspector row got taller — compare the Size section against
    `main`.
+### gate-fixes — two Wave 7 architecture gates back to green
+- **Agent:** studio-implementer · **Stage:** done (targeted tests + `tsc -p tsconfig.node.json` + eslint green; draft PR open) — no dogfood needed (no behaviour change).
+- **Branch:** `fix/wave7-gate-regressions` off `origin/main` (`ee5bc9c`). Two regressions, nothing else: (1) `MultiSelectionInspector.module.css:87-133` still reached for the fluid `--space-3xs/2xs/xs` scale — swapped 1:1 to the frozen `--inspector-space-*` tokens, `inspectorGeometryBudget.test.tsx` 10/10 pass; (2) `qualityAudit.ts` was 757 lines against the 700 ceiling — the W9-3 composition audit moved to `server/handlers/studio/compositionAudit.ts` (253 lines) with its tests in `compositionAudit.test.ts`, leaving `qualityAudit.ts` at 550. Shared finding types stay in `qualityAudit.ts`; its four scan primitives (`RULE_BLOCK_RE`, `DECLARATION_RE`, `RAW_PX_RE`, `lineAt`) are now exported so the two audits scan identically instead of restating each other.
+- **Landmine:** `MIN_TYPE_HIERARCHY_RATIO` is imported by `variantSeeds.ts` (the generator and the grader agree by construction) — it moved with `auditCompositionQuality`, so that import now points at `compositionAudit.ts`.
 
 ### panel-prefill — Typography first on a text layer, and every field prefilled with what the element renders
 - **Agent:** panel-designer · **Stage:** done (typecheck + touched tests + gates green; draft PR open) — **needs human dogfood**
