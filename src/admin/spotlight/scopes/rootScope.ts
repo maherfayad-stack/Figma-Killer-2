@@ -13,6 +13,7 @@ import type { Scope } from '../types'
 import { getAllCommands } from '../builtinCommands'
 import { pagesProvider } from '../providers/pagesProvider'
 import { pluginPagesProvider } from '../providers/pluginPagesProvider'
+import { projectsProvider } from '../providers/projectsProvider'
 
 export const rootScope: Scope = {
   id: 'root',
@@ -21,5 +22,8 @@ export const rootScope: Scope = {
   providers: [
     pagesProvider,
     pluginPagesProvider,
+    // "Open project …" — the only navigation the palette could not previously
+    // do without a detour through the launcher. Remote, so it debounces.
+    projectsProvider,
   ],
 }
