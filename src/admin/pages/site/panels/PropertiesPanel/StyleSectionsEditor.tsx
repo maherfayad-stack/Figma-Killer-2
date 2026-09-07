@@ -97,6 +97,14 @@ interface StyleSectionsEditorProps {
   onClearProperty: (property: keyof CSSPropertyBag) => void
   /** Clear several properties in one undo step (e.g. display + its flex/grid deps). */
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
+  /**
+   * Commit SEVERAL properties to the active target in ONE store write, so a
+   * multi-property gesture (Width -> Fill, the align 3x3, a layout mode
+   * switch, an animation edit) is ONE undo entry instead of 2-8. `null`
+   * clears. Not a substitute for `onClearProperties`, which on a class target
+   * purges base + every context override — see `docs/features/inspector-disclosure.md` §11.
+   */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   onPreview: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview: () => void
   /**
@@ -143,6 +151,7 @@ export function StyleSectionsEditor({
   onRemove,
   onClearProperty,
   onClearProperties,
+  onChangeMany,
   onPreview,
   onClearPreview,
   provenanceByProperty,
@@ -205,6 +214,7 @@ export function StyleSectionsEditor({
             onRemove={onRemove}
             onClearProperty={onClearProperty}
             onClearProperties={onClearProperties}
+            onChangeMany={onChangeMany}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
@@ -255,6 +265,8 @@ interface StyleSectionGroupProps {
   onRemove: (property: keyof CSSPropertyBag) => void
   onClearProperty: (property: keyof CSSPropertyBag) => void
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
+  /** See the group props above — one store write for a multi-property gesture. */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   onPreview: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview: () => void
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
@@ -279,6 +291,7 @@ function StyleSectionGroup({
   onRemove,
   onClearProperty,
   onClearProperties,
+  onChangeMany,
   onPreview,
   onClearPreview,
   provenanceByProperty,
@@ -488,6 +501,7 @@ function StyleSectionGroup({
             onRemove={onRemove}
             onClearProperty={onClearProperty}
             onClearProperties={onClearProperties}
+            onChangeMany={onChangeMany}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
           />
@@ -510,6 +524,7 @@ function StyleSectionGroup({
             currentStyles={currentStyles}
             activeTab={activeTab}
             onChange={onChange}
+            onChangeMany={onChangeMany}
             onRemove={onRemove}
             onClearProperty={onClearProperty}
             onPreview={onPreview}
@@ -578,6 +593,7 @@ function StyleSectionGroup({
             onChange={onChange}
             onRemove={onRemove}
             onClearProperties={onClearProperties}
+            onChangeMany={onChangeMany}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
           />

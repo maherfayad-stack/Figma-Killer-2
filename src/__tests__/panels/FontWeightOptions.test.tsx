@@ -6,6 +6,9 @@ import { setEditorPreference } from '@site/preferences/editorPreferences'
 import { useEditorStore } from '@site/store/store'
 import { makeSite } from '../fixtures'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 const inter: FontEntry = {
   id: 'font-inter',
   source: 'google',
@@ -76,6 +79,7 @@ function renderFontWeightRow(styles: Record<string, unknown>): void {
       sectionKey="base"
       styleQuery="font weight"
       onChange={() => {}}
+      onChangeMany={noopMany}
       onRemove={() => {}}
       onClearProperty={() => {}}
       onClearProperties={() => {}}

@@ -33,6 +33,9 @@ import { ColorValueInput } from '@site/property-controls/ColorValueInput'
 import { ClassPropertyRow } from '../ClassPropertyRow'
 import { StyleSectionsEditor } from '../StyleSectionsEditor'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 afterEach(cleanup)
 
 function noop() {}
@@ -237,6 +240,7 @@ describe('StyleSectionsEditor — MIXED bags', () => {
         sectionKey="base"
         styleQuery=""
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
         onClearProperties={noop}

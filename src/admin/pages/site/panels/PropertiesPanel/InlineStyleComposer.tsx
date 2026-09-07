@@ -107,6 +107,14 @@ export function InlineStyleComposer({
     if (clearable.length === 0) return
     setNodeInlineStyles(nodeId, Object.fromEntries(clearable.map((k) => [String(k), null])))
   }
+  // Write several properties in one undo step — `setNodeInlineStyles` already
+  // takes a whole patch, so a multi-property gesture costs exactly one
+  // transaction. See `StyleSectionsEditor`'s `onChangeMany` doc.
+  const handleChangeMany = (patch: Record<string, string | number | null>) => {
+    const writable = Object.entries(patch).filter(([key]) => !lockedPropertySet.has(key))
+    if (writable.length === 0) return
+    setNodeInlineStyles(nodeId, Object.fromEntries(writable))
+  }
 
   return (
     <>
@@ -143,6 +151,7 @@ export function InlineStyleComposer({
         onRemove={handleRemove}
         onClearProperty={handleRemove}
         onClearProperties={handleClearProperties}
+        onChangeMany={handleChangeMany}
         // Hover-preview is class-keyed in the store; skip it for inline editing.
         onPreview={noop}
         onClearPreview={noop}

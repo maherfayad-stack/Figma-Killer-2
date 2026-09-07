@@ -15,6 +15,9 @@ import { StackedPropertyGrid } from '@site/panels/PropertiesPanel/StackedPropert
 import { SizeSection } from '@site/panels/PropertiesPanel/SizeSection'
 import type { SizingParentLayout } from '@site/panels/PropertiesPanel/elementSizing'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 afterEach(cleanup)
 
 const BLOCK_PARENT: SizingParentLayout = { display: 'block', flexDirection: 'row' }
@@ -74,6 +77,7 @@ describe('a prefilled row still reads as unset', () => {
         currentStyles={{ fontSize: '18px' }}
         activeTab="base"
         onChange={() => {}}
+        onChangeMany={noopMany}
         onRemove={() => {}}
       />,
     )
@@ -94,6 +98,7 @@ describe('a prefilled row still reads as unset', () => {
         currentStyles={{ fontSize: '24px' }}
         activeTab="base"
         onChange={() => {}}
+        onChangeMany={noopMany}
         onRemove={() => {}}
       />,
     )
@@ -115,6 +120,7 @@ describe('bespoke sections prefill too', () => {
         currentStyles={{ width: '320px', height: '48px' }}
         parentLayout={BLOCK_PARENT}
         onChange={() => {}}
+        onChangeMany={noopMany}
         onRemove={() => {}}
         onClearProperty={() => {}}
         visibleProperties={['width', 'height']}
@@ -137,6 +143,7 @@ describe('bespoke sections prefill too', () => {
         currentStyles={{ width: '200px', height: '48px' }}
         parentLayout={BLOCK_PARENT}
         onChange={() => {}}
+        onChangeMany={noopMany}
         onRemove={() => {}}
         onClearProperty={() => {}}
         visibleProperties={['width', 'height']}
