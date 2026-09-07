@@ -87,6 +87,7 @@
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { ProjectProfile } from '../../../handlers/studio/projectProfileSchema'
 import type { TrustTier } from '../../../handlers/studio/studioMeta'
+import { FIDELITY_THRESHOLDS, type FidelityMode } from '../../../handlers/studio/fidelityMode'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../../runtime/types'
 import type { AiTool } from '../types'
 import type { StudioLiveDigest } from './liveDigest'
@@ -299,6 +300,72 @@ Never read .studio/ directly — it is Studio's own state, and a tool covers eac
 Reply in 1-2 sentences after acting. Tools change the repo; the reply narrates. Never paste source, JSON, or diffs into the reply. No emoji.`
 }
 
+/**
+ * W9-2 — the fidelity-mode block, appended to the static prefix.
+ *
+ * ## Why this is part of the PREFIX and not the suffix
+ *
+ * The prefix is the prompt-cached half. Folding the mode block into it means
+ * each mode is its OWN stable cache partition: every turn at `balanced` hits
+ * the same cached prefix as the last turn at `balanced`, and switching to
+ * `strict` costs exactly one cold prefix, then caches again. Putting the
+ * block in the (uncached) dynamic suffix would have cost its tokens on every
+ * single turn forever, in exchange for a flexibility nobody needs — the mode
+ * does not change mid-turn.
+ *
+ * ## Why each block ends in a DONE definition
+ *
+ * The prefix's non-negotiable rule is "never claim a match you did not
+ * measure", and its one worked example of a measurement is
+ * `studio_compare` returning `pass:true`. That sentence is correct under
+ * `strict` and actively wrong under `creative`, where there may be no
+ * reference to compare against at all — an agent reading it with nothing
+ * registered either invents a reference or reports done by eye, which is the
+ * failure the rule exists to prevent. So each mode restates DONE in terms
+ * that are reachable in that mode, and says what it is NOT allowed to
+ * substitute for it.
+ *
+ * The numbers are read from `FIDELITY_THRESHOLDS` rather than written out, so
+ * the prompt cannot state a threshold the tool does not apply.
+ */
+const MODE_BLOCK: Readonly<Record<FidelityMode, string>> = {
+  creative: `
+
+# Fidelity: CREATIVE
+
+You are being asked to design, not to reproduce. Any reference you have is a direction, not a specification: match its intent — the mood, the density, the type of thing it is — and make the concrete decisions yourself. Improving on it is the point. Do not spend turns closing pixel gaps to an image nobody asked you to match.
+
+Show more than one idea when the brief has room for one. Distinct approaches, not the same screen with a different accent colour; say in one line what each is for.
+
+studio_compare still works here, and its thresholds are loose (${FIDELITY_THRESHOLDS.creative.passScore}% similarity, ${FIDELITY_THRESHOLDS.creative.maxRegionCoverage}% region coverage) precisely because a pass in this mode is directional, not a fidelity claim. Never report a creative-mode compare as "it matches the design".
+
+DONE in this mode: every variant you produced typechecks (studio_typecheck, scoped to what you wrote) and passes studio_quality_check. Both, for each variant. "It looks good to me" is not one of the two, and neither is a screenshot you did not measure.`,
+
+  balanced: `
+
+# Fidelity: BALANCED
+
+There is a design and it is the spec, but it is a spec with judgement in it. Match its structure, its spacing rhythm, its type scale and its colours. Where the design is internally inconsistent, or where following it exactly would break a state it does not show (an empty list, a long string, a narrow viewport), do the right thing instead — and SAY SO.
+
+studio_compare runs at ${FIDELITY_THRESHOLDS.balanced.passScore}% similarity with a ${FIDELITY_THRESHOLDS.balanced.maxRegionCoverage}%-of-frame region ceiling. That gap is deliberate: it is room for deliberate deviation, not room for defects.
+
+Report the verdict VERBATIM — the score and the region count as the tool returned them. Never round a number up, never describe a fail as "very close".
+
+DONE in this mode: studio_compare has RUN on every screen you touched since your last write, and every differing region it returned is either fixed or named in your reply as a deliberate deviation with a one-line reason. A region you have not looked at is not a deliberate deviation. If you cannot name why a region differs, it is a defect and it is not done.`,
+
+  strict: `
+
+# Fidelity: STRICT
+
+Reproduce the design. Your judgement is not wanted here — where you disagree with the design, implement it anyway and say what you would have changed. Do not improve spacing, do not substitute a nicer font, do not round a colour to the nearest token unless that token is the colour.
+
+studio_compare runs at ${FIDELITY_THRESHOLDS.strict.passScore}% similarity with a ${FIDELITY_THRESHOLDS.strict.maxRegionCoverage}%-of-frame region ceiling AND an absolute area floor of ~${FIDELITY_THRESHOLDS.strict.maxRegionPixels}px² per region, scaled to the comparison's resolution. The area floor is there because a percentage of a tall screen is a big rectangle: without it a 24x24 icon rendered completely wrong passes. It will not pass now.
+
+Strict also refuses to guess which design it is measuring. A project-wide reference standing in for a screen that has none of its own is not accepted in this mode, and neither is a screen with more than one candidate — register the screen's own design (studio_register_design_reference with pageId), or pass referenceId. Do not work around this by lowering the mode.
+
+DONE in this mode, and nothing less: studio_compare returns pass:true at these thresholds; studio_typecheck passes on every file you wrote; the text on screen is the design's text with no placeholder and no lorem; studio_fidelity_report returns no unresolved finding for the screens you touched, so nothing on them is a silent fallback for something that did not import. That is the whole list. Do not add to it and do not stop before it.`,
+}
+
 // ---------------------------------------------------------------------------
 // Dynamic suffix
 // ---------------------------------------------------------------------------
@@ -496,9 +563,18 @@ export function buildStudioAgentSystemPrompt(
   ctx: StudioPromptContext | null,
   tools: readonly AiTool[],
   live: StudioLiveDigest | null = null,
+  /**
+   * This turn's resolved fidelity mode (W9-2). Defaults to `balanced` for the
+   * callers that have no turn to resolve one from — architecture tests, the
+   * subagent contract check — because `balanced` is the only value that is
+   * wrong in neither direction: `creative` would tell an agent measurement is
+   * optional and `strict` would tell it to refuse work nobody asked it to
+   * refuse. A real turn always passes an explicitly resolved value.
+   */
+  fidelityMode: FidelityMode = 'balanced',
 ): string[] {
   return [
-    buildStaticPromptPrefix(tools),
+    buildStaticPromptPrefix(tools) + MODE_BLOCK[fidelityMode],
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     ctx ? buildDynamicSuffix(ctx, live) : 'Project profile unavailable — call studio_project_profile before assuming anything about this project.',
   ]

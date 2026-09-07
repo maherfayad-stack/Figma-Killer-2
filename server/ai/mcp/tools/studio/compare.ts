@@ -89,9 +89,20 @@
  *
  * `pass` is therefore two conditions, and the second is the one that matters:
  *
- *   - overall similarity at or above `passScore` (default 98%), AND
- *   - no single differing REGION covering more than `maxRegionCoverage` (default
- *     1.5%) of the frame.
+ *   - overall similarity at or above `passScore`, AND
+ *   - no single differing REGION covering more than `maxRegionCoverage` of the
+ *     frame.
+ *
+ * W9-2 added a third for strict, and made all three come from the resolved
+ * fidelity mode rather than from one hardcoded pair. `creative` /
+ * `balanced` / `strict` each name their own `passScore` and
+ * `maxRegionCoverage` (`FIDELITY_THRESHOLDS`); strict additionally applies an
+ * ABSOLUTE per-region area floor, because coverage is a percentage of the
+ * frame and a percentage of a tall page is a big rectangle — a 24x24 icon
+ * rendered completely wrong is 0.02% of a 375x2400 screen and passed the
+ * structural test every time. The mode is resolved per page, so two screens
+ * in one batch can be graded differently when their designs were registered
+ * differently.
  *
  * A structural defect — wrong spacing, a missing element, the wrong button
  * fill, text overlapping a heading — is always a contiguous region well above
@@ -105,7 +116,7 @@ import { createWorkspaceProject, parsePageFile } from '@core/page-parser'
 import { collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { Page } from '@core/page-tree'
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk, type AiToolImage, type AiToolOutput } from '@core/ai'
+import { aiToolError, aiToolOk, type AiToolImage } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
@@ -116,8 +127,15 @@ import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { resolveDesignReference } from './referenceResolve'
-import { captureFrames } from '../../capture/captureFrames'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
+import {
+  FIDELITY_MODES,
+  FIDELITY_THRESHOLDS,
+  type FidelityMode,
+} from '../../../../handlers/studio/fidelityMode'
+import { gradeFrameDiff, resolvePageGrading, type PageGrading } from './compareGrading'
+import { captureMissedPages, type PageCapture } from './compareCapture'
+import { readAgentSessionFidelityMode, readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 import {
   buildCompareCacheKey,
@@ -130,15 +148,15 @@ import {
   decodePngBase64,
   decodePngBuffer,
   reconcileReference,
-  type NodeRect,
 } from './frameDiffEngine'
 
 const DEFAULT_TOP_N = 6
 const MAX_TOP_N = 20
-/** Overall similarity at or above this counts toward a pass. See module doc for why it is not 100. */
-const DEFAULT_PASS_SCORE = 98
-/** No single differing region may cover more than this share of the frame. The structural test. */
-const DEFAULT_MAX_REGION_COVERAGE = 1.5
+// W9-2 — the pass bar is no longer one pair of constants. It comes from the
+// resolved fidelity mode's row in `FIDELITY_THRESHOLDS`, resolved PER PAGE
+// (a design reference can declare its own mode), and every result reports the
+// numbers it was actually graded against under `thresholds` so an agent never
+// has to infer them. See `resolveGrading` below.
 const DPR_MIN = 0.5
 const DPR_MAX = 3
 
@@ -160,11 +178,16 @@ const InputSchema = Type.Object(
     topN: Type.Optional(
       Type.Integer({ minimum: 1, maximum: MAX_TOP_N, description: `How many differing regions to return per page, worst first. Default ${DEFAULT_TOP_N}.` }),
     ),
+    fidelityMode: Type.Optional(
+      Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)), {
+        description: `How strictly to grade, which is the same thing as which thresholds to apply. "creative" (${FIDELITY_THRESHOLDS.creative.passScore}% / ${FIDELITY_THRESHOLDS.creative.maxRegionCoverage}%) is directional only — a pass is not a fidelity claim. "balanced" (${FIDELITY_THRESHOLDS.balanced.passScore}% / ${FIDELITY_THRESHOLDS.balanced.maxRegionCoverage}%) leaves room for deliberate deviation. "strict" (${FIDELITY_THRESHOLDS.strict.passScore}% / ${FIDELITY_THRESHOLDS.strict.maxRegionCoverage}%, plus an absolute ~${FIDELITY_THRESHOLDS.strict.maxRegionPixels}px² per-region area floor that catches a small element rendered entirely wrong) also refuses to grade a screen against a reference that was not registered for it. Omit this: the mode is resolved for you from the design reference, this session, and the project default. Pass it only to grade one call differently on purpose, and never to lower the bar on a screen that is failing.`,
+      }),
+    ),
     passScore: Type.Optional(
-      Type.Number({ minimum: 0, maximum: 100, description: `Overall similarity percentage required to pass. Default ${DEFAULT_PASS_SCORE}. Raising this toward 100 does not make the screen more accurate — it makes the verdict measure font rasterisation instead of design.` }),
+      Type.Number({ minimum: 0, maximum: 100, description: `Overall similarity percentage required to pass, overriding the fidelity mode's own. Raising this toward 100 does not make the screen more accurate — it makes the verdict measure font rasterisation instead of design.` }),
     ),
     maxRegionCoverage: Type.Optional(
-      Type.Number({ minimum: 0, maximum: 100, description: `The largest share of the frame (percent) any single differing region may cover and still pass. Default ${DEFAULT_MAX_REGION_COVERAGE}. This is the structural test — lower it to catch smaller defects.` }),
+      Type.Number({ minimum: 0, maximum: 100, description: `The largest share of the frame (percent) any single differing region may cover and still pass, overriding the fidelity mode's own. This is the structural test — lower it to catch smaller defects.` }),
     ),
     includeImages: Type.Optional(
       Type.Boolean({
@@ -190,92 +213,6 @@ function captureDprFor(dir: string, pageId: string, referenceWidth: number): num
   return Math.round(Math.min(DPR_MAX, Math.max(DPR_MIN, ideal)) * 10_000) / 10_000
 }
 
-interface CapturedFrame {
-  ok: boolean
-  pageId: string
-  width?: number
-  height?: number
-  imageIndex?: number
-  nodeRects?: NodeRect[]
-  /** See `compare.ts`'s previous single-page revision / `computeFrameDiff`'s `nodeRects.imageScale` doc for why this has no default. */
-  imageScale?: number
-  error?: string
-}
-
-/** One page's capture, or the reason there is none. Keyed by page id below. */
-type PageCapture =
-  | { ok: true; frame: CapturedFrame; images: AiToolOutput['images'] }
-  | { ok: false; error: string }
-
-/**
- * Capture every cache-miss page, in as few browser round trips as possible.
- *
- * `studio_export_frames` has always taken `pageIds[]` and captured the batch
- * behind one bridge call; this tool was still asking for one page at a time
- * inside its per-page loop, so a five-screen verification paid five sequential
- * bridge round trips — each one a canvas pan, a frame mount, a settle wait and
- * a rasterise — when it could have paid one. That was the difference between
- * roughly a minute and roughly fifteen seconds on the loop the system prompt
- * tells the agent to run after every fix pass.
- *
- * Grouped by dpr rather than sent as a single call because the dpr is exactly
- * what makes a diff EXACT rather than resampled (`captureDprFor`), and one
- * capture call applies one dpr to its whole batch. In the ordinary case —
- * screens of one size measured against references of one size — every page
- * shares a dpr and this is a single call.
- *
- * W4-2A — routed through `capture/captureFrames.ts` rather than straight at
- * the editor bridge, so a measurement runs headlessly by default. That is not
- * merely a latency win: a comparison against a design reference is a question
- * about what is ON DISK, and answering it used to require a browser tab whose
- * viewport it then hijacked. The live bridge remains the automatic fallback.
- */
-async function captureMissedPages(
-  userId: string,
-  dir: string,
-  targets: readonly { pageId: string; dpr: number | null }[],
-  signal: AbortSignal | undefined,
-): Promise<{ captures: Map<string, PageCapture>; source: 'headless' | 'live' | 'none' }> {
-  const byDpr = new Map<number | null, string[]>()
-  for (const target of targets) {
-    const group = byDpr.get(target.dpr)
-    if (group) group.push(target.pageId)
-    else byDpr.set(target.dpr, [target.pageId])
-  }
-
-  const captures = new Map<string, PageCapture>()
-  let source: 'headless' | 'live' | 'none' = 'none'
-  for (const [dpr, pageIds] of byDpr) {
-    const captured = await captureFrames({
-      userId,
-      dir,
-      pageIds,
-      ...(dpr === null ? {} : { dpr }),
-      // This capture is measured server-side with pixelmatch, not shown to
-      // the model by default — the vision-safe ~1568px edge clamp exists for
-      // a reason that does not apply here (A2). Model visibility is decided
-      // separately by `includeImages`.
-      purpose: 'measurement',
-      // Only the live-bridge FALLBACK pays this wait — see `captureFrames`.
-      reloadBeforeLiveFallback: { boardsChanged: true },
-      ...(signal ? { signal } : {}),
-    })
-    if (captured.source !== 'none') source = captured.source
-    if (!captured.output.ok) {
-      // A transport-level failure is the whole group's failure, but never the
-      // whole call's: pages in another dpr group, and every cache hit, stand.
-      const error = captured.output.error ?? 'The capture request failed.'
-      for (const pageId of pageIds) captures.set(pageId, { ok: false, error })
-      continue
-    }
-    const frames = (captured.output.data as { frames?: CapturedFrame[] } | null)?.frames ?? []
-    for (const frame of frames) {
-      captures.set(frame.pageId, { ok: true, frame, images: captured.output.images })
-    }
-  }
-  return { captures, source }
-}
-
 interface PageCompareSuccess {
   ok: true
   page: { id: string; title: string }
@@ -285,7 +222,7 @@ interface PageCompareSuccess {
   reference: { id: string; label?: string; width: number; height: number; autoSelected: boolean }
   similarityScore: number
   diffPercent: number
-  thresholds: { passScore: number; maxRegionCoverage: number }
+  thresholds: { fidelityMode: FidelityMode; passScore: number; maxRegionCoverage: number; maxRegionPixels: number | null }
   capture: CachedCompareVerdict['capture']
   structuralRegionCount: number
   regions: CachedCompareVerdict['regions']
@@ -349,6 +286,7 @@ export const studioCompareTool: AiTool = {
       pages: requested,
       referenceId,
       topN,
+      fidelityMode: fidelityModeArg,
       passScore,
       maxRegionCoverage,
       includeImages,
@@ -358,6 +296,7 @@ export const studioCompareTool: AiTool = {
       pages?: string[]
       referenceId?: string
       topN?: number
+      fidelityMode?: FidelityMode
       passScore?: number
       maxRegionCoverage?: number
       includeImages?: boolean
@@ -382,8 +321,9 @@ export const studioCompareTool: AiTool = {
 
     const pageById = new Map(pages.map((p) => [p.id, p]))
     const cap = topN ?? DEFAULT_TOP_N
-    const requiredScore = passScore ?? DEFAULT_PASS_SCORE
-    const coverageLimit = maxRegionCoverage ?? DEFAULT_MAX_REGION_COVERAGE
+    // Tier 4 of the precedence chain, read once for the whole batch — it is
+    // the same account and the same project for every page in the call.
+    const projectFidelityMode = readAgentSessionFidelityMode(readStudioMeta(dir), studioAgentUserKey(ctx.userId)) ?? undefined
 
     // 1 (reference half). Resolve each page's reference and cache key up
     // front — cheap, no bridge, no capture — so the cache lookup below can
@@ -394,6 +334,8 @@ export const studioCompareTool: AiTool = {
       referenceError?: string
       reference?: DesignReference
       autoSelected?: boolean
+      /** The resolved mode and the numbers it produced, per page — see the map below for why this is not one value for the batch. */
+      grading?: PageGrading
       cacheKey?: string
       cached?: CachedCompareVerdict | null
     }
@@ -401,13 +343,30 @@ export const studioCompareTool: AiTool = {
       const page = pageById.get(pageId)!
       const resolved = resolveDesignReference(dir, pageId, referenceId)
       if (!resolved.ok) return { pageId, page, referenceError: resolved.error }
-      const cacheKey = buildCompareCacheKey(dir, pageId, resolved.reference.id, requiredScore, coverageLimit, cap)
+
+      // W9-2 — the bar is resolved PER PAGE (`compareGrading.ts`), and a
+      // strict call against a project-wide stand-in is refused there rather
+      // than graded.
+      const graded = resolvePageGrading({
+        pageTitle: page.title,
+        pageId,
+        resolved,
+        toolArg: fidelityModeArg,
+        turn: ctx.fidelityMode,
+        project: projectFidelityMode,
+        passScore,
+        maxRegionCoverage,
+      })
+      if (!graded.ok) return { pageId, page, referenceError: graded.error }
+      const { grading } = graded
+      const cacheKey = buildCompareCacheKey(dir, pageId, resolved.reference.id, grading.mode, grading.requiredScore, grading.coverageLimit, cap)
       const cached = forceRecapture ? null : getCachedCompareVerdict(cacheKey)
       return {
         pageId,
         page,
         reference: resolved.reference,
         autoSelected: resolved.implicit,
+        grading,
         cacheKey,
         cached,
       }
@@ -462,7 +421,12 @@ export const studioCompareTool: AiTool = {
           reference: { id: ref.id, ...(ref.label ? { label: ref.label } : {}), width: ref.width, height: ref.height, autoSelected },
           similarityScore: c.similarityScore,
           diffPercent: c.diffPercent,
-          thresholds: { passScore: requiredScore, maxRegionCoverage: coverageLimit },
+          thresholds: {
+            fidelityMode: entry.grading!.mode,
+            passScore: entry.grading!.requiredScore,
+            maxRegionCoverage: entry.grading!.coverageLimit,
+            maxRegionPixels: entry.grading!.maxRegionPixelsAt1x,
+          },
           capture: c.capture,
           structuralRegionCount: c.structuralRegionCount,
           regions: c.regions,
@@ -539,17 +503,10 @@ export const studioCompareTool: AiTool = {
         topN: cap,
       })
 
+      const grading = entry.grading!
       const worstRegion = diff.regions[0]
-      const structuralRegions = diff.regions.filter((r) => r.frameCoveragePercent > coverageLimit)
-      const pass = diff.similarityScore >= requiredScore && structuralRegions.length === 0
-
-      const verdict = pass
-        ? `Matches the reference: ${diff.similarityScore.toFixed(2)}% similar, no structural differences. Remaining differences are below the ${coverageLimit}%-of-frame floor — that is text rasterisation, not design.`
-        : diff.similarityScore < requiredScore && structuralRegions.length > 0
-          ? `Does NOT match: ${diff.similarityScore.toFixed(2)}% similar (needs ${requiredScore}%), and ${structuralRegions.length} region(s) are large enough to be structural. Fix the largest region first — it is listed first in regions[] with the node ids it covers — then measure again.`
-          : structuralRegions.length > 0
-            ? `Does NOT match: overall similarity is fine (${diff.similarityScore.toFixed(2)}%) but ${structuralRegions.length} region(s) differ structurally — something in a specific place is wrong, not the whole screen. Start with regions[0].`
-            : `Does NOT match: ${diff.similarityScore.toFixed(2)}% similar (needs ${requiredScore}%), spread thinly rather than concentrated in one region. Usually a colour, a font, or a global spacing value that is slightly off everywhere.`
+      const { pass, verdict, structuralRegions, regionPixelLimit } =
+        gradeFrameDiff(diff, grading, authoredFrameWidth(dir, entry.pageId))
 
       const captureMeta: CachedCompareVerdict['capture'] = {
         width: diff.width,
@@ -570,7 +527,12 @@ export const studioCompareTool: AiTool = {
         reference: { id: ref.id, ...(ref.label ? { label: ref.label } : {}), width: ref.width, height: ref.height, autoSelected },
         similarityScore: diff.similarityScore,
         diffPercent: diff.diffPercent,
-        thresholds: { passScore: requiredScore, maxRegionCoverage: coverageLimit },
+        thresholds: {
+          fidelityMode: grading.mode,
+          passScore: grading.requiredScore,
+          maxRegionCoverage: grading.coverageLimit,
+          maxRegionPixels: regionPixelLimit,
+        },
         capture: captureMeta,
         structuralRegionCount: structuralRegions.length,
         regions: diff.regions,
@@ -618,7 +580,12 @@ export const studioCompareTool: AiTool = {
     // that account's Stop gate, and must never unblock anybody else's.
     const agentUserKey = studioAgentUserKey(ctx.userId)
     for (const result of results) {
-      if (result.ok && result.pass) recordPassingCompare(dir, agentUserKey, result.page.id, result.reference.id)
+      if (result.ok && result.pass) {
+        // The mode is recorded WITH the pass, not inferred later: the Stop
+        // gate reads this file from a different process and has no way to
+        // reconstruct which bar this verdict cleared.
+        recordPassingCompare(dir, agentUserKey, result.page.id, result.reference.id, result.thresholds.fidelityMode)
+      }
     }
 
     const passCount = results.filter((r) => r.ok && r.pass).length

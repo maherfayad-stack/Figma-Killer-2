@@ -15,13 +15,22 @@ import type { AgentRoutedTurn } from './types'
 
 export type AgentSessionControlsState = Pick<
   AgentSlice,
-  'agentEffort' | 'agentPermissionMode' | 'agentRoutedTurn'
+  'agentEffort' | 'agentPermissionMode' | 'agentRoutedTurn' | 'agentFidelityMode'
 >
-export type AgentSessionControlsActions = Pick<AgentSlice, 'setAgentEffort' | 'setAgentPermissionMode'>
+export type AgentSessionControlsActions = Pick<
+  AgentSlice,
+  'setAgentEffort' | 'setAgentPermissionMode' | 'setAgentFidelityMode'
+>
 
 export function agentSessionControlsInitialState(): AgentSessionControlsState {
   return {
     agentEffort: null,
+    // Null, not a mode: the server resolves the project's own default (and
+    // the derived reference-armed value) when the turn carries nothing. A
+    // client-side literal here would silently outrank a default the user
+    // saved for this project, which is the one thing the precedence chain
+    // exists to prevent.
+    agentFidelityMode: null,
     // Read-only, server-reported, and null until a routing-capable driver
     // reports one — see `AgentSlice.agentRoutedTurn`.
     agentRoutedTurn: null,
@@ -62,6 +71,9 @@ export function createAgentSessionControlsActions(set: EditorStoreSet): AgentSes
     setAgentPermissionMode(mode) {
       set({ agentPermissionMode: mode })
     },
+    setAgentFidelityMode(mode) {
+      set({ agentFidelityMode: mode })
+    },
   }
 }
 
@@ -79,8 +91,9 @@ export function buildChatRequestBody(params: {
   workspaceDir: string | undefined
   agentEffort: AgentSlice['agentEffort']
   agentPermissionMode: AgentSlice['agentPermissionMode']
+  agentFidelityMode: AgentSlice['agentFidelityMode']
 }): AiChatRequestBody {
-  const { conversationId, content, snapshot, workspaceDir, agentEffort, agentPermissionMode } = params
+  const { conversationId, content, snapshot, workspaceDir, agentEffort, agentPermissionMode, agentFidelityMode } = params
   return {
     conversationId,
     content: [...content],
@@ -88,6 +101,9 @@ export function buildChatRequestBody(params: {
     ...(workspaceDir ? { workspaceDir } : {}),
     ...(agentEffort ? { effort: agentEffort } : {}),
     ...(agentPermissionMode ? { permissionMode: agentPermissionMode } : {}),
+    // Omitted when null so the server's own precedence chain runs — sending a
+    // fabricated 'balanced' would outrank this project's saved default.
+    ...(agentFidelityMode ? { fidelityMode: agentFidelityMode } : {}),
   }
 }
 

@@ -21,6 +21,7 @@ import {
   type SiteAgentSnapshot,
 } from './tools/site'
 import { buildStudioAgentSystemPrompt, studioPromptContextFromProfile } from './tools/studio'
+import type { FidelityMode } from '../handlers/studio/fidelityMode'
 import { buildStudioLiveDigest } from './tools/studio/liveDigest'
 import { StudioAgentSnapshotSchema } from './tools/studio/snapshot'
 import { resolveProjectProfile } from '../handlers/studio/projectProbe'
@@ -85,6 +86,14 @@ export async function buildStudioProjectSystemPrompt(
   liveDigestOptions?: Parameters<typeof buildStudioLiveDigest>[3],
   /** This turn's own latest user message, plain text — threaded straight through to `buildStudioLiveDigest`'s Figma-URL nudge (verification-gate item 4). `undefined` when the caller has no text to offer (an image-only turn), which simply means the nudge can never fire. */
   userMessageText?: string,
+  /**
+   * W9-2's already-resolved fidelity mode for this turn — `chat.ts` runs
+   * `resolveFidelityMode` once (it is the only caller holding the turn value
+   * AND the account key needed to read the project default) and passes the
+   * answer down. Omitted by the tests and the CMS path, which fall back to
+   * `buildStudioAgentSystemPrompt`'s own `balanced` default.
+   */
+  fidelityMode?: FidelityMode,
 ): Promise<string[]> {
   let ctx: ReturnType<typeof studioPromptContextFromProfile>
   try {
@@ -94,7 +103,7 @@ export async function buildStudioProjectSystemPrompt(
     ctx = studioPromptContextFromProfile(dir, name, trust, profile)
   } catch (err) {
     console.error('[ai/chat] failed to resolve the studio project profile, using the unavailable fallback:', err)
-    return buildStudioAgentSystemPrompt(null, tools)
+    return buildStudioAgentSystemPrompt(null, tools, null, fidelityMode)
   }
 
   let live: Awaited<ReturnType<typeof buildStudioLiveDigest>> | null = null
@@ -109,7 +118,7 @@ export async function buildStudioProjectSystemPrompt(
     console.error('[ai/chat] invalid studio snapshot, continuing without the live digest:', parsedSnapshot.errors)
   }
 
-  return buildStudioAgentSystemPrompt(ctx, tools, live)
+  return buildStudioAgentSystemPrompt(ctx, tools, live, fidelityMode)
 }
 
 function emptySiteAgentSnapshot(): SiteAgentSnapshot {

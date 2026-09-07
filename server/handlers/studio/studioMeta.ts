@@ -43,6 +43,7 @@ import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { ProjectProfileSchema } from './projectProfileSchema'
 import { LastDeploySchema } from './deploySchema'
 import { RegisteredMcpServerSchema } from '@core/ai'
+import { FIDELITY_MODES, type FidelityMode } from './fidelityMode'
 
 /**
  * The three trust tiers §0 of the V2 plan declares per project. Default:
@@ -68,13 +69,16 @@ const FrameDefaultsSchema = Type.Object({
   height: Type.Optional(Type.Number({ minimum: 1 })),
 })
 
+const FidelityModeSchema = Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)))
+
 const AgentEffortSchema = Type.Union([
   Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
 ])
 
-/** One account's session controls for this project. Grows with any future per-user control (fidelity mode is the next candidate) — the map below is the shape those arrive into. */
+/** One account's session controls for this project. Two fields today — reasoning effort and W9-2's fidelity mode — and the shape any future per-user control arrives into. */
 const AgentSessionForUserSchema = Type.Object({
   effort: Type.Optional(AgentEffortSchema),
+  fidelityMode: Type.Optional(FidelityModeSchema),
 })
 
 /**
@@ -102,10 +106,13 @@ const AgentSessionForUserSchema = Type.Object({
  */
 const AgentSessionSchema = Type.Object({
   effort: Type.Optional(AgentEffortSchema),
+  /** W9-2's per-project fidelity default, project-wide. Read as the fallback for an account with no `byUser` entry, exactly as the bare `effort` above is. */
+  fidelityMode: Type.Optional(FidelityModeSchema),
   byUser: Type.Optional(Type.Record(Type.String(), AgentSessionForUserSchema)),
 })
 export type AgentSession = Static<typeof AgentSessionSchema>
 export type AgentSessionEffort = Static<typeof AgentEffortSchema>
+export type AgentSessionControls = Static<typeof AgentSessionForUserSchema>
 
 /** This account's persisted effort for a project: its own entry, else the pre-`byUser` project-wide value, else none. */
 export function readAgentSessionEffort(meta: StudioMeta, userKey: string): AgentSessionEffort | null {
@@ -114,19 +121,52 @@ export function readAgentSessionEffort(meta: StudioMeta, userKey: string): Agent
 }
 
 /**
- * The `agentSession` patch that records ONE account's effort, preserving
- * every other account's entry. `mergeStudioMeta` merges shallowly (by design
- * — it is one `{...a, ...b}`), so the whole `agentSession` object has to be
- * rebuilt here rather than half-written by the caller.
+ * This account's persisted fidelity mode for a project — tier 4 of
+ * `resolveFidelityMode`'s precedence. Same own-entry-then-project-wide fold
+ * `readAgentSessionEffort` uses; `null` means the project has no saved
+ * default and the derived tier answers instead.
+ *
+ * Persisting this is safe in a way persisting `permissionMode` is not: the
+ * direction a reset takes you is `strict`-to-nothing, i.e. toward measuring
+ * MORE, never toward a looser gate arriving without the user.
  */
-export function withAgentSessionEffort(
+export function readAgentSessionFidelityMode(meta: StudioMeta, userKey: string): FidelityMode | null {
+  const session = meta.agentSession
+  return session?.byUser?.[userKey]?.fidelityMode ?? session?.fidelityMode ?? null
+}
+
+/**
+ * The `agentSession` patch that records ONE account's session controls,
+ * preserving every other account's entry AND every control this call does not
+ * mention. `mergeStudioMeta` merges shallowly (by design — it is one
+ * `{...a, ...b}`), so the whole `agentSession` object has to be rebuilt here
+ * rather than half-written by the caller.
+ *
+ * A field present-and-`null` in `patch` CLEARS that control; a field absent
+ * from `patch` is left alone. The distinction matters because the route
+ * accepts a partial save — changing fidelity mode must not silently drop the
+ * effort this account chose three sessions ago.
+ */
+export function withAgentSessionControls(
   meta: StudioMeta,
   userKey: string,
-  effort: AgentSessionEffort | null,
+  patch: { effort?: AgentSessionEffort | null; fidelityMode?: FidelityMode | null },
 ): AgentSession {
   const session = meta.agentSession ?? {}
   const byUser = { ...(session.byUser ?? {}) }
-  if (effort) byUser[userKey] = { effort }
+  const current = byUser[userKey] ?? {}
+  const next: AgentSessionControls = { ...current }
+  if ('effort' in patch) {
+    if (patch.effort) next.effort = patch.effort
+    else delete next.effort
+  }
+  if ('fidelityMode' in patch) {
+    if (patch.fidelityMode) next.fidelityMode = patch.fidelityMode
+    else delete next.fidelityMode
+  }
+  // An account that has cleared every control keeps no entry at all — an
+  // empty object on disk claims a choice nobody made.
+  if (Object.keys(next).length > 0) byUser[userKey] = next
   else delete byUser[userKey]
   return { ...session, byUser }
 }
