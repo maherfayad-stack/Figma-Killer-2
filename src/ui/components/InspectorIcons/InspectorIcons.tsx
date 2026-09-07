@@ -268,6 +268,24 @@ export function GapIcon(props: IconProps) {
   )
 }
 
+/**
+ * `row-gap`'s mark — `GapIcon` transposed.
+ *
+ * `GapIcon` draws two bars side by side with a dashed rule between them,
+ * which is a picture of a COLUMN gap. `row-gap` and `column-gap` are always
+ * shown as a pair in the layout settings popover, so the pair needs two
+ * pictures that differ along the axis they actually differ on; one shared
+ * glyph plus two captions is the caption-above-field form this replaces.
+ */
+export function RowGapIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M4 3h16v6H4V3Zm0 12h16v6H4v-6Zm3-4h3v2H7v-2Zm5 0h3v2h-3v-2Zm5 0h2v2h-2v-2Zm-13 0h2v2H4v-2Z"
+    />
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Border marks
 // ---------------------------------------------------------------------------

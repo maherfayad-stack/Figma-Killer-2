@@ -70,7 +70,7 @@
     z-index: 99;
     padding: var(--space-4xl);
     padding-top: var(--space-8xl);
-    padding-bottom: var(--space-l);
+    padding-bottom: var(--inspector-space-l);
     background: linear-gradient(0, var(--panel-fade-bg) 50%, transparent);
 }
 
@@ -79,7 +79,7 @@
     position: sticky;
     top: 0;
     align-self: start;
-    padding-top: var(--space-3xs);
+    padding-top: var(--inspector-space-3xs);
 }
 
 /* ── Generated utility lock wrapper ─────────────────────────────────────── */
@@ -96,7 +96,7 @@
 }
 
 .targetBlockLabel {
-    padding: var(--space-2xs) var(--space-l);
+    padding: var(--inspector-space-2xs) var(--inspector-space-l);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-weight: 700;
@@ -123,8 +123,8 @@
 /* Phantom controls — read-only, slightly dimmed */
 .lockedPreviewTeaser {
     display: grid;
-    gap: var(--space-s);
-    padding: var(--space-l) var(--space-xl);
+    gap: var(--inspector-space-s);
+    padding: var(--inspector-space-l) var(--inspector-space-xl);
     pointer-events: none;
     opacity: 0.55;
     user-select: none;
@@ -145,7 +145,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--space-m);
+    gap: var(--inspector-space-m);
     padding: var(--space-4xl) var(--space-5xl) var(--space-5xl);
     text-align: center;
 }
@@ -160,7 +160,7 @@
 .lockedPreviewCtaActions {
     display: flex;
     align-items: center;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -169,16 +169,16 @@
 
 .generatedUtilityState {
     display: grid;
-    gap: var(--space-s);
-    margin: var(--space-s) var(--space-l) var(--space-xl);
-    padding: var(--space-l);
+    gap: var(--inspector-space-s);
+    margin: var(--inspector-space-s) var(--inspector-space-l) var(--inspector-space-xl);
+    padding: var(--inspector-space-l);
     border-radius: 12px;
     background: var(--bg-surface);
 }
 
 .generatedUtilityHeader {
     display: grid;
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
 }
 
 .generatedUtilityKicker {
@@ -210,7 +210,7 @@
 .generatedUtilityMeta {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
 }
 
 .generatedUtilityMeta span {
@@ -220,5 +220,5 @@
     font-size: var(--text-2xs);
     font-weight: 700;
     line-height: 1;
-    padding: var(--space-3xs) var(--space-s);
+    padding: var(--inspector-space-3xs) var(--inspector-space-s);
 }

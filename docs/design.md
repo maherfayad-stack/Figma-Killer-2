@@ -411,6 +411,39 @@ meaning comes from a glyph inside it.
 | `--inspector-field-bg` / `-hover` | overlay 5% / 10% | Field fill |
 | `--inspector-divider` | overlay 10% | The hairline between sections |
 
+**Inspector spacing is frozen, not fluid.** The admin's `--space-*` scale is
+`clamp()`-based — every gutter in it grows with the viewport, which is right
+for a page of forms and wrong for a panel whose job is to hold a fixed grid of
+24px rows at a fixed 290px width. A panel that silently gains ~1px per gutter
+on a wide monitor gains a section's worth of scroll for no reason the user can
+name. So the inspector has its own pinned scale, the `--space-*` floors:
+
+| Token | Value | | Token | Value |
+|---|---|---|---|---|
+| `--inspector-space-4xs` | 2px | | `--inspector-space-s` | 6px |
+| `--inspector-space-3xs` | 3px | | `--inspector-space-m` | 8px |
+| `--inspector-space-2xs` | 4px | | `--inspector-space-l` | 10px |
+| `--inspector-space-xs` | 5px | | `--inspector-space-xl` | 12px |
+
+CSS modules under `panels/PropertiesPanel/`, `property-controls/` and
+`ui/components/Section/` use these instead of `--space-*`; everything else in
+the admin keeps the fluid scale. `inspectorGeometryBudget.test.ts` gates both
+halves — that every `--inspector-*` token is a literal px (no `clamp()`, no
+`vw`), and that no inspector module reaches back into the fluid small steps.
+
+**The panel's default width is 290** (`PROPERTIES_PANEL_DEFAULT_WIDTH` in
+`uiSlice.ts`): Figma's 240px sidebar plus this panel's two extras, the category
+rail and a scrollbar gutter. It is still user-resizable between
+`SIDEBAR_MIN_WIDTH` (260) and `SIDEBAR_MAX_WIDTH` (520).
+
+**Icon buttons sit on the row grid too.** `Button` carries an inspector skin
+under `data-field-skin="inspector"`: `size="xs"` and `size="sm"` icon-only
+buttons square to `--inspector-row-h` at `--inspector-field-radius`, and a
+ghost one hovers to `--inspector-field-bg` — the fill a resting field already
+has, so a header affordance never lights up brighter than the controls under
+it. `size="micro"` is deliberately exempt: it is the mark inside a class pill,
+where the button is smaller than a row on purpose.
+
 `ControlRow` and every control that has to line up with it read
 `--control-label-w` and `--control-row-h` (100px / 28px by default); the panel
 root rebinds both to its `--inspector-*` values. **Never write the label column
@@ -434,8 +467,15 @@ crowded.
    letterform there via `Input`/`TokenAwareInput`'s `prefix` or `ScrubInput`'s
    `label`: `W` / `H` / `X` / `Y`, the min/max size constraints, line-height,
    letter-spacing, aspect-ratio, opacity, z-index, gap, stroke weight, corner
-   radius. The glyph is `aria-hidden`, so the control **must** still carry the
-   property's name as its `aria-label`.
+   radius. `PROPERTY_FIELD_GLYPHS` in `cssPropertyIcons.ts` is the registry for
+   the properties that go through the generic row, and a property listed there
+   also earns the drag-scrub gesture, because the glyph IS the scrub handle.
+   Where two properties differ only along an axis they get two glyphs that
+   differ along that axis — `column-gap` takes `GapIcon` and `row-gap` its
+   transpose `RowGapIcon`, because the pair is always shown together and one
+   shared picture plus two captions is the form this replaces. The glyph is
+   `aria-hidden`, so the control **must** still carry the property's name as
+   its `aria-label`.
 3. A value that already reads as its own label gets neither
    (`isSelfDescribingProperty`): `Bold`, `16px`, `border-box`, and a colour
    swatch beside its hex. The `background` shorthand is deliberately NOT in

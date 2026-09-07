@@ -20,7 +20,7 @@
     display: grid;
     grid-template-columns: 16px minmax(0, 1fr) minmax(0, 84px);
     align-items: baseline;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     width: 100%;
     min-width: 0;
     text-align: left;
@@ -77,7 +77,7 @@
 
 .empty {
     margin: 0;
-    padding: var(--space-s) var(--space-m);
+    padding: var(--inspector-space-s) var(--inspector-space-m);
     max-width: 240px;
     color: var(--text-subtle);
     font-size: var(--text-2xs);
@@ -87,7 +87,7 @@
 /* Fixed search field above the scrolling list — the menu's `header` slot, so
    the filter stays put while the styles scroll under it. */
 .search {
-    padding: var(--space-3xs) var(--space-3xs) var(--space-2xs);
+    padding: var(--inspector-space-3xs) var(--inspector-space-3xs) var(--inspector-space-2xs);
 }
 
 /* The count of what the cap left out. Stated rather than silently dropped:
@@ -95,7 +95,7 @@
    than a long one. */
 .more {
     margin: 0;
-    padding: var(--space-2xs) var(--space-s) var(--space-3xs);
+    padding: var(--inspector-space-2xs) var(--inspector-space-s) var(--inspector-space-3xs);
     border-top: 1px solid var(--border-muted);
     color: var(--text-subtle);
     font-size: var(--text-2xs);

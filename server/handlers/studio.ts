@@ -255,6 +255,7 @@ import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFrame
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
+import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatch } from './studioWriteback'
 import { tryServeStudioProbe } from './studio/projectProbe'
@@ -397,6 +398,13 @@ export async function tryServeStudio(
       // through here and none of which pass through the launcher. Best-effort
       // (see `recordProjectOpened`); W7-5's onboarding checklist reads it.
       recordProjectOpened(dir)
+      // W9-5 lever 3 — a project on the board is a project about to be
+      // captured (`studio_screenshot`/`studio_compare` are the agent's own
+      // verify loop). Launch the headless Chromium now, off the response's
+      // critical path, so the first capture does not pay the ~300-600 ms cold
+      // launch. Full loads only: a targeted reload is not a project opening.
+      // Fire-and-forget and self-limiting — see `prewarmCaptureBrowser`.
+      if (!pageIdsParam) prewarmCaptureBrowser()
       const missingPageIds = missingStudioLoadPageIds(pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)

@@ -78,6 +78,8 @@ export async function captureMissedPages(
       // a reason that does not apply here (A2). Model visibility is decided
       // separately by `includeImages`.
       purpose: 'measurement',
+      // Only the live-bridge FALLBACK pays this wait — see `captureFrames`.
+      reloadBeforeLiveFallback: { boardsChanged: true },
       ...(signal ? { signal } : {}),
     })
     if (captured.source !== 'none') source = captured.source

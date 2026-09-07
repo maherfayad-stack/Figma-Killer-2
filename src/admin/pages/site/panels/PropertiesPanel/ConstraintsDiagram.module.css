@@ -1,0 +1,135 @@
+/* ConstraintsDiagram — Figma's crosshair.
+ *
+ * Two nested 3×3 grids. The OUTER one is the containing block: its middle
+ * cell holds the element box, and the four cells around it are the edge
+ * bars. The INNER one is the element: its middle row is the horizontal
+ * centring line and its top-middle cell is the vertical one (the bottom-
+ * middle cell mirrors that line decoratively, so the two hit areas stay
+ * disjoint while the drawing stays symmetric).
+ *
+ * Sizes are fixed pixels on purpose — this is a diagram at one size, not a
+ * responsive layout, and every cell has to line up with the line drawn in
+ * the next cell over. Padding and gaps still come from the space scale.
+ */
+
+.frame {
+    display: grid;
+    grid-template-columns: 1fr 34px 1fr;
+    grid-template-rows: 1fr 34px 1fr;
+    width: 76px;
+    height: 76px;
+    flex: 0 0 auto;
+    border: 1px solid var(--overlay-10);
+    border-radius: var(--radius-sm);
+    background: var(--inspector-field-bg);
+}
+
+.frame[data-disabled="true"] {
+    opacity: 0.55;
+}
+
+/* Every clickable line. The Button primitive brings its own padding, min
+ * size, and radius; the doubled class out-specifies them without
+ * `!important`, the same way `PositionSection.module.css` overrides the
+ * clear button. */
+.bar.bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: none;
+    color: var(--text-subtle);
+}
+
+.bar.bar:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+}
+
+.bar.bar[aria-pressed="true"] {
+    background: none;
+    color: var(--text-bright);
+}
+
+.lineV {
+    width: 2px;
+    height: 100%;
+    border-radius: 1px;
+    background: currentcolor;
+}
+
+.lineH {
+    width: 100%;
+    height: 2px;
+    border-radius: 1px;
+    background: currentcolor;
+}
+
+.edgeTop {
+    grid-area: 1 / 2 / 2 / 3;
+}
+
+.edgeLeft {
+    grid-area: 2 / 1 / 3 / 2;
+}
+
+.edgeRight {
+    grid-area: 2 / 3 / 3 / 4;
+}
+
+.edgeBottom {
+    grid-area: 3 / 2 / 4 / 3;
+}
+
+/* The element itself. Dashed edges mean "this axis scales with the
+ * container" — the one constraint that pins nothing and would otherwise be
+ * indistinguishable from having no constraint at all. */
+.box {
+    grid-area: 2 / 2 / 3 / 3;
+    display: grid;
+    grid-template-columns: 1fr 10px 1fr;
+    grid-template-rows: 1fr 10px 1fr;
+    border: 1px solid var(--overlay-30);
+    border-radius: var(--radius-sm);
+    background: var(--overlay-5);
+}
+
+.box[data-x-mode="scale"] {
+    border-left-style: dashed;
+    border-right-style: dashed;
+}
+
+.box[data-y-mode="scale"] {
+    border-top-style: dashed;
+    border-bottom-style: dashed;
+}
+
+.centreY {
+    grid-area: 1 / 2 / 2 / 3;
+}
+
+.centreX {
+    grid-area: 2 / 1 / 3 / 4;
+}
+
+/* The lower half of the vertical centring line: drawn, never clicked, so
+ * the horizontal line's hit area can own the whole middle row. */
+.centreYMirror {
+    grid-area: 3 / 2 / 4 / 3;
+    justify-self: center;
+    width: 2px;
+    height: 100%;
+    border-radius: 1px;
+    background: var(--text-subtle);
+    pointer-events: none;
+}
+
+.box[data-y-mode="center"] .centreYMirror {
+    background: var(--text-bright);
+}

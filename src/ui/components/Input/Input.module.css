@@ -320,7 +320,7 @@
 }
 
 [data-field-skin='inspector'] .input {
-    padding-inline: var(--space-xs);
+    padding-inline: var(--inspector-space-xs);
 }
 
 /* Glyph prefixes (`W`, `H`, the line-height mark) are the field's LABEL in
@@ -330,7 +330,7 @@
 [data-field-skin='inspector'] .prefix {
     justify-content: center;
     min-width: 16px;
-    padding-inline: var(--space-4xs) 0;
+    padding-inline: var(--inspector-space-4xs) 0;
     color: var(--text-subtle);
 }
 

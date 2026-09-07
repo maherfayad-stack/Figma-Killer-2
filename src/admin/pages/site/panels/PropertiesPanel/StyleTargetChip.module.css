@@ -11,9 +11,9 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
     min-width: 0;
-    padding: var(--space-2xs) var(--inspector-pad-x);
+    padding: var(--inspector-space-2xs) var(--inspector-pad-x);
 }
 
 .editingLabel {
@@ -25,12 +25,12 @@
 .chips {
     display: flex;
     align-items: center;
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
     min-width: 0;
 }
 
 .chip.chip {
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     /* Caps the chip at half a 260px panel's content column so a long class
        name ellipses inside the chip instead of widening the row. */
     max-width: 120px;
@@ -60,7 +60,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     height: 22px;
-    padding: 0 var(--space-xs);
+    padding: 0 var(--inspector-space-xs);
     border: 1px solid var(--overlay-20);
     border-radius: var(--radius);
     background: transparent;

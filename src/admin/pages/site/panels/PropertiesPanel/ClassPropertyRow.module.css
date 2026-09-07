@@ -146,7 +146,7 @@
 .provenanceStrip {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
     color: var(--text-subtle);
     font-size: var(--text-3xs);
 }
@@ -154,7 +154,7 @@
 .provenanceLoser {
     display: inline-flex;
     align-items: baseline;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
 }
 
 .provenanceLoserLabel {

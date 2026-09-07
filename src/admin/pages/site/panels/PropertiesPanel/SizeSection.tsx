@@ -62,7 +62,14 @@ import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { hasStyleValue } from './styleValueUtils'
-import { SIZING_OPTIONS, currentSizingMode, sizingPatch, type SizingMode } from './elementSizing'
+import {
+  SIZING_OPTIONS,
+  currentSizingMode,
+  sizingPatch,
+  sizingUnavailableReason,
+  type SizingMode,
+  type SizingParentLayout,
+} from './elementSizing'
 import styles from './SizeSection.module.css'
 
 /** Marks are 13px to match the in-field glyphs the generic rows draw. */
@@ -84,6 +91,16 @@ interface SizeSectionProps {
   /** Patch-shaped hover / as-you-type preview channel. */
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
+  /**
+   * The selected element's REAL parent layout (`useSizingParentLayout`), or
+   * `null` when it can't be read. Fixed / Hug / Fill are meaningless without
+   * it — see `elementSizing.ts` — so `null` leaves every axis on Fixed and
+   * disables the other two modes with `parentLayoutReason` as the reason.
+   */
+  parentLayout?: SizingParentLayout | null
+  /** The named reason Hug/Fill are unavailable. Only read when `parentLayout`
+   *  is `null`; falls back to `sizingUnavailableReason`'s generic sentence. */
+  parentLayoutReason?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -131,11 +148,23 @@ const CONSTRAINTS: ReadonlyArray<ConstraintSpec> = [
 ]
 
 /** Per-axis mode menu — `SIZING_OPTIONS` plus an axis-worded, value-quoting
- *  `activeLabel` on `fixed` (F30's "Fixed width (54)"). */
-function sizingModes(axisNoun: 'width' | 'height'): AddablePropertyFieldMode[] {
+ *  `activeLabel` on `fixed` (F30's "Fixed width (54)").
+ *
+ *  `unavailableReason`, when present, disables Hug and Fill (never Fixed,
+ *  which needs no parent) and shows the reason as each row's tooltip rather
+ *  than dropping the rows — W8-4. */
+function sizingModes(
+  axisNoun: 'width' | 'height',
+  unavailableReason: string | undefined,
+): AddablePropertyFieldMode[] {
   return SIZING_OPTIONS.map((option) => {
     if (option.value !== 'fixed') {
-      return { value: option.value, label: option.label, word: option.word }
+      return {
+        value: option.value,
+        label: option.label,
+        word: option.word,
+        disabledReason: unavailableReason,
+      }
     }
     return {
       value: option.value,
@@ -165,6 +194,8 @@ export function SizeSection({
   onClearProperty,
   onPreview,
   onClearPreview,
+  parentLayout = null,
+  parentLayoutReason,
 }: SizeSectionProps) {
   // Law 3 reveal state — a constraint the user asked for via "Add …" but
   // hasn't necessarily committed a value into yet. A constraint that already
@@ -206,8 +237,32 @@ export function SizeSection({
         onPreview({ [property]: value ?? null } as Partial<CSSPropertyBag>)
     : undefined
 
+  // Hug and Fill are only offered while the parent's layout is known; the
+  // reason is threaded onto the disabled menu rows below.
+  const modeUnavailableReason = parentLayout
+    ? undefined
+    : (parentLayoutReason ?? sizingUnavailableReason(parentLayout))
+
+  /**
+   * Apply one mode switch. A parent-aware switch is not always a single
+   * property — Fill on a flex main axis writes `flex` AND clears `width` —
+   * so this commits every entry of the patch through the SAME per-property
+   * `onChange` the rest of the section writes through, rather than opening a
+   * second write path. `undefined` means clear, which `onChange` already
+   * treats as a removal.
+   */
   function handleModeChange(property: 'width' | 'height', nextMode: SizingMode) {
-    onChange(property, sizingPatch(nextMode, currentStyles[property]))
+    if (nextMode !== 'fixed' && modeUnavailableReason) return
+    const patch = sizingPatch(
+      nextMode,
+      property,
+      parentLayout,
+      storedStyles,
+      currentStyles[property],
+    )
+    for (const [key, value] of Object.entries(patch)) {
+      onChange(key as keyof CSSPropertyBag, value)
+    }
   }
 
   const axisField = (
@@ -218,7 +273,7 @@ export function SizeSection({
   ) => {
     const storedValue = storedStyles[property]
     const currentValue = currentStyles[property]
-    const mode = currentSizingMode(storedValue)
+    const mode = currentSizingMode(property, parentLayout, storedStyles)
     const isSet = hasStyleValue(storedValue)
     const placeholder = !isSet
       ? hasStyleValue(currentValue)
@@ -241,7 +296,7 @@ export function SizeSection({
           onChange={(next) => onChange(property, next)}
           onPreview={previewProperty ? (next) => previewProperty(property, next) : undefined}
           onClearPreview={onClearPreview}
-          modes={sizingModes(axisNoun)}
+          modes={sizingModes(axisNoun, modeUnavailableReason)}
           mode={mode}
           onModeChange={(next) => handleModeChange(property, next as SizingMode)}
           numericMode="fixed"

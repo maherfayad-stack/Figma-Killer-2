@@ -5,8 +5,8 @@
 .dropZone {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
-    padding: var(--space-xs);
+    gap: var(--inspector-space-xs);
+    padding: var(--inspector-space-xs);
     border: 1.5px dashed var(--border);
     border-radius: var(--radius);
     transition: background 80ms ease-out, border-color 80ms ease-out;
@@ -40,7 +40,7 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
     min-width: 0;
 }
 
@@ -51,7 +51,7 @@
 
 .hint {
     display: block;
-    margin-top: var(--space-2xs);
+    margin-top: var(--inspector-space-2xs);
     font-size: var(--text-2xs);
     color: var(--text-muted);
 }

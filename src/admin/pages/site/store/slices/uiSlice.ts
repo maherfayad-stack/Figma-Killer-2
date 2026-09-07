@@ -20,7 +20,16 @@ export type LeftSidebarPanelId =
 export type FrameworkPanelTab = 'home' | 'colors' | 'typography' | 'spacing'
 export type PropertiesPanelMode = 'docked' | 'floating'
 
-const PROPERTIES_PANEL_DEFAULT_WIDTH = 360
+/**
+ * Figma's right sidebar is 240px. 290 is that plus this panel's two extras:
+ * the vertical category rail (`--inspector-rail-w`, 32px) and a scrollbar
+ * gutter. The old 360 was not a design decision, it was the width a label
+ * column needed — and it made the two-up cells ~161px wide against Figma's
+ * ~104, which is the single loudest reason the panel did not read as an
+ * inspector. `SIDEBAR_MIN_WIDTH` (260) still bounds the drag handle, so a
+ * user who wants the old roominess can still pull it out to 520.
+ */
+const PROPERTIES_PANEL_DEFAULT_WIDTH = 290
 
 /**
  * Active document descriptor — tracks which canvas document is open.

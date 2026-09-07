@@ -14,7 +14,7 @@
 .section {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
 }
 
 /* ── Scrub row ─────────────────────────────────────────────────────────── */
@@ -23,7 +23,7 @@
     display: flex;
     align-items: center;
     gap: var(--inspector-field-gap);
-    padding: var(--space-2xs) var(--space-xs);
+    padding: var(--inspector-space-2xs) var(--inspector-space-xs);
 }
 
 .scrubTrack {
@@ -66,7 +66,7 @@
 .iterationRow {
     display: flex;
     align-items: center;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
 }
 
 .emptyNote {
@@ -81,8 +81,8 @@
 .keyframeStep {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2xs);
-    padding: var(--space-xs);
+    gap: var(--inspector-space-2xs);
+    padding: var(--inspector-space-xs);
     border-radius: var(--inspector-field-radius);
     background: var(--bg-surface-2);
 }
@@ -97,7 +97,7 @@
 .keyframeDeclaration {
     display: flex;
     align-items: center;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
 }
 
 /* ── Raw-text fallback (mirrors EffectsSection's) ──────────────────────── */
@@ -105,7 +105,7 @@
 .rawEditor {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
 }
 
 .rawEditorReason {

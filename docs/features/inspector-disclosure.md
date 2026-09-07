@@ -131,6 +131,18 @@ portals out of the panel, it sets `data-field-skin="inspector"` on its own root 
 any future portalled inspector surface must do the same, or it renders
 admin-shaped pill controls inside the design tool.
 
+**Viewport fit.** `useAnchoredFloating` only picks a *side*; it cannot help a
+panel that is taller than the viewport, which is every tabbed ⚙ popover opened
+from a trigger low in the Properties panel. `InspectorPopover` therefore runs a
+second, pure pass — `fitFloatingToViewport` in `src/ui/lib/floatingViewportFit.ts`
+— that clamps the origin against a 12px viewport margin and returns a
+`max-height` ceiling, published as `--inspector-popover-max-height`. The panel
+then never extends past the bottom (or any) screen edge; `.body` scrolls the
+overflow instead. Height is read from `offsetHeight`, not
+`getBoundingClientRect()`, because the latter includes the enter animation's
+`scale()` and measures short. Geometry is unit-tested in
+`src/ui/lib/floatingViewportFit.test.ts`.
+
 ### §3.2 `PropertyList` — used by G6, G7, G8
 
 The Fill / Stroke / Effects list shape (F13, F14, F16, F20). One component,
@@ -213,6 +225,40 @@ control folds into the field's own dropdown.
 
 *Shipped deviation:* `aspectRatio` and `boxSizing` went into a **Size** `⚙`
 popover, not the Layout `⚙`.
+
+#### Hug/Fill is resolved against the real parent (W8-4)
+
+`Fixed`/`Hug`/`Fill` are **intents**, and the CSS that expresses an intent
+depends entirely on how the element's parent lays it out. `elementSizing.ts`
+classifies each axis against the parent's *computed* `display`/`flex-direction`
+(`sizingAxisRole`) and writes accordingly:
+
+| Parent / axis | Fill | Hug |
+|---|---|---|
+| flex, **main** axis | `flex: 1 1 0` (clears the axis length) | `width\|height: fit-content` + `flex: 0 0 auto` |
+| flex, **cross** axis | `align-self: stretch` (clears the axis length) | `width\|height: fit-content` |
+| grid | `justify-self` (inline) / `align-self` (block) `: stretch`, clears the axis length | `width\|height: fit-content` |
+| block | `width\|height: 100%` | `width\|height: fit-content` |
+
+The earlier model wrote `fit-content`/`100%` unconditionally. `100%` on a flex
+child resolves against the container's content box and ignores `gap`, so a
+"Fill" item in a gapped row **overflowed the row and shoved its siblings out** —
+the control claimed one thing and the source did another.
+
+**Read-back mirrors the write.** `currentSizingMode` asks the same role
+question and looks for the same marker `sizingPatch` would have left, so the
+picker always reflects what is really in the source. A `width: 100%` on a flex
+child reads as **Fixed** — there it *is* just a literal length.
+
+**No parent layout ⇒ no Hug/Fill.** When the element's parent can't be resolved
+(its parent is a JSX call site in another file, nothing has rendered it on the
+canvas yet, or it has no parent node), the axis stays on `Fixed` and the Hug /
+Fill menu rows render **disabled with a named reason as their tooltip**
+(`AddablePropertyFieldMode.disabledReason`) rather than disappearing. The parent
+layout comes from `useSizingParentLayout` — a live `getComputedStyle` read of
+the parent's rendered element, the same source `SingleNodeAlignRow` uses for
+G10; a stored declaration cannot tell you what the cascade resolved `display`
+to.
 
 ### G3 — Layout: the settings popover (F3–F8)
 
@@ -396,6 +442,60 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
   (`50%`, a `var()`, a third z component). Rotation stays live through both —
   the collisions are independent. An unflipped element gets no `scale`
   declaration at all, never a no-op `scale: 1 1`.
+
+- **G10.3 — The constraints crosshair (W8-4).** Figma's constraints widget now
+  sits beside the side pickers in absolute/fixed mode
+  (`ConstraintsDiagram.tsx`) — four edge bars plus a centring line per axis,
+  over a square standing for the containing block. It is **presentation over
+  the pickers, not a replacement**: the pickers still own "which property does
+  the value land on", and both surfaces write through the same per-property
+  commit channel. What the crosshair adds is the two constraints a pair of
+  side pickers cannot express, and a read-back of which edges the element is
+  pinned to.
+
+  Every mapping and every refusal lives in one pure module,
+  `constraintMapping.ts` (unit-tested in `constraintMapping.test.ts`) — the
+  component owns pixels and pointer events only:
+
+  | Constraint | The CSS it actually is |
+  |---|---|
+  | Left / Top | the start inset set, the end inset cleared |
+  | Right / Bottom | the end inset set, the start inset cleared |
+  | Left and right (stretch) | **both** insets set, `width`/`height` cleared |
+  | Centre | `left: 50%` plus a `-50%` pull-back |
+  | Scale | both insets as **percentages** of the containing block, size cleared |
+
+  Centring writes the **standalone `translate` property**, never a
+  `transform: translateX(-50%)`, for the same reason `RotationRow` writes
+  standalone `rotate` and G10.2 writes standalone `scale`: one honest
+  declaration instead of rewriting one item of a function list. That leaves
+  exactly two collisions, both refused by name and surfaced as the disabled
+  control's tooltip (§8.4): `transform` already carrying a translate-family
+  function (CSS applies `translate` first, so the two would compound), and a
+  `translate` whose component on this axis is somebody else's real value
+  (`10px`, a `calc()`, a `var()`, a third z component). Leaving centring
+  releases only a pull-back this control itself wrote.
+
+  **Scale refuses without a measurement.** Percent insets are derived from the
+  element's used insets and the containing block's padding box, read off the
+  live canvas frame; with no frame reporting one, Scale is disabled with that
+  reason rather than converting against a guess. A `fixed` element resolves
+  against the viewport, which this read does not measure, so Scale refuses
+  there too.
+
+  **The whole cluster is gated on positioned context**
+  (`resolvePositionedContext`): `fixed` passes (the viewport is a real frame of
+  reference), `absolute` passes only when the element's own parent really is
+  its containing block, and an unverifiable parent stays disabled — the same
+  "no frame, no claim" posture `resolveAlignWrite` takes for the align row.
+  Normal-flow positions never reach the cluster at all (Law 5 already keeps
+  the constraints shape absolute-only).
+
+  Known limitation, inherited not introduced: one crosshair click can produce
+  two or three property writes (stretch sets both insets and clears the size),
+  which lands as that many undo entries — the panel's commit channel is
+  per-property. Same limitation `PositionConstraints` already documents for
+  moving a value between sides.
 
 ### G11 — Export (W8-4)
 

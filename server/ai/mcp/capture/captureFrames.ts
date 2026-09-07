@@ -27,6 +27,16 @@
  *     settle), so an install without a browser degrades to exactly today's
  *     behaviour instead of losing the tool.
  *
+ * ## Who waits for the canvas
+ *
+ * The live-reload wait (`awaitStudioLiveReload`) belongs to the LIVE path and
+ * lives here for that reason. A caller that wants disk truth sets
+ * `reloadBeforeLiveFallback`; the wait is then paid only in the bridge
+ * fallback below, never on the headless path (which re-parses from disk
+ * itself) and never for an explicit `source: 'live'` capture (whose point is
+ * the tab exactly as it stands). Before W9-5 each tool awaited it up front,
+ * on every call, for a renderer that was already current.
+ *
  * ## Failure honesty
  *
  * When both paths fail, the error names BOTH reasons. The old message —
@@ -39,6 +49,7 @@ import { aiToolError, type AiToolOutput, type CapturePurpose } from '@core/ai'
 import type { PreviewAxes } from '@core/studio-board'
 import type { AiBrowserBridge } from '../../runtime/types'
 import { awaitEditorBridgeForUser, editorBridgeScope } from '../editorBridge'
+import { awaitStudioLiveReload } from '../tools/studio/liveReloadPush'
 import { rememberedLaunchFailure } from './browserPool'
 import { captureFramesHeadless, type HeadlessCaptureFailure, type HeadlessCaptureOverrides } from './headlessCapture'
 
@@ -53,6 +64,20 @@ export interface CaptureFramesRequest {
   purpose?: CapturePurpose
   axes?: Partial<PreviewAxes>
   source?: CaptureSource
+  /**
+   * W9-5 lever 2 — set by a caller that wants DISK truth
+   * (`studio_screenshot`, `studio_compare`: "write the files, then look at
+   * them"). It makes the LIVE BRIDGE FALLBACK await a live-reload push for
+   * `pageIds` first, so a tab that has not re-read those files does not hand
+   * back the previous frame.
+   *
+   * It is deliberately NOT paid on the headless path — headless re-parses from
+   * disk on every navigation, so the wait bought a full browser round trip for
+   * a result that was already current — and deliberately NOT paid for an
+   * explicit `source: 'live'` capture, whose entire point is to photograph the
+   * tab as it stands, unsaved edits and all.
+   */
+  reloadBeforeLiveFallback?: { boardsChanged: boolean }
   signal?: AbortSignal
 }
 
@@ -150,6 +175,15 @@ export async function captureFrames(
   // `auto` — fall back to the live tab.
   const bridge = await awaitBridge(request.userId, request.signal)
   if (bridge) {
+    // The ONLY place a live-reload wait is worth paying — see
+    // `reloadBeforeLiveFallback`.
+    if (request.reloadBeforeLiveFallback) {
+      await awaitStudioLiveReload(request.userId, {
+        dir: request.dir,
+        pageIds: request.pageIds,
+        boardsChanged: request.reloadBeforeLiveFallback.boardsChanged,
+      })
+    }
     return { source: 'live', headlessFailure, output: await captureViaBridge(bridge, request) }
   }
 

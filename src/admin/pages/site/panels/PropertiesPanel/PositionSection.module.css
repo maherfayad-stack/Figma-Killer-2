@@ -6,14 +6,24 @@
 /* Align row (F1) — sits above the position switcher with a small gap below
  * it so it reads as its own row rather than crowding the switcher. */
 .alignRow {
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--inspector-space-xs);
 }
 
-/* F29 — the absolute/fixed constraint block: one row per axis, each a side
- * picker + value field. */
+/* F29 — the absolute/fixed constraint block: the two axis rows (each a side
+ * picker + value field) on the left, Figma's crosshair diagram on the right.
+ * The stack takes the remaining width and is allowed to shrink (`minmax(0,
+ * 1fr)`), so the fixed-size diagram never pushes a field out of the panel. */
 .constraintGrid {
     display: grid;
-    gap: var(--space-xs);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.constraintAxisStack {
+    display: grid;
+    min-width: 0;
+    gap: var(--inspector-space-xs);
 }
 
 .constraintCell {
@@ -21,7 +31,7 @@
     display: grid;
     grid-template-columns: 56px 1fr;
     align-items: center;
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
     color: var(--text);
 }
 
@@ -88,7 +98,7 @@
     display: flex;
     align-items: center;
     flex-shrink: 0;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
 }
 
 .settingsBadge {
@@ -159,7 +169,7 @@
 .rotationFallback {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
 }
 
 .rotationFallbackNote {
