@@ -38,7 +38,7 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { copyPngToClipboard } from '@site/panels/PropertiesPanel/nodeExportClient'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSelectors'
+import { selectActiveBoardFrames } from '@site/store/slices/boardSelectors'
 import { resolveCopyAsPngTarget, type CopyAsPngSelection } from './copyAsPngTarget'
 import { hasPendingTextEdit } from './pendingTextEdit'
 import { isTextInputTarget } from './useCanvasKeyboardShortcuts'
@@ -62,7 +62,7 @@ function readCopyAsPngSelection(): CopyAsPngSelection {
   const activeCanvasPage = selectActiveCanvasPage(state)
   const selectedNodeId = state.selectedNodeId
   const node = selectedNodeId ? activeCanvasPage?.nodes[selectedNodeId] ?? null : null
-  const frames = selectActiveBoard(state)?.frames ?? []
+  const frames = selectActiveBoardFrames(state)
   const selectedFramePageIds = state.selectedFrameIds
     .map((frameId) => frames.find((frame) => frame.id === frameId)?.pageId)
     .filter((pageId): pageId is string => typeof pageId === 'string')

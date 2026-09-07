@@ -408,7 +408,7 @@ DATABASE_URL=postgres://… bun run dev   # Postgres mode
 
 # verify
 bun run build            # tsc -b && vite build (typecheck + bundle)
-bun test                 # unit + architecture tests
+bun run test             # unit + architecture tests — NOT bare `bun test`, see below
 bun run lint             # eslint with cache
 
 # automated browser E2E (Playwright; runs a disposable local stack)
@@ -417,6 +417,23 @@ bun run test:e2e          # run specs in tests/e2e/*.e2e.ts
 ```
 
 `bun run build` runs both `tsc -b` and `vite build` — a change that runs in dev but fails `tsc` is not done. Verification is an end-of-task gate, not a per-edit ritual; see `CLAUDE.md` for the rules around pre-existing failures from parallel sessions.
+
+### Run the suite as `bun run test`, never as bare `bun test`
+
+`bun run test` is `bun test --parallel=4`, and the flag is **correctness, not speed**. `bunfig.toml` explains the mechanics; the consequence is what matters here. Bare `bun test` runs every one of the ~1150 files in ONE process, sharing one happy-dom document, one module-scoped `useEditorStore`, and one React module — so a single file can poison every file that runs after it. Measured on the same tree, same machine, over the React/DOM half of the suite:
+
+| command | fail |
+|---|---|
+| `bun test` (one process) | 24 |
+| `bun test --parallel=4` (one process per file) | 2 |
+
+The worst shape is React's `act()`. `act()` unwinds its private `actScopeDepth` / `actQueue` in the `.then()` handlers of the promise `await act(async () => …)` returns; when a test **times out**, bun abandons that async frame, the promise never settles, and both stay leaked for the rest of the process. Every later `render()` — in every later file — then queues work that is never flushed and commits nothing, which surfaces as an empty `<body><div /></body>` or `renderHook` returning `result.current === null`. One agent-canvas test exceeding its budget on a slow CI runner is what turned ~30 real failures into 666.
+
+Three defences, in order of where they act:
+
+1. **`--parallel=4`** contains any such leak to a single file.
+2. **The budgets in `src/__tests__/setup.ts`** — `asyncUtilTimeout: 5000` for `waitFor`/`findBy*`, `setDefaultTimeout(20000)` for bun's per-test budget — are sized for a slow shared CI runner, and keep a comfortable multiple between the two so a bad `waitFor` reports itself instead of tripping the outer timeout. Raise them there, never per test.
+3. **The act-scope repair in `src/__tests__/setup.ts`** resolves any still-pending `act()` wrapper in the global `afterEach`, driving React's own unwind path. Gated by `src/__tests__/harness/actScopeLeakRecovery.test.tsx`, which reproduces the leak and asserts the next render still commits.
 
 `files/` holds standalone scaffolds copied out by an external `pnpm create-file` workflow (e.g. `files/demo/`) — independent projects with their own toolchain (Vitest, not `bun test`) and their own dependency graph. `bunfig.toml` sets `[test] pathIgnorePatterns = ["files/**"]` so `bun test` never discovers them; test a scaffold from inside its own folder (`cd files/<name> && bun run test`).
 
