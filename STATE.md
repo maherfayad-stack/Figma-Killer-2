@@ -21,6 +21,83 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-19 — W8-4: Hug/Fill stops writing `100%` into a flex row
+- **Agent:** panel-designer (`hug-fill`) · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/inspector-parent-aware-sizing`, off `origin/main` at `b56ff12`.
+- **The defect:** `elementSizing.ts` wrote `fit-content` / `100%` for Hug/Fill on
+  every element in every container. `width: 100%` on a flex child resolves
+  against the container's *content box* and ignores `gap`, so a "Fill" item in a
+  gapped row overflowed the row and shoved its siblings out. The control said
+  one thing; the source did another.
+- **Shipped:**
+  - `elementSizing.ts` is now parent-aware and its read-back is the exact mirror
+    of its write. One classifier, `sizingAxisRole(axis, parent)` →
+    `flex-main | flex-cross | grid | block`, and every other function takes its
+    answer instead of re-deriving it. Fill writes `flex: 1 1 0` (main),
+    `align-self: stretch` (cross), `justify-self`/`align-self: stretch` (grid),
+    `100%` (block — the only case the old value was right). Hug writes
+    `fit-content` plus `flex: 0 0 auto` on a main axis only (every other role
+    stretches by default and `fit-content` alone already stops that).
+  - `sizingPatch` returns a **patch**, not a single string — Fill on a flex main
+    axis has to clear the axis length as well as set `flex`. `SizeSection`
+    commits each entry through the same per-property `onChange` the rest of the
+    section uses, so no second write path was opened.
+  - **It only ever touches the axis property and the one companion its own role
+    owns**, and it only clears a companion whose value is a marker this model
+    itself writes — a hand-authored `align-self: center` survives a switch to
+    Fixed.
+  - `useSizingParentLayout.ts` (new) resolves the parent's *computed*
+    `display`/`flexDirection` off a live canvas frame — same source and same
+    shape as `SingleNodeAlignRow`'s `ParentLayoutInfo` (G10). Called **once**
+    in `StyleSectionsEditor` and threaded to `SizeSection`, not per section.
+  - Parent unresolvable → the axis stays Fixed and the Hug / Fill menu rows
+    render **disabled with a named reason as their tooltip** (new
+    `AddablePropertyFieldMode.disabledReason`), never hidden. Three distinct
+    reasons: nothing selected, parent lives outside this file (the cross-file
+    component root case), no live frame yet.
+- **Decisions a future agent must not re-litigate:**
+  - **`width: 100%` on a flex child reads back as `Fixed`, deliberately.** It IS
+    a literal length there. Reporting it as Fill would re-create the lie in the
+    read direction.
+  - **`SizeSection` takes `parentLayout` as a PROP; it does not call the store.**
+    That is what keeps the section unit-testable against all four parent
+    layouts without a live iframe. Don't "simplify" it by moving the hook inside.
+  - **The parent layout is a computed read, never a stored declaration.** Only
+    `getComputedStyle` knows what a class, the cascade, and a media query
+    resolved `display` to.
+- **Cut (deliberate, for speed):** a mode switch that writes two properties
+  files **two** undo entries, not one — `onClearProperties`-style batching for
+  the mixed set+clear case does not exist and building it was out of scope for
+  this row. Also cut: no `PositionConstraints`, `globals.css`, `Button` or
+  `Select` changes (other agents own those this wave); no new CSS/tokens at all
+  — the disabled row reuses `Button`'s existing `disabled` + `tooltip` path.
+- **Files:** `src/admin/pages/site/panels/PropertiesPanel/elementSizing.ts`,
+  `useSizingParentLayout.ts` (new), `SizeSection.tsx`, `StyleSectionsEditor.tsx`,
+  `src/ui/components/AddablePropertyField/AddablePropertyField.tsx`,
+  `__tests__/elementSizing.test.ts` (new, 46 cases incl. a full
+  mode × axis × parent-layout write→read round-trip matrix),
+  `__tests__/sizeSection.test.tsx`, `docs/features/inspector-disclosure.md` (G2).
+- **No CSS modules touched and no tokens added.**
+- **Human action needed — dogfood script:**
+  1. In `studio-workspace/test4`, select a child of a **flex row with a `gap`**.
+     Set Width → **Fill container**. The row must not overflow and siblings must
+     not be shoved out; the source must gain `flex: 1 1 0` and lose `width`.
+     Re-select the node: the Width field must still read **Fill**.
+  2. Same node, Height → **Fill container** → expect `align-self: stretch`, and
+     the field reads Fill on re-selection.
+  3. A child of a **grid** container: Width → Fill must write `justify-self:
+     stretch`, Height → Fill must write `align-self: stretch`.
+  4. A child of a plain **block** container: Fill must still write `100%`.
+  5. Hand-write `width: 100%` on a **flex** child. The Width field must read the
+     literal `100%`, **not** the word "Fill" — that is the point of the change.
+  6. Select a **component root whose parent is a call site in another file**.
+     Open the Width chevron menu: *Hug contents* and *Fill container* must be
+     visible, greyed, and hovering one must explain that the parent lives
+     outside this file. Clicking must write nothing.
+  7. Set Height → Hug, then back to **Fixed**: the box must keep the size it was
+     rendering at, and a hand-written `align-self: center` on the same element
+     must survive that round trip.
+
 ### panel-18 — W7-5: fact-driven onboarding checklist, empty-canvas hint, sample project
 - **Agent:** studio-implementer · **Stage:** done (typecheck + touched tests green; draft PR open) — **needs human dogfood**
 - **Branch:** `feat/launcher-onboarding`, off `origin/main` at `342c67d` (W7-2 / PR #51).
