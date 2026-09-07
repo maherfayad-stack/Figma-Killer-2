@@ -208,6 +208,8 @@ interface AnimationsSectionProps {
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onRemove: (property: keyof CSSPropertyBag) => void
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
+  /** One store write (one undo entry) for a multi-property gesture — see `StyleSectionsEditor`. */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
 }
@@ -218,6 +220,7 @@ export function AnimationsSection({
   onChange,
   onRemove,
   onClearProperties,
+  onChangeMany,
   onPreview,
   onClearPreview,
 }: AnimationsSectionProps) {
@@ -288,12 +291,19 @@ export function AnimationsSection({
     })
   }
 
-  /** Apply a declaration patch through the ordinary per-property write path. */
+  /**
+   * Apply a declaration patch as ONE store write — therefore one undo entry.
+   *
+   * A longhand-shaped animation rule has eight properties; rewriting it one
+   * `onChange` at a time made a single field edit eight history entries, and
+   * one Ctrl+Z then left the rule spliced between two states. See
+   * `StyleSectionsEditor`'s `onChangeMany` doc.
+   */
   function applyPatch(patch: Partial<Record<keyof CSSPropertyBag, string>> | null): void {
     if (!patch) return
-    for (const [property, value] of Object.entries(patch)) {
-      onChange(property as keyof CSSPropertyBag, value)
-    }
+    const entries = Object.entries(patch).map(([property, value]) => [property, value ?? null])
+    if (entries.length === 0) return
+    onChangeMany(Object.fromEntries(entries))
   }
 
   function setAnimationField(index: number, field: AnimationField, value: string) {

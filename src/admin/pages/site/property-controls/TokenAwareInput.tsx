@@ -207,7 +207,12 @@ export function TokenAwareInput({
     // sync, token suggestions, commit) then behaves exactly as it does for an
     // unset field, which is what makes the first keystroke replace "mixed"
     // with one value across the whole selection.
-    const display = mixed ? '' : displayTokenValue(variable.displayValue, tokens)
+    // A framework-token binding is hidden from the affordance above (so no
+    // chip), which means `variable.displayValue` is empty for it — the short
+    // step (`md`) must still come from the raw value.
+    const display = mixed
+      ? ''
+      : displayTokenValue(isFrameworkToken ? value : variable.displayValue, tokens)
     // The "Mixed" string itself is `Input`'s job (it owns the shared
     // constant); this only stops a real placeholder from competing with it.
     const placeholderDisplay = displayTokenValue(placeholder, tokens)
@@ -272,7 +277,25 @@ export function TokenAwareInput({
       }
       const resolved = resolveTokenValue(raw, tokens)
       onClearPreview?.()
-      onCommit(resolved)
+      // Only write when the commit would actually CHANGE this field's value.
+      //
+      // `ScrubInput` has always compared (`next !== display`); this input did
+      // not, and that asymmetry became a real defect the moment the panel
+      // started PREFILLING undeclared properties with the value the element
+      // really renders (`styleFieldDisplay.ts`). An unset padding side now
+      // shows `16px`, so an unguarded blur committed `paddingTop: 16px` into
+      // the user's source — a declaration nobody typed — and pushed an undo
+      // entry that reverts nothing visible. Clicking through the inspector
+      // buried real edits under phantom entries, which is what "Ctrl+Z does
+      // nothing" actually was.
+      //
+      // The comparison is against the RESOLVED value, not the raw draft, so a
+      // token round-trip (`var(--space-md)` displayed as `md`) reads as
+      // unchanged rather than as a rewrite. A MIXED field displays nothing at
+      // all, so its baseline is empty rather than `value` — blurring one
+      // untouched writes nothing instead of flattening the whole selection to
+      // one member's value.
+      if (resolved !== (mixed ? undefined : value)) onCommit(resolved)
       onDraftClear?.()
       setIsEditing(false)
     }

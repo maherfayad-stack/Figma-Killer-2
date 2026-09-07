@@ -24,6 +24,9 @@ import { StyleSectionsEditor } from '../StyleSectionsEditor'
 import { AppearanceSection, AppearanceSectionActions } from '../AppearanceSection'
 import { getCustomProperties, isCuratedProperty } from '../cssControlTypes'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 afterEach(cleanup)
 
 function noop() {}
@@ -38,6 +41,7 @@ function renderEditor(overrides: Partial<EditorProps> = {}) {
       sectionKey="base"
       styleQuery=""
       onChange={noop}
+      onChangeMany={noopMany}
       onRemove={noop}
       onClearProperty={noop}
       onClearProperties={noop}
@@ -57,6 +61,7 @@ function renderAppearance(overrides: Partial<AppearanceProps> = {}) {
       currentStyles={{}}
       activeTab="base"
       onChange={noop}
+      onChangeMany={noopMany}
       onRemove={noop}
       {...overrides}
     />,

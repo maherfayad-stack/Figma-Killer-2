@@ -215,6 +215,18 @@ burst never folds into a Properties-panel burst for the same prop.
 If you add a mutation, decide its coalesce key deliberately. Wrong key = either
 one undo wipes unrelated work, or every keystroke is its own entry.
 
+**A gesture's history cost is the caller's decision.** Every `mutate*` helper
+takes a whole patch and records ONE entry, so a UI that commits a
+multi-property gesture one property at a time turns one click into N undo
+steps. The Properties panel's single multi-property write channel is
+`onChangeMany(patch)` (`StyleSectionsEditor`). And a field must compare before
+it commits — a prefilled field that writes its own displayed value on blur
+pushes an entry that reverts nothing visible. Both rules:
+[`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+§10. Who owns the ⌘Z keystroke:
+[`docs/reference/editor-history.md`](../reference/editor-history.md) → "Who
+owns Ctrl/⌘+Z".
+
 ---
 
 ## Boards autosave — the overwrite hazard, and its guard

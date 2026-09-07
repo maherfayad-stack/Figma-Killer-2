@@ -40,6 +40,16 @@
  * value writes nothing — every field's commit path compares against what it
  * was displaying — so merely focusing and blurring a prefilled field can
  * never silently add a declaration to someone's stylesheet.
+ *
+ * **That comparison is load-bearing, and it is the field's job, not this
+ * module's.** It shipped true for `ScrubInput` and false for
+ * `TokenAwareInput`, which committed unconditionally on blur: with prefill in
+ * place, clicking into a padding side and clicking away wrote a declaration
+ * nobody typed AND pushed an undo entry that reverts nothing visible — which
+ * is what the "Ctrl+Z does nothing" report turned out to be. Any new field
+ * primitive that renders a prefilled value must compare before it commits;
+ * `docs/features/inspector-disclosure.md` §11.1 and
+ * `src/__tests__/panels/prefilledFieldCommitGuard.test.tsx` are the record.
  */
 
 import { isMixed, MIXED, type Mixed } from '@ui/components/MixedValue'

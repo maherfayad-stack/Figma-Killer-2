@@ -120,6 +120,46 @@ Any non-coalescing mutation, `undo`, `redo`, or a site (re)load resets `_history
 
 ---
 
+## Who owns Ctrl/⌘+Z
+
+The keystroke is owned by `UndoRedoButtons.tsx` (a native `document` keydown
+listener), not by the spotlight dispatcher — `editor.undo` / `editor.redo` are
+listed in `shortcutDispatch.ts`'s `COMPONENT_OWNED_SHORTCUTS` so they are not
+also fired there. A keystroke made inside a canvas iframe reaches it as a clone
+re-dispatched on the parent `document` (`useIframeEventForwarding.ts`).
+
+The routing rule is **whoever has an edit in progress owns the keystroke**:
+
+| Focus | ⌘Z goes to |
+|---|---|
+| Anywhere outside a text field | editor undo |
+| A text field with an uncommitted draft | native text undo |
+| A text field with no uncommitted draft | editor undo |
+
+"Uncommitted draft" is tracked from real DOM events in
+`canvas/pendingTextEdit.ts` — an `input` event marks its target pending; a
+focus change, Escape, or Enter on a single-line `<input>` clears it (Enter in a
+`<textarea>` is a newline, not a commit). This replaced a blanket "any editable
+target wins", which made the editor's history unreachable from the keyboard for
+as long as the caret sat in a Properties-panel field — and since every style
+row is now prefilled and both field primitives keep focus after their commit,
+that was most of the time. Regression test:
+`src/__tests__/canvas/undoShortcutRouting.test.tsx`.
+
+---
+
+## One gesture, one entry
+
+A mutation's history cost is decided by its CALLER, not by the store: every
+`mutate*` helper takes a whole patch and records one entry, so committing a
+multi-property gesture one property at a time is what turns one click into N
+undo steps. The Properties panel routes those through a single
+`onChangeMany(patch)` — see
+[`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+§11.2.
+
+---
+
 ## Undo / redo apply
 
 `undoRedoActions.ts` uses `apply` from Mutative:

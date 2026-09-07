@@ -137,6 +137,22 @@ export function StyleRuleComposer({
     clearClassStyleProperties(classId, keys)
   }
 
+  /**
+   * Write several properties to the active target in ONE undo step. Both
+   * class-rule writers already take a whole patch, so this is `handleChange`
+   * without the one-key narrowing — see `StyleSectionsEditor`'s `onChangeMany`
+   * doc for why a multi-property gesture must not be a loop of single writes.
+   */
+  const handleChangeMany = (patch: Record<string, string | number | null>) => {
+    if (Object.keys(patch).length === 0) return
+    const cssPatch = patch as Partial<CSSPropertyBag>
+    if (activeContextId) {
+      setClassContextStyles(classId, activeContextId, cssPatch)
+    } else {
+      updateClassStyles(classId, cssPatch)
+    }
+  }
+
   // Preview a transient style patch on the canvas while a property
   // control's hover-suggestion menu is open. The preview lives entirely
   // in store UI state — no class document mutation, no history entry.
@@ -179,6 +195,7 @@ export function StyleRuleComposer({
       onRemove={handleRemoveProperty}
       onClearProperty={handleClearProperty}
       onClearProperties={handleClearProperties}
+      onChangeMany={handleChangeMany}
       onPreview={handlePreview}
       onClearPreview={handleClearPreview}
       provenanceByProperty={provenanceByProperty}
