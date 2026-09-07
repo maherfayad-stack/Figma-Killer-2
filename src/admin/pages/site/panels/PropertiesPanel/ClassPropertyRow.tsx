@@ -65,7 +65,7 @@ import {
 import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { getFontWeightOptions } from './fontWeightOptions'
 import type { PropertyProvenance } from './stylePropertyProvenance'
-import { useStyleWriteLock } from './StyleWriteLockContext'
+import { resolveRowWriteLock, useStyleWriteLock } from './StyleWriteLockContext'
 import styles from './ClassPropertyRow.module.css'
 
 // ---------------------------------------------------------------------------
@@ -174,8 +174,16 @@ export function ClassPropertyRow({
   const value = mixed ? undefined : (rawValue as string | number | undefined)
   // Pre-flight: why an edit to the enclosing style target can't reach the
   // user's source, or `null` when it can. See this file's doc.
-  const writeLockReason = useStyleWriteLock()
-  const writeLocked = writeLockReason !== null
+  // W8-3 phase 2 — the enclosing lock is now three-state. A `partial` lock
+  // (the bulk composer's "this property is code-valued on 2 of these 5
+  // layers") states its count on the row and leaves it EDITABLE; only a
+  // `blocked` lock disables. `resolveRowWriteLock` owns that distinction so
+  // this component keeps exactly the two locals it always had.
+  const writeLock = useStyleWriteLock()
+  const { disabled: writeLocked, reason: writeLockReason } = resolveRowWriteLock(
+    writeLock,
+    String(property),
+  )
   const type = getCSSPropertyControlType(property)
   const tokenSource = getCSSPropertyTokenSource(property)
   const label = cssPropertyLabel(String(property))
@@ -560,6 +568,7 @@ export function ClassPropertyRow({
       )}
       data-state={isSet ? 'set' : 'unset'}
       data-write-locked={writeLocked ? 'true' : undefined}
+      data-write-partial={!writeLocked && writeLockReason !== null ? 'true' : undefined}
       title={writeLockReason ?? undefined}
       data-testid={`css-property-row-${String(property)}`}
     >

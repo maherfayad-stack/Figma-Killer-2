@@ -47,7 +47,8 @@
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import { AlignGrid } from '@ui/components/AlignGrid'
-import { hasStyleValue, readString } from '../styleValueUtils'
+import { hasStyleValue, isMixedStyleValue, readString } from '../styleValueUtils'
+import { isMixed, MIXED, type Mixed } from '@ui/components/MixedValue'
 import { useSpacingTokens } from '@site/property-controls/tokenUtils'
 import { LayoutModeRow } from './LayoutModeRow'
 import { isLayoutModeRepresentable, layoutModePatch, resolveLayoutMode, type LayoutMode } from './layoutMode'
@@ -122,9 +123,15 @@ export function LayoutSection({
   // The mode row only ever highlights a segment for a display the four
   // buttons can actually represent — everything else renders with none
   // selected rather than guessing (see LayoutModeRow's doc).
-  const layoutMode: LayoutMode | undefined = isLayoutModeRepresentable(display)
-    ? resolveLayoutMode(display, flexDirection)
-    : undefined
+  // W8-3 — a multi-selection whose members render different `display`
+  // values has no single mode to press. It reads MIXED rather than pressing
+  // whichever mode the first member happens to use.
+  const displayMixed = isMixed(currentStyles.display)
+  const layoutMode: LayoutMode | Mixed | undefined = displayMixed
+    ? MIXED
+    : isLayoutModeRepresentable(display)
+      ? resolveLayoutMode(display, flexDirection)
+      : undefined
 
   const applyLayoutMode = (mode: LayoutMode) => {
     const patch = layoutModePatch(mode)
@@ -156,7 +163,7 @@ export function LayoutSection({
               top-right of the auto-layout block, not inline as a 3rd caption). */}
           <div className={styles.flexHeaderRow}>
             <FlexDirectionControl
-              value={flexDirection}
+              value={isMixed(currentStyles.flexDirection) ? MIXED : flexDirection}
               isSet={hasStyleValue(storedStyles.flexDirection)}
               onChange={(v) => onChange('flexDirection', v)}
               onClear={() => onClearProperty('flexDirection')}
@@ -187,6 +194,7 @@ export function LayoutSection({
             <GapInput
               value={readString(currentStyles, 'gap')}
               isSet={hasStyleValue(storedStyles.gap)}
+              mixed={isMixedStyleValue(storedStyles, currentStyles, 'gap')}
               onChange={(v) => onChange('gap', v)}
               onPreview={onPreview ? (v) => onPreview({ gap: v ?? null } as Partial<CSSPropertyBag>) : undefined}
               onClearPreview={onClearPreview}
@@ -203,6 +211,7 @@ export function LayoutSection({
             ariaLabel="Grid template columns"
             value={readString(currentStyles, 'gridTemplateColumns')}
             isSet={hasStyleValue(storedStyles.gridTemplateColumns)}
+            mixed={isMixedStyleValue(storedStyles, currentStyles, 'gridTemplateColumns')}
             onChange={(v) => onChange('gridTemplateColumns', v)}
             onClear={() => onClearProperty('gridTemplateColumns')}
           />
@@ -211,6 +220,7 @@ export function LayoutSection({
             ariaLabel="Grid template rows"
             value={readString(currentStyles, 'gridTemplateRows')}
             isSet={hasStyleValue(storedStyles.gridTemplateRows)}
+            mixed={isMixedStyleValue(storedStyles, currentStyles, 'gridTemplateRows')}
             onChange={(v) => onChange('gridTemplateRows', v)}
             onClear={() => onClearProperty('gridTemplateRows')}
           />
@@ -234,6 +244,7 @@ export function LayoutSection({
             <GapInput
               value={readString(currentStyles, 'gap')}
               isSet={hasStyleValue(storedStyles.gap)}
+              mixed={isMixedStyleValue(storedStyles, currentStyles, 'gap')}
               onChange={(v) => onChange('gap', v)}
               onPreview={onPreview ? (v) => onPreview({ gap: v ?? null } as Partial<CSSPropertyBag>) : undefined}
               onClearPreview={onClearPreview}

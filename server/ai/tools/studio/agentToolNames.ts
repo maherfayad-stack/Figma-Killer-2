@@ -89,6 +89,15 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // 0.12). Without it, a `studio_compare` region with no obvious CSS
   // explanation has no path to "why", only more pixel-guessing.
   'studio_fidelity_report',
+  // W9-4 — the whole "a Figma link arrived" ritual in one call: register the
+  // export as a strict spec reference, ingest the variables, and size the
+  // board frame to the Figma frame's own absoluteBoundingBox. Offered ABOVE
+  // the individual register/ingest tools deliberately: the six-step ordering
+  // was the thing the model got wrong, and the frame-sizing step (the one it
+  // skipped most) is what makes every later studio_compare exact instead of
+  // silently resampled. The individual tools stay for the cases this one does
+  // not cover (an image that is not a Figma frame, a second variable table).
+  'studio_import_figma_frame',
   'studio_register_design_reference',
   'studio_list_design_references',
   'studio_read_design_reference',

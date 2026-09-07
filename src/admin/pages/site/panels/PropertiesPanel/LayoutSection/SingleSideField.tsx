@@ -6,7 +6,7 @@
  */
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
-import { hasStyleValue, readString } from '../styleValueUtils'
+import { hasStyleValue, isMixedStyleValue, readString } from '../styleValueUtils'
 import { ScrubTokenField } from './ScrubTokenField'
 
 interface SingleSideFieldProps {
@@ -38,12 +38,14 @@ export function SingleSideField({
   const stored = readString(storedStyles, String(property))
   const current = readString(currentStyles, String(property))
   const isSet = hasStyleValue(stored)
+  const mixed = isMixedStyleValue(storedStyles, currentStyles, String(property))
 
   return (
     <ScrubTokenField
       aria-label={ariaLabel}
       value={stored}
       placeholder={isSet ? undefined : (current ?? '0px')}
+      mixed={mixed}
       tokens={tokens}
       prefix={prefix}
       onCommit={(resolved) => onChange(property, resolved)}

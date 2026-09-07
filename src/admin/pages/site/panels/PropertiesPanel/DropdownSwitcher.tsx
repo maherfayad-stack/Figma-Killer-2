@@ -35,6 +35,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
+import { isMixed, MIXED, type Mixed } from '@ui/components/MixedValue'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
 import styles from './LayoutSection.module.css'
@@ -50,8 +51,13 @@ interface PrimarySegment {
 interface DropdownSwitcherProps {
   /** Lowercase CSS property name. Drives aria labels and the test id. */
   property: string
-  /** Current CSS value (undefined renders the unset segmented control). */
-  value: string | undefined
+  /**
+   * Current CSS value — `undefined` renders the unset segmented control,
+   * and `MIXED` (W8-3) renders it indeterminate: a multi-selection whose
+   * members hold different values presses no segment and invents no
+   * synthetic one, because there is no single value to echo.
+   */
+  value: string | Mixed | undefined
   /** Segments promoted to the primary segmented row. */
   primarySegments: ReadonlyArray<PrimarySegment>
   /** Full value list shown in the chevron dropdown. */
@@ -106,17 +112,28 @@ export function DropdownSwitcher({
   const testId = `css-${property}-switcher`
   const dataValueAttr = `data-${property}-value`
 
-  const isPrimary = value != null && primarySegments.some((seg) => seg.value === value)
-  const isOtherValue = value != null && value !== '' && !isPrimary
+  const mixed = isMixed(value)
+  const resolved = mixed ? undefined : value
+  const isPrimary = resolved != null && primarySegments.some((seg) => seg.value === resolved)
+  const isOtherValue = resolved != null && resolved !== '' && !isPrimary
 
   // The out-of-band value gets its own segment, appended after the
   // primaries, so it renders verbatim (never coerced towards a primary)
   // while keeping the exact same track shell. `ariaLabel` matches the old
   // chip's `"${Property}: ${value}"` accessible name — callers and tests
   // identify this state by that name, not by a class name or DOM shape.
-  const segments: ReadonlyArray<PrimarySegment> = isOtherValue
-    ? [...primarySegments, { value, label: value, ariaLabel: `${capitalized}: ${value}`, tooltip: `${property}: ${value}` }]
-    : primarySegments
+  const segments: ReadonlyArray<PrimarySegment> =
+    isOtherValue && resolved != null
+      ? [
+          ...primarySegments,
+          {
+            value: resolved,
+            label: resolved,
+            ariaLabel: `${capitalized}: ${resolved}`,
+            tooltip: `${property}: ${resolved}`,
+          },
+        ]
+      : primarySegments
 
   const menu = menuOpen ? (
     <ContextMenu
@@ -133,8 +150,8 @@ export function DropdownSwitcher({
         <ContextMenuItem
           key={opt}
           role="menuitemradio"
-          aria-checked={value === opt}
-          active={value === opt}
+          aria-checked={resolved === opt}
+          active={resolved === opt}
           onMouseEnter={previewActive ? () => onPreview?.(opt) : undefined}
           onClick={() => {
             onChange(opt)
@@ -151,12 +168,12 @@ export function DropdownSwitcher({
     <div
       className={styles.displayRow}
       data-testid={testId}
-      {...{ [dataValueAttr]: value ?? '' }}
+      {...{ [dataValueAttr]: mixed ? 'mixed' : (resolved ?? '') }}
     >
       <SegmentedControl
         fullWidth
         aria-label={capitalized}
-        value={isPrimary || isOtherValue ? value : undefined}
+        value={mixed ? MIXED : isPrimary || isOtherValue ? resolved : undefined}
         onChange={onChange}
         onClear={onClear}
         options={segments.map((seg) => ({

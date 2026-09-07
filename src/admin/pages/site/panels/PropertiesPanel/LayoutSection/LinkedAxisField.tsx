@@ -13,7 +13,7 @@
  */
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
-import { hasStyleValue, readString } from '../styleValueUtils'
+import { hasStyleValue, isMixedStyleValue, readString } from '../styleValueUtils'
 import { ScrubTokenField } from './ScrubTokenField'
 
 interface LinkedAxisFieldProps {
@@ -49,6 +49,12 @@ export function LinkedAxisField({
   const currentA = readString(currentStyles, String(propA))
   const currentB = readString(currentStyles, String(propB))
 
+  // Either half disagreeing makes the linked field mixed — it writes both
+  // sides at once, so it cannot honestly show one side's value.
+  const mixed =
+    isMixedStyleValue(storedStyles, currentStyles, String(propA)) ||
+    isMixedStyleValue(storedStyles, currentStyles, String(propB))
+
   const value = storedA ?? storedB
   const placeholder = currentA ?? currentB ?? '0px'
   const isSet = hasStyleValue(storedA) || hasStyleValue(storedB)
@@ -68,6 +74,7 @@ export function LinkedAxisField({
       aria-label={ariaLabel}
       value={value}
       placeholder={isSet ? undefined : placeholder}
+      mixed={mixed}
       tokens={tokens}
       prefix={prefix}
       onCommit={commit}

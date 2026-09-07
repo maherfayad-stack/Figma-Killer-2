@@ -87,6 +87,7 @@ import { Image2SolidIcon } from 'pixel-art-icons/icons/image-2-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
 import { readString, hasStyleValue } from './styleValueUtils'
+import { isMixed, MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import {
   BackgroundImageRawBody,
   BackgroundLayerPopoverBody,
@@ -269,8 +270,12 @@ export function FillSection({
     : undefined
 
   // ---- entry presence -------------------------------------------------
+  // W8-3 — a selection whose members hold different fills still has a fill
+  // to talk about. The entry stays, reads "Mixed", and its editor commits one
+  // colour to every selected node.
+  const textMixed = isMixed(storedStyles.color)
   const textValue = readString(storedStyles, 'color')
-  const showTextEntry = visible.has('color') && hasStyleValue(textValue)
+  const showTextEntry = visible.has('color') && (textMixed || hasStyleValue(textValue))
 
   const contentFitVisible = CONTENT_FIT_PROPS.some((prop) => visible.has(prop))
   const showContentFitEntry =
@@ -287,8 +292,9 @@ export function FillSection({
     writeBackgroundModel(model, next, onChange)
   }
 
+  const colorMixed = isMixed(storedStyles.backgroundColor)
   const colorValue = readString(storedStyles, 'backgroundColor')
-  const showColorEntry = visible.has('backgroundColor') && hasStyleValue(colorValue)
+  const showColorEntry = visible.has('backgroundColor') && (colorMixed || hasStyleValue(colorValue))
 
   const shorthandValue = readString(storedStyles, 'background')
   const showShorthandEntry = visible.has('background') && hasStyleValue(shorthandValue)
@@ -300,8 +306,8 @@ export function FillSection({
     entries.push({
       id: 'fill-text',
       label: 'Text',
-      leading: <ColorSwatch color={textValue!} />,
-      summary: textValue,
+      leading: <ColorSwatch color={textMixed ? 'transparent' : textValue!} />,
+      summary: textMixed ? MIXED_PLACEHOLDER : textValue,
       data: { kind: 'text' },
     })
   }
@@ -360,8 +366,8 @@ export function FillSection({
     entries.push({
       id: 'fill-color',
       label: 'Solid fill',
-      leading: <ColorSwatch color={colorValue!} />,
-      summary: colorValue,
+      leading: <ColorSwatch color={colorMixed ? 'transparent' : colorValue!} />,
+      summary: colorMixed ? MIXED_PLACEHOLDER : colorValue,
       data: { kind: 'color' },
     })
   }
@@ -455,6 +461,7 @@ export function FillSection({
           {editingEntry.data.kind === 'text' && (
             <ColorValueInput
               value={textValue ?? ''}
+              mixed={textMixed}
               ariaLabel="Text colour"
               swatchLabel="Text colour swatch"
               onChange={(next) => onChange('color', next || undefined)}
@@ -466,6 +473,7 @@ export function FillSection({
           {editingEntry.data.kind === 'color' && (
             <ColorValueInput
               value={colorValue ?? ''}
+              mixed={colorMixed}
               ariaLabel="Solid fill colour"
               swatchLabel="Solid fill colour swatch"
               onChange={(next) => onChange('backgroundColor', next || undefined)}

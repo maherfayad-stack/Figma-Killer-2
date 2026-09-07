@@ -513,8 +513,17 @@ function buildLiveDigestLines(live: StudioLiveDigest): string[] {
   // moment the page gets written, so saying it up front saves a whole
   // build-then-block round trip.
   if (live.figmaReferenceNudge) {
+    // The parsed identifiers, not just "there is a link": a copied Figma URL
+    // writes the node id as `123-456` and every Figma tool wants `123:456`,
+    // so re-deriving it from the message was a step the model routinely got
+    // wrong. `figmaLink` is non-null whenever the nudge is (the nudge is
+    // computed FROM it), but it is read defensively rather than asserted.
+    const link = live.figmaLink
+    const ids = link?.fileKey
+      ? ` (fileKey "${link.fileKey}"${link.nodeId ? `, node id "${link.nodeId}" — that is the colon form Figma's own tools want` : ', no node id in the link — ask which frame'})`
+      : ''
     lines.push(
-      `Figma link in this message, and "${live.figmaReferenceNudge.pageTitle}" has no design reference armed yet — register one (export via the Figma connector, then studio_register_design_reference with pageId:"${live.figmaReferenceNudge.pageId}") before you build, not after.`,
+      `Figma link in this message${ids}, and "${live.figmaReferenceNudge.pageTitle}" has no design reference armed yet — arm it before you build, not after: fetch the frame's metadata and an exact-size export through your Figma connector, then hand BOTH to studio_import_figma_frame with pageId:"${live.figmaReferenceNudge.pageId}" (one call: it registers the export as a strict reference, ingests the variables, and sizes the board frame to the Figma frame's own absoluteBoundingBox).`,
     )
   }
   lines.push(
