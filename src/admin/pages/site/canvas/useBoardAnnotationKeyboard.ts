@@ -94,7 +94,15 @@ export function useBoardAnnotationKeyboard(editable: boolean, isLive: boolean): 
       }
     }
 
+    // `store-09` — a key RELEASE ends the arrow-nudge undo burst, so the next
+    // hold is its own ⌘Z step. No-op when no burst is open.
+    const onKeyUp = () => useEditorStore.getState().endBoardGesture()
+
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
+    document.addEventListener('keyup', onKeyUp)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keyup', onKeyUp)
+    }
   }, [editable, isLive])
 }

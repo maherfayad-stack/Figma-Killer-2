@@ -121,6 +121,10 @@ function DocBlockViewImpl({ doc }: DocBlockViewProps) {
 
   const endEditing = useCallback(() => {
     commit()
+    // `store-09` — one editing SESSION is one undo entry (every toolbar
+    // command commits, and they coalesce under `board:doc-html:<id>`). Closing
+    // the burst here is what makes the next session its own ⌘Z step.
+    useEditorStore.getState().endBoardGesture()
     setIsEditing(false)
   }, [commit])
 

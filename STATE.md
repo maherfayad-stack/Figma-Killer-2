@@ -21,6 +21,65 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### store-09 — ⌘Z now undoes a frame drag and a sticky-note move: one stack, two domains
+- **Agent:** store-engineer · **Stage:** done (targeted store tests + full `src/__tests__/editor-store` + `src/__tests__/architecture` + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs human dogfood**
+- **Branch:** `feat/board-state-undo` off `origin/main` (`7d9a8de`, i.e. after `store-07`/#77 and `store-08`/#79). User report, verbatim: "when moving sticky notes, and elements in the canvas and click ctrl + z it doesn't get back to that position", against the standing rule "it should work on every action".
+
+**This is `store-08`'s own named cut, closed.** Its handoff said, verbatim: *"Board state is not undoable at all — frame move/resize, board CRUD, guides, annotations, `prototypeSlice` links… That is a second history domain, not a patch; audited and named, not attempted."* It is now attempted, and it is a second domain **on the same stack** — because there is only one ⌘Z, and the user does not know that a sticky note and a padding value are stored in different files.
+
+**Design — SNAPSHOT PAIRS, not patches, and that is the load-bearing choice.** `HistoryEntry` grows an optional `board: { before, after }` where each end is `{ boards: BoardsFile; activeBoardId: string | null }`. Every board mutation is already a pure `Board -> Board` transform republished through `upsertBoard`, so `boards` is a persistent immutable structure and a "snapshot" is TWO OBJECT REFERENCES sharing everything the mutation did not touch. O(1) to store, O(1) to restore, and — unlike a patch path into `boards.boards[0].frames[2].x` — nothing to go stale when a board or frame index shifts. Exactness rests on undo being strictly LIFO: the stack is only read from the top, so at undo time the live state IS the entry's `after`.
+
+**Slices touched:** `board` (`boardSlice.ts`, `boardAnnotationSliceActions.ts`, `boardBulkFrameSliceActions.ts`, `boardFrameSelectionActions.ts`, + new `boardFrameSliceActions.ts`, + new `boardHistory.ts`) and `site` (`types.ts`, `undoRedoActions.ts`, `lifecycleActions.ts`, `helpers.ts`, + new `historyStack.ts`). **No new selector** — nothing here reads state in a render path; `restoreBoardSnapshot` prunes a dangling annotation selection inside the same `set`.
+
+**New mutations, with their coalesce keys and history behaviour.** All go through ONE funnel, `commitBoardChange(set, get, coalesceKey, nextBoards, extras)` — the board-domain counterpart to `runHistoricMutation`. It applies the mutation AND records the entry in a single `set`; `extras.also` writes editor-local fields (selection, clipboard, `frameDefaults`) live but UNRECORDED, exactly the rule `runHistoricMutation` applies to editor fields a site recipe touches.
+
+| Action | Coalesce key | Entry |
+|---|---|---|
+| `setFramePosition` | `board:frame-move:<frameId>` | one per drag |
+| `setFrameRect` | `board:frame-rect:<frameId>` | one per resize drag |
+| `nudgeSelectedFrames` | `board:frame-nudge` | one per key-HOLD |
+| `moveNote` / `moveDoc` | `board:annotation-move:<kind>:<id>` | one per drag |
+| `resizeAnnotation` | `board:annotation-resize:<kind>:<id>` | one per drag |
+| `nudgeSelectedAnnotations` | `board:annotation-nudge` | one per key-HOLD |
+| `updateNoteText` | `board:note-text:<noteId>` | one per editing SESSION |
+| `updateDocHtml` | `board:doc-html:<docId>` | one per editing SESSION |
+| `moveGuide` | `board:guide-move:<guideId>` | one per drag |
+| `setFrameSize`, `addFrame`, `removeFrame`, `removeFrameById`, `setFrameAxes`, `duplicateFrameAsVariant`, `addBoard`, `renameBoard`, `removeBoard`, `addGuide`, `removeGuide`, `clearGuides`, all annotation add/delete/recolor/duplicate/paste/reorder, all six bulk frame actions | `null` | one each |
+
+**Why a coalesce key alone was not enough.** A frame drag calls `setFramePosition` on EVERY `pointermove` (that position is real board state the snap guides, the peer-rect collection and the autosave read, so it cannot be deferred to pointer-up), and nothing in the stack ever ended the burst — so two consecutive drags of the same frame would have folded into one entry and ⌘Z would have jumped the frame back past a position the user deliberately stopped at. New store action `endBoardGesture()` (nulls `_historyCoalesceKey`, no-op when no burst is open) is called from the pointer-up of every board drag (`BoardFrameView` move + resize, `useAnnotationInteraction` move + resize, `RulerGuidesLayer`), from `keyup` in both nudge hooks, and from the end of a sticky-note / doc-card editing session.
+
+**Persistence.** Board state is Studio's own state on disk, never the user's `.tsx`, so undo is plain replay + re-persist. `restoreBoardSnapshot` re-raises `boardsDirty` (the signal `AdminCanvasLayout`'s 800ms autosave watches) AND re-raises `boardsPendingExplicitRemoval` when the restore shrinks the frame set — without that, undoing an "add frame" would be refused by `boardsSaveGuard.ts` and never reach disk.
+
+**Reload boundaries get OPPOSITE answers, deliberately:**
+- A **site** reload/patch that fails `historySurvivesReload` now calls `retainBoardOnlyEntries` instead of `= []`. A `.tsx` reparse says nothing about `.studio/boards.json`. `historyNodeIdRemap`'s `remapHistoryEntries` needed no change — it spreads the entry and a board entry has no patch paths and no `structural` tag, so it returns the same reference untouched (verified by test, per the task's ask).
+- A **boards** READ (`loadBoards`, `markBoardsLoadFailed`) calls `dropBoardHistory`. A snapshot references the object graph the store held at the time; once the server hands back a different graph, replay would resurrect a whole boards file rather than undo a gesture. Entries that also carry site patches keep those and lose only their board half.
+
+**Refactors done in the same change (not optional cleanup — the design needed them):**
+- `commitHistory` + `foldIntoCoalescedEntry` moved out of `helpers.ts`'s closure into module-level `site/historyStack.ts` as `commitHistoryEntry`. Two domains now push onto the stack; duplicating the push/evict/coalesce logic would have been the "two ways to do one thing" the rule book forbids.
+- Frame mutation wiring extracted from `boardSlice.ts` to `boardFrameSliceActions.ts` (689 → 578 lines), the same module-size split its three siblings already use. Without it `boardSlice.ts` sat at 696/700 with zero headroom.
+
+**Named cuts (still NOT undoable, deliberately):**
+- **`prototypeSlice` links** (add/remove/edit). Unlike board state, every link op is a SERVER round trip (`applyPrototypeOp` → `adoptPrototype` in `prototypeActions.ts`) — undo has to re-issue an async write and handle its failure, which is `structuralHistory.ts`'s shape, not `boardHistory.ts`'s. Real work, its own PR.
+- **`seedFramesForActiveBoard`.** The one-time default-board hydration, not a gesture. Recording it would put an undo entry on the stack before the user has touched anything.
+- Board/annotation SELECTION, `setActiveBoard` on its own, snap guides, `frameDefaults` — editor-local, same rule as node selection. (Undo does PRUNE an annotation selection pointing at something the restore removed.)
+- No browser dogfood (agents don't drive the browser here).
+
+**Test/comment updated in the same change:** `inlineEditSlice.test.ts` — (a) its "a frame with NO locale override" case mutated the loaded `Board` in place, which `loadBoards` now freezes (it became a Mutative recipe so it can purge board history); it builds a fresh board instead. (b) Its comment justifying the localized-preview undo exemption cited "`boardSlice.ts`'s frame drags are the same 'real edit, no undo entry' precedent" — that precedent is gone, so the comment now states the exemption's own merits (a per-frame PREVIEW overlay, `applyInlineEditValue` writes `localizedPages` only).
+
+**Dogfood checklist for the human** (at `/admin/site`, on a real project):
+1. Drag a frame by its header to a new spot, ⌘Z once — it must return to exactly where the drag started, in ONE step. ⇧⌘Z puts it back.
+2. Drag the SAME frame twice. Two ⌘Z presses = two distinct positions, not one jump to the origin.
+3. Drag a sticky note, ⌘Z. Same for a doc card, and for a card RESIZE handle.
+4. Move a frame, wait ~1s for the autosave, then ⌘Z and wait again — reload the page. The undone position must have PERSISTED (this is the `boardsDirty` re-raise).
+5. Add a frame to the board, ⌘Z, wait for the autosave, reload. The frame must stay gone (this is the `boardsPendingExplicitRemoval` re-raise; without it the save guard silently refuses).
+6. Edit a style value, then drag a frame, then ⌘Z twice — frame first, style second.
+7. Type in a sticky note and press ⌘Z mid-typing — that is NATIVE text undo (`pendingTextEdit.ts`, `store-07`), the board must not move. Click out, THEN ⌘Z — now the note's text reverts.
+8. Arrow-nudge a selected frame with the key held down, release, ⌘Z once — the whole hold reverts as one step.
+
+**Landmines:**
+- **The whole-file snapshot is only exact because undo is LIFO and every board write goes through `commitBoardChange`.** A new board mutation that writes `state.boards` directly with a plain `set` will be silently skipped over by an undo of an EARLIER entry (the restore assigns a `before` that predates it). If you add a board action, route it through `commitBoardChange` or purge history the way `loadBoards` does. There is no gate test for this yet — that is the obvious follow-up.
+- `endBoardGesture` is called from SIX UI sites. A new board drag gesture that forgets it will silently merge with the next drag of the same entity.
+- `loadBoards` is now a Mutative recipe, so `boards` is frozen after a load. Any test that mutated a loaded `Board` in place will throw `Attempted to assign to readonly property`.
 ### capture-modules — the PNG export drew every design-system component as `Unknown module: alm.Button`; the editor and the capture page kept two module lists
 - **Agent:** canvas-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json --noEmit` + eslint green; draft PR open) — **needs human dogfood**
 - **Branch:** `fix/capture-registers-package-modules` off `origin/main` (`7d9a8de`). User report: exporting a page as PNG (inspector Export section) produced an image where every design-system component was the dashed "Unknown module: alm.Button" placeholder while text/images/icons rendered fine — and the SAME page rendered its buttons correctly on the editor canvas.

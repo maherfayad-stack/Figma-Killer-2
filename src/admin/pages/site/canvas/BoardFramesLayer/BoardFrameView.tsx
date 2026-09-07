@@ -293,6 +293,9 @@ function BoardFrameViewImpl({
     if (dragRef.current?.pointerId === e.pointerId) {
       dragRef.current = null
       useEditorStore.getState().setBoardSnapGuides([])
+      // `store-09` — close the undo-coalescing burst this drag opened, so a
+      // second drag of the SAME frame is its own ⌘Z step.
+      useEditorStore.getState().endBoardGesture()
     }
   }
 
@@ -356,7 +359,10 @@ function BoardFrameViewImpl({
     useEditorStore.getState().duplicateFrameAsVariant(frame.id, axes)
 
   const endResize = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (resizeRef.current?.pointerId === e.pointerId) resizeRef.current = null
+    if (resizeRef.current?.pointerId === e.pointerId) {
+      resizeRef.current = null
+      useEditorStore.getState().endBoardGesture()
+    }
   }
 
   return (

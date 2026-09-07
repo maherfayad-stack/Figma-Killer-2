@@ -137,13 +137,19 @@ export function useAnnotationInteraction({ ref, rect, onMove }: UseAnnotationInt
   }
 
   const endDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    let ended = false
     if (moveDragRef.current?.pointerId === event.pointerId) {
       moveDragRef.current = null
       useEditorStore.getState().setBoardSnapGuides([])
+      ended = true
     }
     if (resizeDragRef.current?.pointerId === event.pointerId) {
       resizeDragRef.current = null
+      ended = true
     }
+    // `store-09` — one drag is one undo entry, and the NEXT drag of the same
+    // card must be a second one. See `boardHistory.ts`.
+    if (ended) useEditorStore.getState().endBoardGesture()
   }
 
   return {

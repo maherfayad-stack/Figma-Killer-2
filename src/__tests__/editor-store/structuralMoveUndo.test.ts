@@ -257,7 +257,7 @@ describe('undo of a move is the inverse move, written to source', () => {
     store().redo() // the first value edit
     store().redo() // the move — a structural re-issue, with a redo still queued
     // The re-issued gesture clears `_historyFuture` on its way through
-    // `commitHistory`; the entry queued BEHIND this one must survive that.
+    // `commitHistoryEntry`; the entry queued BEHIND this one must survive that.
     expect(store()._historyFuture.length).toBe(1)
     store().redo()
     expect(store().site!.pages[0]!.nodes[b]!.props.text).toBe('two')
