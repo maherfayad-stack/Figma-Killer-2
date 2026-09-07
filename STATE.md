@@ -132,6 +132,147 @@ are the remaining WS-2 items, not yet dispatched. See
   6. `backgroundColor` + layers: the solid fill row is BELOW the layers, and
      removing the last layer leaves the solid fill and the section alive.
 
+### panel-15 — W8-2 (scrub half): one scrub engine, every numeric scrubs
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-scrub-everywhere` off `origin/main` (`0d05e1c`,
+  i.e. on top of `panel-13`/PR #47).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-2, the *Scrub unification* paragraph
+  ONLY. The look pass (panel width 290, Button/Select inspector skins, fixed
+  `--inspector-*` spacing, `PROPERTY_FIELD_GLYPHS` extension) is the other half
+  of W8-2 and is **not** in this PR.
+
+**1. One scrub engine.** `useScrubDrag`
+(`src/ui/components/ScrubInput/useScrubDrag.ts`, new) is now the whole gesture:
+the keyword/token refusal, the 1/10/0.1 per-pixel ladder resolved through
+`nudgeStepFor`, `min`/`max`, the empty-field unit, rAF-coalesced previews, the
+unmount cancel, click-with-no-movement → focus the field, and the final value
+computed fresh from `pointerup`'s `clientX`. `ScrubInput` and `ScrubTokenField`
+both call it.
+
+**Why a hook and not "ScrubTokenField renders a ScrubInput"** (the work order's
+literal wording): a token-aware field is an `Input` **plus an autocomplete
+dropdown**, so a component that renders `ScrubInput` cannot also be
+`TokenAwareInput`. The two field kinds share the state machine, not the markup.
+Extracting the markup-shaped thing would have meant either killing token
+autocomplete on padding/margin/gap/insets or growing `ScrubInput` a
+`renderField` slot — a thin adapter hiding the wrong seam. **If you revisit
+this, revisit it here; do not "finish the job" by making one render the other.**
+
+`ScrubTokenField` lost ~55 lines of drifted copy in the process: it had **no
+rAF coalescing** (a fast padding drag fired one editor-store write per
+`pointermove`, i.e. per breakpoint-iframe style re-derivation, instead of one
+per frame), no `min`/`max`, and its own inline `altKey ? 0.1 : shiftKey ? 10 : 1`.
+
+**2. The ladder moved down one layer.** `BASE_NUDGE`/`SHIFT_NUDGE`/`FINE_NUDGE`
+and `nudgeStepFor` are now DEFINED in `scrubMath.ts` and re-exported from
+`numericNudge.ts` (whose header still explains them). Forced: `src/ui` cannot
+import `src/admin`, and the gesture lives in `src/ui` — leaving the numbers in
+admin guaranteed a second copy, which is precisely how the ±8 drift happened
+the first time. Admin call sites are unchanged.
+
+**3. The rule that decides which fields scrub: THE MARK IS THE HANDLE.** A
+numeric row draws a scrub field when it has an in-field glyph/letterform, and a
+plain typed field when it does not — because a row whose only visible name is a
+caption in a column the row does not own has nothing honest to drag (and
+`ControlRow` is off-limits this PR). Consequence worth knowing: **adding a
+property to `PROPERTY_FIELD_GLYPHS` now gives it the scrub gesture for free** —
+that is the look pass's glyph-extension task delivering scrub as a side effect,
+by design, not by accident.
+
+**4. What gained the gesture.** TRBL insets (`PositionSection`), constraint
+offsets (`PositionConstraints`), `gap`, all five corner radii
+(`AppearanceSection`), `opacity`, `zIndex`, `fontSize`, `lineHeight`,
+`letterSpacing` (`ClassPropertyRow`). `fontSize` needed a mark to grab, so it
+got one: `FontSizeIcon` (new `InspectorIcons` glyph) registered in
+`PROPERTY_FIELD_GLYPHS`. The TRBL/constraint direction arrows **moved from a
+column beside the field into the field** — one fewer grid column, and the arrow
+is now both the name and the handle (`LayoutSection.module.css`'s
+`.directionIcon` and its two `data-state` rules are gone with it).
+
+**5. Two correctness bugs found and fixed on the way** — these are the reason
+to read this entry even if you don't care about scrubbing:
+  - **`line-height: 1.5` was about to become `1.5px`.** Routing the generic
+    numeric row through `resolveCommitValue` with a `px` default would have
+    silently rewritten every ratio line-height in the user's stylesheet into a
+    *different declaration* (a ratio couples to `font-size`; a length does
+    not). New `isUnitlessNumberProp` (`cssControlTypes.ts`) names the three
+    properties whose field unit is `''`: `opacity`, `zIndex` and `lineHeight`.
+    `letterSpacing` is deliberately NOT one — `letter-spacing: 1.5` is invalid
+    CSS. This also fixes a pre-existing W8-1 hole where nudging an empty
+    `lineHeight` produced `1px`.
+  - **Glyphless numeric rows never coerced at all.** `TextControl` committed
+    raw text, so typing `50` into a border-width row emitted the invalid
+    `border-width: 50` and `100/2` was written literally — the exact bug W8-1
+    fixed for `ScrubInput` but not for this path. `nudgeEmptyUnit` is now
+    `numericUnit`, and it drives both the nudge and a `resolveCommitValue` on
+    blur, plus Enter-keeps-focus. One prop, both halves of §5.
+
+**6. Deliberate non-implementations** (say so rather than leaving a silent gap):
+  - **Grid tracks do NOT scrub.** `GridTrackControl` is a segmented count
+    picker writing `repeat(N, 1fr)`, and its custom field holds a free-form
+    template (`200px 1fr 200px`). A single number is not the whole value, and
+    scrubbing one term of a multi-term value is rewriting CSS we only partly
+    understood. `NUDGE_PROPS` has excluded grid templates since W8-1 for the
+    same reason; W8-2 did not change that. Documented in §5.5.
+  - **`opacity`'s drag saturates.** It is clamped to `0..1` (an improvement —
+    it was unbounded), but the field is unitless `0`–`1` rather than Figma's
+    `0`–`100%`, so at the shared 1-per-pixel base step a plain drag hits an end
+    stop immediately; only Alt (0.1) is fine enough to be useful. The honest
+    fix is the **percentage presentation**, which the look pass owns — not a
+    bespoke ladder for one field, which is the thing §5.3 forbids. Flagged in
+    §5.5.
+
+- **Docs:** `docs/features/inspector-disclosure.md` §5 — §-numbers unchanged;
+  §5.1 gained the `fieldUnit` paragraph, §5.3 the "where the numbers live" note,
+  and a **new §5.5** ("One scrub engine, and the mark is the handle") sits after
+  §5.4 and before §6. `STUDIO-FIGMA-PARITY-PLAN.md` §0a has a W8-2 row.
+- **Tests:** `src/__tests__/panels/scrubTokenField.test.tsx` (11, new — real
+  `PointerEvent`s against the wrapper: ladder, Alt-beats-Shift, min/max, empty
+  start unit, token refusal, click-to-focus, no-op round trip, live display,
+  rAF coalescing) and `src/__tests__/panels/inspectorNumericFields.test.tsx`
+  (18, new — the commit path of every previously-unscrubbed field; `opacity`
+  and `zIndex` are asserted to commit as **unitless numbers**, `lineHeight`'s
+  ratio to survive, `letterSpacing` to still get `px`).
+  `appearanceSection.test.tsx` was updated, not patched around: the radius DOM
+  genuinely changed shape. **Convention worth knowing before you write the next
+  panel test** — `ScrubInput` puts `data-testid` on the field WRAPPER (the shell
+  that also carries the draggable mark), and gives the `<input>` `-field` and
+  the mark `-label`. `Input` puts it straight on the `<input>`. So converting a
+  row from `Input` to `ScrubInput` moves every existing test id up one element,
+  and the edit itself now needs a blur/Enter because a scrub field commits on
+  commit, not per keystroke (§5.4).
+- **Verification:** `bun run build` ✅, `bun test` ✅ apart from the documented
+  pre-existing set. **Two triage notes for whoever runs the gates next:**
+  `no-circular-dependencies` FAILS as a 60s **timeout**, not a cycle — `bun x
+  madge --circular …` run directly on this branch prints *"No circular
+  dependency found"* after **82s** on this machine, i.e. the test's hang guard
+  is now under the real cost of a 3 494-file graph. Not caused by this PR
+  (+2 files) but it will keep firing; someone should raise the budget.
+  `no-core-barrel-deep-imports` times out only inside a 163-file parallel run
+  and passes on its own. Plus the known `chevron-left` icon-catalog failure.
+- **NEEDS HUMAN DOGFOOD** (no e2e; happy-dom has no layout engine, so nothing
+  here proves the fields *look* right). Script, ~4 minutes at `/admin/site`:
+  1. Select any element. In **Position**, set `position: relative`, then drag
+     the ▲/▶/▼/◀ arrow inside each inset field — the number should track the
+     pointer 1:1, the canvas should follow smoothly (not stutter), and ONE undo
+     should take back the whole gesture.
+  2. Switch to `position: absolute` — the X/Y constraint rows appear. Drag the
+     arrow in each; flip the side picker (Left→Right) and confirm the arrow
+     glyph flips with it and the value MOVES rather than duplicating.
+  3. **Appearance**: drag the corner-radius mark left past zero — it must stop
+     at `0px`, never go negative. Expand to four corners; each drags too.
+  4. **Layout**: drag the gap mark; same zero floor.
+  5. **Typography**: drag `fontSize`'s new "Aa" mark, and `lineHeight` /
+     `letterSpacing`. Then TYPE `1.5` into line-height and confirm the
+     stylesheet gets `line-height: 1.5` — **not** `1.5px`. Type `100/2` into
+     letter-spacing and confirm `50px`.
+  6. Type `50` into a border-width row (Stroke → advanced) and confirm `50px`.
+  7. Anywhere: hold **Shift** while dragging (10x), then **Alt** (0.1x), then
+     both (Alt should win). Press **Enter** in any field — the caret must stay
+     put with the text re-selected.
+  8. Multi-select two nodes and confirm a `Mixed` field still refuses to drag.
 ### mcp-20 — W9-6: the last three bridge-bound tools go headless, and the agent gets a ruler
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open)
@@ -492,6 +633,116 @@ are the remaining WS-2 items, not yet dispatched. See
 - **Next step:** W8-2 (scrub unification + the look pass) is unblocked and is
   the natural follow-on — it wires scrubbing into every numeric this PR taught
   to nudge and do maths. W8-3 and W8-4 also list W8-1 as their blocker.
+### panel-15 — the inspector at narrow width: the rail is no longer paved over, and an empty section is no longer an accordion
+- **Agent:** panel-designer
+- **Stage:** done (gates green; draft PR open; **needs a human dogfood pass**)
+- **Updated:** 2026-09-07
+- **Branch:** `fix/inspector-narrow-overlap-empty-sections`, cut from `origin/main`
+  at `f65c4ef` and rebased onto `342c67d` (W8-1 / PR #50 and W7-2 / PR #51 landed
+  mid-flight). W8-1 owns `ScrubInput`, `numericNudge`, `RotationRow` and
+  `TypographySection`; this branch deliberately touches none of them.
+- **Goal:** three bugs the user hit dogfooding the properties panel — (1) section
+  row-end buttons drawing on top of `StyleCategoryRail` at narrow width, (2) the
+  accordion affordance on sections with nothing applied, (3) W/H in Size not
+  reading as equal halves.
+- **Scope:** `src/styles/globals.css` (one new token),
+  `src/ui/components/Section/{Section.tsx,Section.module.css}`,
+  `src/ui/components/ExpandableFieldCluster/ExpandableFieldCluster.module.css`,
+  `src/ui/components/AddablePropertyField/AddablePropertyField.module.css`,
+  `src/admin/pages/site/panels/PropertiesPanel/{StyleSurface.module.css,PropertiesPanel.module.css,LayoutSection.module.css,SizeSection.tsx,SizeSection.module.css,StyleSectionsEditor.tsx,SpacingBoxControl/SpacingSection.module.css,__tests__/emptySectionLaw.test.tsx}`,
+  `docs/{design.md,features/inspector-disclosure.md,reference/ui-primitives.md}`,
+  `STUDIO-WAVE7-PLAN.md` (one W8-2 bullet corrected).
+  **Does not touch** `ScrubInput`, `numericNudge`, `RotationRow`, `TypographySection` —
+  W8-1 owns those.
+- **Done so far:**
+  - **Bug 1 — measured, not guessed.** Drove the real editor at
+    `127.0.0.1:5173/admin/site` at a 260px panel (`SIDEBAR_MIN_WIDTH`) and read
+    geometry back with `getBoundingClientRect`/`scrollWidth`. Four sections were
+    horizontally overflowing their 217px content column: **Spacing 379px**,
+    **Layout 347px**, **Stroke 295px**, **Typography 218px**. The rail is a real
+    grid column (`minmax(0, 1fr) 32px`, `StyleSurface.module.css:10`) — it never
+    floated — but `.surface` clips on x at the *panel* edge, so the overflow
+    painted straight across the rail's icons. One CSS fact, not four bugs: a grid
+    track sized `auto` takes its minimum from its items, and a grid item's own
+    minimum is its content unless it says `min-width: 0`.
+  - The clamp is now declared once per intrinsic-sizing wrapper:
+    `Section.module.css`'s `.sectionBody` **and `.sectionBody > *`** (every section
+    body passes through it), `LayoutSection`'s `.layoutSection` + `.flexBlock > *`,
+    `SpacingSection`'s `.spacingSection`, and — the one that mattered most —
+    `ExpandableFieldCluster`'s `.root`, which padding AND margin both mount and
+    which reported a 339px minimum on its own.
+  - `--inspector-rail-w: 32px` replaces the literal `32` in both surfaces that
+    draw the rail (`StyleSurface`, `SelectorInspector`).
+    `.surfaceContent` gains `overflow-x: clip` as the standing guarantee that the
+    NEXT such control truncates instead of eating the rail. `clip`, not `hidden`:
+    it must not become a second scroll container, and the Y axis stays visible.
+    Every floating surface in the panel portals (ContextMenu, InspectorPopover,
+    Select, Tooltip) and the sticky search bar is positioned against `.panel`, so
+    nothing that must escape is caught.
+  - **After:** every `[data-style-section]` has `scrollWidth === clientWidth` at
+    260px and at 290px, and the rightmost content pixel is exactly the rail's
+    left edge (1237 = rail `left`).
+  - **Bug 2.** `Section` gains **`empty`**: no chevron, no toggle, no body,
+    `children` ignored — a static header whose only control is `actions`.
+    `StyleSectionGroup`'s Law-1 branch passes it instead of `children={null}`.
+    Measured before: clicking an empty Animations header set `aria-expanded=true`
+    and rendered a `.sectionContent` with **0 bytes of HTML**, growing the section
+    33px → 43px. Measured after: no chevron, no `sectionContent`, height stays 33px.
+  - The header "+"s that write a real value (Fill, Effects, Animations) now route
+    through `addAndReveal` so adding the first item OPENS the section. Without it a
+    user with `propertiesSectionsExpanded` off would click "+", write a fill, and
+    be shown a closed section.
+  - **Bug 3.** Size's W/H were always `1fr 1fr` and always equal — the mis-sizing
+    was the mode chevron sitting BESIDE the field, in flow, spending ~20px of an
+    82px cell on chrome next to Layout's padding row where the whole cell is field.
+    The chevron is now drawn inside the field's trailing edge (the idiom
+    `RevealedField`'s "−" in the same module already used), with the input padded
+    clear of it. Measured at 290px: W and H are `97px` each and the ScrubInput
+    shell is the full 97 (was 61 of 82).
+- **Next step:** nothing required. If someone picks up W8-2, the width invariant
+  now written into `docs/features/inspector-disclosure.md` §6
+  (`scrollWidth === clientWidth` for every `[data-style-section]` at 260px) is
+  ready to be turned into a real gate beside the §6 height gate.
+- **Decisions:**
+  - **`empty` on `Section`, not a chevron variant per section.** The primitive is
+    told the fact ("nothing is applied"); it decides the presentation. This is
+    also why `STUDIO-WAVE7-PLAN.md` W8-2's "persistent chevron for collapsed
+    `collapsedWhenEmpty` sections" was rewritten in this change rather than left
+    to contradict the code: a persistent chevron now belongs to a collapsed
+    section that HAS content.
+  - **`min-width: 0` at the source AND `overflow-x: clip` as a backstop.** Either
+    alone is wrong — the clip alone would hide the bug, the clamps alone leave the
+    next section free to reintroduce it silently.
+  - **The chevron overlays the field rather than moving into `ScrubInput`.**
+    Putting it in ScrubInput's shell means a trailing slot on ScrubInput, which
+    W8-1 is actively editing. The overlay is scoped entirely to
+    `AddablePropertyField.module.css` (which already styles the inner `input`
+    for `.wordMode`) and only `SizeSection` consumes that component.
+- **Landmines:**
+  - `min-width: 0` on a flex/grid CONTAINER does not shrink its intrinsic
+    contribution to whatever sizes it — it only removes its own automatic minimum.
+    `ExpandableFieldCluster`'s `.row`/`.cell` both already had it and the cluster
+    still reported 339px; the fix was `min-width: 0` on `.root` itself. Expect to
+    walk the whole chain, not one node of it.
+  - `STUDIO-WAVE7-PLAN.md` is not valid UTF-8 (`file` reports `data`) — plain
+    `grep` silently matches nothing in it. Use `grep -a`.
+  - Full-suite `bun test` shows the known batch-isolation cluster (~28 fails,
+    canvas + architecture gates timing out at 5s under load). Per-directory they
+    are green: `src/__tests__/architecture` alone = 509 pass / 1 fail (the
+    pre-existing `chevron-left` icon-catalog gate).
+- **Verification:** `bun run build` ✅ · `bun test src/admin/pages/site/panels/PropertiesPanel
+  src/ui/components/AddablePropertyField src/ui/components/ExpandableFieldCluster
+  src/__tests__/panels` → 880 pass / 0 fail · `bun test src/__tests__/architecture`
+  → 509 pass / 1 pre-existing fail · `bun run lint` ✅ · live geometry measured in
+  a headless Chromium at 260px and 290px (numbers above).
+- **Human action needed:** dogfood `/admin/site` → select a node → drag the right
+  sidebar to its 260px minimum. Check: (a) no section control touches the icon
+  rail, in either theme; (b) an untouched Fill / Stroke / Effects / Animations /
+  Typography header shows only its title and `+`, and hovering it offers no
+  chevron; (c) clicking Fill's `+` writes a fill AND opens the section — turn
+  "Expand style sections by default" OFF in Settings first, that is the case the
+  reveal exists for; (d) Size's W and H read as equal halves against Layout's H/V
+  padding row underneath, and each chevron still opens Fixed/Hug/Fill.
 
 ### panel-12 — W7-1: the launcher sorts, fails, and redraws honestly
 - **Agent:** studio-implementer
@@ -1115,6 +1366,123 @@ to `docs/features/studio-import.md`'s `className` write-back section.
   confirm the model trigger reads `<model> auto · <effort>` with the router's
   reason on hover.
 
+### panel-16 — W8-4: an Export section, and what it refuses to fake
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-export-section` off `origin/main` (`0d05e1c`).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-4, the *Export section* bullet, one PR.
+  Nothing from W8-2/3 or the parallel scrub/fill/multi-select waves.
+- **What landed.** A node-level **Export** section at the bottom of the
+  inspector (`ExportSection.tsx`, mounted last in `StyleSurface`'s column,
+  keyed by node id). One header line and a `+` at rest (Law 1); the typed `+`
+  menu is **PNG @1×/@2×/@3×**, **SVG**, **Copy CSS**, **Copy JSX**. The image
+  formats add a row (format + density + a run button); the two copies run
+  immediately, because a copy has no settings to keep.
+  - **PNG** — `POST /admin/api/studio/node-png`. Photographs the node's page
+    through the existing `captureFrames` pipeline (untouched — consumed via
+    its exported entry) and crops to the node's own rect. `resolveNodeCropBox`
+    (`nodeExportCapture.ts`) derives the crop from the capture's **reported**
+    `nodeRects` + `imageScale`, never the requested `dpr`, so it stays correct
+    when the pipeline clamps a 3× request. Rounds outward, clamps an
+    overhanging rect, and refuses two cases by name (0×0 element; entirely
+    outside what was photographed).
+  - **SVG** — deliberately **no route**. Whether a node has an honest vector
+    form is a fact about the parse the browser already holds (`props.svg` from
+    `inlineSvg.ts`, or an `<img src>` resolving to `.svg` — including the
+    `?path=…svg` shape the parse rewrites local assets to). Everything else is
+    refused BY NAME (`rasterized-html` / `raster-image` / `dynamic-svg`)
+    rather than wrapped in an `<svg><image href="data:…">` shell. That shell
+    is what "export anything as SVG" tools emit and it is a lie about the file
+    the user just saved.
+  - **Copy CSS** — off the `provenanceByProperty` map `StyleSurface` already
+    computes. Only properties something *declares* are copied, each at its
+    provenance **winner**'s value; an `ambiguous` property falls back to the
+    frame's real computed value rather than picking a candidate declaration at
+    random. A node with no class gets bare declarations under a comment
+    header — never an invented selector.
+  - **Copy JSX** — `POST /admin/api/studio/node-jsx`, located with
+    `locateJsxElement.ts` (the same locator every codemod resolves its write
+    target with) and returned verbatim. Never regenerated from the tree.
+- **Why Export is NOT in `classStyleSections.ts`.** Three consumers read that
+  registry as *CSS properties on a style target*: `StyleSectionsEditor`
+  renders one copy per open target (so a node with both the Element and class
+  blocks open would have shown **two** Export sections), `StyleCategoryRail`
+  derives a rail button **disabled until a class is active** (Export works
+  fine on an unclassed element), and the search filters by claimed properties
+  (Export claims none). It follows Law 1 in its own component instead, so
+  `emptySectionLaw.test.tsx` still covers exactly the seven flagged CSS
+  sections — unchanged, still green. Consequence: **there is no rail icon for
+  Export**; `StyleCategoryRail.tsx` belongs to the parallel inspector-fix
+  agent and was not touched. If a rail entry is wanted, it needs a
+  non-`CLASS_STYLE_SECTIONS` entry in that file — a follow-up, not drift.
+- **Cleanups made on the way (CLAUDE.md "fix at the source"):**
+  - `saveBlobAsFile` (`src/admin/shared/saveBlobAsFile.ts`) — the
+    object-URL + hidden-anchor + delayed-revoke idiom existed in two verbatim
+    copies (`downloadStudioCode.ts`, `agentImageActions.ts`) and this would
+    have been a third. Both migrated.
+  - `server/handlers/studio.ts` had grown **four** bespoke "called outside the
+    loop because it needs the `DbClient`" blocks, each restating the same
+    rationale. They are now one `STUDIO_SESSION_SUB_ROUTERS` array + loop,
+    mirroring the existing `STUDIO_SUB_ROUTERS`. Net effect: the file is
+    **698 lines** (was 692) even after gaining a route — but it is still
+    within 2 lines of the 700-line ceiling. **The next agent to add a route
+    there must split the file, not squeeze.** Its module doc is ~250 lines of
+    prose cataloguing routes that already have their own module docs; that is
+    the obvious extraction.
+  - `@core/ast-codemods` now exports the shared JSX locator
+    (`createProject` / `loadSourceFile` / `findJsxElementAtLocation` /
+    `resolveJsxWholeElement`) through its barrel, so Copy JSX finds the exact
+    span a write would land on instead of growing a second locator.
+    `camelToKebabCssProperty` was reused from `@core/css-codemods` rather than
+    adding a third kebab helper — see that file's own note on why the copies
+    are deliberate.
+- **Tests:** `nodeExportCapture.test.ts` (crop math: scaling, outward
+  rounding, edge clamping, both refusals; plus the capture→crop wiring through
+  the injectable `captureFrames` seam, no Chromium) · `nodeExportRoutes.test.ts`
+  (path ownership, non-POST verbs ignored, **session required before the body
+  is even read**, and the two body schemas — notably that a density the menu
+  does not offer is a 400, not a value to clamp) · `nodeExportModel.test.ts`
+  (the `+` menu registry, file naming, all three SVG refusals + all three
+  accept shapes, Copy CSS winner/ambiguous/skip behaviour and its formatting).
+- **Verification:** `bun run build` (tsc -b + vite) clean · `bun run lint`
+  clean · new tests 44/0 · `bun test src/admin/pages/site/panels/PropertiesPanel
+  src/__tests__/panels src/admin/pages/site/studio/__tests__` → 990/0 (a first
+  run showed 2 fail, green on re-run — the documented batch-isolation flake) ·
+  `bun test src/__tests__/architecture/module-size-budgets.test.ts` → 5/0 ·
+  `bun test server/handlers/studio …` → 6 fail, all in the documented
+  environmental cluster (`applyProjectSeed`, `generateStudioProjectGuide`,
+  `buildStoryRouteEntries` — they read Studio's own `node_modules`, empty in a
+  worktree). The architecture suite's icon-catalog and `madge`/driver-isolation
+  timeouts are the same pre-existing clusters `agent-16` documents above; no
+  new icon was added (`arrow-bar-down`, `image-solid`, `image-2-solid`,
+  `loader`, `plus` are all already vendored, so no `icons:sync` run was needed).
+- **Human action needed — dogfood script.** Open `/admin/site` on
+  `studio-workspace/test4` and select a node:
+  1. The **Export** section is the last block in the panel and is **one line
+     with a `+`**. Confirm it is present on an element with **no class** (the
+     rail's CSS icons are greyed out there — Export must not be).
+  2. `+` → **PNG @2×** adds a row reading `PNG 2×`; its run button downloads a
+     file named after the node with an `@2x.png` suffix. Open it: it must be
+     **just that element**, not the whole frame. Needs
+     `bunx playwright install chromium` — the crop is the one thing no test can
+     prove on this machine.
+  3. Select an **inline `<svg>`** (a design-system icon) → `+` → **SVG** → run.
+     The file must open in a browser as a real vector. Then select a plain
+     `<div>` and do the same: expect a **refusal toast naming the reason**
+     ("rasterized HTML … export PNG instead"), not a downloaded file.
+  4. **Copy CSS** on an element with two classes, then paste. Check the
+     selector is the real `.a.b`, the values match what the panel shows, and
+     nothing inherited leaked in. Repeat on an unclassed element: bare
+     declarations, no invented selector.
+  5. **Copy JSX**, paste, and diff against the element in the `.tsx` — it must
+     be character-identical, comments and expressions included.
+  6. Select a different node and back: the rows are gone (per-selection state,
+     by design — say so if that feels wrong; persisting them means writing
+     into the user's repo).
+- **Next step:** review + merge the PR. Nothing is stacked on it. The
+  `StyleCategoryRail` question in the bullet above is the only known follow-up.
+
 ---
 
 ## Blocked
@@ -1138,6 +1506,11 @@ here **verbatim**, so archiving buries no dogfood step.
 
 ### Still in "Recently landed" below — the entry carries the full script
 
+- **`panel-16` — W8-4 the Export section** (in `## Now`, not yet landed to
+  `main`). Six-step script in the entry. The two steps no test can stand in
+  for: whether the PNG crop actually lands on the selected element (needs
+  `bunx playwright install chromium`), and whether the SVG refusal reads as
+  helpful rather than obstructive on a plain `<div>`.
 - **`panel-13` — W8-1 inspector field ergonomics** (in `## Now`, not yet landed
   to `main`). Open the Properties panel on a text node in `studio-workspace/test4`
   and, in one pass: (1) type `50` into Width, press **Enter** — the field must
@@ -1153,6 +1526,13 @@ here **verbatim**, so archiving buries no dogfood step.
   reason on hover; (7) **Fill** now carries a **Text** row for `color` and an
   "Add text colour" `+`, and **Effects** carries **Text shadow** rows with no
   Spread/Inset fields — check both write to the real `.tsx`/CSS on disk.
+- **`panel-15` — inspector at narrow width** (in `## Now`, not yet landed to
+  `main`). The rail-overlap fix, the empty-section header, and Size's W/H were
+  all measured in a headless browser, but nobody has *used* the panel at 260px:
+  drag the right sidebar to its minimum, confirm no control touches the rail in
+  either theme, confirm an untouched section offers no chevron, turn "Expand
+  style sections by default" OFF and confirm Fill's `+` both writes and opens,
+  and confirm W/H still scrub and still open Fixed/Hug/Fill.
 - **`panel-12` — W7-1 launcher polish** (in `## Now`, not yet landed to `main`).
   Card scale + hover lift in both themes, the rename-then-sort fix, the failed-
   listing retry, and the post-delete refetch. Five-step script in the entry.

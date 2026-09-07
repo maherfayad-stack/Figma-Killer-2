@@ -1,0 +1,32 @@
+/*
+ * ExportSection — the rows themselves are `PropertyList` (imported from
+ * `@ui/components/PropertyList`, unstyled here). This file owns only what
+ * rides in a row's trailing `value` slot: the density chip and the run
+ * button beside it.
+ */
+
+.rowTrailing {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-caption-gap);
+}
+
+/* The density a row exports at ("2×", or "Vector" for SVG). Reads as data,
+   not as a control — it is fixed when the row is added. */
+.scaleChip {
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* The run button's spinner while a capture is in flight. */
+.runningIcon {
+    animation: exportSpin 1s linear infinite;
+}
+
+@keyframes exportSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}

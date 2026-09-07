@@ -70,7 +70,7 @@
  */
 
 import { useState, useRef, type ReactNode } from 'react'
-import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import { useEditorStore, selectActiveCanvasPage, selectSelectedNode } from '@site/store/store'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
 import { canWriteInlineStyleForModule, isGeneratedClassLocked, isStudioPageRootId, styleRuleSelector, styleRuleDisplayName } from '@core/page-tree'
@@ -83,6 +83,7 @@ import { ClassPropertyRow } from './ClassPropertyRow'
 import { StyleCategoryRail, MODULE_CATEGORY_ID } from './StyleCategoryRail'
 import { StyleTargetChip, type ClassCssEditability } from './StyleTargetChip'
 import { ClassCssLockedNotice } from './ClassCssLockedNotice'
+import { ExportSection } from './ExportSection'
 import { classCssWriteLockReason, resolveClassCssEditability } from './classCssWritability'
 import { StyleWriteLockContext } from './StyleWriteLockContext'
 import { useScrollSpy } from './useScrollSpy'
@@ -316,6 +317,14 @@ export function StyleSurface({
   })
   const classWriteLockReason = classCssWriteLockReason(classCssEditability, { studioSession })
 
+  // W8-4's Export block needs two facts no other part of this surface does:
+  // the node itself (its label, and the `props.svg`/`props.src` the SVG
+  // decision reads) and which page it sits on (the screen the capture
+  // photographs). Both are null in global-selector mode, where the section
+  // does not render at all.
+  const selectedNode = useEditorStore(selectSelectedNode)
+  const activePageId = useEditorStore((s) => s.activePageId)
+
   // Rail dot badges reflect the UNION of what's actually set across every
   // block currently visible — a property set via the class OR via inline
   // both count as "this section has content".
@@ -527,6 +536,25 @@ export function StyleSurface({
 
           {/* CSS area — Element block, Class block, locked preview, or generated lock */}
           {cssContent}
+
+          {/* Export (W8-4) — the last block in the column, Figma's position for
+              it. Node-level, not a style-target section: see
+              `ExportSection.tsx`'s doc for why it is NOT registered in
+              `classStyleSections.ts`. Keyed by node so the rows a user
+              configured for one element never carry over to the next; gated on
+              a Studio session because both of its server verbs (photograph
+              this page, read this node's JSX) address a project on disk. */}
+          {nodeId != null && selectedNode != null && activePageId != null && studioSession && (
+            <ExportSection
+              key={nodeId}
+              nodeId={nodeId}
+              pageId={activePageId}
+              node={selectedNode}
+              properties={ALL_CURATED_CSS_PROPERTIES}
+              provenanceByProperty={provenanceByProperty}
+              classSelectors={assignedClassRules.map((rule) => styleRuleSelector(rule))}
+            />
+          )}
         </div>
 
         {/* ── Right column: sticky rail ────────────────────────────── */}

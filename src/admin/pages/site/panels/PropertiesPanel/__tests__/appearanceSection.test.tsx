@@ -63,6 +63,22 @@ function renderAppearance(overrides: Partial<AppearanceProps> = {}) {
   )
 }
 
+/** The radius fields are `ScrubInput`s, which put `data-testid` on the field
+ * WRAPPER (the shell that also carries the draggable mark) and `-field` on the
+ * `<input>` itself. Read the text box through this. */
+function radiusInput(id: string): HTMLInputElement {
+  return screen.getByTestId(`appearance-radius-${id}-field`) as HTMLInputElement
+}
+
+/** A `ScrubInput` commits on blur / Enter, not per keystroke — §5.4. Typing
+ * without committing is a draft, so an edit test has to do both. */
+function editRadius(id: string, value: string) {
+  const input = radiusInput(id)
+  fireEvent.focus(input)
+  fireEvent.change(input, { target: { value } })
+  fireEvent.blur(input, { target: { value } })
+}
+
 /** Forces the radius cluster's collapse state to `expected`, sidestepping
  * its per-cluster-id sticky state (a module-level Map keyed by `id="radius"`
  * that survives remounts by design — see `ExpandableFieldCluster`'s doc). */
@@ -90,8 +106,7 @@ describe('AppearanceSection — opacity + radius row', () => {
     setRadiusExpanded(false)
 
     expect(screen.getByTestId('css-property-row-opacity')).toBeTruthy()
-    const collapsedField = screen.getByTestId('appearance-radius-all') as HTMLInputElement
-    expect(collapsedField.value).toBe('4px')
+    expect(radiusInput('all').value).toBe('4px')
     expect(screen.queryByTestId('appearance-radius-TopLeft')).toBeNull()
   })
 
@@ -108,10 +123,10 @@ describe('AppearanceSection — opacity + radius row', () => {
     })
 
     setRadiusExpanded(true)
-    expect((screen.getByTestId('appearance-radius-TopLeft') as HTMLInputElement).value).toBe('4px')
-    expect((screen.getByTestId('appearance-radius-TopRight') as HTMLInputElement).value).toBe('8px')
-    expect((screen.getByTestId('appearance-radius-BottomRight') as HTMLInputElement).value).toBe('4px')
-    expect((screen.getByTestId('appearance-radius-BottomLeft') as HTMLInputElement).value).toBe('4px')
+    expect(radiusInput('TopLeft').value).toBe('4px')
+    expect(radiusInput('TopRight').value).toBe('8px')
+    expect(radiusInput('BottomRight').value).toBe('4px')
+    expect(radiusInput('BottomLeft').value).toBe('4px')
 
     setRadiusExpanded(false)
     setRadiusExpanded(true)
@@ -132,7 +147,7 @@ describe('AppearanceSection — opacity + radius row', () => {
     })
     setRadiusExpanded(false)
 
-    fireEvent.change(screen.getByTestId('appearance-radius-all'), { target: { value: '10px' } })
+    editRadius('all', '10px')
 
     expect(calls).toContainEqual(['borderTopLeftRadius', '10px'])
     expect(calls).toContainEqual(['borderTopRightRadius', '10px'])
@@ -154,7 +169,7 @@ describe('AppearanceSection — opacity + radius row', () => {
     })
     setRadiusExpanded(true)
 
-    fireEvent.change(screen.getByTestId('appearance-radius-TopRight'), { target: { value: '12px' } })
+    editRadius('TopRight', '12px')
 
     expect(calls).toEqual([['borderTopRightRadius', '12px']])
   })
