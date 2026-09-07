@@ -27,8 +27,8 @@
  * ## Rows are session state, deliberately
  *
  * Figma persists export settings in the file. Studio's file is the user's
- * repository, and writing `{/* export: png@2x *​/}` into their `.tsx` to
- * remember a checkbox is not a trade this tool makes. So the rows live in
+ * repository, and writing an `export: png@2x` marker comment into their `.tsx`
+ * to remember a checkbox is not a trade this tool makes. So the rows live in
  * component state, keyed by node at the mount site — they survive while you
  * work on an element and are gone when you select another one.
  */

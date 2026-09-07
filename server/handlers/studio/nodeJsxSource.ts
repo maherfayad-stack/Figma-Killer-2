@@ -12,7 +12,7 @@
  * A node id carries `rel:line:col`, which points at the TAG NAME, not at the
  * element's extent. Finding where the element ENDS means matching its closing
  * tag through however many nested elements, string literals containing `<`,
- * and `{/* comments *​/}` sit in between — a job for the parser that already
+ * and JSX comment blocks sit in between — a job for the parser that already
  * knows, not a regex. `locateJsxElement.ts` is the same locator every codemod
  * in `@core/ast-codemods` uses to find its write target, so "the JSX you
  * copied" and "the JSX an edit would rewrite" are by construction the same

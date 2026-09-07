@@ -219,11 +219,9 @@
  *   GET/POST /admin/api/studio/comments        → `studio/commentsRoutes.ts`
  *       Review threads pinned to the board (`.studio/comments.json`). POST
  *       carries ONE `CommentOp`, not the whole file, because comments are
- *       multi-writer where board geometry is not. The only studio route that
- *       requires a session: a comment has a byline, and the server is the
- *       only party that can honestly supply one. Called outside the
- *       sub-router loop below because it is the only one needing the
- *       `DbClient`.
+ *       multi-writer where board geometry is not. Requires a session — a
+ *       comment has a byline, and the server is the only party that can
+ *       honestly supply one — so it rides `STUDIO_SESSION_SUB_ROUTERS`.
  *
  *   POST /admin/api/studio/node-{png,jsx}      → `studio/nodeExportRoutes.ts`
  *       W8-4 — the inspector's Export section: a PNG of one node cut out of a
@@ -321,12 +319,9 @@ const STUDIO_SUB_ROUTERS = [
 ] as const
 
 /**
- * Sub-routers that additionally need the `DbClient`, because each acts ON
- * BEHALF OF a signed-in user rather than merely reading a project directory:
- * a comment carries a byline, a share publishes designs to anyone with the
- * URL, and Export drives a capture and returns file contents. A second list
- * rather than four bespoke blocks restating that — the exception is a shape,
- * and the shape is "`STUDIO_SUB_ROUTERS`, plus `runtime`".
+ * The same, for sub-routers that additionally need the `DbClient` because
+ * each acts ON BEHALF OF a signed-in user (a byline, a public share link, a
+ * capture, a file's contents) rather than merely reading a project directory.
  */
 const STUDIO_SESSION_SUB_ROUTERS = [
   tryServeStudioComments,
