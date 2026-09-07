@@ -63,6 +63,16 @@ export interface AddablePropertyFieldMode {
    * one named by `numericMode` — whose field shows `value` as a number.
    */
   word?: string
+  /**
+   * Why this mode cannot be chosen right now. Present ⇒ the menu row is
+   * rendered disabled with this string as its tooltip, rather than hidden —
+   * the same disabled-with-a-named-reason shape `AlignBar`'s
+   * `alignDisabledReasons` uses. A mode the user can't have should still be
+   * visible and should say why; silently dropping it from the menu teaches
+   * nothing. `SizeSection` uses this for Hug/Fill when the selected
+   * element's parent layout can't be read (`elementSizing.ts`).
+   */
+  disabledReason?: string
 }
 
 export interface AddablePropertyFieldAddition {
@@ -251,10 +261,13 @@ export function AddablePropertyField({
             modes.map((modeOption) => {
               const isActive = modeOption.value === mode
               const content = isActive && modeOption.activeLabel ? modeOption.activeLabel(value) : modeOption.label
+              const unavailable = modeOption.disabledReason
               return (
                 <ContextMenuItem
                   key={modeOption.value}
                   selected={isActive}
+                  disabled={unavailable !== undefined}
+                  tooltip={unavailable}
                   onClick={() => {
                     onModeChange?.(modeOption.value)
                     closeMenu()

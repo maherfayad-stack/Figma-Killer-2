@@ -57,6 +57,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -74,6 +75,7 @@ import {
   type FloatingSide,
   type ResolvedFloatingSide,
 } from '@ui/lib/floatingPosition'
+import { fitFloatingToViewport } from '@ui/lib/floatingViewportFit'
 import { useAnchoredFloating } from '@ui/lib/useAnchoredFloating'
 import { useOutsidePointerDismiss } from '@ui/lib/useOutsidePointerDismiss'
 import { useEvent } from '@ui/lib/useEvent'
@@ -81,6 +83,15 @@ import styles from './InspectorPopover.module.css'
 
 /** Preferred side, then the remaining sides in a sensible fallback order. */
 const ALL_SIDES: ReadonlyArray<ResolvedFloatingSide> = ['left', 'right', 'bottom', 'top']
+
+/**
+ * Gap kept between the popover and every viewport edge, px. Deliberately
+ * wider than `computeFloatingPosition`'s own 8px `viewportMargin`: the side
+ * pass only needs the panel technically on-screen, whereas this is the
+ * *visual* breathing room a settings panel needs so its last row never reads
+ * as clipped against the bottom of the display.
+ */
+const VIEWPORT_MARGIN = 12
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), ' +
@@ -122,6 +133,25 @@ function initialTabFor(
   if (remembered != null && tabs.some((tab) => tab.value === remembered)) return remembered
   if (defaultTab != null && tabs.some((tab) => tab.value === defaultTab)) return defaultTab
   return tabs[0]?.value ?? ''
+}
+
+// ---------------------------------------------------------------------------
+// Viewport measurement — see the viewport-fit block inside the component.
+// ---------------------------------------------------------------------------
+
+interface PopoverMetrics {
+  /** Laid-out height of the popover root, px (`offsetHeight`). */
+  height: number
+  viewportWidth: number
+  viewportHeight: number
+}
+
+function samePopoverMetrics(a: PopoverMetrics, b: PopoverMetrics): boolean {
+  return (
+    a.height === b.height &&
+    a.viewportWidth === b.viewportWidth &&
+    a.viewportHeight === b.viewportHeight
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +263,73 @@ export function InspectorPopover({
   })
   const measuring = position === null
 
+  // ── Viewport fit ──────────────────────────────────────────────
+  // `useAnchoredFloating` picks the side and clamps against the popover's
+  // *measured* height, which cannot help a panel taller than the viewport —
+  // it just pins the top and lets the tail run off the bottom of the screen.
+  // Measure the laid-out height ourselves and hand it to
+  // `fitFloatingToViewport`, which returns both the clamped origin and the
+  // `max-height` ceiling that makes the panel fit; `.body` scrolls the rest.
+  //
+  // `offsetHeight`, not `getBoundingClientRect().height`: the latter includes
+  // the enter animation's `scale(0.97)` and reports ~3% short, which would
+  // place the panel ~3% too low and clip exactly the last row.
+  const [metrics, setMetrics] = useState<PopoverMetrics>(() => ({
+    height: 0,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  }))
+
+  const measure = useEvent(() => {
+    const element = popoverRef.current
+    if (!element) return
+    const next: PopoverMetrics = {
+      height: element.offsetHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    }
+    // Bail on an unchanged measurement: the ResizeObserver below fires for
+    // every content change inside the panel, and a fresh object each time
+    // would re-render the whole popover on every keystroke in it.
+    setMetrics((prev) => (samePopoverMetrics(prev, next) ? prev : next))
+  })
+
+  useLayoutEffect(() => {
+    measure()
+  }, [measure])
+
+  useLayoutEffect(() => {
+    const element = popoverRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(() => measure())
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [measure])
+
+  // The panel is `position: fixed`, so a window resize (and a scroll that
+  // moves the anchor) changes which part of the viewport it has to fit into.
+  useEffect(() => {
+    function onViewportChange() {
+      measure()
+    }
+    window.addEventListener('resize', onViewportChange)
+    window.addEventListener('scroll', onViewportChange, true)
+    return () => {
+      window.removeEventListener('resize', onViewportChange)
+      window.removeEventListener('scroll', onViewportChange, true)
+    }
+  }, [measure])
+
+  const fit = fitFloatingToViewport({
+    x: position?.x ?? 0,
+    y: position?.y ?? 0,
+    width: effectiveWidth,
+    height: metrics.height,
+    viewportWidth: metrics.viewportWidth,
+    viewportHeight: metrics.viewportHeight,
+    margin: VIEWPORT_MARGIN,
+  })
+
   // ── Nested popovers ─────────────────────────────────────────────────────
   const registerWithParent = useContext(InspectorPopoverNestingContext)
   const [childRoots, setChildRoots] = useState<readonly HTMLElement[]>([])
@@ -317,9 +414,10 @@ export function InspectorPopover({
   })
 
   const style = {
-    '--inspector-popover-x': `${position?.x ?? 0}px`,
-    '--inspector-popover-y': `${position?.y ?? 0}px`,
+    '--inspector-popover-x': `${fit.x}px`,
+    '--inspector-popover-y': `${fit.y}px`,
     '--inspector-popover-width': `${effectiveWidth}px`,
+    '--inspector-popover-max-height': `${fit.maxHeight}px`,
     ...(zIndex != null ? { '--inspector-popover-z-index': zIndex } : null),
     ...(measuring ? { visibility: 'hidden' as const } : null),
   } as CSSProperties

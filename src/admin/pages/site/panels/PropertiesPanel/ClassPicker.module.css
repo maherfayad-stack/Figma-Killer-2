@@ -2,13 +2,13 @@
 
 .container {
     display: grid;
-    gap: var(--space-m);
+    gap: var(--inspector-space-m);
 }
 
 .pillsContainer {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
 }
 
 /* Input + optional trailing action (e.g. the Componentize button).
@@ -20,7 +20,7 @@
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     align-items: center;
 }
 
@@ -29,7 +29,7 @@
 }
 
 .noMatch {
-    padding: var(--space-m) var(--space-m);
+    padding: var(--inspector-space-m) var(--inspector-space-m);
     color: var(--text-subtle);
     font-size: var(--text-xs);
 }
@@ -44,7 +44,7 @@
 
 .utilityBadge {
     flex: 0 0 auto;
-    padding: var(--space-4xs) var(--space-2xs);
+    padding: var(--inspector-space-4xs) var(--inspector-space-2xs);
     border-radius: 999px;
     background: var(--bg-surface-5);
     color: var(--text);
@@ -65,8 +65,8 @@
     display: flex;
     min-height: 30px;
     align-items: center;
-    gap: var(--space-s);
-    padding: var(--space-s) var(--space-m);
+    gap: var(--inspector-space-s);
+    padding: var(--inspector-space-s) var(--inspector-space-m);
     border-radius: var(--radius);
     background: var(--warning-10);
     color: var(--warning-text);
@@ -89,7 +89,7 @@
 }
 
 .errorText {
-    margin: calc(var(--space-3xs) * -1) 0 0;
+    margin: calc(var(--inspector-space-3xs) * -1) 0 0;
     color: var(--danger);
     font-size: var(--text-xs);
     line-height: 1.35;
@@ -98,8 +98,8 @@
 .noticeRow {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
-    margin: calc(var(--space-3xs) * -1) 0 0;
+    gap: var(--inspector-space-xs);
+    margin: calc(var(--inspector-space-3xs) * -1) 0 0;
     color: var(--text-subtle);
     font-size: var(--text-xs);
     line-height: 1.35;
@@ -114,7 +114,7 @@
    The label sits above its group with breathing room and a subtle uppercase
    treatment so it reads as a section divider, not a clickable row. */
 .sectionHeader {
-    padding: var(--space-s) var(--space-m) var(--space-3xs);
+    padding: var(--inspector-space-s) var(--inspector-space-m) var(--inspector-space-3xs);
     color: var(--text-muted);
     font-size: var(--text-3xs);
     font-weight: 700;
