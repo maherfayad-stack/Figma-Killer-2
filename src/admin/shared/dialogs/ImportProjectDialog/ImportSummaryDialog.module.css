@@ -1,0 +1,55 @@
+/* ImportSummaryDialog — the post-import "here is what we found" step. */
+
+.facts {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-s);
+}
+
+/* Term and value on one row: three short facts read faster as a list of
+   labelled lines than as a stacked definition list. */
+.fact {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-m);
+}
+
+.term {
+    flex: 0 0 auto;
+    min-width: 84px;
+    font-size: var(--text-s);
+    color: var(--text-subtle);
+}
+
+.value {
+    margin: 0;
+    font-size: var(--text-s);
+    color: var(--text-bright);
+}
+
+.picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-s);
+    margin-top: var(--space-xl);
+    padding-top: var(--space-l);
+    border-top: 1px solid var(--border);
+}
+
+.pickerLabel {
+    font-size: var(--text-s);
+    color: var(--text);
+}
+
+.pickerHint {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
+}
+
+.warning {
+    margin: var(--space-l) 0 0;
+    font-size: var(--text-s);
+    color: var(--warning-text);
+}

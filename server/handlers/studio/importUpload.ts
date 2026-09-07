@@ -30,8 +30,12 @@
  *     path (see `archiveIngest.ts`'s module doc for why that matters).
  *   - `file`    — one entry for `kind: 'zip'`; one-or-more for `kind: 'directory'`.
  *
- * Response mirrors `POST /admin/api/studio/import-github`:
- * `{ ok, dir, files, skipped }`.
+ * Response is the shared post-import summary (`./importSummary.ts`):
+ * `{ ok, summary }`, where `summary` carries the transfer counts AND the four
+ * facts that predict what the board is about to look like — framework, pages
+ * dir, page count, and the probe's ranked `pagesDirCandidates` when it had to
+ * guess. A GitHub import's job record ends on exactly the same shape, so the
+ * launcher's summary step is one component whichever way the project arrived.
  */
 import { join } from 'node:path'
 import { unzipSync, type Unzipped } from 'fflate'
@@ -47,6 +51,7 @@ import {
 import { nextProjectName, projectsRootDir, safeProjectFolderName, writeProjectMeta } from '../studioProjects'
 import { probeProject } from './projectProbe'
 import { mergeStudioMeta } from './studioMeta'
+import { buildImportSummary } from './importSummary'
 
 const ImportUploadFieldsSchema = Type.Object({
   kind: Type.Union([Type.Literal('zip'), Type.Literal('directory')]),
@@ -222,7 +227,7 @@ export async function tryServeStudioIngest(
     } catch (probeErr) {
       console.error('[studio/importUpload] post-import probe failed:', probeErr)
     }
-    return jsonResponse({ ok: true, ...result })
+    return jsonResponse({ ok: true, summary: buildImportSummary(dir, result) })
   } catch (err) {
     console.error('[studio]', err)
     if (err instanceof ArchiveIngestError) {

@@ -417,6 +417,25 @@ export function renameProjectDisplayName(dir: string, displayName: string): void
 }
 
 /**
+ * Records where this project's screens actually live — the `pagesDir`
+ * override `projectPagesDir` consults FIRST, ahead of the probe's own guess.
+ *
+ * Written by the post-import summary step when the probe had to guess (see
+ * `studio/importSummary.ts`), which is the only moment in the product where a
+ * human is shown the ranked alternatives and can settle it. A merge write, for
+ * the same reason `renameProjectDisplayName` is one: `writeProjectMeta` has no
+ * merge semantics, so a plain write here would erase the `displayName` the
+ * import had just recorded.
+ *
+ * No re-probe follows. The override outranks `profile.pagesDir` everywhere it
+ * is read, so re-deriving the cached profile would change nothing the loader
+ * consults and would risk overwriting the answer the user just gave.
+ */
+export function setProjectPagesDir(dir: string, pagesDir: string): void {
+  mergeStudioMeta(dir, { pagesDir })
+}
+
+/**
  * WS-7.2 — "apply to all pages": merges `patch` into `.studio/meta.json`'s
  * `frameDefaults`, preserving whatever field the patch doesn't mention (a
  * width-only apply must not erase a previously-saved default height). Used

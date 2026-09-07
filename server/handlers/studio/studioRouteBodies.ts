@@ -49,31 +49,3 @@ export const FrameDefaultsBodySchema = Type.Object({
   width: Type.Optional(Type.Number({ minimum: 1 })),
   height: Type.Optional(Type.Number({ minimum: 1 })),
 })
-
-/**
- * Body of POST /admin/api/studio/import-github (Phase 7B).
- *
- * Deliberately has NO `dir` field. `runGithubImport` clears its target
- * directory before repopulating it, so a caller-supplied target would be an
- * arbitrary recursive-delete primitive driven by a request body. The import
- * target is therefore always derived server-side from the parsed repo
- * (`studio-workspace/<owner>-<repo>`); `runGithubImport`'s `dir`
- * option stays internal (tests only) and is never sourced from the wire.
- *
- * `token`, when present, is forwarded as a Bearer credential and never logged
- * or echoed back.
- *
- * `pagesDir`, when present, is NOT forwarded to `runGithubImport` at all — it
- * has nothing to do with fetching/writing the repo. It's persisted to the
- * freshly-imported project's `.studio/meta.json` afterwards (§1.1's
- * `pagesDir` override) so a repo whose screens don't live at the
- * hand-authored default of `<dir>/pages` (e.g. `src/screens`) is discoverable
- * without restructuring the imported source.
- */
-export const GithubImportBodySchema = Type.Object({
-  url: Type.String(),
-  ref: Type.Optional(Type.String()),
-  subdir: Type.Optional(Type.String()),
-  token: Type.Optional(Type.String()),
-  pagesDir: Type.Optional(Type.String()),
-})

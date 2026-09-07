@@ -30,6 +30,15 @@
  *       stable identifier assigned once at creation). Just rewrites
  *       `.studio/meta.json`.
  *
+ *   POST /admin/api/studio/pages-dir   body: { dir, pagesDir }
+ *       Records which directory holds this project's screens, as
+ *       `.studio/meta.json`'s `pagesDir` override. The post-import summary
+ *       step's picker calls this when the probe had to GUESS — the ranked
+ *       `pagesDirCandidates` it offers are the probe's own, and this is the
+ *       one route that writes the answer back. `dir` is required for the same
+ *       reason `/delete`'s is: pointing this at "whichever project is first
+ *       on disk" would rewrite an unrelated project's page discovery.
+ *
  *   DELETE /admin/api/studio/page   body: { dir?, pageId }
  *       Deletes a page for real — its source file, a stylesheet nothing else
  *       imports any more, its board frames, and any directory those leave
@@ -87,6 +96,7 @@ import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
 import { createScaffoldedPage } from './pageScaffold'
 import { detectPageTemplateKit, starterPage } from './pageTemplates'
+import { isSafePagesDirOverride } from './studioMeta'
 import {
   listStudioProjects,
   nextProjectName,
@@ -95,6 +105,7 @@ import {
   renameProjectDisplayName,
   resolveProjectDir,
   safeProjectFolderName,
+  setProjectPagesDir,
   studioProjectSummary,
   writeProjectMeta,
   rethrowProjectDirRefusal,
@@ -156,6 +167,18 @@ const CreatePageBodySchema = Type.Object({
 const DeletePageBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   pageId: Type.String(),
+})
+
+/**
+ * Body of POST /admin/api/studio/pages-dir. `dir` is required — see the module
+ * doc. `pagesDir` is a project-relative directory; `isSafePagesDirOverride`
+ * rejects an absolute path or any `..` segment before it is written, and
+ * `projectPagesDir` re-checks containment on the joined path every time it
+ * reads the value back.
+ */
+const PagesDirBodySchema = Type.Object({
+  dir: Type.String(),
+  pagesDir: Type.String(),
 })
 
 /** Body of POST /admin/api/studio/delete. `dir` is required — see the module doc. */
@@ -331,6 +354,33 @@ export async function tryServeStudioProjectRoutes(
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Record where this project's screens live. The post-import summary step's
+  // picker is the only caller: it is the one place a human sees the probe's
+  // ranked `pagesDirCandidates` and can answer the question the heuristic had
+  // to guess at. Writing the override (rather than re-probing) is deliberate
+  // — the user knows something the probe's ranking does not.
+  if (pathname === '/admin/api/studio/pages-dir' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, PagesDirBodySchema)
+      if (!body) return badRequest('invalid pages-dir body')
+      const requested = body.dir.trim()
+      if (!requested) return badRequest('pages-dir requires an explicit project dir')
+      const pagesDir = body.pagesDir.trim()
+      if (!isSafePagesDirOverride(pagesDir)) {
+        return badRequest('pagesDir must be a relative directory inside the project')
+      }
+      const dir = resolveProjectDir(requested)
+      if (!existsSync(dir)) return jsonResponse({ error: 'Project not found.' }, { status: 404 })
+      setProjectPagesDir(dir, pagesDir)
+      // The refreshed summary carries the page count the new directory
+      // actually yields — the number the summary step was asking about.
+      return jsonResponse({ project: studioProjectSummary(dir) })
+    } catch (err) {
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

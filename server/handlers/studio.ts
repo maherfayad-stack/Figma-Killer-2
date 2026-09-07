@@ -45,20 +45,6 @@
  *       children) is logged and skipped by this route rather than aborting
  *       the whole batch.
  *
- *   POST /admin/api/studio/import-github   body: { url, ref?, subdir?, token?, pagesDir? }
- *       Phase 7B — GitHub-link import. Fetches the repo's zipball
- *       (`server/handlers/studioGithubImport.ts` owns URL parsing, the
- *       fetch, the zip-entry safety/size guards, and the write) into a
- *       repo-scoped `studio-workspace/<owner>-<repo>/` directory —
- *       never the hand-authored `studio-workspace/` — and returns
- *       `{ ok, dir, files, skipped }`. `pagesDir`, when given, is written to
- *       the new project's `.studio/meta.json` (see `GithubImportBodySchema`'s
- *       doc comment) so a repo whose screens don't live at the default
- *       `<dir>/pages` is still discoverable. The client then calls this same
- *       `/admin/api/studio/load?dir=<returned dir>` to load it: import is
- *       "fetch source, then load it via the existing multi-file loader," not
- *       a second parsing path.
- *
  *   GET  /admin/api/studio/download?dir=<abs>
  *       Phase 6D — "Download the code". NOT codegen: the filesystem is
  *       already the source of truth, so this just zips it up.
@@ -77,8 +63,18 @@
  *   GET  /admin/api/studio/projects
  *   POST /admin/api/studio/create   body: { name? }
  *   POST /admin/api/studio/rename   body: { dir?, name }
+ *   POST /admin/api/studio/pages-dir  body: { dir, pagesDir }
+ *   POST /admin/api/studio/duplicate  body: { dir, name? }
+ *   POST /admin/api/studio/delete     body: { dir }
  *   POST   /admin/api/studio/page   body: { dir?, name? }
  *   DELETE /admin/api/studio/page   body: { dir?, pageId }
+ *
+ * Routes owned by `studio/trashRoutes.ts` (a `STUDIO_SESSION_SUB_ROUTERS`
+ * entry — its two writes are capability-gated, so it needs the `DbClient`):
+ *
+ *   GET  /admin/api/studio/trash
+ *   POST /admin/api/studio/trash/restore  body: { entry }
+ *   POST /admin/api/studio/trash/purge    body: { entry }
  *
  *   GET  /admin/api/studio/framework?dir=<abs>
  *       Reads the project's `.studio/framework.json` sidecar (colors/
@@ -92,6 +88,15 @@
  *
  * Routes owned by a sub-router (see `STUDIO_SUB_ROUTERS` below), documented
  * in the module they live in rather than here:
+ *
+ *   POST /admin/api/studio/import-github          → `studio/githubImportRoutes.ts`
+ *   GET  /admin/api/studio/import-github/status   → the same module
+ *       Phase 7B — GitHub-link import, as a POLLED JOB: the POST answers
+ *       `{ jobId }` immediately and the status route reports the phase, the
+ *       bytes downloaded, and — on success — the `ImportSummary` the
+ *       launcher's post-import step renders. The fetch/unpack/write itself
+ *       still lives in `server/handlers/studioGithubImport.ts`, unchanged and
+ *       confined to `studio-workspace/<owner>-<repo>/`.
  *
  *   GET/POST /admin/api/studio/probe          → `studio/projectProbe.ts`
  *       WS-1.2 — derives a `ProjectProfile` (framework, pages dir, style
@@ -239,12 +244,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
 import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody } from '../http'
-import { GithubImportError, parseGithubRepoUrl, runGithubImport } from './studioGithubImport'
 import {
   mergeProjectFrameDefaults,
   projectDisplayName,
   resolveProjectDir,
-  writeProjectMeta,
   rethrowProjectDirRefusal,
 } from './studioProjects'
 import { readStudioMeta, recordProjectOpened, DEFAULT_TRUST_TIER } from './studio/studioMeta'
@@ -254,8 +257,7 @@ import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatch } from './studioWriteback'
-import { probeProject, tryServeStudioProbe } from './studio/projectProbe'
-import { mergeStudioMeta } from './studio/studioMeta'
+import { tryServeStudioProbe } from './studio/projectProbe'
 import { tryServeStudioInstall } from './studio/installDeps'
 import { tryServeStudioIngest } from './studio/importUpload'
 import { tryServeStudioAssetUpload } from './studio/assetUpload'
@@ -272,6 +274,8 @@ import { tryServeStudioIcons } from './studio/iconCatalog'
 import { tryServeStudioTranslations } from './studio/translations'
 import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
+import { tryServeStudioTrashRoutes } from './studio/trashRoutes'
+import { tryServeStudioGithubImport } from './studio/githubImportRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
 import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
@@ -298,12 +302,12 @@ import {
   BoardsPostBodySchema,
   FrameDefaultsBodySchema,
   FrameworkPostBodySchema,
-  GithubImportBodySchema,
   SaveBodySchema,
 } from './studio/studioRouteBodies'
 
 const STUDIO_SUB_ROUTERS = [
   tryServeStudioProbe,
+  tryServeStudioGithubImport,
   tryServeStudioInstall,
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
@@ -334,6 +338,7 @@ const STUDIO_SUB_ROUTERS = [
 const STUDIO_SESSION_SUB_ROUTERS = [
   tryServeStudioComments,
   tryServeStudioProjectRoutes,
+  tryServeStudioTrashRoutes,
   tryServeStudioShares,
   tryServeStudioNodeExport,
 ] as const
@@ -580,60 +585,6 @@ export async function tryServeStudio(
       return jsonResponse({ ok: true, framework: result.value })
     } catch (err) {
       return studioRouteFailure(err)
-    }
-  }
-
-  // GitHub-link import (Phase 7B) — fetch a repo's zipball into its own
-  // studio-workspace/<owner>-<repo>/ directory. Real work lives in
-  // studioGithubImport.ts; this route is just body validation + error mapping.
-  if (pathname === '/admin/api/studio/import-github' && req.method === 'POST') {
-    try {
-      const body = await readValidatedBody(req, GithubImportBodySchema)
-      if (!body) return badRequest('invalid import body')
-      // Pass the wire fields explicitly — never spread the body, so a future
-      // schema addition can't silently reach `runGithubImport`'s internal
-      // `dir` option (which its target-clearing step would act on).
-      const result = await runGithubImport({
-        url: body.url,
-        ref: body.ref,
-        subdir: body.subdir,
-        token: body.token,
-      })
-      // Persist the display name + pagesDir override into the freshly-created
-      // project's meta.json. Safe to write unconditionally here: a successful
-      // runGithubImport means the target had no pre-existing `.studio/` dir
-      // (it refuses to import into one), so this always creates a fresh
-      // meta.json rather than clobbering a prior one.
-      const derivedDisplayName =
-        parseGithubRepoUrl(body.url)?.repo ?? result.dir.split(/[\\/]+/).filter(Boolean).pop() ?? 'Untitled'
-      writeProjectMeta(result.dir, { displayName: derivedDisplayName, pagesDir: body.pagesDir })
-      // Probe the freshly-imported repo and cache the profile, so the very
-      // first `/load` knows where its pages actually live.
-      //
-      // Without this the import "succeeds" and the canvas is EMPTY, which is
-      // exactly what a real import of a nested repo did: eSIM keeps its app in
-      // `journey-screens/`, so `projectPagesDir` fell back to `<dir>/pages`,
-      // found nothing, and reported no error anywhere. WS-1.1 (ingest) and
-      // WS-1.2 (probe) were built in parallel and each was correct alone —
-      // nothing connected them. `profile.pagesDir` is the second source
-      // `projectPagesDir` consults, after an explicit override, so caching it
-      // here is the whole fix.
-      //
-      // Never fatal: a probe failure must not lose a repo that is already
-      // safely on disk. The user can re-probe from the UI.
-      try {
-        mergeStudioMeta(result.dir, { profile: probeProject(result.dir) })
-      } catch (probeErr) {
-        console.error('[studio] post-import probe failed:', probeErr)
-      }
-      return jsonResponse({ ok: true, ...result })
-    } catch (err) {
-      rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      if (err instanceof GithubImportError) {
-        return jsonResponse({ error: err.message }, { status: err.status })
-      }
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
   }
 

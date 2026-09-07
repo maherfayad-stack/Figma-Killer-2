@@ -46,3 +46,22 @@
     width: var(--import-progress);
     transition: width 120ms ease-out;
 }
+
+/* GitHub tab's in-flight readout — a phase line, and a bar only when GitHub
+   declared a content-length (see GithubImportProgress). */
+.githubProgress {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-s);
+}
+
+.progressLabel {
+    margin: 0;
+    font-size: var(--text-s);
+    color: var(--text-muted);
+}
+
+.progressCount {
+    color: var(--text-subtle);
+    font-variant-numeric: tabular-nums;
+}
