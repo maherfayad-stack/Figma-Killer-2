@@ -78,13 +78,17 @@
  *
  *   GET  /admin/api/studio/framework?dir=<abs>
  *       Reads the project's `.studio/framework.json` sidecar (colors/
- *       typography/spacing/preferences). `{ framework: null }` when nothing
+ *       typography/spacing/preferences) and its `.studio/fonts.json` sidecar
+ *       (installed font families + font tokens). `{ framework: null }` when nothing
  *       is stored yet — the client keeps its own default in that case. See
  *       `studioFramework.ts`'s doc comment for why this file exists.
  *
- *   POST /admin/api/studio/framework   body: { dir?, framework }
+ *   POST /admin/api/studio/framework   body: { dir?, framework, fonts? }
  *       Validates `framework` against `FrameworkSettingsSchema` and writes it
- *       to `.studio/framework.json`. 400 on an invalid shape.
+ *       to `.studio/framework.json`. When `fonts` is present it is validated
+ *       against `SiteFontsSettingsSchema` and written to `.studio/fonts.json`;
+ *       absent means "no font-library change", never "clear it". 400 on an
+ *       invalid shape.
  *
  * Routes owned by a sub-router (see `STUDIO_SUB_ROUTERS` below), documented
  * in the module they live in rather than here:
@@ -251,7 +255,9 @@ import {
   rethrowProjectDirRefusal,
 } from './studioProjects'
 import { readStudioMeta, recordProjectOpened, DEFAULT_TRUST_TIER } from './studio/studioMeta'
-import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
+import { readStudioFontsFile, readStudioFrameworkFile, writeStudioFontsFile, writeStudioFrameworkFile } from './studioFramework'
+import type { SiteFontsSettings } from '@core/fonts'
+import type { FrameworkSettings } from '@core/framework-schema'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
@@ -577,7 +583,11 @@ export async function tryServeStudio(
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const framework = readStudioFrameworkFile(dir)
-      return jsonResponse({ framework })
+      // `font-revert` — the installed font library rides the same round trip
+      // from its own `.studio/fonts.json`. See studioFramework.ts's doc for
+      // why it is a separate file and not a `FrameworkSettings` field.
+      const fonts = readStudioFontsFile(dir)
+      return jsonResponse({ framework, fonts })
     } catch (err) {
       return studioRouteFailure(err)
     }
@@ -588,9 +598,21 @@ export async function tryServeStudio(
       const body = await readValidatedBody(req, FrameworkPostBodySchema)
       if (!body) return badRequest('invalid framework body')
       const dir = resolveProjectDir(body.dir)
-      const result = writeStudioFrameworkFile(dir, body.framework)
-      if (!result.ok) return badRequest(result.message)
-      return jsonResponse({ ok: true, framework: result.value })
+      // An absent field means "this save had no change of that kind" — leave
+      // whatever is on disk alone rather than clobbering it with an empty bag.
+      let framework: FrameworkSettings | null = null
+      if (body.framework !== undefined) {
+        const result = writeStudioFrameworkFile(dir, body.framework)
+        if (!result.ok) return badRequest(result.message)
+        framework = result.value
+      }
+      let fonts: SiteFontsSettings | null = null
+      if (body.fonts !== undefined) {
+        const fontsResult = writeStudioFontsFile(dir, body.fonts)
+        if (!fontsResult.ok) return badRequest(fontsResult.message)
+        fonts = fontsResult.value
+      }
+      return jsonResponse({ ok: true, framework, fonts })
     } catch (err) {
       return studioRouteFailure(err)
     }

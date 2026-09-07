@@ -31,7 +31,7 @@ function stubLoad(authoredCss: string): void {
     const url = typeof input === 'string' ? input : input.toString()
     const path = url.split('?')[0]
     if (path === '/admin/api/studio/framework') {
-      return new Response(JSON.stringify({ framework: null }), { status: 200 })
+      return new Response(JSON.stringify({ framework: null, fonts: null }), { status: 200 })
     }
     // `fsCodemodAdapter.loadSite` reads `/admin/api/studio/load?stream=1` as
     // NDJSON (WS-5.5) — a single `kind: 'meta'` line here since this suite's

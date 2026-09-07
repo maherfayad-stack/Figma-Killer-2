@@ -63,6 +63,12 @@ export function makeNode(overrides: Partial<PageNode> & { id?: string } = {}): P
     locked: overrides.locked,
     hidden: overrides.hidden,
     classIds: overrides.classIds ?? [],
+    // `style-04` — previously dropped, exactly like `lockReason` was below:
+    // a fixture passing `inlineStyles` got a node with none, so NO test could
+    // reach the inline-style save path (`diffInlineStyles` /
+    // `canWriteInlineStyleForModule`) at all. That silence is what let the
+    // font-family write-back gap ship unnoticed.
+    inlineStyles: overrides.inlineStyles,
     dynamicBindings: overrides.dynamicBindings,
     propBindings: overrides.propBindings,
     textOrigin: overrides.textOrigin,

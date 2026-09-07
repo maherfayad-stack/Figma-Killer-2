@@ -48,6 +48,16 @@ WITHOUT clobbering anything already there (whole-family merge — a family is
 only filled when currently empty). This is what populates the Framework
 panel's Colors/Typography/Spacing on a fresh import.
 
+`GET/POST /admin/api/studio/framework` carries TWO editor-owned settings bags,
+not one (`studio/sidecarSync.ts` owns the client end): `settings.framework` →
+`.studio/framework.json`, and `settings.fonts` → `.studio/fonts.json` (the
+installed font library). In a POST body each field is OPTIONAL and an absent
+field means "no change of that kind" — never "clear it", which would delete the
+user's font library on any save that merely didn't touch it. Before this, fonts
+had no persistence at all: installing a font mutated the store and nothing
+else, so the family picker's "Installed fonts" group was empty again on the
+next load.
+
 POST /admin/api/studio/save  { dir, edits: StudioEdit[] }
    └─ studioEditLocation()  → { rel, line, col }  (split composite id, keep TAIL)
    └─ applyStudioEdit()     → one ast-codemod per edit

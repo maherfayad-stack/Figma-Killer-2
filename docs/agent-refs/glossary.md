@@ -5,7 +5,10 @@ Terms that mean something specific here. Alphabetical.
 **`.studio/`** — per-project sidecar directory inside a workspace. Holds
 `meta.json` (displayName, pagesDir, previewAxes, `trust`, cached probe profile),
 `boards.json` (frames, notes, docs), `framework.json` (color/type/spacing
-tokens), `comments.json` (review threads), `prototype.json` (authored links),
+tokens), `fonts.json` (the installed font library — `@font-face` entries plus
+the `var(--font-*)` tokens bound to them; a sibling of `framework.json`, not a
+field inside it, because `settings.fonts` and `settings.framework` are separate
+`SiteSettings` fields), `comments.json` (review threads), `prototype.json` (authored links),
 `shares.json` (share-link registry), `thumbnail.png` (the launcher tile's 4:3
 preview — W7-3), `references/` (design references) and
 `cache/` (compiled styles, component bundles, design-system digests). Excluded

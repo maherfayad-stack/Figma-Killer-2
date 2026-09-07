@@ -51,7 +51,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
   function stubFetch(responses: Record<string, unknown> = {}) {
     const defaults: Record<string, unknown> = {
       '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [] },
-      '/admin/api/studio/framework': { framework: null },
+      '/admin/api/studio/framework': { framework: null, fonts: null },
       '/admin/api/studio/save': { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false },
     }
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -67,7 +67,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       // matching the real endpoint's `{ ok, framework }` response shape.
       if (path === '/admin/api/studio/framework' && method === 'POST') {
         const body = init?.body ? JSON.parse(String(init.body)) : {}
-        return new Response(JSON.stringify({ ok: true, framework: body.framework }), { status: 200 })
+        return new Response(JSON.stringify({ ok: true, framework: body.framework ?? null, fonts: body.fonts ?? null }), { status: 200 })
       }
       const body = responses[path] ?? defaults[path]
       // `/admin/api/studio/load` is read as an NDJSON stream (WS-5.5,
