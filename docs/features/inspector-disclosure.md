@@ -131,6 +131,18 @@ portals out of the panel, it sets `data-field-skin="inspector"` on its own root 
 any future portalled inspector surface must do the same, or it renders
 admin-shaped pill controls inside the design tool.
 
+**Viewport fit.** `useAnchoredFloating` only picks a *side*; it cannot help a
+panel that is taller than the viewport, which is every tabbed ⚙ popover opened
+from a trigger low in the Properties panel. `InspectorPopover` therefore runs a
+second, pure pass — `fitFloatingToViewport` in `src/ui/lib/floatingViewportFit.ts`
+— that clamps the origin against a 12px viewport margin and returns a
+`max-height` ceiling, published as `--inspector-popover-max-height`. The panel
+then never extends past the bottom (or any) screen edge; `.body` scrolls the
+overflow instead. Height is read from `offsetHeight`, not
+`getBoundingClientRect()`, because the latter includes the enter animation's
+`scale()` and measures short. Geometry is unit-tested in
+`src/ui/lib/floatingViewportFit.test.ts`.
+
 ### §3.2 `PropertyList` — used by G6, G7, G8
 
 The Fill / Stroke / Effects list shape (F13, F14, F16, F20). One component,

@@ -13,7 +13,13 @@
     width: var(--inspector-popover-width);
     display: flex;
     flex-direction: column;
-    max-height: calc(100vh - 16px);
+    /* Height ceiling that keeps the panel fully on screen — recomputed in JS
+     * by `fitFloatingToViewport` and pushed down as an inline custom property.
+     * The declaration here is the pre-measure default (matching the 12px
+     * VIEWPORT_MARGIN), not a `var()` fallback: fallbacks hide missing tokens,
+     * see docs/agent-refs/conventions-quickref.md §3. */
+    --inspector-popover-max-height: calc(100vh - 24px);
+    max-height: var(--inspector-popover-max-height);
     overflow: hidden;
     border-radius: var(--panel-radius);
     background: var(--bg-surface);
