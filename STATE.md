@@ -2809,6 +2809,103 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### export-boards — every board is a tab in the downloaded code
+- **Agent:** server-engineer · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/export-boards-as-tabs` off `origin/main`.
+- **User report, verbatim:** "I created another board, and don't see it in the
+  exported one when download code — I should see the boards as tabs in the
+  downloaded one."
+
+**Where the generator was.** Not on `main` at all. The whole preview shell —
+`server/handlers/studio/prototypeShell/` (8 modules, `ensurePrototypeShell`,
+the thing that writes `registry.generated.jsx`) — lives only on the unmerged
+branch `origin/feat/prototype-mode`. That is why `studio-workspace/test4/`
+has a `prototype/` directory whose registry still says `Board 1` while
+`.studio/boards.json` says `Test` + `Testtt`: those files were written by a
+run of that branch, and nothing on `main` has regenerated them since. The
+export was not dropping the second board — **nothing was regenerating at
+all.**
+
+**Brought across (the minimal coherent slice, not the branch):**
+- `server/handlers/studio/prototypeShell/*` (8 modules) + its
+  `__tests__/prototypeShell.test.ts` (25 tests, green as-ported).
+- The three parse-side guards the shell cannot exist without —
+  `PROTOTYPE_SHELL_DIR`/`isPrototypeShellPath` in
+  `src/core/page-parser/workspaceFiles.ts` (+ barrel), `findEntryFile`
+  (`collectPageStylesheets.ts`), `NON_PAGES_DIR_SEGMENTS` (`projectProbe.ts`),
+  `extractLocalComponentCatalog` (`componentSpecExtract.ts`). Without these,
+  Studio reads its own scaffold back as the user's design — `shell.css` lands
+  in their style rules and `CanvasPanel` shows up in the component picker.
+
+**Shipped on top:**
+1. **Regeneration before the zip.** `buildStudioDownloadResponse` calls
+   `ensurePrototypeShell(dir)` first. This is the actual fix for the report:
+   the load memo (`workspaceLoadFingerprint`) covers the user's SOURCE, not
+   `.studio/boards.json`, so creating a board is a memo **hit** — a
+   regeneration hung off the parse alone would be skipped exactly when the
+   boards it reads have changed. `loadStudioPages` also calls it, placed
+   BEFORE the memo for the same reason.
+2. **Boards render as tabs in both views.** The tab row was gated on
+   `view !== 'canvas'` — invisible in the view a downloaded prototype opens
+   on — while the canvas stacked every board as a titled row. It is now
+   `BOARDS.length > 1` unconditionally, and `CanvasPanel` draws the ACTIVE
+   board only.
+3. **The screen row is scoped to the active board** (`boardScreens`), falling
+   back to every screen for a board with no frames. Switching to a board that
+   does not hold your current screen lands you on that board's first frame
+   instead of stranding the flow view.
+4. `LINKS` stays project-wide on purpose — a link addresses a SCREEN, not a
+   board, so scoping it to the tab would break a jump to a screen the author
+   put on a different board. Reasoned in the emitted comment and in the doc.
+
+**Why bumping `App.jsx` is allowed.** `.studio/shell.json` records the SHA-256
+of every static shell file Studio wrote. A file whose hash still matches is
+one nobody edited and is updated; a file whose hash differs belongs to the
+user and is never written again. All 11 shell files in `test4` currently hash
+MATCH, so it picks up the tabs on the next open or download. That mechanism is
+the contract, documented in `docs/features/prototype-export.md` §2.
+
+**Cuts — named, not hidden.** From `origin/feat/prototype-mode` I deliberately
+did NOT bring: the trash subsystem (`pageTrash.ts`, `projectTrash.ts`,
+`trashRoutes.ts` and the `projectRoutes.ts`/`studio.ts` rewiring that comes
+with it), the MCP `prototypeTools.ts`, the `navigationIntent.ts` parse
+addition (code-derived connectors), `src/core/studio-anchor/` +
+`src/core/studio-prototype/`, and every canvas/inspector change on that
+branch. Also cut: `docs/features/prototype-mode.md` (it documents the LINK
+model, which is a different feature) — I wrote a focused
+`docs/features/prototype-export.md` instead. Not touched: the pre-existing
+`buildStudioDownloadResponse` 404 body, which echoes the full workspace path
+back to the client. It is a real (small) leak and it is not mine; flagging it
+rather than widening this PR.
+
+**Dogfood checklist for the human (no browser tests by agents):**
+1. Open `test4` in Studio at `/admin/site`. Confirm `prototype/App.jsx` and
+   `prototype/registry.generated.jsx` were rewritten and the registry now
+   lists BOTH `Test` and `Testtt`.
+2. Click "Download the code". Unzip. Confirm `prototype/registry.generated.jsx`
+   in the ZIP has both boards, and that no `.studio/` entry is present.
+3. Create a THIRD board in Studio and, without reloading, download again —
+   the new board must be in that zip.
+4. `bun install && bun run dev` in the unzipped copy. Confirm a **Boards** tab
+   row above the canvas, that clicking a tab swaps which frames the canvas
+   draws, and that a prototype link still jumps to its target screen.
+5. Edit one line of `prototype/App.jsx` in `test4`, reopen the project, and
+   confirm Studio did NOT overwrite it.
+
+**Verification run:** `bun test server/handlers/studio/__tests__/prototypeShell.test.ts server/handlers/studio/__tests__/prototypeShellBoards.test.ts server/handlers/__tests__/studio.test.ts server/handlers/__tests__/projectProbe.test.ts server/handlers/__tests__/componentSpecExtract.test.ts server/handlers/__tests__/studioProjects.test.ts` (242 pass) ·
+`bun test src/__tests__/studio` (177 pass) ·
+`bun test src/__tests__/architecture/boundary-validation.test.ts src/__tests__/architecture/no-core-barrel-deep-imports.test.ts` (9 pass) ·
+`tsc -p tsconfig.node.json --noEmit` + `tsc -p tsconfig.app.json --noEmit` clean ·
+`bunx eslint` on all changed files clean. Emitted `App.jsx` / `registry.generated.jsx` / `CanvasPanel.jsx` / `Player.jsx` parse-checked through esbuild's JSX loader against a COPY of `test4` (user data untouched).
+
+**Routes changed:** `GET /admin/api/studio/download` — unchanged request
+(`?dir=<abs>`) and unchanged response (`application/zip`, or `{ error }` on
+404). New behaviour only: it regenerates the shell before zipping.
+**Rejections tested:** a `dir` that does not exist still 404s and writes
+nothing; a corrupt `.studio/boards.json` yields a shell with no boards rather
+than a throw or a 500; a frame whose page was deleted is dropped without
+dropping its board; `.studio/` never appears in the archive.
+
 ### strict-teeth — W9-3: strict-mode teeth (crop reconciliation, font availability, named regions)
 - **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
 - **Branch:** `feat/agent-strict-mode-teeth` off `origin/main`. Goal:

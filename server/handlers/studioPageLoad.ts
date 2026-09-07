@@ -75,6 +75,7 @@ import type { Page } from '@core/page-tree'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
+import { ensurePrototypeShell } from './studio/prototypeShell'
 import {
   getCachedRouteParse,
   hashWorkspaceConfig,
@@ -561,6 +562,18 @@ async function computeStudioPages(dir: string, options: StudioLoadOptions): Prom
  * STORED, because it never computed the routes it was not asked for.
  */
 export async function loadStudioPages(dir: string, options: StudioLoadOptions = {}): Promise<StudioLoadResult> {
+  // Scaffold (or refresh) the runnable preview shell — `prototype/`,
+  // `index.html`, `vite.config.js`. A workspace created before the shell
+  // existed grows one the first time it is opened, and every later open brings
+  // the two `.generated` files back in step with `.studio/`.
+  //
+  // BEFORE the memo, deliberately. `workspaceLoadFingerprint` covers the
+  // user's SOURCE, not `.studio/boards.json` — so creating a board is a memo
+  // HIT, and a regeneration placed inside `computeStudioPages` would be
+  // skipped exactly when the boards it reads have changed. It never throws and
+  // writes nothing when nothing changed.
+  ensurePrototypeShell(dir)
+
   const fingerprint = workspaceLoadFingerprint(dir)
   const memoized = getMemoizedStudioLoad(dir, fingerprint)
   if (memoized) return narrowLoadResult(memoized, options.pageIds)
