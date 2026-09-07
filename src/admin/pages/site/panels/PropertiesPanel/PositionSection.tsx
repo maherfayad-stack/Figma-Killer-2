@@ -85,6 +85,7 @@ import { DropdownSwitcher } from './DropdownSwitcher'
 import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
 import { useSpacingTokens, type Token } from '@site/property-controls/tokenUtils'
 import { hasStyleValue, readString } from './styleValueUtils'
+import { isMixed, MIXED } from '@ui/components/MixedValue'
 import { SingleNodeAlignRow } from './SingleNodeAlignRow'
 import { PositionConstraints } from './PositionConstraints'
 import { RotationRow } from './RotationRow'
@@ -139,7 +140,13 @@ export function PositionSection({
   onPreview,
   onClearPreview,
 }: PositionSectionProps) {
-  const position = readString(currentStyles, 'position')
+  // W8-3 — `position` can be the multi-selection MIXED sentinel. It drives
+  // BOTH the switcher and the section's own disclosure, and neither can
+  // answer honestly for a selection that disagrees: the constraint pickers
+  // and the TRBL grid are different shapes, so a mixed `position` shows the
+  // switcher alone until the user resolves it.
+  const positionMixed = isMixed(currentStyles.position)
+  const position = positionMixed ? undefined : readString(currentStyles, 'position')
   const positionIsActive = position != null && POSITIONED_VALUES.has(position)
   const usesConstraints = position != null && CONSTRAINT_VALUES.has(position)
 
@@ -160,7 +167,7 @@ export function PositionSection({
       <SingleNodeAlignRow onChange={onChange} />
       <DropdownSwitcher
         property="position"
-        value={position}
+        value={positionMixed ? MIXED : position}
         primarySegments={POSITION_PRIMARY_SEGMENTS}
         allOptions={POSITION_OPTIONS}
         onChange={(v) => onChange('position', v)}
@@ -317,12 +324,16 @@ function DirectionInput({
   onPreview,
   onClearPreview,
 }: DirectionInputProps) {
-  const isSet = hasStyleValue(storedValue)
-  const placeholder = !isSet
-    ? hasStyleValue(currentValue)
-      ? String(currentValue)
-      : 'auto'
-    : undefined
+  // W8-3 — `hasStyleValue` is true for the MIXED Symbol, so without this the
+  // field would `String()` the sentinel straight into the input.
+  const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
+  const isSet = !mixed && hasStyleValue(storedValue)
+  const placeholder =
+    mixed || isSet
+      ? undefined
+      : hasStyleValue(currentValue)
+        ? String(currentValue)
+        : 'auto'
 
   return (
     <div
@@ -334,6 +345,7 @@ function DirectionInput({
         aria-label={ariaLabel}
         value={isSet ? String(storedValue) : undefined}
         placeholder={placeholder}
+        mixed={mixed}
         prefix={<DirectionIcon size={14} />}
         tokens={tokens}
         onCommit={(resolved) => onChange(property, resolved)}

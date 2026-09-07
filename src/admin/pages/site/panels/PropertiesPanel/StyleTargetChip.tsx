@@ -104,6 +104,17 @@ interface StyleTargetChipProps {
    * behaves exactly as it did before.
    */
   lockedToElementReason?: string
+  /**
+   * W8-3 phase 3 — switch the write target TO the class. Present only where
+   * that is a real action: the multi-selection inspector, whose two targets
+   * (every layer's inline bag, or the one class they all carry) are both
+   * reachable from here. Absent — the single-node surface — the class chip
+   * stays the presentational span described below, because there the way to
+   * "switch to a class" is to pick one in `ClassPicker`.
+   */
+  onSelectClass?: () => void
+  /** Whether the class target is the one currently being edited. */
+  classActive?: boolean
 }
 
 /** The basename of a workspace-relative path — `src/screens/Home.css` -> `Home.css`. */
@@ -157,6 +168,8 @@ export function StyleTargetChip({
   classCssEditability,
   disabled = false,
   lockedToElementReason,
+  onSelectClass,
+  classActive = false,
 }: StyleTargetChipProps) {
   const classWritable = classWrites(classCssEditability)
   // Pinned-to-Element mode: Element is the target, and every other row states
@@ -192,13 +205,32 @@ export function StyleTargetChip({
           Element
         </Button>
         {/*
-          Presentational, not a Button: there is currently no click action
-          for the class chip (switching TO a class means picking one in
-          ClassPicker, a different surface) — a focusable button with no
-          `onClick` is a dead tab stop and a real a11y bug, not a "just in
-          case" affordance. `Tooltip` still surfaces the write-back outcome
-          on hover without adding one.
+          Presentational, not a Button — UNLESS `onSelectClass` gives it a
+          real click action (see that prop's doc). Without one, switching TO
+          a class means picking one in ClassPicker, a different surface, and
+          a focusable button with no `onClick` is a dead tab stop and a real
+          a11y bug rather than a "just in case" affordance. `Tooltip` still
+          surfaces the write-back outcome on hover either way.
         */}
+        {onSelectClass && !pinnedToElement ? (
+          <Button
+            variant="secondary"
+            size="xs"
+            pressed={classActive}
+            disabled={disabled}
+            onClick={onSelectClass}
+            className={styles.chip}
+            data-testid="style-target-chip-class"
+            data-active={classActive ? 'true' : 'false'}
+            data-writable={classWritable ? 'true' : 'false'}
+            tooltip={classTooltip(classSelector, classCssEditability)}
+          >
+            {classSelector ?? 'No class'}
+            {classSelector && !classWritable && (
+              <WarningDiamondSolidIcon size={11} aria-hidden="true" className={styles.warningIcon} />
+            )}
+          </Button>
+        ) : (
         <Tooltip
           content={lockedToElementReason ?? classTooltip(classSelector, classCssEditability)}
           disabled={disabled}
@@ -219,6 +251,7 @@ export function StyleTargetChip({
             )}
           </span>
         </Tooltip>
+        )}
         {/* Track B2 — class TOKEN assignment (Tailwind / hand-authored) is a
             structurally different edit from a declaration inside a class
             already assigned; see module doc for why this is informational,

@@ -41,7 +41,7 @@
 
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
-import type { CSSPropertyBag, PageNode } from '@core/page-tree'
+import type { CSSPropertyBag } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
 import { TokenCatalogProvider } from '@site/property-controls/TokenCatalogProvider'
 import { ALL_CURATED_CSS_PROPERTIES, cssPropertyLabel } from './cssControlTypes'
@@ -49,9 +49,18 @@ import { getActiveStyleTab } from './classStyleSections'
 import { StyleSectionsEditor } from './StyleSectionsEditor'
 import { buildClassChain } from './stylePropertyProvenance'
 import { buildMultiSelectStyleBags, type MultiSelectStyleNode } from './multiSelectStyleBags'
+import { resolveSelectedNodes } from './multiSelectNodes'
+import { StyleWriteLockContext } from './StyleWriteLockContext'
+import { blockedProperties, buildInlineStyleWriteReach } from './styleWriteReach'
 import noticeStyles from './SharedComponentNotice.module.css'
 
 const STYLE_KEY_PREFIX = styleValueKey('')
+
+/**
+ * The noun phrase completing "N are …" for the inline target. Phase 3's class
+ * target passes its own ("compiled"); see `styleWriteReach.ts`.
+ */
+const INLINE_BLOCK_REASON = 'set from an expression in code'
 
 /** Stable empty bag so a node without inline styles doesn't allocate one per render. */
 const EMPTY_STYLES: Record<string, unknown> = {}
@@ -86,9 +95,7 @@ export function MultiInlineStyleComposer({
   const activeContextId = activeConditionId ?? (activeTab !== 'base' ? activeTab : null)
 
   const styleRules = site?.styleRules
-  const nodes = nodeIds
-    .map((id) => resolveSelectedNode(id, activeTree, site, nodeIdToPageIds))
-    .filter((node): node is PageNode => node !== null)
+  const nodes = resolveSelectedNodes(nodeIds, { activeTree, site, nodeIdToPageIds })
 
   const styleNodes: MultiSelectStyleNode[] = nodes.map((node) => ({
     inlineStyles: node.inlineStyles ?? EMPTY_STYLES,
@@ -105,19 +112,22 @@ export function MultiInlineStyleComposer({
     ALL_CURATED_CSS_PROPERTIES,
   )
 
-  // The union of `style:<prop>` locks across the selection. `setNodesInlineStyles`
-  // already skips those nodes property-by-property; naming them here is what
-  // stops that refusal from being silent — the same fix `InlineStyleComposer`
-  // records for the single-node case, widened to "on some of these elements".
-  const lockedProperties = [
-    ...new Set(
-      nodes.flatMap((node) =>
-        (node.codeProps ?? [])
-          .filter((name) => name.startsWith(STYLE_KEY_PREFIX))
-          .map((name) => name.slice(STYLE_KEY_PREFIX.length)),
-      ),
-    ),
-  ]
+  // W8-3 phase 2 — the `style:<prop>` locks across the selection, COUNTED
+  // rather than merely listed. `setNodesInlineStyles` already skips those
+  // nodes property-by-property; the reach is what stops that refusal from
+  // being silent, and what lets each row say how far its own edit lands
+  // ("Writes to 3 of 5 selected layers — 2 are set from an expression in
+  // code") instead of the panel claiming a clean write to all five.
+  //
+  // `STYLE_KEY_PREFIX` is `styleValueKey('')`, i.e. the same `style:` prefix
+  // the parser writes into `codeProps`; the reach builder slices it back off.
+  const reach = buildInlineStyleWriteReach(
+    nodes.map((node) => ({
+      codeProps: (node.codeProps ?? []).filter((name) => name.startsWith(STYLE_KEY_PREFIX)),
+    })),
+    INLINE_BLOCK_REASON,
+  )
+  const lockedProperties = blockedProperties(reach)
 
   const writePatch = (patch: Record<string, string | number | null>) => {
     if (nodeIds.length === 0) return
@@ -146,50 +156,48 @@ export function MultiInlineStyleComposer({
           <LockSolidIcon size={14} className={noticeStyles.icon} />
           <p className={noticeStyles.text}>
             <strong>{lockedProperties.map(cssPropertyLabel).join(', ')}</strong>{' '}
-            {lockedProperties.length === 1 ? 'is' : 'are'} set from an expression in code on some
-            of these elements. Those elements keep their current value; the rest of the selection
-            still updates.
+            {lockedProperties.length === 1 ? 'is' : 'are'} set from an expression in code on{' '}
+            {describeBlockedSpread(lockedProperties, reach)}. Those layers keep their current
+            value; the rest of the selection still updates.
           </p>
         </div>
       )}
-      <StyleSectionsEditor
-        storedStyles={storedStyles}
-        currentStyles={currentStyles}
-        sectionKey="base"
-        styleQuery={styleQuery}
-        onChange={handleChange}
-        onRemove={handleRemove}
-        onClearProperty={handleRemove}
-        onClearProperties={handleClearProperties}
-        // Hover-preview is class-keyed in the store; skip it for inline editing.
-        onPreview={noop}
-        onClearPreview={noop}
-      />
+      {/* W8-3 phase 2 — every row beneath reads this and states how far its
+          own edit reaches. `partial` never disables a control. */}
+      <StyleWriteLockContext.Provider value={{ kind: 'partial', reach }}>
+        <StyleSectionsEditor
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          sectionKey="base"
+          styleQuery={styleQuery}
+          onChange={handleChange}
+          onRemove={handleRemove}
+          onClearProperty={handleRemove}
+          onClearProperties={handleClearProperties}
+          // Hover-preview is class-keyed in the store; skip it for inline editing.
+          onPreview={noop}
+          onClearPreview={noop}
+        />
+      </StyleWriteLockContext.Provider>
     </TokenCatalogProvider>
   )
 }
 
 /**
- * Resolve one selected id to its live node.
- *
- * The active canvas tree answers for the overwhelmingly common case (one
- * frame, or a VC canvas, which `_nodeIdToPageIds` deliberately does not
- * index). A board multi-selection can span frames, so an id the active tree
- * doesn't hold is resolved through the O(1) `_nodeIdToPageIds` index and a
- * single `pages.find` — never a walk of every node of every page
- * (`no-full-site-scan-in-selectors`).
+ * "2 of these 5 layers" / "some of these 5 layers" — the header sentence for
+ * the notice. One blocked property has one honest count; several properties
+ * blocked on different subsets do not share one, and inventing a union count
+ * would overstate every individual row (each row states its own exact count
+ * through the partial write lock).
  */
-function resolveSelectedNode(
-  nodeId: string,
-  activeTree: { nodes: Record<string, PageNode> } | null,
-  site: { pages: ReadonlyArray<{ id: string; nodes: Record<string, PageNode> }> } | null,
-  nodeIdToPageIds: ReadonlyMap<string, string[]>,
-): PageNode | null {
-  const fromActive = activeTree?.nodes[nodeId]
-  if (fromActive) return fromActive
-  const pageId = nodeIdToPageIds.get(nodeId)?.[0]
-  if (!pageId || !site) return null
-  return site.pages.find((page) => page.id === pageId)?.nodes[nodeId] ?? null
+function describeBlockedSpread(
+  properties: ReadonlyArray<string>,
+  reach: { total: number; blockedByProperty: ReadonlyMap<string, number> },
+): string {
+  const layers = reach.total === 1 ? 'layer' : 'layers'
+  if (properties.length !== 1) return `some of these ${reach.total} ${layers}`
+  const blocked = reach.blockedByProperty.get(properties[0]) ?? 0
+  return `${blocked} of these ${reach.total} ${layers}`
 }
 
 function noop() {}

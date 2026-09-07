@@ -295,6 +295,23 @@ export interface SiteSlice {
    * the rest of the selection.
    */
   setNodesInlineStyles: (nodeIds: string[], patch: Record<string, string | number | null | undefined>) => void
+  /**
+   * The per-node sibling of `setNodesInlineStyles`: a DIFFERENT patch per
+   * node, still in ONE history transaction. Selection colours (W8-3 phase 3 /
+   * G6.4) is what needs it — recolouring one swatch rewrites `color` on one
+   * layer and `borderTopColor` on another, and those must undo together or
+   * the user gets half a colour back per Ctrl+Z.
+   *
+   * `coalesceKey` folds a burst into one entry, exactly as the single-field
+   * paths do; pass the colour being replaced so consecutive keystrokes in one
+   * swatch collapse but a second swatch starts a new entry.
+   *
+   * Skips the same nodes `setNodesInlineStyles` does, for the same reason.
+   */
+  setNodesInlineStylesPerNode: (
+    patches: ReadonlyArray<{ nodeId: string; patch: Record<string, string | number | null | undefined> }>,
+    opts?: { coalesceKey?: string },
+  ) => void
   /** Remove a single property from a node's inline styles. */
   removeNodeInlineStyleProperty: (nodeId: string, propKey: string) => void
   /** Remove ALL inline styles from a node (clears the `inlineStyles` field). */
@@ -575,5 +592,6 @@ export interface SiteSliceHelpers {
   mutateTreesForNodeIds: (
     nodeIds: string[],
     fn: (tree: NodeTree<PageNode>, idsOnThisTree: string[]) => SiteMutationResult,
+    opts?: { coalesceKey?: string },
   ) => boolean
 }

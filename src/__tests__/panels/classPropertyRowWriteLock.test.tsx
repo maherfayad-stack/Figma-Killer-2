@@ -29,7 +29,9 @@ const LOCK_REASON = 'This file lives in a build/output directory, not the projec
 
 function renderLocked(children: ReactNode) {
   return render(
-    <StyleWriteLockContext.Provider value={LOCK_REASON}>{children}</StyleWriteLockContext.Provider>,
+    <StyleWriteLockContext.Provider value={{ kind: 'blocked', reason: LOCK_REASON }}>
+      {children}
+    </StyleWriteLockContext.Provider>,
   )
 }
 

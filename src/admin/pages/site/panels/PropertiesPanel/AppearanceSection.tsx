@@ -47,7 +47,8 @@ import { useRef, useState } from 'react'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { resolveStylePlaceholder } from './stylePlaceholder'
-import { hasStyleValue, readString } from './styleValueUtils'
+import { hasStyleValue, pickMixedString, plainString, readString } from './styleValueUtils'
+import { isMixed, MIXED, type Mixed } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './AppearanceSection.module.css'
 
@@ -62,19 +63,16 @@ function radiusKey(corner: Corner): keyof CSSPropertyBag {
   return `border${corner}Radius` as keyof CSSPropertyBag
 }
 
-function pickString(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number') return `${value}px`
-  return ''
-}
-
 function readCorners(bag: Record<string, unknown>): {
-  perCorner: Record<Corner, string>
+  perCorner: Record<Corner, string | Mixed>
   uniform: boolean
   anySet: boolean
 } {
-  const perCorner = {} as Record<Corner, string>
-  for (const corner of CORNERS) perCorner[corner] = pickString(bag[radiusKey(corner)])
+  // `pickMixedString` keeps the W8-3 MIXED sentinel intact — a corner the
+  // selection disagrees on is SET (it counts for `anySet`) and equal to its
+  // fellow mixed corners (so a uniformly-mixed radius stays linked).
+  const perCorner = {} as Record<Corner, string | Mixed>
+  for (const corner of CORNERS) perCorner[corner] = pickMixedString(bag[radiusKey(corner)])
   const values = CORNERS.map((c) => perCorner[c])
   const anySet = values.some((v) => v !== '')
   const uniform = anySet && values.every((v) => v === values[0])
@@ -235,8 +233,19 @@ export function AppearanceSection({
     onPreview(patch as Partial<CSSPropertyBag>)
   }
 
-  const collapsedValue = radiusState.perCorner.TopLeft
-  const collapsedPlaceholder = radiusFallback.perCorner.TopLeft || '0px'
+  // A corner shows its own stored value (MIXED included); when nothing is
+  // stored it falls back to the effective one, and a MIXED fallback becomes
+  // the field's own mixed state rather than a Symbol in the placeholder.
+  const cornerValue = (corner: Corner): string | Mixed => {
+    const stored = radiusState.perCorner[corner]
+    if (stored !== '') return stored
+    return isMixed(radiusFallback.perCorner[corner]) ? MIXED : ''
+  }
+  const cornerPlaceholder = (corner: Corner): string =>
+    plainString(radiusFallback.perCorner[corner]) || '0px'
+
+  const collapsedValue = cornerValue('TopLeft')
+  const collapsedPlaceholder = cornerPlaceholder('TopLeft')
 
   /*
    * All five radius fields are `ScrubInput`s: the corner glyph they already
@@ -269,8 +278,8 @@ export function AppearanceSection({
   )
 
   const expandedFields = CORNERS.map((corner) => {
-    const value = radiusState.perCorner[corner]
-    const placeholder = radiusFallback.perCorner[corner] || '0px'
+    const value = cornerValue(corner)
+    const placeholder = cornerPlaceholder(corner)
     return (
       <ScrubInput
         key={corner}
@@ -291,7 +300,8 @@ export function AppearanceSection({
     )
   })
 
-  const opacityIsSet = hasStyleValue(storedStyles.opacity)
+  const opacityMixed = isMixed(storedStyles.opacity)
+  const opacityIsSet = !opacityMixed && hasStyleValue(storedStyles.opacity)
 
   return (
     <div className={styles.row}>
@@ -299,7 +309,9 @@ export function AppearanceSection({
         <ClassPropertyRow
           key={`${activeTab}-opacity`}
           property="opacity"
-          value={opacityIsSet ? (storedStyles.opacity as string | number) : undefined}
+          value={
+            opacityMixed ? MIXED : opacityIsSet ? (storedStyles.opacity as string | number) : undefined
+          }
           placeholder={
             opacityIsSet
               ? undefined

@@ -30,14 +30,55 @@
  * is the honest default for "nobody asserted a lock here".
  */
 import { createContext, useContext } from 'react'
+import { describeReach, type StyleWriteReach } from './styleWriteReach'
 
 /**
- * The lock reason for the style target currently being rendered, or `null`
- * when edits to it reach disk.
+ * ## Three states, not two (W8-3 phase 2)
+ *
+ * A single-node surface has one target and one answer, so a `string | null`
+ * said everything there was to say. A multi-selection has N targets and the
+ * bulk mutation writes the ones it can, so "locked" and "unlocked" both lie
+ * about the middle case. The third state carries the numbers instead:
+ *
+ *   - `blocked` — nothing typed here reaches disk. Controls render disabled,
+ *     the remove button disappears, and the reason is the row's `title`.
+ *     This is the original lock, unchanged.
+ *   - `partial` — the write lands on some targets and not others, per
+ *     PROPERTY (see `styleWriteReach.ts` for why per-property). Controls stay
+ *     ENABLED — refusing an edit that works for three of five layers would
+ *     cost the three to protect the two — and the row states the count.
+ *   - `null` — every write reaches disk.
  */
-export const StyleWriteLockContext = createContext<string | null>(null)
+export type StyleWriteLock =
+  | { kind: 'blocked'; reason: string }
+  | { kind: 'partial'; reach: StyleWriteReach }
+
+/** The `blocked` lock, so callers with a plain reason string don't build the object by hand. */
+export function blockedStyleWriteLock(reason: string | null): StyleWriteLock | null {
+  return reason === null ? null : { kind: 'blocked', reason }
+}
+
+/**
+ * The lock state for the style target currently being rendered, or `null`
+ * when every edit to it reaches disk.
+ */
+export const StyleWriteLockContext = createContext<StyleWriteLock | null>(null)
 
 /** Reads the enclosing write lock. `null` = this control's edits can be saved. */
-export function useStyleWriteLock(): string | null {
+export function useStyleWriteLock(): StyleWriteLock | null {
   return useContext(StyleWriteLockContext)
+}
+
+/**
+ * What ONE property row must do about the enclosing lock: whether to disable
+ * itself, and the sentence to show. Resolved here so no row re-implements the
+ * `blocked` / `partial` distinction — `partial` never disables.
+ */
+export function resolveRowWriteLock(
+  lock: StyleWriteLock | null,
+  property: string,
+): { disabled: boolean; reason: string | null } {
+  if (lock === null) return { disabled: false, reason: null }
+  if (lock.kind === 'blocked') return { disabled: true, reason: lock.reason }
+  return { disabled: false, reason: describeReach(lock.reach, property) }
 }

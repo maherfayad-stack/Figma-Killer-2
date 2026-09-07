@@ -888,30 +888,103 @@ Symbol. `resolveStylePlaceholder` is the single place that turns a `MIXED`
 placeholders through it (including `StackedPropertyGrid`, and therefore the
 bespoke sections built on it) gets Mixed placeholders for free.
 
-**Known phase-1 gap:** a bespoke section that reads a raw cell through
-`readString` sees `undefined` for `MIXED` and renders its ordinary *unset*
-state — an empty field or an unpressed toggle group, which is visually right
-but does not say the word. The primitives above already accept `mixed`, so
-wiring each section is a one-line change per field; it is deliberately not done
-here because five of those sections were being rewritten in parallel.
+**The bespoke sections read the sentinel too.** A section that reads a raw
+cell through `readString` used to see `undefined` for `MIXED` and render its
+ordinary *unset* state — an empty field, an unpressed toggle group — which is
+indistinguishable from "nobody set this" and one keystroke from flattening a
+disagreement the user was never shown. Two helpers in `styleValueUtils.ts`
+close it: `pickMixedString` (the cell read that PRESERVES the sentinel, used
+by the corner/side clusters in Appearance and Stroke) and `isMixedStyleValue`
+(is this field's stored cell mixed, or its effective one when nothing is
+stored — the placeholder layer). Every section is wired:
 
-### §9.4 The target is pinned to Element, and says so
+| Section | Mixed surface |
+|---|---|
+| Spacing, Layout padding | `SingleSideField` / `LinkedAxisField` → `ScrubTokenField`'s new `mixed` |
+| Layout | mode row (`data-mode="mixed"`), flex direction, gap, grid tracks |
+| Position | the `position` switcher (`data-position-value="mixed"`) and each TRBL offset |
+| Size | W/H and every revealed constraint (`AddablePropertyField` already took `MIXED`) |
+| Typography | text-align and vertical-align groups; every other row via `StackedPropertyGrid` |
+| Appearance | opacity, and all five corner-radius fields |
+| Fill | the entry stays (it used to vanish) and reads "Mixed"; its editor is a mixed `ColorValueInput` |
+| Stroke | weight, colour, style, and stroke position |
 
-A class edit from a multi-selection has a blast radius the panel cannot state
-honestly yet: the N nodes rarely share one class, the classes they do share are
-usually also on elements *outside* the selection, and several are
-compiled/unmapped so the write would not reach disk at all. That is the "one
-honest target" invariant, so phase 1 pins the write target to Element and shows
-why: `StyleTargetChip` takes `lockedToElementReason`, renders Element as the
-active non-switchable target, and states *"Bulk edits write inline styles —
-class edits need a single selection"* on the Element, Class and Assign rows.
-Inline styles carry no such ambiguity — `style=""` belongs to exactly one
-element, so N inline writes touch exactly the N elements selected.
+`String(MIXED)` was the other half of the bug: `hasStyleValue` is true for a
+Symbol, so Position and Size would have printed `Symbol(studio-mixed-value)`
+into their fields. Both now test `isMixed` before stringifying.
 
-Phase 2 (`StyleWriteLockContext` carrying a COUNT — "writes to 3 of 5, 2 are
-compiled" — instead of a boolean) and phase 3 (class-target bulk behind an
-explicit "this class is used by N other elements — continue?" gate, plus G6.4's
-Selection colours) are not in this pass.
+**Deliberately not given a Mixed state:** `AlignGrid`'s 3×3 and Clip content's
+checkbox. Neither primitive has an indeterminate affordance, and inventing one
+for a 9-cell grid is a design decision, not a wire-up. Both render unset, as
+before.
+
+### §9.4 Two targets, and the gate between them
+
+Inline styles carry no ambiguity — `style=""` belongs to exactly one element,
+so N inline writes touch exactly the N elements selected. That is the default
+target, and when the selection shares no class it is the ONLY one:
+`StyleTargetChip` takes `lockedToElementReason` and states *"Bulk edits write
+inline styles — a class target needs one class every selected layer carries"*.
+
+When every selected node DOES carry one class, the class is offered as a second
+target — because "restyle these five cards" usually means the class, and
+refusing it would push the user into five inline overrides that shadow it. The
+decision lives in `multiSelectClassTarget.ts` (pure, unit-tested) and has three
+outcomes:
+
+| Outcome | What the panel does |
+|---|---|
+| `no-shared-class` | Element stays pinned, with the reason above |
+| `allowed` — the class is carried ONLY by the selected nodes | The class chip becomes a real `Button`; clicking it switches target, no gate |
+| `needs-confirmation` — it also lives outside the selection | Clicking raises an inline gate: *".card is used by 3 other elements outside this selection. Editing it changes them too — continue?"* |
+
+The count is the store's O(1) `_classIdToNodeCount` index (never a page walk —
+`no-full-site-scan-in-selectors`), and the "which class" tie-break is the LAST
+shared class in the anchor's `classIds`, i.e. the one the cascade gives the
+final word to. Confirmation is remembered per class id while the surface stays
+mounted: re-asking on every keystroke trains the user to click through. The
+gate is inline, under the chip that raised the question — never
+`window.confirm` (`no-native-browser-dialogs`), and never a modal, because the
+question is about the surface already on screen. Once confirmed, the class
+target mounts the ordinary `StyleRuleComposer` under the same pre-flight
+`StyleWriteLockContext` the single-node surface provides, so a compiled class
+is as unwritable here as it is there.
+
+### §9.4a The write lock carries a count, not a boolean
+
+`setNodesInlineStyles` deliberately skips the individual nodes whose source
+refuses a property and writes the rest. A boolean lock cannot say that: calling
+it unlocked claims a clean write to all five layers, and calling it locked
+disables a control that works for three. So `StyleWriteLockContext` has three
+states (`StyleWriteLockContext.ts`):
+
+- `null` — every write reaches disk.
+- `{ kind: 'blocked', reason }` — nothing does. Controls disabled, remove
+  button dropped, reason as `title`. The original lock, unchanged.
+- `{ kind: 'partial', reach }` — some do. Controls stay **enabled**, and the
+  row states the count: *"Writes to 3 of 5 selected layers — 2 are set from an
+  expression in code."*
+
+The reach is per PROPERTY, not per selection (`styleWriteReach.ts`): a node
+whose `width` comes from an expression takes a `color` edit perfectly well, and
+a selection-wide count would be wrong on every property but one. Each row asks
+about its own property in O(1) via `resolveRowWriteLock`, and carries
+`data-write-partial="true"` when it has something to disclose.
+
+### §9.4b Selection colors (G6.4)
+
+`SelectionColorsSection` lists the distinct colours the selection is *made of*,
+across properties: the same `#111` used as text on one layer and as a border on
+another is ONE swatch with "2 uses". Recolouring rewrites every declaration
+that held it in a single undo step, through the new store action
+`setNodesInlineStylesPerNode` (a DIFFERENT patch per node, one transaction,
+coalesced on `selection-color:<old value>`).
+
+Two deliberate limits, both in `selectionColors.ts`: **inline declarations
+only** (a class-sourced colour's honest target is the class, and a swatch must
+not silently perform a class edit), and **literal text matching** — `#fff` and
+`rgb(255,255,255)` are separate swatches, because bucketing them would mean
+rewriting text the user never asked us to touch.
 
 ### §9.5 A multi-selection needs two members
 
@@ -935,8 +1008,8 @@ extract, don't grow — `FillSection` split into `FillSectionParts.tsx` +
 `fillModel.ts` + `backgroundLayers.ts` for exactly this reason).
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
-`store-engineer` is needed for G6.4 (multi-select) and G8.3 (shadow-layer
-modelling); `test-engineer` owns the §6 measurement gate.
+`store-engineer` owns the multi-select surface (§9) and is needed for G8.3
+(shadow-layer modelling); `test-engineer` owns the §6 measurement gate.
 
 ---
 
