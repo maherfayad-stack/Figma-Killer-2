@@ -20,6 +20,17 @@
  * uses the real store, loaded with a real site document, and simply never
  * mounts anything that can mutate it.
  *
+ * ## Why it registers modules through `canvasModuleSet.ts`
+ *
+ * Same reason. `NodeRenderer` resolves every node through the GLOBAL module
+ * registry, so a renderer is only as faithful as the set that was registered
+ * before it painted. This page is a separate Vite entry and inherits nothing
+ * from the editor's imports — when it kept its own shorter list it rendered
+ * `Unknown module: alm.Button` for a page the canvas rendered correctly. It
+ * now calls the same entry the editor's `useRegisterProjectModules` calls, and
+ * hands the resulting promise to every frame so nothing is photographed before
+ * the project's own `pkg.*` components have registered (or been refused).
+ *
  * The site shell is built the way `fsCodemodAdapter.loadSite` builds it —
  * `createDefaultSiteDocument` plus the project's pages, style registry,
  * conditions and framework settings. The parts of `loadSite` that are NOT
@@ -34,6 +45,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { useEditorStore } from '@site/store/store'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { setStudioAuthoredCss, setStudioVendorCss } from '@site/studio/studioRawCssStores'
+import { mountCanvasModuleSet } from '@site/studio/canvasModuleSet'
 import { CaptureFrame } from './CaptureFrame'
 import { createCaptureRun, publishCaptureError, type CaptureRun } from './captureReadiness'
 import styles from './CaptureFrame.module.css'
@@ -41,6 +53,8 @@ import styles from './CaptureFrame.module.css'
 interface CaptureState {
   payload: AgentCapturePayload
   run: CaptureRun
+  /** Kicked off with the payload (it needs the project dir), awaited by every frame's settle. */
+  moduleRegistration: Promise<void>
 }
 
 export function CaptureApp({ token }: { token: string }) {
@@ -56,7 +70,17 @@ export function CaptureApp({ token }: { token: string }) {
         })
         if (cancelled) return
         hydrateCaptureStore(payload)
-        setState({ payload, run: createCaptureRun(payload.frames.map((frame) => frame.pageId)) })
+        // Started BEFORE the frames mount, not awaited here: the built-in
+        // packs are already registered (importing `canvasModuleSet` did that),
+        // so the frames can paint everything else while the project's own
+        // package bundle is still in flight. `CaptureFrame`'s settle is what
+        // holds the shutter — bounded, and a warning rather than a refusal if
+        // the bundle never arrives.
+        setState({
+          payload,
+          run: createCaptureRun(payload.frames.map((frame) => frame.pageId)),
+          moduleRegistration: mountCanvasModuleSet(payload.dir),
+        })
       } catch (err) {
         if (cancelled) return
         // The driver reads this verbatim, so it must say what actually broke
@@ -81,6 +105,7 @@ export function CaptureApp({ token }: { token: string }) {
             key={frame.pageId}
             page={page}
             width={frame.width}
+            moduleRegistration={state.moduleRegistration}
             onSettled={state.run.report}
           />
         )

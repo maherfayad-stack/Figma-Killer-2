@@ -351,9 +351,36 @@ studio_screenshot / studio_export_frames / studio_compare
 `/admin/agent-capture?token=…` is a **second Vite HTML entry**
 (`agent-capture.html` → `src/admin/agentCapture/`), not a route inside the
 admin SPA. A separate entry makes "no editor shell" structural rather than a
-promise: the bundle contains the base modules, the editor store, the canvas and
-the capture app — no router, no boot probe, no toast provider, no plugin
-runtime, no panels, no persistence, no autosave.
+promise: the bundle contains the canvas module set, the editor store, the
+canvas and the capture app — no router, no boot probe, no toast provider, no
+panels, no persistence, no autosave.
+
+**The module set is shared with the editor, not re-declared.**
+`NodeRenderer` resolves every node through the global module registry, so a
+capture is only as faithful as the set registered before it paints. This entry
+used to list `@modules/base` and stop, which is why an exported PNG came back
+full of dashed `Unknown module: alm.Button` boxes for a page the canvas
+rendered correctly. Both surfaces now go through
+`src/admin/pages/site/studio/canvasModuleSet.ts`:
+
+- the **built-in packs** (`@modules/base` — which pulls in
+  `@modules/studio/slot` — plus `@modules/alm/register` and
+  `@core/loops/sources`) register as an import side effect, so there is no
+  "forgot to call it" state;
+- the **project's own package components** (`pkg.*`) register through
+  `mountCanvasModuleSet(dir)`, which the editor drives from
+  `useRegisterProjectModules()` and the capture page drives from the `dir` in
+  its own payload. The **trust gate stays on the server**
+  (`componentBundle.ts` refuses at Tier 0 before parsing or bundling), so
+  neither surface re-implements it and a Tier-0 project photographs exactly
+  the placeholder the editor shows at Tier 0.
+
+`agent-capture.html` therefore carries a React-only import map
+(`react`, `react-dom`, both JSX runtimes → `public/runtime/*.js`). A component
+bundle is built with those specifiers external, so without the map its
+`import()` throws on a bare specifier and every `pkg.*` component photographs
+as a placeholder. index.html's `@studio/*` entries are deliberately absent:
+plugin canvas module packs are not loaded on this page.
 
 It renders with the SAME code the canvas renders with: `IframeFrameSurface` in
 `interaction="capture"` mode wrapping `CanvasComposedTree`, one frame per
@@ -362,8 +389,8 @@ requested page under its own `CanvasPageContext` (the same mechanism
 injector therefore applies — authored CSS, class CSS, project CSS, the
 animation freeze, the scroll-unroll — and readiness uses the one shared settle
 machine, `settleCaptureDocument` in
-`src/admin/pages/site/canvas/canvasCaptureSettle.ts` (preview data idle → DOM
-quiet → images → fonts → DOM quiet again). The page publishes a validated
+`src/admin/pages/site/canvas/canvasCaptureSettle.ts` (module registration →
+preview data idle → DOM quiet → images → fonts → DOM quiet again). The page publishes a validated
 report on `window.__studioAgentCapture`; the driver polls one expression, then
 reads it in a single `evaluate` and validates it against
 `AgentCaptureReportSchema`.
@@ -374,6 +401,7 @@ degrades to a **warning on a successful capture**, never a failed one:
 
 | Phase | Bound | What "settled" means |
 |---|---|---|
+| Modules | `MODULE_REGISTRATION_BUDGET_MS` (10 s) | `mountCanvasModuleSet`'s registration resolved — the project's `pkg.*` components are registered, or the bundle was refused. Only a one-shot renderer passes this; an editor frame re-renders through `registry.subscribe` however late a module arrives. A bundle that never lands warns and the frame is captured with placeholders. |
 | Preview data | remaining deadline | The `CanvasPreviewReadiness` barrier is idle. A REJECTED preview request releases it, same as a resolved one. |
 | Images | `IMAGE_SETTLE_BUDGET_MS` | Every `<img>` is `complete` — which a 404 sets exactly as a successful load does. An `error` event ends the wait identically to `load`; broken images are counted and reported ("2 images failed to load"). |
 | Fonts | `FONT_SETTLE_BUDGET_MS` | `document.fonts.ready` settled, or the budget expired (a `@font-face` file that never answers cannot stall the capture). |

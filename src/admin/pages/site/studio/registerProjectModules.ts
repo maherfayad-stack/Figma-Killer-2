@@ -83,7 +83,7 @@
  *     entry for WS-3) is NOT built here — an honest, documented gap; see the
  *     `pkg-02` STATE.md entry.
  */
-import React, { useEffect, useSyncExternalStore } from 'react'
+import React from 'react'
 import { apiRequest } from '@core/http'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { ensurePluginRuntime } from '@admin/pluginRuntimeBootstrap'
@@ -104,12 +104,11 @@ import {
   type ModuleDefinition,
   type ModuleComponentProps,
 } from '@core/module-engine'
-import { useAdminUi } from '@admin/state/adminUi'
 import { NodeRenderer } from '@site/canvas/NodeRenderer'
 import { useFramePreviewAxes } from '@site/canvas/previewAxesFrameEffect'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
 import { getStudioPaletteHiddenModuleIds } from './fsCodemodAdapter'
-import { getStudioTrustTier, setPackageBundleStatus, subscribeStudioTrustTier } from './studioProjectTrust'
+import { setPackageBundleStatus } from './studioProjectTrust'
 
 // ---------------------------------------------------------------------------
 // Wire shape — mirrors the server's `PropKind`/`ComponentSpec`/`BundledComponentSpec`
@@ -380,6 +379,24 @@ function buildDefaults(spec: BundledComponentSpec): Record<string, unknown> {
 let activeProjectDir: string | null = null
 let activeModuleIds = new Set<string>()
 
+/**
+ * The registration currently in flight for `activeProjectDir`, or an already
+ * resolved promise when nothing is running.
+ *
+ * It exists because a caller that RENDERS the board rather than watching it
+ * needs to know when registration is done: the headless capture page
+ * (`CaptureFrame.tsx`) photographs a frame exactly once, so a `pkg.*` node
+ * whose bundle lands one tick after the shutter produces a screenshot full of
+ * placeholders and no way to tell that from a genuinely unavailable package.
+ * The editor never needs this — `registry.subscribe` re-renders the canvas
+ * whenever a module arrives, however late.
+ *
+ * `syncProjectModules` never rejects (its whole body is wrapped), so awaiting
+ * this is always safe and always terminates: every failure mode already
+ * resolves through `setPackageBundleStatus`.
+ */
+let pendingProjectModuleSync: Promise<void> = Promise.resolve()
+
 function unregisterActiveProjectModules(): void {
   for (const id of activeModuleIds) registry.unregister(id)
   activeModuleIds = new Set()
@@ -484,7 +501,7 @@ async function syncProjectModules(dir: string): Promise<void> {
  * E3/E4 seam — the explicit reset/resync entrypoint `useDependencyInstallJob.ts`
  * calls after a Studio `bun add`/`bun remove` job lands, so a freshly-installed
  * design-system package becomes registerable WITHOUT waiting for the two
- * triggers `useRegisterProjectModules`'s own effect otherwise reacts to
+ * triggers `useRegisterProjectModules` (`canvasModuleSet.ts`) otherwise reacts to
  * (a project-dir change, or a trust-tier change via `promoteProjectToTier1`).
  * A site reload (`requestCmsSiteReload`) alone changes NEITHER — installing a
  * dependency doesn't touch the project dir or the trust tier — so without this,
@@ -495,15 +512,16 @@ async function syncProjectModules(dir: string): Promise<void> {
  */
 export function resyncActiveProjectModules(): void {
   if (!activeProjectDir) return
-  void syncProjectModules(activeProjectDir)
+  pendingProjectModuleSync = syncProjectModules(activeProjectDir)
 }
 
 // ---------------------------------------------------------------------------
-// Hook — mount once from the editor body (`AdminCanvasEditorBody.tsx`).
+// The registration entry — called through `canvasModuleSet.ts`, never directly
 // ---------------------------------------------------------------------------
 
 /**
- * Drives registration for whichever project is currently open:
+ * Register (or unregister) the `pkg.*` design-system modules for `projectDir`.
+ *
  *   - On every project-dir change, unregisters the previous project's `pkg.*`
  *     modules FIRST — regardless of whether the new project needs a fetch —
  *     so switching away from a project never leaves its modules registered.
@@ -515,31 +533,41 @@ export function resyncActiveProjectModules(): void {
  *     (`ProjectProfile.componentPackages`, via E1's `resolveProjectProfile`)
  *     decides what to fetch; a project with no component-package dependency
  *     costs one cheap, cached, empty-result round trip.
- *   - The trust gate stays exactly where it was — `render-packages`/
- *     `run-project` (Tier ≥ 1) required to actually bundle/render a
- *     package's code (invariant 1: parse, never execute). A Tier-0 project
- *     that DOES depend on a component package still calls this route; the
- *     route refuses with `trust-tier-required` BEFORE any parsing/bundling,
- *     and that refusal is recorded via `setPackageBundleStatus` — read by
- *     `ModulePicker.tsx`/`ModuleInserterDialog.tsx` (picker-level "N
- *     components need this project promoted" notice) and
- *     `PackageComponentPlaceholder.tsx` (per-node, once one is on the
- *     board) — never a silent empty palette.
- *   - Re-runs when the trust tier changes (a successful "promote" action —
- *     `promoteProjectToTier1` in `studioProjectTrust.ts` — updates the
- *     external store this hook subscribes to), so promoting mid-session
- *     picks up components without a full page reload.
+ *   - The trust gate stays exactly where it was, and it stays on the SERVER —
+ *     `render-packages`/`run-project` (Tier ≥ 1) required to actually
+ *     bundle/render a package's code (invariant 1: parse, never execute). A
+ *     Tier-0 project that DOES depend on a component package still calls this
+ *     route; the route refuses with `trust-tier-required` BEFORE any
+ *     parsing/bundling, and that refusal is recorded via
+ *     `setPackageBundleStatus` — read by `ModulePicker.tsx`/
+ *     `ModuleInserterDialog.tsx` (picker-level "N components need this project
+ *     promoted" notice) and `PackageComponentPlaceholder.tsx` (per-node, once
+ *     one is on the board) — never a silent empty palette. Because the gate is
+ *     the route's, every renderer that calls this — the editor canvas and the
+ *     headless capture page alike — gets the identical Tier-0 outcome without
+ *     each having to re-implement the check.
+ *
+ * Returns the in-flight registration so a one-shot renderer can await it; the
+ * editor ignores the promise and lets `registry.subscribe` re-render instead.
  */
-export function useRegisterProjectModules(): void {
-  const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
-  const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
+export function registerProjectPackageModules(projectDir: string | null): Promise<void> {
+  if (projectDir !== activeProjectDir) {
+    unregisterActiveProjectModules()
+    activeProjectDir = projectDir
+  }
+  if (!projectDir) {
+    pendingProjectModuleSync = Promise.resolve()
+    return pendingProjectModuleSync
+  }
+  pendingProjectModuleSync = syncProjectModules(projectDir)
+  return pendingProjectModuleSync
+}
 
-  useEffect(() => {
-    if (projectDir !== activeProjectDir) {
-      unregisterActiveProjectModules()
-      activeProjectDir = projectDir
-    }
-    if (!projectDir) return
-    void syncProjectModules(projectDir)
-  }, [projectDir, trust])
+/**
+ * The registration currently in flight, for a caller that did not start it —
+ * `CaptureFrame.tsx`'s settle machine, which is mounted by the same render
+ * pass that kicked the registration off.
+ */
+export function projectPackageModulesSettled(): Promise<void> {
+  return pendingProjectModuleSync
 }
