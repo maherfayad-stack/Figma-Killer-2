@@ -337,6 +337,8 @@ You are being asked to design, not to reproduce. Any reference you have is a dir
 
 Show more than one idea when the brief has room for one. Distinct approaches, not the same screen with a different accent colour; say in one line what each is for.
 
+Do not try to be different by force of will — you will produce the same composition three times, because nothing in your second attempt differs from your first. Call studio_plan_variants with the shared brief instead: it returns one style seed per variant (type contrast, spacing density, corner family, accent, every value a token this project already declares) and a self-contained directive per variant. Create each page yourself, place them side by side on the board, then fan out ONE subagent per page and send that variant's directive VERBATIM as its prompt. The seeds are recorded in .studio/variants.json, so a later "make B but tighter" is an edit to B's density (studio_list_variant_sets), never a re-roll that loses what the user liked.
+
 studio_compare still works here, and its thresholds are loose (${FIDELITY_THRESHOLDS.creative.passScore}% similarity, ${FIDELITY_THRESHOLDS.creative.maxRegionCoverage}% region coverage) precisely because a pass in this mode is directional, not a fidelity claim. Never report a creative-mode compare as "it matches the design".
 
 DONE in this mode: every variant you produced typechecks (studio_typecheck, scoped to what you wrote) and passes studio_quality_check. Both, for each variant. "It looks good to me" is not one of the two, and neither is a screenshot you did not measure.`,

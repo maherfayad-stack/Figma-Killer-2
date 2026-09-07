@@ -68,6 +68,14 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // stylesheet for one-off values a project token already covers and for
   // same-rule colour pairs that fail WCAG AA contrast.
   'studio_quality_check',
+  // W9-3's creative half. The prompt can ASK for three variants; it cannot
+  // make them different — a model given one brief three times returns the
+  // same composition three times, because nothing in the second prompt
+  // differs from the first. These generate the difference outside the model,
+  // from the project's own token space, and record it so "make B but
+  // tighter" is an edit rather than a re-roll.
+  'studio_plan_variants',
+  'studio_list_variant_sets',
   // The ONE verification studio_compare/studio_screenshot cannot give: does
   // the code the agent just wrote actually compile. Runs the PROJECT's own
   // tsc — see systemPrompt.ts's "not done until it both compares clean AND

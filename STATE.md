@@ -2220,6 +2220,125 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### creative-substance — W9-3: coverage + composition teeth, and variants that actually differ
+- **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/agent-creative-substance` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W9-3, **creative half only** (a sibling agent owns
+  the strict half: `frameDiffEngine`, `compareGrading`, `fontAvailability.ts`,
+  `studio_ingest_design_text`).
+- **Shipped — 1. Component-coverage threshold in `studio_quality_check`:**
+  - New finding `design-system-coverage-low` in `auditPageSourceQuality`
+    (`server/handlers/studio/qualityAudit.ts`). Fires only when FOUR things
+    hold, each one a way the rule would otherwise be noise: a catalog was
+    resolved and offers >= 8 components; the screen has >= 15 JSX opening
+    tags; `design-system-unused` did NOT fire (the zero-import case is
+    reported once, by the stronger finding); and fewer than `min(4, catalog
+    size)` distinct catalog components are actually RENDERED — imported *and*
+    used as a JSX tag, since an unused import is not coverage. An aliased
+    import counts under its catalog name, matched on the local tag.
+  - The catalog is the SAME `resolveDesignSystemGuide` `projectGuide.ts`
+    renders into the project's own `CLAUDE.md` decision table (exported for
+    this; resolved once per call in `qualityCheck.ts` next to the token
+    index). That is deliberate: resolving it a second way would let the
+    finding name components the agent was never offered.
+  - The message NAMES what the decision table offered and the screen did not
+    take, capped at 12 names — "use more components" is unactionable.
+- **Shipped — 2. Composition audit:**
+  - `auditCompositionQuality(sheets, tokens)` in the same module, called ONCE
+    per page from `qualityCheck.ts` over the page's whole stylesheet set:
+    `off-scale-spacing`, `off-scale-type-size`, `flat-type-hierarchy`.
+  - **Aggregates, not per-declaration** — one finding per rule per page with a
+    count, a ratio and the offending `file:line` list. Per-declaration would
+    double-report every value `raw-px-length` already flags, and 40 findings
+    is a tool a weaker model learns to ignore.
+  - **Page-level, not per-file** — this is a deliberate deviation from the
+    plan's "in `auditStylesheetQuality`". A screen's type scale lives across
+    every stylesheet it imports, so a `largest / body` ratio computed inside
+    one `.module.css` measures a fragment and calls it a hierarchy.
+  - Both scale rules run ONLY against tokens the project declares: no spacing
+    tokens (GCD of its own `--space*` values) means NO spacing rule, never an
+    invented 4px default. `flat-type-hierarchy` needs no tokens — largest vs.
+    the modal (body) size, flat under 1.6.
+  - The rejected class-name/word-overlap check was NOT resurrected; none of
+    these use name similarity.
+- **Shipped — 3. Variant style seeds (the seam, not the fan-out):**
+  - `server/handlers/studio/variantSeeds.ts` — pure. `generateVariantSeeds`
+    produces N seeds over four axes (type contrast, density, corner family,
+    accent), each assigned WITHOUT replacement (Fisher-Yates over a
+    caller-seeded mulberry32), every value taken from a token the project
+    already declares. Deterministic for a given `rngSeed`.
+  - **Two cross-checks make the generator and the grader agree by
+    construction:** the type-contrast pool is bounded below by
+    `MIN_TYPE_HIERARCHY_RATIO` *imported from* `qualityAudit.ts`, and the
+    density multipliers are WHOLE multiples of the project's spacing base —
+    so a seed can never propose a screen `flat-type-hierarchy` or
+    `off-scale-spacing` would then flag. (The first draft used a 1.5x
+    "regular" density and failed its own rule; that is why the multipliers
+    are 1/2/3.)
+  - `server/handlers/studio/variantStore.ts` — `.studio/variants.json`, a
+    sibling of `boards.json` (NOT `cache/`: a seed set is user-facing intent
+    nothing can reconstruct). Validated on read with
+    `parseJsonWithFallback`, capped at 20 sets.
+  - **`studio_plan_variants`** + **`studio_list_variant_sets`**
+    (`server/ai/mcp/tools/studio/variantTools.ts`), wired into
+    `studioMcpTools` and `STUDIO_AGENT_TOOL_NAMES`.
+  - `MODE_BLOCK.creative` now names the tool and the fan-out shape.
+- **Tool inventory (mcp-tooling handoff requirement):**
+  | Tool | Class | Capabilities | Input | Failure message when the precondition is missing |
+  |---|---|---|---|---|
+  | `studio_plan_variants` | server-resolved | `['studio.write']` (persists `.studio/variants.json`; never touches user source, never creates a page, never runs project code) | `{ dir?, baseName, brief, count? 2..4, rngSeed? }` — no output directory anywhere in the family | A non-PascalCase `baseName` is refused by name ("it becomes a real .tsx file name — pass \"Home\", not \"home page\" or \"Home.tsx\""). An empty token index does not fail: it returns seeds with no token names, a per-axis "no token found" line in each directive, and a `note` pointing at `studio_project_profile` for the style-compile warning. |
+  | `studio_list_variant_sets` | server-resolved | none (read) | `{ dir?, setId? }` | Unknown `setId` → refused with the ids that DO exist; none recorded at all → says so and names `studio_plan_variants`. |
+  - `studio_quality_check` is unchanged in class/capabilities (server, read) —
+    only its findings and description grew.
+- **CUT — named:**
+  - **The variant fan-out itself.** `studio_plan_variants` PLANS: it does not
+    create `HomeA/B/C` or place them side by side on the board. Not laziness
+    — page creation and `.studio/boards.json` are the orchestrator's alone
+    under `docs/features/agent.md`'s subagent contract, and another agent
+    owns `boardFrames` this wave. Hence `plan`, not the plan's optional
+    `build`: the name says which half it owns. The agent creates the pages
+    with the tools it already has and sends each `directive` verbatim.
+  - **No `studio_edit_variant_seed`.** "Make B but tighter" is currently: read
+    the set back, then re-run `studio_plan_variants` with the same `rngSeed`
+    or hand-author the change. The seed is RECORDED (which is the property
+    that makes the edit possible at all); a first-class edit verb is not.
+  - **The composition thresholds are chosen, not measured** — 1.6 for flat
+    type, >= 6 spacing samples, >= 15 elements for coverage, >= 8 catalog
+    entries, K=4. Only the 2-of-42 observation behind K is real data. If any
+    of these turn out noisy, they are all single named constants.
+  - **Coverage counts JSX tags textually.** A component rendered only through
+    a variable (`const C = cond ? Card : Cell`) is not counted. Under-scans
+    rather than mis-scans, same posture as every other rule in the module.
+- **Dogfood checklist for the human (no browser tests by agents):**
+  1. Run `studio_quality_check` on a real screen in a project with a design
+     system installed. A thin screen should now come back with
+     `design-system-coverage-low` NAMING real component names from that
+     project's `.claude/design-system-components.md` — if it names something
+     that file does not list, the catalog resolution is wrong.
+  2. On the same screen, check the composition findings are ONE each, not one
+     per declaration, and that the `file:line` list points at real lines.
+  3. In a project with NO spacing tokens, confirm `off-scale-spacing` is
+     absent entirely (not "everything is off-scale").
+  4. In creative mode, ask for a home screen "a few different ways" and check
+     the agent calls `studio_plan_variants`, then fans out with the returned
+     directives verbatim. Then ask "make B tighter" and confirm it reads
+     `.studio/variants.json` rather than re-rolling.
+  5. Eyeball `.studio/variants.json` — it should be small, readable, and hold
+     the `rngSeed`.
+- **Pre-existing failures I did NOT cause and did not touch:**
+  `server/ai/tools/studio/liveDigest.test.ts` (2) and
+  `server/handlers/studio/pageWriteVerification.test.ts` call
+  `appendTurnWrite`/`computePageWriteVerification` with the pre-W10 arity;
+  `server/ai/mcp/tools/studio/compare.test.ts` fails to import
+  (`editorBridgeScope`); icon-catalog `chevron-left`; headless-capture suites
+  need Chromium.
+- **Merge note for the sibling strict agent:** you will add a one-line
+  `fontAvailability` call in `qualityCheck.ts`. My changes there are the
+  import line, the catalog resolution next to the profile probe, the extra
+  `catalog` argument on the `auditPageSourceQuality` call, and the
+  sheet-text collection + `auditCompositionQuality` call after the sheet
+  loop. Nothing overlaps the page-source audit's call site beyond that
+  argument.
 ### fidelity-modes — W9-2: creative / balanced / strict, one control from prompt to gate
 - **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
 - **Branch:** `feat/agent-fidelity-modes` off `origin/main`. Goal:

@@ -24,6 +24,7 @@ import { studioCompareMcpTools } from './compare'
 import { studioMeasureReferenceMcpTools } from './measureReference'
 import { studioExtractReferenceAssetMcpTools } from './extractReferenceAsset'
 import { studioQualityCheckMcpTools } from './qualityCheck'
+import { studioVariantMcpTools } from './variantTools'
 import { studioTypecheckMcpTools } from './typecheck'
 import { studioCommentMcpTools } from './commentTools'
 import { studioGitMcpTools } from './gitTools'
@@ -35,6 +36,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioMeasureReferenceMcpTools,
   ...studioMeasureElementMcpTools,
   ...studioQualityCheckMcpTools,
+  ...studioVariantMcpTools,
   ...studioTypecheckMcpTools,
   ...studioExtractReferenceAssetMcpTools,
   ...studioProjectMcpTools,
