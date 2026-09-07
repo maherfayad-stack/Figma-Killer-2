@@ -24,6 +24,18 @@
  *       imports any more, its board frames, and any directory those leave
  *       empty. See `./pageDelete.ts` for what it deliberately does NOT touch.
  *
+ *   POST /admin/api/studio/duplicate   body: { dir, name? }
+ *       Copies a project beside itself — `cpSync` minus `node_modules`,
+ *       build output and `.git` — under a free display name (`<name> copy`,
+ *       or an explicit one), and regenerates the project guide. Returns the
+ *       new `{ project }`. See `./projectDuplicate.ts`.
+ *
+ *       `dir` is REQUIRED, for the same reason `/delete`'s is: the no-dir
+ *       fallback in `resolveProjectDir` resolves to the first project on
+ *       disk, which would turn a client bug into copying a project nobody
+ *       named. Capability-gated (`studio.write`) alongside `/delete` —
+ *       duplicating writes a whole new repository to disk.
+ *
  *   POST /admin/api/studio/delete   body: { dir }
  *       Deletes a PROJECT recoverably — moves its folder into
  *       `studio-workspace/.trash/` (`./projectTrash.ts`). Returns the
@@ -35,9 +47,9 @@
  *       to the first project on disk, which on a delete would turn a client
  *       bug into deleting a project nobody named.
  *
- *       This is also the one route in this file that checks a capability,
- *       which is why the sub-router takes a `runtime`. See the note on
- *       `tryServeStudioProjectRoutes` below.
+ *       This and `/duplicate` are the two routes in this file that check a
+ *       capability, which is why the sub-router takes a `runtime`. See the
+ *       note on `tryServeStudioProjectRoutes` below.
  *
  *   POST /admin/api/studio/page   body: { dir?, name? }
  *       WS-13 step 4 — scaffolds a new page CANONICAL BY CONSTRUCTION, one
@@ -56,13 +68,13 @@ import type { DbClient } from '../../db/client'
 import { requireCapability } from '../../auth/authz'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { ProjectTrashError, trashStudioProject } from './projectTrash'
+import { ProjectDuplicateError, duplicateStudioProject } from './projectDuplicate'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
 import { createScaffoldedPage } from './pageScaffold'
 import { detectPageTemplateKit, starterPage } from './pageTemplates'
 import {
-  discoverPageFiles,
   listStudioProjects,
   nextProjectName,
   projectPagesDir,
@@ -70,8 +82,10 @@ import {
   renameProjectDisplayName,
   resolveProjectDir,
   safeProjectFolderName,
+  studioProjectSummary,
   writeProjectMeta,
-  type StudioProjectSummary, rethrowProjectDirRefusal } from '../studioProjects'
+  rethrowProjectDirRefusal,
+} from '../studioProjects'
 
 /**
  * Body of POST /admin/api/studio/create — scaffold a new project folder.
@@ -137,6 +151,16 @@ const DeleteProjectBodySchema = Type.Object({
 })
 
 /**
+ * Body of POST /admin/api/studio/duplicate. `dir` is required — see the module
+ * doc. `name` is optional: omit it and the server picks the first free
+ * `<name> copy`, `<name> copy 2`, … display name.
+ */
+const DuplicateProjectBodySchema = Type.Object({
+  dir: Type.String(),
+  name: Type.Optional(Type.String()),
+})
+
+/**
  * `runtime` is here for ONE route: `/delete` is capability-gated and needs the
  * `DbClient` to resolve the session. That is the same reason
  * `tryServeStudioComments` takes one, and it is why both are called outside
@@ -169,6 +193,29 @@ export async function tryServeStudioProjectRoutes(
       rethrowProjectDirRefusal(err)
       if (err instanceof ProjectTrashError) {
         return jsonResponse({ error: err.message }, { status: err.reason === 'not-found' ? 404 : 400 })
+      }
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Copy a project beside itself. Gated for the same reason `/delete` is:
+  // this one writes an entire second repository to the user's disk, and the
+  // ungated neighbours below are a known gap, not a precedent.
+  if (pathname === '/admin/api/studio/duplicate' && req.method === 'POST') {
+    const user = await requireCapability(req, runtime.db, 'studio.write')
+    if (user instanceof Response) return user
+    try {
+      const body = await readValidatedBody(req, DuplicateProjectBodySchema)
+      if (!body) return badRequest('invalid duplicate body')
+      const requested = body.dir.trim()
+      if (!requested) return badRequest('duplicate requires an explicit project dir')
+      const project = duplicateStudioProject(projectsRootDir(), requested, body.name)
+      return jsonResponse({ project })
+    } catch (err) {
+      if (err instanceof ProjectDuplicateError) {
+        const status = err.reason === 'not-found' ? 404 : err.reason === 'name-taken' ? 409 : 400
+        return jsonResponse({ error: err.message }, { status })
       }
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
@@ -232,8 +279,7 @@ export async function tryServeStudioProjectRoutes(
       // system is on disk but nothing tells the agent what is in it. AFTER the
       // seed: everything it generates is derived from what the seed just wrote.
       generateStudioProjectGuide(dir)
-      const project: StudioProjectSummary = { dir, name: displayName, pageCount: 1 }
-      return jsonResponse({ project })
+      return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
@@ -254,10 +300,7 @@ export async function tryServeStudioProjectRoutes(
       const dir = resolveProjectDir(body.dir)
       if (!existsSync(dir)) return jsonResponse({ error: 'Project not found.' }, { status: 404 })
       renameProjectDisplayName(dir, displayName)
-      const pagesDir = projectPagesDir(dir)
-      const pageCount = existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
-      const project: StudioProjectSummary = { dir, name: displayName, pageCount }
-      return jsonResponse({ project })
+      return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
       console.error('[studio]', err)

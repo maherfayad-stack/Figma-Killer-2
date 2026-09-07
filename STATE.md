@@ -21,6 +21,729 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-14 — W8-4: Fill edits `background-image` as N layers, honestly
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/fill-background-layers` off `origin/main`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-4, the *Fill as N layers* bullet only.
+  Nothing from W8-1/2/3 or the other three W8-4 bullets (Hug/Fill, Constraints,
+  Export) — they own overlapping files.
+- **Scope:** new `src/admin/pages/site/panels/PropertiesPanel/backgroundLayers.ts`
+  (+ its `__tests__/backgroundLayers.test.ts`); rewritten `FillSection.tsx`,
+  `FillSectionParts.tsx`, `__tests__/fillSection.test.tsx`; edits to
+  `fillModel.ts`, `classStyleSections.ts`, `cssControlTypes.ts`,
+  `styleFamilyClassifier.ts`, `src/core/page-tree/cssPropertyBag.ts`,
+  `docs/features/inspector-disclosure.md` (G6.5).
+- **Done so far:**
+  - **`backgroundLayers.ts` (532 lines, pure, 36 unit tests).** Applies the
+    `boxShadowLayers.ts` pattern to `background-image`: quote- and depth-aware
+    comma split → `{ spine, satellites }` model → byte-identical re-join via
+    `backgroundModelPatch`, **or refuse** with a named reason. Refusals: a
+    top-level `var()` (could expand to any layer count), unbalanced parens or an
+    unterminated string, an empty segment, and any value that would be
+    reformatted. `url("a,b.png")` does NOT split — the splitter tracks quotes,
+    which `boxShadowLayers.ts`'s does not.
+  - **Satellites are per-layer** (`backgroundSize/-Position/-Repeat/
+    -Attachment/-Origin/-Clip/-BlendMode`), following CSS Backgrounds 3 §2.1:
+    a shorter list repeats cyclically (`backgroundLayerSatellite` returns
+    `shared: true`, and the control is labelled `"Size (all layers)"` so the
+    edit that splits the list is not a surprise), a list with MORE values than
+    layers is refused **per
+    property** with its own reason (CSS ignores the extras, a per-layer write
+    would delete them). A refusal in one satellite never hides the layer rows.
+  - **`backgroundColor` is pinned bottom-most** — CSS paints it below every
+    layer, so the old "Solid fill above Image fill" row order was wrong. Row
+    order is now Text → Content fit → layer 1…N → Solid fill → `background`
+    shorthand.
+  - **`objectFit`/`objectPosition` split out** of the old
+    `IMAGE_SATELLITE_PROPS` into `CONTENT_FIT_PROPS` + their own "Content fit"
+    row. They size the element's own replaced content and were never background
+    properties; bundling them was the conflation that made "remove the image
+    fill" have to clear six unrelated things.
+  - Add (prepends at index 0 = top, Figma's behaviour) / remove / reorder
+    (`Alt+↑/↓`, clamped to the layer block) all carry every satellite in step.
+    Removing the last layer clears every satellite; satellites left with no
+    layer get a **"Background sizing"** row rather than vanishing.
+  - Four properties added to `CSSPropertyBag` + `classStyleSections`'s `fill`
+    entry: `backgroundAttachment`, `backgroundOrigin`, `backgroundClip`,
+    `backgroundBlendMode`. Publisher emission is generic (regex allowlist in
+    `classCss.ts`), so nothing else needed changing there.
+- **Next step:** none for this PR. Follow-ups worth a work order: pointer
+  drag-reorder for `PropertyList` (blocked on the dnd-kit migration, already
+  recorded in the plan's Deferred list), and image fill via `MediaLibraryControl`
+  instead of the plain URL field.
+- **Decisions:**
+  - **Refusal granularity is per property, not per section** — a satellite that
+    cannot be split does not stop the layer rows rendering. A whole-section
+    refusal for one odd `background-size` would hide six things the user can
+    edit.
+  - **No visibility eye, still.** §8 decision 1 in
+    `docs/features/inspector-disclosure.md` is unchanged: CSS has no honest
+    "disabled declaration", and neither UI-only state nor commenting out the
+    user's CSS is better than omitting the eye. The work order's
+    "toggle-visibility rows like Effects" is satisfied by matching Effects,
+    which passes no `onToggleVisible` either. Do not "fix" this by turning the
+    eye on — it would need a storage model that does not exist.
+  - **A one-value satellite list is left alone** on add/remove/reorder. It
+    already applies to every layer by CSS's repetition rule and stays correct at
+    any layer count; expanding it would churn the user's source for nothing.
+  - **Writing a satellite expands to one value per layer**, filling the others
+    with the CSS initial (`auto`, `0% 0%`, `repeat`, …) — there is no CSS syntax
+    for "layer 2 only". Once every layer is back at the initial the whole
+    declaration is cleared, so an edit-then-undo leaves no `auto, auto, auto`.
+  - Keyword lists for the satellite selects come from `getEnumOptions`
+    (`cssControlTypes.ts`), not a second copy in `backgroundLayers.ts`.
+  - **`writeBackgroundModel` diffs before/after and emits only the declarations
+    that changed.** `onChange` is one store mutation (and one AST writeback) per
+    call, so naively re-emitting all eight `background-*` properties on every
+    gradient keystroke would have put seven no-op writes in the user's undo
+    history. Locked by a test (`writes ONLY the declarations that changed`).
+- **Landmines:**
+  - `boxShadowLayers.ts`'s `splitTopLevel` is **not** quote-aware. Do not reuse
+    it for anything with `url()` in it. `backgroundLayers.ts` has its own
+    splitter for exactly this reason; the two are deliberately separate.
+  - The layer ROW order is CSS order (first = topmost). Reversing the list for
+    display would invert paint order silently — the section renders the parsed
+    array as-is.
+  - `insertBackgroundLayer` on a **refused** spine returns the model unchanged;
+    the "Add gradient fill" button is `disabled` with a reason in that state
+    rather than looking clickable and doing nothing.
+  - `restructureSatellites` no-ops when the pre-edit layer count is 0. Without
+    that guard, adding the first layer to an element carrying
+    `background-size: cover, contain` would have deleted the declaration.
+- **Verification:** `bun test` on the two touched test files: 36 + 35 pass.
+  `bun run build`, full `bun test`, `bun run lint` — see the PR body for the
+  end-of-task run and its triage.
+- **Human action needed:** dogfood — open `/admin/site`, select a frame with a
+  multi-layer background and check the six things e2e cannot:
+  1. A `.tsx`/CSS class with `background-image: url(...), linear-gradient(...)`
+     shows TWO Fill rows, the url one on top, and the canvas is unchanged after
+     opening and closing each popover (nothing rewritten on read).
+  2. `Alt+↓` on the top layer reorders the paint on the canvas, and the written
+     CSS is the two layers swapped — nothing else touched.
+  3. Set Size on the SECOND layer only: the source becomes
+     `background-size: auto, cover`, and the first layer still renders as before.
+  4. A class whose `background-image` is `var(--something)` shows ONE raw row
+     with the var() reason, and "Add gradient fill" is disabled with a tooltip.
+  5. `background-size: cover, contain` on a one-layer background shows a raw
+     "Size" field inside the layer popover, with the extras reason — and the
+     other satellites still edit per layer beside it.
+  6. `backgroundColor` + layers: the solid fill row is BELOW the layers, and
+     removing the last layer leaves the solid fill and the section alive.
+
+### panel-15 — W8-2 (scrub half): one scrub engine, every numeric scrubs
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-scrub-everywhere` off `origin/main` (`0d05e1c`,
+  i.e. on top of `panel-13`/PR #47).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-2, the *Scrub unification* paragraph
+  ONLY. The look pass (panel width 290, Button/Select inspector skins, fixed
+  `--inspector-*` spacing, `PROPERTY_FIELD_GLYPHS` extension) is the other half
+  of W8-2 and is **not** in this PR.
+
+**1. One scrub engine.** `useScrubDrag`
+(`src/ui/components/ScrubInput/useScrubDrag.ts`, new) is now the whole gesture:
+the keyword/token refusal, the 1/10/0.1 per-pixel ladder resolved through
+`nudgeStepFor`, `min`/`max`, the empty-field unit, rAF-coalesced previews, the
+unmount cancel, click-with-no-movement → focus the field, and the final value
+computed fresh from `pointerup`'s `clientX`. `ScrubInput` and `ScrubTokenField`
+both call it.
+
+**Why a hook and not "ScrubTokenField renders a ScrubInput"** (the work order's
+literal wording): a token-aware field is an `Input` **plus an autocomplete
+dropdown**, so a component that renders `ScrubInput` cannot also be
+`TokenAwareInput`. The two field kinds share the state machine, not the markup.
+Extracting the markup-shaped thing would have meant either killing token
+autocomplete on padding/margin/gap/insets or growing `ScrubInput` a
+`renderField` slot — a thin adapter hiding the wrong seam. **If you revisit
+this, revisit it here; do not "finish the job" by making one render the other.**
+
+`ScrubTokenField` lost ~55 lines of drifted copy in the process: it had **no
+rAF coalescing** (a fast padding drag fired one editor-store write per
+`pointermove`, i.e. per breakpoint-iframe style re-derivation, instead of one
+per frame), no `min`/`max`, and its own inline `altKey ? 0.1 : shiftKey ? 10 : 1`.
+
+**2. The ladder moved down one layer.** `BASE_NUDGE`/`SHIFT_NUDGE`/`FINE_NUDGE`
+and `nudgeStepFor` are now DEFINED in `scrubMath.ts` and re-exported from
+`numericNudge.ts` (whose header still explains them). Forced: `src/ui` cannot
+import `src/admin`, and the gesture lives in `src/ui` — leaving the numbers in
+admin guaranteed a second copy, which is precisely how the ±8 drift happened
+the first time. Admin call sites are unchanged.
+
+**3. The rule that decides which fields scrub: THE MARK IS THE HANDLE.** A
+numeric row draws a scrub field when it has an in-field glyph/letterform, and a
+plain typed field when it does not — because a row whose only visible name is a
+caption in a column the row does not own has nothing honest to drag (and
+`ControlRow` is off-limits this PR). Consequence worth knowing: **adding a
+property to `PROPERTY_FIELD_GLYPHS` now gives it the scrub gesture for free** —
+that is the look pass's glyph-extension task delivering scrub as a side effect,
+by design, not by accident.
+
+**4. What gained the gesture.** TRBL insets (`PositionSection`), constraint
+offsets (`PositionConstraints`), `gap`, all five corner radii
+(`AppearanceSection`), `opacity`, `zIndex`, `fontSize`, `lineHeight`,
+`letterSpacing` (`ClassPropertyRow`). `fontSize` needed a mark to grab, so it
+got one: `FontSizeIcon` (new `InspectorIcons` glyph) registered in
+`PROPERTY_FIELD_GLYPHS`. The TRBL/constraint direction arrows **moved from a
+column beside the field into the field** — one fewer grid column, and the arrow
+is now both the name and the handle (`LayoutSection.module.css`'s
+`.directionIcon` and its two `data-state` rules are gone with it).
+
+**5. Two correctness bugs found and fixed on the way** — these are the reason
+to read this entry even if you don't care about scrubbing:
+  - **`line-height: 1.5` was about to become `1.5px`.** Routing the generic
+    numeric row through `resolveCommitValue` with a `px` default would have
+    silently rewritten every ratio line-height in the user's stylesheet into a
+    *different declaration* (a ratio couples to `font-size`; a length does
+    not). New `isUnitlessNumberProp` (`cssControlTypes.ts`) names the three
+    properties whose field unit is `''`: `opacity`, `zIndex` and `lineHeight`.
+    `letterSpacing` is deliberately NOT one — `letter-spacing: 1.5` is invalid
+    CSS. This also fixes a pre-existing W8-1 hole where nudging an empty
+    `lineHeight` produced `1px`.
+  - **Glyphless numeric rows never coerced at all.** `TextControl` committed
+    raw text, so typing `50` into a border-width row emitted the invalid
+    `border-width: 50` and `100/2` was written literally — the exact bug W8-1
+    fixed for `ScrubInput` but not for this path. `nudgeEmptyUnit` is now
+    `numericUnit`, and it drives both the nudge and a `resolveCommitValue` on
+    blur, plus Enter-keeps-focus. One prop, both halves of §5.
+
+**6. Deliberate non-implementations** (say so rather than leaving a silent gap):
+  - **Grid tracks do NOT scrub.** `GridTrackControl` is a segmented count
+    picker writing `repeat(N, 1fr)`, and its custom field holds a free-form
+    template (`200px 1fr 200px`). A single number is not the whole value, and
+    scrubbing one term of a multi-term value is rewriting CSS we only partly
+    understood. `NUDGE_PROPS` has excluded grid templates since W8-1 for the
+    same reason; W8-2 did not change that. Documented in §5.5.
+  - **`opacity`'s drag saturates.** It is clamped to `0..1` (an improvement —
+    it was unbounded), but the field is unitless `0`–`1` rather than Figma's
+    `0`–`100%`, so at the shared 1-per-pixel base step a plain drag hits an end
+    stop immediately; only Alt (0.1) is fine enough to be useful. The honest
+    fix is the **percentage presentation**, which the look pass owns — not a
+    bespoke ladder for one field, which is the thing §5.3 forbids. Flagged in
+    §5.5.
+
+- **Docs:** `docs/features/inspector-disclosure.md` §5 — §-numbers unchanged;
+  §5.1 gained the `fieldUnit` paragraph, §5.3 the "where the numbers live" note,
+  and a **new §5.5** ("One scrub engine, and the mark is the handle") sits after
+  §5.4 and before §6. `STUDIO-FIGMA-PARITY-PLAN.md` §0a has a W8-2 row.
+- **Tests:** `src/__tests__/panels/scrubTokenField.test.tsx` (11, new — real
+  `PointerEvent`s against the wrapper: ladder, Alt-beats-Shift, min/max, empty
+  start unit, token refusal, click-to-focus, no-op round trip, live display,
+  rAF coalescing) and `src/__tests__/panels/inspectorNumericFields.test.tsx`
+  (18, new — the commit path of every previously-unscrubbed field; `opacity`
+  and `zIndex` are asserted to commit as **unitless numbers**, `lineHeight`'s
+  ratio to survive, `letterSpacing` to still get `px`).
+  `appearanceSection.test.tsx` was updated, not patched around: the radius DOM
+  genuinely changed shape. **Convention worth knowing before you write the next
+  panel test** — `ScrubInput` puts `data-testid` on the field WRAPPER (the shell
+  that also carries the draggable mark), and gives the `<input>` `-field` and
+  the mark `-label`. `Input` puts it straight on the `<input>`. So converting a
+  row from `Input` to `ScrubInput` moves every existing test id up one element,
+  and the edit itself now needs a blur/Enter because a scrub field commits on
+  commit, not per keystroke (§5.4).
+- **Verification:** `bun run build` ✅, `bun test` ✅ apart from the documented
+  pre-existing set. **Two triage notes for whoever runs the gates next:**
+  `no-circular-dependencies` FAILS as a 60s **timeout**, not a cycle — `bun x
+  madge --circular …` run directly on this branch prints *"No circular
+  dependency found"* after **82s** on this machine, i.e. the test's hang guard
+  is now under the real cost of a 3 494-file graph. Not caused by this PR
+  (+2 files) but it will keep firing; someone should raise the budget.
+  `no-core-barrel-deep-imports` times out only inside a 163-file parallel run
+  and passes on its own. Plus the known `chevron-left` icon-catalog failure.
+- **NEEDS HUMAN DOGFOOD** (no e2e; happy-dom has no layout engine, so nothing
+  here proves the fields *look* right). Script, ~4 minutes at `/admin/site`:
+  1. Select any element. In **Position**, set `position: relative`, then drag
+     the ▲/▶/▼/◀ arrow inside each inset field — the number should track the
+     pointer 1:1, the canvas should follow smoothly (not stutter), and ONE undo
+     should take back the whole gesture.
+  2. Switch to `position: absolute` — the X/Y constraint rows appear. Drag the
+     arrow in each; flip the side picker (Left→Right) and confirm the arrow
+     glyph flips with it and the value MOVES rather than duplicating.
+  3. **Appearance**: drag the corner-radius mark left past zero — it must stop
+     at `0px`, never go negative. Expand to four corners; each drags too.
+  4. **Layout**: drag the gap mark; same zero floor.
+  5. **Typography**: drag `fontSize`'s new "Aa" mark, and `lineHeight` /
+     `letterSpacing`. Then TYPE `1.5` into line-height and confirm the
+     stylesheet gets `line-height: 1.5` — **not** `1.5px`. Type `100/2` into
+     letter-spacing and confirm `50px`.
+  6. Type `50` into a border-width row (Stroke → advanced) and confirm `50px`.
+  7. Anywhere: hold **Shift** while dragging (10x), then **Alt** (0.1x), then
+     both (Alt should win). Press **Enter** in any field — the caret must stay
+     put with the text re-selected.
+  8. Multi-select two nodes and confirm a `Mixed` field still refuses to drag.
+### mcp-20 — W9-6: the last three bridge-bound tools go headless, and the agent gets a ruler
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `feat/headless-bridge-tools` off fresh `origin/main`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W9-6 exactly — `studio_computed_styles`,
+  `studio_set_frame_axes` and `studio_duplicate_frame_as_variant` work with no
+  editor tab open; `studio_upload_asset` stays browser-side; add
+  `studio_measure_element`.
+- **Scope:** NEW `src/core/studio-capture/{frameInspectWire,frameInspector}.ts`,
+  `src/core/ai/studioFrameToolSchemas.ts`,
+  `src/admin/agentCapture/frameInspectBridge.ts`,
+  `server/ai/mcp/capture/{captureSession,headlessFrameInspect}.ts`,
+  `server/ai/mcp/tools/studio/{computedStyles,measureElement,frameAxesTools,uploadAssetTool}.ts`
+  (+ tests). MODIFIED `headlessCapture.ts`, `editTools.ts`, `boardFrames.ts`,
+  `agentToolNames.ts`, `parityMatrix.ts`, `systemPrompt.ts`, `frameGrid.ts`,
+  `boardSlice.ts`, `executor.ts`, `CaptureFrame.tsx`, `main.tsx`,
+  `docs/features/{agent,mcp-connectors}.md`. DELETED
+  `server/ai/mcp/tools/studio/browserBridgeTools.ts`; RENAMED
+  `studioBrowserBridgeTools.ts` → `studioUploadAsset.ts` (both halves).
+- **Done so far:**
+  - **A second wire contract on the capture page.**
+    `window.__studioAgentCaptureInspect(requestJson) -> responseJson`, installed
+    beside `__studioAgentCapture`, TypeBox-validated in both directions. One
+    global with a discriminated request (`computedStyles` | `measure`) rather
+    than two globals and two settle paths.
+  - **One reader, two documents.** `@core/studio-capture`'s
+    `inspectFrameDocument` is the measurement; the capture page AND the live
+    canvas both run it. Two readers would mean the number
+    `studio_computed_styles` reports depends on which path answered.
+  - **`captureSession.ts`** extracts the five steps both drivers share (mint
+    grant → warm page → navigate → settle → validate report). `headlessCapture.ts`
+    keeps only the photography; `captureFrames.ts` was NOT touched (W10 owns it)
+    because `headlessCapture.ts` re-exports the moved types.
+  - **`studio_computed_styles`** is `execution:'server'`, headless-first with
+    the live tab as fallback; `readVia` says which answered and a both-paths
+    failure names BOTH reasons. **It now also works for a page with NO board
+    frame at all** — `capturePayload.ts` defaults frame geometry, so the live
+    path's "place a frame first" precondition is gone on the headless path.
+  - **`studio_set_frame_axes` / `studio_duplicate_frame_as_variant`** are
+    `execution:'server'` and write `.studio/boards.json` through
+    `boardFrames.ts`'s now-exported `readBoardsFile`/`writeBoardsFile`, then
+    `pushStudioLiveReload({ boardsChanged: true })` so an open tab re-reads.
+    `VARIANT_GAP` moved to `@core/studio-board`'s `frameGrid.ts`, shared with
+    `boardSlice.ts`.
+  - **NEW `studio_measure_element`** — rendered boxes, padding/margin/border,
+    and the measured gap to siblings **beside the parent's declared
+    row-gap/column-gap**. That pair is the diagnosis: agreeing means the gap
+    value is wrong, disagreeing means a margin is in play. Follows
+    `studio_screenshot`'s three-step ritual (sync board → await live-reload →
+    read) so it measures a screen the agent just wrote. Registered in the
+    barrel, `agentToolNames.ts`, `parityMatrix.ts` and the system prompt.
+  - **`studio_upload_asset` deliberately did not move** — it posts as the
+    signed-in user, which is the one authority a server tool cannot hold.
+- **Next step:** none for this entry.
+- **Decisions:**
+  - **One inspect global, not two.** Both new reads are "run a DOM read against
+    a settled capture frame and return validated JSON". A discriminated
+    request keeps one settle path, one schema pair and one driver helper.
+  - **`studio_measure_element` has no live-tab fallback**, unlike
+    `studio_computed_styles`. The tab is authoritative only for an unsaved
+    in-progress edit; a measurement of layout the agent itself just authored
+    has no such state, so a fallback would only be a slower read of the same
+    file.
+  - **`mutates: true` on a measurement.** It runs `syncBoardFramesFromDisk`,
+    which is a write — the same trade `studio_screenshot` makes, and for the
+    same reason: an agent that has to remember a placement call first will skip
+    it and measure nothing.
+  - **The three moved tools' schemas gained an optional `dir`.** They are
+    server tools now, so they need the same `resolveToolProjectDir` fallback
+    chain every other Studio tool has. The bridge relay deliberately does NOT
+    forward `dir` — the tab already knows which project it has open.
+- **Landmines:**
+  - **`bun test src/__tests__/architecture/module-size-budgets.test.ts` fired on
+    my own diff.** Adding the `studio_measure_element` schema pushed
+    `src/core/ai/toolSchemas.ts` from 688 → 745 lines. Extracted the five
+    frame-addressing schemas to `src/core/ai/studioFrameToolSchemas.ts`
+    (629 + 129) rather than grandfathering. Anything else added to
+    `toolSchemas.ts` will hit this again within ~70 lines.
+  - **`editTools.ts`'s `studio_set_frames` was silently resizing nothing.** It
+    called `resizeFrame(next, frame.pageId, …)`, but `resizeFrame` keys on
+    `f.id` — and every frame written since WS-10 Phase 2 has a `crypto.randomUUID()`
+    id. It still reported `resized: N` and success. Fixed to `frame.id` in this
+    PR (same file, same family; it also lost its private third copy of
+    `writeBoardsFile`). It only ever worked for legacy files where `coerceFrame`
+    synthesised `id = pageId`.
+  - **`createScaffoldedPage(dir, nameInput)` takes a STRING, not an options
+    object**, and it already places a board frame — a test asserting the
+    "no frame yet" path must delete `.studio/boards.json` after scaffolding.
+  - **`safeParseValue` returns `{ ok: false, errors: [{path, message}] }`, not
+    `.error`.** `safeParseJson` DOES return `.error`. Easy to mix up.
+  - **`mock.module` replaces a module for EVERY file in the same `bun test`
+    run**, and a factory that omits an export makes any sibling importing it
+    die with `SyntaxError: Export named 'x' not found`. `measureElement.test.ts`
+    and the pre-existing `compare.test.ts` both mock `./liveReloadPush`;
+    completing both factories (added `pushStudioLiveReload` +
+    `STUDIO_LIVE_RELOAD_TOOL_NAME`) fixed `frameAxesTools.test.ts` in a batch.
+  - **`liveReloadPush.test.ts` is broken by ANY batch containing a suite that
+    mocks `../../editorBridge`** — it imports the real
+    `createEditorBridgeStream`. That is PRE-EXISTING (`compare.test.ts` on
+    `origin/main` already does it) and `computedStyles.test.ts` follows the same
+    established pattern rather than inventing a new one. **Do not "fix" it by
+    stubbing more exports into the factory** — I tried; it converts a module
+    error into three behavioural failures, which is worse. Rewriting
+    `computedStyles.test.ts` to register a REAL bridge stream was also tried and
+    times out against `awaitEditorBridgeForUser`'s reconnect windows. The real
+    fix is for `liveReloadPush.test.ts` (or the mockers) to stop sharing that
+    module path in one run — out of scope here, and part of the documented
+    batch-isolation cluster.
+- **Verification:** `bunx tsc -b` ✅ exit 0 (`bun run build`'s vite half cannot
+  run in a worktree — `standing-08`). `bun run lint` ✅ clean.
+  New suites: `frameInspector.test.ts` 17 pass · `headlessFrameInspect.test.ts`
+  9 pass · `frameAxesTools.test.ts` 9 pass · `computedStyles.test.ts` 6 pass ·
+  `measureElement.test.ts` 7 pass. `bun test src/__tests__/ai src/__tests__/agent`
+  → 482 pass / 0 fail. `bun test src/admin/pages/site/agent src/core/studio-capture
+  src/core/studio-board` → 163 pass / 0 fail. `bun test src/__tests__/architecture`
+  → 18 fail, all the pre-existing `icon-catalog-integrity` cluster
+  (`standing-01`). `bun test server/ai/mcp server/ai/tools` → 8 fail, all the
+  pre-existing browser-dependent `captureFramesHeadless` / W4-2A `studio_compare`
+  batch-isolation cluster; `bun test server/ai/mcp/capture/headlessCapture.test.ts`
+  alone is 10 pass / 0 fail.
+- **Human action needed:** **dogfood — no e2e covers any of this.** With the
+  editor tab CLOSED, ask the agent to (1) `studio_computed_styles` a page and
+  confirm `readVia: "headless"` with real rows; (2) `studio_measure_element` a
+  page with a flex column and confirm `gapAfterPx` vs `parent.rowGapPx` read
+  sensibly; (3) `studio_set_frame_axes` to RTL, then reopen `/admin/site` and
+  confirm the frame is in RTL. Then with the tab OPEN, call
+  `studio_duplicate_frame_as_variant` and confirm the new frame appears on the
+  live board without a reload (the `boardsChanged` live-reload push). Needs
+  `bunx playwright install chromium`.
+### panel-14 — W7-2: the launcher card says what a project IS, and every verb that acts on it
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/launcher-card-data-verbs`, branched off `origin/main` at
+  `e702497` (W7-1 / PR #44) and merged forward to `2901afe` (PR #49).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W7-2 exactly — card data, rename from the
+  launcher, duplicate, a card context menu, and ⌘K "Open project …". Nothing
+  from W7-3 (thumbnails), W7-4 (import/trash) or W7-5 (onboarding), which are
+  other agents' waves and all edit these same three launcher files.
+- **Scope:** `server/handlers/studioProjects.ts`, `server/handlers/studio.ts`,
+  `server/handlers/studio/{projectDuplicate.ts (new),projectRoutes.ts,studioMeta.ts,projectProfileSchema.ts,styleCompile.ts,styleCompileConsent.ts}`
+  (+ `studio/__tests__/projectDuplicate.test.ts`, `handlers/__tests__/studio.test.ts`),
+  `src/admin/pages/dashboard/{ProjectCard.tsx,ProjectCard.module.css,editedAgo.ts,editedAgo.test.ts}` (new)
+  + `{DashboardPage.tsx,DashboardPage.module.css,DashboardPage.test.tsx,hooks/useStudioProjects.ts}`,
+  `src/admin/pages/site/studio/styleCompileConsent.ts` (one doc pointer),
+  `src/admin/spotlight/{providers/projectsProvider.ts,__tests__/projectsProvider.test.ts,scopes/rootScope.ts}`,
+  `src/__tests__/architecture/button-primitive-usage.test.ts`,
+  `docs/agent-refs/path-index.md`.
+- **Done so far:**
+  - **Card data.** `StudioProjectSummary` gains `platform`, `framework`,
+    `trust`, `styleToolchains` and `editedAt`. Every field comes from reads
+    `listStudioProjects` was ALREADY doing per entry and discarding (the
+    `.studio/meta.json` read, the pages-dir walk) plus one `statSync` per file
+    in that same walk. Nothing here probes — a probe per project on a launcher
+    render is not a cost a listing should carry, so an unprobed project simply
+    has no `framework` and no `styleToolchains`, and the card badges nothing.
+  - **`studioProjectSummary(dir)` is the ONE builder** of that shape. The
+    listing, `/create`, `/rename` and `/duplicate` all return one, so a card
+    redrawn from a mutation's answer can never carry less than a card drawn
+    from the listing. It also fixes a live bug: `/rename` hand-built its
+    summary and recomputed `pageCount` with a bare `discoverPageFiles`, which
+    reports the wrong number for a `next-app` project (that directory is full
+    of `layout.tsx`/`route.ts` files that are not routes).
+  - **`ProjectCard`** renders the badges + `N pages · Edited 2 days ago`, and
+    carries an Open / Rename / Duplicate / Delete `ContextMenu` opened either
+    from a hover/focus-revealed ⋯ button or by right-clicking the tile. Delete
+    moved off the hover-only trash ghost — it was the most reachable control
+    on the launcher and the most destructive verb in the product; it is still
+    behind `DeleteProjectDialog`.
+  - **Rename is inline**, and is the toolbar's `StudioProjectLabel` gesture
+    verbatim: the name becomes an `<input>`, Enter/blur commits, Escape
+    reverts, with the same `committingRef` latch (Enter blurs to commit, so
+    without it the blur handler commits a second time).
+    `renameStudioProject` had existed in `useStudioProjects.ts` since it was
+    written, with zero launcher callers.
+  - **`POST /admin/api/studio/duplicate`** (`projectDuplicate.ts`) — `cpSync`
+    of the whole project minus `node_modules`, `dist`, `.next`, `.turbo` and
+    `.git`, under the first free DISPLAY name, `lastOpenedAt` cleared, project
+    guide regenerated. Capability-gated `studio.write` alongside `/delete`.
+  - **⌘K.** `projectsProvider` on the root scope: "Open <project>" from
+    anywhere in the admin, performing the launcher's own three steps
+    (`requestCmsSiteReload()` → `setStudioWorkspaceDir` → navigate) rather
+    than bouncing the user through `/admin/dashboard`.
+  - **`lastOpenedAt`** is stamped into `.studio/meta.json` by
+    `GET /admin/api/studio/load` (`recordProjectOpened`) — W7-5 step 2's
+    stated dependency.
+  - **`compilableStyleToolchains` moved** from `styleCompile.ts` to the
+    `projectProfileSchema.ts` leaf, so the launcher can ask "will this
+    project's styles render?" without importing the Tier-1 subprocess
+    machinery for a six-line pure predicate. Three callers now share it.
+- **Next step:** W7-3 (thumbnails), W7-4 (import/trash) and W7-5 (onboarding)
+  are unblocked and may run in parallel with each other — but W7-3 redesigns
+  the card around a preview image, so it owns `ProjectCard.tsx` and must not
+  run beside anything else touching it.
+- **Decisions:**
+  - **`editedAt` stats every file under the pages dir, not the directory.**
+    The plan suggested "one `statSync`", and one stat of the pages DIRECTORY
+    would have been cheaper — but writing an existing file does not touch its
+    parent's mtime, so that number reports the last time a page was ADDED or
+    REMOVED and the card would call that "Edited". Studio's most common write
+    (an inline style into a `.tsx`, a rule into a co-located `.module.css`)
+    would never move it. The walk already happens for `pageCount`; the added
+    cost is one `stat` per file in the pages dir, the same order as the
+    `readdir` that produced the list.
+  - **The trust badge is `trust === 'static' && styleToolchains.length > 0`,
+    not the tier.** Every project defaults to Tier 0, so a bare "Tier 0" badge
+    on every card is noise. The fact worth surfacing is the one W7-2's own
+    plan text names: a project whose Tailwind/Sass/PostCSS has not run opens
+    unstyled. Above Tier 0 the compile happens, so the badge would be false
+    and is not rendered.
+  - **The framework comes from the CACHED probe only.** `resolveProjectProfile`
+    would give a better answer and also probe (and write) N projects on every
+    launcher render. An absent badge is honest; a slow launcher is not.
+  - **Duplicate leaves `.git` behind, and says so in the toast.** A copied
+    `.git` is not a fork — it is a second working copy pointing at someone
+    else's remote, and pushing from it pushes to the original's origin. The
+    `.studio/` sidecar IS copied, because it is the board.
+  - **The duplicate's display name is chosen BEFORE the folder slug.**
+    `displayName` is what the launcher sorts and renders and the slug is a
+    stable id assigned once (that split is why `/rename` exists at all).
+    De-duplicating the folder first and deriving the name from it would show
+    the user `acme-copy-2` as a project title.
+  - **`formatEditedAgo` is its own function, not AgentPanel's
+    `formatRelativeTime`.** Same input, deliberately different sentence: that
+    one is a terse chip in a 290px panel ("3h"), this is a clause on a
+    home-surface card. A card reading "Edited 3h" reads as truncated. Sharing
+    one formatter would give one of the two call sites the wrong voice.
+  - **Duplicate is capability-gated, `/create` still is not.** `/delete`'s
+    module doc already calls its ungated neighbours a real gap and not a
+    precedent; duplicating writes an entire second repository to the user's
+    disk, so it follows `/delete`, not `/create`.
+- **Landmines:**
+  - **`generateStudioProjectGuide` is not read-only.** It calls
+    `healMissingDesignSystem`, which applies the design-system SEED to any
+    project with no `package.json` — writing `package.json` and
+    `node_modules/@alm-design` into the target. The first version of
+    `projectDuplicate.test.ts`'s "nothing regenerable was copied" case failed
+    because of exactly this, and the `cpSync` filter was innocent. Any fixture
+    in that file needs a real `package.json`.
+  - **`DashboardPage.test.tsx`'s `useStudioProjects` stand-in is still a real
+    hook** (`panel-12`'s landmine, still true) — and its project fixtures now
+    have to carry `trust`, `styleToolchains` and `editedAt`, because the
+    client schema validates them as REQUIRED. They are required deliberately:
+    the server always sends them, and an optional field here would let a
+    silently-changed wire shape through as `undefined`.
+  - **Delete is no longer reachable by `getByRole('button', { name: 'Delete X' })`.**
+    Any future test (or e2e) aiming at it must open the card's action menu
+    first — `Actions for <name>` — and then click the `Delete` **menuitem**.
+  - **The worktree had no `node_modules`** (`panel-12` saw the same). `bun run
+    build` and the whole `icon-catalog-integrity` gate fail wholesale before
+    `bun install`. Not icon drift.
+- **Verification:** `bun run build` ✅, `bun run lint` ✅ (both re-run after
+  merging `origin/main` up to `2901afe`). Targeted, all green:
+  `server/handlers/__tests__/studio.test.ts` → 85 pass;
+  `server/handlers/studio/__tests__/projectDuplicate.test.ts` → 10 pass;
+  `src/admin/pages/dashboard` + `src/admin/spotlight` → 121 pass;
+  `src/__tests__/architecture` → 509 pass / 1 fail (`icon-catalog-integrity`'s
+  `chevron-left` sample, `standing-01`-class pre-existing).
+  Full `bun test` on the pre-merge tree → 11467 pass / 39 fail, every failure
+  in the two clusters `STUDIO-WAVE7-PLAN.md`'s global rules name as
+  pre-existing (headless-capture / canvas batch-isolation, which pass per
+  file, and the `chevron-left` icon sample). Nothing under `dashboard/`,
+  `spotlight/`, `studioProjects` or `studio/` fails.
+- **Human action needed:** **dogfood — every change here is visual and e2e
+  covers none of it.** At `/admin/dashboard`:
+  1. Confirm each tile shows its badges and an "Edited …" line, and that the
+     numbers are right (rename a page file in one project, reload, and check
+     the line moves — this is the claim `editedAt` makes).
+  2. Open a Tier-0 project that uses Tailwind or Sass and confirm the amber
+     "… not compiled" badge is there BEFORE you open it, and that it
+     disappears after promoting the project from the board's consent banner.
+  3. Hover a tile → ⋯ → confirm Open / Rename / Duplicate / Delete. Then
+     right-click the tile and confirm the same menu appears at the pointer.
+  4. Rename from the menu: the name becomes a field, Enter commits, Escape
+     reverts, and the grid re-sorts under the new name after the refetch.
+  5. Duplicate a REAL imported repo (one with `node_modules`) and check:
+     the copy appears as "<name> copy", opening it shows the same board and
+     frames, and `studio-workspace/<slug>-copy/` has no `node_modules`, no
+     `.git`, and a fresh `CLAUDE.md`.
+  6. Delete from the menu and confirm the dialog still names the project.
+  7. ⌘K from inside the editor, type a project name, press Enter — you should
+     land on that project's board with ITS pages, not the previous project's
+     tree under the new directory (that is the `requestCmsSiteReload()` this
+     provider makes; it is the one thing worth checking twice).
+  8. Check both themes — the badges use `--bg-surface-4`/`--warning-20`, which
+     are re-tuned in light.
+
+### panel-13 — W8-1: one field model for every number in the inspector
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `fix/inspector-field-ergonomics` off `origin/main`, merged forward
+  to `f65c4ef`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-1, all six items, one PR. Nothing from
+  W8-2/3/4 — they own overlapping files and must not run beside this.
+- **What landed, per item:**
+  1. **The bare-number bug (correctness).** `ScrubInput.commit()` wrote raw
+     text, so typing `50` into Width emitted `width: 50` — not a declaration;
+     the browser drops it and the user's stylesheet keeps a dead line. Commit
+     now goes through `resolveCommitValue` (`scrubMath.ts`): keyword →
+     untouched, number/arithmetic → evaluated and given the field's own `unit`,
+     **anything else → the literal, unchanged**. `unit=''` means a genuinely
+     unitless field (`FrameBulkInspector`, the frame W/H inputs).
+  2. **One nudge model.** `numericNudge.ts` is now the only place the numbers
+     live: 1 / 10 / 0.1, Alt beating Shift. The ±8 "8px design scale" variant
+     and `FrameSizePanel`'s hand-rolled ±8 ladder are gone; `RotationRow` and
+     the gradient angle dropped their bespoke ±15. `isLengthNudgeProp` →
+     **`isNudgeableProp`** (the set is no longer only lengths) and gained
+     `opacity` + `zIndex`, whose empty-field unit is `''` so a nudge cannot
+     invent `opacity: 1px`.
+  3. **Maths.** New `src/ui/components/ScrubInput/numericExpression.ts` — a
+     recursive-descent evaluator for `100/2`, `100+8`, `100*2`, `(80+20)/2`,
+     TypeBox-validated on the way out. `scrubMath`, `numericNudge` and
+     `tokenUtils.resolveTokenValue` all call it, so one grammar serves every
+     numeric field. It **refuses** mixed units (`100px + 8em`) and division by
+     zero rather than guessing, and every refusal keeps the literal.
+  4. **Enter keeps focus** in all three field kinds (`ScrubInput`,
+     `TokenAwareInput`, `FrameSizePanel`), re-selecting the text. Found and
+     fixed a real latent bug on the way: Escape's `blur()` fires before React
+     re-renders the reverted draft, so the blur handler committed the very text
+     Escape discarded. Both fields now guard it with a `revertingRef`. (It was
+     invisible to tests because `fireEvent.focus` never sets `activeElement`,
+     so the `.blur()` raised no event.)
+  5. **Flip H/V** on the rotation row, writing the standalone `scale` property
+     (`flipValue.ts`) for the same reason rotation writes standalone `rotate`.
+     Two refusals, both disabled-with-a-reason: `transform` already carrying a
+     scale-family function, and a `scale` outside the plain-number space
+     (`50%`, `var()`, a z component). Rotation stays live through both.
+  6. **G9 finished.** `color` → Fill (a new **Text** row, topmost, plus an "Add
+     text colour" header button); `textShadow` → Effects (rows through the same
+     `boxShadowLayers.ts` parser under a new `TEXT_SHADOW_GRAMMAR` — three
+     lengths, no `inset` — and `EffectEditorPopover`'s `variant: 'text'`, which
+     omits Spread and Inset). `TypographySection` is now literally F23's four
+     rows.
+- **Two things worth knowing:**
+  - `rotate` and `scale` are now **real `CSSPropertyBag` members** and claimed
+    by the `position` section. `RotationRow` had been writing `rotate` through
+    an `as keyof CSSPropertyBag` cast, which left it invisible to the style
+    search and counted as a "custom property".
+  - `FillSection.tsx` hit the 700-line ceiling, so it split three ways:
+    `FillSection.tsx` (which rows exist), `FillSectionParts.tsx` (swatches +
+    popover bodies, components-only for `react-refresh`), `fillModel.ts` (the
+    pure value model).
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — the
+  only failures left are the two documented pre-existing ones (icon-catalog
+  `chevron-left`; the canvas + headless-capture batch-isolation cluster, which
+  passes per-file) plus a `flowRouting.ts` module-resolution error that is on
+  `main` and untouched by this diff. New tests:
+  `numericExpression.test.ts` (evaluator + commit coercion), `flipValue.test.ts`,
+  the `TEXT_SHADOW_GRAMMAR` block in `boxShadowLayers.test.ts`, and the Text
+  fill entry in `fillSection.test.tsx`.
+- **Docs:** `docs/features/inspector-disclosure.md` gained **§5 "The field
+  model"** — written into the previously-empty §5 slot precisely so no existing
+  number moved (~50 files cite these by number) — plus G9.4, G10.2 and a
+  refreshed status table. `STUDIO-FIGMA-PARITY-PLAN.md` §0a has a new
+  "Waves 7–10" table with the W8-1 row.
+- **Next step:** W8-2 (scrub unification + the look pass) is unblocked and is
+  the natural follow-on — it wires scrubbing into every numeric this PR taught
+  to nudge and do maths. W8-3 and W8-4 also list W8-1 as their blocker.
+### panel-15 — the inspector at narrow width: the rail is no longer paved over, and an empty section is no longer an accordion
+- **Agent:** panel-designer
+- **Stage:** done (gates green; draft PR open; **needs a human dogfood pass**)
+- **Updated:** 2026-09-07
+- **Branch:** `fix/inspector-narrow-overlap-empty-sections`, cut from `origin/main`
+  at `f65c4ef` and rebased onto `342c67d` (W8-1 / PR #50 and W7-2 / PR #51 landed
+  mid-flight). W8-1 owns `ScrubInput`, `numericNudge`, `RotationRow` and
+  `TypographySection`; this branch deliberately touches none of them.
+- **Goal:** three bugs the user hit dogfooding the properties panel — (1) section
+  row-end buttons drawing on top of `StyleCategoryRail` at narrow width, (2) the
+  accordion affordance on sections with nothing applied, (3) W/H in Size not
+  reading as equal halves.
+- **Scope:** `src/styles/globals.css` (one new token),
+  `src/ui/components/Section/{Section.tsx,Section.module.css}`,
+  `src/ui/components/ExpandableFieldCluster/ExpandableFieldCluster.module.css`,
+  `src/ui/components/AddablePropertyField/AddablePropertyField.module.css`,
+  `src/admin/pages/site/panels/PropertiesPanel/{StyleSurface.module.css,PropertiesPanel.module.css,LayoutSection.module.css,SizeSection.tsx,SizeSection.module.css,StyleSectionsEditor.tsx,SpacingBoxControl/SpacingSection.module.css,__tests__/emptySectionLaw.test.tsx}`,
+  `docs/{design.md,features/inspector-disclosure.md,reference/ui-primitives.md}`,
+  `STUDIO-WAVE7-PLAN.md` (one W8-2 bullet corrected).
+  **Does not touch** `ScrubInput`, `numericNudge`, `RotationRow`, `TypographySection` —
+  W8-1 owns those.
+- **Done so far:**
+  - **Bug 1 — measured, not guessed.** Drove the real editor at
+    `127.0.0.1:5173/admin/site` at a 260px panel (`SIDEBAR_MIN_WIDTH`) and read
+    geometry back with `getBoundingClientRect`/`scrollWidth`. Four sections were
+    horizontally overflowing their 217px content column: **Spacing 379px**,
+    **Layout 347px**, **Stroke 295px**, **Typography 218px**. The rail is a real
+    grid column (`minmax(0, 1fr) 32px`, `StyleSurface.module.css:10`) — it never
+    floated — but `.surface` clips on x at the *panel* edge, so the overflow
+    painted straight across the rail's icons. One CSS fact, not four bugs: a grid
+    track sized `auto` takes its minimum from its items, and a grid item's own
+    minimum is its content unless it says `min-width: 0`.
+  - The clamp is now declared once per intrinsic-sizing wrapper:
+    `Section.module.css`'s `.sectionBody` **and `.sectionBody > *`** (every section
+    body passes through it), `LayoutSection`'s `.layoutSection` + `.flexBlock > *`,
+    `SpacingSection`'s `.spacingSection`, and — the one that mattered most —
+    `ExpandableFieldCluster`'s `.root`, which padding AND margin both mount and
+    which reported a 339px minimum on its own.
+  - `--inspector-rail-w: 32px` replaces the literal `32` in both surfaces that
+    draw the rail (`StyleSurface`, `SelectorInspector`).
+    `.surfaceContent` gains `overflow-x: clip` as the standing guarantee that the
+    NEXT such control truncates instead of eating the rail. `clip`, not `hidden`:
+    it must not become a second scroll container, and the Y axis stays visible.
+    Every floating surface in the panel portals (ContextMenu, InspectorPopover,
+    Select, Tooltip) and the sticky search bar is positioned against `.panel`, so
+    nothing that must escape is caught.
+  - **After:** every `[data-style-section]` has `scrollWidth === clientWidth` at
+    260px and at 290px, and the rightmost content pixel is exactly the rail's
+    left edge (1237 = rail `left`).
+  - **Bug 2.** `Section` gains **`empty`**: no chevron, no toggle, no body,
+    `children` ignored — a static header whose only control is `actions`.
+    `StyleSectionGroup`'s Law-1 branch passes it instead of `children={null}`.
+    Measured before: clicking an empty Animations header set `aria-expanded=true`
+    and rendered a `.sectionContent` with **0 bytes of HTML**, growing the section
+    33px → 43px. Measured after: no chevron, no `sectionContent`, height stays 33px.
+  - The header "+"s that write a real value (Fill, Effects, Animations) now route
+    through `addAndReveal` so adding the first item OPENS the section. Without it a
+    user with `propertiesSectionsExpanded` off would click "+", write a fill, and
+    be shown a closed section.
+  - **Bug 3.** Size's W/H were always `1fr 1fr` and always equal — the mis-sizing
+    was the mode chevron sitting BESIDE the field, in flow, spending ~20px of an
+    82px cell on chrome next to Layout's padding row where the whole cell is field.
+    The chevron is now drawn inside the field's trailing edge (the idiom
+    `RevealedField`'s "−" in the same module already used), with the input padded
+    clear of it. Measured at 290px: W and H are `97px` each and the ScrubInput
+    shell is the full 97 (was 61 of 82).
+- **Next step:** nothing required. If someone picks up W8-2, the width invariant
+  now written into `docs/features/inspector-disclosure.md` §6
+  (`scrollWidth === clientWidth` for every `[data-style-section]` at 260px) is
+  ready to be turned into a real gate beside the §6 height gate.
+- **Decisions:**
+  - **`empty` on `Section`, not a chevron variant per section.** The primitive is
+    told the fact ("nothing is applied"); it decides the presentation. This is
+    also why `STUDIO-WAVE7-PLAN.md` W8-2's "persistent chevron for collapsed
+    `collapsedWhenEmpty` sections" was rewritten in this change rather than left
+    to contradict the code: a persistent chevron now belongs to a collapsed
+    section that HAS content.
+  - **`min-width: 0` at the source AND `overflow-x: clip` as a backstop.** Either
+    alone is wrong — the clip alone would hide the bug, the clamps alone leave the
+    next section free to reintroduce it silently.
+  - **The chevron overlays the field rather than moving into `ScrubInput`.**
+    Putting it in ScrubInput's shell means a trailing slot on ScrubInput, which
+    W8-1 is actively editing. The overlay is scoped entirely to
+    `AddablePropertyField.module.css` (which already styles the inner `input`
+    for `.wordMode`) and only `SizeSection` consumes that component.
+- **Landmines:**
+  - `min-width: 0` on a flex/grid CONTAINER does not shrink its intrinsic
+    contribution to whatever sizes it — it only removes its own automatic minimum.
+    `ExpandableFieldCluster`'s `.row`/`.cell` both already had it and the cluster
+    still reported 339px; the fix was `min-width: 0` on `.root` itself. Expect to
+    walk the whole chain, not one node of it.
+  - `STUDIO-WAVE7-PLAN.md` is not valid UTF-8 (`file` reports `data`) — plain
+    `grep` silently matches nothing in it. Use `grep -a`.
+  - Full-suite `bun test` shows the known batch-isolation cluster (~28 fails,
+    canvas + architecture gates timing out at 5s under load). Per-directory they
+    are green: `src/__tests__/architecture` alone = 509 pass / 1 fail (the
+    pre-existing `chevron-left` icon-catalog gate).
+- **Verification:** `bun run build` ✅ · `bun test src/admin/pages/site/panels/PropertiesPanel
+  src/ui/components/AddablePropertyField src/ui/components/ExpandableFieldCluster
+  src/__tests__/panels` → 880 pass / 0 fail · `bun test src/__tests__/architecture`
+  → 509 pass / 1 pre-existing fail · `bun run lint` ✅ · live geometry measured in
+  a headless Chromium at 260px and 290px (numbers above).
+- **Human action needed:** dogfood `/admin/site` → select a node → drag the right
+  sidebar to its 260px minimum. Check: (a) no section control touches the icon
+  rail, in either theme; (b) an untouched Fill / Stroke / Effects / Animations /
+  Typography header shows only its title and `+`, and hovering it offers no
+  chevron; (c) clicking Fill's `+` writes a fill AND opens the section — turn
+  "Expand style sections by default" OFF in Settings first, that is the case the
+  reveal exists for; (d) Size's W and H read as equal halves against Layout's H/V
+  padding row underneath, and each chevron still opens Fixed/Hug/Fill.
+
 ### panel-12 — W7-1: the launcher sorts, fails, and redraws honestly
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open)
@@ -176,6 +899,35 @@ are the remaining WS-2 items, not yet dispatched. See
 - **Cut / not done:** no e2e or browser dogfood of the popover or the bridge reconnect (UI changes are not e2e-covered here — see the wave-train rule); `bun run lint` and the FULL `bun test` were not run to completion at the end (20 parallel `tsc` processes on this box made every long run time out) — both tsconfig projects typecheck clean (`tsc -p tsconfig.node.json --noEmit`, `tsc -p tsconfig.app.json --noEmit`) and all ~35 touched test files pass.
 - **Landmines:** (1) the suite now declares `STUDIO_WORKSPACE_DIR = os.tmpdir()` once in `src/__tests__/setup.ts`, because ~50 server test files build their fixture with `mkdtempSync(join(tmpdir(), …))` and containment would otherwise refuse every one; a file needing its own root still sets and restores the variable itself (`withOutsideWorkspaceDir` in `server/handlers/__tests__/outsideWorkspaceDir.ts` does exactly that for the routes that must REFUSE an outside dir). (2) `componentBundle.test.ts` pins the root back to the repo's own `studio-workspace/` because its React-version checks need a `node_modules` above the fixture. (3) In THIS worktree `node_modules/` is essentially empty (deps resolve from the primary checkout), so `componentBundle`'s five React-version cases and `devWorkflow`'s vite-binary case fail environmentally — they are not code failures. (4) `module-size-budgets` forced three extractions: `agentConversationReset.ts`, `server/handlers/studio/studioRouteBodies.ts`, `server/siteCss.ts`.
 - **Human action needed:** open two projects in two tabs, run a turn in each, and confirm (a) each tab's history shows only its own threads plus a collapsed "Not in this project", (b) a tool call in tab A never lands in tab B, (c) continuing a project-A thread from project B is refused with the 409 message rather than silently re-pointed.
+### mcp-20 — W9-1(1): a pasted screenshot was silently the design spec; references now have roles, and an ambiguous page is refused
+- **Agent:** studio-implementer (resumed — the first agent was killed on a session limit near the end; its uncommitted worktree was picked up, not redone)
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `fix/design-reference-resolution`, merged up to `origin/main` (#43/#44/#45 fast-forwarded in clean, then #46/#47).
+- **Goal:** W9-1 item 1 exactly — labelled/explicit references beat chat attachments, an ambiguous page is refused instead of guessed, a chat image is *context* until an explicit gesture promotes it, and `mode`/`passScore`/`maxRegionCoverage` land on the persisted shape for W9-2 to consume.
+- **Scope:** `server/ai/mcp/tools/studio/{referenceResolve.ts,referenceResolve.test.ts (new),designReferenceTools.ts}`, `server/handlers/studio/{designReferenceSchema.ts,designReferenceStore.ts,turnDesignReferences.ts,referenceUpload.ts,pageWriteVerification.ts}` + their tests, `server/ai/tools/studio/{liveDigest.ts,systemPrompt.ts}`, `src/core/ai/{designReferenceImage.ts,toolSchemas.ts,designReferenceToolSchemas.ts (new),index.ts}`, `docs/features/{agent.md,mcp-connectors.md}`.
+- **The bug, concretely:** `resolveDesignReference` picked the most recently registered reference while `registerTurnDesignReferences` registered EVERY chat-attached image durably. A screenshot pasted to ask a question outranked the Figma frame the page was built from. Live in `studio-workspace/test4`: the `sms` page's 375x800 frame is shadowed by a 943x294 chat crop, so `studio_compare` refuses on aspect ratio and the Stop gate can never pass again — the real design still on disk, correct, unreachable.
+- **Done so far:**
+  - **`role` on the persisted shape** (`designReferenceSchema.ts`): `'spec' | 'context'`, optional. `designReferenceRole()` derives it from `source` for rows written before the field (`chat-attachment` → `context`, anything else → `spec`). **No rewrite pass runs** — a row gains an explicit role only when next written. `CHAT_ATTACHMENT_REFERENCE_SOURCE` moved here from `turnDesignReferences.ts`: reading a legacy row's role back is a property of the persisted shape, not of the turn pipeline.
+  - **Four-tier precedence, role first** (`referenceResolve.ts`): page-scoped `spec` → unscoped `spec` → page-scoped `context` → unscoped `context`. First non-empty tier decides; **>1 candidate in it is a refusal naming every id, its dimensions and label**, plus the `referenceId` argument that ends it. A reference scoped to a *different* page is never a candidate and gets its own message. Failures are now typed (`ResolveReferenceFailure`: `unknown-id`/`ambiguous`/`other-pages-only`/`none`).
+  - **A chat attachment registers `role:'context'`**; the composer's DESIGN REFERENCE upload route and `studio_register_design_reference` both default to `'spec'`.
+  - **The write-verification gate stopped giving the wrong instruction.** An ambiguous page resolves to no reference, so it used to fall into `describeUnverifiedPage`'s unarmed branch — the Stop hook blocked the turn and told the agent to *register* a design, i.e. add a third candidate to a set it already could not choose from. `PageWriteVerificationEntry.referenceAmbiguity` carries the refusal, and `describeUnverifiedPage` has a third branch ending in `studio_compare({pages:[…], referenceId:"…"})`. Same sentence in the gate and the digest, as before.
+  - **`mode`/`passScore`/`maxRegionCoverage`** added to `DesignReferenceSchema`, the `@core/ai` mirror, the register tool schema and the upload route (which converts and *rejects* an unparseable numeric multipart field rather than coercing to `NaN`). Nothing reads them yet — that is W9-2.
+  - **The digest and system prompt carry the role** on every `Design references registered:` entry, because the roles are what decide which entry a comparison would use. `figmaReferenceNudge` now checks for a page-scoped **spec**, not merely "a reference" — a pasted crop no longer suppresses the nudge on exactly the pages that need it.
+  - Reads that must not be truncated (`resolveDesignReference`, `findDesignReferenceByContentHash`, the digest) go through the new uncapped `readAllDesignReferences`; `listDesignReferences`' cap exists to bound a tool RESULT and was silently bounding decisions.
+- **Next step:** none for this entry. W9-1 item 4 (docs/hygiene) landed separately as #46.
+- **Decisions:**
+  - **Role outranks page scope.** Scope says which screen an image is ABOUT; role says whether it is a design at all. The composer's DESIGN REFERENCE control registers unscoped by design, so scope-first would make the deliberate control lose to any crop that happened to name the page.
+  - **Ambiguity is a refusal, not a tie-break.** "Newest" is precisely the rule that shipped this bug; "oldest" fails the user who registers a corrected export. The agent holds the fact that settles it, and the refusal costs one tool call against a whole project measured against the wrong picture.
+  - **A lone `context` image still resolves.** Demoting attachments must not un-arm the ruler for the paste-a-comp-and-build flow `turnDesignReferences.ts` exists to serve. What it can no longer do is outrank a spec or win a page silently.
+  - **No durable "promote to spec" tool was added.** The two gestures that exist — a `referenceId` argument per call, and registering as `role:'spec'` — cover the plan's requirement, and `studio_delete_design_reference` clears a crowded page. A promote-in-place tool is a real gap only if refusals turn out to repeat across turns; deferred rather than guessed at.
+  - **`toolSchemas.ts` was split, not grandfathered.** The new optional fields pushed it to 705 lines (ceiling 700). The design-reference family moved to `src/core/ai/designReferenceToolSchemas.ts` — that file documents itself as "site WRITE-tool input schemas" and these are headless server tools, so the split is by responsibility, not by line count. `DIR_INPUT_DESCRIPTION` is exported (not re-exported from the barrel) so `dir` means one thing on every Studio tool.
+- **Landmines:**
+  - **`registerDesignReference` is NOT idempotent** — only `registerTurnDesignReferences` de-dupes, by content hash, before calling it. Registering the same bytes twice through the tool creates a second entry and therefore an ambiguous page. This is why the ambiguity message names `studio_delete_design_reference`'s subject matter rather than suggesting a re-register.
+  - **`role` is optional on disk on purpose.** An entry with no `role` is exactly the legacy shape the derivation reads; writing a speculative `'spec'` default at registration would erase the distinction. `designReferenceStore.test.ts` pins the omission.
+  - **The list and read tools project `designReferenceRole(r)` onto every returned entry** so `role` is never missing in a tool result. Do not "simplify" that away — a listing showing role on some rows and not others reads as "unknown" rather than the settled fact it is.
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` → 11467 pass / 29 fail before the split, all pre-existing (`standing-01`): the `icon-catalog-integrity` `chevron-left` case, the seven `captureFramesHeadless` + two `studio_compare` browser tests ("No Chromium available"), the canvas batch-isolation cluster, and a `flowRouting.ts` `routePrototypeLinks` export error from a parallel session. The one failure that WAS mine — `module-size-budgets` at 705 lines — is fixed by the split above; re-run green. `bun test src/core/ai src/__tests__/architecture server/handlers/studio/{designReferenceStore,pageWriteVerification}.test.ts server/ai/mcp/tools/studio/referenceResolve.test.ts` → 550 pass / 1 fail (`chevron-left`). `entryStylesheetCache.test.ts` passes in isolation, confirming its batch failure is the known flake.
+- **Human action needed:** **dogfood.** Open `test4` at `/admin/site`, ask the agent to compare the `sms` page, and confirm it now measures against the 375x800 Figma frame rather than refusing on the 943x294 chat crop's aspect ratio. Then paste a second screenshot on a page with no registered design and confirm the refusal names both ids instead of picking one.
 
 ### struct-07 — W6-5: the code the wave train orphaned is deleted
 - **Agent:** studio-implementer
@@ -623,6 +1375,123 @@ to `docs/features/studio-import.md`'s `className` write-back section.
   confirm the model trigger reads `<model> auto · <effort>` with the router's
   reason on hover.
 
+### panel-16 — W8-4: an Export section, and what it refuses to fake
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-export-section` off `origin/main` (`0d05e1c`).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-4, the *Export section* bullet, one PR.
+  Nothing from W8-2/3 or the parallel scrub/fill/multi-select waves.
+- **What landed.** A node-level **Export** section at the bottom of the
+  inspector (`ExportSection.tsx`, mounted last in `StyleSurface`'s column,
+  keyed by node id). One header line and a `+` at rest (Law 1); the typed `+`
+  menu is **PNG @1×/@2×/@3×**, **SVG**, **Copy CSS**, **Copy JSX**. The image
+  formats add a row (format + density + a run button); the two copies run
+  immediately, because a copy has no settings to keep.
+  - **PNG** — `POST /admin/api/studio/node-png`. Photographs the node's page
+    through the existing `captureFrames` pipeline (untouched — consumed via
+    its exported entry) and crops to the node's own rect. `resolveNodeCropBox`
+    (`nodeExportCapture.ts`) derives the crop from the capture's **reported**
+    `nodeRects` + `imageScale`, never the requested `dpr`, so it stays correct
+    when the pipeline clamps a 3× request. Rounds outward, clamps an
+    overhanging rect, and refuses two cases by name (0×0 element; entirely
+    outside what was photographed).
+  - **SVG** — deliberately **no route**. Whether a node has an honest vector
+    form is a fact about the parse the browser already holds (`props.svg` from
+    `inlineSvg.ts`, or an `<img src>` resolving to `.svg` — including the
+    `?path=…svg` shape the parse rewrites local assets to). Everything else is
+    refused BY NAME (`rasterized-html` / `raster-image` / `dynamic-svg`)
+    rather than wrapped in an `<svg><image href="data:…">` shell. That shell
+    is what "export anything as SVG" tools emit and it is a lie about the file
+    the user just saved.
+  - **Copy CSS** — off the `provenanceByProperty` map `StyleSurface` already
+    computes. Only properties something *declares* are copied, each at its
+    provenance **winner**'s value; an `ambiguous` property falls back to the
+    frame's real computed value rather than picking a candidate declaration at
+    random. A node with no class gets bare declarations under a comment
+    header — never an invented selector.
+  - **Copy JSX** — `POST /admin/api/studio/node-jsx`, located with
+    `locateJsxElement.ts` (the same locator every codemod resolves its write
+    target with) and returned verbatim. Never regenerated from the tree.
+- **Why Export is NOT in `classStyleSections.ts`.** Three consumers read that
+  registry as *CSS properties on a style target*: `StyleSectionsEditor`
+  renders one copy per open target (so a node with both the Element and class
+  blocks open would have shown **two** Export sections), `StyleCategoryRail`
+  derives a rail button **disabled until a class is active** (Export works
+  fine on an unclassed element), and the search filters by claimed properties
+  (Export claims none). It follows Law 1 in its own component instead, so
+  `emptySectionLaw.test.tsx` still covers exactly the seven flagged CSS
+  sections — unchanged, still green. Consequence: **there is no rail icon for
+  Export**; `StyleCategoryRail.tsx` belongs to the parallel inspector-fix
+  agent and was not touched. If a rail entry is wanted, it needs a
+  non-`CLASS_STYLE_SECTIONS` entry in that file — a follow-up, not drift.
+- **Cleanups made on the way (CLAUDE.md "fix at the source"):**
+  - `saveBlobAsFile` (`src/admin/shared/saveBlobAsFile.ts`) — the
+    object-URL + hidden-anchor + delayed-revoke idiom existed in two verbatim
+    copies (`downloadStudioCode.ts`, `agentImageActions.ts`) and this would
+    have been a third. Both migrated.
+  - `server/handlers/studio.ts` had grown **four** bespoke "called outside the
+    loop because it needs the `DbClient`" blocks, each restating the same
+    rationale. They are now one `STUDIO_SESSION_SUB_ROUTERS` array + loop,
+    mirroring the existing `STUDIO_SUB_ROUTERS`. Net effect: the file is
+    **698 lines** (was 692) even after gaining a route — but it is still
+    within 2 lines of the 700-line ceiling. **The next agent to add a route
+    there must split the file, not squeeze.** Its module doc is ~250 lines of
+    prose cataloguing routes that already have their own module docs; that is
+    the obvious extraction.
+  - `@core/ast-codemods` now exports the shared JSX locator
+    (`createProject` / `loadSourceFile` / `findJsxElementAtLocation` /
+    `resolveJsxWholeElement`) through its barrel, so Copy JSX finds the exact
+    span a write would land on instead of growing a second locator.
+    `camelToKebabCssProperty` was reused from `@core/css-codemods` rather than
+    adding a third kebab helper — see that file's own note on why the copies
+    are deliberate.
+- **Tests:** `nodeExportCapture.test.ts` (crop math: scaling, outward
+  rounding, edge clamping, both refusals; plus the capture→crop wiring through
+  the injectable `captureFrames` seam, no Chromium) · `nodeExportRoutes.test.ts`
+  (path ownership, non-POST verbs ignored, **session required before the body
+  is even read**, and the two body schemas — notably that a density the menu
+  does not offer is a 400, not a value to clamp) · `nodeExportModel.test.ts`
+  (the `+` menu registry, file naming, all three SVG refusals + all three
+  accept shapes, Copy CSS winner/ambiguous/skip behaviour and its formatting).
+- **Verification:** `bun run build` (tsc -b + vite) clean · `bun run lint`
+  clean · new tests 44/0 · `bun test src/admin/pages/site/panels/PropertiesPanel
+  src/__tests__/panels src/admin/pages/site/studio/__tests__` → 990/0 (a first
+  run showed 2 fail, green on re-run — the documented batch-isolation flake) ·
+  `bun test src/__tests__/architecture/module-size-budgets.test.ts` → 5/0 ·
+  `bun test server/handlers/studio …` → 6 fail, all in the documented
+  environmental cluster (`applyProjectSeed`, `generateStudioProjectGuide`,
+  `buildStoryRouteEntries` — they read Studio's own `node_modules`, empty in a
+  worktree). The architecture suite's icon-catalog and `madge`/driver-isolation
+  timeouts are the same pre-existing clusters `agent-16` documents above; no
+  new icon was added (`arrow-bar-down`, `image-solid`, `image-2-solid`,
+  `loader`, `plus` are all already vendored, so no `icons:sync` run was needed).
+- **Human action needed — dogfood script.** Open `/admin/site` on
+  `studio-workspace/test4` and select a node:
+  1. The **Export** section is the last block in the panel and is **one line
+     with a `+`**. Confirm it is present on an element with **no class** (the
+     rail's CSS icons are greyed out there — Export must not be).
+  2. `+` → **PNG @2×** adds a row reading `PNG 2×`; its run button downloads a
+     file named after the node with an `@2x.png` suffix. Open it: it must be
+     **just that element**, not the whole frame. Needs
+     `bunx playwright install chromium` — the crop is the one thing no test can
+     prove on this machine.
+  3. Select an **inline `<svg>`** (a design-system icon) → `+` → **SVG** → run.
+     The file must open in a browser as a real vector. Then select a plain
+     `<div>` and do the same: expect a **refusal toast naming the reason**
+     ("rasterized HTML … export PNG instead"), not a downloaded file.
+  4. **Copy CSS** on an element with two classes, then paste. Check the
+     selector is the real `.a.b`, the values match what the panel shows, and
+     nothing inherited leaked in. Repeat on an unclassed element: bare
+     declarations, no invented selector.
+  5. **Copy JSX**, paste, and diff against the element in the `.tsx` — it must
+     be character-identical, comments and expressions included.
+  6. Select a different node and back: the rows are gone (per-selection state,
+     by design — say so if that feels wrong; persisting them means writing
+     into the user's repo).
+- **Next step:** review + merge the PR. Nothing is stacked on it. The
+  `StyleCategoryRail` question in the bullet above is the only known follow-up.
+
 ---
 
 ## Blocked
@@ -646,6 +1515,33 @@ here **verbatim**, so archiving buries no dogfood step.
 
 ### Still in "Recently landed" below — the entry carries the full script
 
+- **`panel-16` — W8-4 the Export section** (in `## Now`, not yet landed to
+  `main`). Six-step script in the entry. The two steps no test can stand in
+  for: whether the PNG crop actually lands on the selected element (needs
+  `bunx playwright install chromium`), and whether the SVG refusal reads as
+  helpful rather than obstructive on a plain `<div>`.
+- **`panel-13` — W8-1 inspector field ergonomics** (in `## Now`, not yet landed
+  to `main`). Open the Properties panel on a text node in `studio-workspace/test4`
+  and, in one pass: (1) type `50` into Width, press **Enter** — the field must
+  read `50px`, keep focus, and have its text selected; (2) type `100/2` into
+  Height and Tab out — `50px`; (3) Shift+↑ on any length (should step 10, not 8),
+  then Alt+↑ (0.1), then Shift+Alt+↑ (0.1 — Alt wins); (4) ↑ on **Opacity** and
+  **Z-index**, which had no keyboard step at all before — confirm no `px` is
+  appended; (5) Escape mid-edit — the old value must come back, and must NOT be
+  overwritten by the blur; (6) the two **Flip** buttons beside Rotation — flip
+  H, flip V, flip both, then flip back and confirm the `scale` declaration is
+  removed from the file rather than left as `scale: 1 1`; then set
+  `transform: scale(2)` by hand and confirm both buttons go disabled with a
+  reason on hover; (7) **Fill** now carries a **Text** row for `color` and an
+  "Add text colour" `+`, and **Effects** carries **Text shadow** rows with no
+  Spread/Inset fields — check both write to the real `.tsx`/CSS on disk.
+- **`panel-15` — inspector at narrow width** (in `## Now`, not yet landed to
+  `main`). The rail-overlap fix, the empty-section header, and Size's W/H were
+  all measured in a headless browser, but nobody has *used* the panel at 260px:
+  drag the right sidebar to its minimum, confirm no control touches the rail in
+  either theme, confirm an untouched section offers no chevron, turn "Expand
+  style sections by default" OFF and confirm Fill's `+` both writes and opens,
+  and confirm W/H still scrub and still open Fixed/Hug/Fill.
 - **`panel-12` — W7-1 launcher polish** (in `## Now`, not yet landed to `main`).
   Card scale + hover lift in both themes, the rename-then-sort fix, the failed-
   listing retry, and the post-delete refetch. Five-step script in the entry.
@@ -873,6 +1769,147 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### inspector-w8-3-p1 — multi-select edits inline styles across N nodes, with Mixed
+- **Agent:** studio-implementer · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/multi-select-inline-bulk-edit` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W8-3 **phase 1 only**.
+- **Shipped:** `setNodesInlineStyles(nodeIds, patch)` over `mutateTreesForNodeIds`
+  (one undo step for N, cross-frame; shares `applyInlineStylePatch` with the
+  single-node action); `multiSelectStyleBags.ts` collapsing N nodes into the
+  `storedStyles`/`currentStyles` pair `StyleSectionsEditor` already renders;
+  `MultiInlineStyleComposer` mounted in `MultiSelectionInspector`;
+  `StyleTargetChip` pinned to Element with the stated reason
+  (`lockedToElementReason`); Mixed rendering in `SegmentedControl`, `Select`,
+  `Input`, `TokenAwareInput`, `ColorValueInput` (shared `MIXED_PLACEHOLDER`),
+  routed through `ClassPropertyRow` + `resolveStylePlaceholder`;
+  `isSelectorMultiSelect` fixed from ≥1 to ≥2. Docs:
+  `inspector-disclosure.md` **§9** (new, existing §-numbers untouched),
+  `agent-refs/editor-store.md`.
+- **CUT — next agent picks these up:** (a) **W8-3 phase 2** —
+  `StyleWriteLockContext` carrying a COUNT ("writes to 3 of 5 — 2 are compiled")
+  instead of a boolean; (b) **W8-3 phase 3** — class-target bulk behind a "this
+  class is used by N other elements — continue?" gate, plus G6.4 Selection
+  colours; (c) **the bespoke-section Mixed gap** — Spacing/Layout/Position/Size/
+  Typography/Appearance/Fill/Border read raw cells via `readString`, which
+  returns `undefined` for `MIXED`, so they render their ordinary *unset* state
+  (blank field / no pressed segment) instead of the word "Mixed". The primitives
+  already take `mixed`; each field is a one-line wiring change. Left undone
+  deliberately — five of those sections were owned by parallel agents this wave.
+- **Needs human dogfood** (no e2e for UI): open `/admin/site`, shift/⌘-click 2+
+  layers on the canvas → the Properties panel should show the action bar, an
+  `Editing: [Element] Class Assign` chip with Element pressed/disabled and the
+  tooltip "Bulk edits write inline styles — class edits need a single
+  selection", then the full style sections. Set `cursor` differently on two
+  layers first (single-select each, Interaction section) → re-select both →
+  the Cursor field must read placeholder **Mixed**; type a value → both layers
+  change and ONE Ctrl+Z reverts both. Then tick ONE checkbox in the Selectors
+  panel → the single-selector inspector (not the bulk bar); tick a second →
+  the bulk bar.
+- **Verification:** `tsc -p tsconfig.app.json --noEmit` and
+  `tsc -p tsconfig.node.json --noEmit` clean; `eslint` clean on every touched
+  path; new/updated tests green (`multiSelectInlineStyles`,
+  `multiSelectStyleBags`, `mixedValueControls`, `multiInlineStyleComposer`,
+  `selectorMultiSelectTrigger`, `selectorsPanel`); the gates this touches
+  (`module-size-budgets`, `css-token-policy`, `no-css-var-fallbacks`,
+  `button-primitive-usage`, `no-full-site-scan-in-selectors`,
+  `css-token-vocabulary`, `boundary-validation`, `ui-primitives-location`) all
+  pass. **Not mine:** the icon-catalog gate (whole `pixel-art-icons/dist` cluster),
+  `ai-driver-isolation`, and `no-circular-dependencies` — which TIMED OUT at 60s
+  under parallel `tsc` load rather than reporting a cycle. The full `bun run build`
+  / `bun run lint` were killed by the same contention; both halves of `tsc -b`
+  were checked individually instead.
+- **Four selectorsPanel tests were updated, not broken:** they asserted the old
+  ≥1 bulk trigger. One now adds a second locked utility locally (the shared
+  fixture's exact contents are asserted by sibling tests, so it was not touched).
+
+### docs-06 — W9-1.4: prose for every agent tool, plus three comment-truth fixes
+- **Agent:** studio-scribe
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `docs/agent-tool-prose` off `origin/main` (`f65c4ef`). Note: the
+  branch NAME was already checked out by another worktree, so the commit was
+  made on this worktree's own branch and pushed to `docs/agent-tool-prose` on
+  the remote. Nothing was lost — the local branch of that name held zero
+  commits ahead of `origin/main`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W9-1 item 4, all four parts. Docs + the test
+  fix + comment truth only; deliberately zero behaviour change.
+- **Scope:** `docs/features/agent.md`,
+  `server/handlers/studio/{projectMcpApprovals.ts,projectMcpApprovals.test.ts,remoteAssetFetch.ts}`,
+  `server/ai/tools/studio/systemPrompt.ts` (one prompt paragraph), `STATE.md`.
+- **Done so far:**
+  - **The "19 of 31" is exactly right, and the 31 is `STUDIO_AGENT_TOOL_NAMES`,**
+    not the MCP registry (which is 48 `studio_*` + `get_context` + 2 `mcp_*` +
+    the 35 CMS `site_*`). The 19 with zero mentions in `agent.md` were:
+    `computed_styles`, `page_diagnostics`, `quality_check`, `typecheck`,
+    `fidelity_report`, `list_design_references`, `read_design_reference`,
+    `ingest_design_variables`, `list_design_variables`,
+    `read_design_variable_set`, `set_frames`, `list_comments`, `reply_comment`,
+    `resolve_comment`, `project_profile`, `list_pages`, `list_tokens`,
+    `find_component`, `install_status`.
+  - `agent.md` gained a **Studio tool index** (all 31, with where each runs and
+    its capability gate) + a registry-only table (17 more) + a paragraph on
+    `get_context` / `mcp_list_project_servers` / `mcp_propose_server` /
+    `site_read_styles` / `site_publish`, then seven new prose sections covering
+    all 19. Every claim was read out of the tool's own source, not its name.
+  - **`projectMcpApprovals.test.ts` fixed properly, not shimmed.** It imported
+    `assertKnownAgentTools` + two others from `./agentRosterMcpTools`, a module
+    deleted with the subagent roster. The two survivors moved to
+    `./projectMcpApprovals`; the roster gate did not survive and has nothing
+    left to gate, so its `describe` block, the `StudioAgentDef` import and the
+    `agentDef` helper were deleted rather than resurrected. 7 tests pass.
+  - **`remoteAssetFetch.ts:210` corrected.** It claimed Figma's Dev Mode server
+    at `127.0.0.1:3845` is "the ONLY Figma server a Studio agent gets
+    (`BUILT_IN_MCP_SERVERS`)". False since `figma` moved to the remote endpoint:
+    `BUILT_IN_MCP_SERVERS` now ships exactly `https://mcp.figma.com/mcp`. The
+    loopback escape hatch is still real and still needed — it just serves a
+    server the *user* registers, which is precisely why it stays an env var.
+  - **`systemPrompt.ts:274` had drifted twice.** It told the agent
+    `studio_screenshot`/`studio_compare` "drive the live board in the user's
+    browser" — untrue since W4-2A: `captureFrames` renders headless off disk
+    FIRST and only falls back to the tab. And "waits through two full reconnect
+    windows" is only true outside `RECENT_BRIDGE_MS` (60 s); inside it,
+    `awaitEditorBridgeForUser` deliberately waits ONE. Rewritten to point the
+    agent at `capturedVia`/`capture-unavailable` and to name
+    `studio_computed_styles` + `studio_page_diagnostics` as the tools that
+    genuinely need the board.
+  - **Two more stale claims found and fixed in `agent.md` while there** (item 5):
+    its `studio_screenshot` step 3 said "relay to the browser-side
+    `studio_export_frames` handler over the live editor bridge", and
+    `studio_compare` said it "captures through the live bridge". Both predate
+    W4-2A's headless-first routing. Nothing describes a removed tool, and the
+    "6 server-side / 29 browser-bridged" CMS counts were re-counted and are
+    correct.
+- **Next step:** none for this entry. If someone picks up `agent.md` again, the
+  real remaining problem is length — see Landmines.
+- **Decisions:** the registry-only tools got table rows with a sourced sentence
+  each rather than 17 more prose sections — the doc's own established shape for
+  a tool surface you reach for rather than live in, and the alternative would
+  have doubled an already-oversized file. The 19 agent tools all got real prose,
+  which is what the work order asked for.
+- **Landmines:**
+  - `docs/CONVENTIONS.md` caps a doc at ~600 lines. `agent.md` was **1226**
+    before this and is **1370** after. Splitting it (the Studio tool surface
+    wants to be its own doc) is a genuine follow-up, deliberately not bundled
+    into a docs-accuracy PR. Do not treat the cap as satisfied.
+  - `CONVENTIONS.md` rule 7 says "no history, no *we used to*". `agent.md`
+    ignores that throughout, on purpose — the causal "this exists because X
+    failed" framing is what stops an agent re-breaking a constraint. New
+    sections match the file's voice, not the generic rule. Do not "fix" one
+    without the other 1200 lines.
+  - `bun run build` cannot complete in an agent worktree: `node_modules/vite`
+    is absent, so `tsc -b` passes and the vite step dies on a missing module.
+    Not a code failure — run the bundle half in the primary checkout.
+- **Verification:** `bun test server/handlers/studio/projectMcpApprovals.test.ts
+  server/ai/tools/studio/systemPrompt.test.ts
+  server/handlers/studio/remoteAssetTools.test.ts` → 26 pass / 0 fail.
+  `bun test src/__tests__/architecture` → 478 pass / 18 fail, **all 18 the
+  known pre-existing icon-catalog `Gate 1`/`Gate 2` cluster** (`chevron-left`,
+  `plus`, `undo`, …), none in a file this touched. `bun run lint` → clean.
+  `bunx tsc -b` → exit 0. `bun run build`'s vite half not run (see Landmines).
+- **Human action needed:** none. No UI and no behaviour changed; the one
+  runtime-visible edit is a paragraph of the agent's system prompt, whose new
+  claims were each read off `captureFrames.ts` and `editorBridge.ts`.
 
 ### docs-05 — W6-4: sweep `docs/` to describe the current tree
 

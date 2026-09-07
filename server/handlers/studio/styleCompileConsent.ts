@@ -29,10 +29,10 @@
  * write is a REFUSAL to be asked (`meta-03` decision 1: trust promotion is an
  * explicit user action, never a side effect).
  *
- * `toolchains` comes from `compilableStyleToolchains` in `./styleCompile.ts` —
- * the same function that decides whether that module warns or compiles — so
- * the prompt can never offer a compile the compiler would decline to do, or
- * stay silent about one it would.
+ * `toolchains` comes from `compilableStyleToolchains` in
+ * `./projectProfileSchema.ts` — the same function `styleCompile.ts` asks to
+ * decide whether it warns or compiles — so the prompt can never offer a
+ * compile the compiler would decline to do, or stay silent about one it would.
  *
  * Containment is `resolveProjectDir`'s, once for every project-scoped route:
  * a `dir` outside `studio-workspace/` throws there and the router answers 404,
@@ -45,7 +45,7 @@ import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { joinAppRoot } from './appRoot'
 import { resolveProjectProfile } from './projectProbe'
-import { compilableStyleToolchains } from './styleCompile'
+import { compilableStyleToolchains } from './projectProfileSchema'
 import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta } from './studioMeta'
 
 const ROUTE_PATH = '/admin/api/studio/style-compile-consent'

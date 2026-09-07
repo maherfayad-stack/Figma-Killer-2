@@ -38,19 +38,23 @@ import { BackgroundImageControl } from '@site/property-controls/BackgroundImageC
 import { FontFamilyControl } from '@site/property-controls/FontFamilyControl'
 import { useEditorStore } from '@site/store/store'
 import { ControlRow, type ControlRowLayout } from '@ui/components/ControlRow'
+import { ScrubInput } from '@ui/components/ScrubInput'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
+import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
 import { useTokenCatalog } from '@site/property-controls/TokenCatalogContext'
 import type { Token } from '@site/property-controls/tokenUtils'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
+import { isMixed, MIXED, MIXED_PLACEHOLDER, type Mixed } from '@ui/components/MixedValue'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import {
   getCSSPropertyControlType,
   getCSSPropertyTokenSource,
   getEnumOptions,
   cssPropertyLabel,
-  isLengthNudgeProp,
+  isNudgeableProp,
+  isUnitlessNumberProp,
   NUMBER_TYPED_PROPS,
 } from './cssControlTypes'
 import {
@@ -87,7 +91,14 @@ function PropertyGlyph({ icon: Mark }: { icon: IconComponent }) {
 
 interface ClassPropertyRowProps {
   property: keyof CSSPropertyBag
-  value: string | number | undefined
+  /**
+   * `MIXED` (`@ui/components/MixedValue`) when the row is driven by a
+   * multi-selection whose members disagree on this property — see W8-3 and
+   * `multiSelectStyleBags.ts`. It is normalized to `undefined` before it
+   * reaches any control, with the fact carried by the `mixed` flag the
+   * controls render as an empty field + "Mixed" placeholder.
+   */
+  value: string | number | Mixed | undefined
   placeholder?: string | number
   fontFamilyValue?: unknown
   isSet?: boolean
@@ -143,7 +154,7 @@ interface ClassPropertyRowProps {
 
 export function ClassPropertyRow({
   property,
-  value,
+  value: rawValue,
   placeholder,
   fontFamilyValue,
   isSet = true,
@@ -154,6 +165,13 @@ export function ClassPropertyRow({
   onClearPreview,
   provenance,
 }: ClassPropertyRowProps) {
+  // W8-3 — a multi-selection hands this row `MIXED` for a property its members
+  // disagree on. Normalized once, here: every control below already renders an
+  // empty field for `undefined`, and `mixed` is what turns that blank into the
+  // stated "Mixed" rather than a silent "unset". The first edit commits one
+  // value, which the caller writes to the whole selection.
+  const mixed = isMixed(rawValue)
+  const value = mixed ? undefined : (rawValue as string | number | undefined)
   // Pre-flight: why an edit to the enclosing style target can't reach the
   // user's source, or `null` when it can. See this file's doc.
   const writeLockReason = useStyleWriteLock()
@@ -195,7 +213,38 @@ export function ClassPropertyRow({
     FieldGlyph && resolvedLayout !== 'inline'
       ? <PropertyGlyph icon={FieldGlyph} />
       : undefined
-  const placeholderText = placeholder !== undefined ? String(placeholder) : undefined
+  // A mixed row's hint IS "Mixed", ahead of any per-property placeholder the
+  // caller computed: with several values in the selection there is no single
+  // one to hint at. Stated here rather than per control so the surfaces that
+  // take no `mixed` flag of their own (the scrub token field, the font-family
+  // and background-image controls) still say it.
+  const placeholderText = mixed
+    ? MIXED_PLACEHOLDER
+    : placeholder !== undefined
+      ? String(placeholder)
+      : undefined
+
+  /*
+   * The field's own unit — the one number the whole §5 field model turns on.
+   * It is what a bare typed number is given on commit, what a drag or a nudge
+   * from an empty field starts counting in, and what arithmetic inherits when
+   * the expression carries no unit of its own.
+   *
+   * `opacity`, `zIndex` and `lineHeight` are unitless fields
+   * (`isUnitlessNumberProp`), so theirs is `''` — a nudge on an unset opacity
+   * must not invent `opacity: 1px`, and a typed line-height ratio of `1.5`
+   * must not become the very different `1.5px`. Every other single-number
+   * property is a length and takes the computed placeholder's unit when it has
+   * one (a `rem`-based stylesheet keeps scrubbing in `rem`), else `px`.
+   * `undefined` means "not a single-number field" — a free-form text row,
+   * which coerces nothing.
+   */
+  const fieldUnit = !isNudgeableProp(property) && tokenSource === undefined
+    ? undefined
+    : isUnitlessNumberProp(property)
+      ? ''
+      : (parseNudgeableValue(placeholderText ?? '')?.unit ?? 'px')
+
   const fonts = useEditorStore((state) => state.site?.settings.fonts ?? null)
 
   // Both token catalogs come from `TokenCatalogProvider` (mounted once in
@@ -301,6 +350,37 @@ export function ClassPropertyRow({
       />
     )
   } else if (tokenSource) {
+    // A token-aware length with an in-field mark gets the scrub gesture on
+    // that mark (§5.5) — the mark is the handle, so a property with none stays
+    // a plain token field. `ScrubTokenField` and `TokenAwareInput` are the same
+    // field; the former is the latter wired to the one scrub engine.
+    const tokenField = glyphPrefix ? (
+      <ScrubTokenField
+        aria-label={label}
+        value={value !== undefined ? String(value) : undefined}
+        placeholder={placeholderText}
+        prefix={glyphPrefix}
+        tokens={tokens}
+        unit={fieldUnit}
+        disabled={writeLocked}
+        onCommit={handleTokenCommit}
+        onPreview={onPreview ? handleTokenPreview : undefined}
+        onClearPreview={onClearPreview}
+        data-testid={`css-token-field-${String(property)}`}
+      />
+    ) : (
+      <TokenAwareInput
+        aria-label={label}
+        value={value !== undefined ? String(value) : undefined}
+        mixed={mixed}
+        placeholder={placeholderText}
+        tokens={tokens}
+        disabled={writeLocked}
+        onCommit={handleTokenCommit}
+        onPreview={onPreview ? handleTokenPreview : undefined}
+        onClearPreview={onClearPreview}
+      />
+    )
     control = (
       <ControlRow
         propKey={String(property)}
@@ -308,17 +388,7 @@ export function ClassPropertyRow({
         layout={resolvedLayout}
         disabled={writeLocked}
       >
-        <TokenAwareInput
-          aria-label={label}
-          value={value !== undefined ? String(value) : undefined}
-          placeholder={placeholderText}
-          prefix={glyphPrefix}
-          tokens={tokens}
-          disabled={writeLocked}
-          onCommit={handleTokenCommit}
-          onPreview={onPreview ? handleTokenPreview : undefined}
-          onClearPreview={onClearPreview}
-        />
+        {tokenField}
       </ControlRow>
     )
   } else if (iconEnumOptions) {
@@ -331,7 +401,13 @@ export function ClassPropertyRow({
       <ControlRow propKey={String(property)} label={label} layout={resolvedLayout} disabled={writeLocked}>
         <SegmentedControl
           disabled={writeLocked}
-          value={value !== undefined && value !== '' ? String(value) : undefined}
+          value={
+            mixed
+              ? MIXED
+              : value !== undefined && value !== ''
+                ? String(value)
+                : undefined
+          }
           options={iconEnumOptions.map((option) => ({
             value: option.value,
             icon: option.icon ? <option.icon size={14} aria-hidden="true" /> : undefined,
@@ -369,6 +445,7 @@ export function ClassPropertyRow({
           key={`${String(property)}-${String(value ?? '')}`}
           propKey={String(property)}
           value={String(value ?? '')}
+          mixed={mixed}
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
@@ -389,6 +466,7 @@ export function ClassPropertyRow({
         <SelectControl
           propKey={String(property)}
           value={String(value ?? '')}
+          mixed={mixed}
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
@@ -407,23 +485,50 @@ export function ClassPropertyRow({
 
     case 'text':
     default: {
-      // Length properties (width, height, gap, insets, border widths/radii, …)
-      // get arrow-key nudging with an empty-field start-from-zero. The unit
-      // follows the placeholder/default value when it carries one, else px.
-      const nudgeEmptyUnit = isLengthNudgeProp(property)
-        ? (parseNudgeableValue(placeholderText ?? '')?.unit ?? 'px')
-        : undefined
-      control = (
+      /*
+       * Single-number properties (width, height, gap, insets, border
+       * widths/radii, opacity, zIndex, …) are numeric fields, and a numeric
+       * field in this panel scrubs, nudges and does maths — §5.5.
+       *
+       * Which of the two shapes a row gets is decided by ONE fact: does the
+       * property carry an in-field mark (`PROPERTY_FIELD_GLYPHS`)? The mark
+       * IS the drag handle, so a property with one becomes a `ScrubInput`
+       * (drag + nudge + commit coercion) and a property without one stays a
+       * typed field with the nudge and the same commit coercion, but no
+       * gesture — there is nothing honest to drag when the row's only visible
+       * name is a caption in a column this row does not own. Give a property
+       * a glyph and it gains the gesture here, automatically.
+       */
+      const scrubs = isNudgeableProp(property) && glyphPrefix !== undefined
+      control = scrubs ? (
+        <ControlRow propKey={String(property)} label={label} layout={resolvedLayout} disabled={writeLocked}>
+          <ScrubInput
+            label={glyphPrefix}
+            aria-label={label}
+            value={value !== undefined ? String(value) : ''}
+            placeholder={placeholderText}
+            unit={fieldUnit ?? 'px'}
+            min={property === 'opacity' ? 0 : undefined}
+            max={property === 'opacity' ? 1 : undefined}
+            disabled={writeLocked}
+            onChange={(next) => handleControlChange(String(property), next)}
+            onPreview={onPreview ? (next) => handleControlPreview(String(property), next) : undefined}
+            onClearPreview={onClearPreview}
+            data-testid={`css-scrub-${String(property)}`}
+          />
+        </ControlRow>
+      ) : (
         <TextControl
           propKey={String(property)}
           value={String(value ?? '')}
+          mixed={mixed}
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
           layout={resolvedLayout}
           disabled={writeLocked}
           prefix={glyphPrefix}
-          nudgeEmptyUnit={nudgeEmptyUnit}
+          numericUnit={fieldUnit}
         />
       )
       break

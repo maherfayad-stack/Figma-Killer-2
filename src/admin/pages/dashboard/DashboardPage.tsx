@@ -25,9 +25,15 @@
  * only has to navigate.
  *
  * The server's listing is the only listing. `useStudioProjects` hands back a
- * `refresh()`, so a delete redraws by refetching; the page keeps no optimistic
- * created/removed shadow copy to reconcile against a list it can only read. A
- * failed load is a state of its own — a retry, not an eternal skeleton.
+ * `refresh()`, so every mutation — delete, rename, duplicate — redraws by
+ * refetching; the page keeps no optimistic created/removed shadow copy to
+ * reconcile against a list it can only read. A failed load is a state of its
+ * own — a retry, not an eternal skeleton.
+ *
+ * The per-project verbs and everything a card renders live in `ProjectCard`
+ * (Open / Rename / Duplicate / Delete, off one `ContextMenu`); this page owns
+ * only the server calls behind them, so all four share one `busy` latch and
+ * one refetch.
  *
  * `requestCmsSiteReload()` is called before every `openProject` (new or
  * existing) so `usePersistence`'s mount effect doesn't short-circuit on a
@@ -42,7 +48,6 @@ import { useState } from 'react'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
-import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import { CircleAlertSolidIcon } from 'pixel-art-icons/icons/circle-alert-solid'
 import { AdminPageLayout } from '@admin/layouts/AdminPageLayout'
@@ -61,11 +66,14 @@ import type { ProjectPlatform } from '@core/studio-board'
 import {
   createStudioProject,
   deleteStudioProject,
+  duplicateStudioProject,
+  renameStudioProject,
   useStudioProjects,
   type StudioProject,
 } from './hooks/useStudioProjects'
 import { NewProjectDialog } from './NewProjectDialog'
 import { DeleteProjectDialog } from './DeleteProjectDialog'
+import { ProjectCard } from './ProjectCard'
 import styles from './DashboardPage.module.css'
 
 // Placeholder tiles shown while the project list is in flight — enough to
@@ -161,6 +169,49 @@ export function DashboardPage() {
     }
   }
 
+  async function handleRename(project: StudioProject, name: string) {
+    try {
+      await renameStudioProject(project.dir, name)
+      refresh()
+    } catch (err) {
+      console.error('[DashboardPage] rename project failed:', err)
+      // No optimistic name to roll back — the card is rendered from the
+      // server's list, so a failed rename simply leaves the old name on
+      // screen, which is the truth.
+      pushToast({
+        kind: 'error',
+        title: 'Could not rename project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    }
+  }
+
+  async function handleDuplicate(project: StudioProject) {
+    if (busy) return
+    setBusy(true)
+    try {
+      const copy = await duplicateStudioProject(project.dir)
+      refresh()
+      pushToast({
+        kind: 'success',
+        title: `Duplicated as “${copy.name}”`,
+        // Naming what was left out is the honest version: the copy will not
+        // build until its dependencies are installed, and nobody should have
+        // to discover that by opening it.
+        body: 'Everything except node_modules, build output and .git was copied.',
+      })
+    } catch (err) {
+      console.error('[DashboardPage] duplicate project failed:', err)
+      pushToast({
+        kind: 'error',
+        title: 'Could not duplicate project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const newProjectButton = (
     <Button variant="primary" onClick={() => setCreateOpen(true)} disabled={busy}>
       <PlusIcon size={12} aria-hidden="true" /> New project
@@ -244,37 +295,15 @@ export function DashboardPage() {
         // of changing silently under a screen reader.
         <ul className={styles.grid} aria-live="polite" aria-label="Projects">
           {filtered.map((project) => (
-            <li key={project.dir} className={styles.cell}>
-              <button
-                type="button"
-                className={styles.card}
-                onClick={() => openProject(project)}
-              >
-                <span className={styles.cardIcon}>
-                  <FolderGlyphIcon size={22} aria-hidden="true" />
-                </span>
-                <span className={styles.cardName}>{project.name}</span>
-                <span className={styles.cardMeta}>
-                  {project.pageCount} page{project.pageCount === 1 ? '' : 's'}
-                </span>
-              </button>
-              {/*
-                A SIBLING of the card, never a child: the card is itself a
-                <button> (§8.11 of the button-primitive allowlist), and a
-                button nested in a button is invalid HTML that browsers
-                silently un-nest — the delete control would stop being
-                clickable in its own right.
-              */}
-              <Button
-                variant="ghost"
-                className={styles.cardDelete}
-                aria-label={`Delete ${project.name}`}
-                disabled={busy}
-                onClick={() => setPendingDelete(project)}
-              >
-                <TrashSolidIcon size={12} aria-hidden="true" />
-              </Button>
-            </li>
+            <ProjectCard
+              key={project.dir}
+              project={project}
+              busy={busy}
+              onOpen={openProject}
+              onRename={handleRename}
+              onDuplicate={(target) => void handleDuplicate(target)}
+              onDelete={setPendingDelete}
+            />
           ))}
         </ul>
       )}

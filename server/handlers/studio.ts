@@ -219,11 +219,13 @@
  *   GET/POST /admin/api/studio/comments        → `studio/commentsRoutes.ts`
  *       Review threads pinned to the board (`.studio/comments.json`). POST
  *       carries ONE `CommentOp`, not the whole file, because comments are
- *       multi-writer where board geometry is not. The only studio route that
- *       requires a session: a comment has a byline, and the server is the
- *       only party that can honestly supply one. Called outside the
- *       sub-router loop below because it is the only one needing the
- *       `DbClient`.
+ *       multi-writer where board geometry is not. Requires a session — a
+ *       comment has a byline, and the server is the only party that can
+ *       honestly supply one — so it rides `STUDIO_SESSION_SUB_ROUTERS`.
+ *
+ *   POST /admin/api/studio/node-{png,jsx}      → `studio/nodeExportRoutes.ts`
+ *       W8-4 — the inspector's Export section: a PNG of one node cut out of a
+ *       capture of its page, and that node's own JSX read verbatim off disk.
  *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
@@ -245,7 +247,7 @@ import {
   writeProjectMeta,
   rethrowProjectDirRefusal,
 } from './studioProjects'
-import { readStudioMeta, DEFAULT_TRUST_TIER } from './studio/studioMeta'
+import { readStudioMeta, recordProjectOpened, DEFAULT_TRUST_TIER } from './studio/studioMeta'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
@@ -272,6 +274,7 @@ import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
+import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
 import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
@@ -324,6 +327,18 @@ const STUDIO_SUB_ROUTERS = [
 ] as const
 
 /**
+ * The same, for sub-routers that additionally need the `DbClient` because
+ * each acts ON BEHALF OF a signed-in user (a byline, a public share link, a
+ * capture, a file's contents) rather than merely reading a project directory.
+ */
+const STUDIO_SESSION_SUB_ROUTERS = [
+  tryServeStudioComments,
+  tryServeStudioProjectRoutes,
+  tryServeStudioShares,
+  tryServeStudioNodeExport,
+] as const
+
+/**
  * The answer every route in this file gives to a failure it did not expect —
  * except a project-dir refusal, which is not this file's to answer: it belongs
  * to the router's single 404 (`rethrowProjectDirRefusal`).
@@ -344,24 +359,10 @@ export async function tryServeStudio(
     if (response) return response
   }
 
-  // Called outside the loop above because it needs the `DbClient` to resolve
-  // the session into a comment's byline — the one studio route that has an
-  // author. See `studio/commentsRoutes.ts`'s module doc.
-  const commentsResponse = await tryServeStudioComments(req, runtime, url, pathname)
-  if (commentsResponse) return commentsResponse
-
-  const projectResponse = await tryServeStudioProjectRoutes(req, runtime, url, pathname)
-  if (projectResponse) return projectResponse
-
-  // Same exception as comments, for the same reason: share management acts on
-  // behalf of a signed-in user (creating one publishes designs to anyone with
-  // the URL; the capture it drives runs on that user's behalf), so it needs
-  // the `DbClient` the uniform sub-router signature does not carry. The
-  // PUBLIC half of this feature is not here at all — it lives on `/share/*`
-  // in `server/router.ts`, outside `/admin` entirely. See
-  // `studio/shareRoutes.ts` and `studio/sharePublic.ts`.
-  const sharesResponse = await tryServeStudioShares(req, runtime, url, pathname)
-  if (sharesResponse) return sharesResponse
+  for (const subRouter of STUDIO_SESSION_SUB_ROUTERS) {
+    const response = await subRouter(req, runtime, url, pathname)
+    if (response) return response
+  }
 
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
@@ -384,6 +385,13 @@ export async function tryServeStudio(
       // story ROUTES are all still discovered and parsed; only the per-page
       // convert narrows), so a targeted reload can never retract a frame.
       syncStoryBoardFrames(dir, loaded.stories)
+      // W7-2 — the one request that means "this project is on the board".
+      // Recorded here rather than in the launcher's click handler because a
+      // project is also opened by a reload, by the sticky `studioWorkspaceDir`
+      // on a fresh session, and by the agent's own reads — all of which come
+      // through here and none of which pass through the launcher. Best-effort
+      // (see `recordProjectOpened`); W7-5's onboarding checklist reads it.
+      recordProjectOpened(dir)
       const missingPageIds = missingStudioLoadPageIds(pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)

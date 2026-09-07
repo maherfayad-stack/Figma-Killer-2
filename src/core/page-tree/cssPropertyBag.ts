@@ -124,9 +124,21 @@ const CSSPropertyBagSchema = Type.Object({
   backgroundColor: Type.Optional(Type.String()),
   background: Type.Optional(Type.String()),
   backgroundImage: Type.Optional(Type.String()),
+  // The per-layer satellites of `background-image`. Every one of these is a
+  // comma-separated list whose Nth value belongs to the Nth `background-image`
+  // layer (CSS Backgrounds 3 §2.1's repetition rules), which is exactly how
+  // `backgroundLayers.ts` reads and writes them — one Fill row per layer, its
+  // satellites edited inside that row's own popover. Declared here rather than
+  // cast at each call site: `keyof CSSPropertyBag` types the whole style
+  // pipeline, so a property missing from this schema is invisible to the
+  // section's "N set" count and to the style search.
   backgroundSize: Type.Optional(Type.String()),
   backgroundPosition: Type.Optional(Type.String()),
   backgroundRepeat: Type.Optional(Type.String()),
+  backgroundAttachment: Type.Optional(Type.String()),
+  backgroundOrigin: Type.Optional(Type.String()),
+  backgroundClip: Type.Optional(Type.String()),
+  backgroundBlendMode: Type.Optional(Type.String()),
   objectFit: Type.Optional(Type.Union([
     Type.Literal('contain'), Type.Literal('cover'), Type.Literal('fill'),
     Type.Literal('none'), Type.Literal('scale-down'),
@@ -209,6 +221,18 @@ const CSSPropertyBagSchema = Type.Object({
   backdropFilter: Type.Optional(Type.String()),
   transform: Type.Optional(Type.String()),
   transformOrigin: Type.Optional(Type.String()),
+
+  // The standalone individual-transform properties. `rotate` and `scale` are
+  // separate declarations from `transform`, applied BEFORE it, which is what
+  // lets the Position section's rotation field and its flip buttons write one
+  // honest value each instead of parsing and rewriting a `transform` function
+  // list (`RotationRow.tsx`). Both are edited by real controls, so they are
+  // full bag members and claimed by the `position` section — the reason the
+  // `transition-*` longhands below are deliberately absent is precisely that
+  // nothing edits those. `translate` is NOT here: no control writes it, and a
+  // key the panel cannot control is an empty row in the style search.
+  rotate: Type.Optional(Type.String()),
+  scale: Type.Optional(Type.String()),
 
   // Motion
   //

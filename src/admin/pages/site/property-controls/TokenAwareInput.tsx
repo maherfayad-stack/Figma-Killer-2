@@ -58,6 +58,13 @@ interface TokenAwareInputProps {
   id?: string
   /** Current resolved CSS value (e.g. `var(--space-md)`, `12px`, `auto`). */
   value: string | undefined
+  /**
+   * True when the field is driven by a multi-selection whose values disagree.
+   * The field shows the shared "Mixed" placeholder over an empty draft rather
+   * than one member's value; committing (Enter / blur / a token pick) writes
+   * the typed value to the whole selection through `onCommit`.
+   */
+  mixed?: boolean
   /** Placeholder shown when no value is set. Token-display is applied. */
   placeholder?: string
   /**
@@ -123,6 +130,7 @@ interface TokenAwareInputProps {
 export function TokenAwareInput({
   id,
   value,
+  mixed = false,
   placeholder,
   prefix,
   tokens,
@@ -146,7 +154,14 @@ export function TokenAwareInput({
   tooltipOnOverflow = false,
   ref,
 }: TokenAwareInputProps) {
-    const display = displayTokenValue(value, tokens)
+    // A mixed field has no single value to display — it shows the shared
+    // "Mixed" placeholder over an empty draft. Everything downstream (draft
+    // sync, token suggestions, commit) then behaves exactly as it does for an
+    // unset field, which is what makes the first keystroke replace "mixed"
+    // with one value across the whole selection.
+    const display = mixed ? '' : displayTokenValue(value, tokens)
+    // The "Mixed" string itself is `Input`'s job (it owns the shared
+    // constant); this only stops a real placeholder from competing with it.
     const placeholderDisplay = displayTokenValue(placeholder, tokens)
 
     // The shared "preview suggestions on hover" preference. When off,
@@ -159,6 +174,8 @@ export function TokenAwareInput({
     const [draft, setDraft] = useState(display)
     const [isEditing, setIsEditing] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
+    /** Set by Escape so the blur it triggers discards instead of committing — see `onBlur`. */
+    const revertingRef = useRef(false)
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
@@ -259,6 +276,7 @@ export function TokenAwareInput({
         fieldSize={fieldSize}
         value={draft}
         prefix={prefix}
+        mixed={mixed}
         placeholder={placeholderDisplay}
         spellCheck={spellCheck}
         autoComplete={autoComplete}
@@ -272,23 +290,45 @@ export function TokenAwareInput({
         }}
         onChange={(e) => {
           const next = e.target.value
+          // Re-opens the editing session after an Enter commit, which ends it
+          // without blurring — otherwise the token menu would stay shut and
+          // the external-value sync could clobber the new draft mid-typing.
+          setIsEditing(true)
           setDraft(next)
           onDraftChange?.(next)
           previewDraft(next)
         }}
-        onBlur={(e) => commit(e.target.value)}
+        onBlur={(e) => {
+          // Escape reverts, then blurs. The blur fires before React has
+          // re-rendered the reverted draft, so committing `e.target.value`
+          // here would write the very text Escape discarded.
+          if (revertingRef.current) {
+            revertingRef.current = false
+            setDraft(display)
+            return
+          }
+          commit(e.target.value)
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
+            // Figma: Enter commits and KEEPS focus, re-selecting the value so
+            // the next keystroke replaces it. Committing closes the token
+            // menu (that is what `commit` sets `isEditing` false for) without
+            // taking the caret out of the field.
             e.preventDefault()
-            ;(e.target as HTMLInputElement).blur()
+            const input = e.target as HTMLInputElement
+            commit(input.value)
+            requestAnimationFrame(() => input.select())
           } else if (e.key === 'Escape') {
             e.preventDefault()
+            revertingRef.current = true
             setDraft(display)
             setIsEditing(false)
             onDraftClear?.()
             ;(e.target as HTMLInputElement).blur()
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-            // Keyboard nudge: ±1 (plain), ±8 (Shift), ±0.1 (Alt), preserving
+            // Keyboard nudge: the one model from `numericNudge.ts` — ±1
+            // (plain), ±10 (Shift), ±0.1 (Alt) — preserving
             // the unit. No-op for non-numeric values (var tokens, `auto`,
             // `calc(...)`), which fall through to the default caret behaviour.
             // An empty field starts from 0, inheriting the placeholder's unit

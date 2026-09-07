@@ -36,6 +36,7 @@ import { CLASS_STYLE_SECTIONS, type ClassStyleSectionDefinition } from './classS
 import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue } from './styleValueUtils'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
+import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StyleRuleComposer.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
@@ -57,9 +58,22 @@ const BORDER_SECTION_ID = 'border'
 // ---------------------------------------------------------------------------
 
 interface StyleSectionsEditorProps {
-  /** The bag whose set/unset state drives the rows (the active editing target). */
+  /**
+   * The bag whose set/unset state drives the rows (the active editing target).
+   *
+   * A cell may hold the `MIXED` sentinel when the caller drives this editor
+   * from a multi-selection (`MultiInlineStyleComposer` /
+   * `multiSelectStyleBags.ts`, W8-3). `hasStyleValue(MIXED)` is true, so a
+   * mixed property counts as SET everywhere this editor asks that question —
+   * section disclosure, the indicator dot, the "N set" meta — and the row
+   * renders it as the empty "Mixed" field.
+   */
   storedStyles: Record<string, unknown>
-  /** Base-merged bag used for placeholder / inherited values. */
+  /**
+   * Base-merged bag used for placeholder / inherited values. May also hold
+   * `MIXED` — see `storedStyles` — in which case the row's placeholder is the
+   * word "Mixed" rather than a default that describes none of the selection.
+   */
   currentStyles: Record<string, unknown>
   /**
    * Every style bag for this rule across every context — base plus each
@@ -271,6 +285,26 @@ function StyleSectionGroup({
   // sections, whose behaviour this work order does not touch.
   const displaySetCount = isCollapsible ? setCountEverywhere : setCount
 
+  /*
+   * The write every header "+" makes, plus the reveal that goes with it.
+   *
+   * Law 1's empty state is not a disclosure (see `Section`'s `empty` prop):
+   * there is no chevron to open, so the ONLY thing that can put a section's
+   * body on screen is the first value landing in it. `setCountEverywhere`
+   * turns positive on the next render and drops the static header, but the
+   * body it is replaced by would then honour the `propertiesSectionsExpanded`
+   * preference — i.e. a user who keeps sections collapsed would click "+",
+   * write a real fill, and be shown a closed section. Revealing on the same
+   * gesture is what makes "add" mean "add AND show me what I added".
+   */
+  const addAndReveal = (
+    property: keyof CSSPropertyBag,
+    value: string | number | undefined,
+  ) => {
+    onReveal(section.id)
+    onChange(property, value)
+  }
+
   const stylesMenu = styleTarget && (
     <SectionStylesMenu
       sectionId={section.id}
@@ -294,7 +328,7 @@ function StyleSectionGroup({
       storedStyles={storedStyles}
       currentStyles={currentStyles}
       activeTab={activeTab}
-      onChange={onChange}
+      onChange={addAndReveal}
       onRemove={onRemove}
       onPreview={onPreview}
       onClearPreview={onClearPreview}
@@ -305,7 +339,7 @@ function StyleSectionGroup({
   //  `PropertyList` renders nothing when empty (Law 1), so a bare reveal would
   //  open an empty section. Once a fill exists, `setCountEverywhere > 0` opens
   //  the section on its own — no `onReveal` needed.
-  const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={onChange} />
+  const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={addAndReveal} />
 
   //  Animations' "+" is a typed menu too (Animation / Transition), and like
   //  Effects' it has to be reachable at the one-line Law-1 rest state, since
@@ -314,7 +348,7 @@ function StyleSectionGroup({
   //  so its first write can be co-located with that node's page — hence
   //  `styleTarget`, the same prop the section styles menu already uses.
   const animationsActions = (
-    <AnimationsSectionActions storedStyles={storedStyles} onChange={onChange} styleTarget={styleTarget} />
+    <AnimationsSectionActions storedStyles={storedStyles} onChange={addAndReveal} styleTarget={styleTarget} />
   )
 
   const sectionActions =
@@ -346,6 +380,12 @@ function StyleSectionGroup({
   // user hasn't clicked "+" yet for this selection — one header line, no
   // body. This is independent of the `propertiesSectionsExpanded`
   // preference: an empty collapsible section stays one line either way.
+  //
+  // `empty` also takes the DISCLOSURE away, not just the body. The section
+  // used to keep its chevron and its toggle here, so pointing at an empty
+  // Fill offered to open it and clicking spent a click growing the header by
+  // an empty 10px box. There is nothing behind the chevron until something
+  // is applied; the header earns its disclosure at that point and not before.
   const showsAsEmptyHeader =
     isCollapsible && setCountEverywhere === 0 && !hasActiveQuery && !revealed
 
@@ -354,9 +394,8 @@ function StyleSectionGroup({
       <Section
         title={section.title}
         icon={section.icon}
-        defaultOpen={false}
+        empty
         flush
-        children={null}
         actions={
           <>
             {stylesMenu}
@@ -548,12 +587,16 @@ function StyleSectionGroup({
             const storedValue = storedStyles[prop]
             const isSet = hasStyleValue(storedValue)
             const provenance = provenanceByProperty?.get(String(prop))
-
+            // W8-3 — a multi-selection bag can hold `MIXED` in either layer:
+            // in `storedStyles` it flows to the row as a value (which renders
+            // the empty "Mixed" field), in `currentStyles` it becomes the
+            // placeholder (`resolveStylePlaceholder` owns that translation for
+            // every section, not just this generic branch).
             return (
               <ClassPropertyRow
                 key={`${activeTab}-${String(prop)}`}
                 property={prop}
-                value={isSet ? (storedValue as string | number) : undefined}
+                value={isSet ? (storedValue as string | number | Mixed) : undefined}
                 placeholder={
                   isSet
                     ? undefined
@@ -563,7 +606,9 @@ function StyleSectionGroup({
                         currentValue: currentStyles[prop],
                       })
                 }
-                fontFamilyValue={currentStyles.fontFamily}
+                fontFamilyValue={
+                  isMixed(currentStyles.fontFamily) ? undefined : currentStyles.fontFamily
+                }
                 isSet={isSet}
                 onChange={onChange}
                 onRemove={onRemove}

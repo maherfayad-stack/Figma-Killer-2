@@ -16,7 +16,20 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve, sep } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
-import { mergeStudioMeta, readStudioMeta, writeStudioMeta, type StudioMeta } from './studio/studioMeta'
+import type { ProjectPlatform } from '@core/studio-board'
+import {
+  DEFAULT_TRUST_TIER,
+  mergeStudioMeta,
+  readStudioMeta,
+  writeStudioMeta,
+  type StudioMeta,
+  type TrustTier,
+} from './studio/studioMeta'
+import {
+  compilableStyleToolchains,
+  type CompilableStyleToolchain,
+  type ProjectFramework,
+} from './studio/projectProfileSchema'
 import { PROJECTS_TRASH_DIR_NAME } from './studio/projectTrash'
 import { isRealpathContainedAllowingMissing } from './studio/workspacePackageResolve'
 
@@ -119,6 +132,11 @@ export function resolveProjectDir(requested: string | null | undefined): string 
 /** File extensions a page file may use — `.tsx` (hand-authored) or `.jsx` (a plain-JS React repo, e.g. a GitHub import). */
 const PAGE_FILE_EXTENSIONS = ['.tsx', '.jsx'] as const
 
+/** A page file for every framework except `next-app` — the one rule, shared by discovery and by the launcher summary's count. */
+function isPageFile(relPath: string): boolean {
+  return PAGE_FILE_EXTENSIONS.some((ext) => relPath.endsWith(ext))
+}
+
 /**
  * Recursively discovers every page file under a workspace's pages directory
  * (Phase 7A — nested route/page dirs like `pages/marketing/Landing.tsx`, not
@@ -127,7 +145,7 @@ const PAGE_FILE_EXTENSIONS = ['.tsx', '.jsx'] as const
  * `collectWorkspaceFiles` via `listWorkspaceFiles`).
  */
 export function discoverPageFiles(pagesDir: string): string[] {
-  return listWorkspaceFiles(pagesDir).filter((relPath) => PAGE_FILE_EXTENSIONS.some((ext) => relPath.endsWith(ext)))
+  return listWorkspaceFiles(pagesDir).filter(isPageFile)
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +157,11 @@ export function discoverPageFiles(pagesDir: string): string[] {
 
 /** A `page.tsx`/`page.jsx` anywhere under `app/`, whatever the nesting. */
 const NEXT_APP_PAGE_FILE_RE = /(^|\/)page\.(tsx|jsx)$/
+
+/** A `page.tsx`/`page.jsx` — one App Router ROUTE, whatever the nesting. Shared with the launcher summary's count. */
+function isAppRouterPageFile(relPath: string): boolean {
+  return NEXT_APP_PAGE_FILE_RE.test(relPath)
+}
 
 /** One discovered App Router route: its `page.tsx` file and the URL it renders at. */
 export interface AppRouterRoute {
@@ -163,7 +186,7 @@ export interface AppRouterRoute {
  */
 export function discoverAppRouterRoutes(appDir: string): AppRouterRoute[] {
   return listWorkspaceFiles(appDir)
-    .filter((relPath) => NEXT_APP_PAGE_FILE_RE.test(relPath))
+    .filter(isAppRouterPageFile)
     .map((relPath) => ({ relPath, route: routeFromAppPageRelPath(relPath) }))
 }
 
@@ -227,31 +250,121 @@ export function collectAppRouterLayoutChain(appDir: string, pageRelPath: string)
   return chain
 }
 
-/** One on-disk studio project — an immediate subfolder of `studio-workspace/`. */
+/**
+ * One on-disk studio project — an immediate subfolder of `studio-workspace/`.
+ *
+ * Everything past `pageCount` is what the Overview launcher needs to describe
+ * a project card BEFORE the user opens it. All of it comes from reads
+ * `listStudioProjects` was already doing and throwing away (`.studio/meta.json`
+ * per entry, the pages-dir walk) plus one `statSync` per file in that walk —
+ * nothing here probes, compiles, parses, or runs anything.
+ */
 export interface StudioProjectSummary {
   /** Absolute directory path — passed straight to `setStudioWorkspaceDir`. */
   dir: string
-  /** Display name = the folder name. */
+  /** Display name — `.studio/meta.json`'s `displayName`, else the folder name. */
   name: string
   /** Number of page files discovered under the project's pages dir (0 when it has none). */
   pageCount: number
+  /**
+   * The form factor chosen at creation (`.studio/meta.json`'s `platform`).
+   * Absent for every GitHub/zip import and every project created before the
+   * field existed — the launcher then badges nothing rather than guessing
+   * "web" from a frame width that the author may simply never have changed.
+   */
+  platform?: ProjectPlatform
+  /**
+   * Framework from the CACHED probe (`.studio/meta.json`'s `profile`), absent
+   * when the project has never been probed. This listing NEVER probes: a
+   * probe reads package manifests and walks candidate directories for every
+   * project on disk, which is not what a launcher render should cost.
+   */
+  framework?: ProjectFramework
+  /** Trust tier from `.studio/meta.json`, `'static'` (Tier 0) when unset — which is every fresh import. */
+  trust: TrustTier
+  /**
+   * Style toolchains the cached probe found that only run at Tier ≥ 1. Empty
+   * for a project that renders everything it can at Tier 0, and empty for an
+   * unprobed one. Paired with `trust === 'static'` this is the launcher's
+   * answer to "why did this project open unstyled?" — asked before it opens.
+   */
+  styleToolchains: CompilableStyleToolchain[]
+  /**
+   * Newest mtime (epoch ms) among the files under the project's pages dir,
+   * floored by the project directory's own mtime. This is "edited" in the
+   * sense the user means it: writing a style into a `.tsx`, adding a page, or
+   * changing a co-located `.module.css` all move it, and none of them move the
+   * pages directory's own mtime (writing an existing file does not touch its
+   * parent). A project with no pages dir reports its folder's mtime.
+   */
+  editedAt: number
+}
+
+/** `statSync(path).mtimeMs`, or 0 for anything unreadable (a race with a delete, a permission error). Never throws — a listing must not fail on one file. */
+function mtimeMsOf(path: string): number {
+  try {
+    return statSync(path).mtimeMs
+  } catch {
+    return 0
+  }
 }
 
 /**
- * Page count for a project directory, 0 when its (possibly overridden) pages
- * dir doesn't exist. A `next-app` project counts ROUTES (`page.tsx` files),
- * not every `.tsx`/`.jsx` under `app/` — that directory is full of
+ * Page count + last-edited time for a project directory, from ONE walk of its
+ * (possibly overridden) pages dir.
+ *
+ * A `next-app` project counts ROUTES (`page.tsx` files), not every
+ * `.tsx`/`.jsx` under `app/` — that directory is full of
  * `layout.tsx`/`template.tsx`/`route.ts` files that are not pages of their
- * own, and `discoverPageFiles` (used for every other framework) has no notion
- * of that distinction. Branches on the cached probe profile, never a guess —
- * an unprobed project (no `.studio/meta.json` yet) falls back to the
- * `discoverPageFiles` count unchanged, exactly today's behaviour.
+ * own. Branches on the cached probe profile, never a guess: an unprobed
+ * project falls back to the plain page-file count unchanged.
+ *
+ * `editedAt` stats every file the walk found, not just the pages: a CSS
+ * Module edit is an edit, and the alternative — one `statSync` on the
+ * directory itself — reports the last time a file was ADDED or REMOVED, which
+ * is not what the card claims. The walk itself already happens for the count;
+ * the added cost is one `stat` per file in the pages dir, which is the same
+ * order as the `readdir` that produced the list.
  */
-function pageCountFor(dir: string): number {
+function projectPageFacts(dir: string, framework: ProjectFramework | undefined): { pageCount: number; editedAt: number } {
   const pagesDir = projectPagesDir(dir)
-  if (!existsSync(pagesDir)) return 0
-  if (readStudioMeta(dir).profile?.framework === 'next-app') return discoverAppRouterRoutes(pagesDir).length
-  return discoverPageFiles(pagesDir).length
+  if (!existsSync(pagesDir)) return { pageCount: 0, editedAt: mtimeMsOf(dir) }
+  const relPaths = listWorkspaceFiles(pagesDir)
+  const matches = framework === 'next-app' ? isAppRouterPageFile : isPageFile
+  let editedAt = mtimeMsOf(dir)
+  let pageCount = 0
+  for (const relPath of relPaths) {
+    if (matches(relPath)) pageCount += 1
+    const mtime = mtimeMsOf(join(pagesDir, ...relPath.split('/')))
+    if (mtime > editedAt) editedAt = mtime
+  }
+  return { pageCount, editedAt }
+}
+
+/**
+ * The full launcher-facing description of one project directory.
+ *
+ * Single source of the summary shape: the listing, the create route, the
+ * rename route and the duplicate route all return one of these, so a card
+ * redrawn from a mutation's answer can never carry less than a card drawn
+ * from the listing. (Before this existed, `/rename` hand-built its own
+ * summary and recomputed `pageCount` with a bare `discoverPageFiles` — which
+ * silently reported the wrong number for a `next-app` project.)
+ */
+export function studioProjectSummary(dir: string): StudioProjectSummary {
+  const meta = readStudioMeta(dir)
+  const framework = meta.profile?.framework
+  const { pageCount, editedAt } = projectPageFacts(dir, framework)
+  return {
+    dir,
+    name: meta.displayName ?? basename(dir) ?? dir,
+    pageCount,
+    ...(meta.platform !== undefined ? { platform: meta.platform } : null),
+    ...(framework !== undefined ? { framework } : null),
+    trust: meta.trust ?? DEFAULT_TRUST_TIER,
+    styleToolchains: meta.profile ? compilableStyleToolchains(meta.profile) : [],
+    editedAt,
+  }
 }
 
 /**
@@ -394,10 +507,7 @@ export function listStudioProjects(projectsRoot: string): StudioProjectSummary[]
         entry.name !== PROJECTS_TRASH_DIR_NAME &&
         !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name),
     )
-    .map((entry) => {
-      const dir = join(projectsRoot, entry.name)
-      return { dir, name: projectDisplayName(dir), pageCount: pageCountFor(dir) }
-    })
+    .map((entry) => studioProjectSummary(join(projectsRoot, entry.name)))
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 

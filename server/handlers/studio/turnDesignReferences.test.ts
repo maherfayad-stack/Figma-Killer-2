@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import sharp from 'sharp'
 import { resolveDesignReference } from '../../ai/mcp/tools/studio/referenceResolve'
+import { CHAT_ATTACHMENT_REFERENCE_SOURCE } from './designReferenceSchema'
 import { listDesignReferences } from './designReferenceStore'
-import { CHAT_ATTACHMENT_REFERENCE_SOURCE, registerTurnDesignReferences } from './turnDesignReferences'
+import { registerTurnDesignReferences } from './turnDesignReferences'
 
 async function png(width: number, height: number, rgb: [number, number, number]): Promise<Uint8Array> {
   const raw = Buffer.alloc(width * height * 3)
@@ -38,6 +39,17 @@ describe('registerTurnDesignReferences', () => {
     expect(armed[0]!.height).toBe(20)
     expect(armed[0]!.source).toBe(CHAT_ATTACHMENT_REFERENCE_SOURCE)
     expect(listDesignReferences(dir, undefined, undefined).references).toHaveLength(1)
+  })
+
+  it('arms an attachment as CONTEXT, never as the spec', async () => {
+    // The flagship reference-drift bug: every chat image registered durably
+    // and resolution picked the most recent one, so a "why does this look
+    // wrong?" screenshot became the comparison spec. An attachment is kept —
+    // it still resolves when it is the page's only candidate — but it can
+    // never outrank a design someone deliberately registered.
+    const armed = await registerTurnDesignReferences(dir, [await png(40, 20, [12, 154, 176])], 'page-a')
+
+    expect(armed[0]!.role).toBe('context')
   })
 
   it('is idempotent by content hash across turns', async () => {

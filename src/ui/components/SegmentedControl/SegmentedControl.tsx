@@ -29,6 +29,7 @@ import type { ReactNode } from 'react'
 import { Button, type ButtonProps } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
+import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import styles from './SegmentedControl.module.css'
 
 interface SegmentedControlOption<T extends string> {
@@ -43,8 +44,17 @@ interface SegmentedControlProps<T extends string> {
   /**
    * The currently active value, or `undefined` for an unset state where no
    * segment appears pressed.
+   *
+   * `MIXED` (`@ui/components/MixedValue`) means "the selection this control is
+   * driven by disagrees" — a multi-selection where some elements are
+   * `flex-start` and others `center`. It renders like the unset state, no
+   * segment pressed (Figma does the same), but says so: the group carries
+   * `data-mixed="true"` for the indeterminate treatment and its accessible
+   * name gains a "mixed" suffix, so "nothing chosen" and "several different
+   * things chosen" are not the same silent blank. Clicking a segment commits
+   * that value to the whole selection through the caller's `onChange`.
    */
-  value: T | undefined
+  value: T | Mixed | undefined
   options: ReadonlyArray<SegmentedControlOption<T>>
   onChange: (next: T) => void
   /**
@@ -81,14 +91,16 @@ export function SegmentedControl<T extends string>({
   'data-testid': dataTestId,
 }: SegmentedControlProps<T>) {
   const clearable = onClear != null
+  const mixed = isMixed(value)
 
   return (
     <div
       role="group"
-      aria-label={ariaLabel}
+      aria-label={mixed && ariaLabel ? `${ariaLabel} (mixed)` : ariaLabel}
       data-testid={dataTestId}
       data-active-surface={activeSurface}
       data-clearable={clearable ? 'true' : undefined}
+      data-mixed={mixed ? 'true' : undefined}
       className={cn(styles.group, fullWidth && styles.fullWidth, className)}
     >
       {options.map((option) => {

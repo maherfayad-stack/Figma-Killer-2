@@ -10,7 +10,10 @@ import { studioReferenceMcpTools } from './referenceRender'
 import { studioDiffMcpTools } from './diffFrames'
 import { studioDesignReferenceMcpTools } from './designReferenceTools'
 import { studioDesignVariableMcpTools } from './designVariableTools'
-import { studioBrowserBridgeMcpTools } from './browserBridgeTools'
+import { studioUploadAssetMcpTools } from './uploadAssetTool'
+import { studioFrameAxesMcpTools } from './frameAxesTools'
+import { studioComputedStylesMcpTools } from './computedStyles'
+import { studioMeasureElementMcpTools } from './measureElement'
 import { studioPackageDocMcpTools } from './packageDocTools'
 import { studioFrameworkTokenMcpTools } from './frameworkTokenTools'
 import { studioComponentCatalogMcpTools } from './componentCatalogTools'
@@ -30,6 +33,7 @@ export const studioMcpTools: AiTool[] = [
   studioScreenshotTool,
   ...studioCompareMcpTools,
   ...studioMeasureReferenceMcpTools,
+  ...studioMeasureElementMcpTools,
   ...studioQualityCheckMcpTools,
   ...studioTypecheckMcpTools,
   ...studioExtractReferenceAssetMcpTools,
@@ -41,7 +45,9 @@ export const studioMcpTools: AiTool[] = [
   ...studioDiffMcpTools,
   ...studioDesignReferenceMcpTools,
   ...studioDesignVariableMcpTools,
-  ...studioBrowserBridgeMcpTools,
+  ...studioUploadAssetMcpTools,
+  ...studioFrameAxesMcpTools,
+  ...studioComputedStylesMcpTools,
   ...studioPackageDocMcpTools,
   ...studioFrameworkTokenMcpTools,
   ...studioComponentCatalogMcpTools,

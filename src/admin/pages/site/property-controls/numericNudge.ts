@@ -1,57 +1,66 @@
 /**
- * numericNudge — keyboard step arithmetic shared by the design-panel value
- * fields (TokenAwareInput's CSS values, NumberControl's unitless numbers).
+ * numericNudge — THE step model for every numeric field in the editor.
+ * `ScrubInput`, `TokenAwareInput`, `TextControl`, `NumberControl` and the frame
+ * W/H fields all resolve their step from here, so a number moves identically
+ * wherever it is typed — and, since W8-2, wherever it is DRAGGED: the scrub
+ * gesture (`useScrubDrag`) resolves its per-pixel scale from `nudgeStepFor` too.
  *
- * Interaction model mirrors Penpot's numeric input:
- *   - plain ↑/↓  → ±1
- *   - Shift+↑/↓  → ±8   (matches an 8px spacing scale — the "big nudge")
- *   - Alt+↑/↓    → ±0.1 (fine nudge)
+ * Figma's model, which is the one we ship:
+ *   - plain ↑/↓ or 1px of drag  → ±1
+ *   - Shift                     → ±10  (the "big nudge")
+ *   - Alt                       → ±0.1 (the fine nudge; beats Shift when both
+ *                                       are held — the more specific request
+ *                                       wins)
  *
- * The value operated on may carry a CSS unit (`16px`, `1.25rem`, `-4%`).
- * A value that isn't a single bare number+unit — `var(--space-md)`, `auto`,
- * `calc(...)`, `10px 20px` — is NOT nudgeable and returns `null`, so token
- * references and keyword values are left untouched.
+ * There used to be three models: ±10 in `ScrubInput`, ±8 in this file, and a
+ * hand-rolled ±8 in `FrameSizePanel`. Which step a field took depended on which
+ * of three components happened to render it — invisible in any one field and
+ * maddening across two. There is now one set of numbers and one resolver
+ * (`nudgeStepFor`), and both live in `scrubMath.ts` (see below) so the gesture
+ * in `src/ui` can reach them without a fourth copy.
+ *
+ * The value operated on may carry a CSS unit (`16px`, `1.25rem`, `-4%`) or be
+ * arithmetic the shared evaluator can reduce (`100/2`, `100 + 8`). Anything
+ * else — `var(--space-md)`, `auto`, `calc(...)`, `10px 20px` — is NOT
+ * nudgeable and returns `null`, so token references and keyword values are
+ * left untouched.
  */
 
-/** Plain arrow nudge. */
-export const BASE_NUDGE = 1
-/** Shift+arrow nudge — the "big" step, aligned to an 8px design scale. */
-export const SHIFT_NUDGE = 8
-/** Alt+arrow nudge — the fine step. */
-export const FINE_NUDGE = 0.1
+import { evaluateNumericExpression } from '@ui/components/ScrubInput'
+
+// The three magnitudes and their resolver are DEFINED in `scrubMath.ts`, at
+// the bottom of the dependency graph, because `src/ui` cannot import from
+// `src/admin` and the drag gesture (`useScrubDrag`) needs the same ladder the
+// keyboard uses. Re-exported here so admin code keeps importing the model
+// from the module whose header explains it.
+export {
+  BASE_NUDGE,
+  FINE_NUDGE,
+  nudgeStepFor,
+  SHIFT_NUDGE,
+  type NudgeModifiers,
+} from '@ui/components/ScrubInput'
+import { nudgeStepFor } from '@ui/components/ScrubInput'
 
 export type NudgeDirection = 'up' | 'down'
-
-/** Keyboard modifiers that select which nudge step applies. */
-export interface NudgeModifiers {
-  shiftKey: boolean
-  altKey: boolean
-}
-
-/** Resolves the step magnitude for a keydown event's modifier state. */
-export function nudgeStepFor({ shiftKey, altKey }: NudgeModifiers): number {
-  if (altKey) return FINE_NUDGE
-  if (shiftKey) return SHIFT_NUDGE
-  return BASE_NUDGE
-}
-
-// A single leading-signed number followed by an optional CSS unit and nothing
-// else. Deliberately narrow: multi-value shorthands, functions, and keywords
-// don't match, so they fall through as non-nudgeable.
-const NUDGEABLE_RE = /^(-?\d*\.?\d+)([a-z%]*)$/i
 
 interface NudgeableNumber {
   number: number
   unit: string
 }
 
-/** Parses a bare `<number><unit>` value, or `null` when it isn't one. */
+/**
+ * Parses a nudgeable value — a bare `<number><unit>` (`16px`, `-4%`, `12`)
+ * or arithmetic that reduces to one (`100/2`, `100 + 8`) — or `null` when it
+ * isn't one. The grammar lives in ONE place, `evaluateNumericExpression`
+ * (`@ui/components/ScrubInput`), so a field that accepts maths on commit
+ * also accepts it as a nudge baseline instead of going inert the moment the
+ * user typed a sum.
+ */
 export function parseNudgeableValue(raw: string): NudgeableNumber | null {
-  const match = NUDGEABLE_RE.exec(raw.trim())
-  if (!match) return null
-  const number = Number.parseFloat(match[1])
-  if (!Number.isFinite(number)) return null
-  return { number, unit: match[2] }
+  const evaluated = evaluateNumericExpression(raw)
+  if (!evaluated) return null
+  return { number: evaluated.magnitude, unit: evaluated.unit }
 }
 
 /**

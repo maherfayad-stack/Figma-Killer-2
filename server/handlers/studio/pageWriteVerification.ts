@@ -49,6 +49,17 @@ export interface PageWriteVerificationEntry {
   readonly lastWrittenAtMs: number
   readonly hasReference: boolean
   readonly referenceId?: string
+  /**
+   * Set when this page HAS candidate references but resolution refused to
+   * pick between them — the message naming the ids and the `referenceId`
+   * argument that settles it.
+   *
+   * Kept distinct from `hasReference: false` because the two need opposite
+   * instructions: an unarmed page is told to register a design, and telling an
+   * ambiguous page the same thing sends the agent to add a third candidate to
+   * a set it already cannot choose from.
+   */
+  readonly referenceAmbiguity?: string
   /** Epoch ms of the last PASSING `studio_compare` for this page, if any — regardless of whether it happened before or after the write being reported. */
   readonly passingCompareAtMs?: number
   /** `true` only when a passing compare exists AND it happened AT OR AFTER `lastWrittenAtMs` — a pass recorded before the write in question proves nothing about the code as it stands now. */
@@ -96,11 +107,14 @@ export function computePageWriteVerification(
 
     let hasReference = false
     let referenceId: string | undefined
+    let referenceAmbiguity: string | undefined
     try {
       const resolved = resolveDesignReference(dir, page.id, undefined)
       if (resolved.ok) {
         hasReference = true
         referenceId = resolved.reference.id
+      } else if (resolved.failure === 'ambiguous') {
+        referenceAmbiguity = resolved.error
       }
     } catch (err) {
       console.error('[pageWriteVerification] reference resolution failed — treating as unarmed:', err)
@@ -116,6 +130,7 @@ export function computePageWriteVerification(
       lastWrittenAtMs: writes.lastAtMs,
       hasReference,
       ...(referenceId ? { referenceId } : {}),
+      ...(referenceAmbiguity ? { referenceAmbiguity } : {}),
       ...(passing ? { passingCompareAtMs: passing.passedAtMs } : {}),
       verifiedSinceWrite,
     })
@@ -136,9 +151,25 @@ function isThrashing(entry: PageWriteVerificationEntry): boolean {
  * phrasing: a project with a live Figma connector is told to export and
  * register; one without is told to register directly or fall back to
  * `studio_quality_check` for a from-scratch brief with nothing to match.
+ *
+ * Three cases, three different instructions — and the ambiguous one is here
+ * because it is the one this gate used to get WRONG. A page whose references
+ * cannot be told apart resolves to NO reference, so it fell into the unarmed
+ * branch and was told to register a design: the single worst move available,
+ * since it already holds more candidates than it can choose between and a new
+ * one makes the next call refuse identically.
  */
 export function describeUnverifiedPage(entry: PageWriteVerificationEntry, figmaConfigured: boolean): string {
   const thrashNote = isThrashing(entry) ? ` (written ${entry.writeCount}x this turn — compose the whole screen and write once)` : ''
+  // Ambiguity FIRST, because an ambiguous page is also `hasReference: false`
+  // and the unarmed branch's instruction ("register a design reference") is
+  // actively wrong for it — it sends the agent to add a third candidate to a
+  // set it already cannot choose from. The refusal message carries the ids and
+  // says how to settle it; all this adds is the concrete call that ends the
+  // block, which is the one thing the gate owes a model it just stopped.
+  if (entry.referenceAmbiguity) {
+    return `"${entry.title}"${thrashNote} has not passed studio_compare since its last write, and its design reference could not be chosen for it. ${entry.referenceAmbiguity} Then call studio_compare({pages:["${entry.title}"], referenceId:"<the id you picked>"}) before calling this done.`
+  }
   if (!entry.hasReference) {
     const howToArm = figmaConfigured
       ? `export it from the Figma connector, then call studio_register_design_reference with pageId:"${entry.pageId}"`

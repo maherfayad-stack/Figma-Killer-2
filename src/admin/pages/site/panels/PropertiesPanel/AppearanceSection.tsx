@@ -37,7 +37,7 @@
 import type { CSSPropertyBag } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/components/ContextMenu'
-import { Input } from '@ui/components/Input'
+import { ScrubInput } from '@ui/components/ScrubInput'
 import { ExpandableFieldCluster } from '@ui/components/ExpandableFieldCluster'
 import { CornerRadiusIcon } from '@ui/components/InspectorIcons'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
@@ -45,7 +45,7 @@ import { EyeOffSolidIcon } from 'pixel-art-icons/icons/eye-off-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
 import { useRef, useState } from 'react'
 import { ClassPropertyRow } from './ClassPropertyRow'
-import { handleNudgeKeydown, parseNudgeableValue } from '@site/property-controls/numericNudge'
+import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue, readString } from './styleValueUtils'
 import type { PropertyProvenance } from './stylePropertyProvenance'
@@ -227,24 +227,44 @@ export function AppearanceSection({
         onPreview({ [property]: value ?? null } as Partial<CSSPropertyBag>)
     : undefined
 
+  /** The linked field previews all four corners in ONE patch, not four. */
+  const writeAllCornerPreviews = (value: string) => {
+    if (!onPreview) return
+    const patch: Record<string, string | null> = {}
+    for (const corner of CORNERS) patch[String(radiusKey(corner))] = value || null
+    onPreview(patch as Partial<CSSPropertyBag>)
+  }
+
   const collapsedValue = radiusState.perCorner.TopLeft
   const collapsedPlaceholder = radiusFallback.perCorner.TopLeft || '0px'
 
+  /*
+   * All five radius fields are `ScrubInput`s: the corner glyph they already
+   * carried is now the drag handle, and commit runs through
+   * `resolveCommitValue`, so a typed `12` becomes `12px` instead of the
+   * invalid declaration `border-radius: 12`. They used to be bare `Input`s
+   * with an arrow-key nudge bolted on and a commit on every keystroke —
+   * the only fields in the panel with a mark you could not drag.
+   *
+   * `min: 0` because a negative corner radius is not a CSS value; the drag
+   * stops at zero rather than emitting one. The unit comes from the computed
+   * placeholder when it carries one, so a `rem`-based stylesheet keeps
+   * scrubbing in `rem`.
+   */
   const collapsedField = (
-    <Input
+    <ScrubInput
       key="radius-all"
       fieldSize="sm"
-      prefix={<CornerRadiusIcon size={13} aria-hidden="true" />}
+      label={<CornerRadiusIcon size={13} aria-hidden="true" />}
       value={collapsedValue}
       placeholder={collapsedPlaceholder}
+      unit={parseNudgeableValue(collapsedPlaceholder)?.unit ?? 'px'}
+      min={0}
       aria-label="Corner radius, all corners"
       data-testid="appearance-radius-all"
-      onChange={(e) => writeAllCorners(e.target.value || undefined)}
-      onKeyDown={(e) =>
-        handleNudgeKeydown(e, collapsedValue, (next) => writeAllCorners(next), {
-          emptyUnit: parseNudgeableValue(collapsedPlaceholder ?? '')?.unit ?? 'px',
-        })
-      }
+      onChange={(next) => writeAllCorners(next || undefined)}
+      onPreview={previewProperty ? (next) => writeAllCornerPreviews(next) : undefined}
+      onClearPreview={onClearPreview}
     />
   )
 
@@ -252,20 +272,21 @@ export function AppearanceSection({
     const value = radiusState.perCorner[corner]
     const placeholder = radiusFallback.perCorner[corner] || '0px'
     return (
-      <Input
+      <ScrubInput
         key={corner}
         fieldSize="sm"
-        prefix={<CornerRadiusIcon size={13} aria-hidden="true" />}
+        label={<CornerRadiusIcon size={13} aria-hidden="true" />}
         value={value}
         placeholder={placeholder}
+        unit={parseNudgeableValue(placeholder)?.unit ?? 'px'}
+        min={0}
         aria-label={`Border radius, ${cornerLabel(corner)}`}
         data-testid={`appearance-radius-${corner}`}
-        onChange={(e) => onChange(radiusKey(corner), e.target.value || undefined)}
-        onKeyDown={(e) =>
-          handleNudgeKeydown(e, value, (next) => onChange(radiusKey(corner), next), {
-            emptyUnit: parseNudgeableValue(placeholder ?? '')?.unit ?? 'px',
-          })
+        onChange={(next) => onChange(radiusKey(corner), next || undefined)}
+        onPreview={
+          previewProperty ? (next) => previewProperty(radiusKey(corner), next || undefined) : undefined
         }
+        onClearPreview={onClearPreview}
       />
     )
   })

@@ -259,3 +259,37 @@ export const ProjectProfileSchema = Type.Object({
   appRootCandidates: Type.Optional(Type.Array(AppRootCandidateSchema)),
 })
 export type ProjectProfile = Static<typeof ProjectProfileSchema>
+
+/** The frameworks the probe can recognize. `'unknown'` is a real answer, not an absence. */
+export type ProjectFramework = ProjectProfile['framework']
+
+/**
+ * A styling toolchain that can only be compiled by RUNNING the workspace's own
+ * code — i.e. one Tier 0 refuses to touch.
+ *
+ * The one place that rule is written down, and it lives HERE — beside the
+ * `ProjectProfile` shape it reads — rather than in `styleCompile.ts`, because
+ * three unrelated callers need the answer and only one of them is the
+ * compiler: `compileProjectStyles` asks it to decide whether to warn or
+ * compile, `styleCompileConsent.ts` asks it to decide whether the board offers
+ * the promote prompt, and `studioProjects.ts` asks it so the launcher can
+ * badge a project whose styles will not render before the user opens it and
+ * wonders why. Keeping it in the compiler module would have forced the last
+ * of those to import the whole Tier-1 subprocess machinery for a six-line
+ * pure predicate.
+ */
+export type CompilableStyleToolchain = 'tailwind' | 'sass' | 'postcss'
+
+/**
+ * The toolchains in a profile that need Tier ≥ 1. Empty means a fresh import
+ * already renders everything it can (plain CSS + CSS Modules + vendor CSS are
+ * all Tier 0 safe).
+ */
+export function compilableStyleToolchains(profile: ProjectProfile): CompilableStyleToolchain[] {
+  const toolchain = profile.styleToolchain
+  const found: CompilableStyleToolchain[] = []
+  if (toolchain.tailwind) found.push('tailwind')
+  if (toolchain.sass) found.push('sass')
+  if (toolchain.postcssConfigPath) found.push('postcss')
+  return found
+}

@@ -93,7 +93,10 @@ const COLOR_COMPANIONS: ReadonlySet<string> = new Set([
   'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle',
   'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
   'outlineStyle', 'outlineWidth', 'outlineOffset',
+  // The `background-image` per-layer satellites — a colour class routinely
+  // ships the whole set with its paint (`backgroundLayers.ts`).
   'backgroundSize', 'backgroundPosition', 'backgroundRepeat', 'backgroundClip',
+  'backgroundAttachment', 'backgroundOrigin', 'backgroundBlendMode',
   'opacity',
 ])
 

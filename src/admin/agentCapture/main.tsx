@@ -20,12 +20,17 @@ import '@modules/base'
 import '../../styles/globals.css'
 import { CaptureApp } from './CaptureApp'
 import { markCaptureLoading, publishCaptureError } from './captureReadiness'
+import { installFrameInspector } from './frameInspectBridge'
 
 // Published before anything can throw, so the driver's poll always finds a
 // defined global — an undefined one is indistinguishable from a page that
 // never executed, and it would sit in `waitForFunction` until its timeout
 // instead of reporting the real failure.
 markCaptureLoading()
+// Installed for the same reason, one contract over: a driver asking a frame a
+// question must find a function that can answer "no settled frame" rather than
+// an `undefined` it can only report as a protocol error.
+installFrameInspector()
 
 const rootElement = document.getElementById('root')
 const token = new URLSearchParams(window.location.search).get('token')

@@ -25,7 +25,10 @@
  *
  *   POST /admin/api/studio/reference-upload
  *     multipart/form-data: `dir` (optional), `file` (the original,
- *     un-re-encoded image bytes).
+ *     un-re-encoded image bytes), plus the optional fidelity fields
+ *     `pageId`, `mode` ('creative'|'balanced'|'strict'), `passScore`,
+ *     `maxRegionCoverage`. Always lands as `role: 'spec'` — see the register
+ *     call below.
  *     -> 200 { ok: true, reference: DesignReference }
  *     -> 4xx { error: string }
  *
@@ -47,10 +50,44 @@ import { getMostRecentDesignReference, registerDesignReference, removeDesignRefe
 
 const ROUTE_PATH = '/admin/api/studio/reference-upload'
 
-/** Same convention as `assetUpload.ts`'s `AssetUploadFieldsSchema` — the non-file multipart fields, validated before anything touches disk. */
+/**
+ * Same convention as `assetUpload.ts`'s `AssetUploadFieldsSchema` — the
+ * non-file multipart fields, validated before anything touches disk.
+ *
+ * `pageId`/`mode`/`passScore`/`maxRegionCoverage` are the fidelity knobs a
+ * caller MAY set at upload time. There is deliberately no `role` field: the
+ * DESIGN REFERENCE control is itself the explicit gesture, so anything landing
+ * here is a `spec` by construction — a browser that could ask for `context`
+ * would be asking for an image the user just nominated to be ignored.
+ *
+ * Multipart values arrive as strings, so the two numeric fields are converted
+ * before validation and a non-numeric value is rejected rather than coerced to
+ * `NaN` — a silently-dropped threshold is exactly the kind of quiet wrong
+ * answer this whole change exists to remove.
+ */
 const ReferenceUploadFieldsSchema = Type.Object({
   dir: Type.Optional(Type.String()),
+  pageId: Type.Optional(Type.String({ minLength: 1 })),
+  mode: Type.Optional(Type.Union([
+    Type.Literal('creative'),
+    Type.Literal('balanced'),
+    Type.Literal('strict'),
+  ])),
+  passScore: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+  maxRegionCoverage: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
 })
+
+/** A multipart field as a string, or `undefined` when absent/not a string. */
+function textField(form: FormData, name: string): string | undefined {
+  const raw = form.get(name)
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined
+}
+
+/** `undefined` when absent; `NaN` when present but not a number, which the schema then rejects. */
+function numberField(form: FormData, name: string): number | undefined {
+  const raw = textField(form, name)
+  return raw === undefined ? undefined : Number(raw)
+}
 
 export async function tryServeStudioReferenceUpload(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (pathname !== ROUTE_PATH) return null
@@ -59,9 +96,12 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
     try {
       const form = await readFormDataWithLimit(req, DESIGN_REFERENCE_MAX_BYTES)
 
-      const dirRaw = form.get('dir')
       const parsedFields = safeParseValue(ReferenceUploadFieldsSchema, {
-        dir: typeof dirRaw === 'string' ? dirRaw : undefined,
+        dir: textField(form, 'dir'),
+        pageId: textField(form, 'pageId'),
+        mode: textField(form, 'mode'),
+        passScore: numberField(form, 'passScore'),
+        maxRegionCoverage: numberField(form, 'maxRegionCoverage'),
       })
       if (!parsedFields.ok) return badRequest('invalid reference-upload body')
 
@@ -78,11 +118,27 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
       }
 
       const bytes = new Uint8Array(await file.arrayBuffer())
-      // No `pageId` — a chat-panel attachment is a general project reference,
-      // not scoped to one page. `label` records the picked file's own name so
-      // a later reader (the panel restoring state, or an MCP list call) has
-      // something human-readable beyond the bare id.
-      const result = await registerDesignReference(dir, bytes, { label: file.name })
+      // `role: 'spec'` — reaching this route means a human used the composer's
+      // DESIGN REFERENCE control, which is the deliberate act that separates a
+      // design from an image that merely got pasted into the conversation
+      // (those arrive via `registerTurnDesignReferences` as `context`).
+      //
+      // `pageId` stays OPTIONAL rather than required: this control has always
+      // registered a general project reference, and the panel does not send
+      // one today. An unscoped spec still outranks every chat attachment; it
+      // is only outranked by a spec registered FOR the page being measured.
+      // `label` records the picked file's own name so a later reader (the
+      // panel restoring state, or an MCP list call) has something
+      // human-readable beyond the bare id.
+      const { pageId, mode, passScore, maxRegionCoverage } = parsedFields.value
+      const result = await registerDesignReference(dir, bytes, {
+        label: file.name,
+        role: 'spec',
+        pageId,
+        mode,
+        passScore,
+        maxRegionCoverage,
+      })
       if (!result.ok) return badRequest(result.error)
 
       return jsonResponse({ ok: true, reference: result.reference })

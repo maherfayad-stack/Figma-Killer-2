@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { ChevronDown2Icon } from 'pixel-art-icons/icons/chevron-down-2'
 import { cn } from '@ui/cn'
+import { MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import styles from './Select.module.css'
 import {
   getInitialActiveIndex,
@@ -90,6 +91,18 @@ interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'siz
   options?: SelectOption[]
   placeholder?: string
   /**
+   * True when the control is driven by a multi-selection whose values
+   * disagree. The trigger shows the shared "Mixed" placeholder instead of any
+   * one option's label (and no leading icon), so a disagreement never reads as
+   * "everything is set to the first item". Picking an option commits it
+   * normally — the caller's `onChange` writes it to the whole selection.
+   *
+   * A separate boolean rather than a `MIXED` sentinel in `value` because
+   * `value` here is the native `SelectHTMLAttributes` prop and cannot hold a
+   * symbol; callers derive it with `isMixed(...)`.
+   */
+  mixed?: boolean
+  /**
    * Optional hover-preview hook. Fired with an option's value while the
    * pointer is over its row in the open dropdown, so callers can transiently
    * apply the value (e.g. preview a CSS value on the canvas) without
@@ -126,6 +139,7 @@ export function Select({
   searchPlaceholder = 'Search…',
   menuPlacement = 'bottom-start',
   menuAnchorRef,
+  mixed = false,
   'aria-label': ariaLabel,
   'aria-labelledby': ariaLabelledBy,
   'data-testid': dataTestId,
@@ -352,7 +366,9 @@ export function Select({
         ) : children}
       </select>
 
-      {selectedOption?.icon && (
+      {/* A leading icon would claim one option is selected — exactly the
+          thing a mixed selection has to avoid stating. */}
+      {!mixed && selectedOption?.icon && (
         <span aria-hidden="true" className={styles.leadingIcon}>
           <SelectIcon icon={selectedOption.icon} />
         </span>
@@ -370,11 +386,12 @@ export function Select({
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
         data-testid={dataTestId}
-        data-placeholder={showPlaceholder ? 'true' : undefined}
+        data-placeholder={mixed || showPlaceholder ? 'true' : undefined}
+        data-mixed={mixed ? 'true' : undefined}
         disabled={disabled}
         readOnly
-        value={selectedText}
-        placeholder={placeholder}
+        value={mixed ? '' : selectedText}
+        placeholder={mixed ? MIXED_PLACEHOLDER : placeholder}
         onChange={handleTriggerChange}
         onKeyDown={handleTriggerKeyDown}
         className={styles.trigger}

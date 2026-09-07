@@ -27,7 +27,8 @@
 import type { Page } from '@core/page-tree'
 import { loadStudioPages } from '../../../handlers/studioPageLoad'
 import { probeInstallStatus } from '../../../handlers/studio/installDeps'
-import { listDesignReferences } from '../../../handlers/studio/designReferenceStore'
+import { readAllDesignReferences } from '../../../handlers/studio/designReferenceStore'
+import { designReferenceRole, type DesignReferenceRole } from '../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../handlers/studio/pageSourceFile'
 import { readStudioMeta } from '../../../handlers/studio/studioMeta'
 import { resolveProjectTscPath } from '../../../handlers/studio/typecheck'
@@ -66,11 +67,21 @@ export interface StudioLiveDigest {
    *
    * Empty when none are registered, which is itself the honest signal: no
    * design was supplied, so "does it match" genuinely has no answer.
+   *
+   * `role` is on every entry because it decides which of these
+   * `resolveDesignReference` will actually pick: a `spec` outranks every
+   * `context` image, and a page with two equally-ranked candidates is refused
+   * by name rather than guessed. Without it the line lists four references and
+   * the agent has no way to tell which one a comparison would use — the exact
+   * blindness that let a pasted question-screenshot shadow a Figma frame for a
+   * whole project. Derived for entries written before the field existed
+   * (`designReferenceRole`), so it is always present here.
    */
   readonly designReferences: ReadonlyArray<{
     readonly id: string
     readonly width: number
     readonly height: number
+    readonly role: DesignReferenceRole
     readonly pageId?: string
     readonly label?: string
   }>
@@ -426,14 +437,22 @@ export async function buildStudioLiveDigest(
     console.error('[ai/liveDigest] page write verification failed — continuing without it:', err)
   }
 
-  const references = listDesignReferences(dir, undefined, undefined).references
+  // Uncapped: `listDesignReferences`' cap exists to bound a TOOL RESULT, and
+  // the prompt does its own bounding (`boundedList`) further down. A nudge
+  // decided from a truncated view would fire on a page whose reference is
+  // reference 51.
+  const references = readAllDesignReferences(dir)
   let figmaReferenceNudge: StudioLiveDigest['figmaReferenceNudge'] = null
   if (
     activePage
     && userMessageText
     && capabilities.figma.status === 'configured'
     && FIGMA_URL_RE.test(userMessageText)
-    && !references.some((r) => r.pageId === activePage.id)
+    // A `spec`, not merely "a reference". A screenshot the user pasted while
+    // this page was open is `context` — it does not mean the page's design has
+    // been armed, and treating it as if it had is what suppressed this nudge
+    // on exactly the pages that most needed it.
+    && !references.some((r) => r.pageId === activePage.id && designReferenceRole(r) === 'spec')
   ) {
     figmaReferenceNudge = { pageId: activePage.id, pageTitle: activePage.title }
   }
@@ -453,6 +472,7 @@ export async function buildStudioLiveDigest(
       id: r.id,
       width: r.width,
       height: r.height,
+      role: designReferenceRole(r),
       ...(r.pageId ? { pageId: r.pageId } : {}),
       ...(r.label ? { label: r.label } : {}),
     })),

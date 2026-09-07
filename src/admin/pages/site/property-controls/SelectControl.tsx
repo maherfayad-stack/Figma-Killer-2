@@ -33,6 +33,7 @@ export function SelectControl({
   isOverride,
   disabled,
   layout,
+  mixed,
   onPreview,
   onClearPreview,
 }: SelectControlProps) {
@@ -64,6 +65,7 @@ export function SelectControl({
         aria-label={label ?? propKey}
         value={String(value ?? '')}
         placeholder={placeholder}
+        mixed={mixed}
         disabled={disabled}
         fieldSize="sm"
         onChange={(e) => {

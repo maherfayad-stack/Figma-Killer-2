@@ -7,6 +7,7 @@ export {
   TextStrikethroughIcon,
   NoneSlashIcon,
   LineHeightIcon,
+  FontSizeIcon,
   LetterSpacingIcon,
   FlowRowIcon,
   FlowRowReverseIcon,
@@ -26,4 +27,6 @@ export {
   CornerRadiusIcon,
   CommentBubbleIcon,
   RotateIcon,
+  FlipHorizontalIcon,
+  FlipVerticalIcon,
 } from './InspectorIcons'

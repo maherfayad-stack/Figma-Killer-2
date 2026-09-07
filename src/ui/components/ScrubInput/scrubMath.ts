@@ -13,11 +13,68 @@
  *     (`auto` / `fill` / `hug` — see `SCRUB_KEYWORDS`);
  *   - anything else (`"calc(100% - 8px)"`, `""`, a var() reference) — not
  *     scrubbable; drag is a no-op and typing is the only way to change it.
+ *
+ * TYPING is a wider door than dragging: `resolveCommitValue` (below) is what
+ * a typed value goes through on commit, and it accepts arithmetic
+ * (`100/2`, `100+8`) via the shared `numericExpression` evaluator and gives a
+ * bare number the field's own unit. Dragging still needs a single numeric
+ * baseline, so `parseScrubValue` stays the narrower gate for the gesture.
  */
+
+import { formatNumericExpression } from './numericExpression'
 
 export interface ParsedScrubValue {
   magnitude: number
   unit: string
+}
+
+// ---------------------------------------------------------------------------
+// The one nudge ladder — 1 / 10 / 0.1
+//
+// These numbers used to live in `numericNudge.ts` (admin), which cannot be
+// imported from `src/ui`. That left the drag gesture free-handing its own
+// `altKey ? 0.1 : shiftKey ? 10 : 1` ladder beside the keyboard one — two
+// copies of the same three magnitudes, one of which had already drifted to 8
+// once before (see `numericNudge.ts`'s header). They live here now, at the
+// bottom of the dependency graph, and `numericNudge.ts` re-exports them so
+// admin code keeps importing the model from the module that documents it.
+// ---------------------------------------------------------------------------
+
+/** Plain arrow nudge / plain drag: one unit per press, one unit per pixel. */
+export const BASE_NUDGE = 1
+/** Shift — the "big" step. */
+export const SHIFT_NUDGE = 10
+/** Alt — the fine step. Beats Shift when both are held. */
+export const FINE_NUDGE = 0.1
+
+/** Keyboard/pointer modifiers that select which step magnitude applies. */
+export interface NudgeModifiers {
+  shiftKey: boolean
+  altKey: boolean
+}
+
+/**
+ * Per-field widening of the ladder. A caller may widen the model for a value
+ * space where 1 is meaningless (`AnimationEditorPopover` steps milliseconds by
+ * 10); it may not re-decide it — there is no override for the Alt step,
+ * because "finer than the base step" is the whole meaning of Alt.
+ */
+export interface NudgeStepOverrides {
+  step?: number
+  shiftStep?: number
+}
+
+/**
+ * The step magnitude for a modifier state: Alt → 0.1, Shift → 10, else 1.
+ * Alt beats Shift because the more specific request wins.
+ */
+export function nudgeStepFor(
+  { shiftKey, altKey }: NudgeModifiers,
+  { step, shiftStep }: NudgeStepOverrides = {},
+): number {
+  if (altKey) return FINE_NUDGE
+  if (shiftKey) return shiftStep ?? SHIFT_NUDGE
+  return step ?? BASE_NUDGE
 }
 
 const NUMERIC_LENGTH_RE = /^(-?\d*\.?\d+)([a-z%]*)$/i
@@ -51,6 +108,30 @@ export function parseScrubValue(raw: string): ParsedScrubValue | null {
 export function formatScrubValue(magnitude: number, unit: string): string {
   const rounded = Math.round(magnitude * 100) / 100
   return `${rounded}${unit}`
+}
+
+/**
+ * What a TYPED value becomes on commit (blur / Enter / Tab).
+ *
+ * Three cases, in order:
+ *   1. A recognised keyword (`auto`/`fill`/`hug`) — passed through untouched.
+ *   2. Arithmetic or a bare number — evaluated, then given `fallbackUnit`
+ *      when the expression carried no unit of its own. This is what stops a
+ *      typed `50` in Width from emitting the invalid declaration `width: 50`;
+ *      it is the same coercion `resolveTokenValue` applies in the
+ *      token-aware fields, so both field kinds agree on what `50` means.
+ *   3. Anything else (`calc(…)`, `var(…)`, `10px 20px`, a half-typed value)
+ *      — kept as the user's literal text. We do not rewrite CSS we did not
+ *      fully understand.
+ *
+ * `fallbackUnit: ''` marks a genuinely unitless field (a frame's pixel count)
+ * and leaves a bare number bare.
+ */
+export function resolveCommitValue(raw: string, fallbackUnit: string): string {
+  const trimmed = raw.trim()
+  if (trimmed === '') return trimmed
+  if (isScrubKeyword(trimmed)) return trimmed
+  return formatNumericExpression(trimmed, fallbackUnit) ?? raw
 }
 
 export interface ScrubDeltaOptions {

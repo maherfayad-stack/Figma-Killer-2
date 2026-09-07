@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { cn } from '@ui/cn'
 import { ChevronDown2Icon } from 'pixel-art-icons/icons/chevron-down-2'
+import { MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import styles from './Input.module.css'
 
 type FieldSize = 'xs' | 'sm' | 'md'
@@ -60,6 +61,17 @@ interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'prefix
    * Pass `false` to opt out (e.g. for read-only numeric displays).
    */
   numberSpinner?: boolean
+  /**
+   * True when the field is driven by a multi-selection whose values disagree.
+   * The field renders empty with the shared "Mixed" placeholder instead of one
+   * arbitrary member's value, and carries `data-mixed="true"`. Typing commits
+   * normally, so the first edit replaces "mixed" with one value everywhere —
+   * Figma's contract.
+   *
+   * The caller still owns `value`; passing `mixed` only changes what is SHOWN
+   * while that value is a stand-in. Pass `value=""` alongside it.
+   */
+  mixed?: boolean
   /** React 19: ref is a regular prop on function components. */
   ref?: Ref<HTMLInputElement>
 }
@@ -84,6 +96,7 @@ export function Input({
   unit,
   trailingSlot,
   numberSpinner,
+  mixed = false,
   type,
   autoComplete = 'off',
   ref,
@@ -123,6 +136,7 @@ export function Input({
       aria-invalid={invalid || props['aria-invalid'] ? true : undefined}
       data-emphasis={emphasis !== 'default' ? emphasis : undefined}
       data-prefixed={prefix ? 'true' : undefined}
+      data-mixed={mixed ? 'true' : undefined}
       className={cn(
         styles.input,
         styles[`size-${fieldSize}`],
@@ -133,6 +147,9 @@ export function Input({
         !hasAffix && className,
       )}
       {...props}
+      // After the spread: a mixed field must show the shared placeholder, not
+      // whichever one the caller passes for its unset state.
+      placeholder={mixed ? MIXED_PLACEHOLDER : props.placeholder}
     />
   )
 

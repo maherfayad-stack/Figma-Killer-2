@@ -109,7 +109,15 @@ const ENUM_OPTIONS = new Map<keyof CSSPropertyBag, string[]>([
   ['overflow',         ['visible', 'hidden', 'scroll', 'auto']],
   ['overflowX',        ['visible', 'hidden', 'scroll', 'auto']],
   ['overflowY',        ['visible', 'hidden', 'scroll', 'auto']],
-  ['backgroundRepeat', ['no-repeat', 'repeat', 'repeat-x', 'repeat-y']],
+  // `background-*` per-layer satellites. These reach a plain select only
+  // through the generic fallback row and the style search — the Fill section
+  // edits each one PER LAYER inside its own layer popover (see
+  // `backgroundLayers.ts`), where a whole-declaration write would be wrong.
+  ['backgroundRepeat', ['no-repeat', 'repeat', 'repeat-x', 'repeat-y', 'space', 'round']],
+  ['backgroundAttachment', ['scroll', 'fixed', 'local']],
+  ['backgroundOrigin', ['padding-box', 'border-box', 'content-box']],
+  ['backgroundClip',   ['border-box', 'padding-box', 'content-box', 'text']],
+  ['backgroundBlendMode', BLEND_MODE_KEYWORDS],
   ['objectFit',        ['cover', 'contain', 'fill', 'none', 'scale-down']],
   ['pointerEvents',    ['auto', 'none']],
   ['scrollBehavior',   ['auto', 'smooth']],
@@ -178,14 +186,22 @@ export function getCSSPropertyTokenSource(
 }
 
 /**
- * Properties whose value is a plain CSS length, where arrow-key nudging makes
- * sense and an empty field should start from `0px`. Excludes props with
- * special value spaces that a fixed 1/8/0.1 length step would mishandle —
- * `opacity`/`zIndex` (unitless ratios/integers), `aspectRatio` (`16/9`),
- * grid templates, `flex`, `transform`, shadows, etc. `fontSize` is absent
- * here because it nudges through its token-aware input instead.
+ * Properties whose value is a single number the arrow keys may nudge, with an
+ * empty field starting from `0`. Everything here takes the ONE nudge model
+ * (±1 / ±10 Shift / ±0.1 Alt — `numericNudge.ts`).
+ *
+ * Most members are plain CSS lengths, so the empty-field unit is `px` (or
+ * whatever unit the computed placeholder carries). `opacity` and `zIndex` are
+ * the two unitless members: they are single numbers like the rest — a number
+ * field with no way to nudge it was simply an omission, not a decision — and
+ * `ClassPropertyRow` gives them an empty unit of `''` so a nudge never
+ * invents `opacity: 1px`.
+ *
+ * Still excluded: value spaces where a single number is not the whole value —
+ * `aspectRatio` (`16/9`), grid templates, `flex`, `transform`, shadows.
+ * `fontSize` is absent because it nudges through its token-aware input.
  */
-const LENGTH_NUDGE_PROPS = new Set<keyof CSSPropertyBag>([
+const NUDGE_PROPS = new Set<keyof CSSPropertyBag>([
   // Size
   'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight',
   // Position insets
@@ -202,11 +218,43 @@ const LENGTH_NUDGE_PROPS = new Set<keyof CSSPropertyBag>([
   'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius',
   'borderBottomLeftRadius', 'borderBottomRightRadius',
   'outlineOffset',
+  // Unitless singles — see the note above.
+  'opacity',
+  'zIndex',
 ])
 
-/** True when `prop` is a plain-length property eligible for arrow-key nudging. */
-export function isLengthNudgeProp(prop: keyof CSSPropertyBag): boolean {
-  return LENGTH_NUDGE_PROPS.has(prop)
+/** True when `prop` is a single-number property eligible for arrow-key nudging. */
+export function isNudgeableProp(prop: keyof CSSPropertyBag): boolean {
+  return NUDGE_PROPS.has(prop)
+}
+
+/**
+ * Single-number properties whose value is legal CSS as a BARE number, so the
+ * field's unit is `''` and typing / scrubbing / nudging must never append one.
+ *
+ * `opacity` and `zIndex` are here because they are unitless by type
+ * (`NUMBER_TYPED_PROPS`). `lineHeight` is here for a different and easier-to-
+ * miss reason: it is a *string* in the bag and it accepts lengths (`24px`), but
+ * its idiomatic form is the unitless ratio `1.5` — which is not `1.5px`, and
+ * not even equivalent to it (the ratio couples to `font-size`, the length does
+ * not; `DEFAULT_CSS_VALUES` has carried that note since before this field
+ * model existed). Coercing a typed `1.5` to `1.5px` would silently break every
+ * ratio line-height in the user's stylesheet, so `lineHeight` is a unitless
+ * field that also happens to accept units — a typed `24px` still passes
+ * through untouched, because coercion only ever ADDS a unit to a bare number.
+ *
+ * `letterSpacing` is deliberately NOT here: `letter-spacing: 1.5` is invalid
+ * CSS, so a bare number there genuinely does need `px`.
+ */
+const UNITLESS_NUMBER_PROPS = new Set<keyof CSSPropertyBag>([
+  'opacity',
+  'zIndex',
+  'lineHeight',
+])
+
+/** True when a bare number is already a valid value for `prop` — see above. */
+export function isUnitlessNumberProp(prop: keyof CSSPropertyBag): boolean {
+  return UNITLESS_NUMBER_PROPS.has(prop)
 }
 
 /**
@@ -291,6 +339,10 @@ const DEFAULT_CSS_VALUES: Partial<Record<keyof CSSPropertyBag, string | number>>
   backgroundSize:    'auto',
   backgroundPosition:'0% 0%',
   backgroundRepeat:  'repeat',
+  backgroundAttachment: 'scroll',
+  backgroundOrigin:  'padding-box',
+  backgroundClip:    'border-box',
+  backgroundBlendMode: 'normal',
   objectFit:         'cover',
   objectPosition:    'center center',
   opacity:           1,              // number (CSSPropertyBag.opacity?: number); 1 = fully opaque

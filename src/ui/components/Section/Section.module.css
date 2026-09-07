@@ -145,12 +145,32 @@
     flex-shrink: 0;
 }
 
-/* Trailing icon-button slot (apply a style, add a fill). */
+/* Trailing icon-button slot (apply a style, add a fill). `flex: none` rather
+ * than `flex-shrink: 0` alone: these buttons are the section's only actions
+ * and must keep their full hit target while the title beside them ellipsises,
+ * at every width the panel can be dragged to. */
 .sectionActions {
     display: inline-flex;
     align-items: center;
     gap: var(--space-4xs);
-    flex-shrink: 0;
+    flex: none;
+}
+
+/*
+ * Static header — a section with nothing to disclose (Law 1's empty state,
+ * docs/features/inspector-disclosure.md §1). No toggle, so the title is a
+ * plain span; it keeps the toggle's box so an empty section and a filled one
+ * sit on the same baseline and the actions land in the same place.
+ */
+.sectionStaticTitle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+    flex: 1;
+    min-width: 0;
+    min-height: var(--inspector-header-h);
+    color: var(--text);
+    text-align: left;
 }
 
 .sectionContent {
@@ -167,4 +187,21 @@
 .sectionBody {
     display: grid;
     gap: var(--inspector-group-gap);
+    /*
+     * A grid track sized `auto` takes its minimum from its items' content —
+     * and a grid ITEM's own minimum is its content too, unless it says
+     * otherwise. So one control that refuses to shrink (a padding cluster's
+     * two token fields, a segmented control's labels) sized this whole column
+     * to ITS width, and the panel's scroll container — which clips on x —
+     * amputated everything past the panel edge and painted the rest over the
+     * category rail. Declared here, on the one wrapper every section body
+     * passes through, so each new section inherits the constraint instead of
+     * rediscovering it. Sections whose own inner wrapper is another grid
+     * repeat it for their own children (`LayoutSection`, `SpacingSection`).
+     */
+    min-width: 0;
+}
+
+.sectionBody > * {
+    min-width: 0;
 }
