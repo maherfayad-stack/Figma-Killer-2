@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { generateVariantSeeds, MAX_VARIANTS_PER_SET, VARIANT_DENSITIES } from './variantSeeds'
 import { buildProjectTokenIndex } from './projectTokenIndex'
-import { MIN_TYPE_HIERARCHY_RATIO } from './qualityAudit'
+import { MIN_TYPE_HIERARCHY_RATIO } from './compositionAudit'
 
 const PROJECT_CSS = `:root {
   --spacing-xs: 4px;

@@ -32,7 +32,7 @@
  *      re-roll variant A's density. Distinctness is structural, not a hope.
  *
  * The type-contrast pool is bounded below by `MIN_TYPE_HIERARCHY_RATIO` —
- * imported from `qualityAudit.ts`, not restated — so a seed can never propose
+ * imported from `compositionAudit.ts`, not restated — so a seed can never propose
  * a screen that this project's own `flat-type-hierarchy` check would then
  * fail. The generator and the grader agree by construction.
  *
@@ -48,7 +48,7 @@
  * `variantStore.ts` owns the disk half.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { MIN_TYPE_HIERARCHY_RATIO } from './qualityAudit'
+import { MIN_TYPE_HIERARCHY_RATIO } from './compositionAudit'
 import type { ProjectTokenIndex, SizeTokenEntry } from './projectTokenIndex'
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ const RADIUS_TOKEN_NAME_RE = /(radius|rounded|corner)/i
 const ACCENT_TOKEN_NAME_RE = /(accent|brand|primary|highlight)/i
 /** Names that are explicitly NOT an accent — a neutral, a surface, or a semantic state. Excluded even when they match the accent pattern (`--primary-text` is text, not an accent). */
 const NON_ACCENT_TOKEN_NAME_RE = /(text|fg|foreground|bg|background|surface|border|shadow|overlay|scrim|neutral|grey|gray|white|black|danger|error|warning|success|info|disabled|muted)/i
-/** Names that read as spacing rhythm — the same vocabulary `qualityAudit.ts` uses to derive a spacing base. */
+/** Names that read as spacing rhythm — the same vocabulary `compositionAudit.ts` uses to derive a spacing base. */
 const SPACING_TOKEN_NAME_RE = /(space|spacing|gap)/i
 
 /** The conventional step used when the project declares no spacing tokens of its own. Named here rather than hidden in a `??` so the directive can SAY that it is a fallback. */
@@ -197,7 +197,7 @@ function radiusFamilyOf(px: number): VariantRadiusFamily {
   return 'pill'
 }
 
-/** The project's own spacing step: the GCD of its integer spacing-token values. Mirrors `qualityAudit.ts`'s `detectSpacingBasePx` — same question, and a different answer here would mean a seed proposing spacing its own audit flags. */
+/** The project's own spacing step: the GCD of its integer spacing-token values. Mirrors `compositionAudit.ts`'s `detectSpacingBasePx` — same question, and a different answer here would mean a seed proposing spacing its own audit flags. */
 function detectSpacingBase(tokens: ProjectTokenIndex): { px: number; fallback: boolean } {
   const values = tokens.lengths
     .filter((t) => SPACING_TOKEN_NAME_RE.test(t.name) && t.px >= 2 && Number.isInteger(t.px))

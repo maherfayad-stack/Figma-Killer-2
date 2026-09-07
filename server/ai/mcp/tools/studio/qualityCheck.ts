@@ -35,7 +35,8 @@
  *     table — resolved here once per call, so the finding can only ever name
  *     components the agent was actually offered.
  *   - `off-scale-spacing` / `off-scale-type-size` / `flat-type-hierarchy`, in
- *     `auditCompositionQuality`, run ONCE per page over the page's whole
+ *     `auditCompositionQuality` (`server/handlers/studio/compositionAudit.ts`),
+ *     run ONCE per page over the page's whole
  *     stylesheet set rather than per file (a type hierarchy computed inside
  *     one `.module.css` measures a fragment) and as aggregates rather than
  *     per declaration (which would double-report every `raw-px-length`).
@@ -92,7 +93,8 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
-import { auditCompositionQuality, auditPageSourceQuality, auditStylesheetQuality, type DesignSystemCatalog, type PageStylesheetText, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
+import { auditPageSourceQuality, auditStylesheetQuality, type DesignSystemCatalog, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
+import { auditCompositionQuality, type PageStylesheetText } from '../../../../handlers/studio/compositionAudit'
 import { resolveDesignSystemGuide } from '../../../../handlers/studio/projectGuide'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { auditFontAvailability, collectFontAvailability } from './fontAvailability'
