@@ -20,6 +20,7 @@ import { createDefaultSiteDocument } from './defaults'
 import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
+import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRemap'
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
@@ -98,7 +99,24 @@ export function createLifecycleActions({
       // `historyPreservation.ts`'s doc for what "safe" means and why a
       // structural-edit reload no longer has to destroy the whole undo stack.
       const knownNodeIds = collectAllNodeIds(site)
+      // `store-08` — a structural write renumbers the `rel:line:col` id of
+      // everything below it, so the stack's addresses go stale even though the
+      // tree is the same tree. Match the reparse against the document the
+      // store still holds and RE-ADDRESS the stack; an empty map (no page
+      // matched, or there was no history to re-address) leaves the
+      // survivability fallback below to decide exactly as it did before. See
+      // `historyNodeIdRemap.ts`.
+      const before = get()
+      const hasHistory = before._historyPast.length > 0 || before._historyFuture.length > 0
+      const remap =
+        hasHistory && before.site
+          ? buildReparseNodeIdRemap(before.site, site)
+          : new Map<string, string>()
       set((state) => {
+        const past = remapHistoryEntries(state._historyPast, remap)
+        const future = remapHistoryEntries(state._historyFuture, remap)
+        if (past !== state._historyPast) state._historyPast = past
+        if (future !== state._historyFuture) state._historyFuture = future
         const historySafe =
           historySurvivesReload(state._historyPast, knownNodeIds) &&
           historySurvivesReload(state._historyFuture, knownNodeIds)
@@ -277,6 +295,12 @@ export function createLifecycleActions({
       // same ordering `loadSite` uses. See this method's own doc for why a
       // patch (unlike most of what this method does) has to check this at all.
       const knownNodeIds = collectAllNodeIds(nextSite)
+      // `store-08` — same re-addressing as `loadSite`: the narrow resync after
+      // a structural write re-reads exactly the pages whose ids just shifted.
+      const historyRemap =
+        get()._historyPast.length > 0 || get()._historyFuture.length > 0
+          ? buildReparseNodeIdRemap(site, nextSite)
+          : new Map<string, string>()
 
       // Board-frame cleanup for a genuinely removed page — computed against
       // FROZEN (pre-`set()`) state, matching every other board mutation in
@@ -326,6 +350,10 @@ export function createLifecycleActions({
         // verbatim). Safe is the common case and leaves both arrays
         // untouched — a Mutative draft that isn't assigned to keeps its
         // prior structural sharing, same "real keep, not a copy" as `loadSite`.
+        const remappedPast = remapHistoryEntries(state._historyPast, historyRemap)
+        const remappedFuture = remapHistoryEntries(state._historyFuture, historyRemap)
+        if (remappedPast !== state._historyPast) state._historyPast = remappedPast
+        if (remappedFuture !== state._historyFuture) state._historyFuture = remappedFuture
         const historySafe =
           historySurvivesReload(state._historyPast, knownNodeIds) &&
           historySurvivesReload(state._historyFuture, knownNodeIds)

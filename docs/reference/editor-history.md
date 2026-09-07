@@ -9,11 +9,13 @@ Every undoable mutation captures a `HistoryEntry` — a pair of Mutative patch a
 ## TL;DR
 
 - History is `_historyPast: HistoryEntry[]` and `_historyFuture: HistoryEntry[]` on the editor store. Max depth: `MAX_HISTORY` (50).
-- Each `HistoryEntry` holds `{ inverse, forward, coalesceKey }` — patch arrays, not full-site clones.
+- Each `HistoryEntry` holds `{ inverse, forward, coalesceKey }` — patch arrays, not full-site clones — plus an optional `structural` tag for a gesture that also wrote MARKUP to the user's source.
 - `runHistoricMutation` is the single entry point. All seven `mutate*` helpers delegate to it.
 - Continuous-input bursts (per-keystroke text/number edits) fold into one entry via `commitHistory` coalescing.
 - Patches are scoped to `site` (`state.site.*`) — editor-local state (selection, zoom, panel visibility) is not undoable.
 - History is in-memory session state — never serialized.
+- A **structural** entry (a move/delete written to the `.tsx`) is undone by RE-ISSUING the gesture, never by replaying its patches. See "Structural undo" below.
+- A reparse that renumbers `rel:line:col` node ids **re-addresses** the stack (`historyNodeIdRemap.ts`); wiping is the fallback, not the default.
 
 ---
 
@@ -46,6 +48,19 @@ export interface HistoryEntry {
   forward: Patches
   /** Coalescing burst identity, or null. */
   coalesceKey: string | null
+  /** Set when this transaction also wrote STRUCTURE to the user's source. */
+  structural?: StructuralHistory
+}
+
+export type StructuralHistory =
+  | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
+  | { gesture: 'delete' }
+
+export interface StructuralHistoryMove {
+  nodeId: string
+  parentId: string
+  /** Index in the destination parent's children AFTER detach — matches `moveNode`. */
+  index: number
 }
 ```
 
@@ -184,6 +199,66 @@ set(state => {
 
 ---
 
+## Structural undo — the document is the `.tsx`, so undo must be a write
+
+`store-08`. Patch replay is a complete undo for a VALUE edit, because `saveSite`
+diffs node values and writes the reverted value back out. It is **not** a
+complete undo for a MOVE or a DELETE: `saveSite` has no notion of parent, order
+or child list at all — that is why `struct-01` gave structural gestures their
+own one-shot source commits (`studioStructuralCommits.ts`). Replaying a move's
+inverse patch moves the element on the canvas, leaves the file saying the
+opposite, and the next reparse silently wins.
+
+So a gesture that issued a source write tags its entry (`structuralHistory.ts`
+→ `tagStructuralGesture`), and `undo`/`redo` branch on that tag before touching
+patches:
+
+| gesture | undo | redo |
+|---|---|---|
+| `move` (canvas body drag, layers-panel drag, reorder + reparent) | re-issues `moveNodes` back to the captured pre-move `(parentId, index)` — re-planned against the live tree, so it rides every refusal gate and writes to source once | re-issues the original move |
+| `delete` | **refuses, with a toast.** No `StudioEdit` kind carries a subtree's source text, so there is nothing honest to write; re-adding the nodes in memory would be a canvas that disagrees with the file | — |
+
+The re-issued gesture is an ordinary mutation: it pushes its own history entry
+and clears the redo stack. `runStructuralStep` undoes both, so one Ctrl+Z
+consumes exactly one entry and a pending redo chain survives.
+
+A structural gesture never coalesces — the tag also clears
+`_historyCoalesceKey`, so a drag can never fold into a typing burst.
+
+**On a CMS or Visual Component tree nothing is tagged**: there is no file to
+disagree with, and plain patch replay stays correct there.
+
+---
+
+## Surviving a reparse — re-address, don't wipe
+
+A studio-imported node's id IS its source location (`rel:line:col`), so every
+structural write shifts the ids of everything below it in the file. Two modules
+decide what happens to the stack when the board re-reads from disk
+(`loadSite` and `patchPages`, in that order):
+
+1. **`historyNodeIdRemap.ts` — `buildReparseNodeIdRemap(before, after)`.** The
+   reparse is a re-read of a tree the store already holds in its post-gesture
+   shape (the optimistic mutation and the source write describe the same
+   result), so the two trees are isomorphic. A parallel walk from each page's
+   root yields an exact old-id → new-id map, and `remapHistoryEntries` rewrites
+   every patch path and structural node id through it. Strict by design — same
+   page SET, same `moduleId` and same child count at every node, no conflicting
+   mapping for a shared `layout.tsx` id — because a wrong remap is worse than a
+   wipe.
+2. **`historyPreservation.ts` — `historySurvivesReload`.** Unchanged fallback,
+   applied to the re-addressed stack: if any referenced node id still doesn't
+   resolve, wipe.
+
+Without (1), a single drag cost the undo history of every unrelated edit before
+it — and when the shift *permuted* line numbers rather than vacating them (three
+same-size siblings reordered), every old id still "existed" and undo replayed
+the patch against whichever element had inherited that address.
+
+Complexity: O(nodes) per reparse, and only when the stack is non-empty.
+
+---
+
 ## Auto-freeze
 
 The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That keeps a dev guard against accidental external mutation, and existing code already tolerates frozen state. `apply()` and `create()` handle frozen bases correctly.
@@ -193,6 +268,17 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 ## What is NOT undoable
 
 - Selection, hover, zoom, pan — editor-local UI state, not in the `site` document.
+- **Everything in `boardSlice.ts`** — frame position/size (`setFramePosition`,
+  `setFrameSize`, `setFrameRect`), board create/rename/delete, guides,
+  annotations, and the prototype links in `prototypeSlice.ts`. All of it lives
+  outside `site` (in `boards`/`prototype` state persisted to `.studio/`), and
+  `runHistoricMutation` records only `site`-scoped patches. Undoing a board
+  frame move would need a second history domain; there is no partial version of
+  that worth shipping.
+- **Undo of a source `delete`, `duplicate`, `wrap` or `insert`.** `duplicate`,
+  `wrap` and `insert` do not mutate the tree at all on a studio-imported board
+  (the source grows and the board re-reads), so they never produce a history
+  entry; `delete` produces one but refuses to replay it. See "Structural undo".
 - `mutateSiteState` — the recipe may write editor fields (e.g. `activeDocument`) alongside a `site` mutation; the editor fields go live but only the `site` patches enter history (parity with the prior snapshot model).
 - History stacks themselves — resetting to `[]` on `clearSite` is a lifecycle operation, not a mutation.
 
@@ -209,7 +295,10 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 ## Related
 
 - `src/admin/pages/site/store/slices/site/helpers.ts` — `runHistoricMutation`, `commitHistory`, all six `mutate*` helpers
-- `src/admin/pages/site/store/slices/site/undoRedoActions.ts` — `undo`, `redo`
+- `src/admin/pages/site/store/slices/site/undoRedoActions.ts` — `undo`, `redo`, `runStructuralStep`
+- `src/admin/pages/site/store/slices/site/structuralHistory.ts` — `tagStructuralGesture`, `captureMoveOrigin`, `reissueStructuralMove`
+- `src/admin/pages/site/store/slices/site/historyNodeIdRemap.ts` — `buildReparseNodeIdRemap`, `remapHistoryEntries`
+- `src/admin/pages/site/store/slices/site/historyPreservation.ts` — `historySurvivesReload`
 - `src/admin/pages/site/store/slices/site/types.ts` — `HistoryEntry`, `SiteSliceHelpers`
 - `src/admin/pages/site/store/slices/site/defaults.ts` — `MAX_HISTORY`
 - `docs/editor.md` — editor store overview
@@ -218,3 +307,5 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
   - `src/__tests__/architecture/centralized-site-mutation-history.test.ts`
   - `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`
   - `src/__tests__/editor-store/undo-redo.test.ts`
+  - `src/__tests__/editor-store/structuralMoveUndo.test.ts`
+  - `src/__tests__/editor-store/structuralReloadHistoryPreservation.test.ts`

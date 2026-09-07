@@ -45,6 +45,7 @@ import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, toastStructuralRefusal } from './structuralSourceEdits'
+import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
@@ -517,11 +518,28 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, get)
         return
       }
+      // `store-08` — where the node is NOW, captured before the mutation, is
+      // the only description of the inverse move that exists. `moveNodes`
+      // (core) writes exactly one element to source (`previewStructuralMove`
+      // resolves the commit off `nodeIds[0]`), so that is the one whose origin
+      // undo has to be able to re-issue.
+      const primaryId = nodeIds[0]!
+      const origin = tree ? captureMoveOrigin(tree, primaryId) : null
       mutateActiveTree((draft) => {
         moveNodes(draft, nodeIds, newParentId, newIndex)
         return true
       })
       const commit = plan?.commit
+      // Tagged only when a SOURCE write is actually issued: a CMS or Visual
+      // Component tree has no file to disagree with, so patch-replay undo
+      // stays correct there and must not be routed through a re-issue.
+      if (commit && origin) {
+        tagStructuralGesture(set, {
+          gesture: 'move',
+          undo: origin,
+          redo: { nodeId: primaryId, parentId: newParentId, index: newIndex },
+        })
+      }
       if (commit?.destinationParentNodeId) {
         // W4-1 — the move crossed parents, so the write names the container as
         // well as the neighbour (which may be absent: appending is a position).

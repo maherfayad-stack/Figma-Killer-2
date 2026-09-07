@@ -21,6 +21,44 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### store-08 — Ctrl+Z on a MOVE: the stack was renumbered out from under it
+- **Agent:** store-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/undo-structural-moves` off `origin/main` (`c068b3d`, i.e. after `store-07`/#77). User report, verbatim: "why ctrl z don't work on moving items in the canvas or in layers around it works in values and other stuff — it should work on every action."
+
+**`store-07` was right that the panel was the problem for VALUE edits, and it explicitly did not investigate this. Two separate root causes, both structural.**
+
+**RC1 — the reload renumbered every id the stack was addressed by.** A studio-imported node's id IS its source location (`rel:line:col`). `moveNodes` (`store/slices/site/nodeActions.ts:509`) mutates the tree optimistically, then `commitStudioMove` writes the `.tsx`, then `resyncBoardAfterWrite` re-reads it — and every element below the edit comes back at a NEW line. `historyPreservation.ts`'s `historySurvivesReload` could only ask "does every id a stored patch names still exist?", so `loadSite`/`patchPages` wiped `_historyPast`/`_historyFuture` wholesale. **One drag cost the undo history of every unrelated edit before it** — including the value edits the user says "work". Worse, when the shift PERMUTED line numbers rather than vacating them (three same-size siblings reordered: b→3, c→4, a→5), every old id still "existed", the check said safe, and undo replayed the patch **against whichever element had inherited that address**. Silent wrong-element edit.
+
+New `store/slices/site/historyNodeIdRemap.ts` re-addresses instead of wiping. The correspondence `historyPreservation.ts`'s doc says the client does not have is real for the one case that matters: a reparse triggered by the editor's OWN structural write is a re-read of a tree the store already holds in its post-gesture shape, so the two are isomorphic and a parallel walk from each page root gives an exact old→new id map. Strict by design (same page SET, same `moduleId` and child count at every node, no conflicting mapping for a shared `layout.tsx` id) — a wrong remap is worse than a wipe, so anything the walk cannot match falls through to `historySurvivesReload` exactly as before. Wired into BOTH `loadSite` and `patchPages`; skipped entirely when the stack is empty.
+
+**RC2 — a patch-replay undo of a move is a lie waiting to happen.** `saveSite` diffs node VALUES and has no notion of parent, order or child list — that is precisely why `struct-01` gave structural gestures their own one-shot source commits. So replaying a move's inverse patch moves the element on the canvas, leaves the `.tsx` saying the opposite, and the next reparse silently wins. New `store/slices/site/structuralHistory.ts`: `moveNodes` tags its history entry with the pre-move `(parentId, index)` — the only moment that is still known — and `undo` **re-issues `moveNodes`** back to it, re-planned against the live tree so it rides every refusal gate and writes to source exactly once. Redo is symmetric. Tagged ONLY when a source write was actually issued, so a CMS/Visual-Component tree keeps plain patch replay.
+
+**Slices touched:** `site` only (`nodeActions.ts`, `deleteNodesAction.ts`, `undoRedoActions.ts`, `lifecycleActions.ts`, `types.ts`, + the two new modules). No board/canvas/selection slice changed. **No new selector.** No new mutation — `moveNodes`/`deleteNodes` keep their existing shape and their existing (null) coalesce key; the new `tagStructuralGesture` additionally forces `_historyCoalesceKey = null` so a drag can never fold into a typing burst.
+
+**Now undoable that was not:** canvas body drag reorder + reparent (#76's path), Layers-panel drag (`DomPanel.tsx:161`) — both route through `moveNodes` — and every value/style/rename/lock/hide entry recorded BEFORE any structural gesture, which used to die with the stack.
+
+**Named cuts (still not undoable, deliberately):**
+- **Undo of a source `delete`.** Its entry is now tagged `gesture: 'delete'` and `undo` REFUSES with a toast instead of replaying: no `StudioEdit` kind carries a subtree's source text (`insert` names a component plus literal props), so re-adding the nodes in memory would be a canvas that disagrees with the file. Making this work needs a new writeback kind that round-trips the removed range — real work, its own PR.
+- **`duplicate` / `wrap` / `insert` on a studio tree produce no history entry at all** (W4-1: the store deliberately does not mutate the tree; the source grows and the board re-reads). Undo has nothing to see. Same remedy as delete.
+- **Board state is not undoable at all** — frame move/resize (`boardSlice.ts:548` `setFramePosition` / `:555` `setFrameSize` / `setFrameRect`), board create/rename/delete, guides, annotations, and `prototypeSlice` links. All of it lives outside `site`, and `runHistoricMutation` records only `site`-scoped patches. That is a second history domain, not a patch; audited and named, not attempted.
+- Multi-node drag: only `nodeIds[0]` is tagged, because `previewStructuralMove` already resolves the source commit off `nodeIds[0]` — the tag is faithful to what is actually written, not to what the canvas moved.
+- No browser dogfood (agents don't drive the browser here).
+
+**Gate test updated in the same change:** `patchPages.test.ts`'s "wipes … when the patch removes a node id a stored entry references" asserted the OLD contract for exactly the case this fixes. Split into "RE-ADDRESSES a stored entry when the patch is a faithful re-read" + "still wipes when the patch is NOT a faithful re-read".
+
+**Dogfood checklist for the human** (at `/admin/site`, on a real imported project):
+1. Edit a style value, then drag an element to a new position on the canvas. Press ⌘Z once — the element must go back AND the `.tsx` must change back (watch the file / `git diff`). Press ⌘Z again — the style edit must revert too.
+2. Same with a Layers-panel drag.
+3. Drag an element into a DIFFERENT parent, ⌘Z, then ⇧⌘Z. Both directions must land in the source.
+4. Delete an element, press ⌘Z — expect the "Undo can't restore this yet" toast, and the canvas must NOT resurrect it.
+5. Undo a move, switch to another page, press ⌘Z again — expect the "no longer open" toast, never a wrong-element move.
+6. Move a board FRAME and press ⌘Z — nothing happens. Known and named, not a regression.
+
+**Landmines:**
+- **`buildReparseNodeIdRemap` matches by POSITION.** It is only sound because the store's tree is already in the post-write shape when the resync arrives (optimistic mutation first, then commit, then reload). If any future path reloads BEFORE the optimistic mutation — or writes to source without mutating the tree while keeping the same node count — the walk will happily map the wrong pair. The same-page-SET gate and the moduleId/child-count checks are what keep the current paths honest; do not loosen them.
+- **`runStructuralStep` snapshots BOTH stacks before the re-issue and assigns them wholesale.** The re-issued `moveNodes` is an ordinary mutation: it pushes its own entry and `commitHistory` clears `_historyFuture`. Computing the new stacks from post-gesture state drops the rest of the redo chain — gated by `keeps the rest of the redo chain when it re-issues a move`.
+- `_historyPast` entries are now mutated in place by `tagStructuralGesture` (a `set` immediately after the mutation). It is the only writer of `HistoryEntry.structural`.
+
 ### store-07 — "ctrl z doesn't work": two root causes, both in the panel, plus one half-revert
 - **Agent:** store-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
 - **Branch:** `fix/undo-after-wave7` off `origin/main` (`71060a8`). User report, verbatim: "ctrl z ... doesn't work properly" / "if ctrl z it doesn't work" — nothing changes when the key is pressed.
