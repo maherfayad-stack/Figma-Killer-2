@@ -58,6 +58,142 @@ New `store/slices/site/historyNodeIdRemap.ts` re-addresses instead of wiping. Th
 - **`buildReparseNodeIdRemap` matches by POSITION.** It is only sound because the store's tree is already in the post-write shape when the resync arrives (optimistic mutation first, then commit, then reload). If any future path reloads BEFORE the optimistic mutation — or writes to source without mutating the tree while keeping the same node count — the walk will happily map the wrong pair. The same-page-SET gate and the moduleId/child-count checks are what keep the current paths honest; do not loosen them.
 - **`runStructuralStep` snapshots BOTH stacks before the re-issue and assigns them wholesale.** The re-issued `moveNodes` is an ordinary mutation: it pushes its own entry and `commitHistory` clears `_historyFuture`. Computing the new stacks from post-gesture state drops the rest of the redo chain — gated by `keeps the rest of the redo chain when it re-issues a move`.
 - `_historyPast` entries are now mutated in place by `tagStructuralGesture` (a `set` immediately after the mutation). It is the only writer of `HistoryEntry.structural`.
+### png-export — PNG export stopped refusing to photograph a screen it could see, and ⌘⇧C copies it
+- **Agent:** panel-designer · **Stage:** done (targeted tests + both tsconfigs + eslint + architecture gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/png-export-settle-and-copy-shortcut` off `origin/main` (`c068b3d`).
+
+**Two user asks, one PR.**
+
+**1. Bug, verbatim: "fix this error when exporting the page or element as png".**
+The toast read `PNG export failed — "onboarding" did not finish rendering within
+20000ms — its preview data, fonts, or images never settled.`
+
+**Root cause — the settle predicate had no bounded phases and no honest failure mode.**
+`CaptureFrame.tsx`'s `waitForFrameSettled` looped `previewReadiness.waitUntilIdle
+→ waitForDocumentQuiet → fonts.ready → waitForDocumentQuiet`, every wait
+unbounded, with ONE 20 s `AbortController` over the whole thing. Any wait that
+never resolved rode that abort and the frame reported `ok: false` — a REFUSAL,
+which `exportNodePng` turned into a failed export. The screen was fully painted
+on the canvas at the time.
+
+Evidence gathered, and what it ruled out:
+- **Not a hanging image.** Probed real Chromium (`chromium_headless_shell-1234`)
+  against a 404 image and an unroutable host: both report `complete: true,
+  naturalWidth: 0` after `load`. Nothing in the old loop waited on images at
+  all — the error message named "images" without ever checking one.
+- **Not `document.fonts.ready`.** Same probe with a `@font-face` pointing at a
+  404: `fonts.ready` resolved in 0 ms. `studio-workspace/test4` has no
+  `@font-face` and no `fonts.googleapis.com` link at all — its type stack is
+  `'Open Sans', system-ui, sans-serif`, all system fallbacks.
+- **The remaining phase is `waitForDocumentQuiet`,** which requires 32 ms with
+  ZERO attribute/childList/characterData mutation anywhere under
+  `documentElement`. Several injectors write into that document on a settle
+  cadence (`CanvasScrollUnrollInjector`'s `data-studio-unroll` tagging,
+  `useIframeFrameAutoHeight`'s `body.style.height` pin ⇄ `ResizeObserver`
+  refit). On `Onboarding.tsx` — an `<img>` from an asset import, four
+  `dangerouslySetInnerHTML` SVGs, and a `pkg.*` package component that the
+  capture page never registers (`useRegisterProjectModules` is mounted by the
+  EDITOR, not by `CaptureApp`) — that document does not go quiet inside the
+  budget. **Not reproduced end-to-end**: `playwright-core@1.63` on this machine
+  wants `chromium_headless_shell-1243` and only 1208–1234 are installed, so the
+  headless driver cannot launch here. See "cut" below.
+
+**Fix (the honest one, not a bigger timeout).** One shared, phase-bounded settle
+machine — `settleCaptureDocument` in
+`src/admin/pages/site/canvas/canvasCaptureSettle.ts` — replaces THREE hand-rolled
+copies of the same loop (`CaptureFrame.tsx`, `AgentSnapshotFrame.tsx`,
+`studioExportFrames.ts` — the headless page, the CMS snapshot frame, and the
+live-bridge path all carried the identical defect).
+- **A resource that will never load has already settled.** New
+  `waitForImagesSettled`: an `<img>` is settled the moment it is `complete`, and
+  an `error` event ends the wait exactly like `load`. Broken images are COUNTED
+  and reported (`"2 images failed to load and are missing from this capture."`).
+- Every phase gets its own 5 s bound inside the 20 s outer bound: images, fonts
+  (`fonts.ready` raced, not awaited), DOM quiet. Preview data gets the remainder.
+- **An expired bound is a WARNING on a successful capture, never a refusal.**
+  `CaptureFrame` now always measures and reports the frame; `ok: false` is
+  reserved for a frame that measured 0×0. The result names `stalledPhase`
+  (`dom-quiet` / `images` / `fonts` / `preview-data`) instead of listing all
+  three and shrugging.
+- Removed the effect-level `setTimeout(() => controller.abort(), 20_000)` in
+  `CaptureSettleReporter`: with the deadline now inside the settle function, that
+  abort would have withheld the frame's report entirely and hung the run until
+  the driver's longer `readyTimeoutMs`.
+
+**2. Feature: "allow me to click ctrl + shift + C to copy as png".**
+- New keybinding `export.copySelectionPng` (⌘⇧C / Ctrl+Shift+C, scope `canvas`,
+  `ignoreInEditableField`). **`layers.copy` (⌘C) now rejects Shift** — it did
+  not, so ⌘⇧C would have fired BOTH commands.
+- `useCopyAsPngShortcut.ts` — a document-level listener (the
+  `useBoardSelectAllShortcut` shape: scoped by intent, not focus, so it works
+  while the caret is in the Properties panel), mounted from `CanvasRoot`. Stands
+  down on `defaultPrevented`, `activeInlineEdit`, `hasPendingTextEdit(target)`
+  (PR #77's rule, same as ⌘Z) and `isTextInputTarget`. One capture in flight at
+  a time.
+- `resolveCopyAsPngTarget` (`copyAsPngTarget.ts`) is the pure routing: selected
+  node → that element; exactly one selected board frame → that frame; nothing
+  selected → the open screen. Refuses a multi-frame selection, an empty board,
+  and a Visual Component document by name.
+- `POST /admin/api/studio/node-png` now takes `nodeId` as OPTIONAL — omitted
+  returns the whole frame uncropped. A page has no addressable root element
+  (`page.rootNodeId` is a `base.body` node whose children ARE the iframe body),
+  so there is nothing to crop to for the nothing-selected case.
+- `copyPngToClipboard` in `nodeExportClient.ts`
+  (`navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])`),
+  built on a new shared `fetchNodePngBlob` that `downloadNodePng` now also uses.
+  Feature-detects and refuses by name rather than throwing a bare `TypeError`.
+- Discoverability: a **Copy as PNG** entry in the Export section's `+` menu,
+  carrying the ⌘⇧C hint resolved from the keybindings registry. The Shortcuts
+  help sheet renders from that registry, so it picks the row up for free.
+
+**Files touched.** `src/admin/pages/site/canvas/canvasCaptureSettle.ts`
+(rewritten), `copyAsPngTarget.ts` + `useCopyAsPngShortcut.ts` (new),
+`CanvasRoot.tsx`, `src/admin/agentCapture/CaptureFrame.tsx`,
+`canvas/AgentSnapshotFrame.tsx`, `agent/studioExportFrames.ts`,
+`spotlight/keybindings.ts`, `panels/PropertiesPanel/{ExportSection.tsx,
+ExportSection.module.css, nodeExportClient.ts, nodeExportModel.ts}`,
+`server/handlers/studio/{nodeExportRoutes.ts, nodeExportCapture.ts}`.
+Tests: `canvas/__tests__/{canvasCaptureSettle,copyAsPngTarget}.test.ts` (new, 26
+cases), updated `nodeExportModel.test.ts` + `nodeExportRoutes.test.ts`.
+Docs: `docs/features/mcp-connectors.md` (the settle table + the phase bounds),
+`docs/features/inspector-disclosure.md` §G11.
+**Tokens added to `globals.css`: none** — the one new rule (`.menuShortcut`)
+uses existing `--text-subtle`, `--text-2xs`, `--inspector-caption-gap`.
+
+**Cuts, named:**
+- **No end-to-end reproduction of the 20 s timeout against `test4/onboarding`.**
+  This machine's playwright browser revision does not match `playwright-core`,
+  so the headless driver cannot launch (`bunx playwright install chromium` would
+  fix it; not run — it mutates a cache shared with other agents). The root cause
+  above is from a Chromium probe of the individual primitives plus static
+  analysis of the loop, not from a captured failure. The fix is
+  cause-independent: whichever phase stalls, the export now succeeds with that
+  phase named.
+- **No fix for whatever keeps that document mutating.** Making the injectors
+  converge is a separate change with a separate blast radius; this PR makes a
+  non-converging document produce a picture instead of an error.
+- **CSS `background-image` is not waited on**, only `<img>`. Nothing waited on
+  it before either, and it cannot stall the capture.
+- **Copy as PNG is fixed at @2×**, matching the Export section's default. No
+  density submenu on the shortcut.
+- **`server/ai/mcp/capture/` had 8 pre-existing failures** on `origin/main`
+  (`c068b3d`) and still has exactly 8 — verified against a clean detached
+  worktree. Same for `direct-icon-imports`' `chevron-left` catalog case. Neither
+  is mine.
+
+**Human action needed (dogfood at these four selection states):**
+1. **`test4` → `onboarding`, select the `.hero` `<img>` element** → Export
+   section `+` → PNG @2× → run. It must DOWNLOAD, not toast "did not finish
+   rendering". If the screen was still settling the file still arrives.
+2. **Same screen, nothing selected, press ⌘⇧C** → toast "Copied as PNG ·
+   Onboarding @2×", then ⌘V into Figma/Slack and confirm the whole screen
+   pasted.
+3. **Select one element, press ⌘⇧C** → only that element's rectangle is on the
+   clipboard, and the layer clipboard is UNCHANGED (⌘V on the canvas afterwards
+   must not paste a duplicated node — that is the `layers.copy` Shift guard).
+4. **Click into a Properties-panel field, type a value WITHOUT pressing Enter,
+   press ⌘⇧C** → nothing copies (the draft owns the keystroke), and the field
+   keeps its text.
 
 ### store-07 — "ctrl z doesn't work": two root causes, both in the panel, plus one half-revert
 - **Agent:** store-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
@@ -2709,6 +2845,103 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### export-boards — every board is a tab in the downloaded code
+- **Agent:** server-engineer · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/export-boards-as-tabs` off `origin/main`.
+- **User report, verbatim:** "I created another board, and don't see it in the
+  exported one when download code — I should see the boards as tabs in the
+  downloaded one."
+
+**Where the generator was.** Not on `main` at all. The whole preview shell —
+`server/handlers/studio/prototypeShell/` (8 modules, `ensurePrototypeShell`,
+the thing that writes `registry.generated.jsx`) — lives only on the unmerged
+branch `origin/feat/prototype-mode`. That is why `studio-workspace/test4/`
+has a `prototype/` directory whose registry still says `Board 1` while
+`.studio/boards.json` says `Test` + `Testtt`: those files were written by a
+run of that branch, and nothing on `main` has regenerated them since. The
+export was not dropping the second board — **nothing was regenerating at
+all.**
+
+**Brought across (the minimal coherent slice, not the branch):**
+- `server/handlers/studio/prototypeShell/*` (8 modules) + its
+  `__tests__/prototypeShell.test.ts` (25 tests, green as-ported).
+- The three parse-side guards the shell cannot exist without —
+  `PROTOTYPE_SHELL_DIR`/`isPrototypeShellPath` in
+  `src/core/page-parser/workspaceFiles.ts` (+ barrel), `findEntryFile`
+  (`collectPageStylesheets.ts`), `NON_PAGES_DIR_SEGMENTS` (`projectProbe.ts`),
+  `extractLocalComponentCatalog` (`componentSpecExtract.ts`). Without these,
+  Studio reads its own scaffold back as the user's design — `shell.css` lands
+  in their style rules and `CanvasPanel` shows up in the component picker.
+
+**Shipped on top:**
+1. **Regeneration before the zip.** `buildStudioDownloadResponse` calls
+   `ensurePrototypeShell(dir)` first. This is the actual fix for the report:
+   the load memo (`workspaceLoadFingerprint`) covers the user's SOURCE, not
+   `.studio/boards.json`, so creating a board is a memo **hit** — a
+   regeneration hung off the parse alone would be skipped exactly when the
+   boards it reads have changed. `loadStudioPages` also calls it, placed
+   BEFORE the memo for the same reason.
+2. **Boards render as tabs in both views.** The tab row was gated on
+   `view !== 'canvas'` — invisible in the view a downloaded prototype opens
+   on — while the canvas stacked every board as a titled row. It is now
+   `BOARDS.length > 1` unconditionally, and `CanvasPanel` draws the ACTIVE
+   board only.
+3. **The screen row is scoped to the active board** (`boardScreens`), falling
+   back to every screen for a board with no frames. Switching to a board that
+   does not hold your current screen lands you on that board's first frame
+   instead of stranding the flow view.
+4. `LINKS` stays project-wide on purpose — a link addresses a SCREEN, not a
+   board, so scoping it to the tab would break a jump to a screen the author
+   put on a different board. Reasoned in the emitted comment and in the doc.
+
+**Why bumping `App.jsx` is allowed.** `.studio/shell.json` records the SHA-256
+of every static shell file Studio wrote. A file whose hash still matches is
+one nobody edited and is updated; a file whose hash differs belongs to the
+user and is never written again. All 11 shell files in `test4` currently hash
+MATCH, so it picks up the tabs on the next open or download. That mechanism is
+the contract, documented in `docs/features/prototype-export.md` §2.
+
+**Cuts — named, not hidden.** From `origin/feat/prototype-mode` I deliberately
+did NOT bring: the trash subsystem (`pageTrash.ts`, `projectTrash.ts`,
+`trashRoutes.ts` and the `projectRoutes.ts`/`studio.ts` rewiring that comes
+with it), the MCP `prototypeTools.ts`, the `navigationIntent.ts` parse
+addition (code-derived connectors), `src/core/studio-anchor/` +
+`src/core/studio-prototype/`, and every canvas/inspector change on that
+branch. Also cut: `docs/features/prototype-mode.md` (it documents the LINK
+model, which is a different feature) — I wrote a focused
+`docs/features/prototype-export.md` instead. Not touched: the pre-existing
+`buildStudioDownloadResponse` 404 body, which echoes the full workspace path
+back to the client. It is a real (small) leak and it is not mine; flagging it
+rather than widening this PR.
+
+**Dogfood checklist for the human (no browser tests by agents):**
+1. Open `test4` in Studio at `/admin/site`. Confirm `prototype/App.jsx` and
+   `prototype/registry.generated.jsx` were rewritten and the registry now
+   lists BOTH `Test` and `Testtt`.
+2. Click "Download the code". Unzip. Confirm `prototype/registry.generated.jsx`
+   in the ZIP has both boards, and that no `.studio/` entry is present.
+3. Create a THIRD board in Studio and, without reloading, download again —
+   the new board must be in that zip.
+4. `bun install && bun run dev` in the unzipped copy. Confirm a **Boards** tab
+   row above the canvas, that clicking a tab swaps which frames the canvas
+   draws, and that a prototype link still jumps to its target screen.
+5. Edit one line of `prototype/App.jsx` in `test4`, reopen the project, and
+   confirm Studio did NOT overwrite it.
+
+**Verification run:** `bun test server/handlers/studio/__tests__/prototypeShell.test.ts server/handlers/studio/__tests__/prototypeShellBoards.test.ts server/handlers/__tests__/studio.test.ts server/handlers/__tests__/projectProbe.test.ts server/handlers/__tests__/componentSpecExtract.test.ts server/handlers/__tests__/studioProjects.test.ts` (242 pass) ·
+`bun test src/__tests__/studio` (177 pass) ·
+`bun test src/__tests__/architecture/boundary-validation.test.ts src/__tests__/architecture/no-core-barrel-deep-imports.test.ts` (9 pass) ·
+`tsc -p tsconfig.node.json --noEmit` + `tsc -p tsconfig.app.json --noEmit` clean ·
+`bunx eslint` on all changed files clean. Emitted `App.jsx` / `registry.generated.jsx` / `CanvasPanel.jsx` / `Player.jsx` parse-checked through esbuild's JSX loader against a COPY of `test4` (user data untouched).
+
+**Routes changed:** `GET /admin/api/studio/download` — unchanged request
+(`?dir=<abs>`) and unchanged response (`application/zip`, or `{ error }` on
+404). New behaviour only: it regenerates the shell before zipping.
+**Rejections tested:** a `dir` that does not exist still 404s and writes
+nothing; a corrupt `.studio/boards.json` yields a shell with no boards rather
+than a throw or a 500; a frame whose page was deleted is dropped without
+dropping its board; `.studio/` never appears in the archive.
 
 ### strict-teeth — W9-3: strict-mode teeth (crop reconciliation, font availability, named regions)
 - **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07

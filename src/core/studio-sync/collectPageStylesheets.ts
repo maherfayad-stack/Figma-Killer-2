@@ -46,6 +46,7 @@
  * (`ProjectCssInjector`) that never touches `site.styleRules`/`classIds`.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { isPrototypeShellPath } from '@core/page-parser'
 import path from 'node:path'
 import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
@@ -244,7 +245,20 @@ export function findEntryFile(root: string): string | undefined {
       if (src) {
         const abs = path.resolve(root, src.replace(/^\//, ''))
         const rel = path.relative(root, abs)
-        if (!rel.startsWith('..') && !path.isAbsolute(rel) && existsSync(abs)) return abs
+        // NOT the preview shell's own entry. Studio scaffolds an `index.html`
+        // pointing at `prototype/main.jsx`, and adopting that as the project's
+        // entry point makes Studio read its own scaffold back as the user's
+        // app — see `isPrototypeShellPath`. Fall through to the conventional
+        // candidates, which is where the user's real entry lives if they have
+        // one.
+        if (
+          !rel.startsWith('..') &&
+          !path.isAbsolute(rel) &&
+          !isPrototypeShellPath(rel.split(path.sep).join('/')) &&
+          existsSync(abs)
+        ) {
+          return abs
+        }
       }
     } catch {
       // Unreadable index.html — fall through to the conventional candidates.
