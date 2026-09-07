@@ -64,7 +64,7 @@
  */
 import { existsSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, PROTOTYPE_SHELL_DIR, listWorkspaceFiles } from '@core/page-parser'
 import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
 import { Type } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
@@ -101,7 +101,12 @@ const NEXT_CONFIG_NAMES = ['next.config.js', 'next.config.mjs', 'next.config.ts'
 const VITE_CONFIG_NAMES = ['vite.config.ts', 'vite.config.js', 'vite.config.mts', 'vite.config.mjs', 'vite.config.cjs'] as const
 const CRA_ENTRY_CANDIDATES = ['src/index.tsx', 'src/index.jsx', 'src/index.ts', 'src/index.js'] as const
 /** Directory segments the pages-dir heuristic and the file scans below never consider a "screens" directory. */
-const NON_PAGES_DIR_SEGMENTS = new Set(['public', '__tests__', '__mocks__'])
+// `prototype` is Studio's OWN preview shell (`prototypeShell/`), not the
+// user's screens. Every file in it is a JSX-returning default export —
+// exactly what `rankPagesDirCandidates` scores on — so without this a
+// re-probe could rank the shell above the real `pages/` and Studio would
+// start treating its own scaffold as the design.
+const NON_PAGES_DIR_SEGMENTS = new Set(['public', '__tests__', '__mocks__', PROTOTYPE_SHELL_DIR])
 
 // ---------------------------------------------------------------------------
 // Small file-read primitives
