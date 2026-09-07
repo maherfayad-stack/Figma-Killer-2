@@ -147,13 +147,14 @@ const ALLOWLIST = new Set([
   'admin/pages/site/panels/TypographyPanel/FontsSection/AddGoogleFontDialog.tsx',
 
   // ── §8.11 Overview project-launcher cards ───────────────────────────────
-  // DashboardPage (the studio Overview) renders each project as a card-style
-  // tile in a responsive grid: a folder glyph on top, project name, then a
-  // page-count meta line stacked below. The whole surface is the click target
-  // that opens the project. Button's fixed-height inline-flex row layout
-  // cannot represent this stacked card grid — same pattern class as §8.5's
-  // full-surface tiles.
-  'admin/pages/dashboard/DashboardPage.tsx',
+  // ProjectCard (the studio Overview's tile) renders each project as a
+  // card-style tile in a responsive grid: a folder glyph on top, project name,
+  // badges, then a page-count/last-edited meta line stacked below. The whole
+  // surface is the click target that opens the project. Button's fixed-height
+  // inline-flex row layout cannot represent this stacked card — same pattern
+  // class as §8.5's full-surface tiles. (The ⋯ menu trigger beside it IS a
+  // `Button`; only the tile itself is bare.)
+  'admin/pages/dashboard/ProjectCard.tsx',
 
   // ── §8.12 Boards section collapse toggle ────────────────────────────────
   // StudioBoardsList's disclosure toggle must render its label in the exact

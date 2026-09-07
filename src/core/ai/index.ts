@@ -97,21 +97,26 @@ export {
   SetSpacingScaleInputSchema,
   RenderSnapshotInputSchema,
   StudioExportFramesInputSchema,
-  StudioSetFrameAxesInputSchema,
-  StudioComputedStylesInputSchema,
   StudioPageDiagnosticsInputSchema,
-  StudioDuplicateFrameAsVariantInputSchema,
   StudioUploadAssetInputSchema,
   StudioListComponentsInputSchema,
   StudioFindComponentInputSchema,
   StudioListComponentBindingsInputSchema,
   StudioFetchRemoteAssetInputSchema,
+} from './toolSchemas'
+export {
   StudioRegisterDesignReferenceInputSchema,
   StudioListDesignReferencesInputSchema,
   StudioReadDesignReferenceInputSchema,
   StudioRecommendExportDprInputSchema,
   StudioDeleteDesignReferenceInputSchema,
-} from './toolSchemas'
+} from './designReferenceToolSchemas'
+export {
+  StudioSetFrameAxesInputSchema,
+  StudioComputedStylesInputSchema,
+  StudioDuplicateFrameAsVariantInputSchema,
+  StudioMeasureElementInputSchema,
+} from './studioFrameToolSchemas'
 export type {
   InsertHtmlInput,
   GetNodeHtmlInput,

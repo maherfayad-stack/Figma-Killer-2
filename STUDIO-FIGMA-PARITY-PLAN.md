@@ -94,6 +94,7 @@ appear here as they land; an absent task has not started.
 | Track | Status |
 |---|---|
 | **W8-1** inspector field ergonomics | ✅ landed — one commit coercion (a typed `50` in Width no longer emits the invalid `width: 50`), ONE nudge model (1 / 10 / 0.1; the ±8 variants are gone) now also covering `opacity`/`zIndex`, arithmetic (`100/2`, `100+8`) in every numeric field through one shared evaluator, Enter commits **and keeps focus** in all three field kinds, Flip H/V on the rotation row via the standalone `scale` property, and **G9 finished** (`color` → Fill, `textShadow` → Effects). Not dogfooded in a browser — see the `w81` handoff in `STATE.md` |
+| **W9-6** bridge-bound tools go headless | ✅ landed — `studio_computed_styles`, `studio_set_frame_axes` and `studio_duplicate_frame_as_variant` no longer need an open editor tab. The first renders on the headless capture substrate (live tab kept as fallback; `readVia` says which answered); the two board tools write `.studio/boards.json` directly and push a live reload. `studio_upload_asset` deliberately stays browser-side — it posts as the signed-in user. **New `studio_measure_element`**: rendered boxes, padding/margin/border and the measured gap to siblings beside the parent's DECLARED gap. Not dogfooded in a browser — see the `mcp-20` handoff in `STATE.md` |
 
 ---
 

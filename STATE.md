@@ -132,6 +132,294 @@ are the remaining WS-2 items, not yet dispatched. See
   6. `backgroundColor` + layers: the solid fill row is BELOW the layers, and
      removing the last layer leaves the solid fill and the section alive.
 
+### mcp-20 — W9-6: the last three bridge-bound tools go headless, and the agent gets a ruler
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `feat/headless-bridge-tools` off fresh `origin/main`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W9-6 exactly — `studio_computed_styles`,
+  `studio_set_frame_axes` and `studio_duplicate_frame_as_variant` work with no
+  editor tab open; `studio_upload_asset` stays browser-side; add
+  `studio_measure_element`.
+- **Scope:** NEW `src/core/studio-capture/{frameInspectWire,frameInspector}.ts`,
+  `src/core/ai/studioFrameToolSchemas.ts`,
+  `src/admin/agentCapture/frameInspectBridge.ts`,
+  `server/ai/mcp/capture/{captureSession,headlessFrameInspect}.ts`,
+  `server/ai/mcp/tools/studio/{computedStyles,measureElement,frameAxesTools,uploadAssetTool}.ts`
+  (+ tests). MODIFIED `headlessCapture.ts`, `editTools.ts`, `boardFrames.ts`,
+  `agentToolNames.ts`, `parityMatrix.ts`, `systemPrompt.ts`, `frameGrid.ts`,
+  `boardSlice.ts`, `executor.ts`, `CaptureFrame.tsx`, `main.tsx`,
+  `docs/features/{agent,mcp-connectors}.md`. DELETED
+  `server/ai/mcp/tools/studio/browserBridgeTools.ts`; RENAMED
+  `studioBrowserBridgeTools.ts` → `studioUploadAsset.ts` (both halves).
+- **Done so far:**
+  - **A second wire contract on the capture page.**
+    `window.__studioAgentCaptureInspect(requestJson) -> responseJson`, installed
+    beside `__studioAgentCapture`, TypeBox-validated in both directions. One
+    global with a discriminated request (`computedStyles` | `measure`) rather
+    than two globals and two settle paths.
+  - **One reader, two documents.** `@core/studio-capture`'s
+    `inspectFrameDocument` is the measurement; the capture page AND the live
+    canvas both run it. Two readers would mean the number
+    `studio_computed_styles` reports depends on which path answered.
+  - **`captureSession.ts`** extracts the five steps both drivers share (mint
+    grant → warm page → navigate → settle → validate report). `headlessCapture.ts`
+    keeps only the photography; `captureFrames.ts` was NOT touched (W10 owns it)
+    because `headlessCapture.ts` re-exports the moved types.
+  - **`studio_computed_styles`** is `execution:'server'`, headless-first with
+    the live tab as fallback; `readVia` says which answered and a both-paths
+    failure names BOTH reasons. **It now also works for a page with NO board
+    frame at all** — `capturePayload.ts` defaults frame geometry, so the live
+    path's "place a frame first" precondition is gone on the headless path.
+  - **`studio_set_frame_axes` / `studio_duplicate_frame_as_variant`** are
+    `execution:'server'` and write `.studio/boards.json` through
+    `boardFrames.ts`'s now-exported `readBoardsFile`/`writeBoardsFile`, then
+    `pushStudioLiveReload({ boardsChanged: true })` so an open tab re-reads.
+    `VARIANT_GAP` moved to `@core/studio-board`'s `frameGrid.ts`, shared with
+    `boardSlice.ts`.
+  - **NEW `studio_measure_element`** — rendered boxes, padding/margin/border,
+    and the measured gap to siblings **beside the parent's declared
+    row-gap/column-gap**. That pair is the diagnosis: agreeing means the gap
+    value is wrong, disagreeing means a margin is in play. Follows
+    `studio_screenshot`'s three-step ritual (sync board → await live-reload →
+    read) so it measures a screen the agent just wrote. Registered in the
+    barrel, `agentToolNames.ts`, `parityMatrix.ts` and the system prompt.
+  - **`studio_upload_asset` deliberately did not move** — it posts as the
+    signed-in user, which is the one authority a server tool cannot hold.
+- **Next step:** none for this entry.
+- **Decisions:**
+  - **One inspect global, not two.** Both new reads are "run a DOM read against
+    a settled capture frame and return validated JSON". A discriminated
+    request keeps one settle path, one schema pair and one driver helper.
+  - **`studio_measure_element` has no live-tab fallback**, unlike
+    `studio_computed_styles`. The tab is authoritative only for an unsaved
+    in-progress edit; a measurement of layout the agent itself just authored
+    has no such state, so a fallback would only be a slower read of the same
+    file.
+  - **`mutates: true` on a measurement.** It runs `syncBoardFramesFromDisk`,
+    which is a write — the same trade `studio_screenshot` makes, and for the
+    same reason: an agent that has to remember a placement call first will skip
+    it and measure nothing.
+  - **The three moved tools' schemas gained an optional `dir`.** They are
+    server tools now, so they need the same `resolveToolProjectDir` fallback
+    chain every other Studio tool has. The bridge relay deliberately does NOT
+    forward `dir` — the tab already knows which project it has open.
+- **Landmines:**
+  - **`bun test src/__tests__/architecture/module-size-budgets.test.ts` fired on
+    my own diff.** Adding the `studio_measure_element` schema pushed
+    `src/core/ai/toolSchemas.ts` from 688 → 745 lines. Extracted the five
+    frame-addressing schemas to `src/core/ai/studioFrameToolSchemas.ts`
+    (629 + 129) rather than grandfathering. Anything else added to
+    `toolSchemas.ts` will hit this again within ~70 lines.
+  - **`editTools.ts`'s `studio_set_frames` was silently resizing nothing.** It
+    called `resizeFrame(next, frame.pageId, …)`, but `resizeFrame` keys on
+    `f.id` — and every frame written since WS-10 Phase 2 has a `crypto.randomUUID()`
+    id. It still reported `resized: N` and success. Fixed to `frame.id` in this
+    PR (same file, same family; it also lost its private third copy of
+    `writeBoardsFile`). It only ever worked for legacy files where `coerceFrame`
+    synthesised `id = pageId`.
+  - **`createScaffoldedPage(dir, nameInput)` takes a STRING, not an options
+    object**, and it already places a board frame — a test asserting the
+    "no frame yet" path must delete `.studio/boards.json` after scaffolding.
+  - **`safeParseValue` returns `{ ok: false, errors: [{path, message}] }`, not
+    `.error`.** `safeParseJson` DOES return `.error`. Easy to mix up.
+  - **`mock.module` replaces a module for EVERY file in the same `bun test`
+    run**, and a factory that omits an export makes any sibling importing it
+    die with `SyntaxError: Export named 'x' not found`. `measureElement.test.ts`
+    and the pre-existing `compare.test.ts` both mock `./liveReloadPush`;
+    completing both factories (added `pushStudioLiveReload` +
+    `STUDIO_LIVE_RELOAD_TOOL_NAME`) fixed `frameAxesTools.test.ts` in a batch.
+  - **`liveReloadPush.test.ts` is broken by ANY batch containing a suite that
+    mocks `../../editorBridge`** — it imports the real
+    `createEditorBridgeStream`. That is PRE-EXISTING (`compare.test.ts` on
+    `origin/main` already does it) and `computedStyles.test.ts` follows the same
+    established pattern rather than inventing a new one. **Do not "fix" it by
+    stubbing more exports into the factory** — I tried; it converts a module
+    error into three behavioural failures, which is worse. Rewriting
+    `computedStyles.test.ts` to register a REAL bridge stream was also tried and
+    times out against `awaitEditorBridgeForUser`'s reconnect windows. The real
+    fix is for `liveReloadPush.test.ts` (or the mockers) to stop sharing that
+    module path in one run — out of scope here, and part of the documented
+    batch-isolation cluster.
+- **Verification:** `bunx tsc -b` ✅ exit 0 (`bun run build`'s vite half cannot
+  run in a worktree — `standing-08`). `bun run lint` ✅ clean.
+  New suites: `frameInspector.test.ts` 17 pass · `headlessFrameInspect.test.ts`
+  9 pass · `frameAxesTools.test.ts` 9 pass · `computedStyles.test.ts` 6 pass ·
+  `measureElement.test.ts` 7 pass. `bun test src/__tests__/ai src/__tests__/agent`
+  → 482 pass / 0 fail. `bun test src/admin/pages/site/agent src/core/studio-capture
+  src/core/studio-board` → 163 pass / 0 fail. `bun test src/__tests__/architecture`
+  → 18 fail, all the pre-existing `icon-catalog-integrity` cluster
+  (`standing-01`). `bun test server/ai/mcp server/ai/tools` → 8 fail, all the
+  pre-existing browser-dependent `captureFramesHeadless` / W4-2A `studio_compare`
+  batch-isolation cluster; `bun test server/ai/mcp/capture/headlessCapture.test.ts`
+  alone is 10 pass / 0 fail.
+- **Human action needed:** **dogfood — no e2e covers any of this.** With the
+  editor tab CLOSED, ask the agent to (1) `studio_computed_styles` a page and
+  confirm `readVia: "headless"` with real rows; (2) `studio_measure_element` a
+  page with a flex column and confirm `gapAfterPx` vs `parent.rowGapPx` read
+  sensibly; (3) `studio_set_frame_axes` to RTL, then reopen `/admin/site` and
+  confirm the frame is in RTL. Then with the tab OPEN, call
+  `studio_duplicate_frame_as_variant` and confirm the new frame appears on the
+  live board without a reload (the `boardsChanged` live-reload push). Needs
+  `bunx playwright install chromium`.
+### panel-14 — W7-2: the launcher card says what a project IS, and every verb that acts on it
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/launcher-card-data-verbs`, branched off `origin/main` at
+  `e702497` (W7-1 / PR #44) and merged forward to `2901afe` (PR #49).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W7-2 exactly — card data, rename from the
+  launcher, duplicate, a card context menu, and ⌘K "Open project …". Nothing
+  from W7-3 (thumbnails), W7-4 (import/trash) or W7-5 (onboarding), which are
+  other agents' waves and all edit these same three launcher files.
+- **Scope:** `server/handlers/studioProjects.ts`, `server/handlers/studio.ts`,
+  `server/handlers/studio/{projectDuplicate.ts (new),projectRoutes.ts,studioMeta.ts,projectProfileSchema.ts,styleCompile.ts,styleCompileConsent.ts}`
+  (+ `studio/__tests__/projectDuplicate.test.ts`, `handlers/__tests__/studio.test.ts`),
+  `src/admin/pages/dashboard/{ProjectCard.tsx,ProjectCard.module.css,editedAgo.ts,editedAgo.test.ts}` (new)
+  + `{DashboardPage.tsx,DashboardPage.module.css,DashboardPage.test.tsx,hooks/useStudioProjects.ts}`,
+  `src/admin/pages/site/studio/styleCompileConsent.ts` (one doc pointer),
+  `src/admin/spotlight/{providers/projectsProvider.ts,__tests__/projectsProvider.test.ts,scopes/rootScope.ts}`,
+  `src/__tests__/architecture/button-primitive-usage.test.ts`,
+  `docs/agent-refs/path-index.md`.
+- **Done so far:**
+  - **Card data.** `StudioProjectSummary` gains `platform`, `framework`,
+    `trust`, `styleToolchains` and `editedAt`. Every field comes from reads
+    `listStudioProjects` was ALREADY doing per entry and discarding (the
+    `.studio/meta.json` read, the pages-dir walk) plus one `statSync` per file
+    in that same walk. Nothing here probes — a probe per project on a launcher
+    render is not a cost a listing should carry, so an unprobed project simply
+    has no `framework` and no `styleToolchains`, and the card badges nothing.
+  - **`studioProjectSummary(dir)` is the ONE builder** of that shape. The
+    listing, `/create`, `/rename` and `/duplicate` all return one, so a card
+    redrawn from a mutation's answer can never carry less than a card drawn
+    from the listing. It also fixes a live bug: `/rename` hand-built its
+    summary and recomputed `pageCount` with a bare `discoverPageFiles`, which
+    reports the wrong number for a `next-app` project (that directory is full
+    of `layout.tsx`/`route.ts` files that are not routes).
+  - **`ProjectCard`** renders the badges + `N pages · Edited 2 days ago`, and
+    carries an Open / Rename / Duplicate / Delete `ContextMenu` opened either
+    from a hover/focus-revealed ⋯ button or by right-clicking the tile. Delete
+    moved off the hover-only trash ghost — it was the most reachable control
+    on the launcher and the most destructive verb in the product; it is still
+    behind `DeleteProjectDialog`.
+  - **Rename is inline**, and is the toolbar's `StudioProjectLabel` gesture
+    verbatim: the name becomes an `<input>`, Enter/blur commits, Escape
+    reverts, with the same `committingRef` latch (Enter blurs to commit, so
+    without it the blur handler commits a second time).
+    `renameStudioProject` had existed in `useStudioProjects.ts` since it was
+    written, with zero launcher callers.
+  - **`POST /admin/api/studio/duplicate`** (`projectDuplicate.ts`) — `cpSync`
+    of the whole project minus `node_modules`, `dist`, `.next`, `.turbo` and
+    `.git`, under the first free DISPLAY name, `lastOpenedAt` cleared, project
+    guide regenerated. Capability-gated `studio.write` alongside `/delete`.
+  - **⌘K.** `projectsProvider` on the root scope: "Open <project>" from
+    anywhere in the admin, performing the launcher's own three steps
+    (`requestCmsSiteReload()` → `setStudioWorkspaceDir` → navigate) rather
+    than bouncing the user through `/admin/dashboard`.
+  - **`lastOpenedAt`** is stamped into `.studio/meta.json` by
+    `GET /admin/api/studio/load` (`recordProjectOpened`) — W7-5 step 2's
+    stated dependency.
+  - **`compilableStyleToolchains` moved** from `styleCompile.ts` to the
+    `projectProfileSchema.ts` leaf, so the launcher can ask "will this
+    project's styles render?" without importing the Tier-1 subprocess
+    machinery for a six-line pure predicate. Three callers now share it.
+- **Next step:** W7-3 (thumbnails), W7-4 (import/trash) and W7-5 (onboarding)
+  are unblocked and may run in parallel with each other — but W7-3 redesigns
+  the card around a preview image, so it owns `ProjectCard.tsx` and must not
+  run beside anything else touching it.
+- **Decisions:**
+  - **`editedAt` stats every file under the pages dir, not the directory.**
+    The plan suggested "one `statSync`", and one stat of the pages DIRECTORY
+    would have been cheaper — but writing an existing file does not touch its
+    parent's mtime, so that number reports the last time a page was ADDED or
+    REMOVED and the card would call that "Edited". Studio's most common write
+    (an inline style into a `.tsx`, a rule into a co-located `.module.css`)
+    would never move it. The walk already happens for `pageCount`; the added
+    cost is one `stat` per file in the pages dir, the same order as the
+    `readdir` that produced the list.
+  - **The trust badge is `trust === 'static' && styleToolchains.length > 0`,
+    not the tier.** Every project defaults to Tier 0, so a bare "Tier 0" badge
+    on every card is noise. The fact worth surfacing is the one W7-2's own
+    plan text names: a project whose Tailwind/Sass/PostCSS has not run opens
+    unstyled. Above Tier 0 the compile happens, so the badge would be false
+    and is not rendered.
+  - **The framework comes from the CACHED probe only.** `resolveProjectProfile`
+    would give a better answer and also probe (and write) N projects on every
+    launcher render. An absent badge is honest; a slow launcher is not.
+  - **Duplicate leaves `.git` behind, and says so in the toast.** A copied
+    `.git` is not a fork — it is a second working copy pointing at someone
+    else's remote, and pushing from it pushes to the original's origin. The
+    `.studio/` sidecar IS copied, because it is the board.
+  - **The duplicate's display name is chosen BEFORE the folder slug.**
+    `displayName` is what the launcher sorts and renders and the slug is a
+    stable id assigned once (that split is why `/rename` exists at all).
+    De-duplicating the folder first and deriving the name from it would show
+    the user `acme-copy-2` as a project title.
+  - **`formatEditedAgo` is its own function, not AgentPanel's
+    `formatRelativeTime`.** Same input, deliberately different sentence: that
+    one is a terse chip in a 290px panel ("3h"), this is a clause on a
+    home-surface card. A card reading "Edited 3h" reads as truncated. Sharing
+    one formatter would give one of the two call sites the wrong voice.
+  - **Duplicate is capability-gated, `/create` still is not.** `/delete`'s
+    module doc already calls its ungated neighbours a real gap and not a
+    precedent; duplicating writes an entire second repository to the user's
+    disk, so it follows `/delete`, not `/create`.
+- **Landmines:**
+  - **`generateStudioProjectGuide` is not read-only.** It calls
+    `healMissingDesignSystem`, which applies the design-system SEED to any
+    project with no `package.json` — writing `package.json` and
+    `node_modules/@alm-design` into the target. The first version of
+    `projectDuplicate.test.ts`'s "nothing regenerable was copied" case failed
+    because of exactly this, and the `cpSync` filter was innocent. Any fixture
+    in that file needs a real `package.json`.
+  - **`DashboardPage.test.tsx`'s `useStudioProjects` stand-in is still a real
+    hook** (`panel-12`'s landmine, still true) — and its project fixtures now
+    have to carry `trust`, `styleToolchains` and `editedAt`, because the
+    client schema validates them as REQUIRED. They are required deliberately:
+    the server always sends them, and an optional field here would let a
+    silently-changed wire shape through as `undefined`.
+  - **Delete is no longer reachable by `getByRole('button', { name: 'Delete X' })`.**
+    Any future test (or e2e) aiming at it must open the card's action menu
+    first — `Actions for <name>` — and then click the `Delete` **menuitem**.
+  - **The worktree had no `node_modules`** (`panel-12` saw the same). `bun run
+    build` and the whole `icon-catalog-integrity` gate fail wholesale before
+    `bun install`. Not icon drift.
+- **Verification:** `bun run build` ✅, `bun run lint` ✅ (both re-run after
+  merging `origin/main` up to `2901afe`). Targeted, all green:
+  `server/handlers/__tests__/studio.test.ts` → 85 pass;
+  `server/handlers/studio/__tests__/projectDuplicate.test.ts` → 10 pass;
+  `src/admin/pages/dashboard` + `src/admin/spotlight` → 121 pass;
+  `src/__tests__/architecture` → 509 pass / 1 fail (`icon-catalog-integrity`'s
+  `chevron-left` sample, `standing-01`-class pre-existing).
+  Full `bun test` on the pre-merge tree → 11467 pass / 39 fail, every failure
+  in the two clusters `STUDIO-WAVE7-PLAN.md`'s global rules name as
+  pre-existing (headless-capture / canvas batch-isolation, which pass per
+  file, and the `chevron-left` icon sample). Nothing under `dashboard/`,
+  `spotlight/`, `studioProjects` or `studio/` fails.
+- **Human action needed:** **dogfood — every change here is visual and e2e
+  covers none of it.** At `/admin/dashboard`:
+  1. Confirm each tile shows its badges and an "Edited …" line, and that the
+     numbers are right (rename a page file in one project, reload, and check
+     the line moves — this is the claim `editedAt` makes).
+  2. Open a Tier-0 project that uses Tailwind or Sass and confirm the amber
+     "… not compiled" badge is there BEFORE you open it, and that it
+     disappears after promoting the project from the board's consent banner.
+  3. Hover a tile → ⋯ → confirm Open / Rename / Duplicate / Delete. Then
+     right-click the tile and confirm the same menu appears at the pointer.
+  4. Rename from the menu: the name becomes a field, Enter commits, Escape
+     reverts, and the grid re-sorts under the new name after the refetch.
+  5. Duplicate a REAL imported repo (one with `node_modules`) and check:
+     the copy appears as "<name> copy", opening it shows the same board and
+     frames, and `studio-workspace/<slug>-copy/` has no `node_modules`, no
+     `.git`, and a fresh `CLAUDE.md`.
+  6. Delete from the menu and confirm the dialog still names the project.
+  7. ⌘K from inside the editor, type a project name, press Enter — you should
+     land on that project's board with ITS pages, not the previous project's
+     tree under the new directory (that is the `requestCmsSiteReload()` this
+     provider makes; it is the one thing worth checking twice).
+  8. Check both themes — the badges use `--bg-surface-4`/`--warning-20`, which
+     are re-tuned in light.
+
 ### panel-13 — W8-1: one field model for every number in the inspector
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open) — **needs human dogfood**
@@ -350,6 +638,36 @@ are the remaining WS-2 items, not yet dispatched. See
   - **The compare numbers are for a 5-page batch of SMALL screens on one machine.** They are a floor, not a budget — nothing gates on them yet, and nobody should turn them into a gate without a second machine's run.
 - **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — see the entry's PR body for the run; failures are the standing pre-existing set (`standing-01`), none in `scripts/`.
 - **Human action needed:** none. Re-run `bun run bench:agent-turn` after W9-2/W9-5 land and diff against the table above.
+
+### mcp-20 — W9-1(1): a pasted screenshot was silently the design spec; references now have roles, and an ambiguous page is refused
+- **Agent:** studio-implementer (resumed — the first agent was killed on a session limit near the end; its uncommitted worktree was picked up, not redone)
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `fix/design-reference-resolution`, merged up to `origin/main` (#43/#44/#45 fast-forwarded in clean, then #46/#47).
+- **Goal:** W9-1 item 1 exactly — labelled/explicit references beat chat attachments, an ambiguous page is refused instead of guessed, a chat image is *context* until an explicit gesture promotes it, and `mode`/`passScore`/`maxRegionCoverage` land on the persisted shape for W9-2 to consume.
+- **Scope:** `server/ai/mcp/tools/studio/{referenceResolve.ts,referenceResolve.test.ts (new),designReferenceTools.ts}`, `server/handlers/studio/{designReferenceSchema.ts,designReferenceStore.ts,turnDesignReferences.ts,referenceUpload.ts,pageWriteVerification.ts}` + their tests, `server/ai/tools/studio/{liveDigest.ts,systemPrompt.ts}`, `src/core/ai/{designReferenceImage.ts,toolSchemas.ts,designReferenceToolSchemas.ts (new),index.ts}`, `docs/features/{agent.md,mcp-connectors.md}`.
+- **The bug, concretely:** `resolveDesignReference` picked the most recently registered reference while `registerTurnDesignReferences` registered EVERY chat-attached image durably. A screenshot pasted to ask a question outranked the Figma frame the page was built from. Live in `studio-workspace/test4`: the `sms` page's 375x800 frame is shadowed by a 943x294 chat crop, so `studio_compare` refuses on aspect ratio and the Stop gate can never pass again — the real design still on disk, correct, unreachable.
+- **Done so far:**
+  - **`role` on the persisted shape** (`designReferenceSchema.ts`): `'spec' | 'context'`, optional. `designReferenceRole()` derives it from `source` for rows written before the field (`chat-attachment` → `context`, anything else → `spec`). **No rewrite pass runs** — a row gains an explicit role only when next written. `CHAT_ATTACHMENT_REFERENCE_SOURCE` moved here from `turnDesignReferences.ts`: reading a legacy row's role back is a property of the persisted shape, not of the turn pipeline.
+  - **Four-tier precedence, role first** (`referenceResolve.ts`): page-scoped `spec` → unscoped `spec` → page-scoped `context` → unscoped `context`. First non-empty tier decides; **>1 candidate in it is a refusal naming every id, its dimensions and label**, plus the `referenceId` argument that ends it. A reference scoped to a *different* page is never a candidate and gets its own message. Failures are now typed (`ResolveReferenceFailure`: `unknown-id`/`ambiguous`/`other-pages-only`/`none`).
+  - **A chat attachment registers `role:'context'`**; the composer's DESIGN REFERENCE upload route and `studio_register_design_reference` both default to `'spec'`.
+  - **The write-verification gate stopped giving the wrong instruction.** An ambiguous page resolves to no reference, so it used to fall into `describeUnverifiedPage`'s unarmed branch — the Stop hook blocked the turn and told the agent to *register* a design, i.e. add a third candidate to a set it already could not choose from. `PageWriteVerificationEntry.referenceAmbiguity` carries the refusal, and `describeUnverifiedPage` has a third branch ending in `studio_compare({pages:[…], referenceId:"…"})`. Same sentence in the gate and the digest, as before.
+  - **`mode`/`passScore`/`maxRegionCoverage`** added to `DesignReferenceSchema`, the `@core/ai` mirror, the register tool schema and the upload route (which converts and *rejects* an unparseable numeric multipart field rather than coercing to `NaN`). Nothing reads them yet — that is W9-2.
+  - **The digest and system prompt carry the role** on every `Design references registered:` entry, because the roles are what decide which entry a comparison would use. `figmaReferenceNudge` now checks for a page-scoped **spec**, not merely "a reference" — a pasted crop no longer suppresses the nudge on exactly the pages that need it.
+  - Reads that must not be truncated (`resolveDesignReference`, `findDesignReferenceByContentHash`, the digest) go through the new uncapped `readAllDesignReferences`; `listDesignReferences`' cap exists to bound a tool RESULT and was silently bounding decisions.
+- **Next step:** none for this entry. W9-1 item 4 (docs/hygiene) landed separately as #46.
+- **Decisions:**
+  - **Role outranks page scope.** Scope says which screen an image is ABOUT; role says whether it is a design at all. The composer's DESIGN REFERENCE control registers unscoped by design, so scope-first would make the deliberate control lose to any crop that happened to name the page.
+  - **Ambiguity is a refusal, not a tie-break.** "Newest" is precisely the rule that shipped this bug; "oldest" fails the user who registers a corrected export. The agent holds the fact that settles it, and the refusal costs one tool call against a whole project measured against the wrong picture.
+  - **A lone `context` image still resolves.** Demoting attachments must not un-arm the ruler for the paste-a-comp-and-build flow `turnDesignReferences.ts` exists to serve. What it can no longer do is outrank a spec or win a page silently.
+  - **No durable "promote to spec" tool was added.** The two gestures that exist — a `referenceId` argument per call, and registering as `role:'spec'` — cover the plan's requirement, and `studio_delete_design_reference` clears a crowded page. A promote-in-place tool is a real gap only if refusals turn out to repeat across turns; deferred rather than guessed at.
+  - **`toolSchemas.ts` was split, not grandfathered.** The new optional fields pushed it to 705 lines (ceiling 700). The design-reference family moved to `src/core/ai/designReferenceToolSchemas.ts` — that file documents itself as "site WRITE-tool input schemas" and these are headless server tools, so the split is by responsibility, not by line count. `DIR_INPUT_DESCRIPTION` is exported (not re-exported from the barrel) so `dir` means one thing on every Studio tool.
+- **Landmines:**
+  - **`registerDesignReference` is NOT idempotent** — only `registerTurnDesignReferences` de-dupes, by content hash, before calling it. Registering the same bytes twice through the tool creates a second entry and therefore an ambiguous page. This is why the ambiguity message names `studio_delete_design_reference`'s subject matter rather than suggesting a re-register.
+  - **`role` is optional on disk on purpose.** An entry with no `role` is exactly the legacy shape the derivation reads; writing a speculative `'spec'` default at registration would erase the distinction. `designReferenceStore.test.ts` pins the omission.
+  - **The list and read tools project `designReferenceRole(r)` onto every returned entry** so `role` is never missing in a tool result. Do not "simplify" that away — a listing showing role on some rows and not others reads as "unknown" rather than the settled fact it is.
+- **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` → 11467 pass / 29 fail before the split, all pre-existing (`standing-01`): the `icon-catalog-integrity` `chevron-left` case, the seven `captureFramesHeadless` + two `studio_compare` browser tests ("No Chromium available"), the canvas batch-isolation cluster, and a `flowRouting.ts` `routePrototypeLinks` export error from a parallel session. The one failure that WAS mine — `module-size-budgets` at 705 lines — is fixed by the split above; re-run green. `bun test src/core/ai src/__tests__/architecture server/handlers/studio/{designReferenceStore,pageWriteVerification}.test.ts server/ai/mcp/tools/studio/referenceResolve.test.ts` → 550 pass / 1 fail (`chevron-left`). `entryStylesheetCache.test.ts` passes in isolation, confirming its batch failure is the known flake.
+- **Human action needed:** **dogfood.** Open `test4` at `/admin/site`, ask the agent to compare the `sms` page, and confirm it now measures against the 375x800 Figma frame rather than refusing on the 943x294 chat crop's aspect ratio. Then paste a second screenshot on a page with no registered design and confirm the refusal names both ids instead of picking one.
 
 ### struct-07 — W6-5: the code the wave train orphaned is deleted
 - **Agent:** studio-implementer

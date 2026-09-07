@@ -511,10 +511,82 @@ describe('listStudioProjects', () => {
 
     const projects = listStudioProjects(projectsRoot)
 
-    expect(projects).toEqual([
+    expect(projects.map((p) => ({ dir: p.dir, name: p.name, pageCount: p.pageCount }))).toEqual([
       { dir: path.join(projectsRoot, 'acme-widgets'), name: 'acme-widgets', pageCount: 1 },
       { dir: path.join(projectsRoot, 'my-workspace'), name: 'my-workspace', pageCount: 2 },
     ])
+  })
+
+  // W7-2 — the launcher card describes a project before it is opened, and
+  // every fact it shows comes from reads this listing was already doing.
+  it('carries the platform, cached framework, trust tier and style toolchains from .studio/meta.json', () => {
+    write('studio-workspace/acme/pages/Home.tsx', 'x')
+    write(
+      'studio-workspace/acme/.studio/meta.json',
+      JSON.stringify({
+        platform: 'web',
+        trust: 'render-packages',
+        profile: {
+          framework: 'next-app',
+          appRoot: '',
+          pagesDir: 'app',
+          routeStyle: 'directory',
+          entryFiles: [],
+          styleToolchain: {
+            tailwind: { version: '3.4.0', configPath: 'tailwind.config.js' },
+            cssModules: false,
+            sass: true,
+            postcssConfigPath: null,
+            cssInJs: null,
+          },
+          packageManager: 'bun',
+          componentPackages: [],
+          aliases: {},
+          warnings: [],
+        },
+      }),
+    )
+
+    const [project] = listStudioProjects(projectsRoot)
+
+    expect(project!.platform).toBe('web')
+    expect(project!.framework).toBe('next-app')
+    expect(project!.trust).toBe('render-packages')
+    expect(project!.styleToolchains).toEqual(['tailwind', 'sass'])
+  })
+
+  it('defaults to Tier 0 and no badges for a project that has never been probed', () => {
+    write('studio-workspace/plain/pages/Home.tsx', 'x')
+
+    const [project] = listStudioProjects(projectsRoot)
+
+    expect(project!.trust).toBe('static')
+    expect(project!.styleToolchains).toEqual([])
+    expect(project!.platform).toBeUndefined()
+    expect(project!.framework).toBeUndefined()
+  })
+
+  // The whole reason `editedAt` stats every file rather than the pages
+  // DIRECTORY: writing an existing file does not touch its parent's mtime, so
+  // a directory stat reports the last time a page was added or removed and
+  // calls that "edited".
+  it('reports editedAt from the newest file under the pages dir, not the directory itself', () => {
+    write('studio-workspace/acme/pages/Home.tsx', 'x')
+    write('studio-workspace/acme/pages/Home.module.css', 'x')
+    const recent = new Date('2031-04-05T06:07:08Z')
+    fs.utimesSync(path.join(projectsRoot, 'acme', 'pages', 'Home.module.css'), recent, recent)
+
+    const [project] = listStudioProjects(projectsRoot)
+
+    expect(project!.editedAt).toBe(recent.getTime())
+  })
+
+  it('reports editedAt from the project folder itself when it has no pages dir', () => {
+    fs.mkdirSync(path.join(projectsRoot, 'empty'), { recursive: true })
+
+    const [project] = listStudioProjects(projectsRoot)
+
+    expect(project!.editedAt).toBeGreaterThan(0)
   })
 
   it('sorts by display name, not by folder slug', () => {
@@ -533,7 +605,7 @@ describe('listStudioProjects', () => {
 
     const projects = listStudioProjects(projectsRoot)
 
-    expect(projects).toEqual([
+    expect(projects.map((p) => ({ dir: p.dir, name: p.name, pageCount: p.pageCount }))).toEqual([
       { dir: path.join(projectsRoot, 'empty'), name: 'empty', pageCount: 0 },
     ])
   })
@@ -572,7 +644,7 @@ describe('GET /admin/api/studio/projects', () => {
 
     expect(res).not.toBeNull()
     expect(res!.status).toBe(200)
-    const body = (await res!.json()) as { projects: Array<{ dir: string; name: string; pageCount: number }> }
+    const body = (await res!.json()) as { projects: Array<{ dir: string; name: string; pageCount: number; trust: string }> }
     expect(Array.isArray(body.projects)).toBe(true)
   })
 })

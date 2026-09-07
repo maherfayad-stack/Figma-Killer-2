@@ -47,6 +47,12 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // the build produced. Without it a type or colour mismatch is only inferable
   // from a screenshot, which is how a wrong font-size survives being "fixed".
   'studio_computed_styles',
+  // The same argument, one axis over: every capture already measures the
+  // frame's boxes and threw away everything around them, so spacing was the
+  // one dimension left to estimate off a picture. Reports the measured gap
+  // beside the parent's DECLARED gap — when those disagree a margin is in
+  // play, and editing the gap can never close the difference.
+  'studio_measure_element',
   // What the screen's RUNTIME said, which no picture and no computed style can
   // report. A frame whose component throws photographs as a blank rectangle,
   // and every other tool agrees with the photograph: compare says ~100%

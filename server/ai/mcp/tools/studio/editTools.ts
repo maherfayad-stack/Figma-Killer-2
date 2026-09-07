@@ -22,12 +22,10 @@
  * (`swapComponentInstance`). All five are real codemods now — none of this
  * tool's verbs return a stub.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import {
   resizeFrame,
-  serializeBoardsFile,
   type Board,
   type BoardsFile,
 } from '@core/studio-board'
@@ -48,7 +46,7 @@ import {
 } from '../../../../handlers/studioWriteback'
 import { pushStudioLiveReload } from './liveReloadPush'
 import { touchedFilesToPageIds } from './touchedPageIds'
-import { readBoardsFileOrEmpty } from '../../../../handlers/studio/boardGeometry'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
 
 const DirField = Type.Optional(
   Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
@@ -93,12 +91,6 @@ const applyEditsTool: AiTool = {
 // studio_set_frames — bulk board geometry (.studio/boards.json)
 // ---------------------------------------------------------------------------
 
-function writeBoardsFile(dir: string, boards: BoardsFile): void {
-  const file = join(dir, '.studio', 'boards.json')
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, serializeBoardsFile(boards))
-}
-
 const SetFramesInputSchema = Type.Object(
   {
     dir: DirField,
@@ -128,7 +120,7 @@ const setFramesTool: AiTool = {
       height: number
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const boardsFile = readBoardsFileOrEmpty(dir)
+    const boardsFile = readBoardsFile(dir)
     const targetSet = pageIds ? new Set(pageIds) : null
 
     let resized = 0
@@ -138,7 +130,7 @@ const setFramesTool: AiTool = {
       let next = board
       for (const frame of board.frames) {
         if (targetSet && !targetSet.has(frame.pageId)) continue
-        next = resizeFrame(next, frame.pageId, width, height)
+        next = resizeFrame(next, frame.id, width, height)
         resized += 1
         resizedPageIds.add(frame.pageId)
         missing.delete(frame.pageId)
