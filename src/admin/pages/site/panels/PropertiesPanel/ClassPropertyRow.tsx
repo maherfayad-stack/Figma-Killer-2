@@ -66,6 +66,7 @@ import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { getFontWeightOptions } from './fontWeightOptions'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import { resolveRowWriteLock, useStyleWriteLock } from './StyleWriteLockContext'
+import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import styles from './ClassPropertyRow.module.css'
 
 // ---------------------------------------------------------------------------
@@ -99,6 +100,17 @@ interface ClassPropertyRowProps {
    * controls render as an empty field + "Mixed" placeholder.
    */
   value: string | number | Mixed | undefined
+  /**
+   * The value this element ACTUALLY renders for the property when the active
+   * target doesn't declare it — the caller's `currentStyles` reading, folded
+   * through `resolveStylePlaceholder`.
+   *
+   * It is no longer drawn as a placeholder behind an empty box. An unset row
+   * DISPLAYS it, muted, because "unset here" and "has no value" are different
+   * facts and only the first one is true (`styleFieldDisplay.ts`). The row's
+   * `isSet` state — its `data-state`, its muted label, its missing remove
+   * button — is what still says the property isn't declared on this target.
+   */
   placeholder?: string | number
   fontFamilyValue?: unknown
   isSet?: boolean
@@ -171,7 +183,16 @@ export function ClassPropertyRow({
   // stated "Mixed" rather than a silent "unset". The first edit commits one
   // value, which the caller writes to the whole selection.
   const mixed = isMixed(rawValue)
-  const value = mixed ? undefined : (rawValue as string | number | undefined)
+  // The one display rule, shared with every bespoke section
+  // (`styleFieldDisplay.ts`): show the stored value, else the value the
+  // element actually renders, else nothing. `inherited` is the second case —
+  // real value, not declared here, rendered in the muted tone.
+  const display = resolveStyleFieldDisplay({
+    storedValue: mixed ? undefined : rawValue,
+    currentValue: mixed ? undefined : placeholder,
+  })
+  const value = mixed ? undefined : display.value
+  const inherited = !mixed && display.inherited
   // Pre-flight: why an edit to the enclosing style target can't reach the
   // user's source, or `null` when it can. See this file's doc.
   // W8-3 phase 2 — the enclosing lock is now three-state. A `partial` lock
@@ -226,11 +247,13 @@ export function ClassPropertyRow({
   // one to hint at. Stated here rather than per control so the surfaces that
   // take no `mixed` flag of their own (the scrub token field, the font-family
   // and background-image controls) still say it.
-  const placeholderText = mixed
-    ? MIXED_PLACEHOLDER
-    : placeholder !== undefined
-      ? String(placeholder)
-      : undefined
+  // The hint a field shows when it has NOTHING to display. With prefill in
+  // place that is only the mixed case (several values, none of them the
+  // field's) — a real current value is now the field's `value`, and the unit
+  // derivation below reads it from there.
+  const placeholderText = mixed ? MIXED_PLACEHOLDER : undefined
+  /** Unit source for the field: whatever it is displaying. */
+  const displayedText = mixed ? undefined : (value !== undefined ? String(value) : undefined)
 
   /*
    * The field's own unit — the one number the whole §5 field model turns on.
@@ -251,7 +274,7 @@ export function ClassPropertyRow({
     ? undefined
     : isUnitlessNumberProp(property)
       ? ''
-      : (parseNudgeableValue(placeholderText ?? '')?.unit ?? 'px')
+      : (parseNudgeableValue(displayedText ?? '')?.unit ?? 'px')
 
   const fonts = useEditorStore((state) => state.site?.settings.fonts ?? null)
 
@@ -440,7 +463,7 @@ export function ClassPropertyRow({
     control = (
       <BackgroundImageControl
         propKey={String(property)}
-        value={String(value ?? '')}
+        value={String((mixed ? undefined : rawValue) ?? '')}
         onChange={handleControlChange}
         label={label}
         disabled={writeLocked}
@@ -564,9 +587,11 @@ export function ClassPropertyRow({
         layout === 'stacked' && styles.propertyRowWrapStacked,
         resolvedLayout === 'bare' && styles.propertyRowWrapBare,
         !isSet && styles.propertyRowUnset,
+        inherited && styles.propertyRowInherited,
         writeLocked && styles.propertyRowLocked,
       )}
       data-state={isSet ? 'set' : 'unset'}
+      data-inherited={inherited ? 'true' : undefined}
       data-write-locked={writeLocked ? 'true' : undefined}
       data-write-partial={!writeLocked && writeLockReason !== null ? 'true' : undefined}
       title={writeLockReason ?? undefined}

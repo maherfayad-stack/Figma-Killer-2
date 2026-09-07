@@ -21,6 +21,116 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-prefill — Typography first on a text layer, and every field prefilled with what the element renders
+- **Agent:** panel-designer · **Stage:** done (typecheck + touched tests + gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/inspector-typography-first-and-prefill` off `origin/main` (`a865eb7`).
+  Two verbatim user asks: "when I select a text the typography controls are at
+  the top, and when selecting anything overall the panel should be prefilled
+  already with the current values even if inline styles".
+
+**1. Typography first (new `PropertiesPanel/styleSectionOrder.ts`)**
+`CLASS_STYLE_SECTIONS` is untouched — it stays the fixed registry. Ordering is
+a function of the SELECTION: `orderStyleSections(sections, textFirst)` lifts
+Typography to the front and leaves every other section's relative order alone.
+`isTextNode` = no element children AND (the module declares `inlineTextEdit` —
+the same registry fact `inlineEditSlice.ts` asks — OR the host `tag` is in
+`TEXT_HOST_TAGS`). `isTextSelection` requires a non-empty selection where
+EVERY node passes. Threaded as a `textFirst` prop:
+`StyleSurface` (single) and `MultiInlineStyleComposer` (multi) compute it;
+`StyleRuleComposer` / `InlineStyleComposer` / `StyleSectionsEditor` /
+`StyleCategoryRail` pass it through. The rail follows the same order as the
+scroll list deliberately — they read the same ordered array.
+
+**2. Prefill (new `PropertiesPanel/styleFieldDisplay.ts`)**
+One rule, one module: `resolveStyleFieldDisplay({ storedValue, currentValue,
+fallback })` → `{ value, placeholder, isSet, inherited }`. Stored value wins;
+else the CURRENT value (the frame's `getComputedStyle` reading, which already
+folds in inline `style={{}}`) becomes the field's VALUE, muted, with the row
+still `data-state="unset"`; else the spec default stays a placeholder. `MIXED`
+in either bag short-circuits — a disagreeing selection is never prefilled.
+
+**Root-cause note (the investigation asked for):** there is no null-`computedValues`
+bug on the inline path. `node.inlineStyles` does reach the Element target's
+stored bag (`StyleSurface` → `InlineStyleComposer`), and both composers already
+folded `{ ...computedValues, ...stored }` into `currentStyles`.
+`useFrameComputedStyleValues` returns `null` only when no canvas element is
+resolvable (tests, pre-mount). The panel *looked* empty because that merged
+value was only ever rendered as a grey `placeholder` behind an empty box. That
+was the whole bug, and it is fixed at the display rule.
+
+**Files touched**
+- New: `styleSectionOrder.ts`, `styleFieldDisplay.ts`,
+  `__tests__/styleSectionOrder.test.ts`, `__tests__/styleFieldDisplay.test.tsx`.
+- Ordering: `StyleSectionsEditor.tsx`, `StyleCategoryRail.tsx`,
+  `StyleSurface.tsx`, `StyleRuleComposer.tsx`, `InlineStyleComposer.tsx`,
+  `MultiInlineStyleComposer.tsx`.
+- Prefill: `ClassPropertyRow.tsx` (+ `.module.css`) — the single seam that
+  covers every generic row and the four grid-backed sections (Typography,
+  Fill, Effects, Interaction) via `StackedPropertyGrid.tsx`; plus the bespoke
+  fields in `SizeSection.tsx`, `PositionSection.tsx`,
+  `SpacingBoxControl/SpacingBoxControl.tsx` (+ `.module.css`),
+  `LayoutSection/{SingleSideField,LinkedAxisField,GapInput}.tsx`,
+  `StrokeSection.tsx`, `AppearanceSection.tsx`, `RotationRow.tsx`.
+- Primitives: `ScrubInput.tsx` (+ `.module.css`), `AddablePropertyField.tsx`
+  (both `AddablePropertyField` and `RevealedField`),
+  `LayoutSection/ScrubTokenField.tsx` (+ `.module.css`) gained an `inherited`
+  presentation flag → `data-inherited` + `--text-muted`.
+- Doc: `docs/features/inspector-disclosure.md` §5.0 and §5.0a.
+- **No new tokens.** Everything uses existing `--text-muted`.
+
+**Deliberately unchanged**
+- Law 1 (`collapsedWhenEmpty`) is judged on the STORED bag and is untouched —
+  prefill only applies inside an OPEN section. `__tests__/emptySectionLaw.tsx`
+  still green.
+- `isSet` semantics: the indicator dot, the "N set" meta, the remove button and
+  `data-state` all still mean "declared on the active target".
+- `backgroundImage` keeps the raw stored value (its computed form is always
+  `none` — noise inside a gradient field).
+
+**Side fix required by the rule:** the two generic row builders
+(`StyleSectionsEditor`'s fallback branch and `StackedPropertyGrid`) now pass
+`MIXED` as the row VALUE via `isMixedStyleValue` instead of leaning on
+`resolveStylePlaceholder` turning it into the literal string `"Mixed"` — that
+string would otherwise have been prefilled into the field.
+
+**Cuts (named, not hidden)**
+- `FillSection` / `EffectsSection` / `AnimationsSection` bespoke sub-controls
+  (colour swatches inside the fill list, shadow-layer popover fields) were not
+  converted — their grid rows ARE prefilled through `ClassPropertyRow`, but the
+  popover-internal fields still use the old placeholder shape.
+- `PositionConstraints.tsx` and `FrameSizePanel` / `FrameBulkInspector` (board
+  frames, not element styles) were left alone.
+- No integration test that renders the whole panel on a `base.text` node and
+  asserts the DOM order of sections — the ordering is unit-tested instead.
+
+**Verification run:** `bun test src/admin/pages/site/panels/PropertiesPanel
+src/__tests__/panels` (1179 pass / 1 fail), `bun test src/ui src/__tests__/ui`
+(340 pass), the five CSS/primitive architecture gates,
+`tsc -p tsconfig.app.json --noEmit` (clean), `bunx eslint` on every changed file
+(clean).
+**Pre-existing failure I did not cause:** `inspectorGeometryBudget.test.tsx` →
+`MultiSelectionInspector.module.css` uses `--space-3xs/2xs/xs`; that file was
+last touched by PR #68 and is not in my diff.
+
+**Human action needed (dogfood, in this order):**
+1. Select a heading (`<h1>`/`<p>`) on the canvas → **Typography must be the
+   first section**, and the category rail's first CSS button must be the
+   Typography glyph. Select a `<div>` → order back to Position-first.
+2. Select any element with NO class and NO inline styles → every open section's
+   fields **read filled** with the element's real values in a dimmed tone, and
+   every row still shows its unset state (no dot, no remove `x`, muted caption).
+3. Select an element styled with an inline `style={{ width: '320px' }}` → the
+   Element target's Width field reads `320px` in NORMAL tone (it is set there),
+   while e.g. Font size reads the inherited value dimmed.
+4. Drag the Width label on a prefilled-but-unset field → it must commit a real
+   `width` declaration starting from the displayed number. Focus and blur the
+   same field without typing → **nothing must be written** (check the class rule
+   / the file on disk).
+5. Multi-select two elements with different widths → Width still says "Mixed",
+   NOT a prefilled number.
+6. Collapse everything: a section with nothing set (e.g. Effects) must still be
+   a one-line header with a `+`, not an expanded grid of prefilled values.
+
 ### store-06 — W8-3 phases 2 + 3, and phase 1's bespoke-section Mixed gap
 - **Agent:** store-engineer · **Stage:** done (typecheck + touched tests + gates green; draft PR open) — **needs human dogfood**
 - **Branch:** `feat/multi-select-mixed-and-class-bulk` off `origin/main` (`b56ff12`).

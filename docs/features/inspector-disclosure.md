@@ -577,6 +577,60 @@ The three kinds, and the one module each rule lives in:
 | `ScrubTokenField` / `TokenAwareInput` | `PropertiesPanel/LayoutSection/`, `property-controls/` | Length fields with token autocomplete: padding, margin, `gap`, the insets, `fontSize`. `ScrubTokenField` IS `TokenAwareInput` plus the scrub gesture — not a fourth field kind |
 | `TextControl` / the frame W-H inputs | `property-controls/`, `FrameSizePanel.tsx` | The generic property row that has no mark to drag, and a board frame's own size |
 
+### §5.0 A field shows what the element renders, never an empty box
+
+Every field asks the same question before it renders, and one module answers it:
+`resolveStyleFieldDisplay` (`PropertiesPanel/styleFieldDisplay.ts`).
+
+    1. the value STORED on the active target (this class rule at this
+       breakpoint, or this node's `style=""`) — the thing an edit replaces;
+    2. otherwise the CURRENT value — the frame's real `getComputedStyle`
+       reading, which already folds in whatever an inline `style={{}}`
+       contributes. Shown MUTED (`--text-muted`), with the row still unset;
+    3. otherwise nothing, and only then is a `placeholder` (the spec default)
+       a hint.
+
+This replaced "show the current value as a grey `placeholder` behind an empty
+field", which read as *this element has no width* on an element that is plainly
+320px wide. The user's report was exactly that: "the panel should be prefilled
+already with the current values even if inline styles."
+
+**Set-ness is a separate fact and is unchanged.** `isSet` still means "the
+active target declares this property", and it is what drives the row's
+`data-state`, its muted caption, the indicator dot, the "N set" section meta,
+the remove button — and Law 1's disclosure, which is judged on the STORED bag
+and is untouched by prefill. What a field displays never changes what the panel
+claims about the source. The presentational half travels as `inherited`:
+`data-inherited="true"` on the row, and the `inherited` prop on `ScrubInput` /
+`AddablePropertyField` / `RevealedField` / `ScrubTokenField`.
+
+**A prefilled value commits like any other.** Dragging Width from its rendered
+`320px` to `340px` sets `width: 340px` on the target — that is what the user
+asked for. Committing the *same* value writes nothing, because every field's
+commit path compares against what it was displaying, so focus-then-blur can
+never silently add a declaration.
+
+**A disagreeing multi-selection is never prefilled.** `MIXED` in either bag
+short-circuits the rule: a value none of the selected elements necessarily has
+is not a value, and the field says "Mixed" (§9.3).
+
+### §5.0a Typography leads on a text layer
+
+`CLASS_STYLE_SECTIONS` stays one fixed registry. What varies per selection is
+the order it is RENDERED in, and exactly one rule varies it
+(`PropertiesPanel/styleSectionOrder.ts`): when every selected node is a text
+layer, **Typography renders first** — in the section list and in the category
+rail, which read the same ordered list so they stay in lockstep. Everything
+else keeps its relative order underneath.
+
+A node is a text layer when it has no element children AND either its module
+declares `inlineTextEdit` (the registry fact the canvas's double-click editor
+already asks — `base.text`, `base.link`, `base.button`, plus any plugin module
+that declares one) or its host tag renders text (`p`, `h1`–`h6`, `span`, `a`,
+`label`, `li`, `strong`, `em`, …). The no-children clause is what keeps an
+`<a>` wrapping a card, or an `<li>` wrapping a row of controls, out of it.
+Figma reaches the same place by only HAVING a Text section on a text layer.
+
 ### §5.1 Commit coerces; it never writes what CSS rejects
 
 A typed value goes through one coercion on commit (blur / Enter / Tab):

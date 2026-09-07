@@ -89,6 +89,7 @@ import { blockedStyleWriteLock, StyleWriteLockContext } from './StyleWriteLockCo
 import { useScrollSpy } from './useScrollSpy'
 import { ALL_CURATED_CSS_PROPERTIES, getCSSPropertyDefaultValue } from './cssControlTypes'
 import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
+import { isTextNode } from './styleSectionOrder'
 import {
   buildClassChain,
   buildStableProvenanceMap,
@@ -325,6 +326,12 @@ export function StyleSurface({
   const selectedNode = useEditorStore(selectSelectedNode)
   const activePageId = useEditorStore((s) => s.activePageId)
 
+  // Select a heading and every edit is a type edit, so Typography leads —
+  // here and in the rail (`styleSectionOrder`). Read from the selected NODE,
+  // not the style bag: a text layer with nothing declared yet is exactly the
+  // case that needs the section at the top.
+  const textFirst = selectedNode != null && isTextNode(selectedNode)
+
   // Rail dot badges reflect the UNION of what's actually set across every
   // block currently visible — a property set via the class OR via inline
   // both count as "this section has content".
@@ -382,6 +389,7 @@ export function StyleSurface({
         computedValues={computedValues}
         provenanceByProperty={provenanceByProperty}
         styleTarget={styleTarget}
+        textFirst={textFirst}
       />
     )
   }
@@ -422,6 +430,7 @@ export function StyleSurface({
           computedValues={computedValues}
           provenanceByProperty={provenanceByProperty}
           styleTarget={styleTarget}
+          textFirst={textFirst}
         />
       </StyleWriteLockContext.Provider>
     )
@@ -566,6 +575,7 @@ export function StyleSurface({
             definition={definition ?? null}
             activeClass={activeClass}
             editingInline={elementBlockVisible}
+            textFirst={textFirst}
           />
         </div>
       </div>

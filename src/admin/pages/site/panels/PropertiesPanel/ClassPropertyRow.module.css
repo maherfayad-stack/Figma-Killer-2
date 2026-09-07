@@ -55,6 +55,19 @@
     color: var(--class-row-label-color);
 }
 
+/* ── Inherited value ──────────────────────────────────────────────────────
+   The row is showing the value the element ACTUALLY renders, which no
+   declaration on the active target produced (`styleFieldDisplay.ts`). It is
+   a real value, so it is a value and not a placeholder — but it is not this
+   target's value, so it reads one tone down. The row's own unset state
+   (`data-state`, the muted caption, no remove button) still carries the
+   "not declared here" fact; this is only its echo inside the field. */
+.propertyRowInherited :global(input),
+.propertyRowInherited :global(select),
+.propertyRowInherited :global(textarea) {
+    color: var(--text-muted);
+}
+
 /* ── Pre-flight write lock ────────────────────────────────────────────────
    The enclosing style target has no hand-editable source (a compiled class,
    an unmapped rule), so nothing typed into this row could survive a save.

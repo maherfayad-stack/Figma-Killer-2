@@ -15,6 +15,7 @@ import { Button } from '@ui/components/Button'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule } from '@core/page-tree'
 import { CLASS_STYLE_SECTIONS } from './classStyleSections'
+import { orderStyleSections } from './styleSectionOrder'
 import styles from './StyleCategoryRail.module.css'
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,13 @@ interface StyleCategoryRailProps {
    * style-editing target, it just writes `node.inlineStyles` instead of a rule.
    */
   editingInline?: boolean
+  /**
+   * The selection is a text layer, so the rail's buttons follow the same
+   * Typography-first order the sections render in (`styleSectionOrder`). The
+   * rail and the scroll order are meant to stay in lockstep — a rail that
+   * kept the default order would scroll to the wrong-looking place.
+   */
+  textFirst?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +103,7 @@ export function StyleCategoryRail({
   definition,
   activeClass,
   editingInline = false,
+  textFirst = false,
 }: StyleCategoryRailProps) {
   const stylesLocked = activeClass === null && !editingInline
   const disabledTooltip = 'Add a class to unlock styles'
@@ -117,7 +126,7 @@ export function StyleCategoryRail({
       )}
 
       {/* ── CSS category buttons ──────────────────────────────────────── */}
-      {CLASS_STYLE_SECTIONS.map((section) => {
+      {orderStyleSections(CLASS_STYLE_SECTIONS, textFirst).map((section) => {
         const SectionIcon = section.icon
         const setCount = sectionSetCounts.get(section.id) ?? 0
         const hasSetStyles = setCount > 0

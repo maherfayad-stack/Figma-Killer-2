@@ -83,6 +83,7 @@ import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGrid'
 import { getEnumOptions } from './cssControlTypes'
 import { hasStyleValue, pickMixedString, plainString } from './styleValueUtils'
+import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StrokeSection.module.css'
@@ -291,8 +292,7 @@ export function StrokeSection({
       key="stroke-weight-all"
       label={<StrokeWeightIcon size={13} aria-hidden="true" />}
       aria-label="Stroke weight, all sides"
-      value={widthState.perSide.Top}
-      placeholder={plainString(widthFallback.perSide.Top) || '0px'}
+      {...strokeWeightDisplay(widthState.perSide.Top, widthFallback.perSide.Top)}
       data-testid="stroke-weight-all"
       onChange={(next) => writeAllWidths(next || undefined)}
     />
@@ -303,8 +303,7 @@ export function StrokeSection({
       key={side}
       label={<StrokeWeightIcon size={13} aria-hidden="true" />}
       aria-label={`Stroke weight, ${side.toLowerCase()}`}
-      value={widthState.perSide[side]}
-      placeholder={plainString(widthFallback.perSide[side]) || '0px'}
+      {...strokeWeightDisplay(widthState.perSide[side], widthFallback.perSide[side])}
       data-testid={`stroke-weight-${side.toLowerCase()}`}
       onChange={(next) => onChange(sideKey(side, 'Width'), next || undefined)}
     />
@@ -467,4 +466,22 @@ export function StrokeSection({
       )}
     </div>
   )
+}
+
+/**
+ * The `value` / `placeholder` / `inherited` trio for one stroke-weight field,
+ * from the one display rule (`styleFieldDisplay.ts`): the declared width,
+ * else the width the element actually renders (muted), else `0px` as a hint.
+ */
+function strokeWeightDisplay(stored: string | Mixed, current: string | Mixed): { value: string | Mixed | undefined; placeholder: string | undefined; inherited: boolean } {
+  const display = resolveStyleFieldDisplay({
+    storedValue: plainString(stored),
+    currentValue: plainString(current),
+    fallback: '0px',
+  })
+  return {
+    value: isMixed(stored) ? stored : display.value,
+    placeholder: display.placeholder,
+    inherited: display.inherited,
+  }
 }

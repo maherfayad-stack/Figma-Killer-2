@@ -22,6 +22,7 @@
  * works), matching the engine's documented contract.
  */
 import { useRef, type ReactNode } from 'react'
+import { cn } from '@ui/cn'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import type { Token } from '@site/property-controls/tokenUtils'
 import { useScrubDrag } from '@ui/components/ScrubInput'
@@ -36,6 +37,13 @@ interface ScrubTokenFieldProps {
    * value to every selected node, exactly as `Input`'s `mixed` documents.
    */
   mixed?: boolean
+  /**
+   * `value` is the element's real rendered value rather than one this field's
+   * style target declares — the panel's prefill state
+   * (`styleFieldDisplay.ts`). Presentation only; the field stays live and a
+   * commit writes the value for real.
+   */
+  inherited?: boolean
   tokens: ReadonlyArray<Token>
   /** Draggable, `aria-hidden` mark — a letterform ("H", "T") or a glyph. */
   prefix: ReactNode
@@ -60,6 +68,7 @@ export function ScrubTokenField({
   value,
   placeholder,
   mixed,
+  inherited,
   tokens,
   prefix,
   'aria-label': ariaLabel,
@@ -100,7 +109,7 @@ export function ScrubTokenField({
       mixed={mixed}
       tokens={tokens}
       disabled={disabled}
-      className={className}
+      className={cn(className, inherited && styles.inheritedField)}
       data-testid={dataTestId}
       prefix={
         <span
