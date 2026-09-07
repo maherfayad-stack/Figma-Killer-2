@@ -23,6 +23,7 @@ export {
   AspectRatioIcon,
   OpacityIcon,
   GapIcon,
+  RowGapIcon,
   StrokeWeightIcon,
   CornerRadiusIcon,
   CommentBubbleIcon,

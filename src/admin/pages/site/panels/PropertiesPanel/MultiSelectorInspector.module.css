@@ -14,34 +14,34 @@
 }
 
 .actionBar {
-  padding: var(--space-xl);
+  padding: var(--inspector-space-xl);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: var(--space-m);
+  gap: var(--inspector-space-m);
 }
 
 .actionRow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-xs);
+  gap: var(--inspector-space-xs);
 }
 
 .list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-3xs) var(--space-xs) var(--space-l);
+  padding: var(--inspector-space-3xs) var(--inspector-space-xs) var(--inspector-space-l);
   display: flex;
   flex-direction: column;
 }
 
 .row {
-  gap: var(--space-xs);
+  gap: var(--inspector-space-xs);
 }
 
 .listHeader {
-  padding: var(--space-3xs) var(--space-xl) var(--space-s);
+  padding: var(--inspector-space-3xs) var(--inspector-space-xl) var(--inspector-space-s);
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;

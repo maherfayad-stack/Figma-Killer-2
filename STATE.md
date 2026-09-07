@@ -138,6 +138,76 @@ are the remaining WS-2 items, not yet dispatched. See
   unchanged from before). Also open a nested colour popover from a Fill row to confirm neither closes the
   other.
 
+### look-pass — W8-2: the inspector's look pass + a geometry gate that can outlive happy-dom
+- **Agent:** panel-designer · **Stage:** done (typecheck + touched tests green; draft PR open) — **needs human dogfood**
+- **Branch:** `feat/inspector-look-pass`, off `origin/main` at `b56ff12`.
+- **Shipped (`STUDIO-WAVE7-PLAN.md` W8-2, "Look pass"):**
+  - **Panel default width 360 → 290.** `PROPERTIES_PANEL_DEFAULT_WIDTH` in `uiSlice.ts`. Figma's 240
+    plus this panel's rail (`--inspector-rail-w`) and a scrollbar gutter. The two-up cells go from
+    ~161px to ~104, which was the loudest visual delta. `SIDEBAR_MIN_WIDTH`/`MAX` (260/520) already
+    bracket 290 and are unchanged, so the drag handle still reaches the old roominess.
+  - **Inspector spacing is frozen.** Eight new `--inspector-space-*` tokens in `globals.css`, pinned to
+    the `--space-*` clamp FLOORS (2/3/4/5/6/8/10/12px). 310 `var(--space-*)` reads across 38 CSS modules
+    under `panels/PropertiesPanel/` + `property-controls/`, plus `ui/components/Section/Section.module.css`
+    and the `[data-field-skin='inspector']` rules in `Input.module.css`, now read the frozen scale.
+    Chose the floor, not the max, on purpose: it is both frozen AND never larger than what shipped, so
+    no section can get taller from this change alone.
+  - **`Button` inspector skin.** `[data-field-skin='inspector']` squares `size="xs"`/`size="sm"` icon-only
+    buttons to `--inspector-row-h` at `--inspector-field-radius`; ghost hover is `--inspector-field-bg`
+    (the fill a resting field already has). `size="micro"` is deliberately exempt — it is the mark inside
+    a class pill and growing it to 24 would burst the pill.
+  - **`Select` inspector skin gains `font-size: var(--text-xs)`** to match `Input`. A select and an input
+    share a row in nearly every two-up pair; `--text-s` beside `--text-xs` read as a misalignment.
+  - **`PROPERTY_FIELD_GLYPHS` 6 → 11**: `gap`, `columnGap`, `rowGap`, `borderWidth`, `borderRadius`.
+    One new hand-drawn `RowGapIcon` in `InspectorIcons` (`GapIcon` transposed) so the row/column-gap PAIR
+    in the layout-settings popover differs along the axis it actually differs on. Note the table also
+    grants the drag-scrub gesture, so those five are now scrubbable.
+  - **The gate: `__tests__/inspectorGeometryBudget.test.tsx`** (10 tests).
+- **The measurement substitution, named.** The order asked for `scrollHeight <= clientHeight` at a 900px
+  viewport. **happy-dom does not lay out** — a probe of a 100px box holding a 500px child reports
+  `clientHeight 0, scrollHeight 0`, so that assertion would pass for an empty panel. CSS Modules also
+  resolve to `""` under `bun test`, so class-based structural queries are blind too. The substitute gates
+  the two inputs a height is computed FROM: (1) every `--inspector-*` token is a literal px, no `clamp()`,
+  no `vw`, and no inspector module reaches back into the fluid small steps; (2) row-count budgets — the
+  rendered `<label>` count for a text node's resident panel (a `<label>` is emitted by exactly the
+  caption-bearing `ControlRow` layouts and never by `bare`, so it is an exact, layout-free caption count;
+  today 1, budget 2) plus a per-section caption-capable ceiling. When CI gets a real layout engine, keep
+  part 1 and replace part 2 with the measurement.
+- **Cut, deliberately:**
+  - **The persistent chevron for collapsed sections was DROPPED mid-task** on a user-level course
+    correction that asked for the opposite. Verified the requested behaviour already ships: `Section`'s
+    `empty` mode renders a plain `<div>` header — no `<button>`, no chevron, no `aria-expanded`, no hover
+    cross-fade — and `StyleSectionsEditor`'s `showsAsEmptyHeader` branch already passes it. Already gated
+    by `__tests__/emptySectionLaw.test.tsx` case (e). **No code change was needed or made.**
+  - **`bun run icons:sync` not run** — no vendored `pixel-art-icons` import was added. `RowGapIcon` is
+    hand-drawn under the `icon-catalog-integrity` Gate 3 exemption for `src/ui/`.
+  - **`workspaceLayout.ts:12-13` untouched.** The order named those lines, but they are
+    `SIDEBAR_MIN_WIDTH`/`SIDEBAR_MAX_WIDTH`, which already bracket 290. Changing them would have narrowed
+    the resize range for no reason.
+  - No `--space-*` → frozen swap outside the inspector's own modules.
+- **Pre-existing failures I did not cause and did not fix:**
+  - `icon-catalog-integrity.test.ts` Gate 2 — `node_modules/pixel-art-icons/dist/icons/chevron-left.js`
+    missing. Absent in the main checkout's vendor dist too; needs `bun run icons:sync` by whoever owns it.
+  - `inspectorNumericFields.test.tsx` "corner radius" ×2 — passes per-file, fails only in the combined
+    `PropertiesPanel/__tests__` + `__tests__/panels` batch. **Verified pre-existing**: reverted my
+    `cssPropertyIcons.ts` change and the two still failed. This is the documented batch-run isolation flake.
+- **Human action needed — dogfood at these selection states:**
+  1. **Select any node.** The right panel should open at **290px**, not 360. Drag the handle: still
+     260–520.
+  2. **Select a text node** (a `.map` row's text, or any `<p>`). Confirm section headers, the fields under
+     them, and the header icon buttons all sit on ONE 24px rhythm — the "+" / gear / eye buttons should be
+     24×24 squares with a 5px radius, not 26×22 pills, and hovering one should give it the same quiet fill
+     an unset field already has.
+  3. **Resize the browser window wide and narrow with the panel open.** Section padding and field gutters
+     must NOT change. Before this change they breathed with the viewport.
+  4. **Select a flex or grid container, open the Layout settings popover (the gear).** `row-gap` and
+     `column-gap` should show as two glyph-prefixed fields with NO captions above them, and the two glyphs
+     must be visibly different (bars stacked vs. side by side). Drag either glyph — it should scrub.
+  5. **Open Border → Advanced.** `border-width` and `border-radius` should carry in-field marks instead of
+     captions, and both should scrub.
+  6. **Confirm the cut:** Border / Effects / Animations with nothing set should be a STATIC title row —
+     no chevron, no hover cross-fade, not clickable — with only its "+" on the right.
+
 ### panel-18 — W7-5: fact-driven onboarding checklist, empty-canvas hint, sample project
 - **Agent:** studio-implementer · **Stage:** done (typecheck + touched tests green; draft PR open) — **needs human dogfood**
 - **Branch:** `feat/launcher-onboarding`, off `origin/main` at `342c67d` (W7-2 / PR #51).

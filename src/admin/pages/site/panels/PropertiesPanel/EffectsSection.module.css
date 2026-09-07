@@ -9,8 +9,8 @@
 /* ── Leading swatch (shadow layers) ────────────────────────────────────── */
 
 .swatch {
-    width: var(--space-l);
-    height: var(--space-l);
+    width: var(--inspector-space-l);
+    height: var(--inspector-space-l);
     border-radius: var(--radius-sm);
     background: var(--effect-swatch-color);
     flex-shrink: 0;
@@ -18,7 +18,7 @@
 
 .swatchInset {
     background: transparent;
-    border: var(--space-4xs) solid var(--effect-swatch-color);
+    border: var(--inspector-space-4xs) solid var(--effect-swatch-color);
 }
 
 /* ── EffectEditorPopover — raw-text fallback ──────────────────────────── */
@@ -26,7 +26,7 @@
 .rawEditor {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
 }
 
 .rawEditorReason {
@@ -40,13 +40,13 @@
 .shadowFields {
     display: flex;
     flex-direction: column;
-    gap: var(--space-m);
+    gap: var(--inspector-space-m);
 }
 
 .insetRow {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
     color: var(--text);
     font-size: var(--text-xs);
 }
@@ -54,7 +54,7 @@
 .shadowGrid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
 }
 
 /* ── EffectsSectionActions — header ⚙ badge ───────────────────────────── */

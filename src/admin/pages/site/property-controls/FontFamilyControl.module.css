@@ -5,7 +5,7 @@
 }
 
 .menuHeader {
-    padding: var(--space-xs) var(--space-m) var(--space-3xs);
+    padding: var(--inspector-space-xs) var(--inspector-space-m) var(--inspector-space-3xs);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-weight: 600;
@@ -17,10 +17,10 @@
 .menuItem {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     align-items: center;
     min-height: 42px;
-    padding: var(--space-s) var(--space-m);
+    padding: var(--inspector-space-s) var(--inspector-space-m);
 }
 
 .menuTitle {

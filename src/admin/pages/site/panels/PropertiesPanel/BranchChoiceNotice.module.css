@@ -1,7 +1,7 @@
 .body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2xs);
+  gap: var(--inspector-space-2xs);
   min-width: 0;
   flex: 1;
 }
@@ -9,7 +9,7 @@
 .list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3xs);
+  gap: var(--inspector-space-3xs);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -41,14 +41,14 @@
 }
 
 .altDetail {
-  padding-left: var(--space-s);
+  padding-left: var(--inspector-space-s);
 }
 
 .jumpButton {
   height: auto;
   min-height: 0;
   padding: 0;
-  gap: var(--space-3xs);
+  gap: var(--inspector-space-3xs);
   background: transparent;
   color: inherit;
   font-size: var(--text-3xs);

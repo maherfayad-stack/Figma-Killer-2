@@ -325,3 +325,40 @@
     border-left-color: var(--text);
     color: var(--text);
 }
+
+/* ── Inspector icon-button skin ───────────────────────────────────────────
+ * Opted into by an ancestor carrying `data-field-skin="inspector"` — the same
+ * attribute `Input`, `Select`, `ScrubInput` and `SegmentedControl` read, set
+ * once on the properties-panel root.
+ *
+ * The inspector is a 24px grid. Its icon buttons were not on it: `size="xs"`
+ * draws 26x22 and `size="sm"` 28x26, so a section header's affordances sat
+ * a pixel or two off every field they lined up with, and their 8px pill
+ * radius read as a different family from the 5px filled rectangles below.
+ * Squaring them to `--inspector-row-h` at `--inspector-field-radius` is what
+ * makes a header and its body look like one instrument.
+ *
+ * `size="micro"` is deliberately NOT rescaled: it is the mark inside a class
+ * pill and a few other places where the button is smaller than a row on
+ * purpose, and growing it to 24 would burst the pill it lives in.
+ */
+[data-field-skin='inspector'] .size-xs.iconOnly,
+[data-field-skin='inspector'] .size-sm.iconOnly {
+    width: var(--inspector-row-h);
+    height: var(--inspector-row-h);
+    border-radius: var(--inspector-field-radius);
+}
+
+/* A ghost button at rest is transparent; under the pointer it takes the fill
+ * a resting inspector FIELD has. That is the quietest hover that still reads
+ * as a hit target, and it says "this is a control of the same family as the
+ * boxes below" rather than lighting up brighter than any of them. */
+[data-field-skin='inspector'] .size-xs.iconOnly.variant-ghost:hover,
+[data-field-skin='inspector'] .size-sm.iconOnly.variant-ghost:hover {
+    background: var(--inspector-field-bg);
+}
+
+[data-field-skin='inspector'] .size-xs.iconOnly.variant-ghost:active,
+[data-field-skin='inspector'] .size-sm.iconOnly.variant-ghost:active {
+    background: var(--inspector-field-bg-hover);
+}

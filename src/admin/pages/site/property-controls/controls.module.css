@@ -12,7 +12,7 @@
 .urlControl {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--inspector-space-xs);
   width: 100%;
 }
 
@@ -20,7 +20,7 @@
 .dataTableControl {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--inspector-space-xs);
   width: 100%;
 }
 
@@ -33,7 +33,7 @@
 .svgControl {
   display: flex;
   flex-direction: column;
-  gap: var(--space-s);
+  gap: var(--inspector-space-s);
   width: 100%;
 }
 
@@ -42,7 +42,7 @@
   align-items: center;
   justify-content: center;
   min-height: 96px;
-  padding: var(--space-l);
+  padding: var(--inspector-space-l);
   border-radius: var(--radius);
   /* A checkerboard neutral so SVGs of any colour stay visible — the panel
      can't load the site's classes that normally tint the mark. */
@@ -82,13 +82,13 @@
 .svgPreviewEmpty {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-s);
+  gap: var(--inspector-space-s);
   font-size: var(--text-s);
 }
 
 .svgActions {
   display: flex;
-  gap: var(--space-xs);
+  gap: var(--inspector-space-xs);
   flex-wrap: wrap;
 }
 
@@ -100,7 +100,7 @@
 /* ── ColorControl ────────────────────────────────────────────────────────── */
 .colorRow {
     display: flex;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     align-items: center;
     min-width: 0;
 }
@@ -140,7 +140,7 @@
    the one legitimate use per the two-layer colour model. */
 .colorContrastBadge {
     flex-shrink: 0;
-    padding: 0 var(--space-3xs);
+    padding: 0 var(--inspector-space-3xs);
     border-radius: var(--radius-sm);
     color: var(--text-muted);
     font-size: var(--text-2xs);
@@ -164,7 +164,7 @@
     right: 0;
     left: 0;
     display: grid;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     border: 1px solid var(--border-muted);
     border-radius: 8px;
     background: var(--bg-surface-2);
@@ -174,10 +174,10 @@
 
 .colorTokenMenu {
     display: grid;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     max-height: 184px;
     overflow: auto;
-    padding: var(--space-3xs);
+    padding: var(--inspector-space-3xs);
 }
 
 .colorTokenOption {
@@ -186,14 +186,14 @@
     min-height: 28px;
     grid-template-columns: 18px minmax(0, 1fr) auto;
     align-items: center;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     border: 0;
     border-radius: 6px;
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     font: inherit;
-    padding: var(--space-3xs) var(--space-xs);
+    padding: var(--inspector-space-3xs) var(--inspector-space-xs);
     text-align: left;
 }
 
@@ -241,7 +241,7 @@
     display: flex;
     min-width: 0;
     align-items: baseline;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
 }
 
 .colorTokenOptionName {
@@ -288,20 +288,20 @@
 .mediaPicker {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
     min-width: 0;
 }
 
 .mediaUrlBody {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
     min-width: 0;
 }
 
 .mediaStatus {
     min-height: 42px;
-    padding: var(--space-m);
+    padding: var(--inspector-space-m);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--bg-surface);
@@ -318,10 +318,10 @@
 .videoPreview {
     display: flex;
     align-items: center;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     min-width: 0;
     min-height: 34px;
-    padding: 0 var(--space-m);
+    padding: 0 var(--inspector-space-m);
     border-radius: var(--input-radius);
     background: var(--bg-surface);
     color: var(--text-disabled);
@@ -354,16 +354,16 @@
 
 /* ── GroupSection ────────────────────────────────────────────────────────── */
 .groupWrapper {
-    margin-bottom: var(--space-m);
+    margin-bottom: var(--inspector-space-m);
 }
 
 .groupHeader {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
     width: 100%;
     min-height: 32px;
-    padding: 0 var(--space-m);
+    padding: 0 var(--inspector-space-m);
     background: var(--overlay-5);
     border: 1px solid var(--overlay-10);
     border-radius: var(--radius);
@@ -387,7 +387,7 @@
 }
 
 .groupChildren {
-    padding: var(--space-m) 0 0 var(--space-m);
+    padding: var(--inspector-space-m) 0 0 var(--inspector-space-m);
 }
 
 /* ── CodeValueControl ────────────────────────────────────────────────────── */
@@ -398,7 +398,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     min-height: 28px;
     font-size: var(--text-xs);
     color: var(--text-muted);
@@ -427,7 +427,7 @@
 .slotControl {
     display: flex;
     align-items: center;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
     flex-wrap: wrap;
 }
 
@@ -444,17 +444,17 @@
     grid-column: 1 / -1;
     display: flex;
     flex-direction: column;
-    gap: var(--space-2xs);
-    margin-top: var(--space-2xs);
-    padding: var(--space-xs);
+    gap: var(--inspector-space-2xs);
+    margin-top: var(--inspector-space-2xs);
+    padding: var(--inspector-space-xs);
     border-radius: var(--radius);
     background: var(--bg-surface-2);
     min-width: 0;
 }
 
 .slotPickerEmpty {
-    margin: var(--space-2xs) 0 0;
-    padding: var(--space-s);
+    margin: var(--inspector-space-2xs) 0 0;
+    padding: var(--inspector-space-s);
     font-size: var(--text-2xs);
     color: var(--text-disabled);
     text-align: center;
@@ -477,8 +477,8 @@
 .slotPickerList {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4xs);
-    margin: var(--space-2xs) 0 0;
+    gap: var(--inspector-space-4xs);
+    margin: var(--inspector-space-2xs) 0 0;
     padding: 0;
     list-style: none;
     max-height: 260px;
@@ -488,7 +488,7 @@
 .slotPickerCandidate {
     width: 100%;
     justify-content: flex-start;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
 }
 
 /*
