@@ -58,6 +58,13 @@ interface TokenAwareInputProps {
   id?: string
   /** Current resolved CSS value (e.g. `var(--space-md)`, `12px`, `auto`). */
   value: string | undefined
+  /**
+   * True when the field is driven by a multi-selection whose values disagree.
+   * The field shows the shared "Mixed" placeholder over an empty draft rather
+   * than one member's value; committing (Enter / blur / a token pick) writes
+   * the typed value to the whole selection through `onCommit`.
+   */
+  mixed?: boolean
   /** Placeholder shown when no value is set. Token-display is applied. */
   placeholder?: string
   /**
@@ -123,6 +130,7 @@ interface TokenAwareInputProps {
 export function TokenAwareInput({
   id,
   value,
+  mixed = false,
   placeholder,
   prefix,
   tokens,
@@ -146,7 +154,14 @@ export function TokenAwareInput({
   tooltipOnOverflow = false,
   ref,
 }: TokenAwareInputProps) {
-    const display = displayTokenValue(value, tokens)
+    // A mixed field has no single value to display — it shows the shared
+    // "Mixed" placeholder over an empty draft. Everything downstream (draft
+    // sync, token suggestions, commit) then behaves exactly as it does for an
+    // unset field, which is what makes the first keystroke replace "mixed"
+    // with one value across the whole selection.
+    const display = mixed ? '' : displayTokenValue(value, tokens)
+    // The "Mixed" string itself is `Input`'s job (it owns the shared
+    // constant); this only stops a real placeholder from competing with it.
     const placeholderDisplay = displayTokenValue(placeholder, tokens)
 
     // The shared "preview suggestions on hover" preference. When off,
@@ -261,6 +276,7 @@ export function TokenAwareInput({
         fieldSize={fieldSize}
         value={draft}
         prefix={prefix}
+        mixed={mixed}
         placeholder={placeholderDisplay}
         spellCheck={spellCheck}
         autoComplete={autoComplete}

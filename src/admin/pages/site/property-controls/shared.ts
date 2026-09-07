@@ -21,6 +21,18 @@ export interface ControlProps<T = unknown> {
   /** Disable the control */
   disabled?: boolean
   /**
+   * True when this control is driven by a multi-selection whose members
+   * disagree on the value (W8-3). The control renders EMPTY with the shared
+   * "Mixed" placeholder rather than picking one member's value to display,
+   * and the first edit commits normally — which writes that one value to the
+   * whole selection through the caller's `onChange`.
+   *
+   * Declared once here, on the shared contract, so "mixed" means the same
+   * thing in every control instead of being re-invented per field. Controls
+   * that have no meaningful mixed rendering simply ignore it.
+   */
+  mixed?: boolean
+  /**
    * Row layout — `inline` (default) renders a label column + control,
    * `stacked` renders the label above a full-width control, `caption` draws
    * that label as a small inspector caption, and `bare` drops it entirely

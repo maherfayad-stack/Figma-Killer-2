@@ -283,6 +283,18 @@ export interface SiteSlice {
    * HTML inline styles.
    */
   setNodeInlineStyles: (nodeId: string, patch: Record<string, string | number | null | undefined>) => void
+  /**
+   * Bulk sibling of `setNodeInlineStyles` — applies ONE patch to every id in
+   * `nodeIds` within a single history transaction, so an inspector edit made
+   * against an N-node multi-selection is ONE undo step (W8-3 phase 1). A
+   * selection spanning several board frames writes each frame's own page tree
+   * in the same transaction (`mutateTreesForNodeIds`, WS-7.3).
+   *
+   * Nodes that individually refuse the write — a stale id, or a property this
+   * node resolved from an expression in source — are skipped without aborting
+   * the rest of the selection.
+   */
+  setNodesInlineStyles: (nodeIds: string[], patch: Record<string, string | number | null | undefined>) => void
   /** Remove a single property from a node's inline styles. */
   removeNodeInlineStyleProperty: (nodeId: string, propKey: string) => void
   /** Remove ALL inline styles from a node (clears the `inlineStyles` field). */

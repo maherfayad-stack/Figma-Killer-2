@@ -36,6 +36,7 @@ import { CLASS_STYLE_SECTIONS, type ClassStyleSectionDefinition } from './classS
 import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue } from './styleValueUtils'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
+import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StyleRuleComposer.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
@@ -57,9 +58,22 @@ const BORDER_SECTION_ID = 'border'
 // ---------------------------------------------------------------------------
 
 interface StyleSectionsEditorProps {
-  /** The bag whose set/unset state drives the rows (the active editing target). */
+  /**
+   * The bag whose set/unset state drives the rows (the active editing target).
+   *
+   * A cell may hold the `MIXED` sentinel when the caller drives this editor
+   * from a multi-selection (`MultiInlineStyleComposer` /
+   * `multiSelectStyleBags.ts`, W8-3). `hasStyleValue(MIXED)` is true, so a
+   * mixed property counts as SET everywhere this editor asks that question —
+   * section disclosure, the indicator dot, the "N set" meta — and the row
+   * renders it as the empty "Mixed" field.
+   */
   storedStyles: Record<string, unknown>
-  /** Base-merged bag used for placeholder / inherited values. */
+  /**
+   * Base-merged bag used for placeholder / inherited values. May also hold
+   * `MIXED` — see `storedStyles` — in which case the row's placeholder is the
+   * word "Mixed" rather than a default that describes none of the selection.
+   */
   currentStyles: Record<string, unknown>
   /**
    * Every style bag for this rule across every context — base plus each
@@ -548,12 +562,16 @@ function StyleSectionGroup({
             const storedValue = storedStyles[prop]
             const isSet = hasStyleValue(storedValue)
             const provenance = provenanceByProperty?.get(String(prop))
-
+            // W8-3 — a multi-selection bag can hold `MIXED` in either layer:
+            // in `storedStyles` it flows to the row as a value (which renders
+            // the empty "Mixed" field), in `currentStyles` it becomes the
+            // placeholder (`resolveStylePlaceholder` owns that translation for
+            // every section, not just this generic branch).
             return (
               <ClassPropertyRow
                 key={`${activeTab}-${String(prop)}`}
                 property={prop}
-                value={isSet ? (storedValue as string | number) : undefined}
+                value={isSet ? (storedValue as string | number | Mixed) : undefined}
                 placeholder={
                   isSet
                     ? undefined
@@ -563,7 +581,9 @@ function StyleSectionGroup({
                         currentValue: currentStyles[prop],
                       })
                 }
-                fontFamilyValue={currentStyles.fontFamily}
+                fontFamilyValue={
+                  isMixed(currentStyles.fontFamily) ? undefined : currentStyles.fontFamily
+                }
                 isSet={isSet}
                 onChange={onChange}
                 onRemove={onRemove}

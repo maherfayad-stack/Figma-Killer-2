@@ -38,6 +38,7 @@ export function TextControl({
   isOverride,
   disabled,
   layout,
+  mixed,
 }: TextControlProps) {
   function handleChange(nextValue: string) {
     onChange(propKey, normalize === 'identifier' ? normalizeIdentifierInput(nextValue) : nextValue)
@@ -62,6 +63,7 @@ export function TextControl({
         type="text"
         value={value ?? ''}
         placeholder={placeholder}
+        mixed={mixed}
         disabled={disabled}
         prefix={prefix}
         aria-label={label ?? propKey}
