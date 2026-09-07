@@ -86,8 +86,8 @@
 .nodeViewSwitcher {
     display: flex;
     align-items: center;
-    gap: var(--space-l);
-    padding: var(--space-xs) var(--inspector-pad-x) 0;
+    gap: var(--inspector-space-l);
+    padding: var(--inspector-space-xs) var(--inspector-pad-x) 0;
 }
 
 .nodeViewSwitcher .nodeViewButton {
@@ -118,7 +118,7 @@
 .headerClassPicker {
     position: relative;
     z-index: 1;
-    padding: var(--space-xs) var(--inspector-pad-x) 0;
+    padding: var(--inspector-space-xs) var(--inspector-pad-x) 0;
 }
 
 /*  Soft fade just below the ClassPicker — mirrors the bottom search bar's
@@ -138,7 +138,7 @@
     display: flex;
     align-items: center;
     min-width: 0;
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
 }
 
 .headerNodeLabel {
@@ -164,7 +164,7 @@
 /* ── SelectorInspector: search bar + scroll-container+rail grid ────────────── */
 
 .selectorSearchBar {
-    padding: var(--space-s) var(--inspector-pad-x);
+    padding: var(--inspector-space-s) var(--inspector-pad-x);
     background: var(--overlay-5);
 }
 
@@ -173,7 +173,7 @@
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr) var(--inspector-rail-w);
-    gap: var(--space-3xs);
+    gap: var(--inspector-space-3xs);
     min-width: 0;
     overflow: hidden;
 }

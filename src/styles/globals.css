@@ -222,6 +222,28 @@
        a glyph inside it. These tokens are what makes that second rhythm one
        decision rather than thirty scattered literals — the three hardcoded
        `100px` label columns this replaced are the cautionary tale. */
+    /* Inspector spacing — FROZEN, not fluid.
+
+       The admin's `--space-*` scale is `clamp()`-based: every gutter in it
+       grows with the viewport. That is right for a page of forms and wrong
+       for an inspector, whose whole job is to hold a fixed grid of 24px rows
+       at a fixed 290px width — a panel that silently gains ~1px per gutter on
+       a wide monitor gains ~20px of height over nine sections, which is a
+       section's worth of scroll appearing for no reason the user can name.
+
+       These are the `--space-*` floors, pinned. Same rhythm as the rest of
+       the admin at its tightest, minus the breathing. Inspector CSS modules
+       use these instead of `--space-*`; everything else keeps the fluid
+       scale. */
+    --inspector-space-4xs: 2px;
+    --inspector-space-3xs: 3px;
+    --inspector-space-2xs: 4px;
+    --inspector-space-xs: 5px;
+    --inspector-space-s: 6px;
+    --inspector-space-m: 8px;
+    --inspector-space-l: 10px;
+    --inspector-space-xl: 12px;
+
     --inspector-pad-x: 8px;
     /* Field + icon-button height. Figma's inspector row. */
     --inspector-row-h: 24px;

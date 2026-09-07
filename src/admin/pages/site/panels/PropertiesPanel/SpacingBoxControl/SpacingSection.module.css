@@ -8,7 +8,7 @@
  * this section that put the box-model gear on top of the category rail. */
 .spacingSection {
     display: grid;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     min-width: 0;
 }
 

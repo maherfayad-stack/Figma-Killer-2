@@ -30,6 +30,10 @@ import {
   AspectRatioIcon,
   OpacityIcon,
   FontSizeIcon,
+  GapIcon,
+  RowGapIcon,
+  CornerRadiusIcon,
+  StrokeWeightIcon,
 } from '@ui/components/InspectorIcons'
 
 // ---------------------------------------------------------------------------
@@ -130,6 +134,29 @@ const PROPERTY_FIELD_GLYPHS = new Map<keyof CSSPropertyBag, IconComponent>([
   // Stacked boxes — `z-index` is depth, and it is the one Position field
   // whose number means nothing without saying which axis it is on.
   ['zIndex', BoxStackSolidIcon],
+
+  // ── The gap family ────────────────────────────────────────────────────
+  // `LayoutSection` already draws the `gap` shorthand with this mark as a
+  // bespoke prefix; claiming it here is what makes the table the single
+  // answer to "what does this property look like" rather than a list the
+  // bespoke sections quietly disagree with. `rowGap`/`columnGap` are the
+  // real win: they render as a captioned PAIR in the layout settings
+  // popover, and two captions reading "Row gap" / "Column gap" over two
+  // identical boxes cost a row apiece to say what two transposed glyphs say
+  // for free.
+  ['gap', GapIcon],
+  ['columnGap', GapIcon],
+  ['rowGap', RowGapIcon],
+
+  // ── Border shorthands ─────────────────────────────────────────────────
+  // The per-side longhands (`borderTopWidth` and friends) deliberately stay
+  // glyphless: `BorderControl` draws them inside its own per-side picker,
+  // where the side is already stated by the control, and four rows each
+  // marked with the same stroke-weight glyph would say nothing. The two
+  // SHORTHANDS live in the Border section's Advanced disclosure as plain
+  // rows, and there the glyph is the whole label.
+  ['borderWidth', StrokeWeightIcon],
+  ['borderRadius', CornerRadiusIcon],
 ])
 
 /** Returns the in-field glyph for a property, or undefined when it keeps a label. */

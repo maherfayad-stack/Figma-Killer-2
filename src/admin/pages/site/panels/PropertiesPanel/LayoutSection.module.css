@@ -12,7 +12,7 @@
  * and drew across the category rail. */
 .layoutSection {
     display: grid;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     min-width: 0;
 }
 
@@ -40,8 +40,8 @@
     display: flex;
     width: 100%;
     align-items: stretch;
-    gap: var(--space-4xs);
-    padding: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
+    padding: var(--inspector-space-4xs);
     border-radius: 10px;
     background: var(--bg-surface-2);
 }
@@ -52,7 +52,7 @@
 .displayChipGroup .displayChip.displayChip {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 0 var(--space-s);
+    padding: 0 var(--inspector-space-s);
     border-radius: 8px;
     background: var(--bg-surface);
     color: var(--text);
@@ -148,7 +148,7 @@
     flex: 1;
     min-width: 0;
     align-items: center;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
     color: var(--text);
     font-size: var(--text-xs);
     cursor: pointer;
@@ -196,7 +196,7 @@
 .positionDirectionsGrid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
 }
 
 /* Single direction cell: input (with its arrow mark inside, as the scrub

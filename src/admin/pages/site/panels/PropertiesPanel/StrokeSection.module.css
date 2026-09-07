@@ -34,7 +34,7 @@
 .trailingActions {
     display: flex;
     align-items: center;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     flex-shrink: 0;
 }
 
@@ -43,7 +43,7 @@
 .settingsBody {
     display: flex;
     flex-direction: column;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
 }
 
 /* The manual "Style" row (writes all four side longhands at once) uses the
@@ -65,7 +65,7 @@
 /* ── Sides menu ───────────────────────────────────────────────────────────── */
 
 .sidesMenuTitle {
-    padding: var(--space-3xs) var(--space-xs);
+    padding: var(--inspector-space-3xs) var(--inspector-space-xs);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-weight: 620;
