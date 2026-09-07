@@ -85,7 +85,7 @@ describe('executeAiTool with an unresolved capability set', () => {
   it('never reaches the browser bridge for a gated browser-executed tool', async () => {
     let reachedBridge = false
     const browserTool: AiTool = {
-      name: 'studio_set_frame_axes',
+      name: 'studio_upload_asset',
       scope: 'site',
       execution: 'browser',
       mutates: true,

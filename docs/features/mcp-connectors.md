@@ -22,7 +22,7 @@ The server is implemented with the official `@modelcontextprotocol/sdk`. That pa
 - **Studio is an MCP server.** One Streamable-HTTP endpoint at `/_studio/mcp` serves both local and remote clients (local is just `localhost`).
 - **Thin adapter over the existing tool engine.** No tool logic is duplicated. MCP is a new *caller* alongside the built-in agent and the plugin host; tool dispatch reuses `executeAiTool`.
 - **Tool surface = the full catalog.** Server-resolved tools (`site_list_documents`, `site_read_styles`, and explicit `site_publish`) run headless — no editor needed. Every browser-execution tool the agent panel has is exposed too, **relayed to the open Site workspace** — the single source of truth for edits. If that workspace is not open, its tools return a clear error; headless tools still work.
-- **Visual verification is headless.** `studio_screenshot`, `studio_export_frames` and `studio_compare` render in a server-side browser against what is on disk — they need no Studio tab open and never disturb one that is. The live editor bridge is their fallback, and stays the deliberate choice for state only an open tab holds (the current selection, an unsaved in-progress edit). See "Headless capture".
+- **Visual verification is headless.** `studio_screenshot`, `studio_export_frames`, `studio_compare`, `studio_computed_styles` and `studio_measure_element` render in a server-side browser against what is on disk — they need no Studio tab open and never disturb one that is. The live editor bridge is their fallback, and stays the deliberate choice for state only an open tab holds (the current selection, an unsaved in-progress edit). **`studio_upload_asset` is the one Studio tool that still requires an open tab**, because it posts as the signed-in user. See "Headless capture".
 - **Draft, then publish.** Browser writes save the draft and never leak intermediate work to visitors. A connector with `ai.tools.write` + `pages.publish` calls `site_publish` once after its edit sequence; that server-side tool runs the canonical full-site pipeline and atomically swaps the rebuilt static slot.
 - **Bearer-token auth, one secret per connector.** The token is shown once on creation and stored only as a SHA-256 hash. New tokens expire after 90 days by default; admins can choose a custom TTL or explicitly create a non-expiring token. Revocable.
 - **Capability-gated.** A connector carries a granted capability subset; the same gate the built-in agent uses (`toolAllowedForCapabilities`) filters the toolset. An MCP caller can never invoke a tool the granting capabilities couldn't authorize over HTTP.
@@ -68,7 +68,7 @@ repositories (headless reads) / live editor store (browser tools)
 | `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`. |
 | `editorBridge.ts` | Per-user live workspace bridge registry + `createEditorBridgeStream`; browser tools route to the owner's open Site workspace. |
 | `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site` — the capability-gated NDJSON stream the workspace holds open. |
-| `capture/` | **Headless agent capture (W4-2A).** `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the driver), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
+| `capture/` | **Headless agent capture (W4-2A, extended by W9-6).** `captureSession.ts` (open + settle + validate one capture page — the five steps both drivers share), `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the rasterising driver), `headlessFrameInspect.ts` (the QUESTION-asking driver behind `studio_computed_styles` / `studio_measure_element`), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
 | `connectors/` | `types.ts` (server-only record), `token.ts` (generate + SHA-256 hash), `store.ts` (CRUD + `toConnectorView`). |
 | `handlers/connectors.ts` | `/admin/api/ai/mcp/connectors` CRUD, gated by `ai.providers.manage`. |
 
@@ -280,6 +280,7 @@ The code vocabulary — frozen once shipped, same contract as `fidelityCodes.ts`
 Not covered, stated rather than implied: `XMLHttpRequest` and `WebSocket` are not wrapped, and anything the authored code catches itself is invisible here by definition.
 
 **Browser-relayed (via the live workspace bridge) — require the Site workspace to be open:**
+- `studio_upload_asset` — the ONLY Studio tool left in this class (W9-6). It posts real `FormData` to `/admin/api/studio/asset-upload` as the signed-in user, and that endpoint's authority is the operator's session, which a server-side tool has no honest way to hold. `studio_fetch_remote_asset` is the headless alternative when the bytes are already at an `http(s)` URL. Everything else that used to be here — `studio_computed_styles`, `studio_set_frame_axes`, `studio_duplicate_frame_as_variant` — now runs server-side; see "Headless frame reads" and "Board writes are file writes" below.
 - Structure editing — `site_insert_html`, `site_replace_node_html`, `site_delete_node`, `site_move_node`, `site_duplicate_node`, `site_rename_node`, `site_update_node_props`.
 - HTML/CSS authoring (`site_apply_css`, `site_assign_class`, `site_remove_class`), page lifecycle (`site_add_page`, …), design tokens (`site_set_color_tokens`, …), code assets, structure reads (`site_read_document`), and live-DOM reads (`site_render_snapshot`, `site_get_node_html`).
 - These have no server implementation — their logic runs in the browser against the live workspace state, routed to `SitePage`. Image attachments (e.g. `site_render_snapshot`'s PNG) come back as MCP image content blocks. No workspace connected → a clear error asking the operator to open the Site editor.
@@ -403,11 +404,64 @@ re-checked against the real captured bytes (a scroll-unrolled page can exceed
 its authored height), with `imageScale` derived from the actual pixel width
 either way.
 
+### Headless frame reads (W9-6)
+
+A capture page that has settled can answer QUESTIONS about a frame, not only be
+photographed. Two tools do exactly that, over a second wire contract
+(`@core/studio-capture`'s `frameInspectWire.ts`) and one shared driver
+(`server/ai/mcp/capture/headlessFrameInspect.ts`):
+
+| Tool | Question | Bridge fallback |
+|---|---|---|
+| `studio_computed_styles` | What did the CSS actually resolve to, per node — real px, real weight, real colour, and the family the text is genuinely SET IN. | **Yes.** The live tab is authoritative for an unsaved in-progress edit, and is what an install with no Chromium degrades to. `readVia` says which answered. |
+| `studio_measure_element` | What did the layout actually produce — each element's box, its padding/margin/border, and the measured gap to its neighbours, beside the parent's DECLARED `row-gap`/`column-gap`. | **No.** It measures a screen the agent just wrote; the tab would only be a slower read of the same file. |
+
+The page exposes ONE function, `window.__studioAgentCaptureInspect(requestJson)
+-> responseJson`, installed at module load next to `window.__studioAgentCapture`
+and called only after the readiness report flips (an inspect of a mid-layout
+frame would report fonts that had not loaded and boxes about to move). Both
+directions are TypeBox-validated: the page validates the request, the driver
+validates the response.
+
+**One reader, two documents.** The measurement itself is
+`@core/studio-capture`'s `inspectFrameDocument`, and the LIVE tab runs the same
+function against its own board-frame iframe
+(`src/admin/pages/site/agent/studioComputedStyles.ts`). If the two paths had
+their own readers, the number `studio_computed_styles` reports would depend on
+which one answered — and a fidelity loop whose measurement moves is not a
+measurement.
+
+`headlessCapture.ts` and `headlessFrameInspect.ts` share the five steps that
+open, settle and validate a capture page (`capture/captureSession.ts`), so the
+grant, the ready expression and the failure vocabulary have exactly one owner.
+
+### Board writes are file writes (W9-6)
+
+`studio_set_frame_axes` and `studio_duplicate_frame_as_variant` were browser
+tools wrapping `EditorStore.setFrameAxes`/`duplicateFrameAsVariant`, because
+that is where the toolbar calls them from. But the result does not live in the
+store: a frame's axes override and a variant frame are `.studio/boards.json`,
+which the store is holding a copy of and POSTs back when `boardsDirty` flushes.
+So the browser path was a round trip through a mutable copy in order to write a
+file the server already owns — at the cost of ~8s of bridge timeout and then a
+refusal whenever no tab was open.
+
+Both are now `execution: 'server'`
+(`server/ai/mcp/tools/studio/frameAxesTools.ts`). They write through
+`boardFrames.ts`'s `readBoardsFile`/`writeBoardsFile` — the module whose stated
+reason to exist is that every server-side write to the board's frame list has
+one owner — and then `pushStudioLiveReload({ boardsChanged: true })`, so an open
+board re-reads the file and the user sees the frame flip exactly as before.
+Addressing is by `pageId`, with an optional `frameId`; the server has no notion
+of an "active board", so the rule is the first board carrying a frame for that
+page, else the first board.
+
 ### Failure honesty
 
 A headless failure is named (`headless-browser-unavailable`,
 `headless-navigation-failed`, `headless-not-ready`, `headless-page-error`,
-`headless-invalid-report`) and falls back to the bridge. When BOTH paths fail
+`headless-invalid-report`, `headless-inspect-failed`) and falls back to the
+bridge. When BOTH paths fail
 the error is `capture-unavailable` and it states both reasons — including how
 to fix the headless one (`bunx playwright install chromium`). A host with no
 Chromium is a supported configuration: the first failed launch is remembered
@@ -547,6 +601,11 @@ Two consequences worth knowing when reading the driver:
 - `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read.
 - `server/ai/mcp/capture/captureToken.test.ts` — grant scoping (project + page set), immediate revocation, expiry, and that a caller cannot widen a grant after minting it.
 - `server/ai/mcp/capture/captureFrames.test.ts` — the routing decision: headless first, bridge fallback, `source:'live'`/`'headless'` overrides, and that a both-paths failure names BOTH reasons instead of blaming a missing board.
+- `server/ai/mcp/capture/headlessFrameInspect.test.ts` — the frame-inspect driver: that the readiness poll happens BEFORE the inspect call, that the request crosses as a JSON string literal the page can parse back, that the grant is revoked however the call ends, and that an unvalidatable response is refused rather than trusted. Chromium is faked; the token, the settle session and both validations are real.
+- `src/core/studio-capture/frameInspector.test.ts` — the shared reader, against a real document: which nodes a `textOnly` sweep skips (and that an explicitly-named node is reported anyway), that a node's OWN text excludes its descendants', selector/nodeIds unioning, and the string boundary's refusals (bad JSON, bad schema, no settled frame).
+- `server/ai/mcp/tools/studio/computedStyles.test.ts` — the routing decision only: headless answers with no bridge touched, a dead browser falls back to the tab and says why, and a both-paths failure names BOTH reasons.
+- `server/ai/mcp/tools/studio/measureElement.test.ts` — the three-step ritual on a real fixture project (board reconciliation, awaited live-reload, then measure) plus screen-name resolution.
+- `server/ai/mcp/tools/studio/frameAxesTools.test.ts` — `studio_set_frame_axes` / `studio_duplicate_frame_as_variant` against a REAL `.studio/boards.json`, re-read through `parseBoardsFile` after every write. No browser anywhere, which is the regression it pins.
 - `server/ai/mcp/capture/headlessCapture.test.ts` — headless capture end to end against a real fixture workspace, including **W4-2A's definition of done: `studio_compare` across five pages with no editor bridge connected**. Everything server-side is real (the capture route handler, token minting/resolution/revocation, the payload builder running the real `loadStudioPages` parse, the driver, the resolution clamp, and the whole of `studio_compare` including pixelmatch diffing and the verdict cache). Only Chromium is faked — CI has no browser binary — and the fake still calls the real route with the token out of the navigation URL and validates the payload against the shared schema, so a broken route or a rejected grant fails the test. What it stands in for is rasterisation alone.
 - `server/handlers/studio/designReferenceStore.test.ts` — register/list/get/read/remove against real sharp-encoded PNG/JPEG bytes, containment, idempotent delete, and graceful degradation when a registered file is missing from disk.
 - `server/handlers/studio/referenceUpload.test.ts` — the chat panel's `POST/GET/DELETE /admin/api/studio/reference-upload` HTTP contract end to end.

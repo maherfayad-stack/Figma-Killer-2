@@ -449,59 +449,6 @@ export const StudioExportFramesInputSchema = Type.Object({
   })),
 })
 
-// ---------------------------------------------------------------------------
-// studio_set_frame_axes / studio_duplicate_frame_as_variant (WS-12 §6.1) —
-// browser-bridged (execution: 'browser', scope: 'site'), same pattern as
-// studio_export_frames above: this file only declares the shape, the real
-// mutation runs client-side against the live board via `EditorStore.setFrameAxes`/
-// `duplicateFrameAsVariant` (`executor.ts`), the same two actions the
-// toolbar's own preview-axes/duplicate-as-variant controls call.
-//
-// Both address a frame by `pageId` (the id every other Studio tool already
-// returns) rather than a raw board `frameId`, which no tool exposes to an
-// agent at all — when a page has more than one frame/variant on the active
-// board, the FIRST one found is targeted; pass `frameId` explicitly
-// (returned by studio_duplicate_frame_as_variant) to address a specific one.
-// ---------------------------------------------------------------------------
-
-const StudioFrameAxesPatchSchema = Type.Object({
-  direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
-  colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
-  locale: Type.Optional(Type.String({ minLength: 1 })),
-})
-
-export const StudioSetFrameAxesInputSchema = Type.Object({
-  pageId: Type.String({ minLength: 1, description: 'Studio page id (from studio_list_pages) whose board frame gets the override.' }),
-  frameId: Type.Optional(Type.String({ description: 'Address a SPECIFIC frame when the page has more than one (a "duplicate as variant" result) — omit to target the first frame found for pageId.' })),
-  axes: StudioFrameAxesPatchSchema,
-})
-
-/**
- * `studio_computed_styles` — what a screen's CSS ACTUALLY resolved to, read off
- * the live canvas.
- *
- * The gap this closes: the agent could see the design's intended values (a
- * Figma connector's variable definitions) and a picture of its own output, but
- * never the values its own stylesheet computed to. So "does this button render
- * at 14px?" was answerable only by squinting at a screenshot, and a label
- * rendering at the wrong size survived four rounds of corrections — each one
- * editing a number that was already right.
- *
- * Deliberately per-NODE rather than per-component: it needs no catalogue of
- * component variants and no knowledge of what `size="default"` means, so it
- * covers buttons, inputs and everything else the same way.
- */
-export const StudioComputedStylesInputSchema = Type.Object({
-  pageId: Type.String({ minLength: 1, description: 'Studio page id (from studio_list_pages) whose live board frame is read.' }),
-  nodeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
-    description: 'Restrict to these node ids (from studio_screenshot\'s nodeRects or studio_find_nodes). Omit to report every node in the frame that renders text or a visible box.',
-  })),
-  textOnly: Type.Optional(Type.Boolean({
-    description: 'Default true — report only nodes with their own text, which is what a type mismatch lives on. Set false to include layout containers (their padding, radius and background).',
-  })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 300, description: 'Cap on reported nodes. Default 80, with an honest truncated count.' })),
-})
-
 /**
  * `studio_page_diagnostics` — the BROWSER leg's input shape (page ids already
  * resolved). The model-facing tool takes screen NAMES and resolves them
@@ -523,12 +470,6 @@ export const StudioPageDiagnosticsInputSchema = Type.Object({
     maximum: 100,
     description: 'Cap on distinct findings reported PER PAGE. Default 25, with an honest truncated count.',
   })),
-})
-
-export const StudioDuplicateFrameAsVariantInputSchema = Type.Object({
-  pageId: Type.String({ minLength: 1, description: 'Studio page id whose board frame is duplicated as a new, independently-addressable variant frame.' }),
-  frameId: Type.Optional(Type.String({ description: 'Duplicate a SPECIFIC frame when the page already has more than one — omit to duplicate the first frame found for pageId.' })),
-  axes: StudioFrameAxesPatchSchema,
 })
 
 // ---------------------------------------------------------------------------
