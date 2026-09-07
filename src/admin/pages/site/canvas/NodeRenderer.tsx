@@ -32,6 +32,13 @@ import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-s
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
 import {
+  isSuppressedPointerTarget,
+  markClickActivated,
+  setSuppressedPointerTarget,
+  takeActivatedClick,
+  takeSuppressedPointerTarget,
+} from './canvasNodeGestureLatch'
+import {
   focusNodeWithoutScrolling,
   isCanvasEditorControlTarget,
   isClosestCanvasNodeTarget,
@@ -86,7 +93,21 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // `useCanvasFormControlSuppression` reads at the document level; the
   // node-level handlers below were the one place still applying the design
   // rule to both.
-  const suppressesFormControls = use(CanvasInteractionContext) !== 'live'
+  const interaction = use(CanvasInteractionContext)
+  const suppressesFormControls = interaction !== 'live'
+  /**
+   * Whether this frame's clicks belong to the EDITOR outright.
+   *
+   * On a design frame they do, and the canvas stops a click dead in the capture
+   * phase. A LIVE frame is the page as a visitor gets it, and the capture-phase
+   * `stopPropagation()` there meant the authored component's own `onClick`
+   * NEVER RAN — the event was swallowed above it, before it could reach the
+   * button inside the `display: contents` host that carries this bag. With the
+   * prototype player armed that turned into "the link fires OR the component
+   * does, never both", which is the whole complaint. `preventDefault()` stays
+   * in both: an authored `<a href>` must not navigate the frame away.
+   */
+  const ownsAuthoredEvents = interaction !== 'live'
   // Per-node subscription — editing this node's props only re-renders THIS
   // component. `frameId` (§4.4/Phase 4) lets a locale-variant frame read
   // `localizedPageSlice.ts`'s tree instead of `site.pages` — see
@@ -161,7 +182,8 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     const preview = s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null
     return getCanvasNodeClassName(canvasNode?.classIds, preview, nodeId, s.site?.styleRules)
   })
-  const { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick } = use(CanvasSelectionContext)
+  const { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
+    use(CanvasSelectionContext)
 
   const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent) => {
     // Imperative store access is correct here (event handler, not render path).
@@ -357,22 +379,26 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     ...(isHovered && !isSelected ? { 'data-hovered': 'true' as const } : {}),
     onPointerDownCapture: (e) => {
       focusNodeWithoutScrolling(e.currentTarget, e.target, isInlineEditing)
+      // The press half of the player's gesture. Guarded by the same
+      // "innermost node wins" predicate the click handlers use, so exactly one
+      // node in the path latches it — the one the pointer is actually on.
+      if (isClosestCanvasNodeTarget(e.target, e.currentTarget) && !isCanvasEditorControlTarget(e.target, e.currentTarget)) {
+        onNodePointerDown(nodeId)
+      }
       if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
         // A press this node does not suppress still STARTS a new gesture, so
-        // whatever the last one latched is over. Without this, a latch left
-        // armed by a press that never became a click would swallow the next
-        // click on that same element.
-        latestSuppressedPointerTarget = null
+        // whatever the last one latched is over.
+        setSuppressedPointerTarget(null)
         return
       }
       e.preventDefault()
       e.stopPropagation()
-      latestSuppressedPointerTarget = e.currentTarget
+      setSuppressedPointerTarget(e.currentTarget)
       handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onMouseDownCapture: (e) => {
       if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
-        latestSuppressedPointerTarget = null
+        setSuppressedPointerTarget(null)
         return
       }
       e.preventDefault()
@@ -380,9 +406,17 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       // The compatibility mousedown for a pointerdown this gesture already
       // acted on. Deliberately does NOT clear the latch: the click still to
       // come belongs to the same gesture.
-      if (latestSuppressedPointerTarget === e.currentTarget) return
-      latestSuppressedPointerTarget = e.currentTarget
+      if (isSuppressedPointerTarget(e.currentTarget)) return
+      setSuppressedPointerTarget(e.currentTarget)
       handleNodeClick(nodeId, e as unknown as React.MouseEvent)
+    },
+    onPointerUpCapture: (e) => {
+      // The release half. Reported against THIS node whatever the component
+      // did to its own DOM in between — see `onNodePointerDown`'s doc for why
+      // the player cannot wait for the `click`.
+      if (!isClosestCanvasNodeTarget(e.target, e.currentTarget)) return
+      if (isCanvasEditorControlTarget(e.target, e.currentTarget)) return
+      onNodePointerUp(nodeId)
     },
     onFocusCapture: (e) => {
       // A live frame is the page as a visitor gets it: blurring every field
@@ -394,18 +428,15 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     onClickCapture: (e) => {
       if (!isClosestCanvasNodeTarget(e.target, e.currentTarget)) return
       if (isCanvasEditorControlTarget(e.target, e.currentTarget)) return
+      // Always: an authored `<a href>` must not navigate the frame away.
       e.preventDefault()
-      e.stopPropagation()
-      // CLOSES the gesture a suppressed pointerdown opened. Without this, one
-      // click on an authored control activated the node TWICE — harmless while
-      // activation only meant "select this node", and not harmless at all once
-      // the player made it mean "follow this link": every prototype link on a
-      // button fired twice, pushing the same screen onto the stack twice, so
-      // going back once landed on the screen you were already looking at.
-      if (latestSuppressedPointerTarget === e.currentTarget) {
-        latestSuppressedPointerTarget = null
-        return
-      }
+      // Only on an EDITING surface — see `ownsAuthoredEvents`.
+      if (ownsAuthoredEvents) e.stopPropagation()
+      // CLOSES the gesture a suppressed pointerdown opened.
+      if (takeSuppressedPointerTarget(e.currentTarget)) return
+      // The bubble-phase twin below sees the same native event a moment later
+      // whenever propagation was left alive — see `canvasNodeGestureLatch`.
+      markClickActivated(ownsAuthoredEvents ? null : (e as unknown as React.MouseEvent).nativeEvent)
       handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onClick: (e) => {
@@ -415,7 +446,8 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
         return
       }
       e.preventDefault()
-      e.stopPropagation()
+      if (ownsAuthoredEvents) e.stopPropagation()
+      if (takeActivatedClick((e as unknown as React.MouseEvent).nativeEvent)) return
       handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onDoubleClickCapture: (e) => {
@@ -638,11 +670,5 @@ function LoopIterationsPreview({ node, baseTemplateContext }: LoopIterationsPrev
 // not rendering a node), and what brought this module back under the size
 // ceiling.
 
-// The node whose authored control the CURRENT pointer gesture suppressed, so
-// that gesture activates it exactly once however many events it raises —
-// pointerdown, then a compatibility mousedown, then the click. Set when the
-// gesture opens, cleared by the click that ends it.
-//
-// Stays HERE, not in `canvasEventTargets`: that module is pure classification,
-// and this is state only this component's own handlers write.
-let latestSuppressedPointerTarget: EventTarget | null = null
+// The per-gesture latches that collapse pointerdown / mousedown / click into
+// ONE activation live in `./canvasNodeGestureLatch`.

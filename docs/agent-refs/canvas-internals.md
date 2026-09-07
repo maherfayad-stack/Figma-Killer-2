@@ -147,6 +147,7 @@ as **chrome-namespaced** aliases (`--chrome-font-sans`, `--chrome-text-*`,
 | Keyboard | cloned onto parent `document`; `Tab` blocked | not forwarded |
 | Chrome CSS | applied | not applied |
 | Authored form controls | suppressed (a press selects the node) | left alone (focus, type, pick) |
+| The component's own `onClick` | swallowed — the canvas owns the click | runs, alongside the canvas's own activation |
 | The page's own `:hover` | rewritten so it cannot match | real |
 | Scrollbars | n/a (frames grow to content) | hidden inside a device mockup |
 
@@ -625,6 +626,35 @@ needs no handler at all; the generic dispatcher runs it (that is how ⌘⇧H →
 `IframeFrameSurface.onKeyDown` returns early without forwarding — otherwise
 Cmd+Z runs the store `undo()` while the contentEditable DOM keeps the text, and
 store and DOM diverge.
+
+### A live frame does not stop propagation, and one press is one activation
+
+`NodeRenderer` activates a node from its **capture-phase** `onClickCapture`,
+which sits ABOVE the authored element (a design-system / package component's
+editor bag goes on a `display: contents` host, and the component's own
+`<button>` is a descendant of it). `stopPropagation()` there means the authored
+component's own `onClick` **never runs at all** — so a live frame only calls it
+when it owns the click outright (`interaction !== 'live'`). `preventDefault()`
+still applies in both: an authored `<a href>` must not navigate the frame away.
+
+Letting the event through means this node's bubble-phase `onClick` sees the same
+gesture a moment later. `canvasNodeGestureLatch.ts` holds the two module-level
+latches that collapse `pointerdown` → compatibility `mousedown` → `click` into
+ONE activation. **Match on the NATIVE event, never the synthetic one:** React
+dispatches each phase from its own root listener and mints a separate
+`SyntheticEvent` for each, so synthetic identities never match across phases.
+
+**The prototype player follows a link on the press/release PAIR, not on the
+`click`.** A `click` is dispatched at the nearest common ancestor of the
+mousedown and mouseup targets — and when the mousedown target has left the
+document by the time the button comes up, there is no common ancestor and the
+browser dispatches **no click at all**. A component whose hover/press effect
+re-renders under the finger does exactly that on the first press and has settled
+by the second, which is what "the link doesn't fire on the first click" looks
+like. The node's own host element is rendered by `NodeRenderer` and survives
+that churn, so `onPointerDownCapture`/`onPointerUpCapture` on it are the reading
+of the gesture a component cannot break. See `useCanvasNodeInteraction`'s
+`PlayGesture`.
 
 ---
 
