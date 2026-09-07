@@ -86,6 +86,24 @@ export const AiChatRequestBodySchema = Type.Object(
     permissionMode: Type.Optional(Type.Union([
       Type.Literal('default'), Type.Literal('acceptEdits'), Type.Literal('plan'), Type.Literal('bypassPermissions'),
     ])),
+    /**
+     * W9-2 — how strictly this turn is meant to match the design, and how
+     * much invention it is allowed. Tier 3 of `resolveFidelityMode`'s
+     * precedence (`server/handlers/studio/fidelityMode.ts`): an explicit
+     * tool argument and the resolved design reference's own `mode` both
+     * outrank it; the persisted per-project default and the derived
+     * "reference armed → balanced, none → creative" sit below it.
+     *
+     * Consumed server-side in two places, both Studio-only: the system
+     * prompt's static prefix gains this mode's block (so each mode is its own
+     * prompt-cache partition), and `studio_compare` reads the mode's
+     * thresholds. Every non-`claudeCli` driver ignores it exactly as it
+     * ignores `effort`/`permissionMode` — there is no provider knob to map it
+     * onto, and it is a prompt/verification setting rather than a model one.
+     */
+    fidelityMode: Type.Optional(Type.Union([
+      Type.Literal('creative'), Type.Literal('balanced'), Type.Literal('strict'),
+    ])),
   },
   { additionalProperties: false },
 )

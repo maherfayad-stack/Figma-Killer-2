@@ -44,6 +44,7 @@ import { studioSnapshotStaleness, STALE_NODE_IDS_WARNING, type StalenessTracker 
 import type { StudioAgentSnapshot } from './snapshot'
 import { computePageWriteVerification, type PageWriteVerificationEntry } from '../../../handlers/studio/pageWriteVerification'
 import { studioAgentUserKey } from '../../../handlers/studio/agentUserScope'
+import { resolveProjectFidelityMode } from '../../../handlers/studio/projectFidelityMode'
 
 export interface StudioLiveDigest {
   readonly board: { readonly activeBoardId: string | null; readonly frames: ReadonlyArray<{ pageId: string; title: string; x: number; y: number; width?: number; height?: number }> }
@@ -432,7 +433,11 @@ export async function buildStudioLiveDigest(
 
   let pageWriteVerification: readonly PageWriteVerificationEntry[] = []
   try {
-    pageWriteVerification = computePageWriteVerification(dir, studioAgentUserKey(options.userId), pages)
+    // Same mode the Stop gate will resolve (`resolveProjectFidelityMode`) —
+    // the digest and the gate must flag the identical set of pages, or the
+    // digest trains the model to distrust its own gate.
+    const userKey = studioAgentUserKey(options.userId)
+    pageWriteVerification = computePageWriteVerification(dir, userKey, pages, resolveProjectFidelityMode(dir, userKey))
   } catch (err) {
     console.error('[ai/liveDigest] page write verification failed — continuing without it:', err)
   }

@@ -84,6 +84,8 @@ import {
 } from '../runtime'
 import { normalizeContextTokens } from '../contextTokens'
 import { resolveValidatedWorkspaceDir } from '../../handlers/studio/workspaceDir'
+import { resolveProjectFidelityMode } from '../../handlers/studio/projectFidelityMode'
+import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
 import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'
 import type { AiStreamEvent } from '../runtime/types'
@@ -134,7 +136,7 @@ async function handleAiChat(
     throw err
   }
   if (!chatBody) return badRequest('Invalid request body.')
-  const { conversationId, content, snapshot, workspaceDir, effort, permissionMode } = chatBody
+  const { conversationId, content, snapshot, workspaceDir, effort, permissionMode, fidelityMode: turnFidelityMode } = chatBody
   // Validated once, reused for both tool selection and prompt assembly below
   // — a client-supplied path is never trusted twice with two different
   // checks that could drift. `null` means either no project is open or the
@@ -142,6 +144,23 @@ async function handleAiChat(
   // outside studio-workspace/ entirely) — both degrade to the CMS toolset,
   // never to trusting the raw client value.
   const validatedWorkspaceDir = resolveValidatedWorkspaceDir(workspaceDir)
+
+  // W9-2 — resolved ONCE here, and once is the point: this is the only place
+  // that holds both the per-turn value and the account key needed to read the
+  // project default off disk, so every consumer downstream (the prompt's
+  // static prefix, `studio_compare` via `ToolContextBase`) is looking at the
+  // same answer. The two tiers ABOVE this one — an explicit tool argument and
+  // the resolved design reference's own `mode` — are per-call and per-page,
+  // so they are applied where they are known (`compare.ts`), on top of this.
+  //
+  // `referenceArmed` is what the derived tier reads: a project with any
+  // registered design gets `balanced` (there is something to measure), one
+  // with none gets `creative` (there is not). Wrapped because a project whose
+  // `.studio/` is unreadable must degrade to "no reference", never take the
+  // whole turn down.
+  const resolvedFidelityMode = validatedWorkspaceDir
+    ? resolveProjectFidelityMode(validatedWorkspaceDir, studioAgentUserKey(user.id), turnFidelityMode)
+    : undefined
 
   const conversation = await readConversationForUser(db, user.id, conversationId)
   if (!conversation) {
@@ -355,7 +374,7 @@ async function handleAiChat(
         .join('\n')
 
       const systemPrompt = validatedWorkspaceDir
-        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, { userId: user.id }, userMessageText)
+        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, { userId: user.id }, userMessageText, resolvedFidelityMode)
         : buildCmsSiteSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold
@@ -451,6 +470,7 @@ async function handleAiChat(
           // it they fall back to "first project alphabetically", which silently
           // pointed the agent at a project the user was not looking at.
           workspaceDir: validatedWorkspaceDir ?? undefined,
+          fidelityMode: resolvedFidelityMode,
           snapshot,
         }
         const { bridgeId, bridge, destroy } = createBridge(
@@ -477,6 +497,7 @@ async function handleAiChat(
           workspaceDir,
           effort,
           permissionMode,
+          fidelityMode: resolvedFidelityMode,
           sessionEpoch: latestConversation.sessionEpoch,
         }
 

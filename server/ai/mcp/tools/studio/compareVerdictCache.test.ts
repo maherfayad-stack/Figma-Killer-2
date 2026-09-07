@@ -46,18 +46,18 @@ describe('compareVerdictCache', () => {
   })
 
   it('misses a cold key', () => {
-    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
+    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
     expect(getCachedCompareVerdict(key)).toBeNull()
   })
 
   it('hits after a write with every tracked file unchanged', () => {
-    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
+    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
     setCachedCompareVerdict(key, [pageFile, cssFile], fakeVerdict)
     expect(getCachedCompareVerdict(key)).toEqual(fakeVerdict)
   })
 
   it('misses once the page\'s own file is edited', () => {
-    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
+    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
     setCachedCompareVerdict(key, [pageFile, cssFile], fakeVerdict)
     expect(getCachedCompareVerdict(key)).toEqual(fakeVerdict)
 
@@ -69,7 +69,7 @@ describe('compareVerdictCache', () => {
   })
 
   it('misses once an imported stylesheet is edited, even though the page\'s own file did not change', () => {
-    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
+    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
     setCachedCompareVerdict(key, [pageFile, cssFile], fakeVerdict)
     expect(getCachedCompareVerdict(key)).toEqual(fakeVerdict)
 
@@ -81,7 +81,7 @@ describe('compareVerdictCache', () => {
   })
 
   it('misses once a tracked file is deleted', () => {
-    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
+    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
     setCachedCompareVerdict(key, [pageFile, cssFile], fakeVerdict)
     fs.rmSync(cssFile)
     expect(getCachedCompareVerdict(key)).toBeNull()
@@ -89,7 +89,7 @@ describe('compareVerdictCache', () => {
 
   it('misses once a tracked file that did NOT exist at write time is later created — the create/delete transition a plain skip would hide', () => {
     const frameworkJson = path.join(tmpDir, '.studio', 'framework.json')
-    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
+    const key = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
     setCachedCompareVerdict(key, [pageFile, cssFile, frameworkJson], fakeVerdict)
     expect(getCachedCompareVerdict(key)).toEqual(fakeVerdict)
 
@@ -100,16 +100,16 @@ describe('compareVerdictCache', () => {
   })
 
   it('different thresholds/topN are different cache entries, not one shared verdict', () => {
-    const keyA = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
-    const keyB = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 90, 1.5, 6)
+    const keyA = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
+    const keyB = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 90, 1.5, 6)
     setCachedCompareVerdict(keyA, [pageFile], fakeVerdict)
     expect(getCachedCompareVerdict(keyA)).toEqual(fakeVerdict)
     expect(getCachedCompareVerdict(keyB)).toBeNull()
   })
 
   it('a different reference id is a different cache entry', () => {
-    const keyA = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 98, 1.5, 6)
-    const keyB = buildCompareCacheKey(tmpDir, 'home', 'ref-2', 98, 1.5, 6)
+    const keyA = buildCompareCacheKey(tmpDir, 'home', 'ref-1', 'balanced', 98, 1.5, 6)
+    const keyB = buildCompareCacheKey(tmpDir, 'home', 'ref-2', 'balanced', 98, 1.5, 6)
     setCachedCompareVerdict(keyA, [pageFile], fakeVerdict)
     expect(getCachedCompareVerdict(keyB)).toBeNull()
   })

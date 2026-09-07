@@ -1,6 +1,7 @@
-/* AgentSessionControls — the composer's compact permission-mode trigger.
-   No labelled form rows, no filled banner: the value itself (plus, while
-   Bypass is on, the trigger's own danger tone) IS the control. */
+/* AgentSessionControls — the composer's compact permission-mode and fidelity
+   triggers. No labelled form rows, no filled banner: the value itself (plus,
+   while Bypass is on, the trigger's own warning glyph) IS the control. Both
+   triggers share `.trigger` and sit in the same `.root` row. */
 
 .root {
     position: relative;

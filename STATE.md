@@ -1915,6 +1915,91 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### fidelity-modes — W9-2: creative / balanced / strict, one control from prompt to gate
+- **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/agent-fidelity-modes` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W9-2.
+- **Shipped — the vertical slice, end to end:**
+  - `server/handlers/studio/fidelityMode.ts` — the vocabulary
+    (`FIDELITY_MODES`), the ONE precedence function (`resolveFidelityMode`:
+    tool arg > per-reference `mode` > per-turn > per-project > derived), the
+    threshold table (`FIDELITY_THRESHOLDS`: creative 80/12, balanced 92/6,
+    strict 99/0.5 + a 400px²-at-1x area floor), and `scaledMaxRegionPixels`.
+    Pure, no I/O. `designReferenceSchema.ts`'s
+    `DESIGN_REFERENCE_FIDELITY_MODES` is now an alias of it — one vocabulary.
+  - `server/handlers/studio/projectFidelityMode.ts` — the disk half
+    (`resolveProjectFidelityMode(dir, userKey, turn?)`). Its own module
+    because `studioMeta.ts` imports `fidelityMode.ts` for the vocabulary at
+    module-init time, so a meta read inside that file would close a cycle.
+  - **Wire:** `fidelityMode` on `AiChatRequestBodySchema`, `AiStreamRequest`,
+    `ToolContextBase` and `ToolContext`. Resolved ONCE in `chat.ts` (the only
+    place holding both the turn value and the account key), then fed to the
+    prompt and to tools.
+  - **Prompt:** `MODE_BLOCK` in `server/ai/tools/studio/systemPrompt.ts`,
+    folded into the STATIC prefix (`prefix = base + MODE_BLOCK[mode]`) so each
+    mode is its own cache partition. Each block ends in a DONE definition
+    reachable in that mode; the numbers are interpolated from
+    `FIDELITY_THRESHOLDS` so the prompt cannot state a bar the tool does not
+    apply.
+  - **`studio_compare`:** an optional `fidelityMode` argument; the mode is
+    resolved **per page** (tier 2 is the reference's own `mode`, so two pages
+    in one batch can grade differently); the mode's thresholds replace the old
+    hardcoded 98/1.5; strict adds the scaled area floor AND refuses the
+    project-wide reference fallback by name. Every result reports
+    `thresholds.fidelityMode`. The verdict cache key gained the mode (strict
+    carries a third threshold the two numbers do not encode).
+  - **Stop gate, strict half:** `pageVerificationStore` records the mode each
+    pass was graded at; under strict, `computePageWriteVerification` reports a
+    balanced-graded pass as `staleFidelityMode` and `describeUnverifiedPage`
+    gives it its own branch ("re-measure, do not rewrite"). `stopGateCheck.ts`
+    and `liveDigest.ts` both resolve the mode through
+    `resolveProjectFidelityMode`, so gate and digest can never disagree.
+  - **UI + persistence:** third `ContextMenu` trigger in
+    `AgentSessionControls.tsx` (`Project default` is a first-class option;
+    store value `null` = let the server decide), persisted per project AND per
+    account through the existing `GET/POST /admin/api/ai/studio-session`.
+    `withAgentSessionEffort` was generalised to `withAgentSessionControls`, and
+    the route's fields are now optional-and-nullable — omitted means "leave
+    alone", so the two pickers never wipe each other.
+  - Docs: `docs/features/agent.md` (new "Fidelity modes" section + the
+    threshold and session-control paragraphs), `docs/features/mcp-connectors.md`
+    (strict refuses tier 2). Tests: `fidelityMode.test.ts` (17, precedence +
+    thresholds + area-floor scaling).
+- **CUT — named, for W9-3:**
+  - **The creative and balanced halves of the mode-aware Stop gate.** Creative's
+    DONE is a passing `quality_check` since the last write, which needs a
+    quality-check verification record that does not exist (the store only
+    records compares); balanced's "every deviation named" is not
+    machine-checkable from the gate's side. Both fall through to the pre-W9-2
+    rule (any post-write passing compare) — the safe direction: it asks for a
+    measurement, it never waves a page through. Only the STRICT half is real.
+  - **Creative's numbers (80 / 12%) are chosen, not measured.** Balanced and
+    strict are the spec's; creative's are a judgement call about what
+    "directional" should mean. If a creative-mode compare turns out to pass
+    junk, tighten there first.
+  - **No creative-mode variant plumbing.** The prompt block asks for N
+    variants; nothing in the tool surface batches or scores them.
+- **Dogfood checklist for the human (no browser tests by agents):**
+  1. Open a project at `/admin/site`. The composer row should show a third
+     trigger reading `Fidelity` (project default). Pick `Strict`; reload the
+     page — it should come back Strict. Switch projects and back.
+  2. With a design reference registered for a page, ask the agent to build it
+     at Strict and confirm `studio_compare` reports
+     `thresholds.fidelityMode: "strict"` and 99 / 0.5.
+  3. Register a reference with NO `pageId`, then compare that page at Strict —
+     it must refuse by name rather than grade against the stand-in.
+  4. Compare a page at Balanced (pass), then switch to Strict and try to end
+     the turn: the Stop gate should ask for a re-measure at strict, NOT for a
+     rewrite.
+- **Pre-existing failures I did NOT cause and did not touch:**
+  `server/handlers/studio/pageWriteVerification.test.ts` (3) and
+  `server/ai/tools/studio/liveDigest.test.ts` (1) call
+  `computePageWriteVerification`/`appendTurnWrite` with the pre-W10 arity (no
+  `userKey`); `server/ai/mcp/tools/studio/compare.test.ts` fails to import
+  (`editorBridgeScope` not exported from `editorBridge.ts`); `headlessCapture`,
+  `computedStyles`, `gitTools`, `liveReloadPush`, `pageDiagnostics` failures are
+  sandbox/browser-environment, not code.
+
 ### inspector-w8-3-p1 — multi-select edits inline styles across N nodes, with Mixed
 - **Agent:** studio-implementer · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-07
 - **Branch:** `feat/multi-select-inline-bulk-edit` off `origin/main`. Goal:

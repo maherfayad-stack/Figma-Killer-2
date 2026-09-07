@@ -219,6 +219,30 @@ export function readAllDesignReferences(dir: string): DesignReference[] {
   return readManifest(dir).references
 }
 
+/**
+ * Whether this project has ANY design reference at all — the single input to
+ * `resolveFidelityMode`'s derived tier (W9-2): something registered means
+ * there is something to measure, so an unspecified mode derives `balanced`
+ * rather than `creative`.
+ *
+ * Deliberately does not distinguish `spec` from `context`, and does not care
+ * which page anything is scoped to. This answers "is there a ruler in this
+ * project", not "does THIS screen have one" — a pasted comp with no page
+ * scope is exactly the case where the derived default should be `balanced`,
+ * and `resolveDesignReference` is what refuses, per page, when the ruler
+ * turns out not to reach.
+ */
+export function projectHasDesignReference(dir: string): boolean {
+  try {
+    return readAllDesignReferences(dir).length > 0
+  } catch (err) {
+    // A project whose `.studio/` cannot be read has no reference we can see,
+    // and that is the honest answer here — never a failed turn.
+    console.error('[studio/designReferenceStore] could not read the reference manifest:', err)
+    return false
+  }
+}
+
 /** Capped, never a silent drop — `truncated`/`omittedCount` are always honest. */
 export function listDesignReferences(
   dir: string,
