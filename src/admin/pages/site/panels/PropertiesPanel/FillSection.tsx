@@ -4,44 +4,55 @@
  *
  * THE CSS MODEL, AND WHERE IT DIVERGES FROM FIGMA'S
  * ---------------------------------------------------
- * Figma's Fill list is a stack of arbitrarily many paint layers. CSS gives
- * this element three channels that can hold a "fill": `color` (the text
- * paint), `backgroundColor` (one paint, below everything) and
- * `backgroundImage` (one image/gradient layer — `background-image`
- * technically supports comma-separated layers, but `gradientValue.ts`
- * deliberately refuses multi-layer values rather than build a stacked editor
- * for a feature nobody asked for yet). So this section shows AT MOST four
- * rows:
+ * Figma's Fill list is a stack of arbitrarily many paint layers. So is CSS's,
+ * and G6.5 finally models it that way: `background-image` is a comma-separated
+ * LIST whose first entry paints TOPMOST, parsed by `backgroundLayers.ts` into
+ * one row per layer and re-joined byte-for-byte (or refused, in full, with a
+ * reason — never a guessed rewrite). The rows, top of the paint stack down:
  *
  *   1. **Text** — `color`. Figma shows a text node's colour in Fill, because
  *      that is what it is; G9's target shape moved it out of Typography once
  *      this section existed to receive it. It sits first because it is the
  *      topmost paint: text renders over the box's own background.
- *   2. **Solid fill** — `backgroundColor`, when set.
- *   3. **Image/gradient fill** — `backgroundImage`, when it holds something
- *      other than `none`, OR when its five satellite properties
- *      (`backgroundSize`/`backgroundRepeat`/`backgroundPosition`/`objectFit`/
- *      `objectPosition`) have been set even without an image (a bare `<img>`
- *      using `objectFit` on its own natural content). Those five live ONLY
- *      inside this entry's own popover — they are properties of the image
- *      fill, and drawing five rows for an element with no image was the
- *      exact defect this plan exists to remove.
- *   4. **The `background` shorthand escape hatch** — read-only, shown ONLY
- *      when the shorthand itself has a value. Decomposing an arbitrary
- *      shorthand into color/image/size/repeat/position safely is a much
- *      bigger, riskier parse than a single gradient function (multiple
- *      comma-separated layers, order-dependent slash syntax, etc.), so this
- *      row never attempts it — it stays whatever the user's source says,
- *      editable only as raw CSS via its own popover (see
- *      `ShorthandEscapeHatchBody` in `FillSectionParts.tsx`). This mirrors
- *      the gradient parser's own refusal rule: an editor that LOOKS
- *      structured but quietly loses information is worse than an honest raw
- *      field.
+ *   2. **Content fit** — `objectFit` / `objectPosition`, when set. These size
+ *      the element's OWN replaced content (an `<img>`'s picture), which paints
+ *      above the background entirely. They used to ride along with the image
+ *      fill's satellites; that conflated two unrelated things.
+ *   3. **Background layer 1…N** — one row per `background-image` layer, in CSS
+ *      paint order. Each layer's six satellites (`background-size`,
+ *      `-position`, `-repeat`, `-attachment`, `-origin`, `-clip`) plus its
+ *      `background-blend-mode` are edited INSIDE that row's popover, per
+ *      layer — drawing them as top-level rows for an element with no image was
+ *      the exact defect this plan exists to remove. Layers add, remove and
+ *      reorder like Effects' shadow layers, over the same `PropertyList`
+ *      gestures (click to edit, `−` to remove, `Alt+↑/↓` to reorder).
+ *   4. **Solid fill** — `backgroundColor`, when set. Pinned BOTTOM-most among
+ *      the paints, because that is where CSS paints it: below every image
+ *      layer. It is deliberately not "layer N+1" — it is a single paint with
+ *      no per-layer satellites of its own.
+ *   5. **The `background` shorthand escape hatch** — shown ONLY when the
+ *      shorthand itself has a value. Decomposing an arbitrary shorthand into
+ *      colour/image/size/repeat/position safely is a much bigger, riskier
+ *      parse than a layer list (order-dependent slash syntax, a colour that
+ *      may appear in any layer's position), so this row never attempts it — it
+ *      stays whatever the user's source says, editable only as raw CSS via its
+ *      own popover (`ShorthandEscapeHatchBody`).
  *
- * The `+`/eye-less list contract comes from `@ui/components/PropertyList` —
- * see that module's doc for Law 1 (empty ⇒ renders nothing) and why the
- * visibility eye is never passed here (CSS has no "disabled declaration";
- * plan §8 decision 1).
+ * When the layer list cannot be split (a top-level `var()`, unbalanced
+ * parens, a value that would be reformatted) the whole `background-image`
+ * becomes ONE raw-text row with its reason — the same refusal rule the
+ * gradient and box-shadow parsers use. And when a satellite is set with no
+ * image layer to apply to, it gets its own "Background sizing" row rather than
+ * disappearing from the inspector.
+ *
+ * NO VISIBILITY EYE, STILL
+ * ------------------------
+ * `PropertyList`'s eye is opt-in and stays off here. §8 decision 1 settled it:
+ * CSS has no "disabled declaration", and the two ways to fake one (UI-only
+ * state lost on reload, or commenting out the user's CSS) are both worse than
+ * omitting it. Hiding a layer here means removing it; the honest undo is the
+ * editor's own history, not a fake eye. The layer LIST is what changed in
+ * G6.5, not that decision.
  *
  * `FillSectionActions` is this section's HEADER content — the "add text
  * colour" / "add solid fill" / "add gradient fill" buttons that live in
@@ -53,9 +64,9 @@
  * WHERE THE REST LIVES
  * ---------------------
  * This file owns which ROWS exist. `FillSectionParts.tsx` draws the swatches
- * and the popover bodies; `fillModel.ts` holds the pure value model (channel
- * membership, defaults, gradient transforms). The split landed when G9's
- * text-fill row pushed this file to the 700-line module ceiling.
+ * and the popover bodies; `backgroundLayers.ts` is the pure layer-stack model
+ * (parse / serialise / refuse / add / remove / reorder); `fillModel.ts` holds
+ * the colour-channel defaults and the gradient transforms.
  *
  * OUT OF SCOPE FOR THIS PASS (see the work order and STATE.md)
  * ---------------------------------------------------------------
@@ -63,8 +74,7 @@
  *     store-side multi-select style editing that doesn't exist yet.
  *   - Image fill via the media library. The image-mode editor here is a
  *     plain URL text field, not `MediaLibraryControl`'s picker/thumbnail
- *     grid — a deliberate scope cut given this work order's effort budget;
- *     follow-up noted in STATE.md.
+ *     grid — a deliberate scope cut; follow-up noted in STATE.md.
  */
 import { useState, type ReactNode, type RefObject } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -78,17 +88,28 @@ import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
 import { readString, hasStyleValue } from './styleValueUtils'
 import {
+  BackgroundImageRawBody,
+  BackgroundLayerPopoverBody,
   ColorSwatch,
-  ImageFillPopoverBody,
+  ContentFitPopoverBody,
   ImageSwatch,
+  OrphanSatellitesBody,
   ShorthandEscapeHatchBody,
 } from './FillSectionParts'
 import {
+  BACKGROUND_SATELLITE_PROPS,
+  backgroundModelPatch,
+  insertBackgroundLayer,
+  moveBackgroundLayer,
+  parseBackgroundLayers,
+  removeBackgroundLayer,
+  type BackgroundModel,
+} from './backgroundLayers'
+import {
+  CONTENT_FIT_PROPS,
   DEFAULT_GRADIENT_FILL,
   DEFAULT_SOLID_FILL,
   DEFAULT_TEXT_FILL,
-  IMAGE_SATELLITE_PROPS,
-  isBackgroundImageSet,
 } from './fillModel'
 import { parseGradient, isUrlImageValue, extractUrlPayload } from './gradientValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
@@ -107,13 +128,15 @@ interface FillSectionActionsProps {
 export function FillSectionActions({ storedStyles, onChange }: FillSectionActionsProps) {
   const textSet = hasStyleValue(readString(storedStyles, 'color'))
   const colorSet = hasStyleValue(readString(storedStyles, 'backgroundColor'))
-  const imageValue = readString(storedStyles, 'backgroundImage')
-  const imageSet = isBackgroundImageSet(imageValue)
+  const model = parseBackgroundLayers(storedStyles)
+  // A refused layer list has no known layer count, so there is no honest index
+  // to insert at. The button stays visible and says why rather than silently
+  // doing nothing.
+  const layersRefused = model.spine.kind === 'raw'
 
-  // Unlike Figma, CSS gives this element exactly one text-fill channel, one
-  // solid-fill channel and one image-fill channel — once all three are in use
-  // there is nothing left to add (see the module doc's "THE CSS MODEL").
-  if (textSet && colorSet && imageSet) return null
+  function addLayer() {
+    writeBackgroundModel(model, insertBackgroundLayer(model, 0, DEFAULT_GRADIENT_FILL), onChange)
+  }
 
   return (
     <>
@@ -143,31 +166,59 @@ export function FillSectionActions({ storedStyles, onChange }: FillSectionAction
           <PlusIcon size={12} aria-hidden="true" />
         </Button>
       )}
-      {!imageSet && (
-        <Button
-          variant="ghost"
-          size="xs"
-          iconOnly
-          aria-label="Add gradient fill"
-          tooltip="Add gradient fill"
-          data-testid="fill-section-add-image"
-          onClick={() => onChange('backgroundImage', DEFAULT_GRADIENT_FILL)}
-        >
-          <Image2SolidIcon size={12} aria-hidden="true" />
-        </Button>
-      )}
+      <Button
+        variant="ghost"
+        size="xs"
+        iconOnly
+        aria-label="Add gradient fill"
+        tooltip={
+          layersRefused
+            ? 'This background-image is edited as raw text, so a layer cannot be added here'
+            : 'Add gradient fill'
+        }
+        disabled={layersRefused}
+        data-testid="fill-section-add-image"
+        onClick={addLayer}
+      >
+        <Image2SolidIcon size={12} aria-hidden="true" />
+      </Button>
     </>
   )
+}
+
+/**
+ * Writes a new layer model as the SMALLEST set of `onChange` calls that
+ * expresses the difference. `onChange` is one store mutation (and one AST
+ * writeback) per call, so re-emitting all eight `background-*` properties on
+ * every gradient keystroke would put seven no-op writes in the user's undo
+ * history. Both patches come from the same serialiser, so comparing them is an
+ * exact "did this declaration change" test.
+ */
+function writeBackgroundModel(
+  previous: BackgroundModel,
+  next: BackgroundModel,
+  onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void,
+) {
+  const before = backgroundModelPatch(previous)
+  const after = backgroundModelPatch(next)
+  for (const [property, value] of Object.entries(after)) {
+    if (before[property as keyof CSSPropertyBag] === value) continue
+    onChange(property as keyof CSSPropertyBag, value)
+  }
 }
 
 // ---------------------------------------------------------------------------
 // FillSection — the body
 // ---------------------------------------------------------------------------
 
-type FillEntryKind = 'text' | 'color' | 'image' | 'shorthand'
-interface FillEntryData {
-  kind: FillEntryKind
-}
+type FillEntryData =
+  | { kind: 'text' }
+  | { kind: 'contentFit' }
+  | { kind: 'layer'; index: number }
+  | { kind: 'layersRaw'; raw: string; reason: string }
+  | { kind: 'orphanSatellites' }
+  | { kind: 'color' }
+  | { kind: 'shorthand' }
 
 interface FillSectionProps {
   storedStyles: Record<string, unknown>
@@ -178,7 +229,7 @@ interface FillSectionProps {
   /**
    * Accepted for call-site compatibility with every other curated section's
    * shape — not consumed here. `PropertyList`'s "remove" clears via
-   * `onChange(prop, undefined)` uniformly (the image entry clears six
+   * `onChange(prop, undefined)` uniformly (a layer row clears several
    * properties in one gesture, which `onRemove`'s single-property signature
    * can't express), so this section never needs the separate
    * clear-one-property callback.
@@ -197,8 +248,6 @@ interface FillSectionProps {
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
-type OpenPopover = { kind: FillEntryKind; anchorRef: RefObject<HTMLElement | null> } | null
-
 export function FillSection({
   storedStyles,
   currentStyles,
@@ -208,7 +257,10 @@ export function FillSection({
   onPreview,
   onClearPreview,
 }: FillSectionProps) {
-  const [openPopover, setOpenPopover] = useState<OpenPopover>(null)
+  // The anchor ref comes from `PropertyList`'s `onActivate` and is stored as
+  // plain STATE (not a `useRef` map read during render) — see EffectsSection's
+  // note on React Compiler's ref-during-render rule.
+  const [editing, setEditing] = useState<{ id: string; anchorRef: RefObject<HTMLElement | null> } | null>(null)
   const visible = new Set(visibleProperties)
 
   const previewProperty = onPreview
@@ -220,15 +272,23 @@ export function FillSection({
   const textValue = readString(storedStyles, 'color')
   const showTextEntry = visible.has('color') && hasStyleValue(textValue)
 
+  const contentFitVisible = CONTENT_FIT_PROPS.some((prop) => visible.has(prop))
+  const showContentFitEntry =
+    contentFitVisible && CONTENT_FIT_PROPS.some((prop) => hasStyleValue(storedStyles[prop]))
+
+  const layersVisible =
+    visible.has('backgroundImage') || BACKGROUND_SATELLITE_PROPS.some((prop) => visible.has(prop))
+  const model = parseBackgroundLayers(storedStyles)
+  const layers = model.spine.kind === 'layers' ? model.spine.layers : []
+  const orphanSatellites =
+    model.spine.kind !== 'layers' && BACKGROUND_SATELLITE_PROPS.some((prop) => model.satellites[prop].kind !== 'unset')
+
+  function write(next: BackgroundModel) {
+    writeBackgroundModel(model, next, onChange)
+  }
+
   const colorValue = readString(storedStyles, 'backgroundColor')
   const showColorEntry = visible.has('backgroundColor') && hasStyleValue(colorValue)
-
-  const imageValue = readString(storedStyles, 'backgroundImage')
-  const imageIsSet = isBackgroundImageSet(imageValue)
-  const satelliteIsSet = IMAGE_SATELLITE_PROPS.some((prop) => hasStyleValue(storedStyles[prop]))
-  const imageEntryVisible =
-    visible.has('backgroundImage') || IMAGE_SATELLITE_PROPS.some((prop) => visible.has(prop))
-  const showImageEntry = imageEntryVisible && (imageIsSet || satelliteIsSet)
 
   const shorthandValue = readString(storedStyles, 'background')
   const showShorthandEntry = visible.has('background') && hasStyleValue(shorthandValue)
@@ -246,6 +306,56 @@ export function FillSection({
     })
   }
 
+  if (showContentFitEntry) {
+    entries.push({
+      id: 'fill-content-fit',
+      label: 'Content fit',
+      leading: <Image2SolidIcon size={14} aria-hidden="true" />,
+      summary: 'Content fit',
+      value: readString(storedStyles, 'objectFit'),
+      data: { kind: 'contentFit' },
+    })
+  }
+
+  // The layer block — its start index is what `handleReorder` clamps drags to.
+  const layerStart = entries.length
+  if (layersVisible) {
+    if (model.spine.kind === 'layers') {
+      layers.forEach((image, index) => {
+        const described = describeLayer(image, index, layers.length)
+        entries.push({
+          id: `fill-layer-${index}`,
+          label: described.label,
+          leading: described.leading,
+          summary: described.summary,
+          value: described.value,
+          data: { kind: 'layer', index },
+        })
+      })
+    } else if (model.spine.kind === 'raw') {
+      entries.push({
+        id: 'fill-layers-raw',
+        label: 'Background image',
+        leading: <CodeIcon size={14} aria-hidden="true" />,
+        summary: 'Custom (raw CSS)',
+        value: model.spine.raw,
+        data: { kind: 'layersRaw', raw: model.spine.raw, reason: model.spine.reason },
+      })
+    }
+
+    if (orphanSatellites) {
+      entries.push({
+        id: 'fill-orphan-satellites',
+        label: 'Background sizing',
+        leading: <Image2SolidIcon size={14} aria-hidden="true" />,
+        summary: 'Background sizing',
+        value: model.spine.kind === 'raw' ? 'Raw layer list' : 'No image layer',
+        data: { kind: 'orphanSatellites' },
+      })
+    }
+  }
+  const layerCount = model.spine.kind === 'layers' ? layers.length : 0
+
   if (showColorEntry) {
     entries.push({
       id: 'fill-color',
@@ -253,18 +363,6 @@ export function FillSection({
       leading: <ColorSwatch color={colorValue!} />,
       summary: colorValue,
       data: { kind: 'color' },
-    })
-  }
-
-  if (showImageEntry) {
-    const described = describeImageEntry(imageValue, imageIsSet)
-    entries.push({
-      id: 'fill-image',
-      label: described.label,
-      leading: described.leading,
-      summary: described.summary,
-      value: described.value,
-      data: { kind: 'image' },
     })
   }
 
@@ -279,30 +377,62 @@ export function FillSection({
   }
 
   function handleActivate(entry: PropertyListEntry<FillEntryData>, anchorRef: RefObject<HTMLElement | null>) {
-    setOpenPopover({ kind: entry.data.kind, anchorRef })
+    setEditing({ id: entry.id, anchorRef })
+  }
+
+  /** Clears each of `props` that is actually set — no write for an already-unset one. */
+  function clearSet(props: ReadonlyArray<keyof CSSPropertyBag>) {
+    for (const prop of props) {
+      if (hasStyleValue(storedStyles[prop])) onChange(prop, undefined)
+    }
   }
 
   function handleRemove(entry: PropertyListEntry<FillEntryData>) {
-    if (entry.data.kind === 'text') {
-      onChange('color', undefined)
-    } else if (entry.data.kind === 'color') {
-      onChange('backgroundColor', undefined)
-    } else if (entry.data.kind === 'image') {
-      // The row represents the WHOLE image-fill configuration — clearing
-      // only `backgroundImage` while leaving `objectFit` set would leave the
-      // entry's own presence condition true and the row would refuse to
-      // disappear after "removing" it.
-      onChange('backgroundImage', undefined)
-      for (const prop of IMAGE_SATELLITE_PROPS) onChange(prop, undefined)
-    } else {
-      onChange('background', undefined)
+    const { data } = entry
+    switch (data.kind) {
+      case 'text':
+        onChange('color', undefined)
+        break
+      case 'color':
+        onChange('backgroundColor', undefined)
+        break
+      case 'contentFit':
+        clearSet(CONTENT_FIT_PROPS)
+        break
+      case 'layer':
+        write(removeBackgroundLayer(model, data.index))
+        break
+      case 'layersRaw':
+        onChange('backgroundImage', undefined)
+        break
+      case 'orphanSatellites':
+        // ONLY the satellites. `background-image` has its own row (a raw one,
+        // or a layer list), and removing "Background sizing" must not delete a
+        // paint the user can still see.
+        clearSet(BACKGROUND_SATELLITE_PROPS)
+        break
+      case 'shorthand':
+        onChange('background', undefined)
+        break
     }
-    if (openPopover?.kind === entry.data.kind) setOpenPopover(null)
+
+    if (editing?.id === entry.id) setEditing(null)
   }
 
-  function closePopover() {
-    setOpenPopover(null)
+  /**
+   * Only a drag whose BOTH endpoints sit inside the background-layer block
+   * means anything — layer order IS paint order within one declaration, and
+   * there is no sense in which the text colour can be dragged below a
+   * gradient (they are separate properties). Everything else is a no-op.
+   */
+  function handleReorder(fromIndex: number, toIndex: number) {
+    const from = fromIndex - layerStart
+    const to = toIndex - layerStart
+    if (from < 0 || to < 0 || from >= layerCount || to >= layerCount) return
+    write(moveBackgroundLayer(model, from, to))
   }
+
+  const editingEntry = editing ? entries.find((entry) => entry.id === editing.id) : undefined
 
   return (
     <div className={styles.fillSection}>
@@ -311,59 +441,85 @@ export function FillSection({
         entries={entries}
         onActivate={handleActivate}
         onRemove={handleRemove}
+        onReorder={layerCount > 1 ? handleReorder : undefined}
       />
 
-      {openPopover?.kind === 'text' && (
-        <InspectorPopover id="fill-text" anchorRef={openPopover.anchorRef} onClose={closePopover} title="Text colour">
-          <ColorValueInput
-            value={textValue ?? ''}
-            ariaLabel="Text colour"
-            swatchLabel="Text colour swatch"
-            onChange={(next) => onChange('color', next || undefined)}
-            onPreview={previewProperty ? (next) => previewProperty('color', next) : undefined}
-            onClearPreview={onClearPreview}
-          />
-        </InspectorPopover>
-      )}
-
-      {openPopover?.kind === 'color' && (
-        <InspectorPopover id="fill-color" anchorRef={openPopover.anchorRef} onClose={closePopover} title="Solid fill">
-          <ColorValueInput
-            value={colorValue ?? ''}
-            ariaLabel="Solid fill colour"
-            swatchLabel="Solid fill colour swatch"
-            onChange={(next) => onChange('backgroundColor', next || undefined)}
-            onPreview={previewProperty ? (next) => previewProperty('backgroundColor', next) : undefined}
-            onClearPreview={onClearPreview}
-          />
-        </InspectorPopover>
-      )}
-
-      {openPopover?.kind === 'image' && (
-        <InspectorPopover id="fill-image" anchorRef={openPopover.anchorRef} onClose={closePopover} title="Image fill" width={264}>
-          <ImageFillPopoverBody
-            imageValue={imageValue}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            activeTab={activeTab}
-            onChange={onChange}
-            onPreview={previewProperty}
-            onClearPreview={onClearPreview}
-          />
-        </InspectorPopover>
-      )}
-
-      {openPopover?.kind === 'shorthand' && (
+      {editing && editingEntry && (
         <InspectorPopover
-          id="fill-shorthand"
-          anchorRef={openPopover.anchorRef}
-          onClose={closePopover}
-          title="Background (raw CSS)"
+          id={editing.id}
+          anchorRef={editing.anchorRef}
+          onClose={() => setEditing(null)}
+          title={popoverTitle(editingEntry)}
+          width={editingEntry.data.kind === 'layer' ? 264 : undefined}
         >
-          <ShorthandEscapeHatchBody
-            value={shorthandValue}
-            onChange={(next) => onChange('background', next || undefined)}
-          />
+          {editingEntry.data.kind === 'text' && (
+            <ColorValueInput
+              value={textValue ?? ''}
+              ariaLabel="Text colour"
+              swatchLabel="Text colour swatch"
+              onChange={(next) => onChange('color', next || undefined)}
+              onPreview={previewProperty ? (next) => previewProperty('color', next) : undefined}
+              onClearPreview={onClearPreview}
+            />
+          )}
+
+          {editingEntry.data.kind === 'color' && (
+            <ColorValueInput
+              value={colorValue ?? ''}
+              ariaLabel="Solid fill colour"
+              swatchLabel="Solid fill colour swatch"
+              onChange={(next) => onChange('backgroundColor', next || undefined)}
+              onPreview={previewProperty ? (next) => previewProperty('backgroundColor', next) : undefined}
+              onClearPreview={onClearPreview}
+            />
+          )}
+
+          {editingEntry.data.kind === 'layer' && (
+            <BackgroundLayerPopoverBody
+              model={model}
+              index={editingEntry.data.index}
+              onModelChange={write}
+              onChange={onChange}
+            />
+          )}
+
+          {editingEntry.data.kind === 'layersRaw' && (
+            <BackgroundImageRawBody
+              value={editingEntry.data.raw}
+              reason={editingEntry.data.reason}
+              onChange={(next) => onChange('backgroundImage', next || undefined)}
+            />
+          )}
+
+          {editingEntry.data.kind === 'orphanSatellites' && (
+            <OrphanSatellitesBody
+              hasRefusedLayers={model.spine.kind === 'raw'}
+              storedStyles={storedStyles}
+              currentStyles={currentStyles}
+              activeTab={activeTab}
+              onChange={onChange}
+              onPreview={previewProperty}
+              onClearPreview={onClearPreview}
+            />
+          )}
+
+          {editingEntry.data.kind === 'contentFit' && (
+            <ContentFitPopoverBody
+              storedStyles={storedStyles}
+              currentStyles={currentStyles}
+              activeTab={activeTab}
+              onChange={onChange}
+              onPreview={previewProperty}
+              onClearPreview={onClearPreview}
+            />
+          )}
+
+          {editingEntry.data.kind === 'shorthand' && (
+            <ShorthandEscapeHatchBody
+              value={shorthandValue}
+              onChange={(next) => onChange('background', next || undefined)}
+            />
+          )}
         </InspectorPopover>
       )}
     </div>
@@ -371,42 +527,64 @@ export function FillSection({
 }
 
 // ---------------------------------------------------------------------------
-// Image-entry summary
+// Row summaries
 // ---------------------------------------------------------------------------
 
-function describeImageEntry(
-  imageValue: string | undefined,
-  imageIsSet: boolean,
+const POPOVER_TITLES: Record<FillEntryData['kind'], string> = {
+  text: 'Text colour',
+  contentFit: 'Content fit',
+  layer: 'Background layer',
+  layersRaw: 'Background image (raw CSS)',
+  orphanSatellites: 'Background sizing',
+  color: 'Solid fill',
+  shorthand: 'Background (raw CSS)',
+}
+
+function popoverTitle(entry: PropertyListEntry<FillEntryData>): string {
+  return entry.data.kind === 'layer' ? entry.label : POPOVER_TITLES[entry.data.kind]
+}
+
+/**
+ * How one `background-image` layer reads in the list. The layer NUMBER is only
+ * drawn when there is more than one — a single-layer background is just "the"
+ * fill, and numbering it invents a stack the user does not have.
+ */
+function describeLayer(
+  image: string,
+  index: number,
+  total: number,
 ): { label: string; summary: ReactNode; value?: ReactNode; leading: ReactNode } {
-  if (!imageIsSet) {
+  const suffix = total > 1 ? ` ${index + 1}` : ''
+
+  if (image.trim().toLowerCase() === 'none') {
     return {
-      label: 'Object fit',
-      summary: 'Object fit',
-      leading: <Image2SolidIcon size={14} aria-hidden="true" />,
+      label: `Empty layer${suffix}`,
+      summary: 'Empty layer',
+      leading: <CodeIcon size={14} aria-hidden="true" />,
     }
   }
 
-  if (isUrlImageValue(imageValue!)) {
+  if (isUrlImageValue(image)) {
     return {
-      label: 'Image fill',
-      summary: extractUrlPayload(imageValue!) || 'Image',
-      leading: <ImageSwatch image={imageValue!} />,
+      label: `Image fill${suffix}`,
+      summary: extractUrlPayload(image) || 'Image',
+      leading: <ImageSwatch image={image} />,
     }
   }
 
-  const parsed = parseGradient(imageValue!)
+  const parsed = parseGradient(image)
   if (parsed.ok) {
     const kindLabel = parsed.gradient.kind === 'linear' ? 'Linear gradient' : 'Radial gradient'
     return {
-      label: `${kindLabel} fill`,
+      label: `${kindLabel} fill${suffix}`,
       summary: kindLabel,
       value: `${parsed.gradient.stops.length} stops`,
-      leading: <ImageSwatch image={imageValue!} />,
+      leading: <ImageSwatch image={image} />,
     }
   }
 
   return {
-    label: 'Image fill',
+    label: `Image fill${suffix}`,
     summary: 'Custom (raw CSS)',
     leading: <CodeIcon size={14} aria-hidden="true" />,
   }

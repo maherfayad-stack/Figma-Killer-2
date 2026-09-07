@@ -1,26 +1,22 @@
 /**
- * FillSection — G6 (docs/features/inspector-disclosure.md).
+ * FillSection — G6 / G6.5 (docs/features/inspector-disclosure.md).
  *
  * Renders `FillSection`/`FillSectionActions` directly rather than through
- * `StyleSectionsEditor` (which still dispatches to the OLD `background`
- * section id/title until the registry rename lands — see this section's
- * STATE.md handoff). Direct rendering also sidesteps
- * `StyleSectionsEditor.tsx`'s current, unrelated `BorderControl` import
- * break from a concurrent session's in-flight G7 work.
+ * `StyleSectionsEditor`, which keeps the test to this section's own contract.
  *
  * Covers:
  *   1. Law 1 — zero set fill properties renders nothing.
- *   2. Solid fill entry: appears only when `backgroundColor` is set, edits
- *      through a popover, "remove" clears it.
- *   3. Image fill entry: gradient / URL / object-fit-only / unparseable-
- *      refused summaries, and each popover's editing behaviour.
- *   4. Removing the image entry clears backgroundImage AND its five
- *      satellite properties, so the entry actually disappears.
- *   5. The `background` shorthand escape hatch — read-only row, honestly
- *      editable via its own raw-CSS popover.
- *   6. `FillSectionActions` — which "add" buttons show/hide as each CSS
- *      channel fills up.
- *   7. `visibleProperties` (style-search) filtering.
+ *   2. Text fill (G9's relocation of `color` into Fill).
+ *   3. Background LAYERS (G6.5): one row per `background-image` layer, in CSS
+ *      paint order, add / remove / reorder, and the per-layer satellites in
+ *      each row's popover.
+ *   4. Honest refusal: a layer list that cannot round-trip renders as one raw
+ *      row, and a satellite that cannot be split per layer gets a raw field.
+ *   5. Solid fill is pinned BELOW the layers — that is where CSS paints it.
+ *   6. Content fit (`objectFit`/`objectPosition`) as its own row.
+ *   7. The `background` shorthand escape hatch.
+ *   8. `FillSectionActions`.
+ *   9. `visibleProperties` (style-search) filtering.
  */
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
@@ -37,13 +33,20 @@ const ALL_FILL_PROPS = [
   'background',
   'backgroundImage',
   'backgroundSize',
-  'backgroundRepeat',
   'backgroundPosition',
+  'backgroundRepeat',
+  'backgroundAttachment',
+  'backgroundOrigin',
+  'backgroundClip',
+  'backgroundBlendMode',
   'objectFit',
   'objectPosition',
 ] as const
 
 type FillProps = ComponentProps<typeof FillSection>
+
+const GRADIENT = 'linear-gradient(90deg, #ff0000 0%, #0000ff 100%)'
+const GRADIENT_B = 'radial-gradient(circle, #00ff00 0%, #ffffff 100%)'
 
 function renderFill(overrides: Partial<FillProps> = {}) {
   return render(
@@ -59,6 +62,13 @@ function renderFill(overrides: Partial<FillProps> = {}) {
   )
 }
 
+/** Collapses the one-property-at-a-time `onChange` calls into a final patch. */
+function patchFrom(onChange: ReturnType<typeof mock>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  for (const [property, value] of onChange.mock.calls as Array<[string, unknown]>) patch[property] = value
+  return patch
+}
+
 // ---------------------------------------------------------------------------
 // 1. Law 1
 // ---------------------------------------------------------------------------
@@ -69,10 +79,15 @@ describe('FillSection — Law 1', () => {
     expect(screen.queryByRole('list', { name: 'Fill' })).toBeNull()
     expect(container.querySelector('[class*="fillSection"]')?.children.length ?? 0).toBe(0)
   })
+
+  it('treats `background-image: none` as no layers at all', () => {
+    renderFill({ storedStyles: { backgroundImage: 'none' } })
+    expect(screen.queryByRole('listitem')).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------
-// 1b. Text fill entry (G9's completion — a text node's colour IS its fill)
+// 2. Text fill entry (G9's completion — a text node's colour IS its fill)
 // ---------------------------------------------------------------------------
 
 describe('FillSection — text fill entry', () => {
@@ -80,16 +95,7 @@ describe('FillSection — text fill entry', () => {
     renderFill({ storedStyles: { color: '#112233' } })
     const row = screen.getByRole('listitem')
     expect(row.textContent).toContain('#112233')
-    // `label` is the entry's accessible name, which is what "Remove <name>" quotes.
     expect(within(row).getByRole('button', { name: 'Remove Text' })).toBeTruthy()
-  })
-
-  it('lists the text fill ABOVE the solid fill — text paints over the background', () => {
-    renderFill({ storedStyles: { color: '#112233', backgroundColor: '#ff0000' } })
-    const rows = screen.getAllByRole('listitem')
-    expect(rows).toHaveLength(2)
-    expect(rows[0]!.textContent).toContain('#112233')
-    expect(rows[1]!.textContent).toContain('#ff0000')
   })
 
   it('edits through its own popover and writes color', () => {
@@ -115,14 +121,208 @@ describe('FillSection — text fill entry', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2. Solid fill entry
+// 3. Background layers
+// ---------------------------------------------------------------------------
+
+describe('FillSection — background layers', () => {
+  it('draws one row per comma-separated layer, first row = topmost paint', () => {
+    renderFill({ storedStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` } })
+    const rows = screen.getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.textContent).toContain('Linear gradient')
+    expect(rows[1]!.textContent).toContain('Radial gradient')
+  })
+
+  it('does not number a single layer — there is no stack to number', () => {
+    renderFill({ storedStyles: { backgroundImage: GRADIENT } })
+    expect(within(screen.getByRole('listitem')).getByRole('button', { name: 'Remove Linear gradient fill' })).toBeTruthy()
+  })
+
+  it('summarises a url() layer by its path and a gradient by its stop count', () => {
+    renderFill({ storedStyles: { backgroundImage: "url('/hero.png'), " + GRADIENT } })
+    const rows = screen.getAllByRole('listitem')
+    expect(rows[0]!.textContent).toContain('/hero.png')
+    expect(rows[1]!.textContent).toContain('2 stops')
+  })
+
+  it('removing one layer rewrites the list without it, satellites in step', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({
+      storedStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}`, backgroundSize: 'cover, contain' },
+      onChange,
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Linear gradient fill 1' }))
+
+    const patch = patchFrom(onChange)
+    expect(patch.backgroundImage).toBe(GRADIENT_B)
+    expect(patch.backgroundSize).toBe('contain')
+  })
+
+  it('removing the last layer clears every per-layer satellite too', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { backgroundImage: GRADIENT, backgroundSize: 'cover' }, onChange })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Linear gradient fill' }))
+
+    const patch = patchFrom(onChange)
+    expect(patch.backgroundImage).toBeUndefined()
+    expect(patch.backgroundSize).toBeUndefined()
+  })
+
+  it('reorders with Alt+ArrowDown — layer order IS paint order', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` }, onChange })
+
+    fireEvent.keyDown(screen.getAllByRole('listitem')[0]!, { key: 'ArrowDown', altKey: true })
+    expect(patchFrom(onChange).backgroundImage).toBe(`${GRADIENT_B}, ${GRADIENT}`)
+  })
+
+  it('a drag that leaves the layer block is a no-op', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    // Text row first, then one layer: Alt+ArrowUp on the layer would swap it
+    // above `color`, which is a different property entirely.
+    renderFill({ storedStyles: { color: '#fff', backgroundImage: `${GRADIENT}, ${GRADIENT_B}` }, onChange })
+
+    fireEvent.keyDown(screen.getAllByRole('listitem')[1]!, { key: 'ArrowUp', altKey: true })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('edits one layer without touching the others', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` }, onChange })
+
+    fireEvent.click(screen.getByText('Radial gradient'))
+    const popover = screen.getByRole('dialog', { name: 'Radial gradient fill 2' })
+    const stopInput = within(popover).getByRole('textbox', { name: 'Stop 1 colour' })
+    fireEvent.change(stopInput, { target: { value: '#123456' } })
+    fireEvent.blur(stopInput)
+
+    const written = String(patchFrom(onChange).backgroundImage)
+    expect(written.startsWith(GRADIENT)).toBe(true)
+    expect(written).toContain('#123456')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3b. Per-layer satellites, inside the layer's own popover
+// ---------------------------------------------------------------------------
+
+describe('FillSection — per-layer satellites', () => {
+  it('writes one value per layer, leaving the others at the CSS initial', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` }, onChange })
+
+    fireEvent.click(screen.getByText('Radial gradient'))
+    const popover = screen.getByRole('dialog', { name: 'Radial gradient fill 2' })
+    const size = within(popover).getByRole('textbox', { name: 'Size' })
+    fireEvent.change(size, { target: { value: 'cover' } })
+    fireEvent.blur(size)
+
+    expect(patchFrom(onChange).backgroundSize).toBe('auto, cover')
+  })
+
+  it('writes ONLY the declarations that changed — one undo entry, not eight', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` }, onChange })
+
+    fireEvent.click(screen.getByText('Radial gradient'))
+    const popover = screen.getByRole('dialog', { name: 'Radial gradient fill 2' })
+    const size = within(popover).getByRole('textbox', { name: 'Size' })
+    fireEvent.change(size, { target: { value: 'cover' } })
+    fireEvent.blur(size)
+
+    expect(onChange.mock.calls.map((call) => call[0])).toEqual(['backgroundSize'])
+  })
+
+  it('says so when a value is shared by CSS repetition, before the edit splits it', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    // One declared size, two layers — CSS repeats it, so it is not layer 2's own.
+    renderFill({ storedStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}`, backgroundSize: 'cover' }, onChange })
+
+    fireEvent.click(screen.getByText('Radial gradient'))
+    const popover = screen.getByRole('dialog', { name: 'Radial gradient fill 2' })
+    const size = within(popover).getByRole('textbox', { name: 'Size (all layers)' })
+    fireEvent.change(size, { target: { value: 'contain' } })
+    fireEvent.blur(size)
+
+    expect(patchFrom(onChange).backgroundSize).toBe('cover, contain')
+  })
+
+  it('shows the per-layer blend mode as a select', () => {
+    renderFill({ storedStyles: { backgroundImage: GRADIENT, backgroundBlendMode: 'multiply' } })
+    fireEvent.click(screen.getByText('Linear gradient'))
+    const popover = screen.getByRole('dialog', { name: 'Linear gradient fill' })
+    expect((within(popover).getByRole('combobox', { name: 'Blend' }) as HTMLSelectElement).value).toBe('multiply')
+  })
+
+  it('falls back to a raw whole-property field when a satellite cannot be split per layer', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    // Two size values but only one layer — CSS ignores the extra, and editing
+    // per layer would silently delete it.
+    renderFill({ storedStyles: { backgroundImage: GRADIENT, backgroundSize: 'cover, contain' }, onChange })
+
+    fireEvent.click(screen.getByText('Linear gradient'))
+    const popover = screen.getByRole('dialog', { name: 'Linear gradient fill' })
+    expect(within(popover).queryByRole('textbox', { name: 'Size' })).toBeNull()
+
+    const raw = within(popover).getByRole('textbox', { name: 'Size, raw CSS' })
+    expect((raw as HTMLInputElement).value).toBe('cover, contain')
+    fireEvent.change(raw, { target: { value: 'cover' } })
+    expect(onChange).toHaveBeenCalledWith('backgroundSize', 'cover')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. Honest refusal of the layer list itself
+// ---------------------------------------------------------------------------
+
+describe('FillSection — refused layer list', () => {
+  it('renders one raw row, never a guessed split, for a top-level var()', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { backgroundImage: 'var(--page-bg)' }, onChange })
+
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('Custom (raw CSS)')
+
+    fireEvent.click(screen.getByText('Custom (raw CSS)'))
+    const popover = screen.getByRole('dialog', { name: 'Background image (raw CSS)' })
+    expect(popover.textContent).toContain('var()')
+
+    const raw = within(popover).getByRole('textbox', { name: 'background-image, raw CSS' })
+    fireEvent.change(raw, { target: { value: GRADIENT } })
+    expect(onChange).toHaveBeenCalledWith('backgroundImage', GRADIENT)
+  })
+
+  it('still shows satellites that have no layer row to live in', () => {
+    renderFill({ storedStyles: { backgroundSize: 'cover' } })
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('Background sizing')
+    expect(row.textContent).toContain('No image layer')
+  })
+
+  it('removing that row clears only the satellites, never the image', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { backgroundImage: 'var(--page-bg)', backgroundSize: 'cover' }, onChange })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Background sizing' }))
+    const patch = patchFrom(onChange)
+    expect(patch.backgroundSize).toBeUndefined()
+    expect('backgroundImage' in patch).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. Solid fill is the BOTTOM-most paint
 // ---------------------------------------------------------------------------
 
 describe('FillSection — solid fill entry', () => {
-  it('shows a row with the colour as its summary when backgroundColor is set', () => {
-    renderFill({ storedStyles: { backgroundColor: '#ff0000' } })
-    const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('#ff0000')
+  it('sits BELOW the image layers, because that is where CSS paints it', () => {
+    renderFill({ storedStyles: { backgroundColor: '#ff0000', backgroundImage: GRADIENT } })
+    const rows = screen.getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.textContent).toContain('Linear gradient')
+    expect(rows[1]!.textContent).toContain('#ff0000')
   })
 
   it('opens a colour popover on activation and writes through onChange', () => {
@@ -148,169 +348,40 @@ describe('FillSection — solid fill entry', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3. Image fill entry
+// 6. Content fit — the element's own replaced content
 // ---------------------------------------------------------------------------
 
-describe('FillSection — image fill entry (gradient)', () => {
-  const gradient = 'linear-gradient(90deg, #ff0000 0%, #0000ff 100%)'
-
-  it('summarises a parseable gradient by kind and stop count', () => {
-    renderFill({ storedStyles: { backgroundImage: gradient } })
+describe('FillSection — content fit entry', () => {
+  it('surfaces a set objectFit as its own row, not as part of a background layer', () => {
+    renderFill({ storedStyles: { objectFit: 'cover' } })
     const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('Linear gradient')
-    expect(row.textContent).toContain('2 stops')
-  })
+    expect(row.textContent).toContain('Content fit')
 
-  it('opens the gradient editor and edits a stop colour', () => {
-    const onChange = mock((_p: string, _v: unknown) => {})
-    renderFill({ storedStyles: { backgroundImage: gradient }, onChange })
-
-    fireEvent.click(screen.getByText('Linear gradient'))
-    const popover = screen.getByRole('dialog', { name: 'Image fill' })
-    const stopInput = within(popover).getByRole('textbox', { name: 'Stop 1 colour' })
-    fireEvent.change(stopInput, { target: { value: '#123456' } })
-    fireEvent.blur(stopInput)
-
-    const [, written] = onChange.mock.calls.at(-1) as [string, string]
-    expect(written).toContain('#123456')
-    expect(written).toContain('0%')
-  })
-
-  it('adding a stop appends one with the last stop’s colour', () => {
-    const onChange = mock((_p: string, _v: unknown) => {})
-    renderFill({ storedStyles: { backgroundImage: gradient }, onChange })
-
-    fireEvent.click(screen.getByText('Linear gradient'))
-    fireEvent.click(screen.getByRole('button', { name: /add stop/i }))
-
-    const [, written] = onChange.mock.calls.at(-1) as [string, string]
-    expect(written).toBe('linear-gradient(90deg, #ff0000 0%, #0000ff 100%, #0000ff)')
-  })
-
-  it('disables removing a stop once only two remain', () => {
-    renderFill({ storedStyles: { backgroundImage: gradient } })
-    fireEvent.click(screen.getByText('Linear gradient'))
-
-    // `Button` converts `disabled` + `tooltip` together into `aria-disabled`
-    // (native `disabled` would swallow the pointerenter the tooltip needs).
-    const removeButtons = screen.getAllByRole('button', { name: /remove stop/i })
-    expect(removeButtons).toHaveLength(2)
-    for (const button of removeButtons) expect(button.getAttribute('aria-disabled')).toBe('true')
-  })
-})
-
-describe('FillSection — image fill entry (url)', () => {
-  it('summarises a url() value by its path', () => {
-    renderFill({ storedStyles: { backgroundImage: "url('/hero.png')" } })
-    expect(screen.getByRole('listitem').textContent).toContain('/hero.png')
-  })
-
-  it('edits the URL through the image-mode field', () => {
-    const onChange = mock((_p: string, _v: unknown) => {})
-    renderFill({ storedStyles: { backgroundImage: "url('/hero.png')" }, onChange })
-
-    fireEvent.click(screen.getByText('/hero.png'))
-    const popover = screen.getByRole('dialog', { name: 'Image fill' })
-    const input = within(popover).getByRole('textbox', { name: 'Image URL' })
-    fireEvent.change(input, { target: { value: '/new.png' } })
-
-    expect(onChange).toHaveBeenCalledWith('backgroundImage', "url('/new.png')")
-  })
-})
-
-describe('FillSection — image fill entry (object-fit only, no backgroundImage)', () => {
-  it('still surfaces an entry so a set objectFit is never invisible', () => {
-    renderFill({ storedStyles: { objectFit: 'cover' } })
-    expect(screen.getByRole('listitem').textContent).toContain('Object fit')
-  })
-
-  it('the popover has no mode toggle and no image field, only sizing rows', () => {
-    renderFill({ storedStyles: { objectFit: 'cover' } })
-    fireEvent.click(screen.getByText('Object fit'))
-    const popover = screen.getByRole('dialog', { name: 'Image fill' })
-    expect(within(popover).queryByRole('group', { name: /image fill type/i })).toBeNull()
+    fireEvent.click(screen.getByText('Content fit'))
+    const popover = screen.getByRole('dialog', { name: 'Content fit' })
     expect(within(popover).getByTestId('css-property-row-objectFit')).toBeTruthy()
-  })
-})
-
-describe('FillSection — image fill entry (unparseable gradient refuses the visual editor)', () => {
-  const hint = 'linear-gradient(red, 50%, blue)' // a colour hint — gradientValue.ts refuses this
-
-  it('falls back to a raw, honestly-editable field instead of a fake structured editor', () => {
-    const onChange = mock((_p: string, _v: unknown) => {})
-    renderFill({ storedStyles: { backgroundImage: hint }, onChange })
-
-    expect(screen.getByRole('listitem').textContent).toContain('Custom (raw CSS)')
-
-    fireEvent.click(screen.getByText('Custom (raw CSS)'))
-    const popover = screen.getByRole('dialog', { name: 'Image fill' })
     expect(within(popover).queryByRole('group', { name: /image fill type/i })).toBeNull()
-
-    const rawInput = within(popover).getByRole('textbox', { name: /raw css/i })
-    expect((rawInput as HTMLInputElement).value).toBe(hint)
-    fireEvent.change(rawInput, { target: { value: 'linear-gradient(red, blue)' } })
-    expect(onChange).toHaveBeenCalledWith('backgroundImage', 'linear-gradient(red, blue)')
   })
-})
 
-// ---------------------------------------------------------------------------
-// 4. Removing the image entry clears its satellites too
-// ---------------------------------------------------------------------------
-
-describe('FillSection — removing the image entry', () => {
-  it('clears backgroundImage AND every satellite property', () => {
+  it('"remove" clears both content-fit properties', () => {
     const onChange = mock((_p: string, _v: unknown) => {})
-    renderFill({
-      storedStyles: {
-        backgroundImage: 'linear-gradient(red, blue)',
-        backgroundSize: 'cover',
-        objectFit: 'contain',
-      },
-      onChange,
-    })
+    renderFill({ storedStyles: { objectFit: 'cover', objectPosition: 'top' }, onChange })
 
-    fireEvent.click(screen.getByRole('button', { name: /remove linear gradient fill/i }))
-
-    const calledProps = onChange.mock.calls.map((call) => call[0])
-    expect(calledProps).toEqual(
-      expect.arrayContaining([
-        'backgroundImage',
-        'backgroundSize',
-        'backgroundRepeat',
-        'backgroundPosition',
-        'objectFit',
-        'objectPosition',
-      ]),
-    )
-    for (const call of onChange.mock.calls) expect(call[1]).toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Content fit' }))
+    const patch = patchFrom(onChange)
+    expect(patch.objectFit).toBeUndefined()
+    expect(patch.objectPosition).toBeUndefined()
   })
 })
 
 // ---------------------------------------------------------------------------
-// 5. background shorthand escape hatch
+// 7. background shorthand escape hatch
 // ---------------------------------------------------------------------------
 
 describe('FillSection — background shorthand escape hatch', () => {
   const shorthand = 'red url(hero.png) no-repeat'
 
-  it('shows as a read-only row only when set', () => {
-    const { rerender } = renderFill()
-    expect(screen.queryByText(shorthand)).toBeNull()
-
-    rerender(
-      <FillSection
-        storedStyles={{ background: shorthand }}
-        currentStyles={{}}
-        visibleProperties={ALL_FILL_PROPS as unknown as FillProps['visibleProperties']}
-        activeTab="base"
-        onChange={noop}
-        onRemove={noop}
-      />,
-    )
-    expect(screen.getByText(shorthand)).toBeTruthy()
-  })
-
-  it('opens a raw-CSS popover — not a structured editor — and still allows editing', () => {
+  it('shows as a row only when set, and opens a raw-CSS popover', () => {
     const onChange = mock((_p: string, _v: unknown) => {})
     renderFill({ storedStyles: { background: shorthand }, onChange })
 
@@ -333,7 +404,7 @@ describe('FillSection — background shorthand escape hatch', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 6. FillSectionActions
+// 8. FillSectionActions
 // ---------------------------------------------------------------------------
 
 describe('FillSectionActions', () => {
@@ -347,7 +418,34 @@ describe('FillSectionActions', () => {
   it('hides "add text colour" once color is set', () => {
     render(<FillSectionActions storedStyles={{ color: '#fff' }} onChange={noop} />)
     expect(screen.queryByRole('button', { name: /add text colour/i })).toBeNull()
-    expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeTruthy()
+  })
+
+  it('hides "add solid color fill" once backgroundColor is set', () => {
+    render(<FillSectionActions storedStyles={{ backgroundColor: '#000' }} onChange={noop} />)
+    expect(screen.queryByRole('button', { name: /add solid color fill/i })).toBeNull()
+  })
+
+  it('keeps "add gradient fill" available once a layer exists — CSS stacks them', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    render(<FillSectionActions storedStyles={{ backgroundImage: GRADIENT }} onChange={onChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /add gradient fill/i }))
+    expect(patchFrom(onChange).backgroundImage).toBe(
+      `linear-gradient(180deg, #000000 0%, #ffffff 100%), ${GRADIENT}`,
+    )
+  })
+
+  it('"add gradient fill" writes a parseable default gradient on an empty element', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    render(<FillSectionActions storedStyles={{}} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: /add gradient fill/i }))
+    expect(patchFrom(onChange).backgroundImage).toBe('linear-gradient(180deg, #000000 0%, #ffffff 100%)')
+  })
+
+  it('disables "add gradient fill" with a reason when the layer list was refused', () => {
+    render(<FillSectionActions storedStyles={{ backgroundImage: 'var(--layers)' }} onChange={noop} />)
+    const button = screen.getByRole('button', { name: /add gradient fill/i })
+    expect(button.getAttribute('aria-disabled')).toBe('true')
   })
 
   it('"add text colour" writes a concrete colour, not a no-op currentColor', () => {
@@ -357,56 +455,22 @@ describe('FillSectionActions', () => {
     expect(onChange).toHaveBeenCalledWith('color', '#000000')
   })
 
-  it('hides "add solid color fill" once backgroundColor is set', () => {
-    render(<FillSectionActions storedStyles={{ backgroundColor: '#000' }} onChange={noop} />)
-    expect(screen.queryByRole('button', { name: /add solid color fill/i })).toBeNull()
-    expect(screen.getByRole('button', { name: /add gradient fill/i })).toBeTruthy()
-  })
-
-  it('hides "add gradient fill" once backgroundImage is set to something other than none', () => {
-    render(<FillSectionActions storedStyles={{ backgroundImage: 'url(x.png)' }} onChange={noop} />)
-    expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /add gradient fill/i })).toBeNull()
-  })
-
-  it('treats backgroundImage: none as unset', () => {
-    render(<FillSectionActions storedStyles={{ backgroundImage: 'none' }} onChange={noop} />)
-    expect(screen.getByRole('button', { name: /add gradient fill/i })).toBeTruthy()
-  })
-
-  it('renders nothing once all three channels are in use', () => {
-    const { container } = render(
-      <FillSectionActions
-        storedStyles={{ color: '#fff', backgroundColor: '#000', backgroundImage: 'url(x.png)' }}
-        onChange={noop}
-      />,
-    )
-    expect(container.querySelectorAll('button')).toHaveLength(0)
-  })
-
   it('"add solid color fill" writes an opaque default colour', () => {
     const onChange = mock((_p: string, _v: unknown) => {})
     render(<FillSectionActions storedStyles={{}} onChange={onChange} />)
     fireEvent.click(screen.getByRole('button', { name: /add solid color fill/i }))
     expect(onChange).toHaveBeenCalledWith('backgroundColor', '#000000')
   })
-
-  it('"add gradient fill" writes a parseable default gradient', () => {
-    const onChange = mock((_p: string, _v: unknown) => {})
-    render(<FillSectionActions storedStyles={{}} onChange={onChange} />)
-    fireEvent.click(screen.getByRole('button', { name: /add gradient fill/i }))
-    expect(onChange).toHaveBeenCalledWith('backgroundImage', 'linear-gradient(180deg, #000000 0%, #ffffff 100%)')
-  })
 })
 
 // ---------------------------------------------------------------------------
-// 7. visibleProperties (style search) filtering
+// 9. visibleProperties (style search) filtering
 // ---------------------------------------------------------------------------
 
 describe('FillSection — visibleProperties filtering', () => {
   it('hides an entry whose properties are all filtered out of visibleProperties', () => {
     renderFill({
-      storedStyles: { backgroundColor: '#ff0000', backgroundImage: 'linear-gradient(red, blue)' },
+      storedStyles: { backgroundColor: '#ff0000', backgroundImage: GRADIENT },
       visibleProperties: ['backgroundColor'] as unknown as FillProps['visibleProperties'],
     })
 

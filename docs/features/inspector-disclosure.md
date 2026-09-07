@@ -244,10 +244,10 @@ invention.
 ### G6 — Fill: a real colour picker and a fill list (F13–F15)
 
 Background is renamed **Fill** and rebuilt on `PropertyList`: empty ⇒ one line,
-`backgroundColor` and `backgroundImage` as entries, and `backgroundSize` /
-`Repeat` / `Position` / `objectFit` / `objectPosition` moved into the *entry's
-own popover* — drawing five of them for an element with no image is the exact
-defect this page exists to prevent.
+`backgroundColor` and each `backgroundImage` layer as entries, and
+`backgroundSize` / `Position` / `Repeat` / `Attachment` / `Origin` / `Clip` /
+`blend-mode` moved into the *layer's own popover* — drawing seven of them for an
+element with no image is the exact defect this page exists to prevent.
 
 - **G6.2** — `ColorPickerPopover`: SV square + hue rail + **alpha rail**, model
   select (HSL/RGB/HEX), the **eyedropper** (feature-detected on
@@ -259,6 +259,35 @@ defect this page exists to prevent.
   visual editor and say why** (`gradientValue.ts`).
 - **G6.4** — *(open)* Selection colours: with 2+ nodes selected, list every
   distinct colour in the selection and let one edit rewrite all of them.
+- **G6.5 — Fill is N layers, honestly (W8-4).** `background-image` is a
+  comma-separated list whose first entry paints TOPMOST, and the Fill list now
+  models it that way: `backgroundLayers.ts` applies the proven
+  `boxShadowLayers.ts` pattern — comma-list parse → one `PropertyList` row per
+  layer → byte-identical re-join, **or refuse** with a named reason. It refuses
+  a top-level `var()` (which could expand to any number of layers, desyncing
+  every satellite's alignment), unbalanced parens, an empty segment, and any
+  value it could not re-join exactly. Layers add / remove / reorder with the
+  same gestures Effects' shadow layers use.
+  - `backgroundColor` is **pinned bottom-most**, not treated as layer N+1 — CSS
+    paints it below every layer and it has no per-layer satellites of its own.
+  - The six satellites plus `background-blend-mode` became **per-layer**, edited
+    inside each row's popover, following CSS Backgrounds 3 §2.1: a shorter list
+    repeats cyclically (the control is labelled "(all layers)" so the edit that
+    splits the list is not a surprise), and a list with
+    MORE values than layers is **refused per property** — CSS ignores the
+    extras, but a per-layer write would delete them from the user's file. The
+    refusal is per property, never per section: an odd `background-size` must
+    not hide six layers the user can still edit.
+  - `objectFit` / `objectPosition` moved OUT of the background satellites into
+    their own **Content fit** row. They size the element's own replaced content,
+    which paints above the background entirely; bundling them with the image
+    fill conflated two unrelated things.
+  - Satellites set with no layer to apply to (`background-size: cover` alone, or
+    alongside a refused layer list) get a **Background sizing** row rather than
+    vanishing from the inspector.
+  - The visibility eye stays omitted — §8 decision 1 is unchanged by this. What
+    changed is the layer list, not the fact that CSS has no honest way to store
+    a hidden-but-present paint.
 
 ### G7 — Stroke (F16–F19)
 
@@ -522,10 +551,11 @@ kept because the alternatives are the part that does not survive in the diff.
 
 `css-token-policy`, `no-css-var-fallbacks`, `button-primitive-usage` (popovers
 must use `Button`), `no-third-party-icons` (run `bun run icons:sync` after adding
-an icon), `boundary-validation` (the gradient, box-shadow and numeric-expression
-parsers are boundaries — TypeBox them, no `as`), `module-size-budgets` (several
-section files sit near the 700-line ceiling: extract, don't grow — `FillSection`
-split into `FillSectionParts.tsx` + `fillModel.ts` for exactly this reason).
+an icon), `boundary-validation` (the gradient, box-shadow, background-layer and
+numeric-expression parsers are boundaries — TypeBox them, no `as`),
+`module-size-budgets` (several section files sit near the 700-line ceiling:
+extract, don't grow — `FillSection` split into `FillSectionParts.tsx` +
+`fillModel.ts` + `backgroundLayers.ts` for exactly this reason).
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` is needed for G6.4 (multi-select) and G8.3 (shadow-layer
