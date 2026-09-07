@@ -75,7 +75,7 @@
   ],
   "previewAxes": {
     "colorScheme": "dark",
-    "direction": "rtl",
-    "locale": "ar"
+    "direction": "ltr",
+    "locale": "en"
   }
 }
