@@ -1,9 +1,15 @@
 /**
  * PositionConstraints — F29's absolute/fixed shape: an X row and a Y row,
  * each a side picker (`Left ▾`/`Right ▾`, `Top ▾`/`Bottom ▾`) plus one value
- * field. The crosshair widget F29 also shows is optional polish, omitted
- * here — the two pickers are the substance (they choose which real CSS
- * property the value lands on).
+ * field, with Figma's crosshair diagram beside them (W8-4).
+ *
+ * The pickers are still the substance — they choose which real CSS property
+ * the value lands on, one property per commit. The crosshair is
+ * PRESENTATION over the same edits: it shows at a glance which edges the
+ * element is pinned to, and adds the two constraints a pair of side pickers
+ * cannot express (centring, and percentage "scale" insets). Its mappings and
+ * its refusals live in `constraintMapping.ts`; `ConstraintsDiagram` renders
+ * them.
  *
  * Extracted out of `PositionSection.tsx` to keep that file under the
  * repo's module-size ceiling (`module-size-budgets.test.ts`) — same
@@ -21,6 +27,7 @@ import { ArrowBarDownIcon } from 'pixel-art-icons/icons/arrow-bar-down'
 import { ArrowBarLeftIcon } from 'pixel-art-icons/icons/arrow-bar-left'
 import type { Token } from '@site/property-controls/tokenUtils'
 import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
+import { ConstraintsDiagram } from './ConstraintsDiagram'
 import { hasStyleValue } from './styleValueUtils'
 import posStyles from './PositionSection.module.css'
 
@@ -69,33 +76,41 @@ export function PositionConstraints({
 }: PositionConstraintsProps) {
   return (
     <div className={posStyles.constraintGrid}>
-      <ConstraintAxisField
-        axisLabel="X"
-        sideA="left"
-        sideB="right"
-        sideALabel="Left"
-        sideBLabel="Right"
+      <div className={posStyles.constraintAxisStack}>
+        <ConstraintAxisField
+          axisLabel="X"
+          sideA="left"
+          sideB="right"
+          sideALabel="Left"
+          sideBLabel="Right"
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          tokens={tokens}
+          onChange={onChange}
+          onClear={onClear}
+          onPreview={onPreview}
+          onClearPreview={onClearPreview}
+        />
+        <ConstraintAxisField
+          axisLabel="Y"
+          sideA="top"
+          sideB="bottom"
+          sideALabel="Top"
+          sideBLabel="Bottom"
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          tokens={tokens}
+          onChange={onChange}
+          onClear={onClear}
+          onPreview={onPreview}
+          onClearPreview={onClearPreview}
+        />
+      </div>
+      <ConstraintsDiagram
         storedStyles={storedStyles}
         currentStyles={currentStyles}
-        tokens={tokens}
         onChange={onChange}
         onClear={onClear}
-        onPreview={onPreview}
-        onClearPreview={onClearPreview}
-      />
-      <ConstraintAxisField
-        axisLabel="Y"
-        sideA="top"
-        sideB="bottom"
-        sideALabel="Top"
-        sideBLabel="Bottom"
-        storedStyles={storedStyles}
-        currentStyles={currentStyles}
-        tokens={tokens}
-        onChange={onChange}
-        onClear={onClear}
-        onPreview={onPreview}
-        onClearPreview={onClearPreview}
       />
     </div>
   )

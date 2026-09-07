@@ -443,6 +443,60 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
   the collisions are independent. An unflipped element gets no `scale`
   declaration at all, never a no-op `scale: 1 1`.
 
+- **G10.3 — The constraints crosshair (W8-4).** Figma's constraints widget now
+  sits beside the side pickers in absolute/fixed mode
+  (`ConstraintsDiagram.tsx`) — four edge bars plus a centring line per axis,
+  over a square standing for the containing block. It is **presentation over
+  the pickers, not a replacement**: the pickers still own "which property does
+  the value land on", and both surfaces write through the same per-property
+  commit channel. What the crosshair adds is the two constraints a pair of
+  side pickers cannot express, and a read-back of which edges the element is
+  pinned to.
+
+  Every mapping and every refusal lives in one pure module,
+  `constraintMapping.ts` (unit-tested in `constraintMapping.test.ts`) — the
+  component owns pixels and pointer events only:
+
+  | Constraint | The CSS it actually is |
+  |---|---|
+  | Left / Top | the start inset set, the end inset cleared |
+  | Right / Bottom | the end inset set, the start inset cleared |
+  | Left and right (stretch) | **both** insets set, `width`/`height` cleared |
+  | Centre | `left: 50%` plus a `-50%` pull-back |
+  | Scale | both insets as **percentages** of the containing block, size cleared |
+
+  Centring writes the **standalone `translate` property**, never a
+  `transform: translateX(-50%)`, for the same reason `RotationRow` writes
+  standalone `rotate` and G10.2 writes standalone `scale`: one honest
+  declaration instead of rewriting one item of a function list. That leaves
+  exactly two collisions, both refused by name and surfaced as the disabled
+  control's tooltip (§8.4): `transform` already carrying a translate-family
+  function (CSS applies `translate` first, so the two would compound), and a
+  `translate` whose component on this axis is somebody else's real value
+  (`10px`, a `calc()`, a `var()`, a third z component). Leaving centring
+  releases only a pull-back this control itself wrote.
+
+  **Scale refuses without a measurement.** Percent insets are derived from the
+  element's used insets and the containing block's padding box, read off the
+  live canvas frame; with no frame reporting one, Scale is disabled with that
+  reason rather than converting against a guess. A `fixed` element resolves
+  against the viewport, which this read does not measure, so Scale refuses
+  there too.
+
+  **The whole cluster is gated on positioned context**
+  (`resolvePositionedContext`): `fixed` passes (the viewport is a real frame of
+  reference), `absolute` passes only when the element's own parent really is
+  its containing block, and an unverifiable parent stays disabled — the same
+  "no frame, no claim" posture `resolveAlignWrite` takes for the align row.
+  Normal-flow positions never reach the cluster at all (Law 5 already keeps
+  the constraints shape absolute-only).
+
+  Known limitation, inherited not introduced: one crosshair click can produce
+  two or three property writes (stretch sets both insets and clears the size),
+  which lands as that many undo entries — the panel's commit channel is
+  per-property. Same limitation `PositionConstraints` already documents for
+  moving a value between sides.
+
 ### G11 — Export (W8-4)
 
 > **Figma:** the Export block at the bottom of the right panel. Empty ⇒ a title
