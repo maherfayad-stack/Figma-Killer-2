@@ -207,7 +207,12 @@ export function TokenAwareInput({
     // sync, token suggestions, commit) then behaves exactly as it does for an
     // unset field, which is what makes the first keystroke replace "mixed"
     // with one value across the whole selection.
-    const display = mixed ? '' : displayTokenValue(variable.displayValue, tokens)
+    // A framework-token binding is hidden from the affordance above (so no
+    // chip), which means `variable.displayValue` is empty for it — the short
+    // step (`md`) must still come from the raw value.
+    const display = mixed
+      ? ''
+      : displayTokenValue(isFrameworkToken ? value : variable.displayValue, tokens)
     // The "Mixed" string itself is `Input`'s job (it owns the shared
     // constant); this only stops a real placeholder from competing with it.
     const placeholderDisplay = displayTokenValue(placeholder, tokens)
