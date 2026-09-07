@@ -15,9 +15,57 @@ import { cloneSiteRuntimeConfig } from '@core/site-runtime'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
-import type { SiteSlice, SiteSliceHelpers } from './types'
+import { refuseStructuralUndo, reissueStructuralMove } from './structuralHistory'
+import type { HistoryEntry, SiteSlice, SiteSliceHelpers, StructuralHistory } from './types'
 
 type UndoRedoActions = Pick<SiteSlice, 'undo' | 'redo'>
+
+/**
+ * `store-08` — a structural transaction is undone by RE-ISSUING the gesture,
+ * never by replaying its patches. See `structuralHistory.ts` for why: the
+ * user's `.tsx` is the document, and `saveSite` diffs values, not structure.
+ *
+ * Returns whether this function handled the entry. `false` means "not
+ * structural — take the patch path".
+ *
+ * The stack bookkeeping is done by hand because the re-issued gesture is an
+ * ordinary mutation: it pushes its own history entry and clears the redo
+ * stack. Both are corrected here, so one Ctrl+Z consumes exactly one entry and
+ * a pending redo chain survives.
+ */
+function runStructuralStep(
+  { get, set }: Pick<SiteSliceHelpers, 'get' | 'set'>,
+  entry: HistoryEntry,
+  structural: StructuralHistory,
+  direction: 'undo' | 'redo',
+): boolean {
+  if (structural.gesture !== 'move') {
+    refuseStructuralUndo(structural.gesture)
+    return true
+  }
+  const from = direction === 'undo' ? '_historyPast' : '_historyFuture'
+  const to = direction === 'undo' ? '_historyFuture' : '_historyPast'
+  // Both stacks are snapshotted BEFORE the re-issue and assigned wholesale
+  // after it. The re-issued gesture pushes its own entry onto `_historyPast`
+  // and clears `_historyFuture` (`commitHistory`), so anything computed from
+  // the post-gesture stacks would double-count in one direction and silently
+  // drop a pending redo chain in the other.
+  const fromBefore = [...get()[from]]
+  const toBefore = [...get()[to]]
+
+  if (!reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)) {
+    return true
+  }
+
+  set((state) => {
+    state[from] = fromBefore.slice(0, -1)
+    state[to] = [...toBefore, entry]
+    state._historyCoalesceKey = null
+    state.canUndo = state._historyPast.length > 0
+    state.canRedo = state._historyFuture.length > 0
+  })
+  return true
+}
 
 export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoActions {
   return {
@@ -25,6 +73,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
       const { _historyPast, site } = get()
       if (_historyPast.length === 0 || !site) return
       const entry = _historyPast[_historyPast.length - 1]!
+      if (entry.structural && runStructuralStep({ get, set }, entry, entry.structural, 'undo')) return
       const restored = apply(site, entry.inverse)
       const packageJson = clonePackageJson(restored.packageJson)
       const siteRuntime = cloneSiteRuntimeConfig(restored.runtime)
@@ -66,6 +115,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
       const { _historyFuture, site } = get()
       if (_historyFuture.length === 0 || !site) return
       const entry = _historyFuture[_historyFuture.length - 1]!
+      if (entry.structural && runStructuralStep({ get, set }, entry, entry.structural, 'redo')) return
       const restored = apply(site, entry.forward)
       const packageJson = clonePackageJson(restored.packageJson)
       const siteRuntime = cloneSiteRuntimeConfig(restored.runtime)

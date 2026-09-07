@@ -140,7 +140,42 @@ export interface HistoryEntry {
   inverse: Patches
   forward: Patches
   coalesceKey: string | null
+  /**
+   * `store-08` — present only when this transaction also WROTE STRUCTURE to
+   * the user's source. Undo/redo must then re-issue the gesture rather than
+   * replay `inverse`/`forward`: `saveSite` diffs node VALUES and has no notion
+   * of parent or order (see `structuralSourceEdits.ts`'s header), so a
+   * patch-only undo moves the element on the canvas, leaves the `.tsx` saying
+   * the opposite, and the next reparse silently wins.
+   */
+  structural?: StructuralHistory
 }
+
+/** One end of a re-issuable structural gesture: "put this node here". */
+export interface StructuralHistoryMove {
+  nodeId: string
+  /** The node id this move's destination parent has — the synthetic page root included. */
+  parentId: string
+  /** Index into the destination parent's children AFTER the node is detached, matching `moveNode`. */
+  index: number
+}
+
+/**
+ * What undo/redo has to re-issue for a structural transaction.
+ *
+ * `move` is re-issuable in both directions: the inverse of a move is another
+ * move, planned against the live tree by the same `moveNodes` action a drag
+ * uses, so it rides every refusal gate and writes to source exactly once.
+ *
+ * `delete` is NOT. Undoing a source delete means writing the element's
+ * original markup back into the file, and the writeback protocol has no edit
+ * kind that carries a subtree's source text — `insert` names a component and
+ * literal props. Rather than replay patches that would re-add nodes the file
+ * does not contain, undo refuses and says so.
+ */
+export type StructuralHistory =
+  | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
+  | { gesture: 'delete' }
 
 export interface SiteSlice {
   site: SiteDocument | null

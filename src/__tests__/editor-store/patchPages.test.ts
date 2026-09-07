@@ -378,16 +378,17 @@ describe('patchPages — history (Track C5)', () => {
     expect(useEditorStore.getState().canUndo).toBe(true)
   })
 
-  it('wipes _historyPast/_historyFuture when the patch removes a node id a stored entry references', () => {
+  it('RE-ADDRESSES a stored entry when the patch is a faithful re-read that renumbered ids (`store-08`)', () => {
     useEditorStore.getState().loadSite(twoPageSite())
     useEditorStore.getState().openPageInCanvas('home')
-    // A real undo-able edit on 'hero' — the exact node the incoming patch is about to shift away.
+    // A real undo-able edit on 'hero' — the exact node the incoming patch is about to shift.
     useEditorStore.getState().updateNodeProps('hero', { text: 'User edit' })
     expect(useEditorStore.getState()._historyPast.length).toBeGreaterThan(0)
-    expect(useEditorStore.getState().canUndo).toBe(true)
 
-    // Re-parsed 'home' no longer has 'hero' — same shape a shifted move/
-    // delete/insert produces (struct-01's `shifted` contract).
+    // Re-parsed 'home' has the SAME tree with a shifted id — what a structural
+    // write below it produces (struct-01's `shifted` contract). Wiping here
+    // cost the user the undo history of every unrelated edit; the stack is
+    // re-pointed at the new address instead (`historyNodeIdRemap.ts`).
     const freshHome = makePage({
       id: 'home',
       slug: 'index',
@@ -395,7 +396,34 @@ describe('patchPages — history (Track C5)', () => {
       rootNodeId: 'root',
       nodes: {
         root: makeNode({ id: 'root', moduleId: 'base.body', children: ['hero-shifted'] }),
+        'hero-shifted': makeNode({ id: 'hero-shifted', moduleId: 'base.text', props: { text: 'User edit' } }),
+      },
+    })
+    useEditorStore.getState().patchPages({ pages: [freshHome] })
+
+    expect(useEditorStore.getState()._historyPast.length).toBe(1)
+    expect(useEditorStore.getState().canUndo).toBe(true)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().site!.pages[0]!.nodes['hero-shifted']!.props.text).toBe('Hi')
+  })
+
+  it('still wipes when the patch is NOT a faithful re-read of the same tree', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.getState().openPageInCanvas('home')
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User edit' })
+    expect(useEditorStore.getState()._historyPast.length).toBeGreaterThan(0)
+
+    // The page gained a node: no honest 1:1 correspondence exists, so the
+    // always-safe fallback applies and `hero` is simply gone.
+    const freshHome = makePage({
+      id: 'home',
+      slug: 'index',
+      title: 'Home',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['hero-shifted', 'extra'] }),
         'hero-shifted': makeNode({ id: 'hero-shifted', moduleId: 'base.text', props: { text: 'Hi' } }),
+        extra: makeNode({ id: 'extra', moduleId: 'base.text', props: { text: 'New' } }),
       },
     })
     useEditorStore.getState().patchPages({ pages: [freshHome] })
