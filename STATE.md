@@ -151,6 +151,163 @@ are the remaining WS-2 items, not yet dispatched. See
   `studio_duplicate_frame_as_variant` and confirm the new frame appears on the
   live board without a reload (the `boardsChanged` live-reload push). Needs
   `bunx playwright install chromium`.
+### panel-14 — W7-2: the launcher card says what a project IS, and every verb that acts on it
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/launcher-card-data-verbs`, branched off `origin/main` at
+  `e702497` (W7-1 / PR #44) and merged forward to `2901afe` (PR #49).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W7-2 exactly — card data, rename from the
+  launcher, duplicate, a card context menu, and ⌘K "Open project …". Nothing
+  from W7-3 (thumbnails), W7-4 (import/trash) or W7-5 (onboarding), which are
+  other agents' waves and all edit these same three launcher files.
+- **Scope:** `server/handlers/studioProjects.ts`, `server/handlers/studio.ts`,
+  `server/handlers/studio/{projectDuplicate.ts (new),projectRoutes.ts,studioMeta.ts,projectProfileSchema.ts,styleCompile.ts,styleCompileConsent.ts}`
+  (+ `studio/__tests__/projectDuplicate.test.ts`, `handlers/__tests__/studio.test.ts`),
+  `src/admin/pages/dashboard/{ProjectCard.tsx,ProjectCard.module.css,editedAgo.ts,editedAgo.test.ts}` (new)
+  + `{DashboardPage.tsx,DashboardPage.module.css,DashboardPage.test.tsx,hooks/useStudioProjects.ts}`,
+  `src/admin/pages/site/studio/styleCompileConsent.ts` (one doc pointer),
+  `src/admin/spotlight/{providers/projectsProvider.ts,__tests__/projectsProvider.test.ts,scopes/rootScope.ts}`,
+  `src/__tests__/architecture/button-primitive-usage.test.ts`,
+  `docs/agent-refs/path-index.md`.
+- **Done so far:**
+  - **Card data.** `StudioProjectSummary` gains `platform`, `framework`,
+    `trust`, `styleToolchains` and `editedAt`. Every field comes from reads
+    `listStudioProjects` was ALREADY doing per entry and discarding (the
+    `.studio/meta.json` read, the pages-dir walk) plus one `statSync` per file
+    in that same walk. Nothing here probes — a probe per project on a launcher
+    render is not a cost a listing should carry, so an unprobed project simply
+    has no `framework` and no `styleToolchains`, and the card badges nothing.
+  - **`studioProjectSummary(dir)` is the ONE builder** of that shape. The
+    listing, `/create`, `/rename` and `/duplicate` all return one, so a card
+    redrawn from a mutation's answer can never carry less than a card drawn
+    from the listing. It also fixes a live bug: `/rename` hand-built its
+    summary and recomputed `pageCount` with a bare `discoverPageFiles`, which
+    reports the wrong number for a `next-app` project (that directory is full
+    of `layout.tsx`/`route.ts` files that are not routes).
+  - **`ProjectCard`** renders the badges + `N pages · Edited 2 days ago`, and
+    carries an Open / Rename / Duplicate / Delete `ContextMenu` opened either
+    from a hover/focus-revealed ⋯ button or by right-clicking the tile. Delete
+    moved off the hover-only trash ghost — it was the most reachable control
+    on the launcher and the most destructive verb in the product; it is still
+    behind `DeleteProjectDialog`.
+  - **Rename is inline**, and is the toolbar's `StudioProjectLabel` gesture
+    verbatim: the name becomes an `<input>`, Enter/blur commits, Escape
+    reverts, with the same `committingRef` latch (Enter blurs to commit, so
+    without it the blur handler commits a second time).
+    `renameStudioProject` had existed in `useStudioProjects.ts` since it was
+    written, with zero launcher callers.
+  - **`POST /admin/api/studio/duplicate`** (`projectDuplicate.ts`) — `cpSync`
+    of the whole project minus `node_modules`, `dist`, `.next`, `.turbo` and
+    `.git`, under the first free DISPLAY name, `lastOpenedAt` cleared, project
+    guide regenerated. Capability-gated `studio.write` alongside `/delete`.
+  - **⌘K.** `projectsProvider` on the root scope: "Open <project>" from
+    anywhere in the admin, performing the launcher's own three steps
+    (`requestCmsSiteReload()` → `setStudioWorkspaceDir` → navigate) rather
+    than bouncing the user through `/admin/dashboard`.
+  - **`lastOpenedAt`** is stamped into `.studio/meta.json` by
+    `GET /admin/api/studio/load` (`recordProjectOpened`) — W7-5 step 2's
+    stated dependency.
+  - **`compilableStyleToolchains` moved** from `styleCompile.ts` to the
+    `projectProfileSchema.ts` leaf, so the launcher can ask "will this
+    project's styles render?" without importing the Tier-1 subprocess
+    machinery for a six-line pure predicate. Three callers now share it.
+- **Next step:** W7-3 (thumbnails), W7-4 (import/trash) and W7-5 (onboarding)
+  are unblocked and may run in parallel with each other — but W7-3 redesigns
+  the card around a preview image, so it owns `ProjectCard.tsx` and must not
+  run beside anything else touching it.
+- **Decisions:**
+  - **`editedAt` stats every file under the pages dir, not the directory.**
+    The plan suggested "one `statSync`", and one stat of the pages DIRECTORY
+    would have been cheaper — but writing an existing file does not touch its
+    parent's mtime, so that number reports the last time a page was ADDED or
+    REMOVED and the card would call that "Edited". Studio's most common write
+    (an inline style into a `.tsx`, a rule into a co-located `.module.css`)
+    would never move it. The walk already happens for `pageCount`; the added
+    cost is one `stat` per file in the pages dir, the same order as the
+    `readdir` that produced the list.
+  - **The trust badge is `trust === 'static' && styleToolchains.length > 0`,
+    not the tier.** Every project defaults to Tier 0, so a bare "Tier 0" badge
+    on every card is noise. The fact worth surfacing is the one W7-2's own
+    plan text names: a project whose Tailwind/Sass/PostCSS has not run opens
+    unstyled. Above Tier 0 the compile happens, so the badge would be false
+    and is not rendered.
+  - **The framework comes from the CACHED probe only.** `resolveProjectProfile`
+    would give a better answer and also probe (and write) N projects on every
+    launcher render. An absent badge is honest; a slow launcher is not.
+  - **Duplicate leaves `.git` behind, and says so in the toast.** A copied
+    `.git` is not a fork — it is a second working copy pointing at someone
+    else's remote, and pushing from it pushes to the original's origin. The
+    `.studio/` sidecar IS copied, because it is the board.
+  - **The duplicate's display name is chosen BEFORE the folder slug.**
+    `displayName` is what the launcher sorts and renders and the slug is a
+    stable id assigned once (that split is why `/rename` exists at all).
+    De-duplicating the folder first and deriving the name from it would show
+    the user `acme-copy-2` as a project title.
+  - **`formatEditedAgo` is its own function, not AgentPanel's
+    `formatRelativeTime`.** Same input, deliberately different sentence: that
+    one is a terse chip in a 290px panel ("3h"), this is a clause on a
+    home-surface card. A card reading "Edited 3h" reads as truncated. Sharing
+    one formatter would give one of the two call sites the wrong voice.
+  - **Duplicate is capability-gated, `/create` still is not.** `/delete`'s
+    module doc already calls its ungated neighbours a real gap and not a
+    precedent; duplicating writes an entire second repository to the user's
+    disk, so it follows `/delete`, not `/create`.
+- **Landmines:**
+  - **`generateStudioProjectGuide` is not read-only.** It calls
+    `healMissingDesignSystem`, which applies the design-system SEED to any
+    project with no `package.json` — writing `package.json` and
+    `node_modules/@alm-design` into the target. The first version of
+    `projectDuplicate.test.ts`'s "nothing regenerable was copied" case failed
+    because of exactly this, and the `cpSync` filter was innocent. Any fixture
+    in that file needs a real `package.json`.
+  - **`DashboardPage.test.tsx`'s `useStudioProjects` stand-in is still a real
+    hook** (`panel-12`'s landmine, still true) — and its project fixtures now
+    have to carry `trust`, `styleToolchains` and `editedAt`, because the
+    client schema validates them as REQUIRED. They are required deliberately:
+    the server always sends them, and an optional field here would let a
+    silently-changed wire shape through as `undefined`.
+  - **Delete is no longer reachable by `getByRole('button', { name: 'Delete X' })`.**
+    Any future test (or e2e) aiming at it must open the card's action menu
+    first — `Actions for <name>` — and then click the `Delete` **menuitem**.
+  - **The worktree had no `node_modules`** (`panel-12` saw the same). `bun run
+    build` and the whole `icon-catalog-integrity` gate fail wholesale before
+    `bun install`. Not icon drift.
+- **Verification:** `bun run build` ✅, `bun run lint` ✅ (both re-run after
+  merging `origin/main` up to `2901afe`). Targeted, all green:
+  `server/handlers/__tests__/studio.test.ts` → 85 pass;
+  `server/handlers/studio/__tests__/projectDuplicate.test.ts` → 10 pass;
+  `src/admin/pages/dashboard` + `src/admin/spotlight` → 121 pass;
+  `src/__tests__/architecture` → 509 pass / 1 fail (`icon-catalog-integrity`'s
+  `chevron-left` sample, `standing-01`-class pre-existing).
+  Full `bun test` on the pre-merge tree → 11467 pass / 39 fail, every failure
+  in the two clusters `STUDIO-WAVE7-PLAN.md`'s global rules name as
+  pre-existing (headless-capture / canvas batch-isolation, which pass per
+  file, and the `chevron-left` icon sample). Nothing under `dashboard/`,
+  `spotlight/`, `studioProjects` or `studio/` fails.
+- **Human action needed:** **dogfood — every change here is visual and e2e
+  covers none of it.** At `/admin/dashboard`:
+  1. Confirm each tile shows its badges and an "Edited …" line, and that the
+     numbers are right (rename a page file in one project, reload, and check
+     the line moves — this is the claim `editedAt` makes).
+  2. Open a Tier-0 project that uses Tailwind or Sass and confirm the amber
+     "… not compiled" badge is there BEFORE you open it, and that it
+     disappears after promoting the project from the board's consent banner.
+  3. Hover a tile → ⋯ → confirm Open / Rename / Duplicate / Delete. Then
+     right-click the tile and confirm the same menu appears at the pointer.
+  4. Rename from the menu: the name becomes a field, Enter commits, Escape
+     reverts, and the grid re-sorts under the new name after the refetch.
+  5. Duplicate a REAL imported repo (one with `node_modules`) and check:
+     the copy appears as "<name> copy", opening it shows the same board and
+     frames, and `studio-workspace/<slug>-copy/` has no `node_modules`, no
+     `.git`, and a fresh `CLAUDE.md`.
+  6. Delete from the menu and confirm the dialog still names the project.
+  7. ⌘K from inside the editor, type a project name, press Enter — you should
+     land on that project's board with ITS pages, not the previous project's
+     tree under the new directory (that is the `requestCmsSiteReload()` this
+     provider makes; it is the one thing worth checking twice).
+  8. Check both themes — the badges use `--bg-surface-4`/`--warning-20`, which
+     are re-tuned in light.
 
 ### panel-13 — W8-1: one field model for every number in the inspector
 - **Agent:** studio-implementer
