@@ -708,6 +708,24 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
   both "rare, expensive" paths into per-frame paths and makes the frame grow
   under the cursor. One settle pass runs when the gesture ends, because the
   layout finished changing while the observers were being ignored.
+- **Overlay portal target.** `BreakpointSelectionOverlay` portals the toolbar,
+  the in-place inspector and the tree ladder into the canvas root
+  (`CanvasViewportActionsContext.canvasRootRef`), captured into state one rAF
+  after mount — an ancestor's ref is not attached yet while a descendant's own
+  layout effects run, so a single-commit mount cannot see it any earlier.
+  While it is unresolved the chrome renders **nowhere**; it must never be
+  parked in `document.body` "for now". React re-creates a portal's entire child
+  subtree when the container identity changes, so a body→root relocation is a
+  REMOUNT: it silently discards that chrome's own state. Measured — clicking
+  "Insert module" in that window opened `ModuleInserterDialog` and the
+  relocation closed it again a frame later (`open` reset to `false` on a fresh
+  `CanvasInsertModuleButton`) with the click already consumed; focus inside the
+  inspector is lost the same way. `document.body` remains the target only for
+  frames with **no** viewport context at all (CMS/VC), where it is the answer
+  from the first render and therefore never swaps. Consequence for tests: a
+  harness that mounts the canvas root and the frame in the same commit gets the
+  toolbar one frame later — `await screen.findByRole(…)`, not `getByRole`.
+
 - Overlay chrome currently lives in the **parent document**, positioned from
   measurements of elements inside a **transformed iframe**. Its position is
   `elementRect × zoom + iframeOffset + panOffset` — so any stale term shows as
@@ -790,6 +808,14 @@ only the measurement is shared (`canvas/canvasViewportCommands.ts`).
   so iframe realms get the parent's built-ins. Test-env only.
 - happy-dom needs `GlobalWindow` (not `Window`) for CSS parsing — only
   `GlobalWindow` puts JS built-ins on the window object.
+- **`MutationObserver` used to die on a GC.** happy-dom holds each observation's
+  callback in a `WeakRef` that nothing else references, so once Bun collected it
+  the observer stayed "connected" and simply never fired again (`takeRecords()`
+  → `[]`). Any injector that attaches its observer in a mount effect and is then
+  exercised seconds later — `CanvasScrollUnrollInjector`,
+  `useIframeFrameAutoHeight` — looked broken and was not. `src/__tests__/setup.ts`
+  pins the derefed callbacks in a `WeakMap` keyed by the observer, patched on
+  happy-dom's shared implementation class so every iframe window inherits it.
 
 ---
 
