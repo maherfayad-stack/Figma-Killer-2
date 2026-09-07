@@ -62,6 +62,7 @@ type NodeActions = Pick<
   | 'updateNodeProps'
   | 'updateInstanceCallSiteProp'
   | 'setNodeInlineStyles'
+  | 'setNodesInlineStyles'
   | 'removeNodeInlineStyleProperty'
   | 'clearNodeInlineStyles'
   | 'setBreakpointOverride'
@@ -82,6 +83,40 @@ function recordPatchChanges(
   patch: Record<string, unknown>,
 ): boolean {
   return Object.entries(patch).some(([key, value]) => !Object.is(current[key], value))
+}
+
+/**
+ * Merge one inline-style patch into `node.inlineStyles`, honouring the storage
+ * model the rest of the panel assumes: `null` / `undefined` / `''` CLEARS a
+ * property, and a bag that empties is dropped entirely so the node carries no
+ * `style` attribute at all. Returns whether anything actually changed.
+ *
+ * Shared by `setNodeInlineStyles` (one node) and `setNodesInlineStyles` (the
+ * W8-3 multi-selection bulk edit) so the two can never drift on what "clear
+ * this property" means — the single-node path is what every existing test and
+ * the publisher already encode.
+ */
+function applyInlineStylePatch(
+  node: PageNode,
+  patch: Record<string, string | number | null | undefined>,
+): boolean {
+  const next: Record<string, unknown> = { ...(node.inlineStyles ?? {}) }
+  let changed = false
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null || value === undefined || value === '') {
+      if (key in next) {
+        delete next[key]
+        changed = true
+      }
+    } else if (!Object.is(next[key], value)) {
+      next[key] = value
+      changed = true
+    }
+  }
+  if (!changed) return false
+  if (Object.keys(next).length > 0) node.inlineStyles = next
+  else delete node.inlineStyles
+  return true
 }
 
 /**
@@ -347,25 +382,32 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         // entry authored as a literal is writable; one resolved from an
         // expression (`width: `${pct}%``) is not.
         if (!isStylePatchWritableToSource(node, patch)) return false
-        const next: Record<string, unknown> = { ...(node.inlineStyles ?? {}) }
-        let changed = false
-        for (const [key, value] of Object.entries(patch)) {
-          if (value === null || value === undefined || value === '') {
-            if (key in next) {
-              delete next[key]
-              changed = true
-            }
-          } else if (!Object.is(next[key], value)) {
-            next[key] = value
-            changed = true
-          }
+        return applyInlineStylePatch(node, patch)
+      })
+    },
+
+    setNodesInlineStyles: (nodeIds, patch) => {
+      if (nodeIds.length === 0) return
+      // `mutateTreesForNodeIds` wraps every touched page in ONE
+      // `runHistoricMutation` transaction, so an inspector edit across an
+      // N-node selection is a single undo step — the same contract
+      // `deleteNodes` / `wrapNodes` already ship (WS-7.3).
+      mutateTreesForNodeIds(nodeIds, (tree, idsOnThisTree) => {
+        let changedAny = false
+        for (const nodeId of idsOnThisTree) {
+          const node = tree.nodes[nodeId]
+          // A bulk edit never aborts halfway. An id that has gone stale
+          // underneath the selection, or a node whose own source refuses this
+          // property (`isStylePatchWritableToSource` — a `style:<prop>`
+          // resolved from an expression), is skipped INDIVIDUALLY so the rest
+          // of the selection still receives the write. Throwing here, as the
+          // single-node path does for a missing id, would leave N-1 nodes
+          // half-written.
+          if (!node) continue
+          if (!isStylePatchWritableToSource(node, patch)) continue
+          if (applyInlineStylePatch(node, patch)) changedAny = true
         }
-        if (!changed) return false
-        // Drop the field entirely when the bag is empty so nodes without inline
-        // styles stay lean (and the publisher emits no `style` attribute).
-        if (Object.keys(next).length > 0) node.inlineStyles = next
-        else delete node.inlineStyles
-        return true
+        return changedAny
       })
     },
 

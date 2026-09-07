@@ -25,6 +25,7 @@
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
+import { isMixed, MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { hasStyleValue } from './styleValueUtils'
 import type { PropertyProvenance } from './stylePropertyProvenance'
@@ -91,6 +92,14 @@ export function resolveStylePlaceholder({
 }: PlaceholderInput): string | undefined {
   const declared = provenance?.sources.find((source) => source.winner)?.value
   if (declared !== undefined && hasStyleValue(declared)) return String(declared)
+
+  // W8-3 — driven by a multi-selection, `currentValue` can be the `MIXED`
+  // sentinel: the selection's members render DIFFERENT values here. There is
+  // no single value to hint at, so the hint is the same word every control
+  // shows for a mixed value. Checked before the shorthand and `String()`
+  // branches below, both of which would otherwise stringify a Symbol into the
+  // field.
+  if (isMixed(currentValue)) return MIXED_PLACEHOLDER
 
   if (EXPANSION_NOISE_SHORTHANDS.has(property)) return undefined
 

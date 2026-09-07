@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
+import { MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import { TokenizedColorField } from './TokenizedColorField'
 
 interface ColorValueInputProps {
@@ -7,6 +8,14 @@ interface ColorValueInputProps {
   id?: string
   /** Committed colour value (`#rrggbb`, `rgb(...)`, `var(--token)`, or ''). */
   value: string
+  /**
+   * True when the field is driven by a multi-selection whose colours disagree.
+   * Pass `value=""` alongside it: the text field then shows the shared "Mixed"
+   * placeholder instead of one element's colour, and the swatch shows the same
+   * "no single colour" state it shows for an empty value. Picking a colour or
+   * typing one commits it to the whole selection through `onChange`.
+   */
+  mixed?: boolean
   /** Accessible label for the text input. */
   ariaLabel: string
   /** Accessible label for the swatch trigger. */
@@ -50,6 +59,7 @@ interface ColorValueInputProps {
 export function ColorValueInput({
   id,
   value,
+  mixed = false,
   ariaLabel,
   swatchLabel,
   placeholder,
@@ -108,7 +118,9 @@ export function ColorValueInput({
       disabled={disabled}
       inputLabel={ariaLabel}
       swatchLabel={swatchLabel}
-      placeholder={placeholder ?? '#000000 or rgb(...)'}
+      // "Mixed" outranks the caller's own hint: with several colours in the
+      // selection there is no single one to hint at.
+      placeholder={mixed ? MIXED_PLACEHOLDER : (placeholder ?? '#000000 or rgb(...)')}
       excludeTokenId={excludeTokenId}
       fieldSize="sm"
       monospace

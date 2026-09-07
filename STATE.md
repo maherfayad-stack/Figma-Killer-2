@@ -1761,6 +1761,59 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### inspector-w8-3-p1 — multi-select edits inline styles across N nodes, with Mixed
+- **Agent:** studio-implementer · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/multi-select-inline-bulk-edit` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W8-3 **phase 1 only**.
+- **Shipped:** `setNodesInlineStyles(nodeIds, patch)` over `mutateTreesForNodeIds`
+  (one undo step for N, cross-frame; shares `applyInlineStylePatch` with the
+  single-node action); `multiSelectStyleBags.ts` collapsing N nodes into the
+  `storedStyles`/`currentStyles` pair `StyleSectionsEditor` already renders;
+  `MultiInlineStyleComposer` mounted in `MultiSelectionInspector`;
+  `StyleTargetChip` pinned to Element with the stated reason
+  (`lockedToElementReason`); Mixed rendering in `SegmentedControl`, `Select`,
+  `Input`, `TokenAwareInput`, `ColorValueInput` (shared `MIXED_PLACEHOLDER`),
+  routed through `ClassPropertyRow` + `resolveStylePlaceholder`;
+  `isSelectorMultiSelect` fixed from ≥1 to ≥2. Docs:
+  `inspector-disclosure.md` **§9** (new, existing §-numbers untouched),
+  `agent-refs/editor-store.md`.
+- **CUT — next agent picks these up:** (a) **W8-3 phase 2** —
+  `StyleWriteLockContext` carrying a COUNT ("writes to 3 of 5 — 2 are compiled")
+  instead of a boolean; (b) **W8-3 phase 3** — class-target bulk behind a "this
+  class is used by N other elements — continue?" gate, plus G6.4 Selection
+  colours; (c) **the bespoke-section Mixed gap** — Spacing/Layout/Position/Size/
+  Typography/Appearance/Fill/Border read raw cells via `readString`, which
+  returns `undefined` for `MIXED`, so they render their ordinary *unset* state
+  (blank field / no pressed segment) instead of the word "Mixed". The primitives
+  already take `mixed`; each field is a one-line wiring change. Left undone
+  deliberately — five of those sections were owned by parallel agents this wave.
+- **Needs human dogfood** (no e2e for UI): open `/admin/site`, shift/⌘-click 2+
+  layers on the canvas → the Properties panel should show the action bar, an
+  `Editing: [Element] Class Assign` chip with Element pressed/disabled and the
+  tooltip "Bulk edits write inline styles — class edits need a single
+  selection", then the full style sections. Set `cursor` differently on two
+  layers first (single-select each, Interaction section) → re-select both →
+  the Cursor field must read placeholder **Mixed**; type a value → both layers
+  change and ONE Ctrl+Z reverts both. Then tick ONE checkbox in the Selectors
+  panel → the single-selector inspector (not the bulk bar); tick a second →
+  the bulk bar.
+- **Verification:** `tsc -p tsconfig.app.json --noEmit` and
+  `tsc -p tsconfig.node.json --noEmit` clean; `eslint` clean on every touched
+  path; new/updated tests green (`multiSelectInlineStyles`,
+  `multiSelectStyleBags`, `mixedValueControls`, `multiInlineStyleComposer`,
+  `selectorMultiSelectTrigger`, `selectorsPanel`); the gates this touches
+  (`module-size-budgets`, `css-token-policy`, `no-css-var-fallbacks`,
+  `button-primitive-usage`, `no-full-site-scan-in-selectors`,
+  `css-token-vocabulary`, `boundary-validation`, `ui-primitives-location`) all
+  pass. **Not mine:** the icon-catalog gate (whole `pixel-art-icons/dist` cluster),
+  `ai-driver-isolation`, and `no-circular-dependencies` — which TIMED OUT at 60s
+  under parallel `tsc` load rather than reporting a cycle. The full `bun run build`
+  / `bun run lint` were killed by the same contention; both halves of `tsc -b`
+  were checked individually instead.
+- **Four selectorsPanel tests were updated, not broken:** they asserted the old
+  ≥1 bulk trigger. One now adds a second locked utility locally (the shared
+  fixture's exact contents are asserted by sibling tests, so it was not touched).
+
 ### docs-06 — W9-1.4: prose for every agent tool, plus three comment-truth fixes
 - **Agent:** studio-scribe
 - **Stage:** done (gates green; draft PR open)

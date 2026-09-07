@@ -123,7 +123,14 @@ export function usePropertiesPanelData(): PropertiesPanelData {
 
   // ─── Derivations ────────────────────────────────────────────────────────
   const isMultiSelect = selectedNodeIds.length > 1
-  const isSelectorMultiSelect = selectedSelectorClassIds.length > 0
+  // A MULTI-selection needs two members, the same bar `isMultiSelect` above
+  // has always applied to layers. Ticking one checkbox in the Selectors panel
+  // used to hand a one-item set to `MultiSelectorInspector`, whose whole
+  // surface is bulk actions ("Delete classes? 1 class will be removed…") plus
+  // a one-row list — a worse inspector for that selector than the ordinary
+  // single-selector one, reachable for the identical selection by clicking
+  // the row instead of its checkbox.
+  const isSelectorMultiSelect = selectedSelectorClassIds.length > 1
 
   // Resolve active VC for ComponentParamsOverview (null when not in VC canvas mode).
   const activeVc = activeDocument?.kind === 'visualComponent'
@@ -148,8 +155,16 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   // stale data on disk technically does.
   const overrideKeys = resolveOverrideKeys(selectedNode, definition, activeBreakpointId)
 
-  const selectedSelectorClass = selectedSelectorClassId
-    ? site?.styleRules[selectedSelectorClassId] ?? null
+  // `toggleSelectorMultiSelect` clears `selectedSelectorClassId` when it
+  // checks a box, so the lone checked selector has to resolve from the
+  // checkbox set — otherwise raising the multi bar to 2 (above) would drop a
+  // one-checkbox selection through to "nothing selected". One checked box and
+  // one clicked row now open the same inspector, which is the point.
+  const soleSelectorClassId =
+    selectedSelectorClassId ??
+    (selectedSelectorClassIds.length === 1 ? selectedSelectorClassIds[0] : null)
+  const selectedSelectorClass = soleSelectorClassId
+    ? site?.styleRules[soleSelectorClassId] ?? null
     : null
   // Ambient rules report "Unused" only when provably dead; class rules report
   // an exact reference count. `null` means "no badge" (unassessable ambient).
@@ -236,7 +251,7 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     activeClassId,
     assignedClassRules,
     selectedSelectorClass,
-    selectedSelectorClassId,
+    selectedSelectorClassId: soleSelectorClassId,
     selectedSelectorClassIds,
     isSelectorMultiSelect,
     selectedSelectorUsage,
