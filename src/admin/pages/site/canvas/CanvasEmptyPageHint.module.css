@@ -1,0 +1,26 @@
+/**
+ * CanvasEmptyPageHint — an overlay over an empty frame body, in the editor's
+ * own document (see the component's module doc for why it is not inside the
+ * iframe).
+ *
+ * `pointer-events: none` so a click, a drag or a marquee started over an empty
+ * page reaches the frame beneath it. The hint is a caption, not a control.
+ */
+
+.hint {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--space-4xl);
+    pointer-events: none;
+    /* Above the iframe, below the frame's own resize handles and selection
+       chrome — this must never sit over a handle the user is reaching for. */
+    z-index: 1;
+}
+
+/* Anything genuinely interactive the hint grows later opts back in here. */
+.hint button,
+.hint a {
+    pointer-events: auto;
+}

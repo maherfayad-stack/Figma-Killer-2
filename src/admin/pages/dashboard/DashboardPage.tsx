@@ -41,6 +41,17 @@
  * projects in the same session can leave the previous project's page tree
  * showing under the new project's directory.
  *
+ * A third way to start sits in the empty state: "Start with the sample
+ * project" copies `examples/studio-sample-project/` — three real pages of
+ * plain React — into the workspace. It is never created for the user; the
+ * button is the only thing that makes one.
+ *
+ * Above all of it, until it is dismissed or finished, is the onboarding
+ * checklist (`OnboardingPanel`). Its five steps derive from live server facts
+ * and each of its buttons performs the real action, which is why this page —
+ * the one place that already owns "open a project", "create a project" and the
+ * admin UI store — is where those actions are wired.
+ *
  * This replaced the old CMS widget-grid dashboard: the app now presents as a
  * studio-first project launcher, reached from the toolbar brand (the logo).
  */
@@ -49,11 +60,13 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
+import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import { CircleAlertSolidIcon } from 'pixel-art-icons/icons/circle-alert-solid'
 import { AdminPageLayout } from '@admin/layouts/AdminPageLayout'
 import { useAuthenticatedAdminUser } from '@admin/sessionContext'
 import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
+import { useAdminUi } from '@admin/state/adminUi'
 import { LazyImportProjectDialog } from '@admin/shared/dialogs/ImportProjectDialog'
 import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
@@ -67,6 +80,7 @@ import type { ImportSummary } from '@site/studio/importSummary'
 import { LazyImportSummaryDialog } from '@admin/shared/dialogs/ImportProjectDialog'
 import type { ProjectPlatform } from '@core/studio-board'
 import {
+  createSampleStudioProject,
   createStudioProject,
   deleteStudioProject,
   duplicateStudioProject,
@@ -74,6 +88,10 @@ import {
   useStudioProjects,
   type StudioProject,
 } from './hooks/useStudioProjects'
+import { useOnboardingFacts } from './hooks/useOnboardingFacts'
+import { OnboardingPanel, type OnboardingAction } from './OnboardingPanel'
+import { dismissOnboarding, isOnboardingDismissed } from './onboardingDismissal'
+import { isOnboardingComplete } from './onboardingSteps'
 import {
   purgeTrashedProject,
   restoreTrashedProject,
@@ -105,9 +123,15 @@ export function DashboardPage() {
   const currentUser = useAuthenticatedAdminUser()
   const navigate = useAdminNavigate()
   const { projects, error, refresh } = useStudioProjects()
+  // W7-5's onboarding checklist. Read here with the page's other resources;
+  // everything derived from it is in the one block further down.
+  const { facts: onboardingFacts } = useOnboardingFacts()
   const { trashed, error: trashError, refresh: refreshTrash } = useProjectTrash()
 
   const [query, setQuery] = useState('')
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() =>
+    isOnboardingDismissed(currentUser.id),
+  )
   const [busy, setBusy] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -130,12 +154,15 @@ export function DashboardPage() {
     ? listed.filter((p) => p.name.toLowerCase().includes(needle))
     : listed
 
-  function openProject(project: StudioProject) {
+  function openProject(project: StudioProject, options: { prototype?: boolean } = {}) {
     // Force the next Site-editor mount to reload from disk instead of
     // short-circuiting on a previous project's still-mounted `existingSite`.
     requestCmsSiteReload()
     setStudioWorkspaceDir(project.dir)
-    navigate('/admin/site')
+    // `?mode=prototype` is consumed once and stripped by `useSiteEditorUrlSync`
+    // — an instruction to arrive in prototype mode, which is what the
+    // checklist's "Try prototype mode" step has to actually do.
+    navigate(options.prototype ? '/admin/site?mode=prototype' : '/admin/site')
   }
 
   async function handleCreate(options: { name?: string; platform: ProjectPlatform }) {
@@ -179,6 +206,24 @@ export function DashboardPage() {
       pushToast({
         kind: 'error',
         title: 'Could not delete project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSample() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const project = await createSampleStudioProject()
+      openProject(project)
+    } catch (err) {
+      console.error('[DashboardPage] sample project failed:', err)
+      pushToast({
+        kind: 'error',
+        title: 'Could not copy the sample project',
         body: getErrorMessage(err, 'Unknown project error'),
       })
     } finally {
@@ -293,6 +338,58 @@ export function DashboardPage() {
       <CodeIcon size={12} aria-hidden="true" /> Import project
     </Button>
   )
+  const sampleProjectButton = (
+    <Button variant="ghost" onClick={() => void handleSample()} disabled={busy}>
+      <SparklesSolidIcon size={12} aria-hidden="true" /> Start with the sample project
+    </Button>
+  )
+
+  // ── Onboarding checklist (W7-5) ────────────────────────────────────────────
+  // Deliberately one contained block: everything the checklist needs is
+  // computed here and consumed by the single `<OnboardingPanel>` above the
+  // toolbar, so the rest of this page is unchanged by its presence.
+  //
+  // Shown only when every one of these holds — a checklist that appears for a
+  // user who has finished, or that a user has already sent away, is noise on
+  // the surface they came to for their projects:
+  //   - the facts loaded (a failed read renders nothing rather than claiming
+  //     nothing is done — see `useOnboardingFacts`);
+  //   - this user has not dismissed it in this browser;
+  //   - at least one of the five steps is still open.
+  const showOnboarding =
+    onboardingFacts !== null && !onboardingDismissed && !isOnboardingComplete(onboardingFacts)
+
+  // The project the "open it" steps act on: the one edited most recently, which
+  // is the one the user was last working in. `editedAt` rather than the
+  // launcher's display-name sort — "a project" in those steps means "the one
+  // you would have opened anyway".
+  const mostRecentProject = listed.reduce<StudioProject | null>(
+    (newest, project) => (newest === null || project.editedAt > newest.editedAt ? project : newest),
+    null,
+  )
+
+  function runOnboardingAction(action: OnboardingAction) {
+    if (action === 'create-project') {
+      setCreateOpen(true)
+      return
+    }
+    if (action === 'open-ai-settings') {
+      // The same Settings section the agent panel's own "no credential" state
+      // opens, so there is one place AI setup happens.
+      useAdminUi.getState().openSettings('ai')
+      return
+    }
+    // Both remaining actions open a project; only the mode differs. The
+    // buttons are disabled without one, so this is defensive rather than a
+    // silent no-op path a user can reach.
+    if (!mostRecentProject) return
+    openProject(mostRecentProject, { prototype: action === 'open-prototype-mode' })
+  }
+
+  function handleDismissOnboarding() {
+    dismissOnboarding(currentUser.id)
+    setOnboardingDismissed(true)
+  }
 
   return (
     <AdminPageLayout
@@ -300,6 +397,18 @@ export function DashboardPage() {
       title={greetingFor(currentUser.displayName)}
       description="Your studio projects — open one to keep editing, start a new one, or import an existing React repository."
     >
+      {/* W7-5 — the onboarding checklist, above the launcher's own toolbar and
+          grid. See the block that computes `showOnboarding` for the three
+          conditions that have to hold for it to be here at all. */}
+      {showOnboarding && onboardingFacts !== null && (
+        <OnboardingPanel
+          facts={onboardingFacts}
+          hasProject={mostRecentProject !== null}
+          onRunAction={runOnboardingAction}
+          onDismiss={handleDismissOnboarding}
+        />
+      )}
+
       <div className={styles.toolbar}>
         <SearchBar
           value={query}
@@ -356,11 +465,16 @@ export function DashboardPage() {
             size="large"
             icon={<FolderGlyphIcon size={22} aria-hidden="true" />}
             title="No projects yet."
-            description="Start a blank project, or import a React repository from GitHub, a .zip, or a folder on this machine."
+            description="Start a blank project, import a React repository from GitHub, a .zip, or a folder on this machine, or copy in the three-page sample to have something to open."
             action={
               <span className={styles.emptyActions}>
                 {newProjectButton}
                 {importProjectButton}
+                {/* The third path, and the only one that needs nothing from
+                    the user: `examples/studio-sample-project/` is copied into
+                    the workspace on click. Never on load — see
+                    `server/handlers/studio/sampleProject.ts`. */}
+                {sampleProjectButton}
               </span>
             }
           />

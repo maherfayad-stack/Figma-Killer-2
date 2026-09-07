@@ -48,6 +48,8 @@ import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
 import { CanvasFrameContext, CanvasPageContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
+import { CanvasEmptyPageHint } from '../CanvasEmptyPageHint'
+import { pageHasNoContent } from '../canvasEmptyPage'
 import { resizeRect, RESIZE_HANDLES, type ResizeRect, type ResizeHandle } from '../rectResize'
 import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
 import { useFramePosterCapture } from './useFramePosterCapture'
@@ -510,6 +512,11 @@ function BoardFrameViewImpl({
         ) : (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
         )}
+        {/* A page with nothing on it renders as a blank rectangle, which reads
+            as "it did not load". Only for a frame that is actually drawing its
+            iframe: an offscreen frame is showing a poster, and a caption over
+            that would be about a page nobody can see. */}
+        {isOnScreen && pageHasNoContent(page) && <CanvasEmptyPageHint />}
       </div>
       {/* Resize handles — SELECTED frames only, not merely active.
           `activePageId` is the edit target: it is set by a capture-phase click

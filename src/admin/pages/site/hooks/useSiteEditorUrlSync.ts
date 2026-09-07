@@ -13,6 +13,13 @@
  *                                  canonical home form, so no `?page` is written
  *                                  while the home page is active.
  *   /admin/site?page=<slug>      → opens the page with that slug.
+ *   /admin/site?mode=prototype   → opens the board in prototype mode. Consumed
+ *                                  ONCE and stripped, like the deep-link params
+ *                                  below: it is an instruction to arrive in that
+ *                                  mode, not a mirror of the mode you are in.
+ *                                  Written by the launcher's onboarding
+ *                                  checklist, whose "Try prototype mode" step
+ *                                  has to actually put the user there.
  *
  * Two older deep-link forms are still consumed once on load, so links saved
  * before the Data workspace was deleted keep resolving:
@@ -52,6 +59,11 @@ export function useSiteEditorUrlSync({ enabled, loaded }: UseSiteEditorUrlSyncOp
     if (!site) return
     appliedRef.current = true
 
+    // Arrive in prototype mode when asked to. Applied before the page
+    // selection so the board is already in the right mode by the time the
+    // frame it should draw connectors over is open.
+    if (initialParams.get('mode') === 'prototype') store.setBoardMode('prototype')
+
     // Data-workspace deep link (`?table=…&row=…`) takes precedence — it carries
     // explicit row ids and can also target a visual component.
     const table = initialParams.get('table')
@@ -85,10 +97,10 @@ export function useSiteEditorUrlSync({ enabled, loaded }: UseSiteEditorUrlSyncOp
     return page.slug
   })
 
-  // Clears the one-shot Data-workspace deep-link params (`table`/`row`) on the
-  // first sync and keeps `?page=` current thereafter.
+  // Clears the one-shot params — the Data-workspace deep link (`table`/`row`)
+  // and `mode` — on the first sync, and keeps `?page=` current thereafter.
   useUrlQuerySync(
-    { page: activePageSlug, table: null, row: null },
+    { page: activePageSlug, table: null, row: null, mode: null },
     { enabled: enabled && loaded },
   )
 }

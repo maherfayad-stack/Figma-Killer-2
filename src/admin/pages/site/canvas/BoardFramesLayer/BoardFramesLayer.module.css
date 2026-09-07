@@ -37,6 +37,9 @@
    content (see the auto-height rule below), and double-clicking the bottom
    edge or the frame's "Fit height to content" menu item puts it back. */
 .frameBody {
+    /* The containing block for `CanvasEmptyPageHint`, which is a sibling of
+       the iframe in the EDITOR's document rather than content inside it. */
+    position: relative;
     width: var(--frame-w);
     height: var(--frame-h);
     overflow: hidden;

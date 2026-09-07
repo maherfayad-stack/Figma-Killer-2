@@ -1,0 +1,148 @@
+/* The palette is defined once, on `Home.module.css`'s `:root`. Every page in
+   this project renders against the same document, so these rules read those
+   custom properties rather than restating them. */
+
+.page {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  min-height: 100%;
+  margin: 0;
+  padding: 64px 32px;
+}
+
+.head {
+  max-width: 640px;
+  margin: 0 auto 48px;
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: 44px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+.lede {
+  margin: 16px 0 0;
+  color: var(--ink-muted);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.plans {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.plan {
+  background: var(--paper-2);
+  border-radius: var(--radius);
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.planFeatured {
+  background: var(--paper-2);
+  border: 2px solid var(--brand);
+  border-radius: var(--radius);
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.badge {
+  margin: 0;
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.planName {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.price {
+  margin: 0;
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.period {
+  color: var(--ink-muted);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.item {
+  color: var(--ink-muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.primary {
+  background: var(--brand);
+  color: var(--brand-ink);
+  border-radius: var(--radius);
+  padding: 16px 24px;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.secondary {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 16px 24px;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.footer {
+  margin-top: 48px;
+  text-align: center;
+}
+
+.link {
+  color: var(--ink-muted);
+  font-size: 15px;
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .plans {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page {
+    padding: 32px 16px;
+  }
+}

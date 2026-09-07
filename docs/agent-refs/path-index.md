@@ -356,6 +356,15 @@ source) where a plausible-looking change is how a real bug ships ·
   behind those verbs, and every one of them redraws through
   `useStudioProjects`'s `refresh()`. The same projects are reachable from ⌘K
   via `src/admin/spotlight/providers/projectsProvider.ts`.
+  Above the grid sits the onboarding checklist: `OnboardingPanel.tsx` +
+  `LiquidProgressRing.tsx`, whose five steps derive from
+  `GET /admin/api/studio/onboarding` (`server/handlers/studio/onboardingFacts.ts`)
+  — live facts, never a flag the UI set. The done/active/todo rule is the pure
+  `onboardingSteps.ts`; dismissal is per-user `localStorage`
+  (`onboardingDismissal.ts`), NOT a `user_preferences` row.
+  The empty state's third path copies `examples/studio-sample-project/` in via
+  `server/handlers/studio/sampleProject.ts` — never automatically, and the copy
+  is marked `sample: true` in its `.studio/meta.json`.
   W7-4 added three siblings, all mounted from `DashboardPage.tsx` in their own
   blocks: `LauncherDropZone.tsx` (drop a folder or `.zip` anywhere on the
   launcher — window listeners, a depth-counted overlay, and the heavy modules

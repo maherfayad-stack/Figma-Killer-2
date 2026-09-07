@@ -150,6 +150,26 @@ export function createStudioProject(
 }
 
 /**
+ * Copies the checked-in sample repository into the workspace and resolves to
+ * the new project's summary.
+ *
+ * Takes nothing: the sample is one fixed repository and the server picks the
+ * first free `Sample project`, `Sample project 2`, … name, the same way
+ * `/duplicate` does. Calling it twice makes a second sample rather than
+ * replacing the first — see `server/handlers/studio/sampleProject.ts`.
+ *
+ * Throws `ApiError` on failure (403 without `studio.write`, 500 when this
+ * installation has no `examples/studio-sample-project/` on disk) so the caller
+ * can surface the message via a toast.
+ */
+export function createSampleStudioProject(): Promise<StudioProject> {
+  return apiRequest('/admin/api/studio/sample', {
+    method: 'POST',
+    schema: CreateProjectResponseSchema,
+  }).then((res) => res.project)
+}
+
+/**
  * Renames a project's DISPLAY name (never its folder) and resolves to the
  * refreshed summary. Throws `ApiError` on failure so the caller can surface
  * the message via a toast.

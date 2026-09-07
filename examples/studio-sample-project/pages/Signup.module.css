@@ -1,0 +1,95 @@
+/* Palette from `Home.module.css`'s `:root` — see the note there. */
+
+.page {
+  background: var(--paper-2);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  min-height: 100%;
+  margin: 0;
+  padding: 64px 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.card {
+  background: var(--paper);
+  border-radius: var(--radius);
+  padding: 48px;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.lede {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.input {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: 15px;
+  font-family: inherit;
+  padding: 16px;
+  width: 100%;
+}
+
+.submit {
+  background: var(--brand);
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--brand-ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 16px 24px;
+}
+
+.fine {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.link {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .card {
+    padding: 32px;
+  }
+
+  .page {
+    padding: 32px 16px;
+  }
+}

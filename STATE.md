@@ -21,6 +21,42 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-18 — W7-5: fact-driven onboarding checklist, empty-canvas hint, sample project
+- **Agent:** studio-implementer · **Stage:** done (typecheck + touched tests green; draft PR open) — **needs human dogfood**
+- **Branch:** `feat/launcher-onboarding`, off `origin/main` at `342c67d` (W7-2 / PR #51).
+- **Shipped, all of `STUDIO-WAVE7-PLAN.md` §W7-5:** a `docs/design.md` "UI copy" section derived from
+  `StyleCompileConsentBanner` + `DeleteProjectDialog`; `OnboardingPanel` + the ported `LiquidProgressRing`
+  above the launcher grid, five steps off one TypeBox-validated `GET /admin/api/studio/onboarding`
+  (`server/handlers/studio/onboardingFacts.ts`, `Promise.allSettled`, each probe soft-fails to `false`);
+  per-user `localStorage` dismissal (`onboardingDismissal.ts`) and auto-hide at 5/5; `CanvasEmptyPageHint`
+  over an empty frame body; `examples/studio-sample-project/` + `sampleProject.ts` +
+  `POST /admin/api/studio/sample`, offered as a third path in the no-projects empty state.
+- **Nothing was cut.** Two things grew beyond the letter of the order, both deliberate:
+  `?mode=prototype` (consumed once and stripped by `useSiteEditorUrlSync`) so step 5's CTA really enters
+  prototype mode, and `listStudioProjectDirs` extracted out of `listStudioProjects` so the facts route
+  skips the per-project pages walk.
+- **Decisions a future agent must not re-litigate:**
+  - **Step 3's fact is git-status OR a page-verification cache, not either alone.** `pageVerification.json`
+    is written ONLY by `studio_compare` (agent visual audits), so it can confirm an edit and never rule one
+    out; a scaffolded project is not a git repo, so IT can never be dirty. Both are checked, cheap first
+    (`existsSync` before any subprocess), capped at 5 `git status` spawns. Both cache paths are globbed —
+    today's `.studio/cache/` and the `.studio/cache/agent/<hash>/` W10 moves it to.
+  - **A failed facts read renders NO panel**, rather than defaulting to all-false: telling a finished user
+    they have done nothing is worse than showing no checklist.
+  - **Dismissal is `localStorage` keyed by user id**, not a `user_preferences` row — Studio state is not
+    CMS DB state, and the launcher must decide whether to draw its largest surface without a round trip.
+  - **The sample is never auto-created**, and a second click makes `Sample project 2` rather than
+    overwriting the first. `sample: true` in its meta is what lets the launcher treat it as disposable.
+- **Pre-existing, NOT mine:** `node_modules/pixel-art-icons/` is absent in this worktree, so
+  `icon-catalog-integrity`'s 18 tests fail on icons I never touched (`plus`, `search-solid`). Every icon I
+  import exists in `vendor/pixel-art-icons/icons/`.
+- **Dogfood script (human, ~4 min):** `bun run dev` → `/admin/dashboard`. (1) With no projects: the empty
+  state offers three paths; click "Start with the sample project" — it lands on a three-page board.
+  (2) Back on the launcher the checklist shows 2/5 with "Edit an element's style" as Next. (3) Click
+  "Open prototype mode" — the board must arrive in prototype mode and the URL must come back clean.
+  (4) Draw a link, return, confirm step 5 ticks. (5) Dismiss, reload — it must not come back.
+  (6) Delete every element on a page and confirm the empty-canvas hint appears over that frame only.
+
 ### server-20 — W7-4: drag-and-drop import, import progress + summary, trash restore/purge
 - **Agent:** general-purpose · **Stage:** done (gates green; draft PR open) — **needs human dogfood**
 - **Updated:** 2026-09-07 · **Branch:** `feat/launcher-import-trash-ux` off `origin/main` at `342c67d` (PR #51).

@@ -41,12 +41,23 @@ server/handlers/
     ├── storyLiterals.ts    — the total, non-throwing AST readers that classification is built on
     ├── storyPages.ts      — an accepted story → a RoutePageEntry, through the existing parse pipeline
     ├── storiesRoutes.ts   — GET/POST /admin/api/studio/stories (the refusal report + the off switch)
+    ├── projectSeed.ts     — what every NEW project starts with, copied (never installed) — see below
+    ├── sampleProject.ts   — POST /admin/api/studio/sample: copies `examples/studio-sample-project/` in
+    ├── onboardingFacts.ts — GET /admin/api/studio/onboarding: the launcher checklist's five live facts
+    └── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
     ├── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
     ├── projectDirGuard.ts — the ONE containment rule for a caller-supplied `dir` (delete / duplicate / thumbnail)
     ├── projectThumbnailFile.ts  — where `.studio/thumbnail.png` lives + its stat (leaf: no capture deps)
     ├── projectThumbnail.ts      — captures the launcher preview headlessly and writes that file
     ├── projectThumbnailQueue.ts — serialises captures, debounces after a save, remembers failures
     └── projectThumbnailRoute.ts — GET /admin/api/studio/thumbnail, mtime validators + 304
+
+examples/studio-sample-project/  — a three-page React repo (plain JSX, co-located CSS Modules,
+                                   `react` as its only dependency) offered as a third way to start
+                                   from the launcher's empty state. Copied on click, never on load;
+                                   Tier-0 safe because a copy runs nothing. Excluded from `tsconfig`
+                                   and from ESLint, like `studio-workspace/` — Studio parses it, it
+                                   does not build or lint it.
 
 src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
@@ -120,6 +131,8 @@ carries its picture with it).
 | `pagesDir` | Project-root-relative POSIX path to the pages directory. Defaults to `<dir>/pages`. Guarded by `isSafePagesDirOverride` — never absolute, never containing a `..` segment on either separator, because this file is hand-editable. |
 | `trust` | `static` (Tier 0, the default, never auto-promoted) \| `render-packages` (Tier 1) \| `run-project` (Tier 2), read/written by `GET/POST /admin/api/studio/trust-tier` (`server/handlers/studio/trustTier.ts`). Gates the Tier 1 style-toolchain subprocess and package-component bundling below (see [Compiled styles](#compiled-styles--tailwind-sass-postcss-css-modules-ws-2122)) and, at Tier 2, `server/handlers/studio/deploy.ts`'s build step. **The parse itself never executes anything at any tier** — promotion only ever widens what a later, explicit action (compile, bundle, deploy) is allowed to run. |
 | `previewAxes.locale` | The `preferredKey` for the static evaluator's dictionary branch pick (see [Tier B](#tier-b--hook--context-provider)). Unset means "first key in source order". Set from the toolbar's locale control (WS-10 §4.2), populated from `localeProbe.ts`'s detection — no more hand-typing a key into JSON. A pre-WS-10-§4.2 project's legacy top-level `previewLocale` field still parses and is folded into `previewAxes.locale` on read (`readStudioMeta`'s `foldLegacyPreviewLocale`); nothing downstream reads the legacy field any more. |
+| `lastOpenedAt` | W7-2 — epoch ms of the last `GET /admin/api/studio/load` for this project, the request that means "this is open on the board". Written by `recordProjectOpened`, best-effort (an unwritable directory never fails a load). A fact about the PROJECT, not about who opened it; the launcher's onboarding checklist reads it for its "Open it on the board" step. |
+| `sample` | W7-5 — this project was copied from `examples/studio-sample-project/` by `server/handlers/studio/sampleProject.ts`, rather than written or imported by the user. It changes what deleting it means: every other project is the user's own repository with no other copy, while a sample has one in Studio's own repository. Never cleared — a user who builds on top of the sample has a project that started as one. |
 | `stories` | W5-3 — Storybook import state. `enabled: false` is the explicit off switch (stories are still globbed, never parsed or placed). `boardId` names the board `syncStoryBoardFrames` created for them; once it no longer resolves, nothing is ever placed again. `placedPageIds` is every story frame ever placed, so a deleted frame stays deleted while a new story still appears. |
 
 Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorted POSIX paths, and skips `EXCLUDED_WORKSPACE_DIR_NAMES` (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`). Both `.tsx` and `.jsx` are page files.

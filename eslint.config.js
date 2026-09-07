@@ -46,7 +46,24 @@ export default defineConfig([
   // lint` fails on the FIXTURE's source (`Math.random()` in a render path is
   // deliberate there — it is what the parser's auto-select branch is tested
   // against). Same reasoning as `studio-workspace` and `.data` above.
-  globalIgnores(['dist', '.worktrees', '.claude', '.data', '.tmp', '.tmp-lint', 'design-system', 'studio-workspace']),
+  //
+  // `examples/studio-sample-project/` is the three-page React repo the
+  // launcher copies into `studio-workspace/` on request
+  // (`server/handlers/studio/sampleProject.ts`). It is a USER project that
+  // happens to live in this repository so it can be checked in — Studio
+  // parses it, never builds or lints it — and it is not in any `tsconfig`
+  // program either. Same reasoning as `studio-workspace` below.
+  globalIgnores([
+    'dist',
+    '.worktrees',
+    '.claude',
+    '.data',
+    '.tmp',
+    '.tmp-lint',
+    'design-system',
+    'studio-workspace',
+    'examples/studio-sample-project',
+  ]),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

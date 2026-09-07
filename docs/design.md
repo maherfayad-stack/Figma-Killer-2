@@ -18,6 +18,7 @@ The design is a **two-layer color model**: an achromatic base (surfaces, borders
 - **CSS Modules only.** No Tailwind utility classes — gated by `noTailwindUtilities.test.ts`. No Tailwind ecosystem deps — gated by `no-tailwind-deps.test.ts`.
 - **Every interactive control goes through a UI primitive** from `src/ui/components/`. Bare `<button>` is gated.
 - **Icons come from `pixel-art-icons`.** Deep-imported for tree-shaking. No `lucide-react`, no inline SVG strings.
+- **Copy names the mechanism.** Sentence case, second person, no marketing adjectives, buttons labelled with the verb they perform, and any destructive-looking string says where the files go. See [UI copy](#ui-copy).
 
 ---
 
@@ -758,6 +759,86 @@ The HTML `title` attribute is banned for hover hints — gated by `no-native-tit
 
 ---
 
+## UI copy
+
+Studio edits a real repository on the user's disk. Every string in the admin is
+therefore a claim about what is about to happen to their files, and the voice
+follows from that: **say the mechanism, not the feeling.** These rules are not
+invented here — they are read off the two surfaces that already get it right,
+`StyleCompileConsentBanner` and `DeleteProjectDialog`. Read those two before
+writing anything new.
+
+### Name the mechanism
+
+Say what will actually run, be written, or be moved — in the user's own
+vocabulary for it (a compiler, a folder, a file, a tier), not in ours.
+
+> "Producing that CSS means running the project's own compiler on this machine
+> — its config files are code, and they will execute."
+> — `StyleCompileConsentBanner`
+
+A user who cannot tell from the sentence what is about to touch their disk
+cannot consent to it.
+
+### Say where the files go
+
+Any string about a destructive-looking verb names the destination, so the user
+can go and look.
+
+> "Nothing is erased. The folder is moved to `studio-workspace/.trash/`, where
+> you can move it back at any time."
+> — `DeleteProjectDialog`
+
+The same rule covers what was *left out*: "Everything except node_modules,
+build output and .git was copied" is the honest version of "Duplicated!".
+
+### Buttons say what happens
+
+A button's label is the verb it performs on the noun it performs it on —
+"Run the project's compiler", "Delete project", "Create project" — not "OK",
+"Continue", "Confirm", or "Yes". The busy label is the same verb in progress
+("Deleting…", "Starting…"). The refusal is "Not now" or "Cancel", never
+"No thanks".
+
+### No marketing adjectives
+
+No *powerful*, *seamless*, *beautiful*, *magical*, *effortless*, *blazing*,
+*simply*, *just*. No exclamation marks. Nothing is *your beautiful new
+project*; it is a project. Enthusiasm in a tool that rewrites source files
+reads as a tool that has not thought about what it is doing.
+
+### Sentence case, and the product is "Studio"
+
+Titles, buttons, labels, menu items, toasts and empty-state headings are all
+sentence case — "New project", never "New Project". The product name is
+**Studio**, flat: never *the Studio*, never *Studio™*, never *Studio Editor*,
+and never a first-person plural (*we*, *our*) — the tool has no personality to
+speak for.
+
+### Second person, present tense, active voice
+
+"You can move it back at any time", not "the folder may be restored by the
+user". Address the user as *you*; describe the system's own actions in the
+present ("Studio never does that on its own"), and never apologise on the
+system's behalf.
+
+### An empty state says what to do next
+
+An `EmptyState` title states the fact ("No projects yet."), the description
+states the available next moves in concrete terms ("Start a blank project, or
+import a React repository from GitHub, a .zip, or a folder on this machine."),
+and the action button carries the verb. A title that is only a mood
+("Nothing here yet…") is not a state, it is a shrug.
+
+### A step is done when a fact says so
+
+Progress copy ("2 of 5 steps complete") must be derived from something that
+actually happened on disk or in the database, never from a flag the UI set
+itself when the user looked at a screen. If the fact is not cheaply knowable,
+the step does not exist. See `OnboardingPanel` and its facts route.
+
+---
+
 ## Forbidden patterns
 
 | Pattern                                                  | Use instead                                              |
@@ -779,6 +860,10 @@ The HTML `title` attribute is banned for hover hints — gated by `no-native-tit
 | Hover that changes a card's border color                 | Hover that lifts the surface tone (`-surface-2` → `-3`)  |
 | Filling an input with a tinted background                | Transparent fill, white-alpha border                     |
 | Inventing a one-off color for a category                 | Use `railGroupAccent` (known job) or `assignRailAccents` / `railAccent` (open-ended) from `@ui/railAccent`, or add a new tint token in `globals.css`|
+| "Your project was created successfully!"                 | Say the mechanism and the destination — see "UI copy"     |
+| A button labelled "OK" / "Continue" / "Confirm"          | The verb it performs ("Delete project", "Create project") |
+| "New Project" (title case), "the Studio"                 | Sentence case, and the product name is "Studio" flat      |
+| A checklist step ticked by a UI-set flag                 | A step derived from a live fact (`OnboardingPanel`)       |
 
 ---
 
