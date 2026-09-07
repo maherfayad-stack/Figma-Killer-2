@@ -63,8 +63,17 @@ function emptyStore(): PageVerificationStore {
   return { version: 1, pages: {} }
 }
 
+/**
+ * The store's filename, exported because a second reader cares only whether a
+ * file by this name exists ANYWHERE under the project's cache — see
+ * `onboardingFacts.ts`, which globs both this directory and the per-user
+ * `agent/<hash>/` one W10 is moving the cache into. A literal copied into that
+ * module would drift the day this path moves.
+ */
+export const PAGE_VERIFICATION_FILE_NAME = 'pageVerification.json'
+
 function storeFile(dir: string): string {
-  return join(dir, '.studio', 'cache', 'pageVerification.json')
+  return join(dir, '.studio', 'cache', PAGE_VERIFICATION_FILE_NAME)
 }
 
 function readStore(dir: string): PageVerificationStore {

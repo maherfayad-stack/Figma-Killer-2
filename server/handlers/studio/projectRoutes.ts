@@ -51,6 +51,20 @@
  *       capability, which is why the sub-router takes a `runtime`. See the
  *       note on `tryServeStudioProjectRoutes` below.
  *
+ *   POST /admin/api/studio/sample   (no body)
+ *       Copies the checked-in sample repository into `studio-workspace/`
+ *       under the first free "Sample project" name and returns the new
+ *       `{ project }`. Capability-gated (`studio.write`) alongside
+ *       `/duplicate` — it writes a whole repository to disk. Never called on
+ *       the user's behalf; see `./sampleProject.ts`.
+ *
+ *   GET  /admin/api/studio/onboarding
+ *       Five booleans for the launcher's onboarding checklist, read from
+ *       live state (projects on disk, this user's AI rows) rather than from
+ *       anything the checklist set itself. Authenticated but not
+ *       capability-gated — it is a read, and fact 4 is about the signed-in
+ *       user. See `./onboardingFacts.ts`.
+ *
  *   POST /admin/api/studio/page   body: { dir?, name? }
  *       WS-13 step 4 — scaffolds a new page CANONICAL BY CONSTRUCTION, one
  *       starter file, auto-placed on the board's first board at the next
@@ -65,10 +79,12 @@ import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
 import type { DbClient } from '../../db/client'
-import { requireCapability } from '../../auth/authz'
+import { requireAuthenticatedUser, requireCapability } from '../../auth/authz'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { ProjectTrashError, trashStudioProject } from './projectTrash'
 import { ProjectDuplicateError, duplicateStudioProject } from './projectDuplicate'
+import { SampleProjectError, createSampleProject } from './sampleProject'
+import { readOnboardingFacts } from './onboardingFacts'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
@@ -218,6 +234,34 @@ export async function tryServeStudioProjectRoutes(
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
+  }
+
+  // Copy the checked-in sample repository in. Gated for the same reason
+  // `/duplicate` is: it writes an entire repository to the user's disk.
+  if (pathname === '/admin/api/studio/sample' && req.method === 'POST') {
+    const user = await requireCapability(req, runtime.db, 'studio.write')
+    if (user instanceof Response) return user
+    try {
+      const project = createSampleProject(projectsRootDir())
+      return jsonResponse({ project })
+    } catch (err) {
+      if (err instanceof SampleProjectError) {
+        return jsonResponse({ error: err.message }, { status: err.reason === 'missing-source' ? 500 : 409 })
+      }
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // The onboarding checklist's five facts. Authenticated rather than
+  // capability-gated: it reads nothing a signed-in user cannot already see,
+  // and one of the five facts is about that user's own AI rows, so it needs
+  // the session either way. `readOnboardingFacts` never throws — each probe
+  // soft-fails to `false` — so there is no per-fact error path to map here.
+  if (pathname === '/admin/api/studio/onboarding' && req.method === 'GET') {
+    const user = await requireAuthenticatedUser(req, runtime.db)
+    if (user instanceof Response) return user
+    return jsonResponse({ facts: await readOnboardingFacts(runtime.db, user.id) })
   }
 
   // List every on-disk studio project for the Overview launcher. Read-only:

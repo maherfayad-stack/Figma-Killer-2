@@ -139,6 +139,7 @@ useUrlQuerySync(
 |-----------|----------|-------|
 | **Site editor** | `/admin/site` | Home page (slug `index`); bare URL is canonical — no `?page=` written |
 | **Site editor** | `/admin/site?page=<slug>` | Opens the page with that slug |
+| **Site editor** | `/admin/site?mode=prototype` | Opens the board in prototype mode. Consumed once and stripped — an instruction to arrive in that mode, not a mirror of the current one. Written by the launcher's onboarding checklist |
 | **Site editor** | `/admin/site?table=pages&row=<rowId>` | Legacy deep-link form, originally produced by the now-deleted Data workspace; `useSiteEditorUrlSync` still consumes it once and normalizes to `?page=<slug>` after |
 | **Site editor** | `/admin/site?table=components&row=<rowId>` | Opens the Visual Component with that id; normalized after consume |
 

@@ -433,6 +433,25 @@ export function projectPreviewLocale(dir: string): string | undefined {
  * slug forever.
  */
 export function listStudioProjects(projectsRoot: string): StudioProjectSummary[] {
+  return listStudioProjectDirs(projectsRoot)
+    .map((dir) => studioProjectSummary(dir))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * Every project DIRECTORY under `projectsRoot`, absolute, in `readdir` order.
+ *
+ * The membership rule — what counts as a project — lives here and nowhere
+ * else; `listStudioProjects` above is this plus one `studioProjectSummary`
+ * per entry. Callers that only need to know WHICH directories exist (the
+ * onboarding facts route asks five yes/no questions of each project's
+ * sidecar) take this instead, and skip the pages-directory walk and per-file
+ * `statSync` that building a summary costs per project.
+ *
+ * Unsorted on purpose: the display-name sort belongs to the listing, which is
+ * the only caller that has display names to sort by.
+ */
+export function listStudioProjectDirs(projectsRoot: string): string[] {
   if (!existsSync(projectsRoot) || !statSync(projectsRoot).isDirectory()) return []
   return readdirSync(projectsRoot, { withFileTypes: true })
     .filter(
@@ -445,8 +464,7 @@ export function listStudioProjects(projectsRoot: string): StudioProjectSummary[]
         entry.name !== PROJECTS_TRASH_DIR_NAME &&
         !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name),
     )
-    .map((entry) => studioProjectSummary(join(projectsRoot, entry.name)))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((entry) => join(projectsRoot, entry.name))
 }
 
 /**

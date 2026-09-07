@@ -172,6 +172,23 @@ export const StudioMetaSchema = Type.Object({
   /** WS-7 — per-project frame size default; overrides the editor's own preference (project wins, same precedent as `defaultBreakpoint`). */
   frameDefaults: Type.Optional(FrameDefaultsSchema),
   /**
+   * W7-5 — this project was copied from the checked-in sample repository
+   * (`examples/studio-sample-project/`, via `./sampleProject.ts`), not written
+   * or imported by the user.
+   *
+   * Recorded because it changes what deleting it MEANS: every other project in
+   * the workspace is the user's own repository with no other copy, which is
+   * why `/delete` moves a folder to the trash and the dialog says so. A sample
+   * has another copy in Studio's own repository and can be thrown away without
+   * ceremony — and a new one is one click away.
+   *
+   * Never set by anything but the sample copy, and never cleared: a user who
+   * builds their real product on top of the sample has a project that started
+   * as one, which is the truth. Absent means "not a sample", which is the
+   * honest reading for every project created before this field existed.
+   */
+  sample: Type.Optional(Type.Boolean()),
+  /**
    * The form factor the project's screens are designed for, chosen once at
    * creation (`POST /admin/api/studio/create`). This records the ANSWER;
    * `frameDefaults` above records its CONSEQUENCE (the width/height every new

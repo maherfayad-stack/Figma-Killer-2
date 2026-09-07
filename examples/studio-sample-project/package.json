@@ -1,0 +1,10 @@
+{
+  "name": "studio-sample-project",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A three-page React sample, opened from Studio's launcher.",
+  "dependencies": {
+    "react": "^19.0.0"
+  }
+}
