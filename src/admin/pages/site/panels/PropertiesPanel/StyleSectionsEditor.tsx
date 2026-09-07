@@ -33,11 +33,12 @@ import { InteractionSection } from './InteractionSection'
 import { SectionStylesMenu } from './SectionStylesMenu'
 import { cssPropertyLabel } from './cssControlTypes'
 import { CLASS_STYLE_SECTIONS, type ClassStyleSectionDefinition } from './classStyleSections'
+import { orderStyleSections } from './styleSectionOrder'
 import { resolveStylePlaceholder } from './stylePlaceholder'
-import { hasStyleValue } from './styleValueUtils'
+import { hasStyleValue, isMixedStyleValue } from './styleValueUtils'
 import { useSizingParentLayout, type SizingParentResolution } from './useSizingParentLayout'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
-import { isMixed, type Mixed } from '@ui/components/MixedValue'
+import { isMixed, MIXED } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StyleRuleComposer.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
@@ -119,6 +120,13 @@ interface StyleSectionsEditorProps {
    * mode, where there is no node, and the buttons then don't render.
    */
   styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
+  /**
+   * The selection is a text layer (`styleSectionOrder.isTextSelection`), so
+   * Typography renders first. Resolved by the caller, which is the level that
+   * knows WHICH nodes are selected — this editor is target-agnostic and only
+   * knows which bag it was handed.
+   */
+  textFirst?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +147,9 @@ export function StyleSectionsEditor({
   onClearPreview,
   provenanceByProperty,
   styleTarget,
+  textFirst = false,
 }: StyleSectionsEditorProps) {
-  const visibleStyleSections = getVisibleStyleSections(styleQuery)
+  const visibleStyleSections = orderStyleSections(getVisibleStyleSections(styleQuery), textFirst)
   const hasActiveQuery = styleQuery.trim().length > 0
 
   // W8-4 — the selected element's REAL parent layout, which is what decides
@@ -601,20 +610,21 @@ function StyleSectionGroup({
         ) : (
           section.properties.map((prop) => {
             const storedValue = storedStyles[prop]
-            const isSet = hasStyleValue(storedValue)
+            // W8-3 — a multi-selection bag can hold `MIXED` in EITHER layer.
+            // Both cases reach the row as the `MIXED` value, which is what
+            // makes it render the stated "Mixed" field: an effective value
+            // the selection disagrees on is not a value this row can
+            // prefill itself with (`styleFieldDisplay.ts`).
+            const mixed = isMixedStyleValue(storedStyles, currentStyles, String(prop))
+            const isSet = !mixed && hasStyleValue(storedValue)
             const provenance = provenanceByProperty?.get(String(prop))
-            // W8-3 — a multi-selection bag can hold `MIXED` in either layer:
-            // in `storedStyles` it flows to the row as a value (which renders
-            // the empty "Mixed" field), in `currentStyles` it becomes the
-            // placeholder (`resolveStylePlaceholder` owns that translation for
-            // every section, not just this generic branch).
             return (
               <ClassPropertyRow
                 key={`${activeTab}-${String(prop)}`}
                 property={prop}
-                value={isSet ? (storedValue as string | number | Mixed) : undefined}
+                value={mixed ? MIXED : isSet ? (storedValue as string | number) : undefined}
                 placeholder={
-                  isSet
+                  mixed || isSet
                     ? undefined
                     : resolveStylePlaceholder({
                         property: prop,

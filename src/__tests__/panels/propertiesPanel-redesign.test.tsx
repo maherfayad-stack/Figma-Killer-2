@@ -595,8 +595,14 @@ describe('PP-11 — Editing a text-type class property via TextControl updates c
     const input = document
       .querySelector('[data-testid="css-property-row-fontFamily"]')
       ?.querySelector('input') as HTMLInputElement
-    expect(input.value).toBe('')
-    expect(input.placeholder).toBe('serif')
+    // The mobile tab declares nothing, but the element still renders the
+    // base rule's `serif` — so the field READS as `serif`, muted, with the
+    // row's `data-state` still saying it is unset HERE
+    // (`styleFieldDisplay.ts`). Typing over it writes the mobile override.
+    expect(input.value).toBe('serif')
+    expect(
+      document.querySelector('[data-testid="css-property-row-fontFamily"]')?.getAttribute('data-state'),
+    ).toBe('unset')
     fireEvent.change(input, { target: { value: 'Inter, sans-serif' } })
 
     const updatedCls = useEditorStore.getState().site!.styleRules[cls.id]
@@ -1431,8 +1437,13 @@ describe('PP-20 — Property search adds class-backed styles to the active class
     const fontFamilyInput = document
       .querySelector('[data-testid="css-property-row-fontFamily"]')
       ?.querySelector('input') as HTMLInputElement
-    expect(fontFamilyInput.value).toBe('')
-    expect(fontFamilyInput.placeholder).toBe('inherit')
+    // Prefilled with the value the element actually renders (here the spec
+    // default, since no frame is mounted), muted and still unset —
+    // `styleFieldDisplay.ts`.
+    expect(fontFamilyInput.value).toBe('inherit')
+    expect(
+      document.querySelector('[data-testid="css-property-row-fontFamily"]')?.getAttribute('data-state'),
+    ).toBe('unset')
     fireEvent.change(fontFamilyInput, { target: { value: 'Inter' } })
 
     // Class styles should now have fontFamily (with default value)
@@ -1459,8 +1470,7 @@ describe('PP-20 — Property search adds class-backed styles to the active class
     const fontFamilyInput = document
       .querySelector('[data-testid="css-property-row-fontFamily"]')
       ?.querySelector('input') as HTMLInputElement
-    expect(fontFamilyInput.value).toBe('')
-    expect(fontFamilyInput.placeholder).toBe('inherit')
+    expect(fontFamilyInput.value).toBe('inherit')
     fireEvent.change(fontFamilyInput, { target: { value: 'serif' } })
 
     const updatedCls = useEditorStore.getState().site!.styleRules[cls.id]

@@ -110,6 +110,13 @@
     font-style: italic;
 }
 
+/* The field is showing the element's real rendered value, which nothing on
+   the active style target declares. A real value, so it is drawn as a value
+   — one tone down, never as a placeholder. */
+.input.inherited {
+    color: var(--text-muted);
+}
+
 /* ─── Inspector field skin ─────────────────────────────────────────────────
  * Opted into by an ancestor carrying `data-field-skin="inspector"`. This file's
  * own header states the contract it has to keep — "matches Input's visual

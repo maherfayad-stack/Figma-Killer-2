@@ -137,6 +137,11 @@ export interface AddablePropertyFieldProps {
   min?: number
   max?: number
   placeholder?: string
+  /**
+   * `value` is the element's real rendered value rather than one the field's
+   * own style target declares — see `ScrubInput`'s prop of the same name.
+   */
+  inherited?: boolean
   disabled?: boolean
   fieldSize?: FieldSize
   className?: string
@@ -164,6 +169,7 @@ export function AddablePropertyField({
   min,
   max,
   placeholder,
+  inherited = false,
   disabled = false,
   fieldSize = 'sm',
   className,
@@ -227,6 +233,7 @@ export function AddablePropertyField({
         min={min}
         max={max}
         placeholder={placeholder}
+        inherited={inherited}
         disabled={disabled}
         fieldSize={fieldSize}
         className={styles.scrubWrapper}
@@ -337,6 +344,11 @@ export interface RevealedFieldProps {
   min?: number
   max?: number
   placeholder?: string
+  /**
+   * `value` is the element's real rendered value rather than one the field's
+   * own style target declares — see `ScrubInput`'s prop of the same name.
+   */
+  inherited?: boolean
   disabled?: boolean
   fieldSize?: FieldSize
   className?: string
@@ -357,12 +369,15 @@ export function RevealedField({
   min,
   max,
   placeholder,
+  inherited = false,
   disabled = false,
   fieldSize = 'sm',
   className,
   'data-testid': dataTestId,
 }: RevealedFieldProps) {
-  const isSet = isMixed(value) || (value !== undefined && value !== '')
+  // An inherited value is DISPLAYED but not declared here, so the remove
+  // affordance must not read as "set" — removing it would remove nothing.
+  const isSet = !inherited && (isMixed(value) || (value !== undefined && value !== ''))
 
   return (
     <div className={cn(styles.revealedCell, className)} data-testid={dataTestId}>
@@ -379,6 +394,7 @@ export function RevealedField({
         min={min}
         max={max}
         placeholder={placeholder}
+        inherited={inherited}
         disabled={disabled}
         fieldSize={fieldSize}
         className={styles.revealedScrubWrapper}

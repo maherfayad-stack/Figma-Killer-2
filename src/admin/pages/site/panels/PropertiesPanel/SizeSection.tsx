@@ -61,6 +61,7 @@ import {
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
+import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import { hasStyleValue } from './styleValueUtils'
 import {
   SIZING_OPTIONS,
@@ -271,20 +272,17 @@ export function SizeSection({
     ariaLabel: string,
     axisNoun: 'width' | 'height',
   ) => {
-    const storedValue = storedStyles[property]
-    const currentValue = currentStyles[property]
-    // W8-3 — `hasStyleValue` is true for the MIXED Symbol, so a selection
-    // that disagrees must be caught before `String(storedValue)` prints the
-    // sentinel into the field. `AddablePropertyField` takes `MIXED` directly.
-    const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
+    // The one display rule (`styleFieldDisplay.ts`): the stored value, else
+    // the value the element actually renders (muted), else the spec default
+    // as a last-resort hint. W8-3 — `hasStyleValue` is true for the MIXED
+    // Symbol, which the resolver catches before anything stringifies it.
+    const display = resolveStyleFieldDisplay({
+      storedValue: storedStyles[property],
+      currentValue: currentStyles[property],
+      fallback: getCSSPropertyDefaultValue(property),
+    })
+    const mixed = isMixed(display.value)
     const mode = mixed ? 'fixed' : currentSizingMode(property, parentLayout, storedStyles)
-    const isSet = !mixed && hasStyleValue(storedValue)
-    const placeholder =
-      mixed || isSet
-        ? undefined
-        : hasStyleValue(currentValue)
-          ? String(currentValue)
-          : String(getCSSPropertyDefaultValue(property))
 
     const additions: AddablePropertyFieldAddition[] = CONSTRAINTS.filter(
       (c) => c.axis === property && !isRevealed(c.prop),
@@ -296,8 +294,9 @@ export function SizeSection({
           name={ariaLabel}
           label={fieldMark}
           aria-label={ariaLabel}
-          value={mixed ? MIXED : isSet ? String(storedValue) : undefined}
-          placeholder={placeholder}
+          value={display.value}
+          placeholder={display.placeholder}
+          inherited={display.inherited}
           onChange={(next) => onChange(property, next)}
           onPreview={previewProperty ? (next) => previewProperty(property, next) : undefined}
           onClearPreview={onClearPreview}
@@ -326,24 +325,20 @@ export function SizeSection({
   }
 
   const revealedRow = (spec: ConstraintSpec) => {
-    const storedValue = storedStyles[spec.prop]
-    const currentValue = currentStyles[spec.prop]
-    const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
-    const isSet = !mixed && hasStyleValue(storedValue)
-    const placeholder =
-      mixed || isSet
-        ? undefined
-        : hasStyleValue(currentValue)
-          ? String(currentValue)
-          : String(getCSSPropertyDefaultValue(spec.prop))
+    const display = resolveStyleFieldDisplay({
+      storedValue: storedStyles[spec.prop],
+      currentValue: currentStyles[spec.prop],
+      fallback: getCSSPropertyDefaultValue(spec.prop),
+    })
 
     return (
       <RevealedField
         key={spec.prop}
         label={spec.icon}
         ariaLabel={spec.ariaLabel}
-        value={mixed ? MIXED : isSet ? String(storedValue) : undefined}
-        placeholder={placeholder}
+        value={display.value}
+        placeholder={display.placeholder}
+        inherited={display.inherited}
         onChange={(resolved) => onChange(spec.prop, resolved)}
         onPreview={previewProperty ? (resolved) => previewProperty(spec.prop, resolved) : undefined}
         onClearPreview={onClearPreview}
@@ -447,10 +442,11 @@ function GenericSizeRow({
   onPreview,
   onClearPreview,
 }: GenericSizeRowProps) {
+  // `ClassPropertyRow` applies the prefill fold itself — it takes the stored
+  // value and the current one and decides which to display — so this row
+  // hands it both and only computes `isSet`, the fact the row cannot derive.
   const storedValue = storedStyles[property]
   const currentValue = currentStyles[property]
-  // W8-3 — MIXED reaches `ClassPropertyRow` as a value (it renders the word);
-  // it must never reach `placeholder`, which would stringify the Symbol.
   const mixed = isMixed(storedValue) || (!hasStyleValue(storedValue) && isMixed(currentValue))
   const isSet = !mixed && hasStyleValue(storedValue)
   const fallbackValue =

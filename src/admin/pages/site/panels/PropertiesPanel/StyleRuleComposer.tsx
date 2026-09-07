@@ -37,6 +37,8 @@ interface StyleRuleComposerProps {
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
   /** Section-header style-apply target — see `StyleSectionsEditor`'s doc. */
   styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
+  /** Typography-first ordering for a text selection — see `styleSectionOrder`. */
+  textFirst?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +53,7 @@ export function StyleRuleComposer({
   computedValues,
   provenanceByProperty,
   styleTarget,
+  textFirst,
 }: StyleRuleComposerProps) {
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   // The editing context is owned by the canvas toolbar's context switcher:
@@ -180,6 +183,7 @@ export function StyleRuleComposer({
       onClearPreview={handleClearPreview}
       provenanceByProperty={provenanceByProperty}
       styleTarget={styleTarget}
+      textFirst={textFirst}
     />
   )
 }

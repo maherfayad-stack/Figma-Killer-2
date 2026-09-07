@@ -34,3 +34,10 @@
     display: block;
     flex: 0 0 auto;
 }
+
+/* The field is showing the element's real rendered value, which nothing on
+   the active style target declares (`styleFieldDisplay.ts`). A real value, so
+   it is drawn as a value — one tone down, never as a placeholder. */
+.inheritedField :global(input) {
+    color: var(--text-muted);
+}

@@ -13,7 +13,8 @@
  */
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
-import { hasStyleValue, isMixedStyleValue, readString } from '../styleValueUtils'
+import { isMixedStyleValue, plainString, readString } from '../styleValueUtils'
+import { resolveStyleFieldDisplay } from '../styleFieldDisplay'
 import { ScrubTokenField } from './ScrubTokenField'
 
 interface LinkedAxisFieldProps {
@@ -55,9 +56,13 @@ export function LinkedAxisField({
     isMixedStyleValue(storedStyles, currentStyles, String(propA)) ||
     isMixedStyleValue(storedStyles, currentStyles, String(propB))
 
-  const value = storedA ?? storedB
-  const placeholder = currentA ?? currentB ?? '0px'
-  const isSet = hasStyleValue(storedA) || hasStyleValue(storedB)
+  // The one display rule (`styleFieldDisplay.ts`): the stored side, else the
+  // padding/margin the element actually renders on that axis (muted).
+  const display = resolveStyleFieldDisplay({
+    storedValue: storedA ?? storedB,
+    currentValue: currentA ?? currentB,
+    fallback: '0px',
+  })
 
   function commit(resolved: string | undefined) {
     onChange(propA, resolved)
@@ -72,8 +77,9 @@ export function LinkedAxisField({
   return (
     <ScrubTokenField
       aria-label={ariaLabel}
-      value={value}
-      placeholder={isSet ? undefined : placeholder}
+      value={plainString(display.value) || undefined}
+      placeholder={display.placeholder}
+      inherited={display.inherited}
       mixed={mixed}
       tokens={tokens}
       prefix={prefix}

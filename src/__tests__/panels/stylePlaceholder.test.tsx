@@ -101,11 +101,15 @@ describe('resolveStylePlaceholder', () => {
 })
 
 describe('provenance reaches the compact sections', () => {
-  it('places the winning declaration in the placeholder of a grid row', () => {
+  it('shows the winning declaration as the value of an unset grid row', () => {
     // The four grid-backed sections (Typography, Background, Effects,
     // Interaction) never received provenance — so applying a colour style
     // left the row reading as unset with a raw `rgb(…)` beneath it and no
     // indication anything had happened.
+    //
+    // It is the row's VALUE now, not a placeholder behind an empty box
+    // (`styleFieldDisplay.ts`): the element really is that colour, and the
+    // row's unset state is carried by `data-state` / `data-inherited`.
     render(
       <StackedPropertyGrid
         spec={['color']}
@@ -126,8 +130,12 @@ describe('provenance reaches the compact sections', () => {
     )
 
     const field = screen.getByRole('textbox', { name: 'Color' }) as HTMLInputElement
-    expect(field.value).toBe('')
-    expect(field.placeholder).toBe('var(--brand-500)')
+    expect(field.value).toBe('var(--brand-500)')
+    // ColorControl's own schema-level hint takes the vacated placeholder slot.
+    expect(field.placeholder).not.toBe('var(--brand-500)')
+    const row = document.querySelector('[data-testid="css-property-row-color"]')
+    expect(row?.getAttribute('data-state')).toBe('unset')
+    expect(row?.getAttribute('data-inherited')).toBe('true')
   })
 
   it('draws the losing declarations, and nothing when there are none', () => {

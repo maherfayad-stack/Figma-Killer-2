@@ -6,7 +6,8 @@
  */
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
-import { hasStyleValue, isMixedStyleValue, readString } from '../styleValueUtils'
+import { isMixedStyleValue, plainString, readString } from '../styleValueUtils'
+import { resolveStyleFieldDisplay } from '../styleFieldDisplay'
 import { ScrubTokenField } from './ScrubTokenField'
 
 interface SingleSideFieldProps {
@@ -35,16 +36,21 @@ export function SingleSideField({
   onClearPreview,
   'data-testid': dataTestId,
 }: SingleSideFieldProps) {
-  const stored = readString(storedStyles, String(property))
-  const current = readString(currentStyles, String(property))
-  const isSet = hasStyleValue(stored)
+  // The one display rule (`styleFieldDisplay.ts`): the stored length, else the
+  // one the element actually renders (muted), else `0px` as a hint.
+  const display = resolveStyleFieldDisplay({
+    storedValue: readString(storedStyles, String(property)),
+    currentValue: readString(currentStyles, String(property)),
+    fallback: '0px',
+  })
   const mixed = isMixedStyleValue(storedStyles, currentStyles, String(property))
 
   return (
     <ScrubTokenField
       aria-label={ariaLabel}
-      value={stored}
-      placeholder={isSet ? undefined : (current ?? '0px')}
+      value={plainString(display.value) || undefined}
+      placeholder={display.placeholder}
+      inherited={display.inherited}
       mixed={mixed}
       tokens={tokens}
       prefix={prefix}

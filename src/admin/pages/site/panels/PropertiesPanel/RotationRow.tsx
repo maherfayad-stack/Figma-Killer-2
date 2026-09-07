@@ -33,6 +33,7 @@ import { FlipHorizontalIcon, FlipVerticalIcon, RotateIcon } from '@ui/components
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { hasStyleValue } from './styleValueUtils'
+import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import { parseFlipState, serializeFlipState, toggleFlipAxis, TRANSFORM_SCALE_FN_RE } from './flipValue'
 import posStyles from './PositionSection.module.css'
 
@@ -86,10 +87,14 @@ export function RotationRow({
     )
   }
 
-  const stored = storedStyles.rotate
-  const isSet = hasStyleValue(stored)
-  const current = currentStyles.rotate
-  const placeholder = !isSet ? (hasStyleValue(current) ? String(current) : '0deg') : undefined
+  // The one display rule (`styleFieldDisplay.ts`): the declared rotation, else
+  // the one the element actually renders (muted), else `0deg` as a hint.
+  const display = resolveStyleFieldDisplay({
+    storedValue: storedStyles.rotate,
+    currentValue: currentStyles.rotate,
+    fallback: '0deg',
+  })
+  const isSet = display.isSet
 
   // Flip reads the element's EFFECTIVE scale (its own declaration, else the
   // one it inherits from a losing rule) so the buttons show the state the
@@ -113,8 +118,9 @@ export function RotationRow({
         <ScrubInput
           aria-label="Rotation"
           label={<RotateIcon size={13} aria-hidden="true" />}
-          value={isSet ? String(stored) : undefined}
-          placeholder={placeholder}
+          value={display.value}
+          placeholder={display.placeholder}
+          inherited={display.inherited}
           unit="deg"
           onChange={(next) => onChange('rotate', next)}
           onPreview={onPreview ? (next) => onPreview('rotate', next) : undefined}

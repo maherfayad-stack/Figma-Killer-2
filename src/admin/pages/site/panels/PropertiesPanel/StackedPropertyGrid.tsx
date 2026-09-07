@@ -16,7 +16,8 @@
 import type { CSSPropertyBag } from '@core/page-tree'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { resolveStylePlaceholder } from './stylePlaceholder'
-import { hasStyleValue } from './styleValueUtils'
+import { hasStyleValue, isMixedStyleValue } from './styleValueUtils'
+import { MIXED } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StackedPropertyGrid.module.css'
 
@@ -84,16 +85,20 @@ export function StackedPropertyGrid({
 
   const renderRow = (property: keyof CSSPropertyBag) => {
     const storedValue = storedStyles[property]
-    const isSet = hasStyleValue(storedValue)
+    // W8-3 — `MIXED` in EITHER bag reaches the row as the `MIXED` value, so it
+    // renders the stated "Mixed" field. A value the selection disagrees on is
+    // not one this row can prefill itself with (`styleFieldDisplay.ts`).
+    const mixed = isMixedStyleValue(storedStyles, currentStyles, String(property))
+    const isSet = !mixed && hasStyleValue(storedValue)
     const provenance = provenanceByProperty?.get(String(property))
 
     return (
       <ClassPropertyRow
         key={`${activeTab}-${String(property)}`}
         property={property}
-        value={isSet ? (storedValue as string | number) : undefined}
+        value={mixed ? MIXED : isSet ? (storedValue as string | number) : undefined}
         placeholder={
-          isSet
+          mixed || isSet
             ? undefined
             : resolveStylePlaceholder({
                 property,
