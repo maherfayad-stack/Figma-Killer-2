@@ -2,7 +2,7 @@
  * boxShadowLayers — exhaustive parse/serialise coverage
  * (docs/features/inspector-disclosure.md §4 G8).
  *
- * The load-bearing property under test: `parseBoxShadowValue` only ever
+ * The load-bearing property under test: `parseShadowValue` only ever
  * returns `'layers'` when `serializeBoxShadowLayers(layers)` reproduces the
  * INPUT byte-for-byte. Every `'layers'` case below asserts that identity
  * directly, not just "some layers came out".
@@ -11,32 +11,34 @@ import { describe, expect, it } from 'bun:test'
 import {
   appendBoxShadowLayer,
   createDefaultBoxShadowLayer,
-  parseBoxShadowLayers,
-  parseBoxShadowValue,
+  createDefaultTextShadowLayer,
+  parseShadowLayers,
+  parseShadowValue,
   removeBoxShadowLayer,
   reorderBoxShadowLayers,
   serializeBoxShadowLayer,
   serializeBoxShadowLayers,
   updateBoxShadowLayer,
+  TEXT_SHADOW_GRAMMAR,
 } from './boxShadowLayers'
 
-describe('parseBoxShadowValue — empty', () => {
+describe('parseShadowValue — empty', () => {
   it('treats undefined/null as empty', () => {
-    expect(parseBoxShadowValue(undefined)).toEqual({ kind: 'empty' })
-    expect(parseBoxShadowValue(null)).toEqual({ kind: 'empty' })
+    expect(parseShadowValue(undefined)).toEqual({ kind: 'empty' })
+    expect(parseShadowValue(null)).toEqual({ kind: 'empty' })
   })
 
   it('treats an empty string and "none" as empty', () => {
-    expect(parseBoxShadowValue('')).toEqual({ kind: 'empty' })
-    expect(parseBoxShadowValue('   ')).toEqual({ kind: 'empty' })
-    expect(parseBoxShadowValue('none')).toEqual({ kind: 'empty' })
-    expect(parseBoxShadowValue('None')).toEqual({ kind: 'empty' })
+    expect(parseShadowValue('')).toEqual({ kind: 'empty' })
+    expect(parseShadowValue('   ')).toEqual({ kind: 'empty' })
+    expect(parseShadowValue('none')).toEqual({ kind: 'empty' })
+    expect(parseShadowValue('None')).toEqual({ kind: 'empty' })
   })
 })
 
-describe('parseBoxShadowValue — single layer, structured', () => {
+describe('parseShadowValue — single layer, structured', () => {
   it('parses "0 4px 4px rgba(0, 0, 0, 0.25)" — offsets + blur + trailing colour, no spread', () => {
-    const result = parseBoxShadowValue('0 4px 4px rgba(0, 0, 0, 0.25)')
+    const result = parseShadowValue('0 4px 4px rgba(0, 0, 0, 0.25)')
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers).toHaveLength(1)
@@ -56,7 +58,7 @@ describe('parseBoxShadowValue — single layer, structured', () => {
 
   it('parses a 4-length layer with spread', () => {
     const raw = 'inset 0 -2px 4px 1px rgba(255, 255, 255, 0.1)'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers[0]).toMatchObject({
@@ -74,7 +76,7 @@ describe('parseBoxShadowValue — single layer, structured', () => {
 
   it('parses a leading colour', () => {
     const raw = 'rgba(0, 0, 0, 0.5) 0 4px 4px'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers[0]).toMatchObject({
@@ -90,7 +92,7 @@ describe('parseBoxShadowValue — single layer, structured', () => {
 
   it('parses a trailing "inset" keyword', () => {
     const raw = '0 4px 4px black inset'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers[0]).toMatchObject({ inset: true, insetPosition: 'trailing' })
@@ -99,7 +101,7 @@ describe('parseBoxShadowValue — single layer, structured', () => {
 
   it('parses a minimal 2-length layer with no blur, no spread, no colour', () => {
     const raw = '2px 2px'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers[0]).toMatchObject({
@@ -114,9 +116,9 @@ describe('parseBoxShadowValue — single layer, structured', () => {
   })
 
   it('accepts a hex colour and a var() colour token', () => {
-    expect(parseBoxShadowValue('0 4px 4px #000000').kind).toBe('layers')
+    expect(parseShadowValue('0 4px 4px #000000').kind).toBe('layers')
     const raw = '0 4px 4px var(--shadow-color)'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers[0]!.color).toBe('var(--shadow-color)')
@@ -124,10 +126,10 @@ describe('parseBoxShadowValue — single layer, structured', () => {
   })
 })
 
-describe('parseBoxShadowValue — two layers, commas inside rgba() are not layer separators', () => {
+describe('parseShadowValue — two layers, commas inside rgba() are not layer separators', () => {
   it('splits exactly two layers and re-serialises byte-identically', () => {
     const raw = '0 4px 4px rgba(0, 0, 0, 0.25), inset 0 -2px 0 rgba(255, 255, 255, 0.1)'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers).toHaveLength(2)
@@ -138,7 +140,7 @@ describe('parseBoxShadowValue — two layers, commas inside rgba() are not layer
 
   it('handles three layers mixing hex, rgba() and a leading colour', () => {
     const raw = '0 1px 2px #000, rgba(0, 0, 0, 0.2) 0 2px 4px, inset 0 0 0 1px black'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('layers')
     if (result.kind !== 'layers') throw new Error('expected layers')
     expect(result.layers).toHaveLength(3)
@@ -146,10 +148,10 @@ describe('parseBoxShadowValue — two layers, commas inside rgba() are not layer
   })
 })
 
-describe('parseBoxShadowValue — refuses rather than guesses (stays raw, loses nothing)', () => {
+describe('parseShadowValue — refuses rather than guesses (stays raw, loses nothing)', () => {
   it('refuses a colour interleaved between lengths', () => {
     const raw = '0 rgba(0,0,0,.5) 4px 4px'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('raw')
     if (result.kind !== 'raw') throw new Error('expected raw')
     expect(result.raw).toBe(raw)
@@ -157,18 +159,18 @@ describe('parseBoxShadowValue — refuses rather than guesses (stays raw, loses 
   })
 
   it('refuses more than one non-length, non-inset token', () => {
-    const result = parseBoxShadowValue('0 4px 4px black potato')
+    const result = parseShadowValue('0 4px 4px black potato')
     expect(result.kind).toBe('raw')
   })
 
   it('refuses fewer than 2 or more than 4 length tokens', () => {
-    expect(parseBoxShadowValue('4px').kind).toBe('raw')
-    expect(parseBoxShadowValue('0 4px 4px 0 8px black').kind).toBe('raw')
+    expect(parseShadowValue('4px').kind).toBe('raw')
+    expect(parseShadowValue('0 4px 4px 0 8px black').kind).toBe('raw')
   })
 
   it('refuses a comma-joined value where one segment is garbage', () => {
     const raw = '0 4px 4px black, potato'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('raw')
     if (result.kind !== 'raw') throw new Error('expected raw')
     // The full original text is preserved — nothing is dropped or partially parsed.
@@ -176,7 +178,7 @@ describe('parseBoxShadowValue — refuses rather than guesses (stays raw, loses 
   })
 
   it('refuses "inset" appearing anywhere other than the first or last token', () => {
-    expect(parseBoxShadowValue('0 inset 4px 4px black').kind).toBe('raw')
+    expect(parseShadowValue('0 inset 4px 4px black').kind).toBe('raw')
   })
 
   it('falls back to raw when the value parses but does not re-serialise byte-identically (unusual whitespace)', () => {
@@ -184,7 +186,7 @@ describe('parseBoxShadowValue — refuses rather than guesses (stays raw, loses 
     // canonical serialiser joins with single spaces, so the round trip fails
     // and the honest behaviour is to leave the original text untouched.
     const raw = '0  4px 4px black'
-    const result = parseBoxShadowValue(raw)
+    const result = parseShadowValue(raw)
     expect(result.kind).toBe('raw')
     if (result.kind !== 'raw') throw new Error('expected raw')
     expect(result.raw).toBe(raw)
@@ -254,11 +256,56 @@ describe('layer-list edit helpers', () => {
   })
 })
 
-describe('parseBoxShadowLayers — grammar-only parse (no round-trip check)', () => {
-  it('is used internally by parseBoxShadowValue but is exposed for direct grammar testing', () => {
-    const layers = parseBoxShadowLayers('0 4px 4px black')
+describe('parseShadowLayers — grammar-only parse (no round-trip check)', () => {
+  it('is used internally by parseShadowValue but is exposed for direct grammar testing', () => {
+    const layers = parseShadowLayers('0 4px 4px black')
     expect(layers).not.toBeNull()
     expect(layers).toHaveLength(1)
-    expect(parseBoxShadowLayers('potato')).toBeNull()
+    expect(parseShadowLayers('potato')).toBeNull()
+  })
+})
+
+/**
+ * `text-shadow` rides the same parser through a narrowed grammar (W8-1 / G9).
+ * The narrowing is the point: a spread length or an `inset` keyword is not
+ * valid `text-shadow`, and accepting either would put a Spread field and an
+ * Inset checkbox on a property CSS gives neither to.
+ */
+describe('parseShadowValue — TEXT_SHADOW_GRAMMAR', () => {
+  it('accepts the two- and three-length forms, with a colour on either side', () => {
+    for (const raw of ['0 1px', '0 1px 2px', '0 1px 2px rgba(0, 0, 0, 0.25)', 'black 1px 1px 2px']) {
+      const result = parseShadowValue(raw, TEXT_SHADOW_GRAMMAR)
+      expect(result.kind).toBe('layers')
+      if (result.kind !== 'layers') continue
+      expect(serializeBoxShadowLayers(result.layers)).toBe(raw)
+    }
+  })
+
+  it('reads multiple comma-separated text shadows as separate layers', () => {
+    const raw = '0 1px 2px black, 0 -1px 2px white'
+    const result = parseShadowValue(raw, TEXT_SHADOW_GRAMMAR)
+    expect(result.kind).toBe('layers')
+    if (result.kind !== 'layers') return
+    expect(result.layers).toHaveLength(2)
+    expect(serializeBoxShadowLayers(result.layers)).toBe(raw)
+  })
+
+  it('refuses a spread length — text-shadow has no spread', () => {
+    expect(parseShadowValue('0 1px 2px 4px black', TEXT_SHADOW_GRAMMAR).kind).toBe('raw')
+    // The same value IS a valid box-shadow, so the narrowing is what refuses it.
+    expect(parseShadowValue('0 1px 2px 4px black').kind).toBe('layers')
+  })
+
+  it('refuses an inset keyword — text-shadow has no inset', () => {
+    expect(parseShadowValue('inset 0 1px 2px black', TEXT_SHADOW_GRAMMAR).kind).toBe('raw')
+    expect(parseShadowValue('inset 0 1px 2px black').kind).toBe('layers')
+  })
+
+  it('creates a default text shadow with no spread and no inset', () => {
+    const layer = createDefaultTextShadowLayer()
+    expect(layer.inset).toBe(false)
+    expect(layer.spreadRadius).toBe('')
+    const serialized = serializeBoxShadowLayer(layer)
+    expect(parseShadowValue(serialized, TEXT_SHADOW_GRAMMAR).kind).toBe('layers')
   })
 })

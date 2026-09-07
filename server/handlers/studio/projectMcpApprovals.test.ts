@@ -1,23 +1,24 @@
 /**
- * agentRosterMcpTools — the fix for the structural blocker: a subagent can
- * now hold a vetted `mcp__<approved-server>__<tool>` name without throwing,
- * while an unapproved/unknown server name still throws exactly as before.
+ * projectMcpApprovals — which external MCP servers a project has actually
+ * approved, and the fingerprint witness of that fact.
+ *
+ * These two functions used to live in `agentRosterMcpTools.ts` alongside
+ * `assertKnownAgentTools`, the gate over a generated subagent roster's
+ * `tools:` frontmatter. The roster is gone (`projectMcpApprovals.ts`'s own
+ * doc says why), and so is that gate and the module that held it — the
+ * approval reads survived into `./projectMcpApprovals`, which is what this
+ * file exercises.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  assertKnownAgentTools,
-  mcpServerFingerprintWitness,
-  resolveApprovedMcpServerNames,
-} from './agentRosterMcpTools'
-import type { StudioAgentDef } from './agentRosterTypes'
+import { mcpServerFingerprintWitness, resolveApprovedMcpServerNames } from './projectMcpApprovals'
 
 let dir: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'studio-roster-mcp-'))
+  dir = mkdtempSync(join(tmpdir(), 'studio-project-mcp-'))
   writeMeta({})
 })
 
@@ -29,17 +30,20 @@ function writeMcpJson(entries: Record<string, unknown>): void {
   writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: entries }))
 }
 
-/** Writes `.studio/meta.json`, always opting out of Studio's auto-approved loopback `figma` built-in — these tests assert on project-declared servers, not on the default. */
+/**
+ * Writes `.studio/meta.json`, always opting the project out of the shipped
+ * `figma` built-in so these tests assert on project-declared servers only.
+ * The built-in is the REMOTE endpoint now (`BUILT_IN_MCP_SERVERS`), which does
+ * not self-approve — but it is still LISTED, so it would otherwise show up in
+ * `mcpServerFingerprintWitness`'s string and couple these assertions to the
+ * shipped list.
+ */
 function writeMeta(meta: Record<string, unknown>): void {
   mkdirSync(join(dir, '.studio'), { recursive: true })
   writeFileSync(
     join(dir, '.studio', 'meta.json'),
     JSON.stringify({ disabledBuiltInMcpServers: ['figma'], ...meta }),
   )
-}
-
-function agentDef(tools: string[]): StudioAgentDef {
-  return { name: 'fixture-agent', description: 'fixture', tools, prompt: 'fixture' }
 }
 
 describe('resolveApprovedMcpServerNames', () => {
@@ -74,44 +78,6 @@ describe('resolveApprovedMcpServerNames', () => {
     writeMcpJson({ studio: { command: 'evil', args: [] } })
     writeMeta({ approvedMcpServers: ['studio'] })
     expect(resolveApprovedMcpServerNames(dir)).toEqual(new Set())
-  })
-})
-
-describe('assertKnownAgentTools — the structural fix', () => {
-  it('still passes through a real native studioAgentTools name unchanged', () => {
-    const def = agentDef(['studio_list_pages'])
-    expect(assertKnownAgentTools(def, new Set())).toBe(def)
-  })
-
-  it('still throws on an unknown native-shaped name (unchanged prior behaviour)', () => {
-    const def = agentDef(['studio_this_tool_does_not_exist'])
-    expect(() => assertKnownAgentTools(def, new Set())).toThrow(/unknown tool/)
-  })
-
-  it('THE FIX: accepts a vetted mcp__<approved-server>__<tool> name', () => {
-    const def = agentDef(['mcp__figma__get_image'])
-    expect(() => assertKnownAgentTools(def, new Set(['figma']))).not.toThrow()
-  })
-
-  it('refuses an mcp__<server>__<tool> name for a server that is NOT approved — "vetted" is tied to real approval, not the mcp__ shape alone', () => {
-    const def = agentDef(['mcp__figma__get_image'])
-    expect(() => assertKnownAgentTools(def, new Set())).toThrow(/unknown tool/)
-    expect(() => assertKnownAgentTools(def, new Set(['some-other-server']))).toThrow(/unknown tool/)
-  })
-
-  it('refuses a bare mcp__<server> name with no tool segment, even for an approved server', () => {
-    const def = agentDef(['mcp__figma'])
-    expect(() => assertKnownAgentTools(def, new Set(['figma']))).toThrow(/unknown tool/)
-  })
-
-  it('a mixed tools list (native + vetted mcp__) is accepted as a whole', () => {
-    const def = agentDef(['studio_find_component', 'mcp__figma__get_metadata'])
-    expect(() => assertKnownAgentTools(def, new Set(['figma']))).not.toThrow()
-  })
-
-  it('one bad name in an otherwise-valid list still throws for the whole definition', () => {
-    const def = agentDef(['studio_find_component', 'mcp__unapproved__get_metadata'])
-    expect(() => assertKnownAgentTools(def, new Set(['figma']))).toThrow(/unknown tool/)
   })
 })
 

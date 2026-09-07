@@ -66,8 +66,14 @@ mock.module('../../capture/headlessFrameInspect', () => ({
   },
 }))
 
+// `mock.module` replaces the WHOLE module for every file in the same `bun test`
+// run, so a factory that omits an export breaks any other suite importing it —
+// `frameAxesTools.test.ts` imports the real `pushStudioLiveReload` through the
+// tool under test. Both exports, always.
 mock.module('./liveReloadPush', () => ({
   awaitStudioLiveReload: async (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
+  pushStudioLiveReload: (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
+  STUDIO_LIVE_RELOAD_TOOL_NAME: 'studio_live_reload',
 }))
 
 const { studioMeasureElementMcpTools } = await import('./measureElement')

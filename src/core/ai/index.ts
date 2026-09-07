@@ -103,12 +103,14 @@ export {
   StudioFindComponentInputSchema,
   StudioListComponentBindingsInputSchema,
   StudioFetchRemoteAssetInputSchema,
+} from './toolSchemas'
+export {
   StudioRegisterDesignReferenceInputSchema,
   StudioListDesignReferencesInputSchema,
   StudioReadDesignReferenceInputSchema,
   StudioRecommendExportDprInputSchema,
   StudioDeleteDesignReferenceInputSchema,
-} from './toolSchemas'
+} from './designReferenceToolSchemas'
 export {
   StudioSetFrameAxesInputSchema,
   StudioComputedStylesInputSchema,

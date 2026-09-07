@@ -13,7 +13,15 @@
  *     (`auto` / `fill` / `hug` — see `SCRUB_KEYWORDS`);
  *   - anything else (`"calc(100% - 8px)"`, `""`, a var() reference) — not
  *     scrubbable; drag is a no-op and typing is the only way to change it.
+ *
+ * TYPING is a wider door than dragging: `resolveCommitValue` (below) is what
+ * a typed value goes through on commit, and it accepts arithmetic
+ * (`100/2`, `100+8`) via the shared `numericExpression` evaluator and gives a
+ * bare number the field's own unit. Dragging still needs a single numeric
+ * baseline, so `parseScrubValue` stays the narrower gate for the gesture.
  */
+
+import { formatNumericExpression } from './numericExpression'
 
 export interface ParsedScrubValue {
   magnitude: number
@@ -51,6 +59,30 @@ export function parseScrubValue(raw: string): ParsedScrubValue | null {
 export function formatScrubValue(magnitude: number, unit: string): string {
   const rounded = Math.round(magnitude * 100) / 100
   return `${rounded}${unit}`
+}
+
+/**
+ * What a TYPED value becomes on commit (blur / Enter / Tab).
+ *
+ * Three cases, in order:
+ *   1. A recognised keyword (`auto`/`fill`/`hug`) — passed through untouched.
+ *   2. Arithmetic or a bare number — evaluated, then given `fallbackUnit`
+ *      when the expression carried no unit of its own. This is what stops a
+ *      typed `50` in Width from emitting the invalid declaration `width: 50`;
+ *      it is the same coercion `resolveTokenValue` applies in the
+ *      token-aware fields, so both field kinds agree on what `50` means.
+ *   3. Anything else (`calc(…)`, `var(…)`, `10px 20px`, a half-typed value)
+ *      — kept as the user's literal text. We do not rewrite CSS we did not
+ *      fully understand.
+ *
+ * `fallbackUnit: ''` marks a genuinely unitless field (a frame's pixel count)
+ * and leaves a bare number bare.
+ */
+export function resolveCommitValue(raw: string, fallbackUnit: string): string {
+  const trimmed = raw.trim()
+  if (trimmed === '') return trimmed
+  if (isScrubKeyword(trimmed)) return trimmed
+  return formatNumericExpression(trimmed, fallbackUnit) ?? raw
 }
 
 export interface ScrubDeltaOptions {

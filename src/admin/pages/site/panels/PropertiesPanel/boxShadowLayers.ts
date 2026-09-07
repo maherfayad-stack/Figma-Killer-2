@@ -1,11 +1,17 @@
 /**
- * boxShadowLayers — pure parse/serialise for the CSS `box-shadow` value
- * (docs/features/inspector-disclosure.md §4 G8, F21).
+ * boxShadowLayers — pure parse/serialise for the CSS shadow values
+ * `box-shadow` and `text-shadow`
+ * (docs/features/inspector-disclosure.md §4 G8/G9, F21).
  *
- * `box-shadow` is a comma-separated LIST of layers, and each layer is itself
- * a small, order-flexible grammar:
+ * Both are a comma-separated LIST of layers, and each layer is itself a
+ * small, order-flexible grammar:
  *
  *   [inset]? && <length>{2,4} && <color>?
+ *
+ * `text-shadow` is the same grammar with two things taken away — no spread
+ * (three lengths, not four) and no `inset` — which is exactly what
+ * `ShadowGrammar` selects, so the two properties share one parser instead of
+ * one growing a near-copy of the other.
  *
  * ("&&" = any order, "?" = optional). This module never guesses: it only
  * accepts the shapes it can reconstruct byte-for-byte, and refuses (returns
@@ -18,7 +24,7 @@
  * plan's §7) — a value that doesn't round-trip stays a raw string, in full,
  * with a reason, never silently reformatted or truncated.
  *
- * `EffectsSection.tsx` is the only intended caller: `parseBoxShadowValue`
+ * `EffectsSection.tsx` is the only intended caller: `parseShadowValue`
  * classifies the whole stored value, and the section renders either N
  * structured `PropertyList` rows (the `'layers'` case) or a single raw-text
  * fallback row (the `'raw'` case) from the result.
@@ -65,6 +71,22 @@ export type BoxShadowParseResult =
   | { kind: 'empty' }
   | { kind: 'layers'; layers: BoxShadowLayer[] }
   | { kind: 'raw'; raw: string; reason: string }
+
+/**
+ * Which shadow property is being read. `box-shadow` and `text-shadow` share
+ * one grammar with two narrowings, so they share one parser rather than
+ * growing a near-copy: a text shadow has no spread (three lengths, not four)
+ * and no `inset` keyword. A value outside its own property's grammar is
+ * refused, not accepted-and-then-hidden — the editor for a text shadow must
+ * not offer a spread field that CSS would ignore.
+ */
+export interface ShadowGrammar {
+  maxLengths: 3 | 4
+  allowInset: boolean
+}
+
+export const BOX_SHADOW_GRAMMAR: ShadowGrammar = { maxLengths: 4, allowInset: true }
+export const TEXT_SHADOW_GRAMMAR: ShadowGrammar = { maxLengths: 3, allowInset: false }
 
 // ---------------------------------------------------------------------------
 // Tokenising — depth-aware so commas/whitespace inside `rgba(…)`, `var(…)`,
@@ -127,7 +149,7 @@ function isLengthToken(token: string): boolean {
  * parse (a `box-shadow` list is one property; a half-structured list is not
  * an honest representation of it).
  */
-function parseSingleLayer(segment: string): BoxShadowLayer | null {
+function parseSingleLayer(segment: string, grammar: ShadowGrammar): BoxShadowLayer | null {
   const tokens = tokenizeLayer(segment)
   if (tokens.length === 0) return null
 
@@ -140,6 +162,10 @@ function parseSingleLayer(segment: string): BoxShadowLayer | null {
     insetPosition = 'trailing'
     rest = tokens.slice(0, -1)
   }
+  // `text-shadow` has no `inset` keyword: a value carrying one is not a text
+  // shadow this module can edit, and pretending otherwise would put an inset
+  // checkbox on a property that has no such concept.
+  if (insetPosition !== 'none' && !grammar.allowInset) return null
   // `inset` anywhere else (or more than once) is too ambiguous to trust.
   if (rest.some((token) => token.toLowerCase() === 'inset')) return null
 
@@ -171,7 +197,7 @@ function parseSingleLayer(segment: string): BoxShadowLayer | null {
     return null
   }
 
-  if (lengths.length < 2 || lengths.length > 4) return null
+  if (lengths.length < 2 || lengths.length > grammar.maxLengths) return null
 
   const [offsetX, offsetY, blurRadius = '', spreadRadius = ''] = lengths
 
@@ -188,15 +214,15 @@ function parseSingleLayer(segment: string): BoxShadowLayer | null {
 }
 
 /**
- * Parses every comma-separated layer of a `box-shadow` value. Pure grammar
- * check — independent of whether the result would round-trip byte-for-byte
- * (see `parseBoxShadowValue`, which adds that check). Returns `null` if ANY
- * layer fails to parse.
+ * Parses every comma-separated layer of a shadow value. Pure grammar check —
+ * independent of whether the result would round-trip byte-for-byte (see
+ * `parseShadowValue`, which adds that check). Returns `null` if ANY layer
+ * fails to parse.
  */
-export function parseBoxShadowLayers(value: string): BoxShadowLayer[] | null {
+export function parseShadowLayers(value: string, grammar: ShadowGrammar = BOX_SHADOW_GRAMMAR): BoxShadowLayer[] | null {
   const segments = splitTopLevel(value, ',').map((segment) => segment.trim())
   if (segments.length === 0 || segments.some((segment) => segment === '')) return null
-  const layers = segments.map(parseSingleLayer)
+  const layers = segments.map((segment) => parseSingleLayer(segment, grammar))
   if (layers.some((layer) => layer === null)) return null
   return layers as BoxShadowLayer[]
 }
@@ -227,18 +253,25 @@ export function serializeBoxShadowLayers(layers: readonly BoxShadowLayer[]): str
 // ---------------------------------------------------------------------------
 
 /**
- * Classifies a stored `box-shadow` value for rendering. `'layers'` only when
- * the value both parses AND re-serialises byte-for-byte identical to the
- * input — anything else (a grammar we don't accept, or one we accept but
- * whose formatting we can't reproduce exactly: extra whitespace, an unusual
- * token order) is `'raw'`, never silently reformatted.
+ * Classifies a stored shadow value for rendering. `'layers'` only when the
+ * value both parses AND re-serialises byte-for-byte identical to the input —
+ * anything else (a grammar we don't accept, or one we accept but whose
+ * formatting we can't reproduce exactly: extra whitespace, an unusual token
+ * order) is `'raw'`, never silently reformatted.
+ *
+ * `grammar` picks which shadow property is being read: `box-shadow` (up to
+ * four lengths, `inset` allowed) or `text-shadow` (up to three lengths, no
+ * `inset`) — see `ShadowGrammar`.
  */
-export function parseBoxShadowValue(value: string | number | undefined | null): BoxShadowParseResult {
+export function parseShadowValue(
+  value: string | number | undefined | null,
+  grammar: ShadowGrammar = BOX_SHADOW_GRAMMAR,
+): BoxShadowParseResult {
   if (value == null) return { kind: 'empty' }
   const trimmed = String(value).trim()
   if (trimmed === '' || trimmed.toLowerCase() === 'none') return { kind: 'empty' }
 
-  const layers = parseBoxShadowLayers(trimmed)
+  const layers = parseShadowLayers(trimmed, grammar)
   if (!layers) {
     return {
       kind: 'raw',
@@ -271,6 +304,20 @@ export function createDefaultBoxShadowLayer(inset: boolean): BoxShadowLayer {
     offsetX: '0',
     offsetY: '4px',
     blurRadius: '4px',
+    spreadRadius: '',
+    color: 'rgba(0, 0, 0, 0.25)',
+    colorPosition: 'trailing',
+  }
+}
+
+/** A fresh text shadow — no spread, no inset, because `text-shadow` has neither. */
+export function createDefaultTextShadowLayer(): BoxShadowLayer {
+  return {
+    inset: false,
+    insetPosition: 'none',
+    offsetX: '0',
+    offsetY: '1px',
+    blurRadius: '2px',
     spreadRadius: '',
     color: 'rgba(0, 0, 0, 0.25)',
     colorPosition: 'trailing',

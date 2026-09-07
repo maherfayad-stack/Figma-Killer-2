@@ -217,11 +217,14 @@ describe('StyleRuleComposer inline style filtering', () => {
       target: { value: 'color' },
     })
 
-    expect(document.querySelector('[data-testid="css-property-row-color"]')).not.toBeNull()
-    // Fill is a LIST now (G6), so it does not pre-draw an unset backgroundColor
-    // row for a search to match. Searching "color" surfaces the section's own
-    // add action instead — the property is still reachable, which is what this
-    // test is really about.
+    // Fill is a LIST now (G6), so it does not pre-draw an unset row for a
+    // search to match — and since W8-1 finished G9, `color` is one of its
+    // entries too (a text node's colour is its fill). Searching "color"
+    // therefore surfaces the section's own add actions rather than two
+    // resident rows; the properties stay reachable, which is what this test is
+    // really about.
+    expect(document.querySelector('[data-testid="css-property-row-color"]')).toBeNull()
+    expect(screen.getByRole('button', { name: /add text colour/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeDefined()
     expect(document.querySelector('[data-testid="css-property-row-display"]')).toBeNull()
     expect(screen.queryByRole('menu', { name: /available style properties/i })).toBeNull()
