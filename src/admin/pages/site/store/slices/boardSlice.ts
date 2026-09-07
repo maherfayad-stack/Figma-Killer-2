@@ -121,6 +121,7 @@ import {
   defaultFramePosition,
   getActiveBoard,
   FRAME_WIDTH,
+  VARIANT_GAP,
 } from '@core/studio-board'
 import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
 import * as guideActions from './boardGuideActions'
@@ -133,9 +134,6 @@ import {
 } from './boardAnnotationSliceActions'
 
 export type { FrameAlignEdge }
-
-/** WS-10 Phase 2 — horizontal gap between a source frame and its "duplicate as variant" sibling. */
-const VARIANT_GAP = 48
 
 /** Mirrors `FrameDefaultsSchema` in `server/handlers/studio/studioMeta.ts` — kept as a plain client-local shape so this browser module never imports server code. */
 export interface FrameDefaults {

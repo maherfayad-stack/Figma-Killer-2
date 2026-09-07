@@ -21,6 +21,119 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### mcp-20 — W9-6: the last three bridge-bound tools go headless, and the agent gets a ruler
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-07
+- **Branch:** `feat/headless-bridge-tools` off fresh `origin/main`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W9-6 exactly — `studio_computed_styles`,
+  `studio_set_frame_axes` and `studio_duplicate_frame_as_variant` work with no
+  editor tab open; `studio_upload_asset` stays browser-side; add
+  `studio_measure_element`.
+- **Scope:** NEW `src/core/studio-capture/{frameInspectWire,frameInspector}.ts`,
+  `src/core/ai/studioFrameToolSchemas.ts`,
+  `src/admin/agentCapture/frameInspectBridge.ts`,
+  `server/ai/mcp/capture/{captureSession,headlessFrameInspect}.ts`,
+  `server/ai/mcp/tools/studio/{computedStyles,measureElement,frameAxesTools,uploadAssetTool}.ts`
+  (+ tests). MODIFIED `headlessCapture.ts`, `editTools.ts`, `boardFrames.ts`,
+  `agentToolNames.ts`, `parityMatrix.ts`, `systemPrompt.ts`, `frameGrid.ts`,
+  `boardSlice.ts`, `executor.ts`, `CaptureFrame.tsx`, `main.tsx`,
+  `docs/features/{agent,mcp-connectors}.md`. DELETED
+  `server/ai/mcp/tools/studio/browserBridgeTools.ts`; RENAMED
+  `studioBrowserBridgeTools.ts` → `studioUploadAsset.ts` (both halves).
+- **Done so far:**
+  - **A second wire contract on the capture page.**
+    `window.__studioAgentCaptureInspect(requestJson) -> responseJson`, installed
+    beside `__studioAgentCapture`, TypeBox-validated in both directions. One
+    global with a discriminated request (`computedStyles` | `measure`) rather
+    than two globals and two settle paths.
+  - **One reader, two documents.** `@core/studio-capture`'s
+    `inspectFrameDocument` is the measurement; the capture page AND the live
+    canvas both run it. Two readers would mean the number
+    `studio_computed_styles` reports depends on which path answered.
+  - **`captureSession.ts`** extracts the five steps both drivers share (mint
+    grant → warm page → navigate → settle → validate report). `headlessCapture.ts`
+    keeps only the photography; `captureFrames.ts` was NOT touched (W10 owns it)
+    because `headlessCapture.ts` re-exports the moved types.
+  - **`studio_computed_styles`** is `execution:'server'`, headless-first with
+    the live tab as fallback; `readVia` says which answered and a both-paths
+    failure names BOTH reasons. **It now also works for a page with NO board
+    frame at all** — `capturePayload.ts` defaults frame geometry, so the live
+    path's "place a frame first" precondition is gone on the headless path.
+  - **`studio_set_frame_axes` / `studio_duplicate_frame_as_variant`** are
+    `execution:'server'` and write `.studio/boards.json` through
+    `boardFrames.ts`'s now-exported `readBoardsFile`/`writeBoardsFile`, then
+    `pushStudioLiveReload({ boardsChanged: true })` so an open tab re-reads.
+    `VARIANT_GAP` moved to `@core/studio-board`'s `frameGrid.ts`, shared with
+    `boardSlice.ts`.
+  - **NEW `studio_measure_element`** — rendered boxes, padding/margin/border,
+    and the measured gap to siblings **beside the parent's declared
+    row-gap/column-gap**. That pair is the diagnosis: agreeing means the gap
+    value is wrong, disagreeing means a margin is in play. Follows
+    `studio_screenshot`'s three-step ritual (sync board → await live-reload →
+    read) so it measures a screen the agent just wrote. Registered in the
+    barrel, `agentToolNames.ts`, `parityMatrix.ts` and the system prompt.
+  - **`studio_upload_asset` deliberately did not move** — it posts as the
+    signed-in user, which is the one authority a server tool cannot hold.
+- **Next step:** none for this entry.
+- **Decisions:**
+  - **One inspect global, not two.** Both new reads are "run a DOM read against
+    a settled capture frame and return validated JSON". A discriminated
+    request keeps one settle path, one schema pair and one driver helper.
+  - **`studio_measure_element` has no live-tab fallback**, unlike
+    `studio_computed_styles`. The tab is authoritative only for an unsaved
+    in-progress edit; a measurement of layout the agent itself just authored
+    has no such state, so a fallback would only be a slower read of the same
+    file.
+  - **`mutates: true` on a measurement.** It runs `syncBoardFramesFromDisk`,
+    which is a write — the same trade `studio_screenshot` makes, and for the
+    same reason: an agent that has to remember a placement call first will skip
+    it and measure nothing.
+  - **The three moved tools' schemas gained an optional `dir`.** They are
+    server tools now, so they need the same `resolveToolProjectDir` fallback
+    chain every other Studio tool has. The bridge relay deliberately does NOT
+    forward `dir` — the tab already knows which project it has open.
+- **Landmines:**
+  - **`bun test src/__tests__/architecture/module-size-budgets.test.ts` fired on
+    my own diff.** Adding the `studio_measure_element` schema pushed
+    `src/core/ai/toolSchemas.ts` from 688 → 745 lines. Extracted the five
+    frame-addressing schemas to `src/core/ai/studioFrameToolSchemas.ts`
+    (629 + 129) rather than grandfathering. Anything else added to
+    `toolSchemas.ts` will hit this again within ~70 lines.
+  - **`editTools.ts`'s `studio_set_frames` was silently resizing nothing.** It
+    called `resizeFrame(next, frame.pageId, …)`, but `resizeFrame` keys on
+    `f.id` — and every frame written since WS-10 Phase 2 has a `crypto.randomUUID()`
+    id. It still reported `resized: N` and success. Fixed to `frame.id` in this
+    PR (same file, same family; it also lost its private third copy of
+    `writeBoardsFile`). It only ever worked for legacy files where `coerceFrame`
+    synthesised `id = pageId`.
+  - **`createScaffoldedPage(dir, nameInput)` takes a STRING, not an options
+    object**, and it already places a board frame — a test asserting the
+    "no frame yet" path must delete `.studio/boards.json` after scaffolding.
+  - **`safeParseValue` returns `{ ok: false, errors: [{path, message}] }`, not
+    `.error`.** `safeParseJson` DOES return `.error`. Easy to mix up.
+- **Verification:** `bunx tsc -b` ✅ exit 0 (`bun run build`'s vite half cannot
+  run in a worktree — `standing-08`). `bun run lint` ✅ clean.
+  New suites: `frameInspector.test.ts` 17 pass · `headlessFrameInspect.test.ts`
+  9 pass · `frameAxesTools.test.ts` 9 pass · `computedStyles.test.ts` 6 pass ·
+  `measureElement.test.ts` 7 pass. `bun test src/__tests__/ai src/__tests__/agent`
+  → 482 pass / 0 fail. `bun test src/admin/pages/site/agent src/core/studio-capture
+  src/core/studio-board` → 163 pass / 0 fail. `bun test src/__tests__/architecture`
+  → 18 fail, all the pre-existing `icon-catalog-integrity` cluster
+  (`standing-01`). `bun test server/ai/mcp server/ai/tools` → 8 fail, all the
+  pre-existing browser-dependent `captureFramesHeadless` / W4-2A `studio_compare`
+  batch-isolation cluster; `bun test server/ai/mcp/capture/headlessCapture.test.ts`
+  alone is 10 pass / 0 fail.
+- **Human action needed:** **dogfood — no e2e covers any of this.** With the
+  editor tab CLOSED, ask the agent to (1) `studio_computed_styles` a page and
+  confirm `readVia: "headless"` with real rows; (2) `studio_measure_element` a
+  page with a flex column and confirm `gapAfterPx` vs `parent.rowGapPx` read
+  sensibly; (3) `studio_set_frame_axes` to RTL, then reopen `/admin/site` and
+  confirm the frame is in RTL. Then with the tab OPEN, call
+  `studio_duplicate_frame_as_variant` and confirm the new frame appears on the
+  live board without a reload (the `boardsChanged` live-reload push). Needs
+  `bunx playwright install chromium`.
+
 ### panel-12 — W7-1: the launcher sorts, fails, and redraws honestly
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open)
