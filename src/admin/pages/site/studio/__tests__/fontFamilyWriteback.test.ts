@@ -26,7 +26,8 @@
  * save path. That omission is the reason cause 1 could ship unnoticed.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { fsCodemodAdapter, __resetStudioSidecarBaselinesForTests } from '../fsCodemodAdapter'
+import { fsCodemodAdapter } from '../fsCodemodAdapter'
+import { __resetSidecarBaselinesForTests } from '../sidecarSync'
 import { useEditorStore } from '@site/store/store'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
@@ -47,8 +48,8 @@ describe('font-family write-back', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
     // The sidecar-sync baselines are module state that outlives this file in a
-    // batch run — see `__resetStudioSidecarBaselinesForTests`'s own doc.
-    __resetStudioSidecarBaselinesForTests()
+    // batch run — see `__resetSidecarBaselinesForTests`'s own doc.
+    __resetSidecarBaselinesForTests()
   })
 
   function stubFetch(responses: Record<string, unknown> = {}) {

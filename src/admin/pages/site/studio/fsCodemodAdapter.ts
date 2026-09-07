@@ -44,9 +44,7 @@ import {
   styleValueKey,
 } from '@core/page-tree'
 import { apiRequest, ndjsonRequest } from '@core/http'
-import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { FrameworkSettingsSchema } from '@core/framework-schema'
-import { SiteFontsSettingsSchema } from '@core/fonts'
+import { type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
@@ -54,6 +52,7 @@ import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
 import { useAdminUi } from '@admin/state/adminUi'
 import { notifyUnexplainedSkips } from '@site/panels/unexplainedSkipsNotice'
 import { notifyInlineStyleUnsaved, type InlineStyleModuleRefusal } from '@site/panels/inlineStyleUnsavedNotice'
+import { armSidecarBaselines, loadSidecarSettings, noteFrameworkSynced, saveChangedSidecarSettings } from './sidecarSync'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
 import { getStudioWorkspaceDir, setStudioLoadedDir, studioWriteDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
@@ -96,64 +95,11 @@ import { setStudioVendorCss, setStudioAuthoredCss } from './studioRawCssStores'
 export type { ComponentSource } from './studioLoadStreamSchema'
 
 /**
- * GET /admin/api/studio/framework response — `null` when nothing is persisted
- * yet. `fonts` (`font-revert`) is the installed font library from the sibling
- * `.studio/fonts.json`; it rides this response rather than getting its own
- * route because it is loaded and saved on exactly the same beats.
- */
-const StudioFrameworkLoadResponseSchema = Type.Object({
-  framework: Type.Union([FrameworkSettingsSchema, Type.Null()]),
-  fonts: Type.Union([SiteFontsSettingsSchema, Type.Null()]),
-})
-
-/** POST /admin/api/studio/framework response. */
-const StudioFrameworkSaveResponseSchema = Type.Object({
-  ok: Type.Boolean(),
-  // Each field echoes back only what this save actually wrote — `null` for a
-  // kind the body did not carry. See `studioRouteBodies.ts` for why absent is
-  // "unchanged", not "clear it".
-  framework: Type.Union([FrameworkSettingsSchema, Type.Null()]),
-  fonts: Type.Union([SiteFontsSettingsSchema, Type.Null()]),
-})
-
-/**
  * Remembered from the last load so saveSite can tell the server which folder
  * to write. Held by `studioSaveRequests`, which every one-shot commit shares.
  */
 function loadedDir(): string | null {
   return studioWriteDir()
-}
-
-/**
- * Serialized `site.settings.framework` as of the last load/save — lets
- * `saveSite` tell whether the framework settings actually changed this round,
- * independent of whether there were any per-node prop/text/style edits.
- * `undefined` means "not yet initialized" (before the first `loadSite` call).
- */
-let lastSyncedFrameworkJson: string | undefined
-
-/**
- * `font-revert` — the same "did it actually change this round?" guard for
- * `site.settings.fonts`. Tracked separately from the framework json because
- * the two are separate `SiteSettings` fields with separate sidecars, and a
- * font install must trigger a POST even when the framework tokens are
- * untouched (which is the normal case: installing a font changes no token).
- */
-let lastSyncedFontsJson: string | undefined
-
-/**
- * Clear both sidecar-sync baselines. Module-level state survives across test
- * FILES in one `bun test` process, so a suite that installs a font and saves
- * leaves `lastSyncedFontsJson` set for every file that runs after it — and a
- * later suite calling `saveSite` WITHOUT a `loadSite` then sees a spurious
- * "the library changed" and fires an extra POST it does not expect. The same
- * hazard has always existed for `lastSyncedFrameworkJson`; it only became
- * observable once a second baseline joined it. Same shape as
- * `__resetToastBusForTests`.
- */
-export function __resetStudioSidecarBaselinesForTests(): void {
-  lastSyncedFrameworkJson = undefined
-  lastSyncedFontsJson = undefined
 }
 
 /**
@@ -220,7 +166,7 @@ export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
   if (dir === null) throw new Error('[fsCodemodAdapter] refreshExtractedTokens called before a project loaded')
   const { framework, status } = await fetchExtractedTokens(dir)
   useEditorStore.getState().applyExtractedFrameworkTokens(framework)
-  lastSyncedFrameworkJson = JSON.stringify(framework)
+  noteFrameworkSynced(framework)
   return status
 }
 
@@ -333,20 +279,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     site.styleRules = styleRules
     site.conditions = conditions
 
-    // Override the default shell's framework settings with whatever's
-    // persisted for this project, if anything — `null` means no
-    // `.studio/framework.json` yet, so the default stands as-is.
-    const { framework, fonts } = await apiRequest('/admin/api/studio/framework', {
-      schema: StudioFrameworkLoadResponseSchema,
-      query: overrideDir ? { dir: overrideDir } : undefined,
-    })
-    if (framework) site.settings.framework = framework
-    // `font-revert` — the installed font library was previously in-memory
-    // ONLY: nothing wrote it, nothing read it, so a font the user installed
-    // through the Framework/Typography panel vanished on the next load and
-    // every `var(--font-*)` token they had assigned resolved to nothing. See
-    // `server/handlers/studioFramework.ts`'s doc for the full account.
-    if (fonts) site.settings.fonts = fonts
+    // Override the default shell's framework tokens + font library with
+    // whatever this project has persisted in `.studio/`, if anything. See
+    // `sidecarSync.ts` — nothing persisted means the default stands as-is.
+    await loadSidecarSettings(site, overrideDir ?? null)
 
     // `tokens-01` — populate the Framework panel from the project's OWN
     // design tokens (`:root` custom properties, a Tailwind theme, or a vendor
@@ -365,8 +301,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       console.error('[fsCodemodAdapter] token extraction failed', err)
     }
 
-    lastSyncedFrameworkJson = JSON.stringify(site.settings.framework)
-    lastSyncedFontsJson = JSON.stringify(site.settings.fonts)
+    armSidecarBaselines(site)
 
     return site
   },
@@ -741,32 +676,11 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     }
     commitClassIdsBaseline(site.pages, refusedClassNodeIds)
 
-    // Framework settings (Colors/Typography/Spacing) live outside the
-    // per-node edit batch above — sync them independently so a framework-only
-    // change (no node prop/text/style edits at all) still persists.
-    const nextFrameworkJson = JSON.stringify(site.settings.framework)
-    // `JSON.stringify(undefined)` is `undefined`, NOT `"null"` — deliberately
-    // the same shape `lastSyncedFrameworkJson` uses, so "no library, never
-    // loaded" compares equal to "no library" and does not fire a spurious POST
-    // on the first save of a project that has no fonts at all.
-    const nextFontsJson = JSON.stringify(site.settings.fonts)
-    const fontsChanged = nextFontsJson !== lastSyncedFontsJson
-    if (nextFrameworkJson !== lastSyncedFrameworkJson || fontsChanged) {
-      await apiRequest('/admin/api/studio/framework', {
-        method: 'POST',
-        // Each kind is sent only when it actually changed — an absent field
-        // tells the server "no change of that kind", which is NOT the same as
-        // an empty bag and must not clobber the sidecar on disk.
-        body: {
-          dir: loadedDir(),
-          ...(site.settings.framework ? { framework: site.settings.framework } : {}),
-          ...(fontsChanged && site.settings.fonts ? { fonts: site.settings.fonts } : {}),
-        },
-        schema: StudioFrameworkSaveResponseSchema,
-      })
-      lastSyncedFrameworkJson = nextFrameworkJson
-      lastSyncedFontsJson = nextFontsJson
-    }
+    // Framework tokens and the installed font library live outside the
+    // per-node edit batch above — they are editor-owned `.studio/` sidecars,
+    // not `.tsx` source — so they sync independently and a settings-only
+    // change (no node edits at all) still persists. See `sidecarSync.ts`.
+    await saveChangedSidecarSettings(site, loadedDir())
 
     // LAST — every diff baseline above has now advanced, so the resync's own
     // baseline writes (fresh from disk, for exactly the reloaded pages) are
