@@ -15,13 +15,31 @@
  * The reload-call assertion below pins that ZERO, which is the property that
  * would silently regress if someone re-added a bridge round trip here.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseBoardsFile } from '@core/studio-board'
 import type { AgentFrameInspectRequest, AgentMeasureResult } from '@core/studio-capture'
 import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
+import * as headlessFrameInspectModule from '../../capture/headlessFrameInspect'
+import * as liveReloadPushModule from './liveReloadPush'
+
+/**
+ * `mock.module` is PROCESS-global and outlives this file — `bun test` runs
+ * every file in one process unless `--parallel` isolates them, so a mock left
+ * standing here is still standing when the next suite imports the same module.
+ * `headlessCapture.test.ts` passed alone and failed in a full run for exactly
+ * this reason. Snapshot the real exports (ESM imports evaluate before any
+ * statement in this body, so these ARE the real ones) and put them back.
+ */
+const realHeadlessFrameInspect = { ...headlessFrameInspectModule }
+const realLiveReloadPush = { ...liveReloadPushModule }
+
+afterAll(() => {
+  mock.module('../../capture/headlessFrameInspect', () => realHeadlessFrameInspect)
+  mock.module('./liveReloadPush', () => realLiveReloadPush)
+})
 
 const MEASURE_RESULT: AgentMeasureResult = {
   kind: 'measure',

@@ -14,7 +14,7 @@
  * project directory, so this exercises the actual dpr math, diff engine and
  * mtime-based invalidation, not a re-description of them.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -25,6 +25,32 @@ import { registerDesignReference } from '../../../../handlers/studio/designRefer
 import type { AiBrowserBridge } from '../../../runtime/types'
 import type { AiToolOutput } from '@core/ai'
 import { clearCompareVerdictCache } from './compareVerdictCache'
+import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
+import * as editorBridgeModule from '../../editorBridge'
+import * as liveReloadPushModule from './liveReloadPush'
+import * as headlessCaptureModule from '../../capture/headlessCapture'
+
+/**
+ * `mock.module` is PROCESS-global and outlives this file — `bun test` runs
+ * every file in one process unless `--parallel` isolates them, so a mock left
+ * standing here is still standing when the next suite imports the same module.
+ * That is not hypothetical: `headlessCapture.test.ts` passes alone and fails
+ * in a full run, because this file (and `captureFrames.test.ts`) had replaced
+ * the module it is testing.
+ *
+ * So every mock below is snapshotted first and put back in `afterAll`. The
+ * snapshot is a plain object taken at import time — ESM imports evaluate
+ * before any statement in this body, so these are the REAL exports.
+ */
+const realEditorBridge = { ...editorBridgeModule }
+const realLiveReloadPush = { ...liveReloadPushModule }
+const realHeadlessCapture = { ...headlessCaptureModule }
+
+afterAll(() => {
+  mock.module('../../editorBridge', () => realEditorBridge)
+  mock.module('./liveReloadPush', () => realLiveReloadPush)
+  mock.module('../../capture/headlessCapture', () => realHeadlessCapture)
+})
 
 let bridgeCalls: Array<{ toolName: string; input: unknown }> = []
 let bridgeImpl: ((toolName: string, input: unknown) => Promise<AiToolOutput>) | null = null
@@ -278,8 +304,13 @@ describe('studio_compare — dpr selection + purpose threading', () => {
       }
     }
 
+    // `strict` named explicitly, because the mode decides whether a 2.25%
+    // region is a defect at all: W9-2's table puts balanced's structural
+    // floor at 6% coverage, so this block passes there. The subject of this
+    // test is the node-id mapping, and a region has to FAIL for there to be a
+    // worst one to map.
     const result = (await studioCompareTool.handler!(
-      { dir, pages: ['Landing'], includeImages: false },
+      { dir, pages: ['Landing'], includeImages: false, fidelityMode: 'strict' },
       ctx(),
     )) as { ok: boolean; data: CompareData }
 
@@ -367,7 +398,11 @@ describe('studio_compare — dpr selection + purpose threading', () => {
     expect(result.data.results[0]!.pass).toBe(true)
 
     const { readPassingCompare } = await import('../../../../handlers/studio/pageVerificationStore')
-    const recorded = readPassingCompare(dir, pageId)
+    // Per ACCOUNT (W10) — read it back under the SAME key `compare.ts` wrote
+    // it under. Reading under a wrong key answers `null` for any page, which
+    // would make this assertion and its "does NOT record" sibling both pass
+    // no matter what the store contains.
+    const recorded = readPassingCompare(dir, studioAgentUserKey('u1'), pageId)
     expect(recorded).not.toBeNull()
     expect(recorded!.referenceId).toBe(registered.reference.id)
     expect(recorded!.passedAtMs).toBeGreaterThanOrEqual(before)
@@ -392,7 +427,7 @@ describe('studio_compare — dpr selection + purpose threading', () => {
     expect(result.data.results[0]!.pass).toBe(false)
 
     const { readPassingCompare } = await import('../../../../handlers/studio/pageVerificationStore')
-    expect(readPassingCompare(dir, pageId)).toBeNull()
+    expect(readPassingCompare(dir, studioAgentUserKey('u1'), pageId)).toBeNull()
   })
 })
 

@@ -15,6 +15,7 @@ import { studioMcpTools } from './index'
 import { STUDIO_AGENT_TOOL_NAMES } from '../../../tools/studio/agentToolNames'
 import { mcpToolsForCapabilities } from '../../registry'
 import type { ToolContext } from '../../../runtime/types'
+import { ProjectDirOutsideWorkspaceError } from '../../../../handlers/studioProjects'
 
 const DOC_PATH = join(import.meta.dir, '../../../../../docs/features/mcp-connectors.md')
 
@@ -47,8 +48,8 @@ describe('studio_page_diagnostics registration', () => {
 })
 
 describe('studio_page_diagnostics failure messages', () => {
-  it('names the missing precondition when no board is connected', async () => {
-    const ctx = {
+  function noBridgeContext(): ToolContext {
+    return {
       db: {} as never,
       userId: 'no-bridge-user',
       capabilities: ['ai.chat'],
@@ -56,14 +57,28 @@ describe('studio_page_diagnostics failure messages', () => {
       snapshot: undefined,
       signal: AbortSignal.abort(),
     } as unknown as ToolContext
+  }
 
-    const out = await studioPageDiagnosticsTool.handler!({ dir: '/nonexistent' }, ctx)
+  it('names the missing precondition when no board is connected', async () => {
+    // No `dir`: it defaults to the turn's open project. An explicit path is
+    // irrelevant to this assertion and, since W10 containment, an
+    // out-of-workspace one never reaches the bridge check at all.
+    const out = await studioPageDiagnosticsTool.handler!({}, noBridgeContext())
     const result = out as { ok: boolean; error?: string }
     expect(result.ok).toBe(false)
     // The message must say WHERE the precondition lives and that it self-heals,
     // not just return an empty result that reads as "nothing is wrong".
     expect(result.error).toContain('No Studio board is connected')
     expect(result.error).toContain('Studio browser tab')
+  })
+
+  it('refuses a dir outside the workspace before it looks for a board', async () => {
+    // The refusal that must never soften into "no diagnostics found": a
+    // read tool naming somewhere it may not go is a containment failure, not
+    // an empty result.
+    await expect(
+      studioPageDiagnosticsTool.handler!({ dir: '/nonexistent' }, noBridgeContext()),
+    ).rejects.toThrow(ProjectDirOutsideWorkspaceError)
   })
 })
 

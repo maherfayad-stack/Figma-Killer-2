@@ -16,9 +16,27 @@
  *   - (W9-5 lever 2) the live-reload wait is paid ONLY on the bridge fallback,
  *     never on the headless path and never for `source: 'live'`.
  */
-import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test'
 import type { AiToolOutput } from '@core/ai'
 import type { AiBrowserBridge } from '../../runtime/types'
+import * as headlessCaptureModule from './headlessCapture'
+import * as liveReloadPushModule from '../tools/studio/liveReloadPush'
+
+/**
+ * `mock.module` is PROCESS-global and outlives this file — `bun test` runs
+ * every file in one process unless `--parallel` isolates them, so a mock left
+ * standing here is still standing when the next suite imports the same module.
+ * `headlessCapture.test.ts` passed alone and failed in a full run for exactly
+ * this reason. Snapshot the real exports (ESM imports evaluate before any
+ * statement in this body, so these ARE the real ones) and put them back.
+ */
+const realHeadlessCapture = { ...headlessCaptureModule }
+const realLiveReloadPush = { ...liveReloadPushModule }
+
+afterAll(() => {
+  mock.module('./headlessCapture', () => realHeadlessCapture)
+  mock.module('../tools/studio/liveReloadPush', () => realLiveReloadPush)
+})
 
 let headlessImpl: () => Promise<unknown> = async () => ({
   ok: false,

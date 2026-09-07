@@ -182,7 +182,7 @@ describe('stopGateCheck.ts (spawned)', () => {
       await run(RECORD_SCRIPT, { tool_input: { file_path: path.join(projectDir, rel) }, cwd: projectDir })
       // Record the passing verdict AFTER the write it covers, via the real store module.
       const { recordPassingCompare } = await import('../pageVerificationStore')
-      recordPassingCompare(projectDir, USER, page.id, registered.reference.id)
+      recordPassingCompare(projectDir, USER, page.id, registered.reference.id, 'balanced')
 
       const result = await run(GATE_SCRIPT, { hook_event_name: 'Stop', cwd: projectDir, stop_hook_active: false })
       expect(result.exitCode).toBe(0)

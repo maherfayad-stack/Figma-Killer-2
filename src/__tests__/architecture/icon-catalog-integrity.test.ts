@@ -153,45 +153,52 @@ describe('Gate 1 — All direct icon imports exist in the icon catalog', () => {
 // ─── Gate 2: catalog files export the expected PascalCase component ──────────
 
 describe('Gate 2 — Catalog files export the expected PascalCase component name', () => {
-  // Sample a subset of icons that are actively used in editor components.
-  // Every entry must be an icon imported somewhere in src/ — otherwise it
-  // won't be present in the vendored pixel-art-icons subset shipped with the
-  // public CMS repo. (Constraint #451 forbids `XIcon` as a close glyph, so
-  // `x` is intentionally NOT in this list.)
-  const SAMPLED_ICONS = [
-    'eye-solid',
-    'undo',
-    'redo',
-    'file-text-solid',
-    'command',
-    'upload',
-    'sliders-horizontal',
-    'smartphone-solid',
-    'monitor-solid',
-    'laptop-solid',
-    'tablet-solid',
-    'chevron-right',
-    'chevron-left',
-    'folder-glyph',
-    'package-solid',
-    'search-solid',
-    'plus',
-  ]
+  // Enumerated from the vendored dist, NOT a hand-maintained sample list.
+  // A hardcoded list goes stale the moment the last import of an icon is
+  // deleted: `bun run icons:sync` prunes orphans out of the vendored subset,
+  // and the sample then names a file that no longer exists. Deriving the set
+  // from disk makes the gate self-maintaining and covers the whole catalog
+  // instead of a 17-icon sample.
+  const catalogIcons = existsSync(ICONS_DIR)
+    ? readdirSync(ICONS_DIR)
+        .filter((f) => extname(f) === ICON_FILE_EXT)
+        .map((f) => f.slice(0, -ICON_FILE_EXT.length))
+        .sort()
+    : []
 
-  for (const name of SAMPLED_ICONS) {
-    it(`pixel-art-icons/dist/icons/${name}.js exports "${toComponentName(name)}"`, () => {
-      const filePath = join(ICONS_DIR, `${name}${ICON_FILE_EXT}`)
-      expect(existsSync(filePath)).toBe(true)
+  it('the vendored catalog is present and non-empty', () => {
+    expect(
+      catalogIcons.length > 0,
+      `No icon files found at ${ICONS_DIR}.\n` +
+        'The vendored pixel-art-icons subset is missing or unbuilt.\n' +
+        'Fix: run `bun install` (which symlinks vendor/pixel-art-icons into\n' +
+        'node_modules), and if vendor/pixel-art-icons/dist/ is empty, rebuild\n' +
+        'it with `bun run icons:sync`.',
+    ).toBe(true)
+  })
 
-      const source = readFileSync(filePath, 'utf8')
+  it('every catalog file exports its expected PascalCase component', () => {
+    const broken: string[] = []
+
+    for (const name of catalogIcons) {
+      const source = readFileSync(join(ICONS_DIR, `${name}${ICON_FILE_EXT}`), 'utf8')
       const expected = toComponentName(name)
       const hasExport =
         source.includes(`export function ${expected}`) ||
         source.includes(`export const ${expected}`)
+      if (!hasExport) broken.push(`${name}${ICON_FILE_EXT} → expected export "${expected}"`)
+    }
 
-      expect(hasExport).toBe(true)
-    })
-  }
+    expect(
+      broken,
+      `These vendored icon files do not export the PascalCase component name\n` +
+        `that \`pixel-art-icons/icons/<name>\` consumers import:\n\n` +
+        broken.map((b) => `  - ${b}`).join('\n') +
+        `\n\nFix: the vendored dist is stale or the upstream icon was renamed.\n` +
+        `Re-vendor with \`bun run icons:sync\` (needs a sibling checkout of the\n` +
+        `upstream pixel-art-icons repo, or PIXEL_ART_ICONS_SRC pointing at one).`,
+    ).toHaveLength(0)
+  })
 })
 
 // ─── Gate 3: no inline <svg JSX in src/admin/pages/site/ components ────────────────────

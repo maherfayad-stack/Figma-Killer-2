@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { projectsRootDir } from '../../../../handlers/studioProjects'
+import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../../../../handlers/studioProjects'
 import { toolAllowedForCapabilities } from '../../../tools/capabilityGate'
 import { studioGitMcpTools } from './gitTools'
 import type { ToolContext } from '../../../runtime/types'
@@ -151,10 +151,24 @@ describe('studio_git_commit — behaviour', () => {
     expect(result.error).toContain('may not create it yourself')
   })
 
-  it('refuses a directory outside the workspace', async () => {
+  it('refuses a directory outside the workspace — before it can touch git at all', async () => {
+    // Since W10 containment is a THROW from `resolveToolProjectDir`, not a
+    // structured tool result: the refusal is decided in one place for every
+    // dir-taking surface, and the MCP layer renders it. Asserting the throw
+    // is what proves the tool did not quietly spawn git somewhere it may not.
+    await expect(
+      tool.handler({ dir: '/etc', message: 'x', files: ['passwd'] }, context(dir)),
+    ).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+  })
+
+  it('refuses the workspace ROOT with a structured outside-workspace result', async () => {
+    // The root passes containment (it IS the root) so it reaches the git
+    // guard, which refuses it separately: it holds every project and is not
+    // one. An unbound context, because a bound one would refuse the sideways
+    // move first and this is about the guard, not about the binding.
     const result = (await tool.handler(
-      { dir: '/etc', message: 'x', files: ['passwd'] },
-      context(dir),
+      { dir: projectsRootDir(), message: 'x', files: ['pages/Home.tsx'] },
+      { } as unknown as ToolContext,
     )) as { ok: boolean; code: string }
     expect(result.ok).toBe(false)
     expect(result.code).toBe('outside-workspace')

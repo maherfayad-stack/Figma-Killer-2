@@ -14,6 +14,41 @@ Archive section at the bottom of this file indexes them.
 
 ## Now
 
+### test-03 — CI was red because CI ran the suite the one way nobody else does
+- **Agent:** test-engineer · **Stage:** done (`bun run lint` clean; `bun run test` on the rebased tree = **12355 pass / 2 fail / 1 skip across 1131 files in ~216 s**, both failures the canvas pair handed to canvas-engineer; `tsc -p tsconfig.app.json` and `tsc -p tsconfig.node.json` exit 0; draft PR open)
+- **Branch:** `fix/ci-lint-and-server-suites` off `origin/main` (`942723d`). User report, verbatim: "fix all github errors it keeps sending me about them in the email". Paired with a sibling agent on the React/DOM half (PR #85).
+
+**`.github/workflows/ci.yml` ran `bun test`; every developer runs `bun run test`, which is `bun test --parallel=4`.** `--parallel` implies `--isolate` — a worker process with a fresh global per file. The bare form puts all ~1130 files in ONE process sharing one `document` and one module registry, and two leaks then travel between files: a React `act()` scope left open by a timed-out test poisons every later render (the sibling's ~600-test wipeout — `AlignGrid.test.tsx` rendered into a `<body>` still holding another suite's `<p data-node-id="title">Checkout</p>`), and `mock.module` is process-global and outlives the file that called it. That single line is why `main` has no green run in its visible history. CI now runs `bun run test`.
+
+**`bun test --isolate` alone is NOT the fix, and this is worth knowing.** It fixes the leak class (verified against the repro), but the single-process form CRASHED the run outright — `panic: Segmentation fault`, no retry, exit non-zero. Under `--parallel=4` bun crashes worker processes too — 6 in one full run here, 28 in another — but retries each file in a fresh process, and **34 of 34 retries passed across the two runs**. The retry only exists in the parallel path. Do not "simplify" the CI step to `--isolate`. **Watch this:** the segfaults are a bun bug, not ours; if a retry ever fails, CI will go red for a reason that has nothing to do with the diff under test.
+
+**Bun pinned 1.3.13 in all three jobs** (was 1.3.11). `engines` allows `>=1.3.0 <1.4.0`, dev machines run 1.3.13, and 1.3.13 is the version every number in this entry was measured on. CI running a version nobody develops against is a second source of "green locally, red in CI".
+
+**Lint: 6 unused `import * as os from 'node:os'`** in `server/handlers/__tests__/{components,previewAxes,reloadScope,styleCompileConsent,trustTier}.test.ts` and `server/handlers/studio/referenceUpload.test.ts`. Deleted. `bun run lint` is clean with nothing else outstanding.
+
+**Real regressions fixed at the source (these failed in CI *and* locally, per file):**
+- **`icon-catalog-integrity` Gate 2** sampled 17 icon names by hand, including `chevron-left`, which nothing imports any more — so `icons:sync` pruned it out of the vendored subset and the sample named a file that does not exist. The gate now ENUMERATES `vendor/pixel-art-icons/dist/icons/` and asserts every one of the 119 files exports its PascalCase component, plus a separate "the catalog is present and non-empty" case whose message names `bun install` / `bun run icons:sync`. Strictly stronger than the sample and it cannot go stale.
+- **`parityMatrix`** — `studio_plan_variants` and `studio_import_figma_frame` are registered mutating tools with no parity row. Two rows added. The gate was doing its job; nobody had answered it.
+- **W10 (`resolveProjectDir` containment) fallout in three test files.** `deploy.test.ts`, `gitTools.test.ts` and `pageDiagnostics.test.ts` still asserted the PRE-W10 shape — a per-route 404 / a structured `outside-workspace` result — while containment is now a THROW answered in one place (the router's catch, `rethrowProjectDirRefusal`). Rewritten to assert the throw, which is the refusal that actually exists; `deploy` keeps a separate case for the workspace ROOT (contained, so it reaches the route, which still 404s it) and `gitTools` keeps one for `assertWithinWorkspace`'s own structured refusal, reached with an unbound context.
+- **Stale call sites that `tsc` cannot see** (see the durable fact below): `computePageWriteVerification(dir, [page])` and `appendTurnWrite(dir, path)` missing the W10 `userKey`; `recordPassingCompare(…, t0)` passing a timestamp where W9-2's `fidelityMode` now sits, which made the store fail its own TypeBox validation and read back empty; `readPassingCompare(dir, pageId)` in `compare.test.ts` — that last one made the "**does NOT record a failing verdict**" refusal pass VACUOUSLY (a wrong key answers `null` for every page, so the assertion could not fail). All read/write under the same key the code under test uses now.
+- **`compare.test.ts`'s "worst region" case** expected `pass: false` from a 2.25%-of-frame region. W9-2 moved balanced's structural floor to 6% coverage, so that region is no longer a defect at the derived mode. The case now names `fidelityMode: 'strict'` explicitly — the subject is the imageScale→nodeId mapping, and a region has to FAIL for there to be a worst one to map. **This is a deliberately changed assertion.**
+- **`selectorStability` and `toolbar.test.ts`** were fixed independently and identically by PR #85 while this branch was in flight; on rebase both hunks resolved to no-ops. The only surviving piece of mine is the failure MESSAGE on `toolbar.test.ts`'s banned-pattern assertions — a gate that fails with "expected true to be false" tells the next person nothing, so it now names the guard, why it is the bug, and what to use instead.
+
+**Batch-isolation fixed at the source, not papered over by `--parallel`.** `mock.module` calls in `captureFrames`, `compare`, `computedStyles` and `measureElement` now snapshot the real exports at import time and re-install them in `afterAll`. That is why `headlessCapture.test.ts` (8 fails in CI), `headlessFrameInspect.test.ts` and `liveReloadPush.test.ts` are green in a bare, un-isolated run too. Isolation is the belt; the restore is the braces.
+
+**Portability landmine removed:** `computedStyles.test.ts` used `workspaceDir: '/tmp/project'`, which only passed because the suite's workspace root is the OS temp dir — `/tmp` on Linux, `/var/folders/…` on macOS. It now builds the path from `projectsRootDir()`.
+
+**Durable fact — `tsc` does not cover server tests.** `tsconfig.node.json` excludes `server/**/__tests__` and `server/**/*.test.ts`. Every stale call site above was invisible to the Build job and only surfaced as a runtime failure, or (worse) as a silently vacuous assertion. Including them is a 268-error job on the current tree — audited, reverted, NOT attempted here. Whoever takes it: that is the gate that would have caught this whole class.
+
+**CUT, deliberately, and named:**
+- **The three canvas failures** — `canvasScrollUnrollPinInteraction.test.tsx` (×2) and `selectionToolbar.test.tsx` (×1) — are the only red left in a `bun run test` run and are handed to canvas-engineer separately. Not touched.
+- **The React/DOM half** (`src/admin/**`, `src/ui/**`, `src/__tests__/canvas|panels|layout|admin/**`) belongs to the sibling agent (PR #85). Not touched.
+- **A full `bun test` writes into `studio-workspace/__canonical-fixture/`** — it modifies the tracked `package.json` and drops `index.html`, `vite.config.js`, `.studio/shell.json` and `prototype/`. Reverted out of this diff, not chased. A suite writing into committed user data is a real problem and needs its own owner.
+- **No architecture gate for "a `mock.module` must be restored."** The four offenders are fixed by hand. A gate over `server/**/*.test.ts` would be the durable answer; not written here.
+
+**Human action needed:** none for this diff — it is CI config, docs, and tests. The proof is the CI run on the PR itself.
+
+
 **M1 — "It opens" is complete.** Every WS-1.x/WS-8.x work order for M1 has
 landed: WS-1.1/1.2/1.4/8.1/8.2 (`meta-04`) and WS-1.3 (`server-04`, below).
 M2 is now in progress: WS-2.1/WS-2.2 (styles) landed, see `style-01` below.
@@ -5126,6 +5161,26 @@ about to report a large, cross-cutting `tsc` breakage in files nobody touched,
 ### standing-01 — the full suite runs now: 34 pre-existing failures, not ~200
 **Rewritten 2026-07-31 by `test-infra-01`. The old numbers are dead — do not
 quote "~200 failures" or "never run the full suite" any more.**
+
+**Amended 2026-09-07 by `test-03`. The 34 are dead too.** On macOS with bun
+1.3.13, `bun run test` reports **12351 pass / 2 fail / 1 skip across 1130
+files in ~160 s**. The two are `canvasScrollUnrollPinInteraction.test.tsx`
+(×2 — one file, two cases) and `selectionToolbar.test.tsx` (×1), owned by
+canvas-engineer.
+
+**Run it as `bun run test`, never as a bare `bun test`.** The script is
+`bun test --parallel=4`; `--parallel` implies `--isolate`. The bare form shares
+one process, one `document` and one module registry across all 1130 files, and
+reports **~600 extra failures that every one of those tests passes
+individually** — a leaked React `act()` scope and a leaked `mock.module`. That
+is what had CI red; see `test-03`. `bun test --isolate` alone fixes the leaks
+but segfaults the run with no retry — only the parallel path retries a crashed
+worker. A single file or directory (`bun test <path>`) is fine.
+
+The "Windows path/separator gates" bucket below has not been re-measured on
+Windows and may still hold. Everything else in it — the plugin QuickJS/worker
+suites, the `fsCodemodAdapter` cluster, `agentBreakpointCapture`,
+`selectorStability`, the `chevron-left` icon sample — is green as of `test-03`.
 
 `bun test` now **completes** in ~300 s and reports **7618 pass / 34 fail /
 1 skip** across 772 files on this Windows machine. Measured before/after on the

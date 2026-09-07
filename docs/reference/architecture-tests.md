@@ -107,7 +107,7 @@ See [docs/design.md](../design.md), [docs/reference/design-tokens.md](design-tok
 | `no-third-party-icons.test.ts`                | No `lucide-react`, `heroicons`, etc. Only `pixel-art-icons`.                     |
 | `direct-icon-imports.test.ts`                 | Icons imported deep (`pixel-art-icons/icons/<name>`), not from the package root. |
 | `vendor-icons-fresh.test.ts`                  | The vendored icon set is up-to-date (run `bun run icons:sync`).                  |
-| `icon-catalog-integrity.test.ts`              | Every icon import resolves; the vendored package's index is consistent.          |
+| `icon-catalog-integrity.test.ts`              | Every icon import resolves; **every** file in the vendored `dist/icons/` exports its PascalCase component (enumerated from disk, not a hand-kept sample — a sample goes stale the moment `icons:sync` prunes an icon nobody imports any more); no inline `<svg>` JSX; no Unicode glyph used as an icon. |
 | `close-icon-correctness.test.ts`              | Close affordances use the standard close icon glyph.                             |
 | `no-plugin-tab-shells.test.ts`                | `role="tablist"` is only allowed inside `src/ui/components/Tabs/` and a small §T-allowlisted set of pre-existing custom controls. Every other tablist in `src/admin/` or `src/editor/` must use `<Tabs>` / `<TabList>` from `@ui/components/Tabs`. |
 
