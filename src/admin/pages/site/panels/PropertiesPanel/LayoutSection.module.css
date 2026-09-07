@@ -5,9 +5,20 @@
  * vertical rhythm as Section.module.css's .sectionBody (8px gap).
  */
 
+/* `min-width: 0` on the grid AND its items, for the reason spelled out on
+ * `Section.module.css`'s `.sectionBody`: this section's display switcher,
+ * align pad and padding cluster all have intrinsic widths well past a 260px
+ * panel's ~200px content column, and without this the column grew to fit them
+ * and drew across the category rail. */
 .layoutSection {
     display: grid;
     gap: var(--space-s);
+    min-width: 0;
+}
+
+.layoutSection > *,
+.flexBlock > * {
+    min-width: 0;
 }
 
 /* Display row holds either the SegmentedControl (unset / flex / grid) or
@@ -188,34 +199,16 @@
     gap: var(--space-xs);
 }
 
-/* Single direction cell: icon · input · (clear button on hover when set).
- * Mirrors ClassPropertyRow's set/unset language via data-state so the
- * leading icon dims for unset values just like the labels in the rest of
- * the inspector. */
+/* Single direction cell: input (with its arrow mark inside, as the scrub
+ * handle) · clear button on hover when set. The arrow used to occupy its own
+ * 18px column beside the field; it is the field's own name, so it moved into
+ * the field's leading edge where every other inspector mark lives. */
 .directionCell {
     position: relative;
     display: grid;
-    grid-template-columns: 18px 1fr;
+    grid-template-columns: 1fr;
     align-items: center;
-    gap: var(--space-3xs);
     color: var(--text);
-}
-
-.directionCell[data-state="unset"] .directionIcon {
-    color: var(--text-subtle);
-}
-
-.directionCell[data-state="set"] .directionIcon {
-    color: var(--text);
-}
-
-.directionIcon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    color: var(--text-muted);
 }
 
 .directionInput {

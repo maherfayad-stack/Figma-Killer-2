@@ -126,3 +126,12 @@ export type {
 } from './addSlotPropToComponent'
 export { findComponentCallSites } from './componentCallSites'
 export type { ComponentCallSite } from './componentCallSites'
+
+/**
+ * The shared JSX locator every codemod above resolves its target with, also
+ * exported for READERS: `server/handlers/studio/nodeJsxSource.ts` ("Copy JSX")
+ * has to find the exact same span a write would land on, and a second locator
+ * there could drift from this one.
+ */
+export { createProject, findJsxElementAtLocation, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
+export type { JsxLocation, JsxOpeningLikeElement } from './locateJsxElement'
