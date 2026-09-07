@@ -21,11 +21,17 @@
  * This module previously also gated a generated subagent roster's `tools:`
  * frontmatter (`assertKnownAgentTools`). That roster is gone — the CLI does
  * not error on an unknown `subagent_type`, it silently substitutes its own
- * `general-purpose` agent and reports success it cannot back up, so `Task`
- * was removed from the session's tool surface entirely
- * (`claudeCliToolSurface.ts`) and what the roster carried now lives in the
- * project's generated `CLAUDE.md` (`projectGuide.ts`). With no subagent
- * definitions left to validate, the gate had nothing to gate.
+ * `general-purpose` agent and reports success it cannot back up, so Studio
+ * stopped generating agent definitions at all and what the roster carried now
+ * lives in the project's generated `CLAUDE.md` (`projectGuide.ts`). With no
+ * subagent definitions left to validate, the gate had nothing to gate.
+ *
+ * `Task` itself is granted again (`WORKSPACE_NATIVE_TOOLS` in
+ * `claudeCliToolSurface.ts`): the fabrication was caused by the INVENTED
+ * roster name, not by delegation, so the prompt pins `subagent_type` to the
+ * CLI's own built-in `'general-purpose'` instead. Nothing about that reaches
+ * this module — a subagent's tool surface is no longer described anywhere
+ * Studio has to validate.
  */
 import { listProjectMcpServers } from '../../ai/drivers/projectMcpServers'
 import { listRegisteredMcpServers } from '../../ai/drivers/registeredMcpServers'

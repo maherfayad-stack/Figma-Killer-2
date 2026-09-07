@@ -207,13 +207,21 @@ async function resolveSafeConnectAddress(
 /**
  * Single-machine escape hatch for fetching assets served on loopback.
  *
- * The concrete case is the Figma Dev Mode MCP server: it is the ONLY Figma
- * server a Studio agent gets (`BUILT_IN_MCP_SERVERS`, `127.0.0.1:3845`), and
- * every asset it exposes — the icons, logos and photographs a design is built
- * from, surfaced as download URLs by `get_design_context` — is served from
- * `http://localhost:3845/assets/...`. The SSRF guard blocked that origin, so
- * "the agent cannot download images or SVGs" was a true statement about the
- * product, not a model failure.
+ * The concrete case is Figma's Dev Mode MCP server, which runs on the user's
+ * own machine at `127.0.0.1:3845`: every asset it exposes — the icons, logos
+ * and photographs a design is built from, surfaced as download URLs by
+ * `get_design_context` — is served from `http://localhost:3845/assets/...`.
+ * The SSRF guard blocked that origin, so "the agent cannot download images or
+ * SVGs" was a true statement about the product, not a model failure.
+ *
+ * It is NOT a Studio built-in, and has not been since `figma` moved to the
+ * remote endpoint: `BUILT_IN_MCP_SERVERS` (`registeredMcpServers.ts`) now
+ * ships exactly one entry, `https://mcp.figma.com/mcp`, whose assets are
+ * ordinary public HTTPS URLs this flag has nothing to do with. A user who
+ * wants the local Dev Mode server registers and approves it themselves, like
+ * any other project MCP server — which is precisely why this stays an
+ * operator-set env var rather than something Studio turns on for a built-in
+ * it controls.
  *
  * The trade this makes is real and is the operator's to make: with this on,
  * any URL the agent supplies can reach any service on the host, INCLUDING
