@@ -109,7 +109,15 @@ const ENUM_OPTIONS = new Map<keyof CSSPropertyBag, string[]>([
   ['overflow',         ['visible', 'hidden', 'scroll', 'auto']],
   ['overflowX',        ['visible', 'hidden', 'scroll', 'auto']],
   ['overflowY',        ['visible', 'hidden', 'scroll', 'auto']],
-  ['backgroundRepeat', ['no-repeat', 'repeat', 'repeat-x', 'repeat-y']],
+  // `background-*` per-layer satellites. These reach a plain select only
+  // through the generic fallback row and the style search — the Fill section
+  // edits each one PER LAYER inside its own layer popover (see
+  // `backgroundLayers.ts`), where a whole-declaration write would be wrong.
+  ['backgroundRepeat', ['no-repeat', 'repeat', 'repeat-x', 'repeat-y', 'space', 'round']],
+  ['backgroundAttachment', ['scroll', 'fixed', 'local']],
+  ['backgroundOrigin', ['padding-box', 'border-box', 'content-box']],
+  ['backgroundClip',   ['border-box', 'padding-box', 'content-box', 'text']],
+  ['backgroundBlendMode', BLEND_MODE_KEYWORDS],
   ['objectFit',        ['cover', 'contain', 'fill', 'none', 'scale-down']],
   ['pointerEvents',    ['auto', 'none']],
   ['scrollBehavior',   ['auto', 'smooth']],
@@ -331,6 +339,10 @@ const DEFAULT_CSS_VALUES: Partial<Record<keyof CSSPropertyBag, string | number>>
   backgroundSize:    'auto',
   backgroundPosition:'0% 0%',
   backgroundRepeat:  'repeat',
+  backgroundAttachment: 'scroll',
+  backgroundOrigin:  'padding-box',
+  backgroundClip:    'border-box',
+  backgroundBlendMode: 'normal',
   objectFit:         'cover',
   objectPosition:    'center center',
   opacity:           1,              // number (CSSPropertyBag.opacity?: number); 1 = fully opaque

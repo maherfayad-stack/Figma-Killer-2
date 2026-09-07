@@ -31,6 +31,13 @@ function resourcesFor(fake: FakeSession, connectorId: string | null = 'connector
   }
 }
 
+/**
+ * The account every acquire below belongs to unless it says otherwise. The
+ * pool is keyed by (user, conversation) since W10, so a test that means "the
+ * same session" has to mean the same user too.
+ */
+const USER = 'user-1'
+
 /** Acquire, recording how many times a new session had to be created. */
 function acquirer(sessions: FakeSession[]) {
   let created = 0
@@ -38,8 +45,9 @@ function acquirer(sessions: FakeSession[]) {
     get created() {
       return created
     },
-    acquire: (conversationId: string, fingerprint: string) =>
+    acquire: (conversationId: string, fingerprint: string, userId: string = USER) =>
       acquireWarmSession({
+        userId,
         conversationId,
         fingerprint,
         create: async () => {
@@ -168,19 +176,21 @@ describe('teardown', () => {
     const lease = await pool.acquire('conv-1', 'fp-a')
     lease.endTurn()
 
-    await disposeWarmSessionsForConversation('conv-1')
+    await disposeWarmSessionsForConversation(USER, 'conv-1')
     expect(sessions[0]!.disposed).toBe(1)
     expect(warmSessionCount()).toBe(0)
     // Idempotent — a second delete must not throw.
-    await disposeWarmSessionsForConversation('conv-1')
+    await disposeWarmSessionsForConversation(USER, 'conv-1')
   })
 
   it('bounds the number of live processes, evicting the least recently used idle one', async () => {
     const sessions: FakeSession[] = []
     const pool = acquirer(sessions)
 
+    // One conversation each for ten DIFFERENT users, so what is being measured
+    // is the global ceiling and not the per-user one.
     for (let i = 0; i < 10; i += 1) {
-      const lease = await pool.acquire(`conv-${i}`, 'fp-a')
+      const lease = await pool.acquire(`conv-${i}`, 'fp-a', `user-${i}`)
       lease.endTurn()
       // Distinct `lastUsedAt` values, so "least recently used" is unambiguous.
       await Bun.sleep(2)
@@ -192,6 +202,29 @@ describe('teardown', () => {
     expect(sessions[9]!.disposed).toBe(0)
   })
 
+  it('bounds ONE user to their own share, without touching anybody else', async () => {
+    // The shape this closes: without a per-user cap, one person with several
+    // tabs fills all eight slots and every other user's next turn pays a full
+    // cold spawn — the shared-server version of the cost the pool exists to
+    // remove.
+    const sessions: FakeSession[] = []
+    const pool = acquirer(sessions)
+
+    const otherUser = await pool.acquire('conv-other', 'fp-a', 'user-2')
+    otherUser.endTurn()
+    await Bun.sleep(2)
+
+    for (let i = 0; i < 4; i += 1) {
+      const lease = await pool.acquire(`conv-${i}`, 'fp-a')
+      lease.endTurn()
+      await Bun.sleep(2)
+    }
+
+    // Two for the busy user, plus the untouched session belonging to the other.
+    expect(warmSessionCount()).toBe(3)
+    expect(sessions[0]!.disposed).toBe(0)
+  })
+
   it('never evicts a mid-turn session to make room', async () => {
     const sessions: FakeSession[] = []
     const pool = acquirer(sessions)
@@ -199,10 +232,10 @@ describe('teardown', () => {
     // Fill the pool with sessions that are all still streaming.
     const held = []
     for (let i = 0; i < 8; i += 1) {
-      held.push(await pool.acquire(`conv-${i}`, 'fp-a'))
+      held.push(await pool.acquire(`conv-${i}`, 'fp-a', `user-${i}`))
       sessions[i]!.busy = true
     }
-    const overflow = await pool.acquire('conv-late', 'fp-a')
+    const overflow = await pool.acquire('conv-late', 'fp-a', 'user-late')
 
     expect(sessions.slice(0, 8).every((s) => s.disposed === 0)).toBe(true)
     overflow.endTurn()
@@ -225,6 +258,7 @@ describe('teardown', () => {
   it('lets a failed spawn through to the caller without pooling anything', async () => {
     await expect(
       acquireWarmSession({
+        userId: USER,
         conversationId: 'conv-1',
         fingerprint: 'fp-a',
         create: async () => {

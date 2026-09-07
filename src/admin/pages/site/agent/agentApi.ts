@@ -219,14 +219,23 @@ const CreatedConversationEnvelopeSchema = Type.Object(
 )
 type CreatedConversation = Static<typeof CreatedConversationEnvelopeSchema>['conversation']
 
+/**
+ * `dir` stamps the new row's `project_key` (W10) so the thread belongs to the
+ * project it was started in. Sent from `agentProjectDir()` — the same value
+ * the turn itself will carry as `workspaceDir`, which is what keeps the
+ * server's cross-project 409 from firing on a thread's very first turn. Null
+ * (no project loaded yet) creates an unscoped thread, which the first real
+ * turn then adopts.
+ */
 export async function createConversation(
   credentialId: string,
   modelId: string,
+  dir: string | null,
   signal?: AbortSignal,
 ): Promise<CreatedConversation> {
   const body = await apiRequest(AI_CONVERSATIONS_PATH, {
     method: 'POST',
-    body: { credentialId, modelId },
+    body: dir ? { credentialId, modelId, dir } : { credentialId, modelId },
     schema: CreatedConversationEnvelopeSchema,
     fallbackMessage: 'Conversation create failed',
     signal,

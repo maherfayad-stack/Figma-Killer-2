@@ -56,7 +56,7 @@
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import { detectDeployProviders } from './deployProviders'
 import { assertDeployableProject } from './deployRunner'
@@ -103,6 +103,7 @@ export async function tryServeStudioDeploy(req: Request, url: URL, pathname: str
     if (pathname === ROUTE_PREFIX && req.method === 'POST') return await serveStart(req)
     if (pathname.startsWith(`${ROUTE_PREFIX}/`) && req.method === 'GET') return serveJob(url, pathname)
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:deploy]', err)
     return jsonResponse({ error: 'The deploy request could not be completed.' }, { status: 500 })
   }

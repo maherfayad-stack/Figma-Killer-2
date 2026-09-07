@@ -61,7 +61,7 @@ import {
   type GitRunResult,
 } from './gitRunner'
 import { parseGitStatusPorcelainV2, type GitStatus, type GitStatusEntry } from './gitStatusParse'
-import { readTurnWriteLog } from './turnWriteLog'
+import { readAllTurnWrites } from './turnWriteLog'
 
 /** Enough history for "what happened recently" without turning the log route into a repository export. */
 export const MAX_LOG_COMMITS = 50
@@ -127,7 +127,10 @@ export async function readGitStatus(dir: string): Promise<GitProjectStatus | Git
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not read git status'))
 
   const parsed = parseGitStatusPorcelainV2(result.stdout)
-  const agentWritten = new Set(readTurnWriteLog(dir).map((entry) => entry.file))
+  // Every account's log, not just the viewer's: "an agent wrote this file" is
+  // a fact about the working tree, and a colleague's agent-written file must
+  // not be shown to this viewer as hand-written. See `readAllTurnWrites`.
+  const agentWritten = new Set(readAllTurnWrites(dir).map((entry) => entry.file))
   const kept = parsed.entries
     .filter((entry) => !isExcludedPath(entry.path))
     .map((entry) => ({ ...entry, agentAuthored: agentWritten.has(entry.path) }))

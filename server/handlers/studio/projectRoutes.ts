@@ -97,6 +97,7 @@ import {
   safeProjectFolderName,
   studioProjectSummary,
   writeProjectMeta,
+  rethrowProjectDirRefusal,
 } from '../studioProjects'
 
 /**
@@ -209,6 +210,7 @@ export async function tryServeStudioProjectRoutes(
       trashStudioProject(projectsRootDir(), requested)
       return jsonResponse({ projects: listStudioProjects(projectsRootDir()) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       if (err instanceof ProjectTrashError) {
         return jsonResponse({ error: err.message }, { status: err.reason === 'not-found' ? 404 : 400 })
       }
@@ -255,6 +257,7 @@ export async function tryServeStudioProjectRoutes(
       }
       return jsonResponse({ projects })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -306,6 +309,7 @@ export async function tryServeStudioProjectRoutes(
       generateStudioProjectGuide(dir)
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -326,6 +330,7 @@ export async function tryServeStudioProjectRoutes(
       renameProjectDisplayName(dir, displayName)
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -344,6 +349,7 @@ export async function tryServeStudioProjectRoutes(
       if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
       return jsonResponse(result)
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -361,6 +367,7 @@ export async function tryServeStudioProjectRoutes(
       if (!result.ok) return jsonResponse({ error: result.notFound }, { status: 404 })
       return jsonResponse(result)
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

@@ -11,6 +11,8 @@ import * as path from 'node:path'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioComponents } from '../studio/components'
 import type { LocalComponentSpec } from '../studio/componentSpecExtract'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
   const url = new URL(`http://localhost${pathAndQuery}`)
@@ -88,13 +90,9 @@ describe('tryServeStudioComponents', () => {
   })
 
   it('rejects a dir outside studio-workspace/', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'components-outside-'))
-    try {
+    await withOutsideWorkspaceDir('components-outside', async (outside) => {
       const { req, url, pathname } = makeRequest(`/admin/api/studio/components?dir=${encodeURIComponent(outside)}`)
-      const res = await tryServeStudioComponents(req, url, pathname)
-      expect(res!.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+      await expect(tryServeStudioComponents(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
   })
 })

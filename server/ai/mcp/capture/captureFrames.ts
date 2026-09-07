@@ -38,7 +38,7 @@
 import { aiToolError, type AiToolOutput, type CapturePurpose } from '@core/ai'
 import type { PreviewAxes } from '@core/studio-board'
 import type { AiBrowserBridge } from '../../runtime/types'
-import { awaitEditorBridgeForUser } from '../editorBridge'
+import { awaitEditorBridgeForUser, editorBridgeScope } from '../editorBridge'
 import { rememberedLaunchFailure } from './browserPool'
 import { captureFramesHeadless, type HeadlessCaptureFailure, type HeadlessCaptureOverrides } from './headlessCapture'
 
@@ -88,8 +88,11 @@ export async function captureFrames(
   overrides: CaptureFramesOverrides = {},
 ): Promise<CaptureFramesOutcome> {
   const source = request.source ?? 'auto'
+  // Scoped to the project being captured (W10): a live capture must come from
+  // the tab showing THIS project, never from whichever tab registered last.
   const awaitBridge = overrides.awaitBridge
-    ?? ((userId: string, signal?: AbortSignal) => awaitEditorBridgeForUser(userId, 'site', signal))
+    ?? ((userId: string, signal?: AbortSignal) =>
+      awaitEditorBridgeForUser(userId, editorBridgeScope(request.dir), signal))
 
   // The caller explicitly wants the live tab (selection, unsaved edits).
   if (source === 'live') {

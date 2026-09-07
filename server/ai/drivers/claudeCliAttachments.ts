@@ -182,23 +182,28 @@ export function stageAttachments(
 }
 
 /**
- * The one stable directory a conversation's warm session stages every turn's
- * attachments beneath, created if absent.
+ * The one stable directory a (user, conversation)'s warm session stages every
+ * turn's attachments beneath, created if absent.
  *
- * Derived from the conversation id rather than handed out by the pool, because
- * it is needed BEFORE a session exists: `--add-dir` and `--tools` are both
- * argv, so the turn has to know where it will stage and whether it staged
- * anything in order to build the command line that spawns the process. A pure
- * function of the conversation id breaks that circularity without a lookup.
+ * Derived from the ids rather than handed out by the pool, because it is
+ * needed BEFORE a session exists: `--add-dir` and `--tools` are both argv, so
+ * the turn has to know where it will stage and whether it staged anything in
+ * order to build the command line that spawns the process. A pure function of
+ * the ids breaks that circularity without a lookup.
  *
- * Hashed, not the raw id: the id is a nanoid and would be a usable path
- * segment, but a directory name in a world-readable `os.tmpdir()` is a public
- * fact, and a conversation id is a capability-shaped identifier in this system
- * (it addresses a conversation over the API). Hashing costs nothing and stops
- * `ls /tmp` from enumerating them.
+ * Hashed, not the raw ids: a conversation id is a nanoid and would be a usable
+ * path segment, but a directory name in a world-readable `os.tmpdir()` is a
+ * public fact, and a conversation id is a capability-shaped identifier in this
+ * system (it addresses a conversation over the API). Hashing costs nothing and
+ * stops `ls /tmp` from enumerating them.
+ *
+ * The USER id is in the hash too (W10), separated by NUL so no pair of ids can
+ * collide by concatenation. Two users can never share a staging root even if a
+ * conversation id were ever guessed or reused — the directory holds one user's
+ * uploaded files, and 0700 on a shared box is a mode bit, not a name.
  */
-export function ensureConversationAttachmentsRoot(conversationId: string): string {
-  const dir = conversationAttachmentsRootPath(conversationId)
+export function ensureConversationAttachmentsRoot(userId: string, conversationId: string): string {
+  const dir = conversationAttachmentsRootPath(userId, conversationId)
   mkdirSync(dir, { recursive: true, mode: STAGING_MODE })
   try {
     chmodSync(dir, STAGING_MODE)
@@ -209,13 +214,13 @@ export function ensureConversationAttachmentsRoot(conversationId: string): strin
   return dir
 }
 
-/** Remove a conversation's whole attachment root — called when its warm session is disposed, which is the only thing that owns this directory's lifetime. */
-export function removeConversationAttachmentsRoot(conversationId: string): void {
-  cleanupAttachments(conversationAttachmentsRootPath(conversationId))
+/** Remove a (user, conversation)'s whole attachment root — called when its warm session is disposed, which is the only thing that owns this directory's lifetime. */
+export function removeConversationAttachmentsRoot(userId: string, conversationId: string): void {
+  cleanupAttachments(conversationAttachmentsRootPath(userId, conversationId))
 }
 
-function conversationAttachmentsRootPath(conversationId: string): string {
-  const digest = createHash('sha256').update(conversationId).digest('hex').slice(0, 32)
+function conversationAttachmentsRootPath(userId: string, conversationId: string): string {
+  const digest = createHash('sha256').update(`${userId} ${conversationId}`).digest('hex').slice(0, 32)
   return join(tmpdir(), `${SESSION_DIR_PREFIX}${digest}`)
 }
 

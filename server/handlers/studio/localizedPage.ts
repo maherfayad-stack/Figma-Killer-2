@@ -15,12 +15,12 @@
  * `ensureLocalizedPage` — client-side caching means this fires at most once
  * per `(pageId, locale)` pair per session, not per render).
  *
- * Same containment posture as every other project-scoped route:
- * `resolveProjectDir` + `isRealpathContained(dir, projectsRootDir())`.
+ * Containment is `resolveProjectDir`'s, once for every project-scoped route:
+ * a `dir` outside `studio-workspace/` throws there and the router answers 404,
+ * so this handler never sees one.
  */
 import { jsonResponse } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { loadStudioPageInLocale } from '../studioPageLoad'
 
 const ROUTE_PATH = '/admin/api/studio/localized-page'
@@ -37,7 +37,6 @@ export async function tryServeStudioLocalizedPage(req: Request, url: URL, pathna
 
   try {
     const dir = resolveProjectDir(url.searchParams.get('dir'))
-    if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
     const pageId = url.searchParams.get('pageId')
     const locale = url.searchParams.get('locale')
@@ -46,6 +45,7 @@ export async function tryServeStudioLocalizedPage(req: Request, url: URL, pathna
     const page = await loadStudioPageInLocale(dir, pageId, locale)
     return jsonResponse({ page })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:localizedPage]', err)
     return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }

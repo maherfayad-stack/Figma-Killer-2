@@ -505,9 +505,12 @@ describe('streamClaudeCli — dynamic system-prompt suffix + turn write log (the
 
   it('resets the turn write log before spawning, so a stale entry from a previous turn never leaks into this one\'s Stop-hook gate', async () => {
     const { mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
-    const logPath = join(projectDir, '.studio', 'cache', 'turnWrites.json')
-    mkdirSync(join(projectDir, '.studio', 'cache'), { recursive: true })
+    const { join, dirname } = await import('node:path')
+    const { agentCacheDir, studioAgentUserKey } = await import('../../handlers/studio/agentUserScope')
+    // The log is per (project, ACCOUNT) since W10 — `user-1` is the account
+    // every `baseRequest()` in this file runs as.
+    const logPath = join(agentCacheDir(projectDir, studioAgentUserKey('user-1')), 'turnWrites.json')
+    mkdirSync(dirname(logPath), { recursive: true })
     writeFileSync(logPath, JSON.stringify([{ file: 'pages/Stale.tsx', atMs: 1 }]))
 
     const spawn = fakeCliSpawn({
@@ -1258,7 +1261,7 @@ describe('streamClaudeCli — the warm session (W4-2B)', () => {
     await collect(baseRequest(), testOptions({ spawn }))
 
     expect(revokedCalls).toEqual([])
-    await endClaudeCliConversation('conv-1')
+    await endClaudeCliConversation('user-1', 'conv-1')
     expect(revokedCalls).toEqual([{ connectorId: 'connector-1', userId: 'user-1' }])
   })
 })

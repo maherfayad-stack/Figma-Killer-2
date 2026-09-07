@@ -24,8 +24,9 @@ import { executeAiTool } from '../drivers/http/execTool'
 import { mcpToolsForCapabilities, mcpToolsForStudioWorkspace } from './registry'
 import { MCP_RESOURCES, findMcpResource } from './resources'
 import {
+  editorBridgeScope,
   getEditorBridgeForUser,
-  type EditorBridgeScope,
+  getMostRecentEditorBridgeForUser,
 } from './editorBridge'
 import {
   PERMISSION_REQUEST_TOOL_NAME,
@@ -50,9 +51,8 @@ const NOOP_BRIDGE: AiBrowserBridge = {
   },
 }
 
-const NO_WORKSPACE_MESSAGE: Record<EditorBridgeScope, string> = {
-  site: 'This tool runs in the Site editor. Open the Site editor in a browser (signed in as the connector owner) and try again.',
-}
+const NO_WORKSPACE_MESSAGE =
+  'This tool runs in the Site editor. Open the Site editor in a browser (signed in as the connector owner) and try again.'
 
 export function buildMcpServer(ctx: McpServerContext): Server {
   const server = new Server(
@@ -132,6 +132,13 @@ export function buildMcpServer(ctx: McpServerContext): Server {
     // connector owner's matching open workspace. No workspace → a clear,
     // actionable error. Browser tools currently belong only to Site; keep
     // that invariant explicit instead of guessing a bridge.
+    //
+    // WHICH open workspace (W10): a connector bound to a Studio project
+    // (`connectorWorkspace.ts` — the in-canvas agent, whose turn `chat.ts`
+    // already validated a project for) is routed to THAT project's bridge and
+    // no other. An unbound connector — an external MCP client with no editor
+    // tab of its own — has no project to name, so it keeps the pre-existing
+    // "whatever this user has open" behaviour.
     let bridge = NOOP_BRIDGE
     if (tool.execution === 'browser') {
       if (tool.scope !== 'site') {
@@ -140,10 +147,12 @@ export function buildMcpServer(ctx: McpServerContext): Server {
           content: [{ type: 'text', text: `Browser tool "${tool.name}" has unsupported scope "${tool.scope}".` }],
         }
       }
-      const browserScope: EditorBridgeScope = tool.scope
-      const live = getEditorBridgeForUser(ctx.userId, browserScope)
+      const boundWorkspace = getConnectorWorkspace(ctx.connectorId)
+      const live = boundWorkspace
+        ? getEditorBridgeForUser(ctx.userId, editorBridgeScope(boundWorkspace))
+        : getMostRecentEditorBridgeForUser(ctx.userId)
       if (!live) {
-        return { isError: true, content: [{ type: 'text', text: NO_WORKSPACE_MESSAGE[browserScope] }] }
+        return { isError: true, content: [{ type: 'text', text: NO_WORKSPACE_MESSAGE }] }
       }
       bridge = live
     }

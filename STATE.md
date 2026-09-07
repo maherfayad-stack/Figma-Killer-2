@@ -96,6 +96,116 @@ are the remaining WS-2 items, not yet dispatched. See
   ~40 s, edit a screen on the board and confirm the tile updates ~15 s after
   the last save, and check the ⋯ menu + inline rename still work on the new
   card shape.
+### panel-14 — W8-4: Fill edits `background-image` as N layers, honestly
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/fill-background-layers` off `origin/main`.
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-4, the *Fill as N layers* bullet only.
+  Nothing from W8-1/2/3 or the other three W8-4 bullets (Hug/Fill, Constraints,
+  Export) — they own overlapping files.
+- **Scope:** new `src/admin/pages/site/panels/PropertiesPanel/backgroundLayers.ts`
+  (+ its `__tests__/backgroundLayers.test.ts`); rewritten `FillSection.tsx`,
+  `FillSectionParts.tsx`, `__tests__/fillSection.test.tsx`; edits to
+  `fillModel.ts`, `classStyleSections.ts`, `cssControlTypes.ts`,
+  `styleFamilyClassifier.ts`, `src/core/page-tree/cssPropertyBag.ts`,
+  `docs/features/inspector-disclosure.md` (G6.5).
+- **Done so far:**
+  - **`backgroundLayers.ts` (532 lines, pure, 36 unit tests).** Applies the
+    `boxShadowLayers.ts` pattern to `background-image`: quote- and depth-aware
+    comma split → `{ spine, satellites }` model → byte-identical re-join via
+    `backgroundModelPatch`, **or refuse** with a named reason. Refusals: a
+    top-level `var()` (could expand to any layer count), unbalanced parens or an
+    unterminated string, an empty segment, and any value that would be
+    reformatted. `url("a,b.png")` does NOT split — the splitter tracks quotes,
+    which `boxShadowLayers.ts`'s does not.
+  - **Satellites are per-layer** (`backgroundSize/-Position/-Repeat/
+    -Attachment/-Origin/-Clip/-BlendMode`), following CSS Backgrounds 3 §2.1:
+    a shorter list repeats cyclically (`backgroundLayerSatellite` returns
+    `shared: true`, and the control is labelled `"Size (all layers)"` so the
+    edit that splits the list is not a surprise), a list with MORE values than
+    layers is refused **per
+    property** with its own reason (CSS ignores the extras, a per-layer write
+    would delete them). A refusal in one satellite never hides the layer rows.
+  - **`backgroundColor` is pinned bottom-most** — CSS paints it below every
+    layer, so the old "Solid fill above Image fill" row order was wrong. Row
+    order is now Text → Content fit → layer 1…N → Solid fill → `background`
+    shorthand.
+  - **`objectFit`/`objectPosition` split out** of the old
+    `IMAGE_SATELLITE_PROPS` into `CONTENT_FIT_PROPS` + their own "Content fit"
+    row. They size the element's own replaced content and were never background
+    properties; bundling them was the conflation that made "remove the image
+    fill" have to clear six unrelated things.
+  - Add (prepends at index 0 = top, Figma's behaviour) / remove / reorder
+    (`Alt+↑/↓`, clamped to the layer block) all carry every satellite in step.
+    Removing the last layer clears every satellite; satellites left with no
+    layer get a **"Background sizing"** row rather than vanishing.
+  - Four properties added to `CSSPropertyBag` + `classStyleSections`'s `fill`
+    entry: `backgroundAttachment`, `backgroundOrigin`, `backgroundClip`,
+    `backgroundBlendMode`. Publisher emission is generic (regex allowlist in
+    `classCss.ts`), so nothing else needed changing there.
+- **Next step:** none for this PR. Follow-ups worth a work order: pointer
+  drag-reorder for `PropertyList` (blocked on the dnd-kit migration, already
+  recorded in the plan's Deferred list), and image fill via `MediaLibraryControl`
+  instead of the plain URL field.
+- **Decisions:**
+  - **Refusal granularity is per property, not per section** — a satellite that
+    cannot be split does not stop the layer rows rendering. A whole-section
+    refusal for one odd `background-size` would hide six things the user can
+    edit.
+  - **No visibility eye, still.** §8 decision 1 in
+    `docs/features/inspector-disclosure.md` is unchanged: CSS has no honest
+    "disabled declaration", and neither UI-only state nor commenting out the
+    user's CSS is better than omitting the eye. The work order's
+    "toggle-visibility rows like Effects" is satisfied by matching Effects,
+    which passes no `onToggleVisible` either. Do not "fix" this by turning the
+    eye on — it would need a storage model that does not exist.
+  - **A one-value satellite list is left alone** on add/remove/reorder. It
+    already applies to every layer by CSS's repetition rule and stays correct at
+    any layer count; expanding it would churn the user's source for nothing.
+  - **Writing a satellite expands to one value per layer**, filling the others
+    with the CSS initial (`auto`, `0% 0%`, `repeat`, …) — there is no CSS syntax
+    for "layer 2 only". Once every layer is back at the initial the whole
+    declaration is cleared, so an edit-then-undo leaves no `auto, auto, auto`.
+  - Keyword lists for the satellite selects come from `getEnumOptions`
+    (`cssControlTypes.ts`), not a second copy in `backgroundLayers.ts`.
+  - **`writeBackgroundModel` diffs before/after and emits only the declarations
+    that changed.** `onChange` is one store mutation (and one AST writeback) per
+    call, so naively re-emitting all eight `background-*` properties on every
+    gradient keystroke would have put seven no-op writes in the user's undo
+    history. Locked by a test (`writes ONLY the declarations that changed`).
+- **Landmines:**
+  - `boxShadowLayers.ts`'s `splitTopLevel` is **not** quote-aware. Do not reuse
+    it for anything with `url()` in it. `backgroundLayers.ts` has its own
+    splitter for exactly this reason; the two are deliberately separate.
+  - The layer ROW order is CSS order (first = topmost). Reversing the list for
+    display would invert paint order silently — the section renders the parsed
+    array as-is.
+  - `insertBackgroundLayer` on a **refused** spine returns the model unchanged;
+    the "Add gradient fill" button is `disabled` with a reason in that state
+    rather than looking clickable and doing nothing.
+  - `restructureSatellites` no-ops when the pre-edit layer count is 0. Without
+    that guard, adding the first layer to an element carrying
+    `background-size: cover, contain` would have deleted the declaration.
+- **Verification:** `bun test` on the two touched test files: 36 + 35 pass.
+  `bun run build`, full `bun test`, `bun run lint` — see the PR body for the
+  end-of-task run and its triage.
+- **Human action needed:** dogfood — open `/admin/site`, select a frame with a
+  multi-layer background and check the six things e2e cannot:
+  1. A `.tsx`/CSS class with `background-image: url(...), linear-gradient(...)`
+     shows TWO Fill rows, the url one on top, and the canvas is unchanged after
+     opening and closing each popover (nothing rewritten on read).
+  2. `Alt+↓` on the top layer reorders the paint on the canvas, and the written
+     CSS is the two layers swapped — nothing else touched.
+  3. Set Size on the SECOND layer only: the source becomes
+     `background-size: auto, cover`, and the first layer still renders as before.
+  4. A class whose `background-image` is `var(--something)` shows ONE raw row
+     with the var() reason, and "Add gradient fill" is disabled with a tooltip.
+  5. `background-size: cover, contain` on a one-layer background shows a raw
+     "Size" field inside the layer popover, with the extras reason — and the
+     other satellites still edit per layer beside it.
+  6. `backgroundColor` + layers: the solid fill row is BELOW the layers, and
+     removing the last layer leaves the solid fill and the section alive.
 
 ### panel-15 — W8-2 (scrub half): one scrub engine, every numeric scrubs
 - **Agent:** studio-implementer
@@ -855,6 +965,15 @@ to read this entry even if you don't care about scrubbing:
 - **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — see the entry's PR body for the run; failures are the standing pre-existing set (`standing-01`), none in `scripts/`.
 - **Human action needed:** none. Re-run `bun run bench:agent-turn` after W9-2/W9-5 land and diff against the table above.
 
+### server-05 — W10: agent sessions are per (account, project), and the `dir` escape is closed
+- **Agent:** studio-implementer (picked up a killed agent's uncommitted worktree)
+- **Stage:** done — gates green on the files touched; **UI needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/per-project-agent-sessions`, merged with `origin/main` at `f65c4ef` (#43/#44/#45). No merge conflicts — `studioProjects.ts` touched on both sides but in different functions.
+- **Shipped:** migration 022 (`ai_conversations.project_key`, both dialects, nullable, no backfill, `(user_id, project_key, updated_at desc)` index) · list `?dir=` + create stamp + `chat.ts` 409/adopt · `resolveProjectDir` realpath containment throwing `ProjectDirOutsideWorkspaceError` answered once by the router, with `rethrowProjectDirRefusal(err)` first in every route-local catch-all · bound connectors refused a foreign `dir` (`ProjectDirMismatchError`) · warm pool keyed `(userId, conversationId)` + per-user cap 2 + userId in the fingerprint + hashed attachment root · `.studio/cache/agent/<userKeyHash>/{turnWrites,pageVerification}.json` with the key passed to hook subprocesses via `STUDIO_AGENT_USER_KEY` · `agentSession.effort` → `byUser` · bridge scope `site:${projectKey}` · `agentProjectDir()` as the ONE client-side project answer (bridge, create, chat) · `ConversationHistory` scoped list + collapsed "Not in this project" group.
+- **Cut / not done:** no e2e or browser dogfood of the popover or the bridge reconnect (UI changes are not e2e-covered here — see the wave-train rule); `bun run lint` and the FULL `bun test` were not run to completion at the end (20 parallel `tsc` processes on this box made every long run time out) — both tsconfig projects typecheck clean (`tsc -p tsconfig.node.json --noEmit`, `tsc -p tsconfig.app.json --noEmit`) and all ~35 touched test files pass.
+- **Landmines:** (1) the suite now declares `STUDIO_WORKSPACE_DIR = os.tmpdir()` once in `src/__tests__/setup.ts`, because ~50 server test files build their fixture with `mkdtempSync(join(tmpdir(), …))` and containment would otherwise refuse every one; a file needing its own root still sets and restores the variable itself (`withOutsideWorkspaceDir` in `server/handlers/__tests__/outsideWorkspaceDir.ts` does exactly that for the routes that must REFUSE an outside dir). (2) `componentBundle.test.ts` pins the root back to the repo's own `studio-workspace/` because its React-version checks need a `node_modules` above the fixture. (3) In THIS worktree `node_modules/` is essentially empty (deps resolve from the primary checkout), so `componentBundle`'s five React-version cases and `devWorkflow`'s vite-binary case fail environmentally — they are not code failures. (4) `module-size-budgets` forced three extractions: `agentConversationReset.ts`, `server/handlers/studio/studioRouteBodies.ts`, `server/siteCss.ts`.
+- **Human action needed:** open two projects in two tabs, run a turn in each, and confirm (a) each tab's history shows only its own threads plus a collapsed "Not in this project", (b) a tool call in tab A never lands in tab B, (c) continuing a project-A thread from project B is refused with the 409 message rather than silently re-pointed.
 ### mcp-20 — W9-1(1): a pasted screenshot was silently the design spec; references now have roles, and an ambiguous page is refused
 - **Agent:** studio-implementer (resumed — the first agent was killed on a session limit near the end; its uncommitted worktree was picked up, not redone)
 - **Stage:** done (gates green; draft PR open)
@@ -1725,6 +1844,59 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### inspector-w8-3-p1 — multi-select edits inline styles across N nodes, with Mixed
+- **Agent:** studio-implementer · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/multi-select-inline-bulk-edit` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W8-3 **phase 1 only**.
+- **Shipped:** `setNodesInlineStyles(nodeIds, patch)` over `mutateTreesForNodeIds`
+  (one undo step for N, cross-frame; shares `applyInlineStylePatch` with the
+  single-node action); `multiSelectStyleBags.ts` collapsing N nodes into the
+  `storedStyles`/`currentStyles` pair `StyleSectionsEditor` already renders;
+  `MultiInlineStyleComposer` mounted in `MultiSelectionInspector`;
+  `StyleTargetChip` pinned to Element with the stated reason
+  (`lockedToElementReason`); Mixed rendering in `SegmentedControl`, `Select`,
+  `Input`, `TokenAwareInput`, `ColorValueInput` (shared `MIXED_PLACEHOLDER`),
+  routed through `ClassPropertyRow` + `resolveStylePlaceholder`;
+  `isSelectorMultiSelect` fixed from ≥1 to ≥2. Docs:
+  `inspector-disclosure.md` **§9** (new, existing §-numbers untouched),
+  `agent-refs/editor-store.md`.
+- **CUT — next agent picks these up:** (a) **W8-3 phase 2** —
+  `StyleWriteLockContext` carrying a COUNT ("writes to 3 of 5 — 2 are compiled")
+  instead of a boolean; (b) **W8-3 phase 3** — class-target bulk behind a "this
+  class is used by N other elements — continue?" gate, plus G6.4 Selection
+  colours; (c) **the bespoke-section Mixed gap** — Spacing/Layout/Position/Size/
+  Typography/Appearance/Fill/Border read raw cells via `readString`, which
+  returns `undefined` for `MIXED`, so they render their ordinary *unset* state
+  (blank field / no pressed segment) instead of the word "Mixed". The primitives
+  already take `mixed`; each field is a one-line wiring change. Left undone
+  deliberately — five of those sections were owned by parallel agents this wave.
+- **Needs human dogfood** (no e2e for UI): open `/admin/site`, shift/⌘-click 2+
+  layers on the canvas → the Properties panel should show the action bar, an
+  `Editing: [Element] Class Assign` chip with Element pressed/disabled and the
+  tooltip "Bulk edits write inline styles — class edits need a single
+  selection", then the full style sections. Set `cursor` differently on two
+  layers first (single-select each, Interaction section) → re-select both →
+  the Cursor field must read placeholder **Mixed**; type a value → both layers
+  change and ONE Ctrl+Z reverts both. Then tick ONE checkbox in the Selectors
+  panel → the single-selector inspector (not the bulk bar); tick a second →
+  the bulk bar.
+- **Verification:** `tsc -p tsconfig.app.json --noEmit` and
+  `tsc -p tsconfig.node.json --noEmit` clean; `eslint` clean on every touched
+  path; new/updated tests green (`multiSelectInlineStyles`,
+  `multiSelectStyleBags`, `mixedValueControls`, `multiInlineStyleComposer`,
+  `selectorMultiSelectTrigger`, `selectorsPanel`); the gates this touches
+  (`module-size-budgets`, `css-token-policy`, `no-css-var-fallbacks`,
+  `button-primitive-usage`, `no-full-site-scan-in-selectors`,
+  `css-token-vocabulary`, `boundary-validation`, `ui-primitives-location`) all
+  pass. **Not mine:** the icon-catalog gate (whole `pixel-art-icons/dist` cluster),
+  `ai-driver-isolation`, and `no-circular-dependencies` — which TIMED OUT at 60s
+  under parallel `tsc` load rather than reporting a cycle. The full `bun run build`
+  / `bun run lint` were killed by the same contention; both halves of `tsc -b`
+  were checked individually instead.
+- **Four selectorsPanel tests were updated, not broken:** they asserted the old
+  ≥1 bulk trigger. One now adds a second locked utility locally (the shared
+  fixture's exact contents are asserted by sibling tests, so it was not touched).
 
 ### docs-06 — W9-1.4: prose for every agent tool, plus three comment-truth fixes
 - **Agent:** studio-scribe

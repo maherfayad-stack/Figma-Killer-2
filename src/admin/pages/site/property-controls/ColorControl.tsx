@@ -27,6 +27,7 @@ export function ColorControl({
   isOverride,
   disabled,
   layout,
+  mixed,
   onPreview,
   onClearPreview,
   contrastAgainst,
@@ -43,6 +44,7 @@ export function ColorControl({
       <ColorValueInput
         id={`ctrl-${propKey}-text`}
         value={String(value ?? '')}
+        mixed={mixed}
         disabled={disabled}
         ariaLabel={label ?? propKey}
         swatchLabel={`${label ?? propKey} colour swatch`}

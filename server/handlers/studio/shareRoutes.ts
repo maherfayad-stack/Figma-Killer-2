@@ -42,7 +42,7 @@ import {
   STUDIO_SHARES_ROUTE,
   type ShareMutationResponse,
 } from '@core/studio-share'
-import { resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { findBoard, writeShareSnapshot } from './shareSnapshot'
 import {
   findShareRecord,
@@ -78,6 +78,7 @@ export async function tryServeStudioShares(
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       return jsonResponse({ dir, shares: listShareSummaries(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio-shares]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -90,6 +91,7 @@ export async function tryServeStudioShares(
       const dir = resolveProjectDir(body.dir)
       return await createOrUpdateShare(dir, user.id, body.boardId, body.token)
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio-shares]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -104,6 +106,7 @@ export async function tryServeStudioShares(
       if (!revoked) return jsonResponse({ error: 'No such share in this project.' }, { status: 404 })
       return jsonResponse({ ok: true, shares: listShareSummaries(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio-shares]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

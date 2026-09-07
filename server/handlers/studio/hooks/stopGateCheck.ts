@@ -40,6 +40,7 @@
  */
 import { loadStudioPages } from '../../studioPageLoad'
 import { computePageWriteVerification, describeUnverifiedPage } from '../pageWriteVerification'
+import { studioAgentUserKeyFromEnv } from '../agentUserScope'
 import { buildStudioCapabilityDigest } from '../../../ai/tools/studio/liveDigest'
 
 interface StopHookInput {
@@ -64,7 +65,9 @@ async function main(): Promise<void> {
 
   try {
     const { pages } = await loadStudioPages(dir)
-    const entries = computePageWriteVerification(dir, pages)
+    // Only THIS account's writes and compares gate this turn — the key rides
+    // in on the environment the CLI handed down (`agentUserScope.ts`).
+    const entries = computePageWriteVerification(dir, studioAgentUserKeyFromEnv(), pages)
     const blocking = entries.filter((e) => !e.verifiedSinceWrite)
     if (blocking.length === 0) return
 

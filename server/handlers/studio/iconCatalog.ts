@@ -47,11 +47,10 @@
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { jsonResponse } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveProjectProfile } from './projectProbe'
 import { readTextCapped } from './cappedFileRead'
 import { resolveAppRoot } from './appRoot'
-import { isRealpathContained } from './workspacePackageResolve'
 
 const ROUTE_PATH = '/admin/api/studio/icons'
 
@@ -148,7 +147,6 @@ export async function tryServeStudioIcons(req: Request, url: URL, pathname: stri
 
   try {
     const dir = resolveProjectDir(url.searchParams.get('dir'))
-    if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
     // The same package list `componentBundle.ts` bundles from, so the picker
     // can never offer an icon out of a package the canvas does not know.
@@ -159,6 +157,7 @@ export async function tryServeStudioIcons(req: Request, url: URL, pathname: stri
     }
     return jsonResponse({ icons })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:icons]', err)
     return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }

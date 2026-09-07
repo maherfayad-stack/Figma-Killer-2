@@ -112,6 +112,7 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
 import { recordPassingCompare } from '../../../../handlers/studio/pageVerificationStore'
+import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { resolveDesignReference } from './referenceResolve'
@@ -617,8 +618,11 @@ export const studioCompareTool: AiTool = {
     // Stop hook's checker script, spawned by the `claude` CLI with no access
     // to this server's memory — answer "has this page been verified since it
     // was last written" without re-running a capture.
+    // Recorded under the CALLING account's key: this pass is what unblocks
+    // that account's Stop gate, and must never unblock anybody else's.
+    const agentUserKey = studioAgentUserKey(ctx.userId)
     for (const result of results) {
-      if (result.ok && result.pass) recordPassingCompare(dir, result.page.id, result.reference.id)
+      if (result.ok && result.pass) recordPassingCompare(dir, agentUserKey, result.page.id, result.reference.id)
     }
 
     const passCount = results.filter((r) => r.ok && r.pass).length
