@@ -64,6 +64,7 @@ import type {
   FigmaCodeConnectProp,
   FigmaEnumMappingEntry,
 } from './figmaCodeConnectSchema'
+import { parseFigmaUrl } from './figmaUrl'
 
 const FIGMA_CONNECT_FILE_RE = /\.figma\.tsx$/
 /** Bounded so a pathological package cannot blow parse time — the real corpus (29 files) is nowhere near this. */
@@ -84,37 +85,10 @@ export function listFigmaConnectFiles(pkgDir: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Figma URL parsing
+// Figma URL parsing — `parseFigmaUrl` (`./figmaUrl.ts`), the shared leaf.
+// It used to live here; three unrelated callers now need the same two
+// numbers out of a Figma link, so it moved out rather than being copied.
 // ---------------------------------------------------------------------------
-
-const FIGMA_FILE_KEY_RE = /figma\.com\/design\/([^/]+)\//
-const FIGMA_NODE_ID_QUERY_RE = /[?&]node-id=([^&]+)/
-/** A real Figma node id as it appears in a URL query param: digits-dash-digits (`53958-5861`). Anything else — a `figma connect create` scaffold's un-filled-in `REPLACE-ME`, or any other non-numeric placeholder a future template might use — is flagged via `nodeIdPlaceholder` rather than silently treated as a resolvable reference. */
-const FIGMA_URL_NODE_ID_SHAPE_RE = /^\d+-\d+$/
-
-interface ParsedFigmaUrl {
-  figmaFileKey: string | undefined
-  figmaNodeId: string | undefined
-  nodeIdPlaceholder: boolean
-}
-
-/** `figma.connect`'s second argument, decoded. Never throws — an unparseable URL just yields every field `undefined`/`true`. */
-export function parseFigmaConnectUrl(url: string): ParsedFigmaUrl {
-  const fileKeyMatch = FIGMA_FILE_KEY_RE.exec(url)
-  const nodeIdMatch = FIGMA_NODE_ID_QUERY_RE.exec(url)
-  let rawNodeId: string | undefined
-  try {
-    rawNodeId = nodeIdMatch?.[1] ? decodeURIComponent(nodeIdMatch[1]) : undefined
-  } catch {
-    rawNodeId = nodeIdMatch?.[1]
-  }
-  const shaped = rawNodeId !== undefined && FIGMA_URL_NODE_ID_SHAPE_RE.test(rawNodeId)
-  return {
-    figmaFileKey: fileKeyMatch?.[1],
-    figmaNodeId: shaped ? rawNodeId!.replace('-', ':') : rawNodeId,
-    nodeIdPlaceholder: !shaped,
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Comment extraction
@@ -243,7 +217,7 @@ function specFromConnectCall(callExpr: Node, relFile: string): FigmaCodeConnectC
 
   const component = componentArg.getText()
   const figmaUrl = urlArg.getLiteralValue()
-  const { figmaFileKey, figmaNodeId, nodeIdPlaceholder } = parseFigmaConnectUrl(figmaUrl)
+  const { fileKey: figmaFileKey, nodeId: figmaNodeId, nodeIdPlaceholder } = parseFigmaUrl(figmaUrl)
 
   const propsMember = optionsArg.getProperty('props')
   const propsObject =

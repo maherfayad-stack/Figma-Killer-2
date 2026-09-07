@@ -106,6 +106,7 @@ function baseLiveDigest(capabilities: StudioLiveDigest['capabilities']): StudioL
     staleWarning: null,
     capabilities,
     pageWriteVerification: [],
+    figmaLink: null,
     figmaReferenceNudge: null,
   }
 }
@@ -265,15 +266,31 @@ describe('Studio system prompt — page write verification + Figma nudge (the wr
     expect(suffix).not.toContain('has NO design reference')
   })
 
-  it('the Figma nudge names the page and the exact registration call', () => {
+  it('the Figma nudge names the page, the parsed identifiers, and the one-call import', () => {
     const live: StudioLiveDigest = {
       ...baseLiveDigest(configuredCapabilities),
+      figmaLink: { url: 'https://figma.com/design/KEY/S?node-id=1-2', fileKey: 'KEY', nodeId: '1:2' },
       figmaReferenceNudge: { pageId: 'onboarding', pageTitle: 'Onboarding' },
     }
     const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
     expect(suffix).toContain('Figma link in this message')
     expect(suffix).toContain('"Onboarding"')
-    expect(suffix).toContain('studio_register_design_reference')
+    // The identifiers, not just "there is a link": the colon form is the one
+    // Figma's own tools take, and re-deriving it from the raw URL is the step
+    // the model got wrong.
+    expect(suffix).toContain('fileKey "KEY"')
+    expect(suffix).toContain('node id "1:2"')
+    expect(suffix).toContain('studio_import_figma_frame')
+  })
+
+  it('a Figma link with no node-id says so rather than inventing one', () => {
+    const live: StudioLiveDigest = {
+      ...baseLiveDigest(configuredCapabilities),
+      figmaLink: { url: 'https://figma.com/design/KEY/S', fileKey: 'KEY', nodeId: null },
+      figmaReferenceNudge: { pageId: 'onboarding', pageTitle: 'Onboarding' },
+    }
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+    expect(suffix).toContain('no node id in the link')
   })
 
   it('no nudge, no line', () => {

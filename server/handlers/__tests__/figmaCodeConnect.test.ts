@@ -16,7 +16,6 @@ import * as path from 'node:path'
 import {
   collectFigmaCodeConnectComponents,
   listFigmaConnectFiles,
-  parseFigmaConnectUrl,
 } from '../studio/figmaCodeConnect'
 
 let tmpDir: string
@@ -40,31 +39,8 @@ function installFigmaConnect(pkgName: string, componentFile: string, contents: s
   write(`node_modules/${pkgName}/src/components/${componentFile}.figma.tsx`, contents)
 }
 
-describe('parseFigmaConnectUrl', () => {
-  it('parses the file key and normalizes a real node-id to colon form', () => {
-    const parsed = parseFigmaConnectUrl('https://www.figma.com/design/8nasqgUrdKsT8JgQRBHwPB/Styles?node-id=53958-5861')
-    expect(parsed).toEqual({ figmaFileKey: '8nasqgUrdKsT8JgQRBHwPB', figmaNodeId: '53958:5861', nodeIdPlaceholder: false })
-  })
-
-  it('flags a REPLACE-ME node-id as a placeholder, not a resolvable reference', () => {
-    const parsed = parseFigmaConnectUrl('https://www.figma.com/design/ABC123/Styles?node-id=REPLACE-ME')
-    expect(parsed.figmaFileKey).toBe('ABC123')
-    expect(parsed.figmaNodeId).toBe('REPLACE-ME')
-    expect(parsed.nodeIdPlaceholder).toBe(true)
-  })
-
-  it('degrades to undefined fields for a URL with no node-id param at all', () => {
-    const parsed = parseFigmaConnectUrl('https://www.figma.com/design/ABC123/Styles')
-    expect(parsed.figmaFileKey).toBe('ABC123')
-    expect(parsed.figmaNodeId).toBeUndefined()
-    expect(parsed.nodeIdPlaceholder).toBe(true)
-  })
-
-  it('never throws on a URL matching nothing at all', () => {
-    const parsed = parseFigmaConnectUrl('not a url')
-    expect(parsed).toEqual({ figmaFileKey: undefined, figmaNodeId: undefined, nodeIdPlaceholder: true })
-  })
-})
+// URL parsing itself moved to the shared `figmaUrl.ts` leaf — its cases live
+// in `server/handlers/studio/figmaUrl.test.ts`.
 
 describe('listFigmaConnectFiles', () => {
   it('finds every *.figma.tsx file under a package, sorted, ignoring plain component files', () => {

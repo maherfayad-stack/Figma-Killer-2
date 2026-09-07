@@ -2320,6 +2320,120 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### figma-pipeline — W9-4: a pasted Figma link becomes a strict, exactly-sized reference in one call
+- **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/agent-figma-link-pipeline` off `origin/main` (db774d5). Goal:
+  `STUDIO-WAVE7-PLAN.md` §W9-4, items 1-3.
+- **Shipped:**
+  - **`server/handlers/studio/figmaUrl.ts`** — the ONE Figma-link parser, a
+    dependency-free leaf (not even TypeBox). `parseFigmaUrl(url)` ->
+    `{ fileKey, nodeId, nodeIdPlaceholder }`, normalising both separators
+    Figma uses (`123-456` and `%3A`) to the canonical `123:456`, and
+    accepting all four URL shapes (`/design/`, `/file/`, `/proto/`,
+    `/board/`) instead of only today's. `findFigmaUrlInText(text)` finds the
+    FIRST figma.com URL in free text and strips the sentence punctuation
+    `\S+` swallows (`…node-id=1-2.` and `](…)` both used to corrupt the node
+    id). Extracted OUT of `figmaCodeConnect.ts` — `parseFigmaConnectUrl` is
+    deleted, not forwarded; its call site maps to the binding field names
+    inline. 13 unit tests in `figmaUrl.test.ts` (the four that moved verbatim
+    out of `figmaCodeConnect.test.ts` plus the shapes the new callers meet).
+  - **`StudioLiveDigest.figmaLink`** (`liveDigest.ts`) — `{ url, fileKey,
+    nodeId }` for the first Figma URL in the user's message, computed
+    UNCONDITIONALLY (the nudge keeps its three extra preconditions and is now
+    derived from this field). `nodeId` is `null`, never the raw text, for a
+    placeholder or missing `node-id`, so nothing downstream can hand a
+    `REPLACE-ME` to a Figma tool. The prompt's nudge line now names the
+    identifiers and points at the new tool instead of at the six-step ritual.
+  - **`studio_import_figma_frame`** (`server/ai/mcp/tools/studio/
+    importFigmaFrame.ts`) — `execution:'server'`, `mutates:true`,
+    `requiredCapabilities:['studio.write']`. Input:
+    `{ dir?, pageId, url?, exportPath?, node?, variables?, mode?, label? }`,
+    TypeBox, `additionalProperties:false` at the top level, fields read by
+    name (never spread). Four legs, each with its own status code:
+    `frame.status` (`resized`/`already-matched`/`no-bounding-box`/
+    `out-of-range`/`no-frame-for-page`/`section-not-sized`),
+    `reference.status` (`registered`/`not-provided`/`failed`),
+    `variables.status`, `screenDetection` (`single-frame`/
+    `section-of-screens`/`no-metadata`/`no-bounding-box`). A missing export
+    still resizes the frame. Defaults `role:'spec'` + `mode:'strict'`.
+    **The frame sizing is the point** — it kills the resample class (test4's
+    800-tall refs vs 788-808-tall frames) by setting `.studio/boards.json`
+    from `absoluteBoundingBox` through `boardFrames.ts`, the same write path
+    `studio_set_frames` uses, after `syncBoardFramesFromDisk` so a page the
+    agent wrote moments ago is placed rather than reported missing.
+  - **Section -> N screens** — a direct child counts as a screen when it is
+    visible, FRAME-like, >=240x320 AND >=50% of the parent's height. That
+    last clause is the whole discriminator (screens sit side by side and are
+    nearly as tall as the section; a hero inside one screen is a fraction of
+    its height). Two or more make it a section: **nothing is resized**, and
+    `screens[]` enumerates name/nodeId/size. `detectScreens` is exported and
+    unit-tested on its own.
+  - **`visible:false` layers** are counted (never descended into — a layer
+    under a hidden layer is not a second finding), up to 20 named back, with
+    the note that says what it is for.
+  - **`server/ai/mcp/tools/studio/readProjectImageBytes.ts`** — the
+    containment-checked project-image read, extracted verbatim out of
+    `designReferenceTools.ts` so both register paths share one
+    implementation (realpath-based containment, and the "your chat
+    attachment is already registered as X" refusal).
+    `DesignVariableEntrySchema` + `toRawDesignVariableEntries` are now
+    exported from `designVariableTools.ts` for the same reason.
+  - Registered in `mcp/tools/studio/index.ts` AND in
+    `server/ai/tools/studio/agentToolNames.ts` (the in-canvas agent is the
+    primary consumer). Docs: `docs/features/agent.md` (tool-table row + a
+    full "The Figma-link pipeline" section with the status-code table),
+    `docs/features/mcp-connectors.md`.
+- **Studio still never talks to Figma.** The tool fetches nothing, accepts no
+  token, stores no token, logs no token and returns no token. `url` is
+  provenance text only; every Figma-side input is something the AGENT already
+  fetched through its OWN connector.
+- **CUT — named:**
+  - **W9-4 item 4, connector discoverability in the Agent Panel, is NOT
+    done.** The four connector states are computed server-side
+    (`buildStudioCapabilityDigest`) and reach the PROMPT only — nothing
+    exposes them to the browser. Surfacing them needs a new
+    `GET /admin/api/studio/...` route + schema + a panel affordance linking to
+    Settings -> MCP servers; that is a whole vertical slice, not a trim, so it
+    was cut rather than half-built. Next agent: the digest already computes
+    `figma.status` and `loopbackAssetFetchBlocked` — only the transport and
+    the UI are missing.
+  - **Pages are enumerated, never auto-created** for a section. Creating N
+    Studio pages from one tool call would write files the user never asked
+    for under names this tool would have to invent. `studio_create_page`
+    exists and is cheap; the enumeration is what was missing.
+  - **The screen-detection ratio (0.5) is chosen, not measured.** It is
+    deliberately conservative — a false `single-frame` is a much cheaper
+    mistake than a false `section-of-screens` that sends the agent building
+    four pages nobody asked for.
+  - **No `imageBase64`/`url`-fetch input on the new tool.** `exportPath` is
+    the route that actually works with a Figma connector (its asset-download
+    tool writes real files); `studio_register_design_reference` still has the
+    other two for the cases that need them.
+- **Dogfood checklist for the human (no browser tests by agents):**
+  1. With a Figma connector signed in, paste a frame URL into the composer
+     with a page selected. The prompt nudge should now name the fileKey and
+     the node id in COLON form (`53958:5861`), not the dashed URL form.
+  2. Ask the agent to import it. Confirm ONE `studio_import_figma_frame` call
+     replaces the register/ingest/set_frames sequence, and that
+     `.studio/boards.json`'s frame for that page comes back at the Figma
+     frame's exact width/height.
+  3. Run `studio_compare` after. It should report an EXACT dimension match,
+     not `dimensionMatch: "resampled"` — that is the whole point of the row.
+  4. Paste a SECTION url (a board of screens). The tool must resize nothing
+     and list the child screens with their node ids.
+  5. Ask for the import with no export downloaded: the frame should still be
+     resized and `reference.status` should read `not-provided` with a note.
+- **Pre-existing failures I did NOT cause** (verified against a detached
+  `origin/main` worktree: `bun test server/ai/mcp` is **20 fail** on baseline
+  and **20 fail** with my change, +26 new passing tests):
+  `compare.test.ts` still fails to import (`editorBridgeScope` not exported
+  from `editorBridge.ts`) — identical at baseline; `headlessCapture`,
+  `computedStyles`, `gitTools`, `liveReloadPush`, `pageDiagnostics` are
+  sandbox/browser-environment. **Fixed in passing** (in scope because I
+  touched the file): `liveDigest.test.ts`'s pre-W10 `appendTurnWrite` arity.
+  `pageWriteVerification.test.ts` has the same class of failure and is NOT
+  mine.
+
 ### fidelity-modes — W9-2: creative / balanced / strict, one control from prompt to gate
 - **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
 - **Branch:** `feat/agent-fidelity-modes` off `origin/main`. Goal:
