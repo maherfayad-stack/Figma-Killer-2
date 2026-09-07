@@ -5,6 +5,7 @@ import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
 import { ColorPickerPopover, isColorToken, type ColorPickerToken } from '@ui/components/ColorPickerPopover'
 import { Input } from '@ui/components/Input'
+import { COLOR_VARIABLE_KINDS, useVariableAffordance } from '@ui/components/VariableField'
 import { cn } from '@ui/cn'
 import styles from './controls.module.css'
 
@@ -203,9 +204,39 @@ export function TokenizedColorField({
 
   const currentContrast = contrastBadgeFor(swatchValue, contrastAgainst)
 
+  // ── "Apply variable" ──────────────────────────────────────────────────
+  // Colour-only: this field can legally take a colour custom property and
+  // nothing else, so `COLOR_VARIABLE_KINDS` is what the picker offers.
+  //
+  // Deliberately trigger-ONLY here — no leading chip. This field's leading
+  // edge is already occupied by the swatch button (`.colorSwatchTrigger`,
+  // absolutely positioned over it), and the text field already shows
+  // `var(--x)` in full, so a chip would be a second, redundant name fighting
+  // the swatch for 5px of inset. Cut named in the PR body.
+  //
+  // A binding to one of the FRAMEWORK colour tokens is excluded for the same
+  // reason `TokenAwareInput` excludes its own scale steps: `appliedVariable`
+  // already resolves and renders those, and `ColorPickerPopover`'s token grid
+  // is the picker for them.
+  const variable = useVariableAffordance({
+    value: appliedVariable ? undefined : value,
+    accept: COLOR_VARIABLE_KINDS,
+    onCommit: onTokenSelect,
+    fieldLabel: inputLabel,
+    disabled,
+    editing: open,
+  })
+
   return (
     <div className={styles.colorRow}>
-      <div className={styles.colorField} data-color-field="true">
+      <div
+        className={styles.colorField}
+        data-color-field="true"
+        /* Scopes the hover-reveal rule for the trailing variable button.
+         * See VariableField.module.css's `[data-variable-host]` selector. */
+        data-variable-host=""
+      >
+        {variable.trigger}
         <Button
           ref={swatchButtonRef}
           type="button"

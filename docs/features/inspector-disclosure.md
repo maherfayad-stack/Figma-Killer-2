@@ -1051,6 +1051,127 @@ offering to delete "1 class" over a one-row list.
 
 ---
 
+## §10. Apply variable — binding a field to a project CSS custom property
+
+Figma's inspector puts a small hexagon at the trailing edge of every field;
+hovering reveals it, clicking it opens a searchable list of the file's
+variables, and picking one binds the field. Studio's version binds to the
+thing that is actually real here: **a CSS custom property the open project's
+own stylesheets declare** — `--color-primary`, `--space-4`, `--radius-card` —
+written into the source as `var(--name)`.
+
+### §10.1 Where the variables come from
+
+`projectVariables.ts` (`src/admin/pages/site/property-controls/`) scans the
+raw CSS the client **already has** for the canvas — `studioRawCssStores.ts`'s
+`authoredCss` (the project's own `.css`, concatenated in cascade order) and
+`vendorCss` (a design system's package stylesheets) — plus a third string it
+generates locally with `generateFrameworkRootCss`, the same generator
+`canvasClassCss.ts` feeds the canvas. No server change, no second wire
+format, and the catalog can never disagree with what the canvas is rendering,
+because it *is* what the canvas is rendering.
+
+Each entry carries a name, a **resolved** value (chains of `var(--a)` →
+`var(--b)` → `4px` are followed, bounded and cycle-safe), a kind, and the
+bundle it came from. Groups in the picker read Project / Package / Framework.
+A package re-declaring a name the user's own stylesheet already declares does
+**not** relabel it — the user's own value and label win.
+
+`ProjectVariablesProvider` publishes the catalog on the panel's root
+`<aside>`, the same altitude as `data-field-skin="inspector"` and for the
+same reason: the affordance has to reach ~40 components down without being
+threaded through all of them.
+
+### §10.2 The kind filter is the "no control that lies" rule, applied to variables
+
+A field only offers variables **compatible with its property**, and the kind
+is inferred from the *resolved value*, never from the name (`--brand-4` is a
+colour in one project and a spacing step in another). `classifyVariableValue`
+buckets into `color` / `length` / `number` / `other`. A width field that
+offered `--color-primary` would let one click write a declaration the browser
+drops, leaving a field that reads as bound while rendering nothing.
+
+Corollary: **when nothing compatible exists, no icon is rendered at all.** An
+icon that opens an empty list is the same defect in a different costume.
+
+### §10.3 The affordance
+
+One shared piece, `src/ui/components/VariableField/`, consumed by field
+primitives through `useVariableAffordance` — a hook, not a wrapper component,
+because the affordance is two elements in two places inside a field that
+already exists:
+
+| piece | where | reveal |
+|---|---|---|
+| `trigger` | absolutely positioned at the field's trailing edge, inside the field's own `position: relative` wrapper | `opacity: 0` until `[data-variable-host]:hover`, `:focus-within`, or its own `:focus-visible` |
+| `chip` | the field's leading slot (`Input`'s new `leadingSlot`, or inline in `ScrubInput`'s flex row) | only while bound and not editing |
+
+Wrapping each field in a new element instead would have moved every caller's
+layout `className` one level away from the box it was written for, across
+~40 call sites. **Nothing here adds height**: the trigger is out of flow, and
+the chip is a 16px inline item with `align-self: center` inside a 24px row —
+which is what keeps `inspectorGeometryBudget.test.tsx` green.
+
+`[data-variable-host]` is a plain attribute each field primitive sets on its
+wrapper. It exists because a CSS-module class name cannot cross the module
+boundary between the field's stylesheet and `VariableField.module.css`.
+
+### §10.4 The four states, and what each one writes
+
+| state | field shows | commit |
+|---|---|---|
+| unbound | its own value | trigger → pick → `var(--x)` |
+| bound, idle | chip (name only) + empty rest of field | detach × → the **resolved literal** |
+| bound, editing | empty input + open picker | a typed literal, **or** `var(--y)` |
+| Mixed | the shared "Mixed" placeholder, **no chip** | pick → `var(--x)` to every selected node |
+
+The chip shows the **name only** — `color-primary`, dashes stripped, Figma's
+convention — with the resolved value as its `title`. Clicking it focuses the
+field's own (now empty) input **and** opens the picker, so one gesture
+reaches both "type any literal" and "swap to another variable". Escape closes
+the picker and leaves the binding alone, because entering edit mode writes
+nothing.
+
+Every write goes through the field's **own** `onChange`/`onCommit`. That is
+what makes a variable pick one honest, undoable AST write and what makes
+multi-selection fan-out work with no extra code.
+
+**A bound field is not scrubbable, and nothing had to disable it.**
+`useScrubDrag`'s documented contract already refuses any baseline that is not
+a bare `<number><unit>`; while bound the baseline is the empty display
+string.
+
+**An empty commit on a bound field is a no-op.** The input is empty while
+bound, so a blur that typed nothing would otherwise read as "the user cleared
+this" and silently destroy the binding on every stray focus. The explicit
+ways out are typing a literal and the chip's detach ×.
+
+### §10.5 What binds, and what deliberately does not
+
+`parseVarBinding` treats a value as bound only when it is **exactly one**
+`var()` reference (a fallback argument is allowed). `calc(var(--x) * 2)` and
+`1px solid var(--x)` are literal values that merely *mention* a variable —
+showing a detachable chip for either would claim a one-token edit the field
+cannot honestly make.
+
+A binding to one of the field's **own framework scale steps** is also not
+shown as a chip: `TokenAwareInput` already round-trips `var(--space-md)` back
+to the short `md` its autocomplete is built around, and `TokenizedColorField`
+already resolves and renders framework colour tokens. The chip is for the
+project's own custom properties — the ones with no step shorthand and no
+place in those dropdowns.
+
+### §10.6 Reach
+
+`ScrubInput` and `TokenAwareInput` are the two seams; everything downstream
+inherits from them — `ScrubTokenField`, `AddablePropertyField`,
+`SpacingBoxControl`, `ClassPropertyRow`'s generic rows, and the bespoke
+Size / Spacing / Position / Typography / Stroke / Appearance fields.
+`TokenizedColorField` (and therefore `ColorValueInput`) carries the trigger
+for colour variables.
+
+---
+
 ## Gates that bite work in this area
 
 `css-token-policy`, `no-css-var-fallbacks`, `button-primitive-usage` (popovers
