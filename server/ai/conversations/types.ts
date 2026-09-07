@@ -45,6 +45,18 @@ export interface ConversationRecord {
    * Every other driver ignores it.
    */
   readonly sessionEpoch: number
+  /**
+   * Which Studio project this conversation belongs to —
+   * `registeredMcpServerProjectKey(dir)`, the same key MCP OAuth sessions and
+   * registered-server secrets are scoped by (migration 022).
+   *
+   * `null` means "not project-scoped": every conversation created before the
+   * column existed, and every conversation started with no project open. A
+   * null key is adopted by the first turn taken against a real project; a
+   * non-null one is immutable, and `chat.ts` refuses a turn from a different
+   * project rather than silently re-pointing the thread.
+   */
+  readonly projectKey: string | null
   readonly createdAt: string
   readonly updatedAt: string
   readonly deletedAt: string | null
@@ -85,6 +97,8 @@ export interface ConversationView {
   readonly cacheCreationTokensTotal: number
   /** Current-context snapshot — see ConversationRecord.contextTokens. */
   readonly contextTokens: number
+  /** See `ConversationRecord.projectKey`. The history popover groups the null ones under "Other projects". */
+  readonly projectKey: string | null
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -111,6 +125,8 @@ export interface CreateConversationInput {
   readonly title?: string
   readonly credentialId: string
   readonly modelId: string
+  /** The project this conversation is being started in, already derived from a VALIDATED dir. Omitted/null for a conversation started with no project open. */
+  readonly projectKey?: string | null
 }
 
 export interface UpdateConversationInput {

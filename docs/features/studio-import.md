@@ -41,7 +41,12 @@ server/handlers/
     ├── storyLiterals.ts    — the total, non-throwing AST readers that classification is built on
     ├── storyPages.ts      — an accepted story → a RoutePageEntry, through the existing parse pipeline
     ├── storiesRoutes.ts   — GET/POST /admin/api/studio/stories (the refusal report + the off switch)
-    └── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
+    ├── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
+    ├── projectDirGuard.ts — the ONE containment rule for a caller-supplied `dir` (delete / duplicate / thumbnail)
+    ├── projectThumbnailFile.ts  — where `.studio/thumbnail.png` lives + its stat (leaf: no capture deps)
+    ├── projectThumbnail.ts      — captures the launcher preview headlessly and writes that file
+    ├── projectThumbnailQueue.ts — serialises captures, debounces after a save, remembers failures
+    └── projectThumbnailRoute.ts — GET /admin/api/studio/thumbnail, mtime validators + 304
 
 src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
@@ -95,7 +100,11 @@ src/admin/pages/site/canvas/
 
 ## Project configuration — `.studio/meta.json`
 
-Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
+Sits alongside the existing `.studio/boards.json`, `.studio/framework.json` and
+`.studio/thumbnail.png` (W7-3 — the launcher tile's 4:3 preview, captured
+headlessly by `studio/projectThumbnail.ts`; it lives in the project's own
+sidecar rather than a server cache so a duplicated, moved or un-trashed project
+carries its picture with it).
 
 ```json
 {

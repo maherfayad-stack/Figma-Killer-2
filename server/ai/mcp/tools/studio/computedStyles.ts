@@ -33,7 +33,7 @@ import { StudioComputedStylesInputSchema, aiToolError } from '@core/ai'
 import { safeParseValue } from '@core/utils/typeboxHelpers'
 import { AgentComputedStylesResultSchema, type AgentFrameInspectRequest } from '@core/studio-capture'
 import type { AiTool, ToolContext } from '../../../runtime/types'
-import { awaitEditorBridgeForUser } from '../../editorBridge'
+import { awaitEditorBridgeForUser, editorBridgeScope } from '../../editorBridge'
 import { inspectFrameHeadless } from '../../capture/headlessFrameInspect'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
@@ -69,7 +69,7 @@ const computedStylesTool: AiTool = {
 
     // Fall back to the user's own tab — the only path left when there is no
     // Chromium, and the authoritative one for an unsaved in-progress edit.
-    const bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
+    const bridge = await awaitEditorBridgeForUser(ctx.userId, editorBridgeScope(dir), ctx.signal)
     if (!bridge) {
       return aiToolError(
         // Names BOTH halves, the same rule `captureFrames.ts` follows: the old

@@ -1087,4 +1087,26 @@ export const pgMigrations: Migration[] = [
       alter table ai_conversations add column session_epoch integer not null default 0;
     `,
   },
+  {
+    // W10 — a conversation belongs to (account, project), not to the account
+    // alone. `project_key` is `registeredMcpServerProjectKey(dir)` (server/ai/
+    // drivers/registeredMcpServers.ts), the SAME key MCP OAuth sessions and
+    // registered-server secrets are already scoped by, so all three agree on
+    // what "this project" means.
+    //
+    // Nullable with NO backfill, deliberately: every conversation that exists
+    // today was created before projects were a scope, and guessing which one
+    // it belonged to would be fabrication. `null` reads as "not project-
+    // scoped" and stays visible in every project's history (grouped under
+    // "Other projects" in the UI); the first turn taken against an open
+    // project ADOPTS the key. `chat.ts` refuses (409) a turn whose project
+    // disagrees with a conversation's already-stamped, non-null key.
+    id: '022_ai_conversation_project_key',
+    sql: `
+      alter table ai_conversations add column project_key text;
+
+      create index if not exists ai_conv_user_project_updated_idx
+        on ai_conversations (user_id, project_key, updated_at desc);
+    `,
+  },
 ]

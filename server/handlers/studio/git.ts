@@ -72,7 +72,7 @@
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { isCommitSha, isAcceptableCommitMessage, resolveWorkspaceRelativePath } from './gitPaths'
 import { assertOwnGitRepo, assertWithinWorkspace, hasGitRepo } from './gitRunner'
 import {
@@ -165,6 +165,7 @@ export async function tryServeStudioGit(req: Request, url: URL, pathname: string
     if (action === 'init' && req.method === 'POST') return await serveInit(req)
     if (action === 'restore' && req.method === 'POST') return await serveRestore(req)
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:git]', err)
     return jsonResponse({ error: 'The git operation could not be completed.' }, { status: 500 })
   }

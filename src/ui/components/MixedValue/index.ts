@@ -15,6 +15,14 @@
 /** Unique sentinel meaning "the selection's values for this field disagree". */
 export const MIXED: unique symbol = Symbol('studio-mixed-value')
 
+/**
+ * The one string every control shows in place of a value when the selection
+ * disagrees. Defined here, next to the sentinel, so the five control surfaces
+ * that render it (`SegmentedControl`, `Select`, `Input`, `TokenAwareInput`,
+ * `ColorValueInput`) cannot drift into "Mixed" / "mixed" / "Multiple".
+ */
+export const MIXED_PLACEHOLDER = 'Mixed'
+
 /** The type of the `MIXED` sentinel — use as `T | Mixed` in a control's value prop. */
 export type Mixed = typeof MIXED
 

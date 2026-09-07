@@ -32,10 +32,12 @@
     gap: var(--space-m);
 }
 
-/* Loading placeholder tile — same surface, radius and padding as `ProjectCard`'s
- * `.card`, so the grid doesn't reflow when the real project tiles replace it. */
+/* Loading placeholder tile — same surface and radius as `ProjectCard`'s
+ * `.card`, and the same 4:3 lead area, so the grid doesn't reflow when the
+ * real project tiles replace it. */
 .cardSkeleton {
-    padding: var(--space-3xl);
+    aspect-ratio: 4 / 3;
+    padding: var(--space-m);
     background: var(--bg-surface-2);
     border-radius: var(--card-radius);
 }

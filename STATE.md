@@ -55,6 +55,81 @@ are the remaining WS-2 items, not yet dispatched. See
 - **Pre-existing, not mine:** icon-catalog Gate 1/2 (vendored `pixel-art-icons/dist/` absent
   in this worktree), `bundle-size-budgets` skipped without a `dist/`.
 
+### server-20 — W7-3: the launcher tile shows the project, not a folder glyph
+- **Agent:** server-engineer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/launcher-project-thumbnails`, off `origin/main` at `342c67d` (W7-2 / PR #51).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W7-3 — capture each project's first screen
+  headlessly, serve it with mtime caching, and rebuild the card around it.
+- **Scope:** NEW `server/handlers/studio/{projectDirGuard,projectThumbnailFile,projectThumbnail,projectThumbnailQueue,projectThumbnailRoute}.ts`
+  + `studio/__tests__/projectThumbnail.test.ts`; edited
+  `server/handlers/{studioProjects,studioWriteback}.ts`,
+  `server/handlers/studio/{projectRoutes,projectTrash,projectDuplicate}.ts`;
+  NEW `src/admin/pages/dashboard/hooks/useProjectThumbnail.ts`; edited
+  `src/admin/pages/dashboard/{ProjectCard.tsx,ProjectCard.module.css,DashboardPage.module.css,DashboardPage.test.tsx,hooks/useStudioProjects.ts}`;
+  docs `agent-refs/{path-index,glossary}.md`, `features/studio-import.md`.
+  **`server/handlers/studio.ts` was deliberately NOT touched** — it is at 699 of
+  `module-size-budgets`' 700-line ceiling, which is why `GET /thumbnail` is
+  registered inside `projectRoutes.ts` rather than as a new `STUDIO_SUB_ROUTERS`
+  entry. Do not "tidy" that by adding an import there.
+- **Done so far:**
+  - `captureProjectThumbnail(dir)` → `captureFrames({ source: \'headless\' })`,
+    `sharp` to 480×360, written to `.studio/thumbnail.png`. `source` is
+    explicit: `auto`\'s fallback is the LIVE editor tab, and hijacking whatever
+    project a user has open to refresh someone else\'s thumbnail is not a trade
+    a background job gets to make.
+  - **No new `CapturePurpose` was needed** and nothing under
+    `server/ai/mcp/capture/` or `src/core/ai/` was touched (two other agents
+    are editing those). The plan allowed for a `purpose: \'thumbnail\'` scale;
+    it would have been dead weight — the capture asks for `dpr: 1`, which the
+    `\'vision\'` cap never binds on, and the downscale is `sharp`\'s job after
+    the fact.
+  - `GET /admin/api/studio/thumbnail?dir=` — mtime+size `ETag`,
+    `Last-Modified`, `must-revalidate`, 304 on a match; 404 + `no-store` while
+    the capture is queued. A same-origin `<img src>`, NOT `apiBlobRequest`:
+    the browser\'s own HTTP cache is the entire point of the validators.
+  - `StudioProjectSummary` gains `hasThumbnail` + `thumbnailUpdatedAt` (one
+    `stat`, in the single `studioProjectSummary(dir)` builder).
+  - Triggers: `GET /projects` backfills every project without one; a debounced
+    (15 s) refresh fires from `applyStudioEditBatch` — the single engine BOTH
+    `/save` and MCP `studio_apply_edits` run through, so the agent\'s writes
+    count too. Both fire-and-forget. `projectThumbnailQueue` serialises them
+    (the browser pool is ONE Chromium) and memoises failures per process; a
+    save clears that memo for its project.
+  - `ProjectCard` is the Figma-file-tile shape now: 4:3 preview on top, name +
+    badges below, ⋯ moved to the bottom row (it used to float over what is now
+    a screenshot), name back to `--text-m` from W7-1\'s `--text-xl`.
+- **Next step:** none for this PR. Merge after `git fetch && git merge origin/main`
+  (W7-4/W7-5 also touch `DashboardPage.*`).
+- **Decisions:**
+  - `PROJECTS_TRASH_DIR_NAME` + the parent-comparison containment check MOVED
+    out of `projectTrash.ts` into a new `projectDirGuard.ts`, because a third
+    caller (`/thumbnail`) would have made three copies of a security check.
+    `/delete`, `/duplicate` and `/thumbnail` all call
+    `resolveWorkspaceProjectDir` now. **W7-4 (trash UX) will conflict here** —
+    resolve by keeping the guard.
+  - The thumbnail lives in the project\'s own `.studio/` sidecar, not a server
+    cache: a duplicated, moved or un-trashed project carries its picture.
+- **Landmines:**
+  - `bun run build` / `tsc -b` time out in a worktree whose `node_modules/` is
+    an empty shadowing directory — run `bun install` in the worktree first.
+    Per-project `tsc -p tsconfig.{app,node}.json --noEmit` is the fast check.
+  - A project with no `.studio/boards.json` frames short-circuits before any
+    browser work. That is what makes enqueueing every project on every launcher
+    render cheap, and what keeps the test suite from launching Chromium.
+- **Verification:** `tsc -p tsconfig.app.json --noEmit` ✅,
+  `tsc -p tsconfig.node.json --noEmit` ✅, `eslint` on every touched file ✅,
+  283 tests across the 18 touched suites ✅ (17 new). Architecture gates ran:
+  `css-token-policy`, `css-token-vocabulary`, `no-css-var-fallbacks`,
+  `module-size-budgets`, `button-primitive-usage` all pass; the icon-catalog
+  cluster and the `ai-driver-isolation` timeouts are the standing pre-existing
+  failures. Full `bun run build` NOT run — see landmines.
+- **Human action needed:** dogfood — open `/admin/dashboard` with two or more
+  projects, confirm each tile\'s folder glyph swaps to a real screenshot within
+  ~40 s, edit a screen on the board and confirm the tile updates ~15 s after
+  the last save, and check the ⋯ menu + inline rename still work on the new
+  card shape.
 ### panel-14 — W8-4: Fill edits `background-image` as N layers, honestly
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open) — **needs human dogfood**
@@ -924,6 +999,15 @@ to read this entry even if you don't care about scrubbing:
 - **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — see the entry's PR body for the run; failures are the standing pre-existing set (`standing-01`), none in `scripts/`.
 - **Human action needed:** none. Re-run `bun run bench:agent-turn` after W9-2/W9-5 land and diff against the table above.
 
+### server-05 — W10: agent sessions are per (account, project), and the `dir` escape is closed
+- **Agent:** studio-implementer (picked up a killed agent's uncommitted worktree)
+- **Stage:** done — gates green on the files touched; **UI needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/per-project-agent-sessions`, merged with `origin/main` at `f65c4ef` (#43/#44/#45). No merge conflicts — `studioProjects.ts` touched on both sides but in different functions.
+- **Shipped:** migration 022 (`ai_conversations.project_key`, both dialects, nullable, no backfill, `(user_id, project_key, updated_at desc)` index) · list `?dir=` + create stamp + `chat.ts` 409/adopt · `resolveProjectDir` realpath containment throwing `ProjectDirOutsideWorkspaceError` answered once by the router, with `rethrowProjectDirRefusal(err)` first in every route-local catch-all · bound connectors refused a foreign `dir` (`ProjectDirMismatchError`) · warm pool keyed `(userId, conversationId)` + per-user cap 2 + userId in the fingerprint + hashed attachment root · `.studio/cache/agent/<userKeyHash>/{turnWrites,pageVerification}.json` with the key passed to hook subprocesses via `STUDIO_AGENT_USER_KEY` · `agentSession.effort` → `byUser` · bridge scope `site:${projectKey}` · `agentProjectDir()` as the ONE client-side project answer (bridge, create, chat) · `ConversationHistory` scoped list + collapsed "Not in this project" group.
+- **Cut / not done:** no e2e or browser dogfood of the popover or the bridge reconnect (UI changes are not e2e-covered here — see the wave-train rule); `bun run lint` and the FULL `bun test` were not run to completion at the end (20 parallel `tsc` processes on this box made every long run time out) — both tsconfig projects typecheck clean (`tsc -p tsconfig.node.json --noEmit`, `tsc -p tsconfig.app.json --noEmit`) and all ~35 touched test files pass.
+- **Landmines:** (1) the suite now declares `STUDIO_WORKSPACE_DIR = os.tmpdir()` once in `src/__tests__/setup.ts`, because ~50 server test files build their fixture with `mkdtempSync(join(tmpdir(), …))` and containment would otherwise refuse every one; a file needing its own root still sets and restores the variable itself (`withOutsideWorkspaceDir` in `server/handlers/__tests__/outsideWorkspaceDir.ts` does exactly that for the routes that must REFUSE an outside dir). (2) `componentBundle.test.ts` pins the root back to the repo's own `studio-workspace/` because its React-version checks need a `node_modules` above the fixture. (3) In THIS worktree `node_modules/` is essentially empty (deps resolve from the primary checkout), so `componentBundle`'s five React-version cases and `devWorkflow`'s vite-binary case fail environmentally — they are not code failures. (4) `module-size-budgets` forced three extractions: `agentConversationReset.ts`, `server/handlers/studio/studioRouteBodies.ts`, `server/siteCss.ts`.
+- **Human action needed:** open two projects in two tabs, run a turn in each, and confirm (a) each tab's history shows only its own threads plus a collapsed "Not in this project", (b) a tool call in tab A never lands in tab B, (c) continuing a project-A thread from project B is refused with the 409 message rather than silently re-pointed.
 ### mcp-20 — W9-1(1): a pasted screenshot was silently the design spec; references now have roles, and an ambiguous page is refused
 - **Agent:** studio-implementer (resumed — the first agent was killed on a session limit near the end; its uncommitted worktree was picked up, not redone)
 - **Stage:** done (gates green; draft PR open)
@@ -1794,6 +1878,59 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### inspector-w8-3-p1 — multi-select edits inline styles across N nodes, with Mixed
+- **Agent:** studio-implementer · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/multi-select-inline-bulk-edit` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W8-3 **phase 1 only**.
+- **Shipped:** `setNodesInlineStyles(nodeIds, patch)` over `mutateTreesForNodeIds`
+  (one undo step for N, cross-frame; shares `applyInlineStylePatch` with the
+  single-node action); `multiSelectStyleBags.ts` collapsing N nodes into the
+  `storedStyles`/`currentStyles` pair `StyleSectionsEditor` already renders;
+  `MultiInlineStyleComposer` mounted in `MultiSelectionInspector`;
+  `StyleTargetChip` pinned to Element with the stated reason
+  (`lockedToElementReason`); Mixed rendering in `SegmentedControl`, `Select`,
+  `Input`, `TokenAwareInput`, `ColorValueInput` (shared `MIXED_PLACEHOLDER`),
+  routed through `ClassPropertyRow` + `resolveStylePlaceholder`;
+  `isSelectorMultiSelect` fixed from ≥1 to ≥2. Docs:
+  `inspector-disclosure.md` **§9** (new, existing §-numbers untouched),
+  `agent-refs/editor-store.md`.
+- **CUT — next agent picks these up:** (a) **W8-3 phase 2** —
+  `StyleWriteLockContext` carrying a COUNT ("writes to 3 of 5 — 2 are compiled")
+  instead of a boolean; (b) **W8-3 phase 3** — class-target bulk behind a "this
+  class is used by N other elements — continue?" gate, plus G6.4 Selection
+  colours; (c) **the bespoke-section Mixed gap** — Spacing/Layout/Position/Size/
+  Typography/Appearance/Fill/Border read raw cells via `readString`, which
+  returns `undefined` for `MIXED`, so they render their ordinary *unset* state
+  (blank field / no pressed segment) instead of the word "Mixed". The primitives
+  already take `mixed`; each field is a one-line wiring change. Left undone
+  deliberately — five of those sections were owned by parallel agents this wave.
+- **Needs human dogfood** (no e2e for UI): open `/admin/site`, shift/⌘-click 2+
+  layers on the canvas → the Properties panel should show the action bar, an
+  `Editing: [Element] Class Assign` chip with Element pressed/disabled and the
+  tooltip "Bulk edits write inline styles — class edits need a single
+  selection", then the full style sections. Set `cursor` differently on two
+  layers first (single-select each, Interaction section) → re-select both →
+  the Cursor field must read placeholder **Mixed**; type a value → both layers
+  change and ONE Ctrl+Z reverts both. Then tick ONE checkbox in the Selectors
+  panel → the single-selector inspector (not the bulk bar); tick a second →
+  the bulk bar.
+- **Verification:** `tsc -p tsconfig.app.json --noEmit` and
+  `tsc -p tsconfig.node.json --noEmit` clean; `eslint` clean on every touched
+  path; new/updated tests green (`multiSelectInlineStyles`,
+  `multiSelectStyleBags`, `mixedValueControls`, `multiInlineStyleComposer`,
+  `selectorMultiSelectTrigger`, `selectorsPanel`); the gates this touches
+  (`module-size-budgets`, `css-token-policy`, `no-css-var-fallbacks`,
+  `button-primitive-usage`, `no-full-site-scan-in-selectors`,
+  `css-token-vocabulary`, `boundary-validation`, `ui-primitives-location`) all
+  pass. **Not mine:** the icon-catalog gate (whole `pixel-art-icons/dist` cluster),
+  `ai-driver-isolation`, and `no-circular-dependencies` — which TIMED OUT at 60s
+  under parallel `tsc` load rather than reporting a cycle. The full `bun run build`
+  / `bun run lint` were killed by the same contention; both halves of `tsc -b`
+  were checked individually instead.
+- **Four selectorsPanel tests were updated, not broken:** they asserted the old
+  ≥1 bulk trigger. One now adds a second locked utility locally (the shared
+  fixture's exact contents are asserted by sibling tests, so it was not touched).
 
 ### docs-06 — W9-1.4: prose for every agent tool, plus three comment-truth fixes
 - **Agent:** studio-scribe

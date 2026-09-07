@@ -37,14 +37,14 @@
  * `requestCmsSiteReload()` after this POST resolves, or the board keeps
  * showing whatever locale it last parsed in.
  *
- * Same containment posture as every other project-scoped route:
- * `resolveProjectDir` + `isRealpathContained(dir, projectsRootDir())`.
+ * Containment is `resolveProjectDir`'s, once for every project-scoped route:
+ * a `dir` outside `studio-workspace/` throws there and the router answers 404,
+ * so this handler never sees one.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 
 const ROUTE_PATH = '/admin/api/studio/preview-axes'
@@ -74,9 +74,9 @@ export async function tryServeStudioPreviewAxes(req: Request, url: URL, pathname
   if (req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       return jsonResponse({ previewAxes: resolvePreviewAxes(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:previewAxes]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -87,12 +87,12 @@ export async function tryServeStudioPreviewAxes(req: Request, url: URL, pathname
       const body = await readValidatedBody(req, PreviewAxesPostBodySchema)
       if (!body) return badRequest('invalid preview-axes body')
       const dir = resolveProjectDir(body.dir)
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
       const existing = readStudioMeta(dir).previewAxes ?? {}
       mergeStudioMeta(dir, { previewAxes: { ...existing, ...body.previewAxes } })
       return jsonResponse({ ok: true, previewAxes: resolvePreviewAxes(dir) })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:previewAxes]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

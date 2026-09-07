@@ -92,7 +92,8 @@ import { sanitizePackageName } from '@core/module-engine'
 import { safeParseJson } from '@core/utils/jsonValidate'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { serveStaticFile } from '../../static'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
+import { isRealpathContained } from './workspacePackageResolve'
 import { resolveAppRoot } from './appRoot'
 import { ALM_DESIGN_PACKAGE_SPECIFIER } from './designSystemDetect'
 import { buildPackageManifest, resolvePackageDtsEntry, resolvePackageTsxEntry } from './packageManifest'
@@ -101,7 +102,6 @@ import { resolveProjectProfile } from './projectProbe'
 import type { ProbeWarning } from './projectProfileSchema'
 import { runCappedSubprocess, minimalSubprocessEnv } from './subprocessRunner'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
-import { isRealpathContained } from './workspacePackageResolve'
 import type { ComponentBundleTask, ComponentBundleWorkerResult } from './componentBundleWorker'
 
 const ROUTE_PATH = '/admin/api/studio/component-bundle'
@@ -334,7 +334,6 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const hash = url.searchParams.get('hash')
       if (!hash || !BUNDLE_HASH_RE.test(hash)) return new Response('Not found', { status: 404 })
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
       const { js } = cacheFilePaths(dir, hash)
       if (!isRealpathContained(js, dir)) return new Response('Not found', { status: 404 }) // belt-and-braces, same posture as studioAsset.ts
@@ -342,6 +341,7 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       const served = await serveStaticFile(dir, `/.studio/cache/bundle-${hash}.js`, req)
       return served ?? new Response('Not found', { status: 404 })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:componentBundle]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -352,7 +352,6 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       const body = await readValidatedBody(req, ComponentBundleBodySchema)
       if (!body) return badRequest('invalid component-bundle body')
       const dir = resolveProjectDir(body.dir)
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       // `approot-01` — every node_modules-touching step below (React-version
       // check, cache key, manifest extraction, the bundler subprocess itself)
       // targets the project's APP ROOT, not necessarily `dir`: a nested app
@@ -469,6 +468,7 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
 
       return jsonResponse({ ok: true, url: bundleUrl(dir, hash), hash, components, warnings })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:componentBundle]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

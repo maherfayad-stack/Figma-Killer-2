@@ -39,15 +39,14 @@
  * nothing to the list, same posture as every other `tryServeStudio*`
  * sub-router's Not-Found-on-refusal contract.
  *
- * Same containment posture as every other project-scoped route
- * (`trustTier.ts`, `extractComponent.ts`): `resolveProjectDir` +
- * `isRealpathContained(dir, projectsRootDir())`.
+ * Containment is `resolveProjectDir`'s, once for every project-scoped route:
+ * a `dir` outside `studio-workspace/` throws there and the router answers 404,
+ * so this handler never sees one.
  */
 import { createWorkspaceProject } from '@core/page-parser'
 import { jsonResponse } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { extractLocalComponentCatalog, type LocalComponentSpec } from './componentSpecExtract'
-import { isRealpathContained } from './workspacePackageResolve'
 
 const ROUTE_PATH = '/admin/api/studio/components'
 
@@ -57,12 +56,12 @@ export async function tryServeStudioComponents(req: Request, url: URL, pathname:
 
   try {
     const dir = resolveProjectDir(url.searchParams.get('dir'))
-    if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
     const project = createWorkspaceProject(dir)
     const components: LocalComponentSpec[] = extractLocalComponentCatalog(project, dir)
     return jsonResponse({ components })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:components]', err)
     return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }

@@ -19,6 +19,27 @@ import { createScaffoldedPage } from '../pageScaffold'
 import { resolvePageSourceFile } from '../pageSourceFile'
 import { registerDesignReference } from '../designReferenceStore'
 import { readTurnWriteLog } from '../turnWriteLog'
+import { STUDIO_AGENT_USER_KEY_ENV } from '../agentUserScope'
+
+/**
+ * The account a spawned hook believes it is running for. `claudeCli.ts` puts
+ * this on the CLI's environment and the CLI hands it down to every hook it
+ * spawns (W10) — passing it through the spawn here is what proves that
+ * channel actually reaches the script, rather than asserting against a
+ * hard-coded path.
+ */
+const USER = 'a1b2c3d4e5f60718'
+const OTHER_USER = '00112233445566ff'
+
+/**
+ * Each case here spawns one or two real `bun <script>` subprocesses, and each
+ * of those loads the studio page-parser graph from cold. That is comfortably
+ * over bun test's 5s default on a loaded machine — the reason this file used
+ * to fail intermittently and only ever on the spawning cases. Stated
+ * explicitly so the suite's result depends on the hook's behaviour, not on
+ * how busy the host is.
+ */
+const SPAWN_TIMEOUT_MS = 30_000
 
 const RECORD_SCRIPT = path.join(import.meta.dir, 'recordToolWrite.ts')
 const GATE_SCRIPT = path.join(import.meta.dir, 'stopGateCheck.ts')
@@ -29,11 +50,12 @@ interface RunResult {
   readonly stderr: string
 }
 
-async function run(script: string, stdin: unknown): Promise<RunResult> {
+async function run(script: string, stdin: unknown, userKey: string = USER): Promise<RunResult> {
   const proc = Bun.spawn([process.execPath, script], {
     stdin: new TextEncoder().encode(JSON.stringify(stdin)),
     stdout: 'pipe',
     stderr: 'pipe',
+    env: { ...process.env, [STUDIO_AGENT_USER_KEY_ENV]: userKey },
   })
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -62,22 +84,22 @@ describe('recordToolWrite.ts (spawned)', () => {
       })
       expect(result.exitCode).toBe(0)
       expect(result.stdout).toBe('') // never noise in the transcript
-      expect(readTurnWriteLog(projectDir)).toEqual([{ file: 'pages/Onboarding.tsx', atMs: expect.any(Number) }])
+      expect(readTurnWriteLog(projectDir, USER)).toEqual([{ file: 'pages/Onboarding.tsx', atMs: expect.any(Number) }])
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }
-  })
+  }, SPAWN_TIMEOUT_MS)
 
   it('is a no-op, still exit 0, when there is no file_path (a Read/Glob call would never reach this hook, but a malformed input must not crash it)', async () => {
     const projectDir = await freshDir()
     try {
       const result = await run(RECORD_SCRIPT, { hook_event_name: 'PostToolUse', cwd: projectDir })
       expect(result.exitCode).toBe(0)
-      expect(readTurnWriteLog(projectDir)).toEqual([])
+      expect(readTurnWriteLog(projectDir, USER)).toEqual([])
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }
-  })
+  }, SPAWN_TIMEOUT_MS)
 })
 
 const ONE_PIXEL_PNG = Buffer.from(
@@ -96,7 +118,7 @@ describe('stopGateCheck.ts (spawned)', () => {
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }
-  })
+  }, SPAWN_TIMEOUT_MS)
 
   it('blocks with a specific, actionable reason for a page written this turn with no reference armed', async () => {
     const projectDir = await freshDir()
@@ -125,7 +147,7 @@ describe('stopGateCheck.ts (spawned)', () => {
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }
-  })
+  }, SPAWN_TIMEOUT_MS)
 
   it('never blocks twice in the same stop cycle — stop_hook_active always allows through', async () => {
     const projectDir = await freshDir()
@@ -143,7 +165,7 @@ describe('stopGateCheck.ts (spawned)', () => {
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }
-  })
+  }, SPAWN_TIMEOUT_MS)
 
   it('stays silent once the page has a registered reference and a passing compare recorded after the write', async () => {
     const projectDir = await freshDir()
@@ -160,7 +182,7 @@ describe('stopGateCheck.ts (spawned)', () => {
       await run(RECORD_SCRIPT, { tool_input: { file_path: path.join(projectDir, rel) }, cwd: projectDir })
       // Record the passing verdict AFTER the write it covers, via the real store module.
       const { recordPassingCompare } = await import('../pageVerificationStore')
-      recordPassingCompare(projectDir, page.id, registered.reference.id)
+      recordPassingCompare(projectDir, USER, page.id, registered.reference.id)
 
       const result = await run(GATE_SCRIPT, { hook_event_name: 'Stop', cwd: projectDir, stop_hook_active: false })
       expect(result.exitCode).toBe(0)
@@ -168,11 +190,36 @@ describe('stopGateCheck.ts (spawned)', () => {
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }
-  })
+  }, SPAWN_TIMEOUT_MS)
 
   it('fails open (exit 0, no block) when cwd is missing from stdin', async () => {
     const result = await run(GATE_SCRIPT, { hook_event_name: 'Stop', stop_hook_active: false })
     expect(result.exitCode).toBe(0)
     expect(result.stdout.trim()).toBe('')
   })
+
+  it("does not block on a colleague's writes — the gate is per account", async () => {
+    const projectDir = await freshDir()
+    try {
+      const scaffolded = createScaffoldedPage(projectDir, 'Onboarding')
+      if (!scaffolded.ok) throw new Error(scaffolded.conflict)
+      const { pages } = await loadStudioPages(projectDir)
+      const page = pages.find((p) => p.id === scaffolded.pageId)!
+      const rel = resolvePageSourceFile(page)!
+
+      // USER writes; OTHER_USER stops. Before W10 both shared one project-wide
+      // log, so this stop was blocked on a screen OTHER_USER never touched.
+      await run(RECORD_SCRIPT, { tool_input: { file_path: path.join(projectDir, rel) }, cwd: projectDir }, USER)
+
+      const result = await run(
+        GATE_SCRIPT,
+        { hook_event_name: 'Stop', cwd: projectDir, stop_hook_active: false },
+        OTHER_USER,
+      )
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout.trim()).toBe('')
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, SPAWN_TIMEOUT_MS)
 })

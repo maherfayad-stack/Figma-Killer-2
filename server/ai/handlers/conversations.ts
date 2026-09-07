@@ -1,14 +1,18 @@
 /**
  * Conversations handler — full CRUD over chat history.
  *
- *   GET    /admin/api/ai/conversations                       list
+ *   GET    /admin/api/ai/conversations?dir=<project>         list
  *   POST   /admin/api/ai/conversations                       create
  *   GET    /admin/api/ai/conversations/:id                   read (+messages)
  *   PUT    /admin/api/ai/conversations/:id                   update
  *   DELETE /admin/api/ai/conversations/:id                   soft-delete
  *
  * Every operation is scoped to the authenticated user (cross-user reads
- * return 404).
+ * return 404) and, where a project is named, to the open project as well:
+ * `?dir=` on the list and `dir` on the create body are validated and turned
+ * into a project key by `conversationProjectKey`. A list with a project
+ * returns that project's conversations plus the unscoped ones; a create with
+ * one stamps the new row. See `../conversations/projectScope.ts`.
  */
 
 import {
@@ -32,6 +36,7 @@ import {
   toConversationView,
   updateConversationForUser,
 } from '../conversations/store'
+import { conversationProjectKey } from '../conversations/projectScope'
 import { isConversationStreaming } from './chat'
 import { endClaudeCliConversation } from '../drivers/claudeCliWarmTurn'
 
@@ -39,6 +44,8 @@ const CreateBodySchema = Type.Object({
   title: Type.Optional(Type.String()),
   credentialId: Type.String({ minLength: 1 }),
   modelId: Type.String({ minLength: 1 }),
+  /** The open project's absolute dir. Validated, never trusted — a dir outside `studio-workspace/` keys as "no project", not as itself. */
+  dir: Type.Optional(Type.String({ minLength: 1 })),
 })
 
 const UpdateBodySchema = Type.Object({
@@ -50,11 +57,11 @@ const UpdateBodySchema = Type.Object({
 export function tryHandleAiConversations(
   req: Request,
   db: DbClient,
-  _url: URL,
+  url: URL,
   pathname: string,
 ): Promise<Response> | null {
   if (pathname === '/admin/api/ai/conversations') {
-    return dispatchCollection(req, db)
+    return dispatchCollection(req, db, url)
   }
   const imageMatch = pathname.match(
     /^\/admin\/api\/ai\/conversations\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/,
@@ -135,17 +142,21 @@ function imageNotFound(): Response {
 // Collection
 // ---------------------------------------------------------------------------
 
-async function dispatchCollection(req: Request, db: DbClient): Promise<Response> {
-  if (req.method === 'GET') return handleList(req, db)
+async function dispatchCollection(req: Request, db: DbClient, url: URL): Promise<Response> {
+  if (req.method === 'GET') return handleList(req, db, url)
   if (req.method === 'POST') return handleCreate(req, db)
   return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
 }
 
-async function handleList(req: Request, db: DbClient): Promise<Response> {
+async function handleList(req: Request, db: DbClient, url: URL): Promise<Response> {
   const userOrResponse = await requireCapability(req, db, 'ai.chat')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  const records = await listConversationsForUser(db, userOrResponse.id)
+  // No `dir` (or one that fails containment) lists everything, exactly as
+  // this route did before projects were a scope — the client is telling us it
+  // has no project open, not asking us to guess one.
+  const projectKey = conversationProjectKey(url.searchParams.get('dir'))
+  const records = await listConversationsForUser(db, userOrResponse.id, projectKey)
   return jsonResponse({ conversations: records.map(toConversationView) })
 }
 
@@ -156,7 +167,10 @@ async function handleCreate(req: Request, db: DbClient): Promise<Response> {
   const body = await readValidatedBody(req, CreateBodySchema)
   if (!body) return badRequest('Invalid request body.')
 
-  const record = await createConversationForUser(db, userOrResponse.id, body)
+  const record = await createConversationForUser(db, userOrResponse.id, {
+    ...body,
+    projectKey: conversationProjectKey(body.dir),
+  })
   return jsonResponse({ conversation: toConversationView(record) }, { status: 201 })
 }
 
@@ -219,8 +233,9 @@ async function handleDelete(req: Request, db: DbClient, id: string): Promise<Res
   if (!ok) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
   // A deleted conversation must not leave a `claude` subprocess (and its MCP
   // children) running, nor a live connector token minted for it. Idempotent
-  // and a no-op for every other provider.
-  await endClaudeCliConversation(id)
+  // and a no-op for every other provider. Keyed by (user, conversation) —
+  // the pool and the attachment root both are.
+  await endClaudeCliConversation(userOrResponse.id, id)
   return jsonResponse({ ok: true })
 }
 
@@ -262,6 +277,6 @@ async function handleRestartSession(req: Request, db: DbClient, id: string): Pro
   // but killing the old process HERE is what makes "restart" mean restart:
   // the user gets the config re-read they asked for immediately, rather than
   // leaving a stale subprocess resident until the next turn or the idle timer.
-  await endClaudeCliConversation(id)
+  await endClaudeCliConversation(userOrResponse.id, id)
   return jsonResponse({ ok: true })
 }

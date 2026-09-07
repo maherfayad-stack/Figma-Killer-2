@@ -38,8 +38,7 @@ import { join } from 'node:path'
 import { extractStringsToDictionary, relativeSpecifier, type StringExtraction } from '@core/ast-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import { findHardcodedStrings, type HardcodedString } from './hardcodedStrings'
 import { findScaffoldedI18n, scaffoldProjectI18n, SCAFFOLD_HOOK_NAME, SCAFFOLD_LOCALES } from './i18nScaffold'
@@ -259,9 +258,9 @@ export async function tryServeStudioI18nSetup(req: Request, _url: URL, pathname:
     const body = await readValidatedBody(req, SetupBodySchema)
     if (!body) return badRequest('Expected { dir? }.')
     const dir = resolveProjectDir(body.dir ?? null)
-    if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
     return jsonResponse(setUpProjectI18n(dir))
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:i18nSetup]', err)
     return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }

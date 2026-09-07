@@ -47,7 +47,7 @@ import { PAGE_DIAGNOSTIC_CODES, type PageDiagnosticCode } from '@core/ai'
 import { decodeSourceNodeId } from '@core/page-tree'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
-import { awaitEditorBridgeForUser } from '../../editorBridge'
+import { awaitEditorBridgeForUser, editorBridgeScope } from '../../editorBridge'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 
@@ -127,7 +127,7 @@ export const studioPageDiagnosticsTool: AiTool = {
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
-    const bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
+    const bridge = await awaitEditorBridgeForUser(ctx.userId, editorBridgeScope(dir), ctx.signal)
     if (!bridge) {
       return {
         ok: false,

@@ -72,9 +72,18 @@ export interface PageWriteVerificationEntry {
  * simply absent — this is never a full page listing, only the ones that
  * moved. Never throws (a bad reference-resolution or store read degrades
  * that ONE page to `hasReference: false`, never aborts the batch).
+ *
+ * Both halves of the question — what was written, and what has passed a
+ * compare — are read from ONE account's cache (`userKey`, see
+ * `agentUserScope.ts`). A gate that could be satisfied by a colleague's
+ * compare, or tripped by a colleague's write, is not a gate on this session.
  */
-export function computePageWriteVerification(dir: string, pages: readonly Page[]): PageWriteVerificationEntry[] {
-  const writeLog = readTurnWriteLog(dir)
+export function computePageWriteVerification(
+  dir: string,
+  userKey: string,
+  pages: readonly Page[],
+): PageWriteVerificationEntry[] {
+  const writeLog = readTurnWriteLog(dir, userKey)
   if (writeLog.length === 0) return []
 
   const writesByFile = new Map<string, { count: number; lastAtMs: number }>()
@@ -111,7 +120,7 @@ export function computePageWriteVerification(dir: string, pages: readonly Page[]
       console.error('[pageWriteVerification] reference resolution failed — treating as unarmed:', err)
     }
 
-    const passing = readPassingCompare(dir, page.id)
+    const passing = readPassingCompare(dir, userKey, page.id)
     const verifiedSinceWrite = passing !== null && passing.passedAtMs >= writes.lastAtMs
 
     results.push({

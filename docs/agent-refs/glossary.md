@@ -6,7 +6,8 @@ Terms that mean something specific here. Alphabetical.
 `meta.json` (displayName, pagesDir, previewAxes, `trust`, cached probe profile),
 `boards.json` (frames, notes, docs), `framework.json` (color/type/spacing
 tokens), `comments.json` (review threads), `prototype.json` (authored links),
-`shares.json` (share-link registry), `references/` (design references) and
+`shares.json` (share-link registry), `thumbnail.png` (the launcher tile's 4:3
+preview — W7-3), `references/` (design references) and
 `cache/` (compiled styles, component bundles, design-system digests). Excluded
 from imports and downloads. Its presence marks a directory as a real studio
 workspace — the GitHub import refuses to clear one.

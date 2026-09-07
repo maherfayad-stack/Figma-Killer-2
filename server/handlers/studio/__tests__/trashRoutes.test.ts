@@ -17,7 +17,8 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import type { DbClient } from '../../../db/client'
-import { PROJECTS_TRASH_DIR_NAME, trashStudioProject } from '../projectTrash'
+import { PROJECTS_TRASH_DIR_NAME } from '../projectDirGuard'
+import { trashStudioProject } from '../projectTrash'
 import { tryServeStudioTrashRoutes } from '../trashRoutes'
 
 let root: string

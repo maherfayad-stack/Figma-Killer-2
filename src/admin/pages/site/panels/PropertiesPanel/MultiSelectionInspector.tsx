@@ -5,7 +5,11 @@
  * The panel header above this component shows "N layers selected" (rendered
  * by the parent `PropertiesPanel.NodeHeader` substitute — see
  * `MultiSelectionHeader` below). This body provides the discoverable action
- * surface for the multi-selection: Duplicate, Wrap..., Copy, Cut, Paste, Delete.
+ * surface for the multi-selection: Duplicate, Wrap..., Copy, Cut, Paste, Delete,
+ * and — since W8-3 phase 1 — the shared CSS style sections, editing every
+ * selected layer's inline styles at once with Mixed values where they
+ * disagree (`MultiInlineStyleComposer`, and
+ * `docs/features/inspector-disclosure.md` §9).
  *
  * Componentize is intentionally NOT exposed in v1 — see the multi-select task
  * notes for the v1 vs v2 scope decision.
@@ -59,7 +63,19 @@ import {
   ContextMenu,
   ContextMenuItem,
 } from '@ui/components/ContextMenu'
+import { useEditorPermissions } from '@site/editorPermissionsContext'
+import { StyleTargetChip } from './StyleTargetChip'
+import { MultiInlineStyleComposer } from './MultiInlineStyleComposer'
 import styles from './MultiSelectionInspector.module.css'
+
+/**
+ * Why the style sections below the action bar write inline styles and not a
+ * class. Shown in the target chip's Element/Class tooltips so the constraint
+ * is stated where the user is already looking, not discovered from a refusal
+ * after the fact — see `MultiInlineStyleComposer`'s module doc.
+ */
+const BULK_TARGET_REASON =
+  'Bulk edits write inline styles — class edits need a single selection'
 
 interface MultiSelectionInspectorProps {
   /** Ordered selection set (anchor last). Must contain 2+ ids. */
@@ -77,6 +93,7 @@ export function MultiSelectionInspector({
   const wrapNodes = useEditorStore((s) => s.wrapNodes)
   const pasteNode = useEditorStore((s) => s.pasteNode)
   const canPaste = useEditorStore((s) => s.clipboardEntry !== null)
+  const { canEditStyle } = useEditorPermissions()
 
   // Resolve display names / tags / class chips against the active canvas page.
   // The selectors subscribe to STABLE references (page + visualComponents +
@@ -207,6 +224,21 @@ export function MultiSelectionInspector({
           </Button>
         </div>
       </div>
+
+      {/* W8-3 phase 1 — the shared style sections, editing every selected
+          layer's inline styles at once. The chip above them states the pinned
+          target and why it is pinned; `MultiInlineStyleComposer`'s doc has the
+          full reasoning. Style-editing is a permission, so both are hidden
+          from a content-only Client. */}
+      {canEditStyle && (
+        <div className={styles.styleArea} data-testid="multi-select-style-area">
+          <StyleTargetChip
+            elementVisible
+            lockedToElementReason={BULK_TARGET_REASON}
+          />
+          <MultiInlineStyleComposer nodeIds={selectedNodeIds} styleQuery="" />
+        </div>
+      )}
 
       <div className={styles.layerListHeader}>
         Selected layers ({selectedNodeIds.length})

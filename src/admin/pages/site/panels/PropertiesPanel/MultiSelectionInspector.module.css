@@ -3,10 +3,17 @@
  * are selected. Replaces the single-node ClassPicker + StyleSurface stack
  * with:
  *   - a primary action bar (Duplicate / Delete / Wrap / Copy / Cut / Paste)
+ *   - the shared CSS style sections, editing every selected layer's inline
+ *     styles at once (W8-3 phase 1)
  *   - a list of the selected layers, each with a quick "remove from selection"
  *
  * Layer summary pills use the shared TagPill primitive. This module keeps only
  * the row/list sizing needed by the multi-selection surface.
+ *
+ * The whole body scrolls as ONE column (rather than the layer list owning its
+ * own scroller, as it did when it was the only tall thing here) — the style
+ * sections are far taller than the list and two independent scrollers inside
+ * one panel is the shape this inspector's single-column siblings avoid.
  */
 
 .root {
@@ -14,7 +21,7 @@
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 /* Primary action bar — center-aligned grid of buttons inside a soft surface. */
@@ -32,11 +39,16 @@
   gap: var(--space-xs);
 }
 
-/* Selected-layers list — scrollable, compact rows */
+/* Style sections — the shared CSS editor, bound to the whole selection. */
+.styleArea {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-s);
+}
+
+/* Selected-layers list — compact rows; the panel body owns the scroller. */
 .layerList {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
   padding: var(--space-3xs) var(--space-xs) var(--space-l);
   display: flex;
   flex-direction: column;

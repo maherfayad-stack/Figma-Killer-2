@@ -39,8 +39,7 @@ import { isUntranslated } from '@core/i18n'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
-import { projectsRootDir, resolveProjectDir } from '../../handlers/studioProjects'
-import { isRealpathContained } from '../../handlers/studio/workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../../handlers/studioProjects'
 import { readTranslationCatalog } from '../../handlers/studio/translationCatalog'
 import { writeTranslationEntry } from '../../handlers/studio/translationWrite'
 import { resolveDriver } from '../drivers'
@@ -130,7 +129,6 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
   if (!body) return badRequest('Expected { targetLocale, sourceLocale?, keys? }.')
 
   const dir = resolveProjectDir(body.dir ?? null)
-  if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
   const catalog = readTranslationCatalog(dir)
   if (!catalog) return jsonResponse({ error: 'This project has no locale dictionary to translate into.' }, { status: 409 })
@@ -167,6 +165,7 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
   try {
     resolved = await resolveCredentialForDriver(record)
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     return jsonResponse({ error: err instanceof Error ? err.message : 'Credential resolution failed.' }, { status: 409 })
   }
 
@@ -191,6 +190,7 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
       },
     })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[ai:translateContent]', err)
     return jsonResponse({ error: err instanceof Error ? err.message : 'The model call failed.' }, { status: 502 })
   }

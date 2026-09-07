@@ -59,9 +59,10 @@
  * Every immediate subfolder of `studio-workspace/` IS a project
  * (`listStudioProjects`), so without an explicit skip the trash would list
  * itself as a project named `.trash` — and opening it would point Studio at a
- * directory whose children are deleted projects. `PROJECTS_TRASH_DIR_NAME` is
- * declared here, beside the code that creates the directory, and
- * `listStudioProjects` imports it rather than repeating the string.
+ * directory whose children are deleted projects. `PROJECTS_TRASH_DIR_NAME`
+ * lives in `./projectDirGuard.ts` — the module that owns "which paths are
+ * projects" — and every consumer, this one included, imports it from there
+ * rather than repeating the string.
  *
  * It is deliberately NOT added to `EXCLUDED_WORKSPACE_DIR_NAMES`: that set
  * names directories to skip INSIDE a project (`node_modules`, `dist`, …), and
@@ -69,10 +70,8 @@
  */
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { PROJECTS_TRASH_DIR_NAME, resolveWorkspaceProjectDir, type ProjectDirRejection } from './projectDirGuard'
 import { readStudioMeta } from './studioMeta'
-
-/** Directory under `studio-workspace/` that holds deleted projects. */
-export const PROJECTS_TRASH_DIR_NAME = '.trash'
 
 /**
  * Why a trash operation could not be performed. The routes map `not-found` to
@@ -81,7 +80,7 @@ export const PROJECTS_TRASH_DIR_NAME = '.trash'
  * is already gone, and a restore blocked by a live project of the same name is
  * neither: it is a state the user can fix by renaming, and the message says so.
  */
-export type ProjectTrashFailure = 'not-a-project' | 'not-found' | 'not-in-trash' | 'slug-taken'
+export type ProjectTrashFailure = ProjectDirRejection | 'not-in-trash' | 'slug-taken'
 
 export class ProjectTrashError extends Error {
   // Declared and assigned rather than written as a constructor parameter
@@ -127,37 +126,24 @@ function availableTrashPath(trashRoot: string, folder: string): string {
  * Moves one project into the workspace trash and returns where it landed.
  *
  * `requestedDir` is caller-supplied, so it is validated as a PATH before it is
- * validated as a project: the resolved directory's parent must be the projects
- * root itself. Comparing the parent — rather than testing a `startsWith`
- * prefix — rejects `..` traversal, a nested path like `<project>/pages`, and
- * the workspace root itself in a single check, and cannot be fooled by a
- * sibling root whose name merely begins with the same characters.
+ * validated as a project — by `resolveWorkspaceProjectDir`, the single
+ * containment rule this route shares with `/duplicate` and `/thumbnail`. See
+ * `./projectDirGuard.ts` for why the check compares the resolved PARENT
+ * rather than testing a prefix.
  */
 export function trashStudioProject(projectsRoot: string, requestedDir: string): string {
   const root = resolve(projectsRoot)
-  const target = resolve(requestedDir)
+  const resolved = resolveWorkspaceProjectDir(root, requestedDir, 'deleted')
+  if (!resolved.ok) throw new ProjectTrashError(resolved.reason, resolved.message)
 
-  if (dirname(target) !== root) {
-    throw new ProjectTrashError(
-      'not-a-project',
-      'Only a project directly inside the workspace can be deleted.',
-    )
-  }
-  const folder = basename(target)
-  if (folder === PROJECTS_TRASH_DIR_NAME) {
-    throw new ProjectTrashError('not-a-project', 'The trash is not a project.')
-  }
-  if (!existsSync(target) || !statSync(target).isDirectory()) {
-    throw new ProjectTrashError('not-found', 'Project not found.')
-  }
-
+  const folder = basename(resolved.dir)
   const trashRoot = join(root, PROJECTS_TRASH_DIR_NAME)
   mkdirSync(trashRoot, { recursive: true })
   const destination = availableTrashPath(trashRoot, folder)
   // Same filesystem by construction (the trash is inside the projects root),
   // so this is an atomic rename rather than a copy — a delete can never leave
   // a half-copied project behind.
-  renameSync(target, destination)
+  renameSync(resolved.dir, destination)
   return destination
 }
 
