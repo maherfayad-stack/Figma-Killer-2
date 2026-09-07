@@ -240,7 +240,7 @@ are the remaining WS-2 items, not yet dispatched. See
 - **Verification:** `bun run build` ✅ · `bun run lint` ✅ · `bun test` — see the entry's PR body for the run; failures are the standing pre-existing set (`standing-01`), none in `scripts/`.
 - **Human action needed:** none. Re-run `bun run bench:agent-turn` after W9-2/W9-5 land and diff against the table above.
 
-### mcp-19 — W9-1(1): a pasted screenshot was silently the design spec; references now have roles, and an ambiguous page is refused
+### mcp-20 — W9-1(1): a pasted screenshot was silently the design spec; references now have roles, and an ambiguous page is refused
 - **Agent:** studio-implementer (resumed — the first agent was killed on a session limit near the end; its uncommitted worktree was picked up, not redone)
 - **Stage:** done (gates green; draft PR open)
 - **Updated:** 2026-09-07
