@@ -117,6 +117,21 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
     action: 'Read the board\'s review comment threads, reply in one, and resolve it',
     status: { kind: 'tool', toolNames: ['studio_list_comments', 'studio_reply_comment', 'studio_resolve_comment'] },
   },
+  {
+    // The canvas equivalent is duplicating a screen three times and hand-
+    // varying it. The tool exists because "be different" is not something a
+    // model does to itself: the seeds are recorded in `.studio/variants.json`
+    // so a later "make B but tighter" edits B's density instead of re-rolling.
+    action: 'Plan N genuinely different design directions for one brief, and read the recorded seeds back',
+    status: { kind: 'tool', toolNames: ['studio_plan_variants', 'studio_list_variant_sets'] },
+  },
+  {
+    // One call, because the three steps are one intent and doing two of them
+    // is worse than doing none: an armed reference measured against a frame
+    // that is not the design's own size scores noise.
+    action: 'Arm a page from a Figma frame — register the export as a strict reference, ingest its variables, and size the board frame to the frame\'s own bounding box',
+    status: { kind: 'tool', toolNames: ['studio_import_figma_frame'] },
+  },
 
   // ── Deliberately withheld — by design, not by oversight.
   {

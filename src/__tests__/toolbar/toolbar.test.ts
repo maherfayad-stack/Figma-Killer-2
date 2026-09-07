@@ -245,9 +245,15 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
     // A reintroduced blanket check here would silently restore the bug the
     // rewrite above describes, and the behaviour test cannot see it — this
     // half is what makes the refusal single-sourced.
-    expect(src).not.toContain("tagName === 'INPUT'")
-    expect(src).not.toContain("tagName === 'TEXTAREA'")
-    expect(src).not.toContain('isContentEditable')
+    for (const banned of ["tagName === 'INPUT'", "tagName === 'TEXTAREA'", 'isContentEditable']) {
+      expect(
+        src.includes(banned),
+        `UndoRedoButtons.tsx hand-rolls a text-target guard (${banned}).\n` +
+          'That is the guard that made \u2318Z unreachable from a parked inspector field.\n' +
+          "Fix: delete it and rely on hasPendingTextEdit(e.target) from './pendingTextEdit',\n" +
+          'which is the single rule every editable surface shares.',
+      ).toBe(false)
+    }
   })
 
   it('keyboard handler registers on document (global scope, not canvas-local)', () => {

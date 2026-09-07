@@ -27,7 +27,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.3.13
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -46,7 +46,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.3.13
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -64,13 +64,29 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.3.13
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # `bun run test` — NOT a bare `bun test`. The script is exactly
+      # `bun test --parallel=4`, and `--parallel` implies `--isolate`: worker
+      # processes with a fresh global per file, instead of all ~1130 test files
+      # sharing one process and one `document`.
+      #
+      # That is not a speed tweak, it is the correctness model this suite is
+      # written against. Two leak classes made bare `bun test` fail ~600 tests
+      # in CI that every one of them passes individually:
+      #
+      #   - a React `act()` scope left open by a timed-out test poisoned every
+      #     later render in the process (the ~600-test DOM wipeout);
+      #   - `mock.module` is process-global and outlives the file that called
+      #     it, so a suite inherited the previous one's module stubs.
+      #
+      # Developers have always run `bun run test`; CI was the only place
+      # running the un-isolated form, which is why `main` never went green.
       - name: Test
-        run: bun test
+        run: bun run test
 
 # NOTE: The Playwright E2E suite is intentionally NOT run in CI yet. As
 # configured (`workers: 1`, fully serial, 156 tests) it takes ~45-60 min and is

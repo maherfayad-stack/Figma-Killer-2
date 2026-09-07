@@ -59,9 +59,19 @@ describe('ImportHtmlModal', () => {
     expect(document.querySelector('textarea#import-html-textarea')).toBeNull()
 
     const editor = await screen.findByTestId('import-html-code-editor')
-    await waitFor(() => {
-      expect(editor.querySelector('[data-codemirror-container]')).toBeTruthy()
-    })
+    // CodeMirror is behind a dynamic `import()` — `codemirror-lazy-only.test.ts`
+    // gates that it stays that way — so this waits on a real module fetch and
+    // evaluation, not on a render. The global `asyncUtilTimeout` of 5s is sized
+    // for renders and is not enough for a cold chunk on a shared CI runner:
+    // this was the one non-canvas failure left in the first green-ish CI run.
+    // 15s sits comfortably under the 20s per-test budget, so a genuine hang
+    // still reports itself here rather than as an opaque test timeout.
+    await waitFor(
+      () => {
+        expect(editor.querySelector('[data-codemirror-container]')).toBeTruthy()
+      },
+      { timeout: 15_000 },
+    )
 
     const preview = screen.getByRole('tree', { name: 'Imported node preview' })
     await waitFor(() => {

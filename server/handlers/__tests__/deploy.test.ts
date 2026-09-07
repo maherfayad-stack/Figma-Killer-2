@@ -25,12 +25,13 @@
 import { afterAll, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { projectsRootDir } from '../studioProjects'
+import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProjects'
 import { tryServeStudioDeploy } from '../studio/deploy'
 import { detectDeployProviders, parseAuthProbe, parsePreviewUrl, mentionsUnlinkedProject } from '../studio/deployProviders'
 import { resolveDeployJob, startDeployJob } from '../studio/deployJobs'
 import { readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../studio/subprocessRunner'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -321,12 +322,27 @@ describe('route validation', () => {
     expect((await call('/admin/api/studio/deploy', post({ dir, provider: 'heroku', confirm: true })))?.status).toBe(400)
   })
 
-  it('404s a dir outside the workspace, and the workspace root itself', async () => {
-    const outside = path.join(projectsRootDir(), '..', '..')
-    expect((await call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(outside)}`))?.status).toBe(404)
-    expect(
-      (await call('/admin/api/studio/deploy', post({ dir: outside, provider: 'vercel', confirm: true })))?.status,
-    ).toBe(404)
+  it('refuses a dir outside the workspace — on the read AND on the start route', async () => {
+    // Containment is answered in exactly ONE place: the router's top-level
+    // catch (`handleServerRequest`), which turns this throw into a flat 404.
+    // The route therefore re-throws instead of inventing its own 404
+    // (`rethrowProjectDirRefusal`), so the refusal this asserts is the throw.
+    // A route that swallowed it would answer 500 — or, worse, deploy a
+    // directory the client may not name.
+    await withOutsideWorkspaceDir('deploy-outside', async (outside) => {
+      await expect(
+        call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(outside)}`),
+      ).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+      await expect(
+        call('/admin/api/studio/deploy', post({ dir: outside, provider: 'vercel', confirm: true })),
+      ).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
+  })
+
+  it('404s the workspace root itself — contained, but not a project', async () => {
+    // The root passes containment, so it reaches the route. The route still
+    // refuses it: `assertDeployableProject` will not deploy the folder that
+    // holds every project.
     expect(
       (await call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(projectsRootDir())}`))?.status,
     ).toBe(404)

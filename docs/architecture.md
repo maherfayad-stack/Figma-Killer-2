@@ -408,7 +408,7 @@ DATABASE_URL=postgres://… bun run dev   # Postgres mode
 
 # verify
 bun run build            # tsc -b && vite build (typecheck + bundle)
-bun run test             # unit + architecture tests — NOT bare `bun test`, see below
+bun run test             # unit + architecture tests — `bun test --parallel=4`, NOT bare `bun test`
 bun run lint             # eslint with cache
 
 # automated browser E2E (Playwright; runs a disposable local stack)
@@ -434,6 +434,10 @@ Three defences, in order of where they act:
 1. **`--parallel=4`** contains any such leak to a single file.
 2. **The budgets in `src/__tests__/setup.ts`** — `asyncUtilTimeout: 5000` for `waitFor`/`findBy*`, `setDefaultTimeout(20000)` for bun's per-test budget — are sized for a slow shared CI runner, and keep a comfortable multiple between the two so a bad `waitFor` reports itself instead of tripping the outer timeout. Raise them there, never per test.
 3. **The act-scope repair in `src/__tests__/setup.ts`** resolves any still-pending `act()` wrapper in the global `afterEach`, driving React's own unwind path. Gated by `src/__tests__/harness/actScopeLeakRecovery.test.tsx`, which reproduces the leak and asserts the next render still commits.
+
+`act()` is not the only thing that travels. **`mock.module` is process-global and outlives the file that called it**, so a suite that stubs a module leaves that stub standing for every later suite that imports it — which is how `server/ai/mcp/capture/headlessCapture.test.ts` passed alone and failed in a full run. `--parallel` contains that too, but the suites that mock (`captureFrames`, `compare`, `computedStyles`, `measureElement`) also snapshot the real exports at import time and re-install them in `afterAll`, so they are honest un-isolated as well. Do the same in any new file that calls `mock.module`.
+
+**CI runs `bun run test`** (`.github/workflows/ci.yml` → the Test job), pinned to the same bun version as `engines`. It used to run the bare form, which is the single reason `main` had no green run in its visible history. Note that `bun test --isolate` alone is NOT a substitute: it fixes the leakage and then segfaults the run outright, with no retry — only the parallel path retries a crashed worker's file.
 
 `files/` holds standalone scaffolds copied out by an external `pnpm create-file` workflow (e.g. `files/demo/`) — independent projects with their own toolchain (Vitest, not `bun test`) and their own dependency graph. `bunfig.toml` sets `[test] pathIgnorePatterns = ["files/**"]` so `bun test` never discovers them; test a scaffold from inside its own folder (`cd files/<name> && bun run test`).
 

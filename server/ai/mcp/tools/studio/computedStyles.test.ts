@@ -13,10 +13,30 @@
  * `execution: 'browser'` with no handler at all, so a project with no tab open
  * spent ~8s in the bridge and then refused.
  */
-import { afterEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test'
 import type { AiBrowserBridge } from '../../../runtime/types'
 import type { AiToolOutput } from '@core/ai'
 import type { AgentComputedStylesResult } from '@core/studio-capture'
+import { join } from 'node:path'
+import { projectsRootDir } from '../../../../handlers/studioProjects'
+import * as headlessFrameInspectModule from '../../capture/headlessFrameInspect'
+import * as editorBridgeModule from '../../editorBridge'
+
+/**
+ * `mock.module` is PROCESS-global and outlives this file — `bun test` runs
+ * every file in one process unless `--parallel` isolates them, so a mock left
+ * standing here is still standing when the next suite imports the same module.
+ * `headlessCapture.test.ts` passed alone and failed in a full run for exactly
+ * this reason. Snapshot the real exports (ESM imports evaluate before any
+ * statement in this body, so these ARE the real ones) and put them back.
+ */
+const realHeadlessFrameInspect = { ...headlessFrameInspectModule }
+const realEditorBridge = { ...editorBridgeModule }
+
+afterAll(() => {
+  mock.module('../../capture/headlessFrameInspect', () => realHeadlessFrameInspect)
+  mock.module('../../editorBridge', () => realEditorBridge)
+})
 
 const HEADLESS_RESULT: AgentComputedStylesResult = {
   kind: 'computedStyles',
@@ -66,7 +86,12 @@ function ctx() {
     userId: 'u1',
     capabilities: [],
     conversationId: 'c1',
-    workspaceDir: '/tmp/project',
+    // Inside the workspace root, because `resolveToolProjectDir` refuses
+    // anything outside it (W10). It never has to EXIST — containment allows a
+    // missing leaf — and nothing on this path touches the filesystem. A
+    // hardcoded `/tmp/…` only looked fine because the suite's workspace root
+    // is the OS temp dir, which is `/tmp` on Linux and is not on macOS.
+    workspaceDir: join(projectsRootDir(), 'computed-styles-fixture'),
     snapshot: null,
     signal: new AbortController().signal,
     db: undefined,

@@ -111,7 +111,7 @@ Three categories, three voices:
 1. Skim [`architecture.md`](architecture.md) → "Where things live — decision table".
 2. Read the feature doc closest to what you're adding (e.g. [`features/plugin-system.md`](features/plugin-system.md) for a plugin SDK extension).
 3. Read the relevant reference doc(s) for the primitives you'll touch ([`reference/page-tree.md`](reference/page-tree.md), [`reference/database-dialects.md`](reference/database-dialects.md), [`reference/typebox-patterns.md`](reference/typebox-patterns.md)).
-4. Make the change. Verify with `bun test && bun run build && bun run lint`.
+4. Make the change. Verify with `bun run test && bun run build && bun run lint` (`bun run test` — not a bare `bun test`; see [`architecture.md`](architecture.md) → Commands for why the suite needs `--parallel`'s isolation).
 
 ### "I want to change the visual design"
 
