@@ -1,16 +1,19 @@
 # Inspector progressive disclosure
 
-The properties panel's density contract: five laws, ten goals (G1–G10), and the
-list of Figma controls Studio deliberately refuses to copy.
+The properties panel's density contract: five laws, ten goals (G1–G10), the
+field model every numeric control shares, and the list of Figma controls Studio
+deliberately refuses to copy.
 
 This page is the **authoritative reference for the vocabulary the inspector
 source cites**. Roughly fifty files under
 `src/admin/pages/site/panels/PropertiesPanel/`, `src/ui/components/` and
 `src/core/` carry comments of the form *"Law 3 (§1)"*, *"§4 G5"*, *"G9.2 / §7 /
 §8.4"*, *"G4.9"*, *"G6.2"*. The section numbers below are the ones those
-comments mean — `§1` is the laws, `§4` is the goals, `§6` the measurement gate,
-`§7` the do-not-copy list, `§8` the resolved decisions. **Keep the numbering
-stable.**
+comments mean — `§1` is the laws, `§4` is the goals, `§5` the field model, `§6`
+the measurement gate, `§7` the do-not-copy list, `§8` the resolved decisions.
+**Keep the numbering stable.** (`§2` was folded into `§1` before this page
+existed and is deliberately never reused; `§5` was empty until W8-1 wrote the
+field model into it, which added a section without renumbering one.)
 
 > **History.** This content was the delivery plan `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`,
 > retired once its work orders shipped. The plan's own progress bookkeeping is
@@ -24,14 +27,14 @@ stable.**
 
 ## Status
 
-G1–G10 shipped. Two pieces did not, and are tracked as open workstreams in
+G1–G10 shipped, G9 completed in W8-1. Two pieces did not, and are tracked as
+open workstreams in
 [`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md):
 
 | Open | What is missing |
 |---|---|
 | **G6.4 — Selection colours** | Listing every distinct colour across a multi-node selection and rewriting all of them from one edit. Deferred at `FillSection.tsx` — it needs store-side multi-select style editing that does not exist yet. |
 | **§6 — The measurement gate** | No `scrollHeight <= clientHeight` test exists, and no height baseline was ever recorded in `docs/audits/`. The budgets in §6 are therefore unenforced. |
-| **G9 — `color`/`textShadow` relocation** | Still resident on Typography's own rows rather than moved into Fill/Effects — see G9's own note below. Not tracked in `STUDIO-NEXT-WORKSTREAMS.md` yet. |
 
 One goal was superseded rather than shipped as written: **G8.4** moved
 `transform`/`transition`/`animation` out of Effects, but into a full
@@ -291,12 +294,22 @@ An 8-entry grid becomes **four rows** — family / weight+size /
 line-height+letter-spacing / align+valign+`⚙` — with *more* capability than
 before, because the popover's Details and Variable tabs expose properties
 previously reachable only by typing a property name into the custom-properties
-editor. The target design moves `color` to **Fill** for text nodes and
-`textShadow` to **Effects** as a shadow layer; **not shipped yet** —
-`TypographySection.tsx` keeps both resident on its own four rows, because G6
-(Fill) and G8 (Effects) had not yet run when this section shipped and moving
-them first would have deleted the only way to reach them. That is the one way
-this section is not literally four rows today.
+editor.
+
+- **G9.4 — the relocation, completed in W8-1.** `color` moved to **Fill** and
+  `textShadow` to **Effects**, which is what Figma does: a text node's colour
+  *is* its fill, and a text shadow *is* a shadow. It could not ship with the
+  rest of G9 because G6 (Fill) and G8 (Effects) had not yet run, and moving
+  either first would have deleted the only way to reach it. Ownership is
+  declared in `classStyleSections.ts` — exactly one section claims a property,
+  because that array drives both the "N set" count and the style search.
+  Concretely: Fill grows a **Text** row (topmost, since text paints over the
+  box's own background) plus an "Add text colour" header button, and Effects
+  grows `text-shadow` rows through the same `boxShadowLayers.ts` parser under
+  `TEXT_SHADOW_GRAMMAR` — the same grammar narrowed to three lengths and no
+  `inset`, with `EffectEditorPopover`'s `variant: 'text'` omitting the Spread
+  and Inset controls that `text-shadow` has no concept of. This section is now
+  literally F23's four rows.
 
 - **G9.2** — vertical align: the honest CSS mapping is `alignItems` on the text
   node's own box, which only applies in flex context. Where it cannot be written
@@ -324,6 +337,102 @@ rather than tucked behind a popover — it writes the standalone `rotate`
 property and refuses, with a reason, when `transform` already contains a
 rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
 (`ZIndexSettingsRow`).
+
+- **G10.2 — Flip horizontal / vertical (W8-1).** Two toggles beside the
+  rotation field, writing the standalone **`scale`** property (`scale: -1 1` /
+  `1 -1`) for the same reason rotation writes standalone `rotate`: one honest
+  declaration instead of rewriting one item of a `transform` function list.
+  The value model is `flipValue.ts`. Two refusals, both disabled-with-a-reason
+  per §8.4 rather than hidden: `transform` already carrying a scale-family
+  function (CSS applies `scale` first, so both would compound invisibly), and
+  a `scale` value outside the plain-number space the toggles can reproduce
+  (`50%`, a `var()`, a third z component). Rotation stays live through both —
+  the collisions are independent. An unflipped element gets no `scale`
+  declaration at all, never a no-op `scale: 1 1`.
+
+---
+
+## §5. The field model
+
+§1–§4 are about which controls exist and when. This section is about how a
+**numeric field behaves once you are typing in it** — one model, shared by all
+three field kinds, because the alternative is what shipped before W8-1: three
+components that each answered "what does typing `50` mean?" differently, in a
+panel where a designer moves between them dozens of times a minute.
+
+The three kinds, and the one module each rule lives in:
+
+| Field kind | Where | Used for |
+|---|---|---|
+| `ScrubInput` | `src/ui/components/ScrubInput/` | Drag-the-label numerics: W/H, rotation, shadow offsets, stroke weight |
+| `TokenAwareInput` | `src/admin/pages/site/property-controls/` | Length fields with token autocomplete (padding, margin, `fontSize`) |
+| `TextControl` / the frame W-H inputs | `property-controls/`, `FrameSizePanel.tsx` | The generic property row, and a board frame's own size |
+
+### §5.1 Commit coerces; it never writes what CSS rejects
+
+A typed value goes through one coercion on commit (blur / Enter / Tab):
+`resolveCommitValue` (`scrubMath.ts`) for scrub fields, `resolveTokenValue`
+(`tokenUtils.ts`) for token-aware ones. Both do the same three things in the
+same order: a recognised keyword (`auto`/`fill`/`hug`) passes through; a number
+or an arithmetic expression is evaluated and given **the field's own unit**
+when it carries none; anything else is kept as the user's literal text.
+
+The bug this closes: typing `50` into Width used to emit `width: 50`, which is
+not a declaration — the browser drops it, and the user's stylesheet now
+contains a line that does nothing. A field whose whole job is producing a valid
+value must not be able to produce an invalid one.
+
+The third branch is the one that keeps this honest. `calc(100% - 8px)`,
+`var(--space-md)` and `10px 20px` are all real CSS we did not fully parse, so
+they are written back exactly as typed. **We never rewrite CSS we only partly
+understood** — the same rule the gradient (G6.3) and box-shadow (G8.3) parsers
+follow.
+
+### §5.2 Arithmetic, through one evaluator
+
+`100/2`, `100 + 8`, `100px*2`, `(80+20)/2` all evaluate on commit.
+`evaluateNumericExpression` (`src/ui/components/ScrubInput/numericExpression.ts`)
+is the single parser; `scrubMath`, `numericNudge` and `tokenUtils` all call it,
+so a field that scrubs also nudges and also does maths.
+
+It is a parser, so it is a boundary: TypeBox validates the result on the way
+out, and every refusal returns `null` so the caller keeps the literal. Two
+refusals are worth naming — **mixed units** (`100px + 8em`: picking one of two
+units would be a guess) and **division by zero** — because in both cases the
+tempting behaviour is to produce *something*.
+
+### §5.3 One nudge model: 1 / 10 / 0.1
+
+Plain ↑/↓ is ±1, Shift is ±10, Alt is ±0.1, and **Alt beats Shift** when both
+are held (the more specific request wins). `numericNudge.ts` owns the numbers;
+`nudgeStepFor` is the only resolver. Drag-scrub uses the same three magnitudes
+as its per-pixel scale.
+
+Before W8-1 there were three ladders — ±10 in `ScrubInput`, ±8 in
+`numericNudge` ("an 8px design scale"), and a hand-rolled ±8 in
+`FrameSizePanel` — so the same keypress moved a value by a different amount
+depending on which component drew the field. A caller may still widen the model
+for a value space where 1 is meaningless (`AnimationEditorPopover` steps
+milliseconds by 10); it may not re-decide it.
+
+`opacity` and `zIndex` are in the nudge set (`isNudgeableProp`,
+`cssControlTypes.ts`) — they are single numbers, and having no keyboard step
+was an omission rather than a decision. They are the two unitless members, so
+their empty-field unit is `''`: nudging an unset opacity must not invent
+`opacity: 1px`.
+
+### §5.4 Enter commits and keeps focus
+
+Enter commits the value, re-selects the text so the next keystroke replaces it,
+and leaves the caret in the field — Figma's behaviour. All three field kinds
+used to `blur()` instead, which meant the panel's keyboard focus fell out from
+under a user adjusting one value repeatedly.
+
+Blur still commits (clicking away is not a discard) and Escape still reverts.
+Escape's revert needs care: the blur it triggers fires *before* React has
+re-rendered the reverted draft, so both `ScrubInput` and `TokenAwareInput` set
+a flag that makes that one blur discard instead of commit — otherwise Escape
+writes the very value it was pressed to abandon.
 
 ---
 
@@ -413,8 +522,10 @@ kept because the alternatives are the part that does not survive in the diff.
 
 `css-token-policy`, `no-css-var-fallbacks`, `button-primitive-usage` (popovers
 must use `Button`), `no-third-party-icons` (run `bun run icons:sync` after adding
-an icon), `boundary-validation` (the gradient and box-shadow parsers are
-boundaries — TypeBox them, no `as`).
+an icon), `boundary-validation` (the gradient, box-shadow and numeric-expression
+parsers are boundaries — TypeBox them, no `as`), `module-size-budgets` (several
+section files sit near the 700-line ceiling: extract, don't grow — `FillSection`
+split into `FillSectionParts.tsx` + `fillModel.ts` for exactly this reason).
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` is needed for G6.4 (multi-select) and G8.3 (shadow-layer

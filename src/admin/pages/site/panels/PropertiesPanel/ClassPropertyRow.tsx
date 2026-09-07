@@ -50,7 +50,7 @@ import {
   getCSSPropertyTokenSource,
   getEnumOptions,
   cssPropertyLabel,
-  isLengthNudgeProp,
+  isNudgeableProp,
   NUMBER_TYPED_PROPS,
 } from './cssControlTypes'
 import {
@@ -407,12 +407,17 @@ export function ClassPropertyRow({
 
     case 'text':
     default: {
-      // Length properties (width, height, gap, insets, border widths/radii, …)
-      // get arrow-key nudging with an empty-field start-from-zero. The unit
-      // follows the placeholder/default value when it carries one, else px.
-      const nudgeEmptyUnit = isLengthNudgeProp(property)
-        ? (parseNudgeableValue(placeholderText ?? '')?.unit ?? 'px')
-        : undefined
+      // Single-number properties (width, height, gap, insets, border
+      // widths/radii, opacity, zIndex, …) get arrow-key nudging with an
+      // empty-field start-from-zero. `opacity`/`zIndex` are unitless by
+      // type (`NUMBER_TYPED_PROPS`), so their empty unit is `''` — nudging an
+      // unset opacity must not invent `opacity: 1px`. Every other member is a
+      // length, and takes the placeholder's unit when it carries one, else px.
+      const nudgeEmptyUnit = !isNudgeableProp(property)
+        ? undefined
+        : NUMBER_TYPED_PROPS.has(property)
+          ? ''
+          : (parseNudgeableValue(placeholderText ?? '')?.unit ?? 'px')
       control = (
         <TextControl
           propKey={String(property)}

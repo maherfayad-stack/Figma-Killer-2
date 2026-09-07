@@ -1,22 +1,34 @@
 /**
- * numericNudge — keyboard step arithmetic shared by the design-panel value
- * fields (TokenAwareInput's CSS values, NumberControl's unitless numbers).
+ * numericNudge — THE keyboard step model for every numeric field in the
+ * editor. `ScrubInput` (its `step`/`shiftStep` defaults), `TokenAwareInput`,
+ * `TextControl`, `NumberControl` and the frame W/H fields all resolve their
+ * step from here, so a number nudges identically wherever it is typed.
  *
- * Interaction model mirrors Penpot's numeric input:
+ * Figma's model, which is the one we ship:
  *   - plain ↑/↓  → ±1
- *   - Shift+↑/↓  → ±8   (matches an 8px spacing scale — the "big nudge")
- *   - Alt+↑/↓    → ±0.1 (fine nudge)
+ *   - Shift+↑/↓  → ±10  (the "big nudge")
+ *   - Alt+↑/↓    → ±0.1 (the fine nudge; beats Shift when both are held,
+ *                        because the more specific request wins)
  *
- * The value operated on may carry a CSS unit (`16px`, `1.25rem`, `-4%`).
- * A value that isn't a single bare number+unit — `var(--space-md)`, `auto`,
- * `calc(...)`, `10px 20px` — is NOT nudgeable and returns `null`, so token
- * references and keyword values are left untouched.
+ * There used to be three models: ±10 here in `ScrubInput`, ±8 in this file,
+ * and a hand-rolled ±8 in `FrameSizePanel`. Which step a field took depended
+ * on which of three components happened to render it — invisible in any one
+ * field and maddening across two. There is now one set of numbers and one
+ * resolver (`nudgeStepFor`).
+ *
+ * The value operated on may carry a CSS unit (`16px`, `1.25rem`, `-4%`) or be
+ * arithmetic the shared evaluator can reduce (`100/2`, `100 + 8`). Anything
+ * else — `var(--space-md)`, `auto`, `calc(...)`, `10px 20px` — is NOT
+ * nudgeable and returns `null`, so token references and keyword values are
+ * left untouched.
  */
+
+import { evaluateNumericExpression } from '@ui/components/ScrubInput'
 
 /** Plain arrow nudge. */
 export const BASE_NUDGE = 1
-/** Shift+arrow nudge — the "big" step, aligned to an 8px design scale. */
-export const SHIFT_NUDGE = 8
+/** Shift+arrow nudge — the "big" step. */
+export const SHIFT_NUDGE = 10
 /** Alt+arrow nudge — the fine step. */
 export const FINE_NUDGE = 0.1
 
@@ -35,23 +47,23 @@ export function nudgeStepFor({ shiftKey, altKey }: NudgeModifiers): number {
   return BASE_NUDGE
 }
 
-// A single leading-signed number followed by an optional CSS unit and nothing
-// else. Deliberately narrow: multi-value shorthands, functions, and keywords
-// don't match, so they fall through as non-nudgeable.
-const NUDGEABLE_RE = /^(-?\d*\.?\d+)([a-z%]*)$/i
-
 interface NudgeableNumber {
   number: number
   unit: string
 }
 
-/** Parses a bare `<number><unit>` value, or `null` when it isn't one. */
+/**
+ * Parses a nudgeable value — a bare `<number><unit>` (`16px`, `-4%`, `12`)
+ * or arithmetic that reduces to one (`100/2`, `100 + 8`) — or `null` when it
+ * isn't one. The grammar lives in ONE place, `evaluateNumericExpression`
+ * (`@ui/components/ScrubInput`), so a field that accepts maths on commit
+ * also accepts it as a nudge baseline instead of going inert the moment the
+ * user typed a sum.
+ */
 export function parseNudgeableValue(raw: string): NudgeableNumber | null {
-  const match = NUDGEABLE_RE.exec(raw.trim())
-  if (!match) return null
-  const number = Number.parseFloat(match[1])
-  if (!Number.isFinite(number)) return null
-  return { number, unit: match[2] }
+  const evaluated = evaluateNumericExpression(raw)
+  if (!evaluated) return null
+  return { number: evaluated.magnitude, unit: evaluated.unit }
 }
 
 /**

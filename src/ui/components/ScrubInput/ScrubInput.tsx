@@ -38,6 +38,17 @@
  * *typed*, but dragging/arrow-keying them is a no-op: there's no numeric
  * baseline to scrub from, and silently coercing a keyword to `0px` would be
  * exactly the kind of lying control this codebase's controls avoid.
+ *
+ * A TYPED commit goes through `resolveCommitValue` (`scrubMath.ts`), which
+ * gives a bare number this field's `unit` and evaluates arithmetic
+ * (`100/2`, `100+8`). Without it, typing `50` into Width emitted the invalid
+ * declaration `width: 50` — the field's whole job is producing a value CSS
+ * accepts, and the commit path is where that is decided.
+ *
+ * ENTER COMMITS AND KEEPS FOCUS, Figma's behaviour: the value lands, the
+ * text is re-selected so the next keystroke replaces it, and the caret never
+ * leaves the field. Blur commits too (so click-away is not a discard) and
+ * Escape reverts. Nothing about a commit implies losing focus.
  */
 import {
   useEffect,
@@ -50,7 +61,7 @@ import {
 } from 'react'
 import { cn } from '@ui/cn'
 import { MIXED, isMixed, type Mixed } from '../MixedValue'
-import { applyKeyboardStep, applyScrubDelta, isScrubKeyword, parseScrubValue } from './scrubMath'
+import { applyKeyboardStep, applyScrubDelta, isScrubKeyword, parseScrubValue, resolveCommitValue } from './scrubMath'
 import styles from './ScrubInput.module.css'
 
 export { MIXED }
@@ -81,9 +92,14 @@ export interface ScrubInputProps {
    */
   label: ReactNode
   'aria-label': string
-  /** Unit assigned when scrubbing/nudging starts from an empty field. Default `'px'`. */
+  /**
+   * The field's unit: assigned when scrubbing/nudging starts from an empty
+   * field, AND appended to a typed bare number on commit. Default `'px'`.
+   * Pass `''` for a genuinely unitless field (a frame's pixel count, a
+   * ratio) — a bare number then stays bare.
+   */
   unit?: string
-  /** Magnitude change per plain arrow-key press or per pixel of drag. Default 1. */
+  /** Magnitude change per plain arrow-key press or per pixel of drag. Default 1 — the one nudge model, see `numericNudge.ts`. */
   step?: number
   /** Magnitude change per Shift+arrow-key press, and the drag speed multiplier while Shift is held. Default 10. */
   shiftStep?: number
@@ -122,6 +138,8 @@ export function ScrubInput({
   const [isDragging, setIsDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef<{ pointerId: number; startX: number; baseline: string; moved: boolean } | null>(null)
+  /** Set by Escape so the blur it triggers discards instead of committing — see `handleInputBlur`. */
+  const revertingRef = useRef(false)
 
   // Sync external value → draft when not actively editing/dragging (React 19
   // "adjust state during render" idiom — same pattern as TokenAwareInput).
@@ -175,11 +193,20 @@ export function ScrubInput({
     }
   }, [])
 
-  function commit(raw: string) {
-    setIsEditing(false)
+  /**
+   * Commit a typed value. Coerces first (`resolveCommitValue`), so what the
+   * field shows after a commit is exactly what was written to the stylesheet
+   * — a typed `50` reads back as `50px`, not as the invalid `50` it used to
+   * emit. Focus is NOT touched here: blur and Enter both route through this,
+   * and only blur ends the editing session.
+   */
+  function commit(raw: string): string {
     cancelScheduledPreview()
     onClearPreview?.()
-    if (raw !== display) onChange(raw)
+    const next = resolveCommitValue(raw, unit)
+    if (next !== draft) setDraft(next)
+    if (next !== display) onChange(next)
+    return next
   }
 
   function handleLabelPointerDown(e: ReactPointerEvent<HTMLSpanElement>) {
@@ -242,17 +269,33 @@ export function ScrubInput({
   }
 
   function handleInputBlur(e: FocusEvent<HTMLInputElement>) {
+    setIsEditing(false)
+    // Escape reverts and then blurs. The blur fires synchronously, BEFORE
+    // React has re-rendered the reverted draft, so `e.target.value` here is
+    // still the abandoned text — committing it would make Escape write the
+    // very value it was pressed to discard.
+    if (revertingRef.current) {
+      revertingRef.current = false
+      setDraft(display)
+      return
+    }
     commit(e.target.value)
   }
 
   function handleKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
-      e.currentTarget.blur()
+      const input = e.currentTarget
+      commit(input.value)
+      // Figma: Enter commits without leaving the field, and re-selects so the
+      // next keystroke replaces the value. Selection runs after the commit's
+      // re-render so it targets the coerced text, not the pre-commit draft.
+      requestAnimationFrame(() => input.select())
       return
     }
     if (e.key === 'Escape') {
       e.preventDefault()
+      revertingRef.current = true
       setDraft(display)
       setIsEditing(false)
       onClearPreview?.()
@@ -265,10 +308,14 @@ export function ScrubInput({
       if (parsed === null) return // keyword / non-numeric — let the caret move instead
       e.preventDefault()
       const direction = e.key === 'ArrowUp' ? 1 : -1
+      // One nudge model, `numericNudge.ts`'s: plain 1, Shift 10, Alt 0.1 —
+      // and Alt wins over Shift, because the fine step is the more specific
+      // request. `step`/`shiftStep` stay props only so a caller can widen the
+      // model for a value space where 1 is meaningless, not to re-decide it.
       const next = applyKeyboardStep(base, direction, {
         step: e.altKey ? 0.1 : step,
         shiftStep,
-        shift: e.shiftKey,
+        shift: e.shiftKey && !e.altKey,
         min,
         max,
         fallbackUnit: unit,

@@ -32,6 +32,7 @@ afterEach(cleanup)
 function noop() {}
 
 const ALL_FILL_PROPS = [
+  'color',
   'backgroundColor',
   'background',
   'backgroundImage',
@@ -67,6 +68,49 @@ describe('FillSection — Law 1', () => {
     const { container } = renderFill()
     expect(screen.queryByRole('list', { name: 'Fill' })).toBeNull()
     expect(container.querySelector('[class*="fillSection"]')?.children.length ?? 0).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 1b. Text fill entry (G9's completion — a text node's colour IS its fill)
+// ---------------------------------------------------------------------------
+
+describe('FillSection — text fill entry', () => {
+  it('shows a Text row with the colour as its summary when color is set', () => {
+    renderFill({ storedStyles: { color: '#112233' } })
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('#112233')
+    // `label` is the entry's accessible name, which is what "Remove <name>" quotes.
+    expect(within(row).getByRole('button', { name: 'Remove Text' })).toBeTruthy()
+  })
+
+  it('lists the text fill ABOVE the solid fill — text paints over the background', () => {
+    renderFill({ storedStyles: { color: '#112233', backgroundColor: '#ff0000' } })
+    const rows = screen.getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.textContent).toContain('#112233')
+    expect(rows[1]!.textContent).toContain('#ff0000')
+  })
+
+  it('edits through its own popover and writes color', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    renderFill({ storedStyles: { color: '#112233' }, onChange })
+
+    fireEvent.click(screen.getByText('#112233'))
+    const popover = screen.getByRole('dialog', { name: 'Text colour' })
+    const input = within(popover).getByRole('textbox', { name: 'Text colour' })
+    fireEvent.change(input, { target: { value: '#445566' } })
+    fireEvent.blur(input)
+
+    expect(onChange).toHaveBeenCalledWith('color', '#445566')
+  })
+
+  it('is hidden by the style search when `color` is filtered out', () => {
+    renderFill({
+      storedStyles: { color: '#112233' },
+      visibleProperties: ['backgroundColor'] as unknown as FillProps['visibleProperties'],
+    })
+    expect(screen.queryByRole('listitem')).toBeNull()
   })
 })
 
@@ -293,10 +337,24 @@ describe('FillSection — background shorthand escape hatch', () => {
 // ---------------------------------------------------------------------------
 
 describe('FillSectionActions', () => {
-  it('shows both add buttons when nothing is set', () => {
+  it('shows all three add buttons when nothing is set', () => {
     render(<FillSectionActions storedStyles={{}} onChange={noop} />)
+    expect(screen.getByRole('button', { name: /add text colour/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /add gradient fill/i })).toBeTruthy()
+  })
+
+  it('hides "add text colour" once color is set', () => {
+    render(<FillSectionActions storedStyles={{ color: '#fff' }} onChange={noop} />)
+    expect(screen.queryByRole('button', { name: /add text colour/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeTruthy()
+  })
+
+  it('"add text colour" writes a concrete colour, not a no-op currentColor', () => {
+    const onChange = mock((_p: string, _v: unknown) => {})
+    render(<FillSectionActions storedStyles={{}} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: /add text colour/i }))
+    expect(onChange).toHaveBeenCalledWith('color', '#000000')
   })
 
   it('hides "add solid color fill" once backgroundColor is set', () => {
@@ -316,9 +374,12 @@ describe('FillSectionActions', () => {
     expect(screen.getByRole('button', { name: /add gradient fill/i })).toBeTruthy()
   })
 
-  it('renders nothing once both channels are in use', () => {
+  it('renders nothing once all three channels are in use', () => {
     const { container } = render(
-      <FillSectionActions storedStyles={{ backgroundColor: '#000', backgroundImage: 'url(x.png)' }} onChange={noop} />,
+      <FillSectionActions
+        storedStyles={{ color: '#fff', backgroundColor: '#000', backgroundImage: 'url(x.png)' }}
+        onChange={noop}
+      />,
     )
     expect(container.querySelectorAll('button')).toHaveLength(0)
   })
