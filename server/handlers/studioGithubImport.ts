@@ -136,6 +136,20 @@ export function defaultGithubImportDir(owner: string, repo: string): string {
   return join(process.cwd(), 'studio-workspace', `${owner}-${repo}`)
 }
 
+/**
+ * One progress tick from an in-flight import. `phase` is coarse on purpose:
+ * only `downloading` has a magnitude worth showing, and `unpacking` is a
+ * single synchronous `unzipSync` that cannot report intermediate progress
+ * without inflating entries twice. See `studio/githubImportRoutes.ts` for how
+ * the polled job turns these into what the user sees.
+ */
+export interface GithubImportProgress {
+  phase: 'downloading' | 'unpacking'
+  receivedBytes: number
+  /** `content-length` when GitHub sent one, else `null` — a generated zipball frequently has none. */
+  totalBytes: number | null
+}
+
 export interface GithubImportOptions {
   url: string
   ref?: string
@@ -144,6 +158,8 @@ export interface GithubImportOptions {
   token?: string
   /** Overrides the default `studio-workspace/<owner>-<repo>` target — mainly for tests. */
   dir?: string
+  /** Called as the archive streams in and again when unpacking starts. Optional: a caller with no progress channel simply omits it. */
+  onProgress?: (progress: GithubImportProgress) => void
 }
 
 export interface GithubImportOutcome {
@@ -217,7 +233,15 @@ export async function runGithubImport(
     res,
     MAX_ARCHIVE_BYTES,
     `The repository archive is larger than the ${Math.round(MAX_ARCHIVE_BYTES / (1024 * 1024))} MB import limit.`,
+    options.onProgress
+      ? (receivedBytes, totalBytes) => options.onProgress?.({ phase: 'downloading', receivedBytes, totalBytes })
+      : undefined,
   ).catch(asGithubImportError)
+
+  // The download is the only part with a magnitude; from here the whole
+  // archive is in memory and `unzipSync` runs to completion in one call, so
+  // the honest report is a phase change, not a second bar.
+  options.onProgress?.({ phase: 'unpacking', receivedBytes: zipBytes.byteLength, totalBytes: zipBytes.byteLength })
 
   // GitHub zipballs always nest content under one top-level `<repo>-<sha>/`
   // folder — `stripRootFolder: true` unconditionally, never a per-archive

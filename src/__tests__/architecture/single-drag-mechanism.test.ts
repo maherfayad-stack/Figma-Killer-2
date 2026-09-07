@@ -74,9 +74,14 @@ const DND_KIT_ALLOWLIST: ReadonlySet<string> = new Set([
  * elements). Neither signal collides with dnd-kit: its synthetic drag events
  * have no `dataTransfer` property and use their own event types, never
  * React's `DragEvent`. All pre-existing media-workspace surfaces plus the
- * file-drop targets shared with it. G15 (file drop onto the canvas / Studio
- * importer) is a real, disclosed gap — not covered by this allowlist
- * because it does not exist yet; see the handoff.
+ * file-drop targets shared with it.
+ *
+ * G15's launcher half is now CLOSED (W7-4): dropping a folder or a `.zip` on
+ * the Overview launcher imports it. That is native HTML5 by necessity, not by
+ * preference — `@dnd-kit/core` moves elements WITHIN a page and has no access
+ * to `DataTransferItem.webkitGetAsEntry()`, which is the only API that can
+ * tell a dropped directory from a file and walk its contents. Dropping a file
+ * onto the CANVAS is still a gap.
  */
 const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
   'admin/shared/media/utils/mediaDragDrop.ts',
@@ -87,9 +92,16 @@ const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
   'admin/pages/site/panels/PropertiesPanel/ImageSourceSection.tsx',
   // Dormant CMS import wizard's file-drop analyze step.
   'admin/modals/SiteImport/steps/AnalyzeStep.tsx',
-  // Dormant CMS import wizard's own drop step (separate from the live Studio
-  // importer, which has no drop target at all yet — G15).
+  // Dormant CMS import wizard's own drop step (separate from the launcher's
+  // live importer below).
   'admin/modals/SiteImport/steps/DropStep.tsx',
+  // W7-4 — the Overview launcher's drop-to-import target: the window-level
+  // listeners + overlay.
+  'admin/pages/dashboard/LauncherDropZone.tsx',
+  // W7-4 — `webkitGetAsEntry()` classification and the dropped-directory
+  // walk it feeds. The only reason native DnD is used at all here: dnd-kit
+  // cannot see a dropped folder's contents.
+  'admin/pages/site/studio/droppedFolderWalk.ts',
 ])
 
 // ─── File collection ─────────────────────────────────────────────────────────

@@ -9,10 +9,12 @@
  * so the prompt interrupts a screen reader rather than waiting to be found.
  *
  * The body states where the files GO, not merely that the action can be
- * undone. "Moved to the workspace trash" plus the path is something the user
- * can act on without Studio's help — the recovery is a `mv` they can perform
- * themselves — and that is a stronger promise than an undo button this
- * dashboard does not have.
+ * undone — and, since W7-4, it names the control that brings them back. It
+ * used to send the user to a terminal: "the folder is in
+ * studio-workspace/.trash/, move it back to restore it". That was true and
+ * useless at the only moment it is read, which is the moment someone is about
+ * to delete a repository they may want. The recovery now lives in the product
+ * (`TrashDialog`), so the promise is one the dashboard can keep by itself.
  *
  * There is no type-the-name-to-confirm step. That ceremony earns its cost when
  * an action is irreversible; here it would tax every honest deletion to guard
@@ -56,8 +58,10 @@ export function DeleteProjectDialog({ project, busy, onClose, onConfirm }: Delet
           : `This project and its ${project?.pageCount ?? 0} pages leave the launcher.`}
       </p>
       <p className={styles.body}>
-        Nothing is erased. The folder is moved to <code className={styles.path}>studio-workspace/.trash/</code>,
-        where you can move it back at any time.
+        Nothing is erased. The whole folder moves to{' '}
+        <code className={styles.path}>studio-workspace/.trash/</code>, and{' '}
+        <strong>Trash</strong> in the launcher toolbar restores it — or erases it for good — whenever
+        you like.
       </p>
     </Dialog>
   )

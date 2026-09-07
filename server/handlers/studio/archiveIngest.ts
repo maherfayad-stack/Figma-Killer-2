@@ -280,13 +280,24 @@ export async function readBytesWithLimit(
   source: { headers: Headers; body: ReadableStream<Uint8Array> | null; arrayBuffer(): Promise<ArrayBuffer> },
   maxBytes: number,
   tooLargeMessage: string,
+  /**
+   * Called once per streamed chunk with the running byte count and the
+   * declared total (`null` when the source sent no `content-length` — a
+   * GitHub zipball is generated on the fly and usually does not). This is the
+   * ONLY honest progress signal an import has: everything after it happens in
+   * memory in one `unzipSync` call. Optional, because the upload route reads a
+   * request body the browser is already reporting progress on.
+   */
+  onProgress?: (receivedBytes: number, totalBytes: number | null) => void,
 ): Promise<Uint8Array> {
   const contentLength = source.headers.get('content-length')
+  let declaredTotal: number | null = null
   if (contentLength) {
     const parsed = Number(contentLength)
     if (Number.isFinite(parsed) && parsed > maxBytes) {
       throw new ArchiveIngestError(tooLargeMessage, 413)
     }
+    if (Number.isFinite(parsed)) declaredTotal = parsed
   }
 
   const reader = source.body?.getReader()
@@ -303,6 +314,7 @@ export async function readBytesWithLimit(
       throw new ArchiveIngestError(tooLargeMessage, 413)
     }
     chunks.push(value)
+    onProgress?.(received, declaredTotal)
   }
 
   const bytes = new Uint8Array(received)

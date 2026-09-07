@@ -25,6 +25,7 @@ import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } fro
 import { collectWorkspaceFiles } from '../studioDownload'
 import { probeProject } from '../studio/projectProbe'
 import { mergeStudioMeta } from '../studio/studioMeta'
+import { clearGithubImportJobsForTest } from '../studio/githubImportRoutes'
 
 describe('orderStudioEditsForApply', () => {
   it('sorts bottom-to-top: descending line, then descending column', () => {
@@ -1343,7 +1344,22 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
     globalThis.fetch = originalFetch
+    clearGithubImportJobsForTest()
   })
+
+  /** Polls the status route until the job leaves `downloading`/`unpacking`/`probing`. */
+  async function awaitJob(jobId: string) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const url = new URL(`http://localhost/admin/api/studio/import-github/status?jobId=${jobId}`)
+      const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+      const body = (await res!.json()) as {
+        job: { phase: string; error: string | null; summary: { dir: string; files: number; skipped: number; pageCount: number } | null }
+      }
+      if (body.job.phase === 'done' || body.job.phase === 'failed') return body.job
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error('import job never reached a terminal phase')
+  }
 
   it('returns 400 with an { error } envelope for a non-GitHub URL, without touching the network', async () => {
     let fetchCalled = false
@@ -1366,6 +1382,13 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
     expect(fetchCalled).toBe(false)
   })
 
+  it('answers 404 for a job id nobody started, rather than a phantom running job', async () => {
+    const url = new URL('http://localhost/admin/api/studio/import-github/status?jobId=nope')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+
+    expect(res!.status).toBe(404)
+  })
+
   it('imports a fake zipball end to end, deriving the target server-side and IGNORING a caller-supplied dir', async () => {
     // Security regression: the import clears its target before repopulating,
     // so honouring a request-body `dir` would be an arbitrary recursive-delete
@@ -1385,19 +1408,25 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
     const res = await tryServeStudio(req, undefined, url, url.pathname)
 
     expect(res!.status).toBe(200)
-    const body = (await res!.json()) as { ok: boolean; dir: string; files: number; skipped: number }
+    const started = (await res!.json()) as { jobId: string }
+    const job = await awaitJob(started.jobId)
+
+    expect(job.phase).toBe('done')
+    const summary = job.summary!
     try {
-      expect(body.ok).toBe(true)
-      expect(body.files).toBe(1)
-      expect(body.skipped).toBe(0)
+      expect(summary.files).toBe(1)
+      expect(summary.skipped).toBe(0)
+      // The summary step's whole reason for existing: it reports what the
+      // board is about to show, not just how many bytes moved.
+      expect(summary.pageCount).toBe(1)
       // Server-derived target, NOT the caller's tmpDir.
-      expect(body.dir).not.toBe(tmpDir)
-      expect(body.dir.split(path.sep).join('/')).toContain('studio-workspace/acme-widgets')
-      expect(fs.existsSync(path.join(body.dir, 'pages', 'Home.tsx'))).toBe(true)
+      expect(summary.dir).not.toBe(tmpDir)
+      expect(summary.dir.split(path.sep).join('/')).toContain('studio-workspace/acme-widgets')
+      expect(fs.existsSync(path.join(summary.dir, 'pages', 'Home.tsx'))).toBe(true)
       // The caller-supplied directory was never touched.
       expect(fs.existsSync(path.join(tmpDir, 'pages'))).toBe(false)
     } finally {
-      fs.rmSync(body.dir, { recursive: true, force: true })
+      fs.rmSync(summary.dir, { recursive: true, force: true })
     }
   })
 })

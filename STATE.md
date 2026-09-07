@@ -21,6 +21,40 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### server-20 — W7-4: drag-and-drop import, import progress + summary, trash restore/purge
+- **Agent:** general-purpose · **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07 · **Branch:** `feat/launcher-import-trash-ux` off `origin/main` at `342c67d` (PR #51).
+- **Shipped:** (1) drop a folder or `.zip` anywhere on the launcher →
+  `LauncherDropZone.tsx` + `droppedFolderWalk.ts` (pure decider, unit-tested; prunes
+  `EXCLUDED_WORKSPACE_DIR_NAMES`, refuses whole past 8k files / 200 MB rather than
+  truncating), reusing `uploadProjectArchive({ kind: 'directory' })` unchanged.
+  (2) `import-github` is now a POLLED JOB (`studio/githubImportRoutes.ts`, the
+  `installDeps.ts` shape, no disk sidecar) + a post-import summary step shared by both
+  import paths (`studio/importSummary.ts`), surfacing `pagesDirCandidates` as a picker
+  that writes through the new `POST /admin/api/studio/pages-dir`.
+  (3) Trash: `GET /admin/api/studio/trash`, `.../restore`, `.../purge` (`trashRoutes.ts`,
+  both writes `studio.write`-gated), a "Trash (N)" launcher affordance, and
+  `DeleteProjectDialog` no longer tells anyone to run `mv` in a terminal.
+- **Cut, deliberately:** no SSE (the job carries four phase changes — a poll needs no
+  reconnection story); no durability sidecar for an import job (the project directory IS
+  the outcome, so a forgotten job 404s and the launcher listing is the honest answer); no
+  browser/e2e coverage — **needs human dogfood**.
+- **Dogfood script:** `bun run dev` → `/admin/dashboard`. (a) drag a real repo folder onto
+  the grid, confirm the overlay, then the summary step naming framework + pages dir;
+  (b) drag a folder containing `node_modules` and confirm it is not uploaded; (c) import a
+  GitHub URL and watch the phase line + MB counter; (d) import a repo with no routing
+  framework and switch `pagesDir` in the picker — the page count must change; (e) delete a
+  project, open Trash (N), Restore it, delete again, Delete forever (two clicks).
+- **Landmines:** `parseTrashEntryName` is the trash's whole manifest — it reads the slug
+  and deletion instant back OUT of the `<slug>-<ISO stamp>` folder name `availableTrashPath`
+  writes. Changing either half breaks Restore silently, so they live in one file. A restore
+  REFUSES on a slug collision (409) rather than merging; `purgeTrashedProject` holds the
+  feature's only `rmSync` and every verb re-runs the parent-comparison containment check.
+  `GithubImportBodySchema`'s `pagesDir` field was DELETED (no caller, no UI, and the answer
+  is unknowable at that moment) — the choice now happens post-import.
+- **Pre-existing, not mine:** icon-catalog Gate 1/2 (vendored `pixel-art-icons/dist/` absent
+  in this worktree), `bundle-size-budgets` skipped without a `dist/`.
+
 ### panel-14 — W7-2: the launcher card says what a project IS, and every verb that acts on it
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open) — **needs human dogfood**

@@ -16,9 +16,20 @@
  *     `webkitRelativePath` (e.g. `"my-app/pages/Home.tsx"`); the server does
  *     NOT strip a root segment for this shape (see that module's doc), so
  *     `stripPickedFolderName` does it here before upload.
+ *
+ * A folder DROPPED on the launcher takes the same `kind: 'directory'` path.
+ * `droppedFolderWalk.ts` walks the `DataTransfer` entry tree and renames each
+ * `File` to its path relative to the dropped folder, which is exactly what
+ * `stripPickedFolderName` produces for a pick — so a drop and a pick send
+ * byte-identical requests and there is no second upload path to keep in step.
+ *
+ * The response is the shared post-import `ImportSummary` (`./importSummary.ts`)
+ * — the same shape a GitHub import job ends on, so the launcher's summary step
+ * is one component regardless of how the project arrived.
  */
 import { compiledCheck } from '@core/utils/typeboxCompiler'
 import { Type } from '@core/utils/typeboxHelpers'
+import { ImportSummarySchema, type ImportSummary } from './importSummary'
 
 export interface UploadProjectInput {
   kind: 'zip' | 'directory'
@@ -31,17 +42,9 @@ export interface UploadProjectInput {
   signal?: AbortSignal
 }
 
-export interface UploadProjectResult {
-  dir: string
-  files: number
-  skipped: number
-}
-
 const UploadProjectResponseSchema = Type.Object({
   ok: Type.Literal(true),
-  dir: Type.String(),
-  files: Type.Number(),
-  skipped: Type.Number(),
+  summary: ImportSummarySchema,
 })
 
 /** Non-standard but universally supported on `<input webkitdirectory>` picks; not in TS's `File` type. */
@@ -64,7 +67,7 @@ export function pickedFolderName(files: File[]): string | undefined {
   return undefined
 }
 
-export function uploadProjectArchive(input: UploadProjectInput): Promise<UploadProjectResult> {
+export function uploadProjectArchive(input: UploadProjectInput): Promise<ImportSummary> {
   return new Promise((resolve, reject) => {
     const form = new FormData()
     form.set('kind', input.kind)
@@ -95,7 +98,7 @@ export function uploadProjectArchive(input: UploadProjectInput): Promise<UploadP
           reject(new Error('Server response did not match the expected shape'))
           return
         }
-        resolve({ dir: data.dir, files: data.files, skipped: data.skipped })
+        resolve(data.summary)
         return
       }
       reject(new Error(extractXhrErrorMessage(xhr) ?? `Upload failed with ${xhr.status}`))

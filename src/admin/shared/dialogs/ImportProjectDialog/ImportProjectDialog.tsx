@@ -14,10 +14,14 @@
  *
  * Upload/folder go through `uploadProjectArchive` (XHR, for progress on a
  * ~100 MB archive — `fetch` has no upload-progress event); GitHub goes
- * through `apiRequest` via `importGithubProject`, same as before. Every path
- * ends the same way: point the editor at the returned `dir` and reload
- * through the normal multi-file loader — this dialog never parses anything
- * itself.
+ * through `importGithubProject`, which starts a server-side JOB and polls it,
+ * so a clone that takes a minute reports what it is doing instead of showing
+ * a button that reads "Importing…".
+ *
+ * Every path ends the same way: the finished `ImportSummary` replaces this
+ * form with `ImportSummaryDialog` — framework, pages dir, page count, and a
+ * picker when the probe had to guess — and only THEN does the editor get
+ * pointed at the imported `dir`. This dialog never parses anything itself.
  *
  * Formerly `ImportGithubDialog` (GitHub-only). Renamed because the GitHub
  * tab is now one of three, not the whole dialog.
@@ -40,9 +44,11 @@ import { Tab, TabList, TabPanel, Tabs } from '@ui/components/Tabs'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
-import { importGithubProject } from '@site/studio/importGithubProject'
-import { pickedFolderName, uploadProjectArchive, type UploadProjectResult } from '@site/studio/importUploadProject'
+import { importGithubProject, type ImportProgress } from '@site/studio/importGithubProject'
+import { pickedFolderName, uploadProjectArchive } from '@site/studio/importUploadProject'
+import type { ImportSummary } from '@site/studio/importSummary'
 import { setStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
+import { ImportSummaryDialog } from './ImportSummaryDialog'
 import dialogStyles from '@admin/shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
 import styles from './ImportProjectDialog.module.css'
 
@@ -66,7 +72,11 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
   const [tab, setTab] = useState<ImportTab>('github')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [githubProgress, setGithubProgress] = useState<ImportProgress | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // The finished import. Set instead of closing, so the summary step replaces
+  // this form rather than flashing past it on the way to the board.
+  const [summary, setSummary] = useState<ImportSummary | null>(null)
 
   // GitHub tab fields
   const [url, setUrl] = useState('')
@@ -96,9 +106,22 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
     !busy &&
     (tab === 'github' ? trimmedUrl.length > 0 : tab === 'upload' ? zipFile !== null : folderFiles.length > 0)
 
-  function handleSucceeded(result: UploadProjectResult) {
-    setStudioWorkspaceDir(result.dir)
+  /**
+   * Points the editor at the imported project and hands control back to the
+   * host surface. Deliberately NOT called when the import lands — only when
+   * the user leaves the summary step by opening the project. Switching the
+   * open workspace is what makes the next editor mount reload from disk, and
+   * doing it behind a dialog the user has not dismissed yet would swap the
+   * project out from under a Studio toolbar import.
+   */
+  function openImported(imported: ImportSummary) {
+    setStudioWorkspaceDir(imported.dir)
     requestCmsSiteReload()
+    onImported?.()
+    onClose()
+  }
+
+  function handleSucceeded(result: ImportSummary) {
     pushToast({
       kind: 'success',
       title: 'Project imported',
@@ -107,8 +130,7 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
           ? `${result.files} files imported, ${result.skipped} skipped.`
           : `${result.files} files imported.`,
     })
-    onImported?.()
-    onClose()
+    setSummary(result)
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -117,6 +139,7 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
 
     setBusy(true)
     setProgress(0)
+    setGithubProgress(null)
     setSubmitError(null)
     try {
       if (tab === 'github') {
@@ -125,6 +148,7 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
           ref: ref.trim() || undefined,
           subdir: subdir.trim() || undefined,
           token: token.trim() || undefined,
+          onProgress: setGithubProgress,
         })
         handleSucceeded(result)
         return
@@ -169,6 +193,13 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
     setFolderFiles(files)
     setSubmitError(null)
     if (!folderRootName.trim()) setFolderRootName(pickedFolderName(files) ?? '')
+  }
+
+  // The summary step REPLACES this form rather than stacking on top of it:
+  // the import has already happened, and offering "Import" a second time
+  // behind a summary would invite a duplicate.
+  if (summary) {
+    return <ImportSummaryDialog summary={summary} onClose={onClose} onOpen={openImported} />
   }
 
   return (
@@ -259,6 +290,8 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
                   disabled={busy}
                 />
               </div>
+
+              {busy && tab === 'github' && <GithubImportProgress progress={githubProgress} />}
             </div>
           </TabPanel>
 
@@ -341,6 +374,46 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
       </Tabs>
     </Dialog>
   )
+}
+
+/**
+ * What a GitHub import is doing right now. A phase line plus — only while the
+ * archive is streaming AND GitHub declared a length — a real bar. A zipball is
+ * generated on the fly and usually carries no `content-length`, so the honest
+ * fallback is the byte counter alone rather than a bar wired to a made-up
+ * total.
+ */
+function GithubImportProgress({ progress }: { progress: ImportProgress | null }) {
+  const phase = progress?.phase ?? 'downloading'
+  const label =
+    phase === 'downloading'
+      ? 'Downloading the repository…'
+      : phase === 'unpacking'
+        ? 'Unpacking files…'
+        : 'Looking for pages…'
+  const received = progress?.receivedBytes ?? 0
+  const total = progress?.totalBytes ?? null
+
+  return (
+    <div className={styles.githubProgress}>
+      <p className={styles.progressLabel} role="status">
+        {label}
+        {phase === 'downloading' && received > 0 && (
+          <span className={styles.progressCount}>
+            {' '}
+            {formatMegabytes(received)}
+            {total !== null ? ` of ${formatMegabytes(total)}` : ''}
+          </span>
+        )}
+      </p>
+      {phase === 'downloading' && total !== null && total > 0 && <UploadProgress fraction={received / total} />}
+    </div>
+  )
+}
+
+/** One decimal place of MB — the unit a repository download is read in. */
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function UploadProgress({ fraction }: { fraction: number }) {
