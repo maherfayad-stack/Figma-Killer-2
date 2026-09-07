@@ -48,6 +48,7 @@ function renderLayout(overrides: Partial<LayoutProps> = {}) {
       onRemove={noop}
       onClearProperty={noop}
       onClearProperties={noop}
+      onChangeMany={noop}
       {...overrides}
     />,
   )
@@ -139,32 +140,37 @@ describe('LayoutSection — LayoutModeRow (integration)', () => {
     expect(screen.getByRole('button', { name: /^grid$/i }).getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('clicking Vertical stack writes display: flex + flex-direction: column', () => {
-    const calls: Array<[string, unknown]> = []
-    renderLayout({ onChange: (p, v) => calls.push([String(p), v]) })
+  // One gesture, one store write: a mode switch sets two properties and must
+  // cost ONE undo entry, not two (see `StyleSectionsEditor`'s `onChangeMany`).
+  it('clicking Vertical stack writes display: flex + flex-direction: column in one write', () => {
+    const patches: Array<Record<string, unknown>> = []
+    renderLayout({ onChangeMany: (patch) => patches.push(patch) })
 
     fireEvent.click(screen.getByRole('button', { name: /^vertical stack$/i }))
 
-    expect(calls).toContainEqual(['display', 'flex'])
-    expect(calls).toContainEqual(['flexDirection', 'column'])
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toMatchObject({ display: 'flex', flexDirection: 'column' })
   })
 
-  it('clicking Grid writes display: grid', () => {
-    const calls: Array<[string, unknown]> = []
-    renderLayout({ onChange: (p, v) => calls.push([String(p), v]) })
+  it('clicking Grid writes display: grid in one write', () => {
+    const patches: Array<Record<string, unknown>> = []
+    renderLayout({ onChangeMany: (patch) => patches.push(patch) })
 
     fireEvent.click(screen.getByRole('button', { name: /^grid$/i }))
 
-    expect(calls).toContainEqual(['display', 'grid'])
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toMatchObject({ display: 'grid' })
   })
 
   it('a display value none of the four buttons can represent (inline-block) shows no selection and is not rewritten on render', () => {
     const onChange = mock(() => {})
+    const onChangeMany = mock(() => {})
     const onClearProperties = mock(() => {})
     renderLayout({
       storedStyles: { display: 'inline-block' },
       currentStyles: { display: 'inline-block' },
       onChange,
+      onChangeMany,
       onClearProperties,
     })
 
@@ -175,6 +181,7 @@ describe('LayoutSection — LayoutModeRow (integration)', () => {
 
     // Rendering never normalises the unrepresentable value on its own.
     expect(onChange).not.toHaveBeenCalled()
+    expect(onChangeMany).not.toHaveBeenCalled()
     expect(onClearProperties).not.toHaveBeenCalled()
 
     // The value stays reachable — named honestly on the trailing menu trigger.
@@ -182,17 +189,17 @@ describe('LayoutSection — LayoutModeRow (integration)', () => {
   })
 
   it('clicking a mode button on an unrepresentable value is an explicit, one-shot write — not a silent normalisation', () => {
-    const calls: Array<[string, unknown]> = []
+    const patches: Array<Record<string, unknown>> = []
     renderLayout({
       storedStyles: { display: 'none' },
       currentStyles: { display: 'none' },
-      onChange: (p, v) => calls.push([String(p), v]),
+      onChangeMany: (patch) => patches.push(patch),
     })
 
     fireEvent.click(screen.getByRole('button', { name: /^horizontal stack$/i }))
 
-    expect(calls).toContainEqual(['display', 'flex'])
-    expect(calls).toContainEqual(['flexDirection', 'row'])
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toMatchObject({ display: 'flex', flexDirection: 'row' })
   })
 })
 
@@ -201,18 +208,18 @@ describe('LayoutSection — LayoutModeRow (integration)', () => {
 // ---------------------------------------------------------------------------
 
 describe('LayoutSection — AlignGrid (flex)', () => {
-  it('clicking the center cell writes alignItems + justifyContent as center', () => {
-    const calls: Array<[string, unknown]> = []
+  it('clicking the center cell writes alignItems + justifyContent as center, in one write', () => {
+    const patches: Array<Record<string, unknown>> = []
     renderLayout({
       storedStyles: { display: 'flex' },
       currentStyles: { display: 'flex' },
-      onChange: (p, v) => calls.push([String(p), v]),
+      onChangeMany: (patch) => patches.push(patch),
     })
 
     fireEvent.click(screen.getByTestId('css-align-grid-cell-1-1'))
 
-    expect(calls).toContainEqual(['alignItems', 'center'])
-    expect(calls).toContainEqual(['justifyContent', 'center'])
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toMatchObject({ alignItems: 'center', justifyContent: 'center' })
   })
 
   it('clicking the already-active cell clears both properties', () => {
@@ -231,19 +238,19 @@ describe('LayoutSection — AlignGrid (flex)', () => {
 })
 
 describe('LayoutSection — AlignGrid (grid)', () => {
-  it('clicking a cell writes alignItems + justifyItems (not justifyContent)', () => {
-    const calls: Array<[string, unknown]> = []
+  it('clicking a cell writes alignItems + justifyItems (not justifyContent), in one write', () => {
+    const patches: Array<Record<string, unknown>> = []
     renderLayout({
       storedStyles: { display: 'grid' },
       currentStyles: { display: 'grid' },
-      onChange: (p, v) => calls.push([String(p), v]),
+      onChangeMany: (patch) => patches.push(patch),
     })
 
     fireEvent.click(screen.getByTestId('css-align-grid-cell-0-0'))
 
-    expect(calls).toContainEqual(['alignItems', 'flex-start'])
-    expect(calls).toContainEqual(['justifyItems', 'flex-start'])
-    expect(calls.some(([prop]) => prop === 'justifyContent')).toBe(false)
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toMatchObject({ alignItems: 'flex-start', justifyItems: 'flex-start' })
+    expect(Object.keys(patches[0]!)).not.toContain('justifyContent')
   })
 })
 

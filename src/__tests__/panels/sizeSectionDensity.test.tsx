@@ -15,6 +15,9 @@ import { describe, it, expect, afterEach } from 'bun:test'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { SizeSection } from '@site/panels/PropertiesPanel/SizeSection'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 afterEach(cleanup)
 
 const noop = () => {}
@@ -26,6 +29,7 @@ function renderSizeSection(stored: Record<string, unknown> = {}) {
       storedStyles={stored}
       activeTab="base"
       onChange={noop}
+      onChangeMany={noopMany}
       onRemove={noop}
       onClearProperty={noop}
     />,

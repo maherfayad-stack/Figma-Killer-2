@@ -145,6 +145,12 @@ export function MultiInlineStyleComposer({
     if (keys.length === 0) return
     writePatch(Object.fromEntries(keys.map((key) => [String(key), null])))
   }
+  // One store write for a multi-property gesture, across the whole selection —
+  // see `StyleSectionsEditor`'s `onChangeMany` doc.
+  const handleChangeMany = (patch: Record<string, string | number | null>) => {
+    if (Object.keys(patch).length === 0) return
+    writePatch(patch)
+  }
 
   return (
     <TokenCatalogProvider>
@@ -175,6 +181,7 @@ export function MultiInlineStyleComposer({
           onRemove={handleRemove}
           onClearProperty={handleRemove}
           onClearProperties={handleClearProperties}
+          onChangeMany={handleChangeMany}
           // Hover-preview is class-keyed in the store; skip it for inline editing.
           onPreview={noop}
           onClearPreview={noop}

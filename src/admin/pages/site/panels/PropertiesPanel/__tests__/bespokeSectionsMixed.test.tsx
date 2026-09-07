@@ -29,6 +29,9 @@ import { AppearanceSection } from '../AppearanceSection'
 import { FillSection } from '../FillSection'
 import { StrokeSection } from '../StrokeSection'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 afterEach(cleanup)
 
 function noop() {}
@@ -66,6 +69,7 @@ describe('Spacing — margin', () => {
         }}
         currentStyles={{}}
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
       />,
     )
@@ -84,6 +88,7 @@ describe('Spacing — margin', () => {
         }}
         currentStyles={{}}
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
       />,
     )
@@ -100,6 +105,7 @@ describe('Layout', () => {
         currentStyles={{}}
         activeTab="base"
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
         onClearProperties={noop}
@@ -136,6 +142,7 @@ describe('Position', () => {
         storedStyles={{}}
         activeTab="base"
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
         {...overrides}
@@ -169,6 +176,7 @@ describe('Size', () => {
         currentStyles={{}}
         activeTab="base"
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
       />,
@@ -188,6 +196,7 @@ describe('Typography', () => {
         visibleProperties={TYPOGRAPHY_PROPERTIES}
         activeTab="base"
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
       />,
     )
@@ -208,6 +217,7 @@ describe('Appearance — corner radius', () => {
         currentStyles={{}}
         activeTab="base"
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
       />,
     )
@@ -229,6 +239,7 @@ describe('Fill', () => {
         visibleProperties={FILL_PROPERTIES}
         activeTab="base"
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
       />,
     )
@@ -251,6 +262,7 @@ describe('Stroke', () => {
         }}
         currentStyles={{}}
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
       />,

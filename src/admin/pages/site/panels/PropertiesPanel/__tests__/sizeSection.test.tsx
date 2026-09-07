@@ -58,6 +58,13 @@ function renderSizeSection({
   const calls = {
     onChange: [] as Array<[keyof CSSPropertyBag, string | number | undefined]>,
     onClearProperty: [] as Array<keyof CSSPropertyBag>,
+    /**
+     * Every multi-property gesture (a Hug/Fill switch) arrives here as ONE
+     * patch, because it must cost ONE undo entry — see `StyleSectionsEditor`'s
+     * `onChangeMany`. Asserting on this list is therefore also asserting the
+     * gesture's history cost.
+     */
+    onChangeMany: [] as Array<Record<string, string | number | null>>,
   }
 
   function Harness() {
@@ -74,6 +81,17 @@ function renderSizeSection({
             const next = { ...prev }
             if (value === undefined) delete next[prop]
             else next[prop] = value
+            return next
+          })
+        }}
+        onChangeMany={(patch) => {
+          calls.onChangeMany.push(patch)
+          setStoredStyles((prev) => {
+            const next = { ...prev }
+            for (const [prop, value] of Object.entries(patch)) {
+              if (value === null) delete next[prop as keyof CSSPropertyBag]
+              else next[prop as keyof CSSPropertyBag] = value
+            }
             return next
           })
         }}
@@ -211,7 +229,7 @@ describe('size section — sizing mode', () => {
     const modeRow = screen.getByTestId('css-size-mode-height')
     fireEvent.click(within(modeRow).getByRole('button', { name: 'Fixed' }))
 
-    expect(calls.onChange).toEqual([['height', '325px']])
+    expect(calls.onChangeMany).toEqual([{ height: '325px' }])
   })
 })
 
@@ -230,10 +248,9 @@ describe('size section — parent-aware sizing', () => {
     await openWidthMenu()
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Fill container' }))
 
-    expect(calls.onChange).toEqual([
-      ['width', undefined],
-      ['flex', '1 1 0'],
-    ])
+    // ONE write, not two: the old per-property loop made a single Fill click
+    // two undo entries, so one Ctrl+Z restored `width` and left `flex` behind.
+    expect(calls.onChangeMany).toEqual([{ width: null, flex: '1 1 0' }])
   })
 
   it('reads that flex back as Fill, and a bare 100% on the same child as Fixed', () => {
@@ -255,7 +272,7 @@ describe('size section — parent-aware sizing', () => {
     })
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Fill container' }))
 
-    expect(calls.onChange).toEqual([['alignSelf', 'stretch']])
+    expect(calls.onChangeMany).toEqual([{ alignSelf: 'stretch' }])
   })
 
   it('offers Hug/Fill disabled, with a reason, when the parent layout is unreadable', async () => {
@@ -277,6 +294,7 @@ describe('size section — parent-aware sizing', () => {
 
     fireEvent.click(fill)
     expect(calls.onChange).toEqual([])
+    expect(calls.onChangeMany).toEqual([])
   })
 
   it('leaves the axis on Fixed with an unreadable parent, whatever is stored', () => {

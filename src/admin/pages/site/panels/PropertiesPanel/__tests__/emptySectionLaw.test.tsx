@@ -19,6 +19,9 @@ import type { ComponentProps } from 'react'
 import { StyleSectionsEditor } from '../StyleSectionsEditor'
 import { setEditorPreference } from '@site/preferences/editorPreferences'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 afterEach(() => {
   cleanup()
   setEditorPreference('propertiesSectionsExpanded', true)
@@ -36,6 +39,7 @@ function renderEditor(overrides: Partial<EditorProps> = {}) {
       sectionKey="base"
       styleQuery=""
       onChange={noop}
+      onChangeMany={noopMany}
       onRemove={noop}
       onClearProperty={noop}
       onClearProperties={noop}
@@ -150,6 +154,7 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
         sectionKey="base"
         styleQuery=""
         onChange={(property, value) => written.push([String(property), value])}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
         onClearProperties={noop}
@@ -172,6 +177,7 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
         sectionKey="base"
         styleQuery=""
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
         onClearProperties={noop}

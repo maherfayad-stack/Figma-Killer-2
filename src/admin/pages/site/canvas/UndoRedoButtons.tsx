@@ -19,6 +19,7 @@ import { UndoIcon } from 'pixel-art-icons/icons/undo'
 import { RedoIcon } from 'pixel-art-icons/icons/redo'
 import { Button } from '@ui/components/Button'
 import { getKeybindingForCommand, formatShortcut } from '@admin/spotlight/keybindings'
+import { hasPendingTextEdit } from './pendingTextEdit'
 import styles from './CanvasNotch.module.css'
 
 // Resolve undo/redo bindings once at module load — they never change.
@@ -33,12 +34,13 @@ export function UndoRedoButtons() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
-      ) return
+      // Whoever has an edit IN PROGRESS owns the keystroke — see
+      // `pendingTextEdit.ts`. This used to be a blanket "any editable target
+      // wins", which made the editor's undo unreachable from the keyboard for
+      // as long as the caret sat in a Properties-panel field. Since every
+      // style row is prefilled and every field keeps focus after its commit,
+      // that was most of the time.
+      if (hasPendingTextEdit(e.target)) return
 
       if (kbUndo?.match(e)) {
         e.preventDefault()

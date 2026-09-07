@@ -1051,6 +1051,57 @@ offering to delete "1 class" over a one-row list.
 
 ---
 
+## §10. What an inspector gesture costs the undo stack
+
+Two defects made Ctrl+Z read as broken from the Properties panel. Both were
+bugs about *history cost*, not about the values written.
+
+### §10.1 A prefilled field must not write on a bare focus/blur
+
+Prefill (`styleFieldDisplay.ts`, §5) means an undeclared property DISPLAYS the
+value the element actually renders. That is only safe if committing an
+unchanged value writes nothing — otherwise clicking into a padding side and
+clicking away mints `padding-top: 16px` in the user's source, and pushes an
+undo entry that reverts nothing visible. A click-through of the panel then
+buries the user's real edits under phantom entries.
+
+`ScrubInput` always compared (`next !== display`). `TokenAwareInput` — the
+input behind every `ScrubTokenField` and behind `SpacingBoxControl`'s four
+sides — did not. It now compares the RESOLVED value against its own `value`,
+so a token round-trip (`var(--space-md)` shown as `md`) reads as unchanged, and
+a MIXED field's baseline is empty rather than one member's value.
+
+**Any new field primitive must compare before it commits.** Regression test:
+`src/__tests__/panels/prefilledFieldCommitGuard.test.tsx`.
+
+### §10.2 One gesture is one undo entry — `onChangeMany`
+
+A multi-property gesture is one gesture to the user: Width → Fill writes `flex`
+AND clears `width`; the align 3×3 sets both axes; a layout mode switch sets
+`display` + `flexDirection`; an animation edit rewrites a whole longhand group.
+Every one of those was committed through the per-property `onChange` in a loop,
+so a single click became 2–8 history entries and one Ctrl+Z left the element
+spliced between two states it was never in.
+
+`StyleSectionsEditor`'s `onChangeMany(patch)` is the one multi-property write
+channel — `null` clears. All three composers implement it over a store action
+that already took a whole patch (`setNodeInlineStyles` /
+`setNodesInlineStyles` / `updateClassStyles`), so one call is one
+`runHistoricMutation` transaction.
+
+It does **not** replace `onClearProperties`: on a class target that one purges a
+property from the base rule AND every context override, which a patch aimed at
+the active context cannot express. `LayoutSection`'s mode switch therefore
+still costs two entries when the mode change also has to purge dependent
+properties — named, not fixed.
+
+Regression tests: `sizeSection.test.tsx` and `layoutSection.test.tsx` assert
+ONE `onChangeMany` call per gesture;
+`src/__tests__/editor-store/multiPropertyGestureIsOneEntry.test.ts` pins the
+store half.
+
+---
+
 ## Gates that bite work in this area
 
 `css-token-policy`, `no-css-var-fallbacks`, `button-primitive-usage` (popovers

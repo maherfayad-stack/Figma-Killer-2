@@ -86,6 +86,8 @@ interface SizeSectionProps {
   /** Active breakpoint tab id — keys sub-controls so they re-mount on tab change. */
   activeTab: string
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
+  /** One store write (one undo entry) for a multi-property gesture — see `StyleSectionsEditor`. */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   onRemove: (property: keyof CSSPropertyBag) => void
   /** Fully clear a property — see StyleRuleComposer.handleClearProperty. */
   onClearProperty: (property: keyof CSSPropertyBag) => void
@@ -191,6 +193,7 @@ export function SizeSection({
   storedStyles,
   activeTab,
   onChange,
+  onChangeMany,
   onRemove,
   onClearProperty,
   onPreview,
@@ -247,10 +250,12 @@ export function SizeSection({
   /**
    * Apply one mode switch. A parent-aware switch is not always a single
    * property — Fill on a flex main axis writes `flex` AND clears `width` —
-   * so this commits every entry of the patch through the SAME per-property
-   * `onChange` the rest of the section writes through, rather than opening a
-   * second write path. `undefined` means clear, which `onChange` already
-   * treats as a removal.
+   * so the whole patch is committed as ONE store write (`onChangeMany`) and
+   * therefore ONE undo entry. It used to loop the per-property `onChange`,
+   * which made a single Fill click two history entries: one Ctrl+Z restored
+   * `width` but left `flex` behind, leaving the element in a sizing state the
+   * user never picked. `undefined` means clear, which the patch carries as
+   * `null`.
    */
   function handleModeChange(property: 'width' | 'height', nextMode: SizingMode) {
     if (nextMode !== 'fixed' && modeUnavailableReason) return
@@ -261,9 +266,11 @@ export function SizeSection({
       storedStyles,
       currentStyles[property],
     )
-    for (const [key, value] of Object.entries(patch)) {
-      onChange(key as keyof CSSPropertyBag, value)
-    }
+    onChangeMany(
+      Object.fromEntries(
+        Object.entries(patch).map(([key, value]) => [key, value ?? null]),
+      ),
+    )
   }
 
   const axisField = (

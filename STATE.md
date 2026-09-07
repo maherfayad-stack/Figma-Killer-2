@@ -21,6 +21,35 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### store-07 — "ctrl z doesn't work": two root causes, both in the panel, plus one half-revert
+- **Agent:** store-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/undo-after-wave7` off `origin/main` (`71060a8`). User report, verbatim: "ctrl z ... doesn't work properly" / "if ctrl z it doesn't work" — nothing changes when the key is pressed.
+
+**The store was never the problem.** `src/__tests__/editor-store/undo-redo.test.ts` and `historyCoalescingFold.test.ts` are 27/27 green on `origin/main`; `commitHistory`'s coalescing requires key EQUALITY, so a single-node edit cannot fold into an unrelated burst (suspect 3, checked, clean). Both real causes were in the Properties panel, and PR #73 (prefill) is what turned each from latent into everyday.
+
+**RC1 — every panel click pushed a phantom undo entry.** `TokenAwareInput.commit()` (`property-controls/TokenAwareInput.tsx`) called `onCommit` UNCONDITIONALLY from `onBlur`. That was harmless while an undeclared property rendered as an empty box. Since #73 an unset field DISPLAYS the element's real computed value, so clicking into a padding side / gap / position inset and clicking away wrote `paddingTop: 16px` into the user's `.tsx` for real and pushed a history entry that reverts nothing visible. `styleFieldDisplay.ts`'s own doc asserts the guard that made prefill safe ("every field's commit path compares against what it was displaying") — `ScrubInput` had it, `TokenAwareInput` never did. It now compares the RESOLVED value against `value` (so a token round-trip `var(--space-md)`→`md` reads as unchanged) and treats a MIXED field's baseline as empty (so blurring one untouched no longer flattens the selection).
+
+**RC2 — the editor's undo was unreachable from the keyboard whenever the caret was in a panel field.** `UndoRedoButtons.tsx` guarded with a blanket "target is INPUT / TEXTAREA / contentEditable → return". Both field primitives deliberately KEEP focus after a commit (Figma: Enter commits and re-selects), and after #73 the panel is wall-to-wall populated inputs — so the ⌘Z pressed right after an edit landed on a React-CONTROLLED input whose native undo stack has nothing to give, and died there. New `canvas/pendingTextEdit.ts` tracks the honest fact instead: an `input` event marks its target pending; a focus change, Escape, or Enter on a single-line `<input>` clears it (Enter in a `<textarea>` is a newline, not a commit). Rule: **whoever has an edit in progress owns the keystroke** — no draft, or focus outside a field, and ⌘Z is the editor's.
+
+**RC3 (suspect 4, real) — one gesture cost 2-8 undo entries.** `SizeSection.handleModeChange`, `LayoutSection.applyLayoutMode`, both `AlignGrid` handlers and `AnimationsSection.applyPatch` all looped the per-property `onChange`. Width→Fill writes `flex` and clears `width`; one Ctrl+Z restored `width` and left `flex` behind. New `StyleSectionsEditor` prop `onChangeMany(patch)` (`null` clears) is the one multi-property write channel; all three composers implement it over a store action that already took a whole patch, so one call is one `runHistoricMutation` transaction.
+
+**Slices touched:** none. No store file changed — `setNodeInlineStyles`/`setNodesInlineStyles`/`updateClassStyles` already had the right shape and the panel simply wasn't using it. **No new selector, no new mutation, no new coalesce key.**
+
+**Named cuts:**
+- `onClearProperties` stays alongside `onChangeMany`. It is NOT a duplicate write path: on a class target it purges a property from the base rule AND every context override, which a patch aimed at the active context cannot express. Consequence: `LayoutSection`'s mode switch still costs 2 entries when the switch also has to purge dependent properties (down from 4). Fixing it properly means a purge-aware patch shape on the class writers — follow-up, not this PR.
+- Not investigated further: whether `resyncBoardAfterWrite` widening to `loadSite` wipes a still-valid history stack in practice. `historyPreservation.ts` guards it and `loadSite` only wipes when a stored patch names a node id the reload no longer has — plausible after a line-shifting structural write, but I could not reproduce it and did not want to speculate a fix into the reload path.
+- No browser dogfood (agents don't drive the browser here).
+
+**Dogfood checklist for the human** (at `/admin/site`, on a real project):
+1. Click into a padding/gap/position field WITHOUT typing, click elsewhere. Nothing should be written (no dirty marker, no new declaration in the file) and Undo should stay disabled if it was.
+2. Change a width, press Enter (focus stays in the field), press ⌘Z / Ctrl+Z. The change must revert.
+3. Type into a field and press ⌘Z BEFORE committing — the text should revert, the canvas must not.
+4. Switch Width to Fill on a flex child, press ⌘Z once. Both `flex` and `width` must return to their prior state together.
+5. Click a cell in the align 3×3, press ⌘Z once — both axes revert.
+6. Type in the Agent prompt box and press ⌘Z — native text undo, the canvas must not change.
+
+**Landmine:** `pendingTextEdit.ts` installs three capture-phase `document` listeners once, lazily, and never removes them. That is deliberate (cheaper than reference-counting across mounts) but it means the module is global state: a test that asserts routing must either drive real `input`/`focusin` events or call `clearPendingTextEdit()`.
+
 ### gate-fixes — two Wave 7 architecture gates back to green
 - **Agent:** studio-implementer · **Stage:** done (targeted tests + `tsc -p tsconfig.node.json` + eslint green; draft PR open) — no dogfood needed (no behaviour change).
 - **Branch:** `fix/wave7-gate-regressions` off `origin/main` (`ee5bc9c`). Two regressions, nothing else: (1) `MultiSelectionInspector.module.css:87-133` still reached for the fluid `--space-3xs/2xs/xs` scale — swapped 1:1 to the frozen `--inspector-space-*` tokens, `inspectorGeometryBudget.test.tsx` 10/10 pass; (2) `qualityAudit.ts` was 757 lines against the 700 ceiling — the W9-3 composition audit moved to `server/handlers/studio/compositionAudit.ts` (253 lines) with its tests in `compositionAudit.test.ts`, leaving `qualityAudit.ts` at 550. Shared finding types stay in `qualityAudit.ts`; its four scan primitives (`RULE_BLOCK_RE`, `DECLARATION_RE`, `RAW_PX_RE`, `lineAt`) are now exported so the two audits scan identically instead of restating each other.

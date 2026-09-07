@@ -39,6 +39,9 @@ import {
 } from '../cssPropertyIcons'
 import { StyleSectionsEditor } from '../StyleSectionsEditor'
 
+/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
+function noopMany() {}
+
 const SRC_ROOT = join(import.meta.dir, '../../../../../..')
 const GLOBALS_CSS = readFileSync(join(SRC_ROOT, 'styles/globals.css'), 'utf8')
 
@@ -145,6 +148,7 @@ describe('caption budget — the panel\'s most expensive row form', () => {
         sectionKey="base"
         styleQuery=""
         onChange={noop}
+        onChangeMany={noopMany}
         onRemove={noop}
         onClearProperty={noop}
         onClearProperties={noop}

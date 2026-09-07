@@ -88,6 +88,8 @@ interface LayoutSectionProps {
    * matching display is active), leaving the section badge stuck on "N set".
    */
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
+  /** One store write (one undo entry) for a multi-property gesture — see `StyleSectionsEditor`. */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   /**
    * Patch-shaped hover-preview channel (see StyleRuleComposer.handlePreview).
    * Forwarded to the layout mode row's ▾ menu, the gap token input, and the
@@ -109,6 +111,7 @@ export function LayoutSection({
   onRemove,
   onClearProperty,
   onClearProperties,
+  onChangeMany,
   onPreview,
   onClearPreview,
 }: LayoutSectionProps) {
@@ -135,8 +138,17 @@ export function LayoutSection({
 
   const applyLayoutMode = (mode: LayoutMode) => {
     const patch = layoutModePatch(mode)
-    for (const [property, value] of Object.entries(patch.set)) {
-      onChange(property as keyof CSSPropertyBag, value)
+    // One store write for the whole `set` half — a mode switch is one gesture
+    // and must be one undo entry (see `StyleSectionsEditor`'s `onChangeMany`).
+    // The `clear` half stays its own call because on a class target it is not
+    // a write at all: it purges the property from the base rule AND every
+    // context override, which a patch aimed at the active context cannot do.
+    if (Object.keys(patch.set).length > 0) {
+      onChangeMany(
+        Object.fromEntries(
+          Object.entries(patch.set).map(([property, value]) => [property, value ?? null]),
+        ),
+      )
     }
     if (patch.clear.length > 0) onClearProperties(patch.clear)
   }
@@ -180,9 +192,10 @@ export function LayoutSection({
               flexDirection={flexDirection}
               align={{ value: alignItems, isSet: hasStyleValue(storedStyles.alignItems) }}
               justify={{ value: justifyContent, isSet: hasStyleValue(storedStyles.justifyContent) }}
+              // One click on the 3x3 sets both axes — one store write, one
+              // undo entry (see `StyleSectionsEditor`'s `onChangeMany`).
               onChange={(patch) => {
-                onChange('alignItems', patch.align)
-                onChange('justifyContent', patch.justify)
+                onChangeMany({ alignItems: patch.align ?? null, justifyContent: patch.justify ?? null })
               }}
               onClear={() => {
                 onClearProperty('alignItems')
@@ -231,8 +244,7 @@ export function LayoutSection({
               align={{ value: alignItems, isSet: hasStyleValue(storedStyles.alignItems) }}
               justify={{ value: justifyItems, isSet: hasStyleValue(storedStyles.justifyItems) }}
               onChange={(patch) => {
-                onChange('alignItems', patch.align)
-                onChange('justifyItems', patch.justify)
+                onChangeMany({ alignItems: patch.align ?? null, justifyItems: patch.justify ?? null })
               }}
               onClear={() => {
                 onClearProperty('alignItems')
