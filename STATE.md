@@ -112,6 +112,24 @@ are the remaining WS-2 items, not yet dispatched. See
     "no frame yet" path must delete `.studio/boards.json` after scaffolding.
   - **`safeParseValue` returns `{ ok: false, errors: [{path, message}] }`, not
     `.error`.** `safeParseJson` DOES return `.error`. Easy to mix up.
+  - **`mock.module` replaces a module for EVERY file in the same `bun test`
+    run**, and a factory that omits an export makes any sibling importing it
+    die with `SyntaxError: Export named 'x' not found`. `measureElement.test.ts`
+    and the pre-existing `compare.test.ts` both mock `./liveReloadPush`;
+    completing both factories (added `pushStudioLiveReload` +
+    `STUDIO_LIVE_RELOAD_TOOL_NAME`) fixed `frameAxesTools.test.ts` in a batch.
+  - **`liveReloadPush.test.ts` is broken by ANY batch containing a suite that
+    mocks `../../editorBridge`** — it imports the real
+    `createEditorBridgeStream`. That is PRE-EXISTING (`compare.test.ts` on
+    `origin/main` already does it) and `computedStyles.test.ts` follows the same
+    established pattern rather than inventing a new one. **Do not "fix" it by
+    stubbing more exports into the factory** — I tried; it converts a module
+    error into three behavioural failures, which is worse. Rewriting
+    `computedStyles.test.ts` to register a REAL bridge stream was also tried and
+    times out against `awaitEditorBridgeForUser`'s reconnect windows. The real
+    fix is for `liveReloadPush.test.ts` (or the mockers) to stop sharing that
+    module path in one run — out of scope here, and part of the documented
+    batch-isolation cluster.
 - **Verification:** `bunx tsc -b` ✅ exit 0 (`bun run build`'s vite half cannot
   run in a worktree — `standing-08`). `bun run lint` ✅ clean.
   New suites: `frameInspector.test.ts` 17 pass · `headlessFrameInspect.test.ts`
