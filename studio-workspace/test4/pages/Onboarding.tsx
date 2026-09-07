@@ -44,10 +44,7 @@ export default function Onboarding() {
 
         <div className={styles.footer}>
           <div className={styles.cta} style={{ width: "360px" }}>
-            <Button variant="primary" size="default" label={t.onboarding.agree} className={styles.ctaButton} style={{ width: "359px", alignSelf: "stretch",
-                height: "auto",
-                flex: "0 0 auto"
-            }} />
+            <Button variant="primary" size="medium" label={t.onboarding.agree} className={styles.ctaButton} />
           </div>
           <div className={styles.cta}>
             <Button variant="primary-inverted" size="default" label={t.onboarding.maybeLater} className={styles.ctaButton} />
