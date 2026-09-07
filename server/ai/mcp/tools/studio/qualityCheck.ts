@@ -75,6 +75,7 @@ import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
 import { auditPageSourceQuality, auditStylesheetQuality, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
+import { auditFontAvailability, collectFontAvailability } from './fontAvailability'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 
@@ -114,7 +115,7 @@ export const studioQualityCheckTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Reference-free quality signals for one or more screens you built WITHOUT a design to measure against — studio_compare and studio_measure_reference both need a registered reference; this needs none. Statically scans each screen\'s own .css/.module.css (and any inlined local component\'s) AND its own .tsx. Stylesheet checks: raw-hex-color / raw-px-length — a literal value where the project already declares a var(--token) close enough that it is almost certainly the one you meant, so you know exactly which var() to swap in — and low-contrast-pair — a single rule that declares both color and a background whose WCAG contrast falls under the 4.5:1 AA-normal-text floor (this cannot see font-size/font-weight, so a genuinely large/bold rule may still pass WCAG AA\'s looser 3:1 large-text threshold in practice; the finding says so). Page-source checks, the ones that catch the agent hand-rolling something the design system already provides, or shipping an icon that is simply absent: unresolved-asset-import — a `?raw` import naming a file that is NOT on disk, so the element renders empty while still typechecking and still holding its box (the one finding here no screenshot and no `tsc` run will ever tell you); hand-authored-vector-path — a literal <svg> containing a hand-written <path d="..."> instead of a real icon; hardcoded-inline-sizing — style={{ width: 24 }} patching layout inline instead of in the stylesheet (does not flag the legitimate style={{ \'--x\': value }} dynamic-custom-property case, or any genuinely computed value); design-system-unused — this screen imports nothing at all from the project\'s configured design-system package(s), worth checking even though a legitimately plain screen can have zero imports. Each finding carries a file:line and a message naming the exact fix. Name screens the way you named the files ("Checkout"), or pass several at once to audit a whole flow in one call, or omit `pages` to audit every screen in the project. This complements studio_screenshot, it does not replace it — a clean audit here says nothing about whether the screen LOOKS right, only whether its source follows the project\'s own rules. Returns { results[] }, each { ok, page, findings[], findingCount, filesScanned, rulesScanned, truncated } — a page whose own source location can\'t be decoded becomes an ok:false entry rather than failing the whole call.',
+    'Reference-free quality signals for one or more screens you built WITHOUT a design to measure against — studio_compare and studio_measure_reference both need a registered reference; this needs none. Statically scans each screen\'s own .css/.module.css (and any inlined local component\'s) AND its own .tsx. Stylesheet checks: raw-hex-color / raw-px-length — a literal value where the project already declares a var(--token) close enough that it is almost certainly the one you meant, so you know exactly which var() to swap in — and low-contrast-pair — a single rule that declares both color and a background whose WCAG contrast falls under the 4.5:1 AA-normal-text floor (this cannot see font-size/font-weight, so a genuinely large/bold rule may still pass WCAG AA\'s looser 3:1 large-text threshold in practice; the finding says so). Page-source checks, the ones that catch the agent hand-rolling something the design system already provides, or shipping an icon that is simply absent: unresolved-asset-import — a `?raw` import naming a file that is NOT on disk, so the element renders empty while still typechecking and still holding its box (the one finding here no screenshot and no `tsc` run will ever tell you); hand-authored-vector-path — a literal <svg> containing a hand-written <path d="..."> instead of a real icon; hardcoded-inline-sizing — style={{ width: 24 }} patching layout inline instead of in the stylesheet (does not flag the legitimate style={{ \'--x\': value }} dynamic-custom-property case, or any genuinely computed value); design-system-unused — this screen imports nothing at all from the project\'s configured design-system package(s), worth checking even though a legitimately plain screen can have zero imports; font-not-available — the FIRST family in a font-family stack that this project cannot load (no @font-face anywhere it can see, no Google Fonts link, no next/font/google import, no matching font file on disk), so the browser silently renders the screen in a fallback face whose metrics differ and every font-size you then tune against a screenshot is tuned against the wrong typeface. Each finding carries a file:line and a message naming the exact fix. Name screens the way you named the files ("Checkout"), or pass several at once to audit a whole flow in one call, or omit `pages` to audit every screen in the project. This complements studio_screenshot, it does not replace it — a clean audit here says nothing about whether the screen LOOKS right, only whether its source follows the project\'s own rules. Returns { results[] }, each { ok, page, findings[], findingCount, filesScanned, rulesScanned, truncated } — a page whose own source location can\'t be decoded becomes an ok:false entry rather than failing the whole call.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pages: requested } = input as { dir?: string; pages?: string[] }
@@ -152,6 +153,10 @@ export const studioQualityCheckTool: AiTool = {
       console.error('[studio_quality_check] could not resolve the project profile / compile project styles:', err)
     }
     const tokens: ProjectTokenIndex = buildProjectTokenIndex(...cssSources)
+    // Workspace-level, like the token index above: a font-file disk walk and
+    // the project's setup files are the same facts for every page in the
+    // batch. See `fontAvailability.ts` for what counts as available.
+    const fonts = collectFontAvailability(dir, cssSources)
 
     const results: PageQualityResult[] = []
     for (const pageId of ids) {
@@ -214,6 +219,8 @@ export const studioQualityCheckTool: AiTool = {
         })
         continue
       }
+
+      findings.push(...auditFontAvailability(sheets, fonts))
 
       for (const sheet of sheets) {
         if (findings.length >= MAX_FINDINGS_PER_PAGE) {

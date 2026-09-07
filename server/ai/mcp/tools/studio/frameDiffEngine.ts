@@ -46,6 +46,15 @@ const ASPECT_RATIO_TOLERANCE = 0.05
  * legitimately be much taller.
  */
 const VISION_CAP_MATCH_TOLERANCE_PX = 2
+/**
+ * How many image pixels TALLER than the reference (measured at the
+ * comparison's own width scale) a capture must be before
+ * `reconcileReference` treats the aspect mismatch as scroll-unroll and crops
+ * instead of refusing. A couple of pixels is dpr rounding, not a scrolled
+ * page; the resample branch already handles that case and lands inside the
+ * aspect tolerance anyway.
+ */
+const SCROLL_UNROLL_MIN_EXTRA_PX = 2
 
 /**
  * A node's bounding rect in ordinary CSS px — exactly what
@@ -96,14 +105,63 @@ export function decodePngBase64(base64: string, label: string): DecodedImage {
   return decodePngBuffer(Buffer.from(base64, 'base64'), label)
 }
 
+/**
+ * The top `height` rows of an already-decoded image, as a `DecodedImage`
+ * VIEW over the same bytes (no copy — the diff only ever reads them).
+ *
+ * Paired with `ReferenceReconciliation.method: 'cropped-to-reference'`:
+ * `computeFrameDiff` requires its two images to be the same size, so the
+ * caller crops its baseline to the band the reconciliation chose. A `height`
+ * at or above the image's own is returned unchanged rather than treated as
+ * an error — the band can never be larger than what was captured.
+ */
+export function cropImageTop(image: DecodedImage, height: number): DecodedImage {
+  const rows = Math.max(1, Math.min(image.height, Math.round(height)))
+  if (rows === image.height) return image
+  return { width: image.width, height: rows, data: image.data.subarray(0, image.width * rows * 4) }
+}
+
 // ---------------------------------------------------------------------------
 // Reference reconciliation
 // ---------------------------------------------------------------------------
 
 export interface ReferenceReconciliation {
-  /** A plain PNG buffer at the EXACT baseline pixel dimensions, ready for `decodePngBuffer`. */
+  /**
+   * A plain PNG buffer ready for `decodePngBuffer`, at the EXACT dimensions
+   * the diff must run at. For `exact`/`resampled` that is the baseline's own
+   * size. For `cropped-to-reference` it is `baselineWidth x comparedHeight`,
+   * and the CALLER must crop its baseline to the same top band
+   * (`cropImageTop`) before diffing — the two images must be the same size
+   * or `computeFrameDiff` is scoring misaligned rows.
+   */
   pngBuffer: Buffer
-  method: 'exact' | 'resampled'
+  /**
+   * `exact` — the reference was already the baseline's pixel size.
+   * `resampled` — the sizes differed within the aspect tolerance and the
+   * reference was stretched to fit (interpolated, a weaker claim).
+   * `cropped-to-reference` — the aspect differed BEYOND the tolerance in the
+   * one direction that has an honest reading: same width, capture taller.
+   * That is a scroll-unrolled capture of a page whose design reference is a
+   * fixed-height artboard, and refusing it made "match this artboard"
+   * unmeasurable. Only the top `comparedHeight` band is compared, and
+   * everything below it is explicitly UNMEASURED rather than silently
+   * squashed into the reference's height.
+   */
+  method: 'exact' | 'resampled' | 'cropped-to-reference'
+  /**
+   * Present only for `cropped-to-reference` — the height, in baseline image
+   * pixels, of the band that was actually compared (the reference's own
+   * height at this comparison's width scale). The caller crops its baseline
+   * to this before diffing.
+   */
+  comparedHeight?: number
+  /**
+   * Present only for `cropped-to-reference` — baseline image pixels BELOW
+   * the compared band. This comparison says nothing at all about them, and
+   * the verdict has to say so: a pass over the top 844px of a 2400px capture
+   * is not a pass on the screen.
+   */
+  unmeasuredHeight?: number
   /**
    * Present only when `method === 'resampled'` — names WHICH axis forced the
    * resample and, when it looks like the vision-safe capture cap rather than
@@ -166,10 +224,12 @@ export async function reconcileReference(
   const baselineAspect = baselineWidth / baselineHeight
   const aspectDelta = Math.abs(referenceAspect - baselineAspect) / referenceAspect
   if (aspectDelta > ASPECT_RATIO_TOLERANCE) {
+    const cropped = await cropToReference(referenceBytes, referenceWidth, referenceHeight, baselineWidth, baselineHeight)
+    if (cropped) return { ok: true, result: cropped }
     return {
       ok: false,
       error:
-        `The registered reference (${referenceWidth}x${referenceHeight}, aspect ${referenceAspect.toFixed(3)}) and the captured baseline (${baselineWidth}x${baselineHeight}, aspect ${baselineAspect.toFixed(3)}) differ in aspect ratio by ${(aspectDelta * 100).toFixed(1)}% — too much to attribute to a resolution/dpr mismatch. Resampling would stretch one image and could hide a real content difference (a missing section, a different crop, or the wrong frame). Resize the board frame to the reference's own proportions (studio_set_frames), or confirm the reference is actually this screen, before measuring again.`,
+        `The registered reference (${referenceWidth}x${referenceHeight}, aspect ${referenceAspect.toFixed(3)}) and the captured baseline (${baselineWidth}x${baselineHeight}, aspect ${baselineAspect.toFixed(3)}) differ in aspect ratio by ${(aspectDelta * 100).toFixed(1)}% — too much to attribute to a resolution/dpr mismatch, and NOT the scroll-unroll shape (same width, capture taller) that would be croppable. Resampling would stretch one image and could hide a real content difference (a missing section, a different crop, or the wrong frame). Resize the board frame to the reference's own proportions (studio_set_frames), or confirm the reference is actually this screen, before measuring again.`,
     }
   }
 
@@ -185,6 +245,58 @@ export async function reconcileReference(
       method: 'resampled',
       note: describeResampleReason(referenceWidth, referenceHeight, baselineWidth, baselineHeight),
     },
+  }
+}
+
+/**
+ * The scroll-unroll case, or `null` if this mismatch is not that shape.
+ *
+ * A board frame captures its FULL content height (`canvasScrollUnroll`), so a
+ * long page measured against a fixed-height Figma artboard produces a capture
+ * that is the same width and several times taller. That is not "the wrong
+ * frame" — it is the ordinary shape of measuring a scrolling screen against
+ * the artboard someone drew for its first viewport, and refusing it (the only
+ * previous outcome, since the aspect delta is enormous) made that measurement
+ * impossible rather than careful.
+ *
+ * Two guards, both deliberately narrow, keep this from swallowing the
+ * refusals it sits in front of:
+ *
+ *   - **The widths must match EXACTLY.** Not "within a tolerance", not "at a
+ *     plausible dpr ratio" — exactly. `studio_compare` already captures at
+ *     the dpr that lands on the reference's own pixel width, so this is the
+ *     designed path's normal outcome, and requiring it means the compared
+ *     band is exact-pixel rather than interpolated. A reference that needs
+ *     horizontal scaling to line up is a resolution question the caller
+ *     should answer with `studio_recommend_export_dpr`, not something to
+ *     paper over here. It also keeps a landscape reference (400x100) against
+ *     a portrait capture — a genuinely wrong frame — refused, which a
+ *     scale-tolerant rule would have quietly cropped.
+ *   - **The direction is one-sided.** A capture TALLER than the reference is
+ *     cropped: nothing is hidden, the claim is narrowed to the band that has
+ *     a reference at all, and `unmeasuredHeight` says how much was left out.
+ *     A capture SHORTER than the reference is still refused — that is content
+ *     the design has and the screen does not, a missing section, which is
+ *     exactly the defect this measurement exists to surface.
+ */
+async function cropToReference(
+  referenceBytes: Uint8Array,
+  referenceWidth: number,
+  referenceHeight: number,
+  baselineWidth: number,
+  baselineHeight: number,
+): Promise<ReferenceReconciliation | null> {
+  if (referenceWidth !== baselineWidth) return null
+  if (baselineHeight - referenceHeight < SCROLL_UNROLL_MIN_EXTRA_PX) return null
+
+  const pngBuffer = await sharp(referenceBytes).ensureAlpha().png().toBuffer()
+  const unmeasuredHeight = baselineHeight - referenceHeight
+  return {
+    pngBuffer,
+    method: 'cropped-to-reference',
+    comparedHeight: referenceHeight,
+    unmeasuredHeight,
+    note: `The capture (${baselineWidth}x${baselineHeight}) is EXACTLY the reference's width (${referenceWidth}x${referenceHeight}) and ${unmeasuredHeight}px taller — a scroll-unrolled capture of a scrolling screen measured against a fixed-height artboard. Compared the TOP ${referenceHeight}px only, at exact pixels (nothing was scaled), which is what "match this artboard" means. The ${unmeasuredHeight}px below the band is UNMEASURED: this score says nothing about it. Register a design reference for the lower sections to measure those too.`,
   }
 }
 

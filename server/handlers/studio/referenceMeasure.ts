@@ -218,7 +218,15 @@ function bucket(channel: number): number {
  */
 const MAX_EXACT_PER_BUCKET = 64
 
-function countColors(pixels: Buffer, channels: number): Array<{ rgb: Rgb; count: number }> {
+/**
+ * Exported for `server/ai/mcp/tools/studio/regionExplain.ts`, which names the
+ * dominant colour inside one of `studio_compare`'s differing rectangles. It
+ * shares this implementation rather than growing its own so the two tools can
+ * never disagree about what "the dominant colour here" is — the quantise-then-
+ * pick-the-modal-exact-value behaviour above is the whole answer, and a second
+ * copy of it would drift.
+ */
+export function countColors(pixels: Buffer, channels: number): Array<{ rgb: Rgb; count: number }> {
   const bucketCounts = new Map<number, number>()
   const exactByBucket = new Map<number, Map<number, number>>()
 

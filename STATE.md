@@ -2220,6 +2220,108 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### strict-teeth — W9-3: strict-mode teeth (crop reconciliation, font availability, named regions)
+- **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/agent-strict-mode-teeth` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W9-3, the **strict half only** — a sibling agent
+  owns the "creative substance" half (variants, composition audit, component
+  coverage). Builds directly on W9-2 (`fidelityMode.ts`, `FIDELITY_THRESHOLDS`,
+  the `compareGrading.ts`/`compareCapture.ts` split).
+- **Shipped — three of the four items, in the plan's own priority order:**
+  1. **`method: 'cropped-to-reference'`** — the third value in
+     `ReferenceReconciliation` (`frameDiffEngine.ts`). A board frame captures
+     its FULL scroll-unrolled content height, so a scrolling screen measured
+     against a fixed-height artboard produced an aspect delta far past the 5%
+     tolerance and got REFUSED — "match this artboard" was unmeasurable. It
+     now compares the top `comparedHeight` band. Two guards keep it honest:
+     the widths must match **exactly** (so the band is exact-pixel, never
+     interpolated — `studio_recommend_export_dpr` already produces this, and
+     the exact-width rule is also what keeps a landscape 400x100 reference
+     against a portrait capture refused), and the direction is one-sided (a
+     capture SHORTER than the reference is a missing section and is still
+     refused). `cropImageTop` crops the baseline to the same band — a
+     no-copy `subarray` view — in BOTH callers (`compare.ts`,
+     `diffFrames.ts`); forgetting one would score every row against the wrong
+     one. `gradeFrameDiff` gained a 4th param and `describeMethod` appends the
+     method to the verdict: `exact` says nothing, `resampled` says
+     interpolated, `cropped-to-reference` says the pixels below the band are
+     **UNMEASURED** and not to report them as verified. `capture.width/height`
+     now report the CAPTURE's own size (identical to the diff's for every
+     other method) with `capture.comparedHeight` alongside.
+  2. **`font-not-available`** — a new quality finding, detector in its OWN
+     file (`server/ai/mcp/tools/studio/fontAvailability.ts`) per the work
+     order, wired into `qualityCheck.ts` in two lines (a workspace-level
+     `collectFontAvailability` beside the token index, and one
+     `findings.push(...)` in the page loop) so the sibling agent owns that
+     file's body. Only the FIRST family in a stack is judged. Availability is
+     deliberately generous — `@font-face` in the page's sheets / compiled
+     project CSS / vendor CSS, a `fonts.googleapis.com` link (css2 AND legacy
+     `|` form), a `next/font/google` named import, or a matching font file
+     under a bounded set of asset dirs — and `font-family: var(--font-display)`
+     is resolved through the project's own custom properties (shared
+     `collectRootScopeMaps`/`resolveVarValue`) before being judged. **Stands
+     down entirely** when `next/font/local` appears in the scanned setup
+     files: a generated family name cannot be judged from static text, and
+     under-reporting is the correct direction (same bar that got the
+     composition heuristic rejected).
+  3. **Design-variable-aware region explanations** — `regionExplain.ts`, new.
+     Each of the worst 5 regions on a FAILING page gets `colorExplanation`:
+     the dominant colour on both sides, named as a design variable
+     (`designVariableIndex`) and as a project token. Shares
+     `referenceMeasure.ts`'s `countColors` (exported for this) rather than
+     growing a second dominant-colour implementation. Returns `undefined`
+     when both fills agree — that silence is the signal that the region MOVED
+     rather than being miscoloured, and a colour sentence there would send the
+     agent to recolour something already correct. Only a failing page pays for
+     the project-token index (it compiles the project's styles, whose cache
+     key hashes every source file, so post-write it is a real recompile).
+- **CUT — named, for a follow-up:**
+  - **`studio_ingest_design_text` + text diffing against captured `nodeRects`
+    strings (item 4).** Not started. It is a whole new manifest store + tool +
+    a text-diff pass, and it did not fit the time box. **Consequence to be
+    aware of:** strict mode still says nothing about text fidelity, and — this
+    is the part item 4 was supposed to add — it does not currently REFUSE to
+    claim text fidelity either. A strict pass today means "the pixels in the
+    measured band match", which a reader may over-read as "the copy is right".
+    Whoever picks this up should ship the refusal alongside the tool.
+  - **The crop path does not fire when the widths differ** (e.g. a 2x export
+    against a 1x capture of a scrolling screen). Deliberate — the band would
+    be interpolated, and that is a dpr question `studio_recommend_export_dpr`
+    answers. If real usage hits this often, relaxing to a clean integer scale
+    is the next move, with the note saying the band is interpolated.
+  - **`colorExplanation` is colour only.** No type-size or spacing
+    explanation, though `designVariableIndex` indexes sizes too.
+- **Also fixed (it was in my way):** `compare.test.ts`'s
+  `mock.module('../../editorBridge', …)` factory was missing
+  `editorBridgeScope`, so the whole file failed at import. Added a per-dir
+  stable double. With it, the file runs: **13 pass / 2 fail**, and I verified
+  those same 2 fail identically on a clean `origin/main` worktree with only
+  the mock fix applied — they need Chromium.
+- **Dogfood checklist for the human (no browser tests by agents):**
+  1. Register a design reference for a SCROLLING screen (a tall page whose
+     board frame unrolls past the artboard height) at the frame's own width,
+     then `studio_compare` it. It should return a verdict instead of the
+     aspect-ratio refusal, `capture.dimensionMatch: "cropped-to-reference"`,
+     and the verdict text should name the unmeasured pixels below the band.
+  2. Register a reference for a screen that is SHORTER than the design (a
+     missing section) — it must still refuse.
+  3. Write `font-family: "Poppins", sans-serif` into a screen's stylesheet in
+     a project that does not link Poppins, then `studio_quality_check` it: one
+     `font-not-available` finding naming Poppins. Add the Google Fonts `<link>`
+     to `index.html` and re-run: the finding should disappear.
+  4. On a project with an ingested design-variable set
+     (`studio_ingest_design_variables`), deliberately colour a block with the
+     wrong token and `studio_compare`: `regions[0].colorExplanation` should
+     name the design variable AND the token you actually wrote.
+- **Pre-existing failures I did NOT cause and did not touch:** the icon-catalog
+  `chevron-left` gate (`src/__tests__/architecture/`, 1 fail out of 505); the
+  2 Chromium-dependent `compare.test.ts` cases above;
+  `pageWriteVerification.test.ts` / `liveDigest.test.ts` pre-W10 arity;
+  `bundle-size-budgets` skipped without a `dist/`.
+- **Do not touch (concurrent agent):** `liveDigest.ts`, `boardFrames`,
+  `AgentPanel`, `studio_import_figma_frame`, and `qualityCheck.ts`'s body
+  (composition audit / component coverage) are owned by other Wave 7 agents.
+
 ### fidelity-modes — W9-2: creative / balanced / strict, one control from prompt to gate
 - **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
 - **Branch:** `feat/agent-fidelity-modes` off `origin/main`. Goal:

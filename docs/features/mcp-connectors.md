@@ -223,9 +223,15 @@ visually by exporting them as images and comparing them to the live one"):
   differing region overlaps — "the hero section is 78% different, nodes X and
   Y," not "the images look different." `studio_diff_frames` also accepts a
   `referenceId` instead of a second base64 PNG — see "Design references"
-  below — in which case a dimension mismatch is RECONCILED (dpr-matched or
-  labelled-resampled) rather than refused; the plain two-PNG `reference` path
-  keeps its original strict behavior unchanged.
+  below — in which case a dimension mismatch is RECONCILED (dpr-matched,
+  labelled-resampled, or — when the capture is EXACTLY the reference's width
+  and scroll-unrolled taller — labelled `cropped-to-reference` and diffed over
+  the top `comparedHeight` band only, with `unmeasuredHeight` naming the
+  pixels below that the score does not cover) rather than refused. A capture
+  SHORTER than the reference, or one whose width does not match, is still
+  refused: those are a missing section and a resolution question, not a
+  scrolling screen. The plain two-PNG `reference` path keeps its original
+  strict behavior unchanged.
 
 **Design references** — a durable, per-project, addressable-by-id store
 (`server/handlers/studio/designReferenceStore.ts`) for a ground-truth design

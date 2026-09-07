@@ -88,6 +88,18 @@
  *     there. Coarse by design: it says "worth checking", not "wrong" — a
  *     screen with no UI beyond native HTML is a legitimate reason for zero
  *     imports.
+ *   - `font-not-available` — the first family in a `font-family` stack that
+ *     the project cannot load: no `@font-face` (in the page's own sheets, the
+ *     compiled project CSS or the vendor CSS), no `fonts.googleapis.com`
+ *     link, no `next/font/google` import, and no matching font file on disk.
+ *     The browser falls back silently, so the screen renders in a face with
+ *     different metrics and every size tuned against a screenshot from there
+ *     on is tuned against the wrong typeface. Produced by
+ *     `server/ai/mcp/tools/studio/fontAvailability.ts` — its own module, not
+ *     this one, because unlike every rule above it needs the WORKSPACE (a
+ *     disk walk for font files, the project's setup files) and not just the
+ *     text of one authored file. See that module for where it deliberately
+ *     stands down.
  */
 import type { UnresolvedAssetImport } from '@core/page-parser'
 import { colorDifference, contrastRatio, parseHexColor, type Rgb } from '@core/design-tokens'
@@ -142,6 +154,7 @@ export type QualityFindingCode =
   | 'hardcoded-inline-sizing'
   | 'design-system-unused'
   | 'unresolved-asset-import'
+  | 'font-not-available'
 
 export interface QualityFinding {
   readonly code: QualityFindingCode
