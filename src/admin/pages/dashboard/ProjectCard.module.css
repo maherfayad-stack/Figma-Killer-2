@@ -1,0 +1,164 @@
+/* ProjectCard — one project tile on the studio Overview / project launcher. */
+
+/*
+  Positioning context for the ⋯ menu button, which is a sibling of the card
+  rather than a child of it — the card is a <button>, and a button inside a
+  button is invalid HTML.
+*/
+.cell {
+    position: relative;
+}
+
+/* Card-style project tile — the whole surface opens the project (see the
+ * §8.11 button-primitive allowlist entry). Borderless tile: a lifted surface
+ * on the page background, `--card-radius`, hover raises the surface tone
+ * rather than recoloring a border. */
+.card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2xs);
+    width: 100%;
+    padding: var(--space-3xl);
+    background: var(--bg-surface-2);
+    border: 0;
+    border-radius: var(--card-radius);
+    cursor: pointer;
+    text-align: left;
+    transition:
+        background 120ms ease,
+        transform 120ms ease,
+        box-shadow 150ms ease;
+}
+
+/*
+  Tone lift per the borderless-card rule, plus a real lift: surface-2 →
+  surface-3 alone is a ~2% step that most displays swallow, so a tile the
+  pointer is over was nearly indistinguishable from its neighbours. The 2px
+  rise and the contact shadow are what make the card read as pickable — still
+  no border, still achromatic.
+*/
+.card:hover {
+    background: var(--bg-surface-3);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card-hover);
+}
+
+/* Press puts it back down, so the click has somewhere to land. */
+.card:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+.card:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+}
+
+.cardIcon {
+    display: inline-flex;
+    color: var(--accent-2);
+    margin-bottom: var(--space-2xs);
+}
+
+/* The project's name is the largest thing on the home surface — at `--text-m`
+ * it read like the panel chrome inside the editor rather than the title of a
+ * document you are about to open. */
+.cardName {
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--text-bright);
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/*
+  The inline rename field stands in for `.cardName`, so it takes the card's
+  full width rather than the field's own default. Its type scale stays the
+  Input primitive's — a 20px text field would be a different control, and the
+  point of an inline rename is that the row does not jump when it opens.
+*/
+.renameInput {
+    width: 100%;
+}
+
+/* `--text-subtle`, not `--text-disabled`: this is the card's only metadata,
+ * and disabled-grey on `--bg-surface-2` is around 2.3:1 — unreadable, and
+ * semantically wrong for a line that is neither disabled nor decorative. */
+.cardMeta {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/*
+  Facts about the project, not decoration — so they sit between the name and
+  the meta line rather than floating in a corner, and they wrap instead of
+  truncating (a badge cut in half says nothing).
+*/
+.badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+    margin-top: var(--space-2xs);
+    max-width: 100%;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--space-px) var(--space-xs);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-4);
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    line-height: 1.6;
+    white-space: nowrap;
+}
+
+/*
+  `--warning`'s documented meaning is "not broken, but do not trust it", which
+  is exactly a Tier-0 project whose Tailwind/Sass/PostCSS has not run: the
+  project is fine, the pixels are not what its author sees.
+*/
+.badgeWarning {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--space-px) var(--space-xs);
+    border-radius: var(--radius-sm);
+    background: var(--warning-20);
+    color: var(--warning-text);
+    font-size: var(--text-2xs);
+    line-height: 1.6;
+    white-space: nowrap;
+}
+
+/*
+  Revealed on hover or focus, so a grid of projects reads as projects rather
+  than as a row of menu buttons. `:focus-within` is what keeps it reachable by
+  keyboard: tabbing to the (still focusable) control makes it visible.
+*/
+.cardMenuButton {
+    position: absolute;
+    top: var(--space-s);
+    right: var(--space-s);
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.cell:hover .cardMenuButton,
+.cell:focus-within .cardMenuButton {
+    opacity: 1;
+}
+
+/* Nothing to hover with, so it cannot be hover-revealed. */
+@media (hover: none) {
+    .cardMenuButton {
+        opacity: 1;
+    }
+}

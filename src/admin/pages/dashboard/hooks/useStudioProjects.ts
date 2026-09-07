@@ -22,12 +22,50 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { apiRequest } from '@core/http'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import type { ProjectPlatform } from '@core/studio-board'
+import { TrustTierSchema } from '@site/studio/studioProjectTrust'
+import { CompilableStyleToolchainSchema } from '@site/studio/styleCompileConsent'
 
+/**
+ * The framework vocabulary `ProjectProfile.framework` uses on the server
+ * (`server/handlers/studio/projectProfileSchema.ts`). Mirrored rather than
+ * imported for the same reason `TrustTierSchema` is mirrored in
+ * `studioProjectTrust.ts`: this runs in the browser and only has to agree on
+ * the wire shape, not import a Node-only module.
+ */
+const ProjectFrameworkSchema = Type.Union([
+  Type.Literal('vite'),
+  Type.Literal('next-app'),
+  Type.Literal('next-pages'),
+  Type.Literal('cra'),
+  Type.Literal('remix'),
+  Type.Literal('astro'),
+  Type.Literal('unknown'),
+])
+export type ProjectFramework = Static<typeof ProjectFrameworkSchema>
+
+/**
+ * One project as the launcher knows it. Mirrors `StudioProjectSummary`
+ * (`server/handlers/studioProjects.ts`), which is the one place all four
+ * project endpoints build their answer — so a card redrawn from a rename or a
+ * duplicate carries exactly what a card drawn from the listing does.
+ *
+ * `platform` and `framework` are genuinely optional on the wire (an import has
+ * no recorded platform; an unprobed project has no framework), and the card
+ * renders no badge for an absent one rather than guessing. `trust`,
+ * `styleToolchains` and `editedAt` are always sent.
+ */
 const StudioProjectSchema = Type.Object(
   {
     dir: Type.String(),
     name: Type.String(),
     pageCount: Type.Number(),
+    platform: Type.Optional(Type.Union([Type.Literal('mobile'), Type.Literal('web')])),
+    framework: Type.Optional(ProjectFrameworkSchema),
+    trust: TrustTierSchema,
+    /** Style toolchains the probe found that only run at Tier ≥ 1. Meaningful paired with `trust === 'static'`. */
+    styleToolchains: Type.Array(CompilableStyleToolchainSchema),
+    /** Epoch ms of the newest file under the project's pages dir — see the server-side field doc. */
+    editedAt: Type.Number(),
   },
   { additionalProperties: true },
 )
@@ -49,6 +87,11 @@ const DeleteProjectResponseSchema = Type.Object(
 )
 
 const RenameProjectResponseSchema = Type.Object(
+  { project: StudioProjectSchema },
+  { additionalProperties: true },
+)
+
+const DuplicateProjectResponseSchema = Type.Object(
   { project: StudioProjectSchema },
   { additionalProperties: true },
 )
@@ -112,6 +155,26 @@ export function renameStudioProject(dir: string, name: string): Promise<StudioPr
     method: 'POST',
     body: { dir, name },
     schema: RenameProjectResponseSchema,
+  }).then((res) => res.project)
+}
+
+/**
+ * Copies a project beside itself and resolves to the new project's summary.
+ *
+ * The copy is the whole repository minus `node_modules`, build output and
+ * `.git` (see `server/handlers/studio/projectDuplicate.ts` for why each is
+ * left behind). `name` is optional — omit it and the server picks the first
+ * free `<name> copy`, `<name> copy 2`, ….
+ *
+ * Throws `ApiError` on failure (403 without `studio.write`, 404 for a project
+ * that has since been deleted, 409 for a name collision) so the caller can
+ * surface the message via a toast.
+ */
+export function duplicateStudioProject(dir: string, name?: string): Promise<StudioProject> {
+  return apiRequest('/admin/api/studio/duplicate', {
+    method: 'POST',
+    body: { dir, name },
+    schema: DuplicateProjectResponseSchema,
   }).then((res) => res.project)
 }
 
