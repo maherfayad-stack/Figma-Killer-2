@@ -1,0 +1,160 @@
+/* ── base ── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  height: 32px;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border-base-default);
+  border-radius: var(--rounded-full);
+  background: var(--background-base-default);
+  color: var(--text-base-default);
+  font-family: var(--type-caption-semibold-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-semibold-weight);
+  line-height: var(--type-caption-lh);
+  white-space: nowrap;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  -webkit-appearance: none;
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--border-secondary-default);
+  outline-offset: 2px;
+}
+
+/* ── hover / active ── */
+.chip:hover:not(:disabled) {
+  background: var(--background-base-hover);
+  border-color: var(--color-aqua-30);
+}
+
+.chip:active:not(:disabled) {
+  background: var(--background-base-active);
+  border-color: var(--border-base-hover);
+}
+
+/* ── disabled ── */
+.chip:disabled {
+  color: var(--text-base-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ── selected ── */
+.chip--selected {
+  background: var(--background-base-selected);
+  border-color: var(--border-base-selected);
+  color: var(--text-link-default);
+}
+
+.chip--selected:hover:not(:disabled) {
+  background: var(--background-base-hover);
+  border-color: var(--color-aqua-30);
+  color: var(--text-link-hover);
+}
+
+.chip--selected:active:not(:disabled) {
+  background: var(--background-base-active);
+  border-color: var(--border-base-hover);
+  color: var(--text-link-pressed);
+}
+
+.chip--selected:disabled {
+  background: var(--background-base-subtle);
+  border-color: transparent;
+  color: var(--text-base-disabled);
+}
+
+/* ── error ── */
+.chip--error {
+  border-color: var(--border-primary-default);
+  color: var(--text-warning-default);
+}
+
+.chip--error .chip__icon {
+  color: var(--icon-primary-default);
+}
+
+.chip--selected.chip--error {
+  background: var(--background-warning-subtle);
+}
+
+.chip--error:hover:not(:disabled) {
+  background: var(--background-warning-subtle);
+  border-color: var(--border-primary-hover);
+  color: var(--text-warning-hover);
+}
+
+.chip--error:hover:not(:disabled) .chip__icon,
+.chip--error:hover:not(:disabled) .chip__chevron {
+  color: var(--icon-primary-hover);
+}
+
+.chip--error:active:not(:disabled) {
+  background: var(--background-base-default);
+  border-color: var(--border-primary-pressed);
+  color: var(--text-warning-pressed);
+}
+
+.chip--error:active:not(:disabled) .chip__icon,
+.chip--error:active:not(:disabled) .chip__chevron {
+  color: var(--icon-primary-pressed);
+}
+
+/* ── dropdown: tighter trailing padding ── */
+.chip--dropdown {
+  padding-right: var(--space-sm);
+}
+
+/* ── slots ── */
+.chip__icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.chip__label {
+  flex-shrink: 0;
+}
+
+.chip__chevron {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+/* ── skeleton ── */
+.chip--skeleton {
+  display: inline-block;
+  width: 72px;
+  height: 32px;
+  border-radius: var(--rounded-full);
+  border: none;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    var(--color-gainsboro) 25%,
+    var(--color-alice)     50%,
+    var(--color-gainsboro) 75%
+  );
+  background-size: 200% 100%;
+  animation: chip-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes chip-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── RTL ── */
+[dir='rtl'] .chip {
+  direction: rtl;
+}

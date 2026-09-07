@@ -3,12 +3,14 @@
  * lost; the files that are yours to edit are App.jsx, CanvasPanel.* and
  * shell.css, which Studio writes once and never touches again. */
 import Onboarding from '../pages/Onboarding'
+import Page from '../pages/Page'
 import Sms from '../pages/SMS'
 import SignUp from '../pages/SignUp'
 
 /** Every screen in `pages/`, by the same id Studio addresses it with. */
 export const SCREENS = [
   { key: "onboarding", label: "Onboarding", Component: Onboarding },
+  { key: "page", label: "Page", Component: Page },
   { key: "sms", label: "SMS", Component: Sms },
   { key: "sign-up", label: "SignUp", Component: SignUp },
 ]
@@ -19,15 +21,16 @@ export const BOARDS = [
     id: "2fd078d6-209f-44df-842e-4bda43d97ed5",
     name: "Test",
     frames: [
-      {"key":"3884d231-f0eb-4dcb-a48b-49e01249f3ad","pageId":"onboarding","label":"Onboarding","x":424,"y":901,"width":393,"height":808},
-      {"key":"d7132d36-dbde-434c-b257-1ff2d0ce909f","pageId":"sms","label":"SMS","x":-2,"y":901,"width":393,"height":804},
+      {"key":"3884d231-f0eb-4dcb-a48b-49e01249f3ad","pageId":"onboarding","label":"Onboarding","x":416,"y":910,"width":393,"height":808},
+      {"key":"d7132d36-dbde-434c-b257-1ff2d0ce909f","pageId":"sms","label":"SMS","x":-2,"y":901,"width":393,"height":804,"axes":{"direction":"ltr","locale":"en"}},
       {"key":"2a978b29-58cf-40b2-bf8c-efb5873db9d3","pageId":"sign-up","label":"SignUp","x":-422,"y":901,"width":393,"height":788},
+      {"key":"7d3d15c3-ce92-4901-8411-935a853f8aea","pageId":"page","label":"Page","x":968,"y":985,"width":393,"height":852},
     ],
     notes: [
-      {"id":"bb7731f0-d5b9-467f-8b72-e2d588782623","x":-988.4908055234471,"y":838.1512654950589,"w":216.9538838520047,"h":126.12189749690015,"text":"Testing the sticky notes","color":"yellow"},
+      {"id":"bb7731f0-d5b9-467f-8b72-e2d588782623","x":-988.4908055234471,"y":838.1512654950589,"w":216.9538838520047,"h":126.12189749690015,"text":"asd","color":"pink"},
     ],
     docs: [
-      {"id":"2f9af55e-0d53-415c-b494-5a42cec1a594","x":-988.4908055234471,"y":1019.4376876719375,"w":490.0097483540562,"h":367.25298435898634,"html":"<h1>Best test for a doc</h1>this doc is amazing<div><br></div><div><h3>hooooray what. a doc</h3><div><ul><li>who made this amazing work</li><li>it's me hehe</li><li>kbasl;dfsdfna;dsf</li></ul></div></div>"},
+      {"id":"2f9af55e-0d53-415c-b494-5a42cec1a594","x":-988.4908055234471,"y":1019.4376876719375,"w":490.0097483540562,"h":367.25298435898634,"html":"<h2>Best test for a doc</h2><div>asdasdasd</div><div><h3>hooooray what. a doc</h3><div><ul><li>who made this amazing work</li><li>it's me hehe</li><li>kbasl;dfsdfna;dsf</li></ul></div></div>"},
     ],
   },
   {
@@ -47,12 +50,12 @@ export const BOARDS = [
 
 /** The board-level defaults a frame inherits when it carries no size of its own. */
 /** The project's name, drawn top-left. The last word takes the accent. */
-export const PROJECT_NAME = "test4"
+export const PROJECT_NAME = "test4 copy"
 
 export const FRAME_DEFAULTS = {"width":393,"height":852}
 
 /** What the board was last previewing in Studio — the shell opens on the same thing. */
-export const PREVIEW_AXES = {"direction":"ltr","colorScheme":"dark","locale":"en"}
+export const PREVIEW_AXES = {"direction":"rtl","colorScheme":"light","locale":"ar"}
 
 /** Locale codes this project's dictionary declares. */
 export const LOCALES = ["en","ar"]
@@ -65,29 +68,6 @@ export const LOCALES = ["en","ar"]
  * rendered DOM. See `Player.jsx`.
  */
 export const LINKS = [
-  {
-    "id": "bdb3afb0-d601-4ffc-b1f0-e55daa7a8b49",
-    "source": {
-      "pageId": "sign-up",
-      "node": {
-        "nodeId": "pages/SignUp.tsx:30:16",
-        "indexPath": [
-          0,
-          1,
-          1,
-          0,
-          1,
-          0
-        ],
-        "moduleId": "alm.Button",
-        "textSnippet": ""
-      }
-    },
-    "trigger": "click",
-    "action": "overlay",
-    "targetPageId": "sms",
-    "transition": "sheet"
-  },
   {
     "id": "72c775ca-bd15-481e-b607-6b2e33fd75b4",
     "source": {
@@ -153,25 +133,26 @@ export const LINKS = [
     "targetPageId": null
   },
   {
-    "id": "9ef314f0-8cc3-4167-abb1-37a02d9f4094",
+    "id": "449ba46a-e825-4279-b82e-ed74891dc0ba",
     "source": {
-      "pageId": "sms",
+      "pageId": "sign-up",
       "node": {
-        "nodeId": "pages/SMS.tsx:36:14",
+        "nodeId": "pages/SignUp.tsx:38:16",
         "indexPath": [
           0,
           1,
           1,
+          0,
           1,
-          5
+          0
         ],
-        "moduleId": "base.container",
+        "moduleId": "alm.Button",
         "textSnippet": ""
       }
     },
     "trigger": "click",
     "action": "navigate",
-    "targetPageId": "onboarding",
+    "targetPageId": "sms",
     "transition": "slide-left"
   }
 ]

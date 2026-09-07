@@ -1,0 +1,154 @@
+/* ── base ── */
+.cell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ── hover / pressed ── */
+.cell:hover {
+  background: var(--background-base-hover);
+}
+
+.cell:active {
+  background: var(--background-base-pressed);
+}
+
+/* ── selected ── */
+.cell--selected {
+  background: var(--background-base-selected);
+  box-shadow: inset 0 0 0 1px var(--border-base-selected);
+}
+
+.cell--selected .separator {
+  background: var(--border-base-selected);
+}
+
+/* ── row ── */
+.cell__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  padding: 16px 0;
+}
+
+/* ── visual ── */
+.cell__visual {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--icon-base-default);
+}
+
+.cell__visual--icon {
+  width: 24px;
+  height: 24px;
+}
+
+.cell__visual--3d-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--rounded-sm);
+  overflow: hidden;
+  background: var(--background-neutral-subtle);
+}
+
+.cell__visual--image {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--rounded);
+  overflow: hidden;
+  background: var(--background-neutral-subtle);
+}
+
+.cell__visual-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ── content ── */
+.cell__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.cell__title {
+  color: var(--text-base-subtext);
+  text-align: start;
+}
+
+.cell__label {
+  color: var(--text-base-default);
+  text-align: start;
+}
+
+.cell__subtext {
+  color: var(--text-base-subtext);
+  text-align: start;
+}
+
+/* ── trailing ── */
+.cell__trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.cell__trailing-value {
+  color: var(--text-base-subtext);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.cell__trailing-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--icon-base-default);
+  width: 24px;
+  height: 24px;
+}
+
+/* ── chevron ── */
+.cell__chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--icon-secondary-default);
+}
+
+.cell:hover .cell__chevron {
+  color: var(--icon-secondary-hover);
+}
+
+.cell:active .cell__chevron {
+  color: var(--icon-secondary-pressed);
+}
+
+/* ── toggle trailing ── */
+.cell__toggle {
+  flex-shrink: 0;
+}
+
+/* ── stepper trailing ── */
+.cell__stepper {
+  flex-shrink: 0;
+}
+
+/* ── RTL font ── */
+[dir="rtl"] .cell__title,
+[dir="rtl"] .cell__label,
+[dir="rtl"] .cell__subtext,
+[dir="rtl"] .cell__trailing-value,
+[dir="rtl"] .cell__tag {
+  font-family: var(--font-body);
+}

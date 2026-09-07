@@ -1,0 +1,28 @@
+.callout {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--gradient-neon-green);
+  color: var(--color-metal-static);
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: var(--type-body-regular-weight);
+  white-space: nowrap;
+}
+
+.callout--small {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+}
+
+.callout__icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.callout--small .callout__icon {
+  width: 12px;
+  height: 12px;
+}

@@ -8,8 +8,8 @@
         {
           "id": "3884d231-f0eb-4dcb-a48b-49e01249f3ad",
           "pageId": "onboarding",
-          "x": 423.5457421416977,
-          "y": 901.2122142435089,
+          "x": 415.5162011260727,
+          "y": 909.7539012552277,
           "width": 393,
           "height": 808.3556063558458
         },
@@ -19,7 +19,11 @@
           "x": -2.215753681495851,
           "y": 901.2122142435089,
           "width": 393,
-          "height": 804.1839933372852
+          "height": 804.1839933372852,
+          "axes": {
+            "direction": "ltr",
+            "locale": "en"
+          }
         },
         {
           "id": "2a978b29-58cf-40b2-bf8c-efb5873db9d3",
@@ -28,6 +32,14 @@
           "y": 901.2122142435089,
           "width": 393,
           "height": 788.4835965566353
+        },
+        {
+          "id": "7d3d15c3-ce92-4901-8411-935a853f8aea",
+          "pageId": "page",
+          "x": 967.90625,
+          "y": 984.5723294331506,
+          "width": 393,
+          "height": 852
         }
       ],
       "notes": [
@@ -37,8 +49,8 @@
           "y": 838.1512654950589,
           "w": 216.9538838520047,
           "h": 126.12189749690015,
-          "text": "Testing the sticky notes",
-          "color": "yellow"
+          "text": "asd",
+          "color": "pink"
         }
       ],
       "docs": [
@@ -48,7 +60,7 @@
           "y": 1019.4376876719375,
           "w": 490.0097483540562,
           "h": 367.25298435898634,
-          "html": "<h1>Best test for a doc</h1>this doc is amazing<div><br></div><div><h3>hooooray what. a doc</h3><div><ul><li>who made this amazing work</li><li>it's me hehe</li><li>kbasl;dfsdfna;dsf</li></ul></div></div>"
+          "html": "<h2>Best test for a doc</h2><div>asdasdasd</div><div><h3>hooooray what. a doc</h3><div><ul><li>who made this amazing work</li><li>it's me hehe</li><li>kbasl;dfsdfna;dsf</li></ul></div></div>"
         }
       ],
       "guides": [

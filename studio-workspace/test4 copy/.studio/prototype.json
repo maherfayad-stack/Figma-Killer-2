@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "links": [
+    {
+      "id": "72c775ca-bd15-481e-b607-6b2e33fd75b4",
+      "source": {
+        "pageId": "onboarding",
+        "node": {
+          "nodeId": "pages/Onboarding.tsx:45:10",
+          "indexPath": [
+            0,
+            1,
+            1
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "navigate",
+      "targetPageId": "sign-up",
+      "transition": "slide-left"
+    },
+    {
+      "id": "b14ba0be-ab2c-4ca4-958d-753cd53d678b",
+      "source": {
+        "pageId": "sign-up",
+        "node": {
+          "nodeId": "pages/SignUp.tsx:21:8~components/SheetHeader.tsx:23:12",
+          "indexPath": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "moduleId": "alm.GlassButton",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "back",
+      "targetPageId": null
+    },
+    {
+      "id": "ea91ae57-7b4a-46fb-b51f-e05c9bb9ee29",
+      "source": {
+        "pageId": "sms",
+        "node": {
+          "nodeId": "pages/SMS.tsx:11:10~components/SheetHeader.tsx:22:10",
+          "indexPath": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "back",
+      "targetPageId": null
+    },
+    {
+      "id": "449ba46a-e825-4279-b82e-ed74891dc0ba",
+      "source": {
+        "pageId": "sign-up",
+        "node": {
+          "nodeId": "pages/SignUp.tsx:38:16",
+          "indexPath": [
+            0,
+            1,
+            1,
+            0,
+            1,
+            0
+          ],
+          "moduleId": "alm.Button",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "navigate",
+      "targetPageId": "sms",
+      "transition": "slide-left"
+    }
+  ]
+}
