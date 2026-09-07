@@ -21,6 +21,44 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### test-03 — CI's Test job: 666 failures were ~35 real ones plus one bricked React
+- **Agent:** test-engineer · **Stage:** done (targeted suites + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs no dogfood, this is test infrastructure**
+- **Branch:** `fix/ci-dom-suites` off `origin/main` (`942723d`). Scope: the React/DOM half of the suite (`src/admin/**`, `src/ui/**`, `src/__tests__/{canvas,panels,layout,admin,agent}/**`). A sibling agent owns lint, `server/**`, `src/__tests__/{architecture,server}` and `.github/workflows/ci.yml`.
+- **User report:** GitHub Actions failure emails. `main` has never been green in the visible history; the Test job reported **666 failed tests across 118 files**.
+
+**One cause explains ~630 of the 666.** `ci.yml` runs bare `bun test`, NOT `bun run test` — and `--parallel=4` lives in package.json's `test` script, not in `bunfig.toml` (which says so, at length, and is ignored by the workflow). Bare `bun test` therefore runs all ~1150 files in ONE process, sharing one happy-dom document, one module-scoped `useEditorStore`, and one React module.
+
+The lethal part is React's `act()`. It unwinds its private `actScopeDepth` / `actQueue` in the `.then()` handlers of the promise `await act(async () => …)` returns. When bun's per-test timeout fires it **abandons that async frame** — the promise never settles, the handlers never run, and both stay leaked for the rest of the process. React then takes the `prevActScopeDepth !== 0` branch on every later render: work is queued and never flushed. Every subsequent `render()` in every subsequent FILE commits nothing.
+
+That is exactly what the CI log shows. `src/__tests__/agent/agentBreakpointCapture.test.tsx` blows its 5000ms budget (its `waitForAgentRenderFrame` polls for a full `FRAME_WAIT_TIMEOUT_MS = 5_000` before returning null, so the outer timeout always wins by ~1ms), React prints *"You seem to have overlapping act() calls"*, and from the very next file — `code-editor/codeMirrorEditor.test.tsx`, log line 618 — **every React file reports 0 passes** to the end of the run, with `<body><div /></body>` or `result.current === null`. 500+ files, all one abandoned promise.
+
+**Measured, same tree, same machine, over the DOM half (294 files):**
+
+| command | fail |
+|---|---|
+| `bun test` (CI's command, one process) | 26 |
+| `bun test --parallel=4` (`bun run test`) | 3 |
+
+**Three defences shipped, in the order they act.**
+1. **`--parallel=4` in CI.** `ci.yml` is the sibling agent's file — the exact step is in the PR body: `run: bun test --parallel=4` (or `bun run test`). **Without this the other two only reduce the blast radius; they do not remove it.**
+2. **Budgets, declared once** in `src/__tests__/setup.ts`: `configure({ asyncUtilTimeout: 5_000 })` for `waitFor`/`findBy*` (was 1000ms — canvas suites that mount a breakpoint frame land at 1005–1030ms on a laptop, i.e. they were passing by ~0ms of margin and failed outright on a 2-core runner) and `setDefaultTimeout(20_000)` for bun's per-test budget. The multiple between the two is the point: a bad `waitFor` now reports itself instead of tripping the outer timeout and abandoning the frame.
+3. **An act-scope repair** in the same file's global `afterEach`. `React.act` is wrapped so an async callback's thenable is replaced by one we can settle, and any still-pending wrapper is **resolved** (not rejected — resolving drives React's own fulfilment path, `popActScope` + flush, restoring exactly the state React would have reached itself). `thrownErrors` is cleared too: it is a shared array, so an abandoned act can otherwise deposit an error that surfaces inside an unrelated later test. The patch goes through `createRequire(...)('react')`, not `import` — an ESM namespace is frozen, and RTL copies `React.act` once at module load, so it must be installed before the `@testing-library/react` import below it.
+
+**Tests added.**
+- `src/__tests__/harness/actScopeLeakRecovery.test.tsx` (new) — reproduces the leak deliberately (a floating `await act(...)` still open when the test ends, which is exactly what a timeout leaves behind) and asserts the next two renders still commit. **Verified to fail without the repair**, with the identical `<body><div /></body>` signature seen in CI.
+- `src/__tests__/toolbar/toolbar.test.ts` — **one assertion deliberately rewritten, named here as required.** "keyboard shortcut handler guards against text input targets" grepped `UndoRedoButtons.tsx` for `tagName === 'INPUT'` / `'TEXTAREA'` / `isContentEditable`. That rule was **replaced, not moved**: refusing ⌘Z for any editable target made editor undo unreachable while the caret sat in a prefilled Properties-panel field (see `pendingTextEdit.ts`'s header). The gate had been asserting literals against a file that no longer contains them, red on every CI run since. It is now two tests — a behaviour test that drives real `input`/`focusin`/Enter/Escape events through `hasPendingTextEdit` and pins the refusal (a field with an UNCOMMITTED draft keeps the keystroke; a parked-but-clean field does not; Enter commits a single-line field but is only a newline in a textarea), plus a source half asserting the delegation and that no blanket editable-target check comes back.
+
+**Source fix (1 line).** `src/admin/pages/site/canvas/useCopyAsPngShortcut.ts` used `selectActiveBoard(state)?.frames ?? []`, a fresh array per read, which `selectorStability.test.ts` flags. There is already a stable selector for exactly this — `selectActiveBoardFrames` with its module-level `EMPTY_FRAMES` — so it now uses it. Deterministic red on macOS too; `standing-01` mislabels this one as a Windows path failure.
+
+**Still red, and NOT caused by this branch** (all three reproduce identically on unmodified `origin/main`, verified before any edit):
+- `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx` ×2 — a raw `div` with `style.position = 'fixed'` appended into the iframe body never receives `SCROLL_UNROLL_ATTR`; the injector's `view.MutationObserver` → rAF-coalesced tagging pass does not tag it under happy-dom. The sibling file `canvasScrollUnrollInjector.test.tsx` passes, so it is this direct-DOM-mutation path specifically. Needs `canvas-engineer`.
+- `src/__tests__/canvas/selectionToolbar.test.tsx` ×1 — "does not bubble toolbar clicks to the canvas background". Diagnosis: after `fireEvent.click` the trigger still reads `aria-expanded="false"`, so `setOpen(true)` never committed and the lazy dialog never mounts. The two sibling tests that open the same dialog pass; the only difference is this one supplies `CanvasViewportActionsContext`, which flips `portalTarget` from `document.body` to the harness div. Needs `canvas-engineer`.
+- `icon-catalog-integrity.test.ts` (`chevron-left`), `pluginServerRuntime`, `pluginWorkerRpcTimeout`, `cmsPlugins`, `headlessCapture` — all `standing-01`, all the sibling agent's half.
+
+**CUT, deliberately:** no attempt at the three canvas failures above (product-level canvas debugging, not test infrastructure, and each needs the iframe/portal owner). No change to `FRAME_WAIT_TIMEOUT_MS` in `renderEvidence.ts` — that is production behaviour (how long the agent waits for a canvas frame before giving up) and must not be stretched to suit a test.
+
+**Human action needed:** fold `--parallel=4` into `ci.yml`'s Test step. Everything else is inert without it.
+
 ### font-revert — the font-family you picked came back, and installing a font did nothing
 - **Agent:** panel-designer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + `tsc -p tsconfig.node.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
 - **Branch:** `fix/font-family-write-reverts` off `origin/main` (`7d9a8de`). User report, verbatim: "why after applying different font in the properties panel it gets back to this font again even after installing the font from the framework it's the same" — plus, mid-task, "same in components".

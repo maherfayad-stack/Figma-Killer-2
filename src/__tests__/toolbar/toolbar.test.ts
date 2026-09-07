@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url'
 import { ZoomControls } from '@site/toolbar/ZoomControls'
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { clearPendingTextEdit, hasPendingTextEdit } from '@site/canvas/pendingTextEdit'
 
 // ─── Guideline #224 constants ─────────────────────────────────────────────────
 
@@ -179,16 +180,74 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
     expect(registrySrc).toContain("'Meta+Shift+Z' : 'Control+Shift+Z'")
   })
 
-  it('keyboard shortcut handler guards against text input targets', () => {
+  // REWRITTEN (was: grep UndoRedoButtons.tsx for `tagName === 'INPUT'` /
+  // `'TEXTAREA'` / `isContentEditable`). That rule was deliberately REPLACED,
+  // not moved: refusing the shortcut for ANY editable target made the editor's
+  // undo unreachable from the keyboard for as long as the caret sat in a
+  // Properties-panel field — and since every style row is prefilled and both
+  // field primitives keep focus after their commit, that was most of the time.
+  // See the header of `pendingTextEdit.ts`. The gate kept asserting the old
+  // literals against a file that no longer contains them, so it had been red
+  // on every CI run since the refactor. It now asserts the contract that
+  // actually exists, through the module that owns it.
+  it('refuses the undo keystroke only for a field holding an UNCOMMITTED draft', () => {
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+
+    try {
+      clearPendingTextEdit()
+
+      // Focus alone is not a draft — the editor still owns ⌘Z. This is the
+      // whole point of the rewrite: a parked-but-clean inspector field must
+      // NOT swallow the shortcut.
+      input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      expect(hasPendingTextEdit(input)).toBe(false)
+
+      // Typing marks the field pending — now the browser's text undo wins.
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      expect(hasPendingTextEdit(input)).toBe(true)
+
+      // Enter is the commit gesture for a single-line field: focus stays, the
+      // draft does not.
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      expect(hasPendingTextEdit(input)).toBe(false)
+
+      // Escape abandons a draft.
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      expect(hasPendingTextEdit(input)).toBe(false)
+
+      // Enter in a textarea inserts a newline — it is NOT a commit, so that
+      // draft stays pending and keeps the keystroke.
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      expect(hasPendingTextEdit(textarea)).toBe(true)
+
+      // A draft belongs to the element that has focus: moving focus drops it.
+      input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      expect(hasPendingTextEdit(textarea)).toBe(false)
+    } finally {
+      clearPendingTextEdit()
+      input.remove()
+      textarea.remove()
+    }
+  })
+
+  it('delegates that routing decision to pendingTextEdit, with no editable-target check of its own', () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
       new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
       'utf-8',
     )
-    // Shortcuts must not fire inside inputs (would break text editing)
-    expect(src).toContain("tagName === 'INPUT'")
-    expect(src).toContain("tagName === 'TEXTAREA'")
-    expect(src).toContain('isContentEditable')
+    expect(src).toContain('hasPendingTextEdit(e.target)')
+    // A reintroduced blanket check here would silently restore the bug the
+    // rewrite above describes, and the behaviour test cannot see it — this
+    // half is what makes the refusal single-sourced.
+    expect(src).not.toContain("tagName === 'INPUT'")
+    expect(src).not.toContain("tagName === 'TEXTAREA'")
+    expect(src).not.toContain('isContentEditable')
   })
 
   it('keyboard handler registers on document (global scope, not canvas-local)', () => {
