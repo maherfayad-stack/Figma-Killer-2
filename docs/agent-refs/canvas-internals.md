@@ -801,3 +801,20 @@ readiness tracker (preview rows, loop data, media, fonts, React settling, image
 embedding), captures, and unmounts. It never changes the visible canvas state,
 never runs authored runtime scripts, and sits **offscreen** rather than
 `display:none` so it has real layout geometry.
+
+**The headless capture page renders the same module set, from a different
+bundle.** `/admin/agent-capture` (`src/admin/agentCapture/`) is a second Vite
+HTML entry, so it inherits none of the editor's imports — and `NodeRenderer`
+resolves every node through the GLOBAL module registry. When the two entries
+kept independent lists, the editor rendered a design-system page correctly
+while its PNG export came back full of `Unknown module: alm.Button`. The set
+now lives once, in `src/admin/pages/site/studio/canvasModuleSet.ts`: built-in
+packs as import side effects, plus `mountCanvasModuleSet(dir)` for the
+project's own `pkg.*` components (trust-gated on the server, so both surfaces
+get the identical Tier-0 outcome without either re-implementing the check).
+Because a capture frame is photographed exactly ONCE — an editor frame just
+re-renders through `registry.subscribe` when a module lands late — that
+registration is a bounded settle phase (`modules`) in
+`canvasCaptureSettle.ts`, warning and photographing anyway if the bundle never
+arrives. Adding a pack to the canvas is one line in `canvasModuleSet.ts`;
+gated by `src/__tests__/canvas/captureCanvasModuleSet.test.tsx`.

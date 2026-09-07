@@ -22,6 +22,14 @@ describe('Site editor shell lazy body', () => {
   it('keeps visual editor body imports behind the existing layout shell', () => {
     const layout = readAdminFile('layouts/AdminCanvasLayout/AdminCanvasLayout.tsx')
     const body = readAdminFile('layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx')
+    // The canvas module packs are no longer listed by the body directly: the
+    // headless capture page renders the same nodes from a SEPARATE Vite entry
+    // and inherits none of these imports, so both surfaces go through one
+    // shared entry (`canvasModuleSet.ts`) instead of keeping two lists — see
+    // that file's doc, and `captureCanvasModuleSet.test.tsx` for the gate on
+    // its CONTENTS. What this rule still owns is the ALTITUDE: the packs load
+    // from the lazy body, never from the route shell.
+    const moduleSet = readAdminFile('pages/site/studio/canvasModuleSet.ts')
 
     expect(layout).toContain("import('./AdminCanvasEditorBody')")
     expect(layout).toContain('prewarmedLazy<AdminCanvasEditorBodyProps>')
@@ -35,14 +43,16 @@ describe('Site editor shell lazy body', () => {
     expect(layout).not.toContain("@admin/pages/site/sidebars/RightSidebar")
     expect(layout).not.toContain("@modules/base")
     expect(layout).not.toContain("@core/loops/sources")
+    expect(layout).not.toContain('studio/canvasModuleSet')
 
     expect(body).toContain("@dnd-kit/core")
     expect(body).toContain("@admin/pages/site/canvas")
     expect(body).toContain("@admin/pages/site/panels/PropertiesPanel")
     expect(body).toContain("@admin/pages/site/sidebars/LeftSidebar")
     expect(body).toContain("@admin/pages/site/sidebars/RightSidebar")
-    expect(body).toContain("@modules/base")
-    expect(body).toContain("@core/loops/sources")
+    expect(body).toContain('studio/canvasModuleSet')
+    expect(moduleSet).toContain("@modules/base")
+    expect(moduleSet).toContain("@core/loops/sources")
   })
 
   it('keeps rarely opened Import HTML UI behind an open-state lazy boundary', () => {

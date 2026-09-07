@@ -10,7 +10,7 @@ import { CanvasRoot } from '@admin/pages/site/canvas'
 import { CodeEditorPanel, CodeEditorSkeleton } from '@admin/pages/site/code-editor'
 import { useActiveLivePath } from '@admin/pages/site/hooks/useActiveLivePath'
 import { useAutoResolveDependencies } from '@admin/pages/site/hooks/useAutoResolveDependencies'
-import { useRegisterProjectModules } from '@admin/pages/site/studio/registerProjectModules'
+import { useRegisterProjectModules } from '@admin/pages/site/studio/canvasModuleSet'
 import { usePreviewAxesHydration } from '@admin/pages/site/studio/usePreviewAxesHydration'
 import { useStudioCommentsLoad } from '@admin/pages/site/studio/useStudioCommentsLoad'
 import { useStudioPrototypeLoad } from '@admin/pages/site/studio/useStudioPrototypeLoad'
@@ -26,12 +26,15 @@ import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
 import styles from './AdminCanvasLayout.module.css'
 
-// Register the editor-only runtime graph from the lazy body, not the route
-// shell. The toolbar/chrome can paint without block definitions or loop
-// sources; CanvasRoot and PropertiesPanel need them.
-import '@modules/base'
-import '@modules/alm/register'
-import '@core/loops/sources'
+// The canvas runtime graph — base + design-system packs + loop sources —
+// arrives with `canvasModuleSet.ts`, imported above for `useRegisterProjectModules`.
+// It is NOT re-listed here: the headless capture page renders the same nodes
+// from a different entry, and two independent lists is exactly how it ended up
+// photographing `Unknown module: alm.Button`. See that file's doc.
+//
+// It still loads from the lazy body rather than the route shell: the
+// toolbar/chrome can paint without block definitions or loop sources;
+// CanvasRoot and PropertiesPanel need them.
 
 const ImportHtmlModal = lazy(() =>
   import('@admin/modals/ImportHtml').then((m) => ({ default: m.ImportHtmlModal })),
@@ -55,8 +58,8 @@ export function AdminCanvasEditorBody({
   useAutoResolveDependencies()
   // WS-3.3 — registers/unregisters `pkg.*` design-system modules for
   // whichever project is currently open. Generalizes `@modules/alm/register`
-  // (imported below, kept per `standing-07`) to any npm package a project
-  // actually imports, not just the one hardcoded `@alm-design/design-system`.
+  // (part of the shared module set, kept per `standing-07`) to any npm package
+  // a project actually imports, not just `@alm-design/design-system`.
   useRegisterProjectModules()
   // WS-10 Phase 1 — loads the project's persisted preview axes + dark-mode
   // capability probe on open. See its own doc.

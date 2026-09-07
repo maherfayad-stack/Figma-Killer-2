@@ -45,6 +45,18 @@
  *     to wait for.
  *   - **Preview data.** The `CanvasPreviewReadiness` barrier gets whatever is
  *     left of the overall deadline.
+ *   - **Module registration.** A project's own design-system components
+ *     (`pkg.*`) register asynchronously — the bundle is fetched, then
+ *     `import()`ed, then `registry.registerOrReplace`d. A one-shot renderer
+ *     that photographs before that lands captures the placeholder instead of
+ *     the component, which is precisely the PNG-export defect this phase
+ *     exists to close. It runs FIRST (nothing else is worth waiting for if the
+ *     renderers themselves are missing) and is bounded by
+ *     `MODULE_REGISTRATION_BUDGET_MS`, degrading — like every other phase — to
+ *     a NAMED warning rather than a refusal, because a package that will never
+ *     bundle has already reached its final pixels. Callers with nothing to
+ *     wait on (the editor's own visible frames, whose modules registered long
+ *     ago) simply omit the option.
  *
  * The overall `timeoutMs` stays as the outer bound, and `stalledPhase` names
  * which half of the loop was still in flight when it hit — so the next time a
@@ -73,6 +85,13 @@ export const CAPTURE_SETTLE_TIMEOUT_MS = 20_000
 
 /** Per-phase bounds, each well inside `CAPTURE_SETTLE_TIMEOUT_MS`. See the module doc. */
 export const DOM_QUIET_BUDGET_MS = 5_000
+/**
+ * Longer than the resource budgets on purpose: this one covers a cold
+ * `component-bundle` round trip (a real `Bun.build` subprocess on the server,
+ * not a cache hit) plus the `import()` of its output. Still comfortably inside
+ * `CAPTURE_SETTLE_TIMEOUT_MS`, and still only a warning when it expires.
+ */
+export const MODULE_REGISTRATION_BUDGET_MS = 10_000
 export const FONT_SETTLE_BUDGET_MS = 5_000
 export const IMAGE_SETTLE_BUDGET_MS = 5_000
 
@@ -275,7 +294,7 @@ export function waitForImagesSettled(
 // ---------------------------------------------------------------------------
 
 /** Which half of the settle loop was still running when a bound expired. */
-export type CaptureSettlePhase = 'preview-data' | 'dom-quiet' | 'images' | 'fonts'
+export type CaptureSettlePhase = 'modules' | 'preview-data' | 'dom-quiet' | 'images' | 'fonts'
 
 export interface CaptureSettleResult {
   /** True when every phase reached a resting state inside its bound. */
@@ -298,6 +317,13 @@ export interface SettleCaptureDocumentOptions {
   signal: AbortSignal
   /** The async-preview barrier, when the caller provides one. Visible editor frames do not. */
   previewReadiness?: CanvasPreviewReadiness | null
+  /**
+   * The canvas module registration for this project
+   * (`canvasModuleSet.ts`'s `mountCanvasModuleSet`), when the caller is a
+   * one-shot renderer. Omitted by every caller whose modules were registered
+   * before the frame mounted.
+   */
+  moduleRegistration?: Promise<unknown> | null
   /** Outer bound on the whole settle. Defaults to `CAPTURE_SETTLE_TIMEOUT_MS`. */
   timeoutMs?: number
 }
@@ -343,7 +369,7 @@ async function withBudget<T>(
 export async function settleCaptureDocument(
   options: SettleCaptureDocumentOptions,
 ): Promise<CaptureSettleResult> {
-  const { document: doc, signal, previewReadiness } = options
+  const { document: doc, signal, previewReadiness, moduleRegistration } = options
   const deadline = Date.now() + (options.timeoutMs ?? CAPTURE_SETTLE_TIMEOUT_MS)
   const warnings: string[] = []
 
@@ -352,6 +378,21 @@ export async function settleCaptureDocument(
   const stalled = (phase: CaptureSettlePhase, warning: string): CaptureSettleResult => {
     warnings.push(warning)
     return { settled: false, stalledPhase: phase, warnings, aborted: false }
+  }
+
+  // Module renderers first — see the module doc. A frame whose components are
+  // still unregistered would otherwise go quiet around its placeholders and be
+  // declared settled.
+  if (moduleRegistration) {
+    const budget = Math.min(MODULE_REGISTRATION_BUDGET_MS, remainingMs(deadline))
+    const outcome = await waitForPromise(moduleRegistration, signal, budget)
+    if (outcome === 'aborted') return abortedResult('modules')
+    if (outcome === 'timeout') {
+      warnings.push(
+        `This project's package components had not finished registering after ${budget}ms; ` +
+        'any design-system component on this screen was captured as a placeholder.',
+      )
+    }
   }
 
   // Let descendant effects register their first data/media requests before an
