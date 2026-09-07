@@ -36,7 +36,20 @@ export const BoardsPostBodySchema = Type.Object({
  */
 export const FrameworkPostBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
-  framework: Type.Unknown(),
+  /**
+   * `font-revert` — optional, symmetric with `fonts` below: absent means
+   * "no framework change this round", never "clear it". A save that carries
+   * only a font-library change must not have to restate (or invent)
+   * framework settings to be accepted.
+   */
+  framework: Type.Optional(Type.Unknown()),
+  /**
+   * `font-revert` — the installed font library (`SiteSettings.fonts`), which
+   * rides the same round trip but lands in its own `.studio/fonts.json`.
+   * Optional so a framework-only save (the common case) sends nothing extra;
+   * `writeStudioFontsFile` is the real validator, same posture as `framework`.
+   */
+  fonts: Type.Optional(Type.Unknown()),
 })
 
 /**

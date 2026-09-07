@@ -258,7 +258,7 @@ describe('AdminCanvasLayout — Studio site hydration gate', () => {
         })
       }
       if (url.includes('/admin/api/studio/framework')) {
-        return new Response(JSON.stringify({ framework: null }), { status: 200 })
+        return new Response(JSON.stringify({ framework: null, fonts: null }), { status: 200 })
       }
       if (url.includes('/admin/api/studio/boards')) {
         return new Response(JSON.stringify({ dir: '/tmp/studio-test', boards: { version: 1, boards: [] } }), { status: 200 })

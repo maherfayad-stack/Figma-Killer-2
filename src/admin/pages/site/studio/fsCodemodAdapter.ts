@@ -46,12 +46,14 @@ import {
 import { apiRequest, ndjsonRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { FrameworkSettingsSchema } from '@core/framework-schema'
+import { SiteFontsSettingsSchema } from '@core/fonts'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
 import { useAdminUi } from '@admin/state/adminUi'
 import { notifyUnexplainedSkips } from '@site/panels/unexplainedSkipsNotice'
+import { notifyInlineStyleUnsaved, type InlineStyleModuleRefusal } from '@site/panels/inlineStyleUnsavedNotice'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
 import { getStudioWorkspaceDir, setStudioLoadedDir, studioWriteDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
@@ -93,15 +95,25 @@ import { setStudioVendorCss, setStudioAuthoredCss } from './studioRawCssStores'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
 
-/** GET /admin/api/studio/framework response — `null` when nothing is persisted yet. */
+/**
+ * GET /admin/api/studio/framework response — `null` when nothing is persisted
+ * yet. `fonts` (`font-revert`) is the installed font library from the sibling
+ * `.studio/fonts.json`; it rides this response rather than getting its own
+ * route because it is loaded and saved on exactly the same beats.
+ */
 const StudioFrameworkLoadResponseSchema = Type.Object({
   framework: Type.Union([FrameworkSettingsSchema, Type.Null()]),
+  fonts: Type.Union([SiteFontsSettingsSchema, Type.Null()]),
 })
 
 /** POST /admin/api/studio/framework response. */
 const StudioFrameworkSaveResponseSchema = Type.Object({
   ok: Type.Boolean(),
-  framework: FrameworkSettingsSchema,
+  // Each field echoes back only what this save actually wrote — `null` for a
+  // kind the body did not carry. See `studioRouteBodies.ts` for why absent is
+  // "unchanged", not "clear it".
+  framework: Type.Union([FrameworkSettingsSchema, Type.Null()]),
+  fonts: Type.Union([SiteFontsSettingsSchema, Type.Null()]),
 })
 
 /**
@@ -119,6 +131,30 @@ function loadedDir(): string | null {
  * `undefined` means "not yet initialized" (before the first `loadSite` call).
  */
 let lastSyncedFrameworkJson: string | undefined
+
+/**
+ * `font-revert` — the same "did it actually change this round?" guard for
+ * `site.settings.fonts`. Tracked separately from the framework json because
+ * the two are separate `SiteSettings` fields with separate sidecars, and a
+ * font install must trigger a POST even when the framework tokens are
+ * untouched (which is the normal case: installing a font changes no token).
+ */
+let lastSyncedFontsJson: string | undefined
+
+/**
+ * Clear both sidecar-sync baselines. Module-level state survives across test
+ * FILES in one `bun test` process, so a suite that installs a font and saves
+ * leaves `lastSyncedFontsJson` set for every file that runs after it — and a
+ * later suite calling `saveSite` WITHOUT a `loadSite` then sees a spurious
+ * "the library changed" and fires an extra POST it does not expect. The same
+ * hazard has always existed for `lastSyncedFrameworkJson`; it only became
+ * observable once a second baseline joined it. Same shape as
+ * `__resetToastBusForTests`.
+ */
+export function __resetStudioSidecarBaselinesForTests(): void {
+  lastSyncedFrameworkJson = undefined
+  lastSyncedFontsJson = undefined
+}
 
 /**
  * Remembered from the last load — local-vs-package classification for every
@@ -300,11 +336,17 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // Override the default shell's framework settings with whatever's
     // persisted for this project, if anything — `null` means no
     // `.studio/framework.json` yet, so the default stands as-is.
-    const { framework } = await apiRequest('/admin/api/studio/framework', {
+    const { framework, fonts } = await apiRequest('/admin/api/studio/framework', {
       schema: StudioFrameworkLoadResponseSchema,
       query: overrideDir ? { dir: overrideDir } : undefined,
     })
     if (framework) site.settings.framework = framework
+    // `font-revert` — the installed font library was previously in-memory
+    // ONLY: nothing wrote it, nothing read it, so a font the user installed
+    // through the Framework/Typography panel vanished on the next load and
+    // every `var(--font-*)` token they had assigned resolved to nothing. See
+    // `server/handlers/studioFramework.ts`'s doc for the full account.
+    if (fonts) site.settings.fonts = fonts
 
     // `tokens-01` — populate the Framework panel from the project's OWN
     // design tokens (`:root` custom properties, a Tailwind theme, or a vendor
@@ -324,6 +366,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     }
 
     lastSyncedFrameworkJson = JSON.stringify(site.settings.framework)
+    lastSyncedFontsJson = JSON.stringify(site.settings.fonts)
 
     return site
   },
@@ -344,6 +387,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // `style-03`'s counterpart: the `(nodeId, key)` pairs this batch REMOVES
     // from source, which have no value to record — see `dropNodeValuesBaseline`.
     const drops: NodeValueDrop[] = []
+    // `font-revert` — inline-style drift on a node whose MODULE has no
+    // `style=""` target (`pkg.*`, `studio.instance`). Collected rather than
+    // dropped, and toasted below: see `inlineStyleUnsavedNotice.ts`.
+    const inlineStyleRefusals: InlineStyleModuleRefusal[] = []
 
     // C4 — this loop used to scan every node of every page on every autosave
     // tick, ignoring `opts.dirty` (fed correctly by every `mutateSite`/
@@ -480,9 +527,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // the rule: it is the one predicate every OFFER has to agree with
         // (`StyleSurface`'s composer, `CanvasResizeHandles`'s handles), and S4
         // is what happens when a copy drifts. See it for which modules qualify.
-        if (canWriteInlineStyleForModule(node.moduleId)) {
-          const { changed, removed } = diffInlineStyles(node, baseline)
-          if (Object.keys(changed).length > 0 || removed.length > 0) {
+        const { changed, removed } = diffInlineStyles(node, baseline)
+        if (Object.keys(changed).length > 0 || removed.length > 0) {
+          if (canWriteInlineStyleForModule(node.moduleId)) {
             edits.push({
               kind: 'style',
               nodeId: node.id,
@@ -491,6 +538,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
             })
             for (const [k, v] of Object.entries(changed)) bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v })
             for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property) })
+          } else {
+            // `font-revert` — this used to be an `if` around the block above,
+            // so a `pkg.*` / `studio.instance` node's style drift was dropped
+            // in SILENCE: the canvas showed it, the save reported success, and
+            // the next reload put the old value back. Refused out loud now,
+            // at the one chokepoint every write path (single composer, multi
+            // composer, canvas handles, agent) already passes through.
+            inlineStyleRefusals.push({
+              nodeLabel: node.label ?? node.id,
+              moduleId: node.moduleId,
+              properties: [...Object.keys(changed), ...removed],
+            })
           }
         }
       }
@@ -508,6 +567,12 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // exactly when the write is attempted, catches every entry point
     // (including a future AI-agent-driven class edit), and never re-fires
     // for a node whose classes are unchanged since the last save.
+    // `font-revert` — same beat as the class refusal below, same reason:
+    // fired where the write WOULD have been attempted, so every entry point
+    // (docked composer, multi-selection composer, canvas handles, agent) is
+    // covered by one message instead of each surface owning a copy of the rule.
+    notifyInlineStyleUnsaved(inlineStyleRefusals)
+
     const classPlan = collectClassNameEdits(site.pages, site.styleRules, site.visualComponents)
     edits.push(...classPlan.edits)
     if (classPlan.unwritable.length > 0) notifyClassAssignmentUnsaved(classPlan.unwritable)
@@ -680,13 +745,27 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // per-node edit batch above — sync them independently so a framework-only
     // change (no node prop/text/style edits at all) still persists.
     const nextFrameworkJson = JSON.stringify(site.settings.framework)
-    if (nextFrameworkJson !== lastSyncedFrameworkJson) {
+    // `JSON.stringify(undefined)` is `undefined`, NOT `"null"` — deliberately
+    // the same shape `lastSyncedFrameworkJson` uses, so "no library, never
+    // loaded" compares equal to "no library" and does not fire a spurious POST
+    // on the first save of a project that has no fonts at all.
+    const nextFontsJson = JSON.stringify(site.settings.fonts)
+    const fontsChanged = nextFontsJson !== lastSyncedFontsJson
+    if (nextFrameworkJson !== lastSyncedFrameworkJson || fontsChanged) {
       await apiRequest('/admin/api/studio/framework', {
         method: 'POST',
-        body: { dir: loadedDir(), framework: site.settings.framework },
+        // Each kind is sent only when it actually changed — an absent field
+        // tells the server "no change of that kind", which is NOT the same as
+        // an empty bag and must not clobber the sidecar on disk.
+        body: {
+          dir: loadedDir(),
+          ...(site.settings.framework ? { framework: site.settings.framework } : {}),
+          ...(fontsChanged && site.settings.fonts ? { fonts: site.settings.fonts } : {}),
+        },
         schema: StudioFrameworkSaveResponseSchema,
       })
       lastSyncedFrameworkJson = nextFrameworkJson
+      lastSyncedFontsJson = nextFontsJson
     }
 
     // LAST — every diff baseline above has now advanced, so the resync's own
