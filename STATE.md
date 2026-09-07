@@ -21,6 +21,115 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### image-fill — "in fill I need to be able to fill with image": the Fill section gets a real image source
+
+- **Agent:** panel-designer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + `tsc -p tsconfig.node.json` + eslint green; draft PR open) — **needs dogfood**
+- **Branch:** `feat/inspector-image-fill` off `origin/main` (`5605811`). Worktree `.tmp/wt-image-fill/`.
+- **User report (verbatim):** "in fill I need to be able to fill with image".
+
+**What the image button in the Fill header actually did:** it added a *gradient*.
+`FillSectionActions` drew `Image2SolidIcon` on a button whose `aria-label` was
+"Add gradient fill" and whose `onClick` inserted `DEFAULT_GRADIENT_FILL`. The
+only way to get an image fill was to add a gradient, open its popover, flip a
+segmented control to "Image URL", and type a path into a bare text field. PR #55
+cut media-library image fill on purpose; what was left was a mislabelled button.
+
+**What shipped.** Two header buttons now: a paint bucket (gradient, the old
+behaviour and the old `data-testid` renamed to `fill-section-add-gradient`) and
+an image one that opens `ImageSourcePicker` — project assets / upload / URL.
+Nothing is written until a source is picked, so no speculative `url('')` ever
+lands in the user's source. An image layer's popover carries a preview + file
+name, the picker again (to change the source), a **Fit** control
+(Cover/Contain/Stretch/Tile → `background-size` + `background-repeat`) and the
+**3×3 position puck** (→ `background-position`).
+
+**The load-bearing decision is which URL gets written.** Not Studio's
+`/admin/api/studio/asset?dir=…` endpoint — that is an admin-origin URL, and
+pasting it into the user's stylesheet is exactly the lying edit this product
+refuses. `imageFillValue.ts` writes what *their* build resolves: a file under
+`public/`/`static/` becomes root-relative and is **build-safe** (Vite, Next and
+CRA all copy the public root to the site root verbatim, so it works in dev, in a
+build, from an inline `style` attribute and from a CSS file). A file elsewhere —
+`src/assets/hero.png`, which `studio-workspace/test4` reaches through
+`import phoneImage from '../src/assets/EN-2.png'` — still gets a root-relative
+URL because that is the only thing that can work at all and it *does* work on
+their dev server, but its tile is labelled **"dev only"** with the reason in the
+tooltip. Uploads therefore target `public/`, where the answer is unconditional.
+
+**Server.** One new route, `GET /admin/api/studio/project-assets`
+(`server/handlers/studio/projectAssets.ts`), registered in `STUDIO_SUB_ROUTERS`.
+It is `listWorkspaceFiles` filtered to image extensions — no stat, no contents,
+no second copy of the adversarial path guard (`studioAsset.ts` still serves the
+bytes one at a time). `node_modules`/`.git`/`dist`/`.studio` come free from
+`EXCLUDED_WORKSPACE_DIR_NAMES`; `prototype/` is excluded explicitly, because
+Studio's own preview scaffold is not the user's design asset. **The upload path
+is not new** — it reuses `POST /admin/api/studio/asset-upload` and
+`landAssetBytes` unchanged (magic-number sniffing, symlink-aware containment on
+the real path of the nearest existing ancestor, collision-safe naming, SVG
+sanitisation), already covered by 20 adversarial tests in
+`server/handlers/__tests__/assetUpload.test.ts`. No CMS media library was added.
+
+**Refusals were not weakened.** A refused layer list (`var(--layers)`,
+unbalanced parens, a non-round-tripping value) still disables *both* add
+buttons with the reason in the tooltip — pinned by a test. A satellite refused
+per-layer hides its friendly control entirely and keeps the whole-declaration
+raw field with its reason; offering Fit on top of a refused `background-size`
+would write the very per-layer value the parse declined to invent. Fit reads a
+pair it cannot express as *custom* (no segment selected) and the puck lights no
+cell for `12px 40%`, rather than snapping the user's value to the nearest preset.
+
+**Files touched**
+- New: `server/handlers/studio/projectAssets.ts`,
+  `src/admin/pages/site/studio/projectAssets.ts`,
+  `src/admin/pages/site/panels/PropertiesPanel/imageFillValue.ts`,
+  `ImageSourcePicker.tsx`, `ImageSourcePicker.module.css`.
+- Changed: `server/handlers/studio.ts` (sub-router + route doc),
+  `PropertiesPanel/FillSection.tsx`, `FillSectionParts.tsx`,
+  `FillSection.module.css`, `docs/features/inspector-disclosure.md` (new G6.6).
+- Tests: `server/handlers/__tests__/projectAssets.test.ts` (new),
+  `PropertiesPanel/__tests__/imageFillValue.test.ts` (new),
+  `__tests__/imageFill.test.tsx` (new), `__tests__/backgroundLayers.test.ts`
+  (7 added cases for a `url()` layer carrying size/position/repeat).
+- **No tokens were added to `globals.css`** — the panel is built from
+  `--inspector-*`, `--space-px`, `--text-2xs`, `--bg-surface-3`,
+  `--border-muted`, `--text-subtle`/`--text-muted`, `--warning-text`,
+  `--radius`/`--radius-sm`, all already defined.
+
+**Cut, deliberately, and named:**
+1. **The canvas does not preview a project-relative `url()`.** The admin is a
+   different origin from the user's dev server, so `url('/hero.png')` 404s
+   inside the canvas iframe even though it is exactly right in their repo. The
+   *inspector* previews correctly (row swatch, layer thumbnail, picker grid) via
+   `imageFillPreviewSrc` → the authenticated read endpoint. Fixing the canvas
+   needs a `url()` rewrite in BOTH `ClassStyleInjector`'s generated class CSS
+   and the inline-style path — canvas-engineer work with perf implications, not
+   a panel change.
+2. **Apply-variable (PR #75) on the URL field.** Awkward inside the picker's
+   tab strip; skipped as the task allowed.
+3. **Drag-reorder** stays exactly as PR #55 left it (layer-block-internal only).
+
+**Human action needed — dogfood script.** Open `/admin/site` on `test4`.
+1. Select a plain container (e.g. the Onboarding page's root `div`). In **Fill**,
+   the header now has *two* add buttons — confirm the paint bucket adds a
+   gradient (old behaviour) and the image button opens a picker instead of
+   writing anything.
+2. In the picker's **Project** tab: `test4` has no `public/` dir, so every tile
+   should be labelled **"dev only"** and the `src/assets/*.png|svg` thumbnails
+   should actually render. Pick one — confirm the row appears with a thumbnail
+   and `background-image: url('/src/assets/…')` lands in the source.
+3. **Upload** tab: drop a PNG. Confirm it lands in a newly created
+   `studio-workspace/test4/public/` and the written URL is `/<name>.png` with no
+   "dev only" label. (This is the one path that writes a new file into the
+   user's repo — verify the file is where it says it is.)
+4. Open that layer's row → confirm **Fit** starts on *Tile* (nothing set yet),
+   that picking *Cover* writes `background-size: cover` + `no-repeat`, and that
+   picking *Tile* again removes both declarations rather than leaving `auto`.
+5. Click the puck's bottom-right cell → `background-position: right bottom`.
+   Then type `12px 40%` into the raw Position row below and confirm **no cell**
+   lights up.
+6. **The known gap:** the canvas frame itself will not show the image. That is
+   cut #1 above, not a bug to re-report.
+
 ### test-03 — CI's Test job: 666 failures were ~35 real ones plus one bricked React
 - **Agent:** test-engineer · **Stage:** done (targeted suites + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs no dogfood, this is test infrastructure**
 - **Branch:** `fix/ci-dom-suites` off `origin/main` (`942723d`). Scope: the React/DOM half of the suite (`src/admin/**`, `src/ui/**`, `src/__tests__/{canvas,panels,layout,admin,agent}/**`). A sibling agent owns lint, `server/**`, `src/__tests__/{architecture,server}` and `.github/workflows/ci.yml`.

@@ -72,11 +72,22 @@
  * ---------------------------------------------------------------
  *   - Selection colours for a multi-node selection (plan §4 G6.4) — needs
  *     store-side multi-select style editing that doesn't exist yet.
- *   - Image fill via the media library. The image-mode editor here is a
- *     plain URL text field, not `MediaLibraryControl`'s picker/thumbnail
- *     grid — a deliberate scope cut; follow-up noted in STATE.md.
+ *   - Drag-to-reorder across the whole Fill list. Only a drag whose BOTH
+ *     endpoints sit inside the background-layer block does anything (see
+ *     `handleReorder`) — the text colour and the solid fill are separate CSS
+ *     properties, not layers, and cannot be dragged among the paints.
+ *
+ * IMAGE FILL
+ * ----------
+ * "Add image fill" opens `ImageSourcePicker` — the project's own images, an
+ * upload into the project, or a pasted URL — and only then inserts a layer,
+ * so no `url('')` is ever written into the user's source speculatively. What
+ * gets written is the URL THEIR build resolves, never Studio's own
+ * `/admin/api/studio/asset` preview URL; `imageFillValue.ts` owns that
+ * mapping and its build-safety caveat. The CMS media library is deliberately
+ * NOT involved: Studio's assets live on disk in the user's repo.
  */
-import { useState, type ReactNode, type RefObject } from 'react'
+import { useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { PropertyList, type PropertyListEntry } from '@ui/components/PropertyList'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
@@ -84,6 +95,7 @@ import { Button } from '@ui/components/Button'
 import { ColorValueInput } from '@site/property-controls/ColorValueInput'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { Image2SolidIcon } from 'pixel-art-icons/icons/image-2-solid'
+import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
 import { readString, hasStyleValue } from './styleValueUtils'
@@ -104,6 +116,7 @@ import {
   moveBackgroundLayer,
   parseBackgroundLayers,
   removeBackgroundLayer,
+  setBackgroundLayerImage,
   type BackgroundModel,
 } from './backgroundLayers'
 import {
@@ -112,7 +125,8 @@ import {
   DEFAULT_SOLID_FILL,
   DEFAULT_TEXT_FILL,
 } from './fillModel'
-import { parseGradient, isUrlImageValue, extractUrlPayload } from './gradientValue'
+import { parseGradient, isUrlImageValue, extractUrlPayload, wrapUrlPayload } from './gradientValue'
+import { ImageSourcePicker } from './ImageSourcePicker'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './FillSection.module.css'
 
@@ -135,9 +149,39 @@ export function FillSectionActions({ storedStyles, onChange }: FillSectionAction
   // doing nothing.
   const layersRefused = model.spine.kind === 'raw'
 
+  const imageButtonRef = useRef<HTMLButtonElement | null>(null)
+  const [picking, setPicking] = useState(false)
+  // Which layer this picker session already inserted. The URL tab commits on
+  // every keystroke, so the FIRST pick inserts and every later one REPLACES —
+  // otherwise typing a URL would stack one dead layer per character.
+  const [pickedIndex, setPickedIndex] = useState<number | null>(null)
+
   function addLayer() {
     writeBackgroundModel(model, insertBackgroundLayer(model, 0, DEFAULT_GRADIENT_FILL), onChange)
   }
+
+  function pickImage(url: string) {
+    const image = url === '' ? "url('')" : wrapUrlPayload(url)
+    if (pickedIndex === null) {
+      writeBackgroundModel(model, insertBackgroundLayer(model, 0, image), onChange)
+      setPickedIndex(0)
+      return
+    }
+    writeBackgroundModel(model, setBackgroundLayerImage(model, pickedIndex, image), onChange)
+  }
+
+  function closePicker() {
+    setPicking(false)
+    setPickedIndex(null)
+  }
+
+  // The layer this session inserted, read back out of the model so the URL
+  // field is a controlled input over the user's actual source, not a
+  // second copy of it that could drift.
+  const pickedImagePayload =
+    pickedIndex !== null && model.spine.kind === 'layers'
+      ? extractUrlPayload(model.spine.layers[pickedIndex] ?? '')
+      : ''
 
   return (
     <>
@@ -178,11 +222,40 @@ export function FillSectionActions({ storedStyles, onChange }: FillSectionAction
             : 'Add gradient fill'
         }
         disabled={layersRefused}
-        data-testid="fill-section-add-image"
+        data-testid="fill-section-add-gradient"
         onClick={addLayer}
+      >
+        <PaintBucketSolidIcon size={12} aria-hidden="true" />
+      </Button>
+      <Button
+        ref={imageButtonRef}
+        variant="ghost"
+        size="xs"
+        iconOnly
+        aria-label="Add image fill"
+        tooltip={
+          layersRefused
+            ? 'This background-image is edited as raw text, so a layer cannot be added here'
+            : 'Add image fill'
+        }
+        disabled={layersRefused}
+        pressed={picking}
+        data-testid="fill-section-add-image"
+        onClick={() => (picking ? closePicker() : setPicking(true))}
       >
         <Image2SolidIcon size={12} aria-hidden="true" />
       </Button>
+      {picking && (
+        <InspectorPopover
+          id="fill-add-image"
+          anchorRef={imageButtonRef}
+          onClose={closePicker}
+          title="Image fill"
+          width={264}
+        >
+          <ImageSourcePicker value={pickedImagePayload} onPick={pickImage} />
+        </InspectorPopover>
+      )}
     </>
   )
 }

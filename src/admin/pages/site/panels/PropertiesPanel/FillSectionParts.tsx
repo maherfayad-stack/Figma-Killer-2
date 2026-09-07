@@ -57,6 +57,17 @@ import {
   wrapUrlPayload,
   type ParsedGradient,
 } from './gradientValue'
+import { ImageSourcePicker } from './ImageSourcePicker'
+import {
+  IMAGE_FILL_FIT_LABELS,
+  IMAGE_FILL_FIT_SATELLITES,
+  IMAGE_FILL_POSITION_CELLS,
+  fitFromSatellites,
+  imageFillFileName,
+  positionCellFor,
+  type ImageFillFit,
+} from './imageFillValue'
+import { imageFillPreviewSrc, useProjectImageAssets } from '@site/studio/projectAssets'
 import styles from './FillSection.module.css'
 
 // ---------------------------------------------------------------------------
@@ -73,11 +84,25 @@ export function ColorSwatch({ color }: { color: string }) {
   )
 }
 
+/**
+ * The leading glyph for one background layer. A gradient paints itself. A
+ * `url()` does NOT: the admin is a different origin from the user's dev
+ * server, so the written URL (`/hero.png`) would 404 here even though it is
+ * exactly right in their repo. `imageFillPreviewSrc` maps it back to the file
+ * on disk and previews it through the authenticated read endpoint; when it
+ * maps to nothing (a remote host that is down, a path not in this project)
+ * the swatch stays an empty well rather than a broken-image glyph.
+ */
 export function ImageSwatch({ image }: { image: string }) {
+  const assets = useProjectImageAssets()
+  const isUrl = isUrlImageValue(image)
+  const previewSrc = isUrl ? imageFillPreviewSrc(extractUrlPayload(image), assets) : undefined
+  const cssImage = isUrl ? (previewSrc ? `url(${JSON.stringify(previewSrc)})` : 'none') : image
+
   return (
     <span
       className={cn(styles.swatch, styles.swatchImage)}
-      style={{ '--fill-swatch-image': image } as CSSProperties}
+      style={{ '--fill-swatch-image': cssImage } as CSSProperties}
       aria-hidden="true"
     />
   )
@@ -139,13 +164,7 @@ export function BackgroundLayerPopoverBody({
       )}
 
       {mode === 'image' && (
-        <Input
-          fieldSize="sm"
-          value={extractUrlPayload(value)}
-          placeholder="/images/hero.png"
-          aria-label="Image URL"
-          onChange={(e) => setImage(wrapUrlPayload(e.target.value))}
-        />
+        <ImageFillEditor model={model} index={index} value={value} onModelChange={onModelChange} onImageChange={setImage} />
       )}
 
       {mode === undefined && (
@@ -507,6 +526,153 @@ export function BackgroundImageRawBody({
         aria-label="background-image, raw CSS"
         onChange={(e) => onChange(e.target.value)}
       />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Image fill — source, fit, position
+// ---------------------------------------------------------------------------
+
+/**
+ * The `mode === 'image'` half of a layer popover: what the image IS, then the
+ * two things Figma lets you say about it — how it fills the box (Fit) and
+ * where it sits (the 9-grid).
+ *
+ * Both controls are pure sugar over the SAME per-layer satellites the rows
+ * underneath still show: Fit writes `background-size` + `background-repeat`,
+ * the grid writes `background-position`. Nothing is stored that CSS does not
+ * already store, so a value typed into the raw rows below round-trips back
+ * into these controls, and a value they cannot express (`12px 40%`,
+ * `background-size: 60% auto`) reads as "Custom" / no grid selection instead
+ * of being rounded to the nearest thing this UI can draw.
+ *
+ * When a satellite was REFUSED per-layer (`backgroundLayers.ts`'s reasons —
+ * a top-level `var()`, extra values, …) the matching control is not drawn at
+ * all. `LayerSatelliteRow` already renders that property's whole-declaration
+ * raw field with its reason; offering a friendly control on top of it would
+ * write the exact per-layer value the parse refused to invent.
+ */
+function ImageFillEditor({
+  model,
+  index,
+  value,
+  onModelChange,
+  onImageChange,
+}: {
+  model: BackgroundModel
+  index: number
+  value: string
+  onModelChange: (next: BackgroundModel) => void
+  onImageChange: (next: string) => void
+}) {
+  const assets = useProjectImageAssets()
+  const payload = extractUrlPayload(value)
+  const previewSrc = imageFillPreviewSrc(payload, assets)
+
+  const sizeView = backgroundLayerSatellite(model, 'backgroundSize', index)
+  const repeatView = backgroundLayerSatellite(model, 'backgroundRepeat', index)
+  const positionView = backgroundLayerSatellite(model, 'backgroundPosition', index)
+
+  const fitEditable = sizeView.kind !== 'raw' && repeatView.kind !== 'raw'
+  const fit = fitFromSatellites(
+    sizeView.kind === 'value' ? sizeView.value : '',
+    repeatView.kind === 'value' ? repeatView.value : '',
+  )
+
+  function applyFit(next: Exclude<ImageFillFit, 'custom'>) {
+    const pair = IMAGE_FILL_FIT_SATELLITES[next]
+    let updated = setBackgroundLayerSatellite(model, 'backgroundSize', index, pair.backgroundSize)
+    updated = setBackgroundLayerSatellite(updated, 'backgroundRepeat', index, pair.backgroundRepeat)
+    onModelChange(updated)
+  }
+
+  return (
+    <div className={styles.imageEditor}>
+      <div className={styles.imagePreviewRow}>
+        {previewSrc ? (
+          <img className={styles.imagePreview} src={previewSrc} alt="" />
+        ) : (
+          <span className={styles.imagePreview} aria-hidden="true" />
+        )}
+        <span className={styles.imageName} title={payload}>
+          {payload === '' ? 'No image chosen' : imageFillFileName(payload)}
+        </span>
+      </div>
+
+      <ImageSourcePicker
+        value={payload}
+        onPick={(next) => onImageChange(next === '' ? "url('')" : wrapUrlPayload(next))}
+      />
+
+      {fitEditable && (
+        <>
+          {/* A custom size/repeat pair selects NO segment — SegmentedControl's own
+              unset state — rather than being snapped to the nearest preset. */}
+          <SegmentedControl<Exclude<ImageFillFit, 'custom'>>
+            value={fit === 'custom' ? undefined : fit}
+            options={(['cover', 'contain', 'fill', 'tile'] as const).map((option) => ({
+              value: option,
+              label: IMAGE_FILL_FIT_LABELS[option],
+            }))}
+            onChange={applyFit}
+            fullWidth
+            size="sm"
+            aria-label="Image fit"
+          />
+          {fit === 'custom' && (
+            <p className={styles.refusalText}>
+              Custom size and repeat — set below. Picking a fit above replaces both.
+            </p>
+          )}
+        </>
+      )}
+
+      {positionView.kind !== 'raw' && (
+        <ImageFillPositionGrid
+          value={positionView.kind === 'value' ? positionView.value : ''}
+          onChange={(next) =>
+            onModelChange(setBackgroundLayerSatellite(model, 'backgroundPosition', index, next))
+          }
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * `background-position`'s nine keyword pairs as Figma's 3×3 puck. Selection
+ * is EXACT — `positionCellFor` returns nothing for a value the grid cannot
+ * express, and no cell lights up, so the grid never implies it is showing a
+ * position it would actually write.
+ */
+function ImageFillPositionGrid({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (next: string) => void
+}) {
+  const selected = positionCellFor(value)
+  return (
+    <div className={styles.positionGroup}>
+      <p className={styles.sizingHeading}>Position</p>
+      <div className={styles.positionGrid} role="group" aria-label="Background position">
+        {IMAGE_FILL_POSITION_CELLS.map((cell) => (
+          <Button
+            key={cell.value}
+            variant="ghost"
+            size="micro"
+            iconOnly
+            pressed={selected === cell.value}
+            aria-label={cell.label}
+            tooltip={cell.label}
+            onClick={() => onChange(cell.value)}
+          >
+            <span className={styles.positionDot} aria-hidden="true" />
+          </Button>
+        ))}
+      </div>
     </div>
   )
 }
