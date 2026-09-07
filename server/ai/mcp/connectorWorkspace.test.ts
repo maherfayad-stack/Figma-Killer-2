@@ -6,7 +6,10 @@
  * which of the three sources wins:
  *   explicit `dir` → this turn's open project → first project alphabetically.
  */
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { getConnectorWorkspace, registerConnectorWorkspace } from './connectorWorkspace'
 import { resolveToolProjectDir } from './tools/studio/resolveToolProjectDir'
 
@@ -36,21 +39,36 @@ describe('registerConnectorWorkspace', () => {
 })
 
 describe('resolveToolProjectDir', () => {
-  it('prefers an explicitly passed dir over the open workspace', () => {
-    const dir = resolveToolProjectDir('/w/explicit', { workspaceDir: '/w/open' })
-    expect(dir).toBe('/w/explicit')
+  // Real directories inside a real workspace root: since W10 every `dir` is
+  // containment-checked against `projectsRootDir()`, so a made-up `/w/…` path
+  // is refused before precedence is ever consulted.
+  const previousRoot = process.env.STUDIO_WORKSPACE_DIR
+  let open = ''
+
+  beforeAll(() => {
+    const root = mkdtempSync(join(tmpdir(), 'connector-workspace-'))
+    process.env.STUDIO_WORKSPACE_DIR = root
+    open = join(root, 'untitled-2')
+    mkdirSync(open, { recursive: true })
+  })
+
+  afterAll(() => {
+    const root = process.env.STUDIO_WORKSPACE_DIR!
+    if (previousRoot === undefined) delete process.env.STUDIO_WORKSPACE_DIR
+    else process.env.STUDIO_WORKSPACE_DIR = previousRoot
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('accepts an explicitly passed dir that names the open workspace', () => {
+    expect(resolveToolProjectDir(open, { workspaceDir: open })).toBe(open)
   })
 
   it('falls back to the turn workspace when the caller passed no dir', () => {
     // This is the whole fix: an omitted `dir` used to mean "first project
     // alphabetically", which is how an agent ended up in `untitled` while the
     // user was in `untitled-2`.
-    expect(resolveToolProjectDir(undefined, { workspaceDir: '/w/untitled-2' })).toBe('/w/untitled-2')
-    expect(resolveToolProjectDir(null, { workspaceDir: '/w/untitled-2' })).toBe('/w/untitled-2')
-  })
-
-  it('does not fall back to the workspace when a dir is given, even a surprising one', () => {
-    expect(resolveToolProjectDir('/w/other', { workspaceDir: '/w/untitled-2' })).toBe('/w/other')
+    expect(resolveToolProjectDir(undefined, { workspaceDir: open })).toBe(open)
+    expect(resolveToolProjectDir(null, { workspaceDir: open })).toBe(open)
   })
 
   it('with neither, defers to resolveProjectDir rather than returning undefined', () => {
@@ -61,4 +79,10 @@ describe('resolveToolProjectDir', () => {
     expect(typeof dir).toBe('string')
     expect(dir.startsWith('/')).toBe(true)
   })
+
+  // A bound connector naming a DIFFERENT project is refused, and a `dir`
+  // outside the workspace root is refused outright — both live in
+  // `src/__tests__/architecture/studio-tool-project-dir.test.ts`, next to the
+  // gate that keeps every tool routed through this resolver in the first
+  // place.
 })

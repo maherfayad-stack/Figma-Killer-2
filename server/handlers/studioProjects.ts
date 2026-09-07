@@ -48,14 +48,30 @@ export function projectsRootDir(): string {
  * "you asked for somewhere you may not go" apart from any other failure.
  */
 export class ProjectDirOutsideWorkspaceError extends Error {
-  /** The offending path, as the caller wrote it. Never echoed to a client: the router answers a flat "Not found". */
+  /** The offending path, as the caller wrote it. Carried as a FIELD, never in `message`: a route-local catch-all that renders `err.message` into a body would otherwise echo a prober's own path back at it. The router logs this; nothing sends it. */
   readonly path: string
 
   constructor(path: string) {
-    super(`Requested project directory is outside the Studio workspace root: ${path}`)
+    super('Requested project directory is outside the Studio workspace root.')
     this.name = 'ProjectDirOutsideWorkspaceError'
     this.path = path
   }
+}
+
+/**
+ * Re-throw the containment refusal, and only it. Call this FIRST in any
+ * `catch` that turns an unknown error into a `Response`.
+ *
+ * Those catch-alls exist to keep an unexpected failure from taking the server
+ * down, and they are right to do that — but a `dir` outside the workspace is
+ * not an unexpected failure, it is a client asking for somewhere it may not
+ * go, and the answer to that is decided in exactly one place: the router's
+ * flat 404 (`server/router.ts`). Without this guard each route would flatten
+ * the refusal into its own 404-or-500, which is how "one refusal, one answer"
+ * quietly becomes thirty slightly different answers.
+ */
+export function rethrowProjectDirRefusal(err: unknown): void {
+  if (err instanceof ProjectDirOutsideWorkspaceError) throw err
 }
 
 /**

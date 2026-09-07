@@ -24,13 +24,13 @@
  * boundary (`meta-03` decision 1), and consent has to come from a route a
  * button calls, not a side effect of loading a page.
  *
- * Same containment posture as every other project-scoped route:
- * `resolveProjectDir` + `isRealpathContained(dir, projectsRootDir())`.
+ * Containment is `resolveProjectDir`'s, once for every project-scoped route:
+ * a `dir` outside `studio-workspace/` throws there and the router answers 404,
+ * so this handler never sees one.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta, TrustTierSchema } from './studioMeta'
 
 const ROUTE_PATH = '/admin/api/studio/trust-tier'
@@ -48,10 +48,10 @@ export async function tryServeStudioTrustTier(req: Request, url: URL, pathname: 
   if (req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
       return jsonResponse({ trust })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:trustTier]', err)
       return new Response('Not found', { status: 404 })
     }
@@ -62,11 +62,11 @@ export async function tryServeStudioTrustTier(req: Request, url: URL, pathname: 
       const body = await readValidatedBody(req, TrustTierPostBodySchema)
       if (!body) return badRequest('invalid trust-tier body')
       const dir = resolveProjectDir(body.dir)
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
       mergeStudioMeta(dir, { trust: body.trust })
       return jsonResponse({ ok: true, trust: body.trust })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio:trustTier]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

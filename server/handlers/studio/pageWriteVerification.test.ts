@@ -16,6 +16,9 @@ import { resolvePageSourceFile } from './pageSourceFile'
 import { registerDesignReference } from './designReferenceStore'
 import { recordPassingCompare } from './pageVerificationStore'
 import { appendTurnWrite, resetTurnWriteLog } from './turnWriteLog'
+
+/** Writes and compares are both per ACCOUNT within a project (W10). */
+const USER = 'a1b2c3d4e5f60718'
 import {
   computePageWriteVerification,
   describePageForDigest,
@@ -49,14 +52,14 @@ async function scaffold(name: string) {
 describe('computePageWriteVerification', () => {
   it('returns nothing when the turn write log is empty', async () => {
     const { page } = await scaffold('Onboarding')
-    expect(computePageWriteVerification(dir, [page])).toEqual([])
+    expect(computePageWriteVerification(dir, USER, [page])).toEqual([])
   })
 
   it('flags a page written this turn with no design reference registered', async () => {
     const { page, rel } = await scaffold('Onboarding')
-    appendTurnWrite(dir, path.join(dir, rel))
+    appendTurnWrite(dir, USER, path.join(dir, rel))
 
-    const [entry] = computePageWriteVerification(dir, [page])
+    const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry).toBeDefined()
     expect(entry!.hasReference).toBe(false)
     expect(entry!.verifiedSinceWrite).toBe(false)
@@ -69,10 +72,10 @@ describe('computePageWriteVerification', () => {
     if (!registered.ok) throw new Error(registered.error)
 
     const t0 = Date.now()
-    recordPassingCompare(dir, page.id, registered.reference.id, t0)
-    appendTurnWrite(dir, path.join(dir, rel), t0 + 1000)
+    recordPassingCompare(dir, USER, page.id, registered.reference.id, t0)
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0 + 1000)
 
-    const [entry] = computePageWriteVerification(dir, [page])
+    const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(true)
     expect(entry!.verifiedSinceWrite).toBe(false)
   })
@@ -83,10 +86,10 @@ describe('computePageWriteVerification', () => {
     if (!registered.ok) throw new Error(registered.error)
 
     const t0 = Date.now()
-    appendTurnWrite(dir, path.join(dir, rel), t0)
-    recordPassingCompare(dir, page.id, registered.reference.id, t0 + 1000)
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+    recordPassingCompare(dir, USER, page.id, registered.reference.id, t0 + 1000)
 
-    const [entry] = computePageWriteVerification(dir, [page])
+    const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(true)
     expect(entry!.verifiedSinceWrite).toBe(true)
   })
@@ -94,11 +97,11 @@ describe('computePageWriteVerification', () => {
   it('counts every write to the same file, and never flags a page nothing wrote to', async () => {
     const onboarding = await scaffold('Onboarding')
     const checkout = await scaffold('Checkout')
-    appendTurnWrite(dir, path.join(dir, onboarding.rel))
-    appendTurnWrite(dir, path.join(dir, onboarding.rel))
-    appendTurnWrite(dir, path.join(dir, onboarding.rel))
+    appendTurnWrite(dir, USER, path.join(dir, onboarding.rel))
+    appendTurnWrite(dir, USER, path.join(dir, onboarding.rel))
+    appendTurnWrite(dir, USER, path.join(dir, onboarding.rel))
 
-    const entries = computePageWriteVerification(dir, [onboarding.page, checkout.page])
+    const entries = computePageWriteVerification(dir, USER, [onboarding.page, checkout.page])
     expect(entries).toHaveLength(1)
     expect(entries[0]!.pageId).toBe(onboarding.page.id)
     expect(entries[0]!.writeCount).toBe(3)
@@ -106,11 +109,11 @@ describe('computePageWriteVerification', () => {
 
   it('resetTurnWriteLog clears the log for a fresh turn', async () => {
     const { page, rel } = await scaffold('Onboarding')
-    appendTurnWrite(dir, path.join(dir, rel))
-    expect(computePageWriteVerification(dir, [page])).toHaveLength(1)
+    appendTurnWrite(dir, USER, path.join(dir, rel))
+    expect(computePageWriteVerification(dir, USER, [page])).toHaveLength(1)
 
-    resetTurnWriteLog(dir)
-    expect(computePageWriteVerification(dir, [page])).toEqual([])
+    resetTurnWriteLog(dir, USER)
+    expect(computePageWriteVerification(dir, USER, [page])).toEqual([])
   })
 })
 

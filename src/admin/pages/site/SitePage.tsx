@@ -3,9 +3,8 @@ import { AdminCanvasLayout } from '@admin/layouts/AdminCanvasLayout'
 import { consumePendingAction } from '@admin/spotlight/pendingAction'
 import { useEditorStore } from '@site/store/store'
 import { useMcpWorkspaceBridge } from '@admin/ai/useMcpWorkspaceBridge'
-import { executeAgentTool } from './agent'
+import { agentProjectDir, executeAgentTool } from './agent'
 import { flushEditorSave } from './hooks/editorSaveRef'
-import { studioWriteDir } from './studio/studioWorkspaceDir'
 
 async function flushPendingSiteDraft(): Promise<void> {
   if (useEditorStore.getState().hasUnsavedChanges) await flushEditorSave()
@@ -20,7 +19,12 @@ async function flushPendingSiteDraft(): Promise<void> {
  */
 export function SitePage() {
   // Relay MCP browser-tool calls to this open editor while it's mounted.
-  useMcpWorkspaceBridge('site', executeAgentTool, flushPendingSiteDraft)
+  // The bridge is registered server-side under `site:${projectKey}`, so it
+  // has to say which project this tab is showing. `agentProjectDir` is passed
+  // as the getter it is, not as a value: the project settles after the first
+  // load, and every reconnect (≤120s) then picks up the current one without
+  // this hook having to be reactive.
+  useMcpWorkspaceBridge(agentProjectDir, executeAgentTool, flushPendingSiteDraft)
 
   // Consume cross-workspace pending actions queued by the spotlight. Each
   // action waits for the editor store to hydrate (site !== null) — we

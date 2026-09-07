@@ -67,7 +67,7 @@ repositories (headless reads) / live editor store (browser tools)
 | `tools/studio/` | WS-9 Studio tool family — project/board orientation, bulk edits, codemods, and the fidelity report. See "Studio tools (WS-9)" below. |
 | `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`. |
 | `editorBridge.ts` | Per-user live workspace bridge registry + `createEditorBridgeStream`; browser tools route to the owner's open Site workspace. |
-| `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site` — the capability-gated NDJSON stream the workspace holds open. |
+| `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site&dir=<project>` — the capability-gated NDJSON stream the workspace holds open. The bridge registers under `site:${projectKey}` (W10), and the server derives that key from the VALIDATED `dir` — a client that could name its own key could name another project's. A missing or uncontained `dir` yields 400, never a bridge on a guessed project. |
 | `capture/` | **Headless agent capture (W4-2A).** `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the driver), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
 | `connectors/` | `types.ts` (server-only record), `token.ts` (generate + SHA-256 hash), `store.ts` (CRUD + `toConnectorView`). |
 | `handlers/connectors.ts` | `/admin/api/ai/mcp/connectors` CRUD, gated by `ai.providers.manage`. |
@@ -279,9 +279,9 @@ Not covered, stated rather than implied: `XMLHttpRequest` and `WebSocket` are no
 
 ```
 MCP browser-tool call            Site workspace (open in a browser)
-   │ executeAiTool(browser)         │ useMcpWorkspaceBridge('site', dispatcher)
+   │ executeAiTool(browser)         │ useMcpWorkspaceBridge(agentProjectDir, dispatcher)
    ▼                                ▼
-buildMcpServer → getEditorBridgeForUser(userId, 'site')
+buildMcpServer → getEditorBridgeForUser(userId, editorBridgeScope(boundWorkspace))
    │ bridge.callBrowser(tool, input) → emits toolRequest ─────────────▶ SitePage dispatcher
    │                                                                        │ (live workspace)
    ◀───────────── POST /admin/api/ai/tool-result ◀── postToolResult ◀───────┘
@@ -543,3 +543,13 @@ Two consequences worth knowing when reading the driver:
 - `server/ai/mcp/tools/studio/diffFrames.test.ts` — the pre-existing generic two-PNG contract plus the new `referenceId` path's exact/resampled/aspect-ratio-refusal cases, against real registered references.
 - `src/__tests__/ai/mcpConnectorsHandler.test.ts` — CRUD, step-up, privilege floor, capability gating.
 - `src/__tests__/architecture/ai-mcp-connectors-never-leak.test.ts` — token never serialized.
+
+
+## Sessions are per (account, project) — W10
+
+An agent conversation belongs to one account **and** one project. Four things changed:
+
+- **`ai_conversations.project_key`** (migration 022, both dialects, nullable, no backfill) is `registeredMcpServerProjectKey(dir)` — the same key MCP OAuth sessions and registered-server secrets already use. `null` means "not project-scoped": every thread that predates the column, and every thread started with no project open. The list route (`?dir=`) returns this project's threads plus the null ones; `chat.ts` refuses a turn whose project disagrees with a stamped key (409) and adopts a null one on first use, conditionally in SQL so two tabs cannot double-stamp.
+- **The editor bridge scope is `site:${projectKey}`**, so two tabs on two projects are two independently addressable bridges. Before, one slot per user meant last-registered won and a tool call could be relayed into the wrong project's tab with nothing reporting a mismatch. An **unbound** connector — an external MCP client with no editor tab — keeps the old "whatever this user has open" routing (`getMostRecentEditorBridgeForUser`), because it has no project to name.
+- **The warm CLI pool is keyed `(userId, conversationId)`**, `userId` is in the reuse fingerprint, there is a per-user cap of 2 under the global 8, and the attachment staging root hashes both ids.
+- **`resolveProjectDir` containment-checks every client-supplied `dir`** against `projectsRootDir()`, realpaths resolved on both sides. It throws `ProjectDirOutsideWorkspaceError`; `server/router.ts` answers a flat 404 once for every route, and any route-local `catch` that turns errors into responses calls `rethrowProjectDirRefusal(err)` first so the refusal is not flattened into thirty different answers. A **workspace-bound** connector may name only its own project — an explicit `dir` for a different one raises `ProjectDirMismatchError`.

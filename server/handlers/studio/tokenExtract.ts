@@ -104,7 +104,7 @@ import { join } from 'node:path'
 import type { FrameworkSettings } from '@core/framework-schema'
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { resolveProjectDir } from '../studioProjects'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from '../studioFramework'
 import { readCappedFile } from './styleCompileFileRead'
 import { compileProjectStyles } from './styleCompile'
@@ -329,6 +329,7 @@ export async function tryServeStudioTokens(req: Request, url: URL, pathname: str
       const result = await extractProjectTokens(dir, resolveProfile(dir))
       return jsonResponse({ source: result.source, counts: result.counts, warnings: result.warnings })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio/tokenExtract]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -351,6 +352,7 @@ export async function tryServeStudioTokens(req: Request, url: URL, pathname: str
         warnings: result.warnings,
       })
     } catch (err) {
+      rethrowProjectDirRefusal(err)
       console.error('[studio/tokenExtract]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

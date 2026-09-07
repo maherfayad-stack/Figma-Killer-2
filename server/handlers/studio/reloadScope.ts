@@ -92,19 +92,12 @@ import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { isWritableSourceRel } from '../studioWriteback'
-import {
-  discoverAppRouterRoutes,
-  discoverPageFiles,
-  projectPagesDir,
-  projectsRootDir,
-  resolveProjectDir,
-} from '../studioProjects'
+import { discoverAppRouterRoutes, discoverPageFiles, projectPagesDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { assignAppRouterPageIds, assignPageIds } from '../studioPageIds'
 import { readStudioMeta, type StudioMeta } from './studioMeta'
 import { storyFilesIn } from './storyDiscovery'
 import { storyPageIdFromRoutePath } from './storyPages'
 import { cachedRouteDependencies } from './pageParseCache'
-import { isRealpathContained } from './workspacePackageResolve'
 
 const ROUTE_PATH = '/admin/api/studio/reload-scope'
 
@@ -224,11 +217,11 @@ export async function tryServeStudioReloadScope(req: Request, _url: URL, pathnam
     const body = await readValidatedBody(req, ReloadScopeBodySchema)
     if (!body) return badRequest('invalid reload-scope body')
     const dir = resolveProjectDir(body.dir)
-    if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
 
     const pageIds = resolveNarrowReloadPageIds(dir, body.files)
     return jsonResponse(pageIds ? { ok: true, narrow: true, pageIds } : { ok: true, narrow: false })
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:reloadScope]', err)
     return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }

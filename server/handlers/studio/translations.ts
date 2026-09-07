@@ -21,13 +21,13 @@
  *        user's source, not a failed request — the same posture the studio
  *        writeback routes take with their refusal lists.
  *
- * Same containment posture as every other project-scoped route:
- * `resolveProjectDir` + `isRealpathContained(dir, projectsRootDir())`.
+ * Containment is `resolveProjectDir`'s, once for every project-scoped route:
+ * a `dir` outside `studio-workspace/` throws there and the router answers 404,
+ * so this handler never sees one.
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { projectsRootDir, resolveProjectDir } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
+import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readTranslationCatalog } from './translationCatalog'
 import { findHardcodedStrings } from './hardcodedStrings'
 import { writeTranslationEntry } from './translationWrite'
@@ -47,7 +47,6 @@ export async function tryServeStudioTranslations(req: Request, url: URL, pathnam
   try {
     if (req.method === 'GET') {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       const catalog = readTranslationCatalog(dir)
       return jsonResponse({
         hardcoded: findHardcodedStrings(dir),
@@ -67,12 +66,12 @@ export async function tryServeStudioTranslations(req: Request, url: URL, pathnam
       // malformed request, distinct from the structured refusal below.
       if (!body) return badRequest('Expected { locale, key, value }.')
       const dir = resolveProjectDir(body.dir ?? null)
-      if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
       return jsonResponse(writeTranslationEntry(dir, { locale: body.locale, key: body.key, value: body.value }))
     }
 
     return null
   } catch (err) {
+    rethrowProjectDirRefusal(err)
     console.error('[studio:translations]', err)
     return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }

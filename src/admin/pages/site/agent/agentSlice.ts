@@ -17,7 +17,6 @@
  */
 
 import { nanoid } from 'nanoid'
-import { useAdminUi } from '@admin/state/adminUi'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { ApiError, isAbortError, responseErrorMessage } from '@core/http'
 import { pushToast } from '@ui/components/Toast'
@@ -30,10 +29,15 @@ import {
   createConversation,
   rehydrateMessages,
 } from './agentApi'
+import { agentProjectDir } from './agentProjectDir'
+import {
+  conversationResetState,
+  emptyConversationUsage,
+  surfaceAssistantError,
+} from './agentConversationReset'
 import { readNdjsonStream } from '@admin/ai/ndjsonStream'
 import { processStreamEvent, ServerStreamEventSchema } from './streamEvents'
 import type {
-  AgentConversationUsage,
   AgentSlice,
   AgentSliceConfig,
   AgentSliceGet,
@@ -98,6 +102,7 @@ async function ensureConversationId(
   const conv = await createConversation(
     creds.credentialId,
     creds.modelId,
+    agentProjectDir(),
     signal,
   )
   signal.throwIfAborted()
@@ -107,67 +112,6 @@ async function ensureConversationId(
     state.agentActiveModelId = creds.modelId
   })
   return conv.id
-}
-
-// The canonical conversation-reset key-set, in ONE place. clearAgentMessages,
-// startNewAgentConversation, and deleteAgentConversation all reset through here
-// so they can't drift apart again (usage was omitted from one copy once;
-// agentError from another). A factory (not a shared constant) so
-// each reset gets a fresh `agentMessages` array.
-type ConversationResetKeys =
-  | 'agentMessages'
-  | 'agentError'
-  | 'agentConversationId'
-  | 'agentActiveCredentialId'
-  | 'agentActiveModelId'
-  | 'agentUsage'
-  | 'agentComposerEpoch'
-
-function emptyConversationUsage(): AgentConversationUsage {
-  return {
-    contextTokens: null,
-    contextCredentialId: null,
-    contextModelId: null,
-    promptTokens: 0,
-    completionTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-    costUsd: 0,
-  }
-}
-
-function conversationResetState(agentComposerEpoch: number): Pick<AgentSlice, ConversationResetKeys> {
-  return {
-    agentMessages: [],
-    agentError: null,
-    agentConversationId: null,
-    agentActiveCredentialId: null,
-    agentActiveModelId: null,
-    agentUsage: emptyConversationUsage(),
-    agentComposerEpoch,
-  }
-}
-
-/**
- * Surface a terminal send error in a SINGLE draft mutation (F10): set
- * `agentError` and add the assistant placeholder block together so the panel
- * renders once, not twice. The placeholder only lands if the assistant message
- * is still empty — i.e. no streamed text/tool blocks arrived before the failure.
- */
-function surfaceAssistantError(
-  set: EditorStoreSet,
-  assistantId: string,
-  error: string,
-  placeholder: string,
-): void {
-  set((state) => {
-    state.agentError = error
-    const msg = state.agentMessages.find((m) => m.id === assistantId)
-    failPendingToolCalls(msg, error)
-    if (msg && msg.blocks.length === 0) {
-      msg.blocks.push({ kind: 'text', text: placeholder })
-    }
-  })
 }
 
 /**
@@ -356,7 +300,9 @@ export function createAgentSlice(
 
     async loadAgentConversations() {
       try {
-        const conversations = await listConversations()
+        // Scoped to the open project (W10): this project's threads plus the
+        // unscoped ones. The popover groups them; the server does the filter.
+        const conversations = await listConversations(agentProjectDir())
         set({ agentConversations: conversations })
       } catch (err) {
         console.error('[AgentSlice] Failed to load conversations:', err)
@@ -603,7 +549,9 @@ export function createAgentSlice(
           conversationId,
           content,
           snapshot,
-          workspaceDir: useAdminUi.getState().studioProject?.dir,
+          // Same derivation the thread was stamped with and the browser
+          // bridge registered under (W10) — three call sites, one answer.
+          workspaceDir: agentProjectDir() ?? undefined,
           agentEffort,
           agentPermissionMode,
         })

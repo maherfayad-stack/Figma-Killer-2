@@ -15,6 +15,8 @@ import * as path from 'node:path'
 import sharp from 'sharp'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioReferenceUpload } from './referenceUpload'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from '../__tests__/outsideWorkspaceDir'
 
 const ROUTE_URL = 'http://localhost/admin/api/studio/reference-upload'
 const ROUTE_PATH = '/admin/api/studio/reference-upload'
@@ -116,12 +118,10 @@ describe('tryServeStudioReferenceUpload', () => {
   })
 
   it('rejects a dir outside studio-workspace/', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-upload-outside-'))
-    try {
-      const res = await get(outside)
-      expect(res.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+    // The refusal is `resolveProjectDir`'s and reaches the router, not a
+    // status this route chose for itself (W10).
+    await withOutsideWorkspaceDir('reference-upload-outside', async (outside) => {
+      await expect(get(outside)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
   })
 })

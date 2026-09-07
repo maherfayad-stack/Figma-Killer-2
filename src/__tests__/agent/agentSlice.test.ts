@@ -162,6 +162,9 @@ const conversationDetailMessagesResponse = (
       cacheReadTokensTotal: 0,
       cacheCreationTokensTotal: 0,
       contextTokens: 0,
+      // W10 — a conversation belongs to one project. `null` is "not
+      // project-scoped", which is what these fixtures are.
+      projectKey: null,
       createdAt: '2026-07-11T10:00:00.000Z',
       updatedAt: '2026-07-11T10:00:00.000Z',
       messages,
@@ -1505,6 +1508,7 @@ describe('setAgentProvider', () => {
           costUsdTotal: 0,
           cacheReadTokensTotal: 0,
           cacheCreationTokensTotal: 0,
+          projectKey: null,
           contextTokens: 0,
           createdAt: '2026-07-11T10:00:00.000Z',
           updatedAt: '2026-07-11T10:00:00.000Z',

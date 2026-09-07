@@ -21,6 +21,8 @@ import * as path from 'node:path'
 import { readStudioMeta } from '../studio/studioMeta'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioStyleCompileConsent } from '../studio/styleCompileConsent'
+import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 interface ConsentStatusBody {
   trust: string
@@ -127,27 +129,19 @@ describe('tryServeStudioStyleCompileConsent', () => {
   })
 
   it('GET rejects a dir outside studio-workspace/', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'style-consent-outside-'))
-    try {
+    await withOutsideWorkspaceDir('style-consent-outside', async (outside) => {
       const { req, url, pathname } = makeRequest(
         `/admin/api/studio/style-compile-consent?dir=${encodeURIComponent(outside)}`,
       )
-      const res = await tryServeStudioStyleCompileConsent(req, url, pathname)
-      expect(res!.status).toBe(404)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+      await expect(tryServeStudioStyleCompileConsent(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    })
   })
 
   it('POST rejects a dir outside studio-workspace/ without writing anything', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'style-consent-outside-'))
-    try {
+    await withOutsideWorkspaceDir('style-consent-outside', async (outside) => {
       const { req, url, pathname } = makeRequest('/admin/api/studio/style-compile-consent', postBody({ dir: outside }))
-      const res = await tryServeStudioStyleCompileConsent(req, url, pathname)
-      expect(res!.status).toBe(404)
+      await expect(tryServeStudioStyleCompileConsent(req, url, pathname)).rejects.toThrow(ProjectDirOutsideWorkspaceError)
       expect(fs.existsSync(path.join(outside, '.studio'))).toBe(false)
-    } finally {
-      fs.rmSync(outside, { recursive: true, force: true })
-    }
+    })
   })
 })
