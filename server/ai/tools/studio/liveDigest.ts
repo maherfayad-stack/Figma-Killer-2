@@ -31,6 +31,7 @@ import { readAllDesignReferences } from '../../../handlers/studio/designReferenc
 import { designReferenceRole, type DesignReferenceRole } from '../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../handlers/studio/pageSourceFile'
 import { readStudioMeta } from '../../../handlers/studio/studioMeta'
+import { findFigmaUrlInText } from '../../../handlers/studio/figmaUrl'
 import { resolveProjectTscPath } from '../../../handlers/studio/typecheck'
 import { loopbackAssetFetchEnabled } from '../../../handlers/studio/remoteAssetFetch'
 import { listProjectMcpServers } from '../../drivers/projectMcpServers'
@@ -109,6 +110,28 @@ export interface StudioLiveDigest {
    * quiet, common case renders no line at all (see `buildLiveDigestLines`).
    */
   readonly pageWriteVerification: readonly PageWriteVerificationEntry[]
+  /**
+   * The FIRST figma.com URL in the user's latest message, parsed
+   * (`figmaUrl.ts`) — `null` when this message names none.
+   *
+   * Reported as identifiers, not as prose, because the identifiers are what
+   * the next action needs: `studio_import_figma_frame` takes the `url`, and
+   * the agent's OWN Figma connector takes `fileKey` + `nodeId`. Before this,
+   * the prompt could say "there is a Figma link in this message" and the
+   * agent then had to re-read the message and re-derive the node id itself —
+   * a step it routinely got wrong, because a copied Figma link separates the
+   * node id with `-` and every Figma tool wants `:`.
+   *
+   * `nodeId` is `null` (rather than the raw text) when the URL's `node-id`
+   * is missing or is not a resolvable reference, so nothing downstream can
+   * hand a placeholder to a Figma tool. Never persisted, never sent
+   * anywhere — derived fresh per turn from a string the prompt already had.
+   */
+  readonly figmaLink: {
+    readonly url: string
+    readonly fileKey: string | null
+    readonly nodeId: string | null
+  } | null
   /**
    * `true` when the user's latest message names a Figma URL AND a Figma
    * connector is configured AND the active page has no reference armed yet —
@@ -353,9 +376,6 @@ export interface BuildStudioLiveDigestOptions {
   readonly userId?: string
 }
 
-/** A figma.com URL anywhere in the user's latest message — the one signal `registerTurnDesignReferences` (a transient chat IMAGE attachment) can't catch, because a pasted Figma LINK carries no bytes for it to register. */
-const FIGMA_URL_RE = /https?:\/\/(?:www\.)?figma\.com\/\S+/i
-
 /**
  * Never throws: any resolution failure (page not found, file unreadable)
  * degrades that ONE field to its honest-absence value rather than aborting
@@ -364,7 +384,7 @@ const FIGMA_URL_RE = /https?:\/\/(?:www\.)?figma\.com\/\S+/i
  *
  * `userMessageText` is this turn's own latest user message (plain text,
  * already available to `chatSystemPrompt.ts`'s caller) — consulted ONLY for
- * `FIGMA_URL_RE`, never persisted, never sent anywhere. `undefined` (the
+ * `findFigmaUrlInText`, never persisted, never sent anywhere. `undefined` (the
  * default) simply means the nudge below can never fire, which is the honest
  * degrade for any caller that hasn't threaded it through yet.
  */
@@ -447,12 +467,22 @@ export async function buildStudioLiveDigest(
   // decided from a truncated view would fire on a page whose reference is
   // reference 51.
   const references = readAllDesignReferences(dir)
+  // Parsed unconditionally — a link the user pasted is a fact about this
+  // message, independent of whether a connector is configured or a reference
+  // is already armed. The NUDGE below is the conditional part.
+  const found = userMessageText ? findFigmaUrlInText(userMessageText) : null
+  const figmaLink: StudioLiveDigest['figmaLink'] = found
+    ? {
+        url: found.url,
+        fileKey: found.fileKey ?? null,
+        nodeId: found.nodeIdPlaceholder ? null : (found.nodeId ?? null),
+      }
+    : null
   let figmaReferenceNudge: StudioLiveDigest['figmaReferenceNudge'] = null
   if (
     activePage
-    && userMessageText
+    && figmaLink !== null
     && capabilities.figma.status === 'configured'
-    && FIGMA_URL_RE.test(userMessageText)
     // A `spec`, not merely "a reference". A screenshot the user pasted while
     // this page was open is `context` — it does not mean the page's design has
     // been armed, and treating it as if it had is what suppressed this nudge
@@ -484,6 +514,7 @@ export async function buildStudioLiveDigest(
     staleWarning,
     capabilities,
     pageWriteVerification,
+    figmaLink,
     figmaReferenceNudge,
   }
 }

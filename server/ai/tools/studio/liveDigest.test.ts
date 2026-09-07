@@ -266,6 +266,7 @@ describe('buildStudioLiveDigest — page write verification + Figma nudge', () =
     const { createScaffoldedPage } = await import('../../../handlers/studio/pageScaffold')
     const { resolvePageSourceFile } = await import('../../../handlers/studio/pageSourceFile')
     const { appendTurnWrite } = await import('../../../handlers/studio/turnWriteLog')
+    const { studioAgentUserKey } = await import('../../../handlers/studio/agentUserScope')
     const { loadStudioPages } = await import('../../../handlers/studioPageLoad')
 
     const scaffolded = createScaffoldedPage(dir, 'Onboarding')
@@ -273,7 +274,9 @@ describe('buildStudioLiveDigest — page write verification + Figma nudge', () =
     const { pages } = await loadStudioPages(dir)
     const page = pages.find((p) => p.id === scaffolded.pageId)!
     const rel = resolvePageSourceFile(page)!
-    appendTurnWrite(dir, join(dir, ...rel.split('/')))
+    // W10 keyed the turn-write log per account; the digest resolves the same
+    // key from `options.userId` (absent here => the shared key).
+    appendTurnWrite(dir, studioAgentUserKey(undefined), join(dir, ...rel.split('/')))
 
     const digest = await buildStudioLiveDigest(dir, baseSnapshot, 'conv-writes-unverified', { staleness: createStalenessTracker() })
     expect(digest.pageWriteVerification).toHaveLength(1)
@@ -331,5 +334,38 @@ describe('buildStudioLiveDigest — page write verification + Figma nudge', () =
       'match this: https://www.figma.com/file/abc123/Onboarding',
     )
     expect(digest.figmaReferenceNudge).toBeNull()
+  })
+
+  it('figmaLink parses the pasted URL into identifiers, independently of the nudge', async () => {
+    // W9-4 — the digest reports { fileKey, nodeId } so the prompt can name
+    // them; the NUDGE has three extra preconditions and this field has none.
+    // No connector approved and no active page here on purpose.
+    const digest = await buildStudioLiveDigest(
+      dir,
+      baseSnapshot,
+      'conv-figma-link',
+      { staleness: createStalenessTracker() },
+      'build https://www.figma.com/design/8nasqgUrdKsT8JgQRBHwPB/Shop?node-id=53958-5861 please',
+    )
+    expect(digest.figmaLink).toEqual({
+      url: 'https://www.figma.com/design/8nasqgUrdKsT8JgQRBHwPB/Shop?node-id=53958-5861',
+      fileKey: '8nasqgUrdKsT8JgQRBHwPB',
+      nodeId: '53958:5861',
+    })
+    expect(digest.figmaReferenceNudge).toBeNull()
+  })
+
+  it('figmaLink is null with no message and reports a null nodeId for a link that names no node', async () => {
+    const none = await buildStudioLiveDigest(dir, baseSnapshot, 'conv-figma-link-none', { staleness: createStalenessTracker() })
+    expect(none.figmaLink).toBeNull()
+
+    const noNode = await buildStudioLiveDigest(
+      dir,
+      baseSnapshot,
+      'conv-figma-link-nonode',
+      { staleness: createStalenessTracker() },
+      'https://www.figma.com/design/KEY/Shop',
+    )
+    expect(noNode.figmaLink).toEqual({ url: 'https://www.figma.com/design/KEY/Shop', fileKey: 'KEY', nodeId: null })
   })
 })

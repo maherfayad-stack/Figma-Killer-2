@@ -31,7 +31,7 @@
  * absent; nothing here changes `studio_measure_reference`'s existing
  * behaviour for a project that never calls these tools.
  */
-import { Type } from '@core/utils/typeboxHelpers'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { aiToolError } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
@@ -62,7 +62,15 @@ const DIR_INPUT_DESCRIPTION =
 // studio_ingest_design_variables
 // ---------------------------------------------------------------------------
 
-const VariableEntrySchema = Type.Object(
+/**
+ * One row of a design tool's variable table, exactly as it reported it.
+ *
+ * Exported because `studio_import_figma_frame` (`importFigmaFrame.ts`)
+ * ingests the SAME table as one leg of its one-call Figma flow — a second
+ * declaration of these five fields would be the schema drift
+ * `ai-tool-schema-ssot.test.ts` exists to prevent, one folder over.
+ */
+export const DesignVariableEntrySchema = Type.Object(
   {
     name: Type.String({
       minLength: 1,
@@ -109,7 +117,7 @@ const IngestInputSchema = Type.Object(
       Type.String({ description: 'Scope this table to one already-registered design reference (studio_register_design_reference), when you are ingesting the variable table for the SAME design that reference is an image of. Must already exist — register the reference first.' }),
     ),
     label: Type.Optional(Type.String({ maxLength: DESIGN_VARIABLE_LABEL_MAX_LENGTH, description: 'A short human-readable name for this table, e.g. "Design system — Figma".' })),
-    variables: Type.Array(VariableEntrySchema, {
+    variables: Type.Array(DesignVariableEntrySchema, {
       minItems: 1,
       maxItems: MAX_VARIABLES_PER_INGEST,
       description: `The name/value table as the design tool returned it. Up to ${MAX_VARIABLES_PER_INGEST} entries per call — call again for a larger table (each call creates its own addressable set).`,
@@ -117,6 +125,21 @@ const IngestInputSchema = Type.Object(
   },
   { additionalProperties: false },
 )
+
+export type DesignVariableEntry = Static<typeof DesignVariableEntrySchema>
+
+/** The wire shape above -> the store's own row shape. Exported alongside {@link DesignVariableEntrySchema} so the second ingesting tool converts identically rather than approximately (a `value: 0` stringified with `||` instead of a type check is exactly the bug this prevents). */
+export function toRawDesignVariableEntries(
+  variables: ReadonlyArray<DesignVariableEntry>,
+): RawDesignVariableEntry[] {
+  return variables.map((v) => ({
+    name: v.name,
+    raw: typeof v.value === 'string' ? v.value : String(v.value),
+    ...(v.figmaType ? { figmaType: v.figmaType } : {}),
+    ...(v.collection ? { collection: v.collection } : {}),
+    ...(v.mode ? { mode: v.mode } : {}),
+  }))
+}
 
 const ingestDesignVariablesTool: AiTool = {
   name: 'studio_ingest_design_variables',
@@ -134,13 +157,7 @@ const ingestDesignVariablesTool: AiTool = {
       pageId?: string
       referenceId?: string
       label?: string
-      variables: Array<{
-        name: string
-        value: string | number | boolean
-        figmaType?: string
-        collection?: string
-        mode?: string
-      }>
+      variables: DesignVariableEntry[]
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
@@ -150,15 +167,7 @@ const ingestDesignVariablesTool: AiTool = {
       )
     }
 
-    const entries: RawDesignVariableEntry[] = variables.map((v) => ({
-      name: v.name,
-      raw: typeof v.value === 'string' ? v.value : String(v.value),
-      ...(v.figmaType ? { figmaType: v.figmaType } : {}),
-      ...(v.collection ? { collection: v.collection } : {}),
-      ...(v.mode ? { mode: v.mode } : {}),
-    }))
-
-    const result = ingestDesignVariables(dir, entries, { source, pageId, referenceId, label })
+    const result = ingestDesignVariables(dir, toRawDesignVariableEntries(variables), { source, pageId, referenceId, label })
 
     return {
       ok: true,
