@@ -82,7 +82,7 @@ import { ArrowBarRightIcon } from 'pixel-art-icons/icons/arrow-bar-right'
 import { ArrowBarDownIcon } from 'pixel-art-icons/icons/arrow-bar-down'
 import { ArrowBarLeftIcon } from 'pixel-art-icons/icons/arrow-bar-left'
 import { DropdownSwitcher } from './DropdownSwitcher'
-import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
+import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
 import { useSpacingTokens, type Token } from '@site/property-controls/tokenUtils'
 import { hasStyleValue, readString } from './styleValueUtils'
 import { SingleNodeAlignRow } from './SingleNodeAlignRow'
@@ -283,6 +283,11 @@ const POSITION_PRIMARY_SEGMENTS = [
 
 // ---------------------------------------------------------------------------
 // DirectionInput — icon-as-label numeric/text input for top/right/bottom/left
+//
+// The direction arrow used to sit in its own 18px grid column beside the
+// field. It is the field's mark, so it now rides INSIDE the field as
+// `ScrubTokenField`'s drag handle: one less column, and an inset you can drag
+// the way you can already drag W/H. §5 of inspector-disclosure.md.
 // ---------------------------------------------------------------------------
 
 interface DirectionInputProps {
@@ -325,18 +330,17 @@ function DirectionInput({
       data-state={isSet ? 'set' : 'unset'}
       data-testid={`css-direction-input-${String(property)}`}
     >
-      <span className={styles.directionIcon} aria-hidden="true">
-        <DirectionIcon size={14} />
-      </span>
-      <TokenAwareInput
+      <ScrubTokenField
         aria-label={ariaLabel}
         value={isSet ? String(storedValue) : undefined}
         placeholder={placeholder}
+        prefix={<DirectionIcon size={14} />}
         tokens={tokens}
         onCommit={(resolved) => onChange(property, resolved)}
         onPreview={onPreview ? (resolved) => onPreview(property, resolved) : undefined}
         onClearPreview={onClearPreview}
         className={styles.directionInput}
+        data-testid={`css-direction-${String(property)}`}
       />
       {isSet && (
         <Button

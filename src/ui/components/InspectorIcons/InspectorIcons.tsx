@@ -115,6 +115,22 @@ export function LineHeightIcon(props: IconProps) {
   )
 }
 
+/**
+ * Two letterforms at different sizes — the universal "type size" mark.
+ *
+ * `fontSize` is a self-describing field (its value reads `16px`), so it never
+ * carried a caption; it also never carried a mark, which left it the one
+ * length in the typography block with nothing to drag. This is that mark.
+ */
+export function FontSizeIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M3 4h10v2H3V4Zm4 2h2v14H7V6Zm8 4h6v2h-6v-2Zm2 2h2v8h-2v-8Z"
+    />
+  )
+}
+
 /** A letterform pinned between two measure bars. */
 export function LetterSpacingIcon(props: IconProps) {
   return (

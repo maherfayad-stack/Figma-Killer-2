@@ -1,20 +1,23 @@
 /**
- * numericNudge — THE keyboard step model for every numeric field in the
- * editor. `ScrubInput` (its `step`/`shiftStep` defaults), `TokenAwareInput`,
- * `TextControl`, `NumberControl` and the frame W/H fields all resolve their
- * step from here, so a number nudges identically wherever it is typed.
+ * numericNudge — THE step model for every numeric field in the editor.
+ * `ScrubInput`, `TokenAwareInput`, `TextControl`, `NumberControl` and the frame
+ * W/H fields all resolve their step from here, so a number moves identically
+ * wherever it is typed — and, since W8-2, wherever it is DRAGGED: the scrub
+ * gesture (`useScrubDrag`) resolves its per-pixel scale from `nudgeStepFor` too.
  *
  * Figma's model, which is the one we ship:
- *   - plain ↑/↓  → ±1
- *   - Shift+↑/↓  → ±10  (the "big nudge")
- *   - Alt+↑/↓    → ±0.1 (the fine nudge; beats Shift when both are held,
- *                        because the more specific request wins)
+ *   - plain ↑/↓ or 1px of drag  → ±1
+ *   - Shift                     → ±10  (the "big nudge")
+ *   - Alt                       → ±0.1 (the fine nudge; beats Shift when both
+ *                                       are held — the more specific request
+ *                                       wins)
  *
- * There used to be three models: ±10 here in `ScrubInput`, ±8 in this file,
- * and a hand-rolled ±8 in `FrameSizePanel`. Which step a field took depended
- * on which of three components happened to render it — invisible in any one
- * field and maddening across two. There is now one set of numbers and one
- * resolver (`nudgeStepFor`).
+ * There used to be three models: ±10 in `ScrubInput`, ±8 in this file, and a
+ * hand-rolled ±8 in `FrameSizePanel`. Which step a field took depended on which
+ * of three components happened to render it — invisible in any one field and
+ * maddening across two. There is now one set of numbers and one resolver
+ * (`nudgeStepFor`), and both live in `scrubMath.ts` (see below) so the gesture
+ * in `src/ui` can reach them without a fourth copy.
  *
  * The value operated on may carry a CSS unit (`16px`, `1.25rem`, `-4%`) or be
  * arithmetic the shared evaluator can reduce (`100/2`, `100 + 8`). Anything
@@ -25,27 +28,21 @@
 
 import { evaluateNumericExpression } from '@ui/components/ScrubInput'
 
-/** Plain arrow nudge. */
-export const BASE_NUDGE = 1
-/** Shift+arrow nudge — the "big" step. */
-export const SHIFT_NUDGE = 10
-/** Alt+arrow nudge — the fine step. */
-export const FINE_NUDGE = 0.1
+// The three magnitudes and their resolver are DEFINED in `scrubMath.ts`, at
+// the bottom of the dependency graph, because `src/ui` cannot import from
+// `src/admin` and the drag gesture (`useScrubDrag`) needs the same ladder the
+// keyboard uses. Re-exported here so admin code keeps importing the model
+// from the module whose header explains it.
+export {
+  BASE_NUDGE,
+  FINE_NUDGE,
+  nudgeStepFor,
+  SHIFT_NUDGE,
+  type NudgeModifiers,
+} from '@ui/components/ScrubInput'
+import { nudgeStepFor } from '@ui/components/ScrubInput'
 
 export type NudgeDirection = 'up' | 'down'
-
-/** Keyboard modifiers that select which nudge step applies. */
-export interface NudgeModifiers {
-  shiftKey: boolean
-  altKey: boolean
-}
-
-/** Resolves the step magnitude for a keydown event's modifier state. */
-export function nudgeStepFor({ shiftKey, altKey }: NudgeModifiers): number {
-  if (altKey) return FINE_NUDGE
-  if (shiftKey) return SHIFT_NUDGE
-  return BASE_NUDGE
-}
 
 interface NudgeableNumber {
   number: number

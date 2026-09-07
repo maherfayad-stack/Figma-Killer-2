@@ -29,6 +29,7 @@ import {
   LetterSpacingIcon,
   AspectRatioIcon,
   OpacityIcon,
+  FontSizeIcon,
 } from '@ui/components/InspectorIcons'
 
 // ---------------------------------------------------------------------------
@@ -117,6 +118,11 @@ export function getIconEnumOptions(
  * still go through the generic row.
  */
 const PROPERTY_FIELD_GLYPHS = new Map<keyof CSSPropertyBag, IconComponent>([
+  // The mark is also the field's SCRUB HANDLE (§5.5) — `ClassPropertyRow`
+  // renders a nudgeable property that has one as a drag-scrub field, and one
+  // that has none as a plain typed field, because there is nothing honest to
+  // drag. Adding a property here therefore gives it the gesture too.
+  ['fontSize', FontSizeIcon],
   ['lineHeight', LineHeightIcon],
   ['letterSpacing', LetterSpacingIcon],
   ['aspectRatio', AspectRatioIcon],
