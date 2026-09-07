@@ -44,7 +44,7 @@ function stubFetch(saveCalls: Array<{ body: unknown }>) {
       })
     }
     if (path === '/admin/api/studio/framework') {
-      return new Response(JSON.stringify({ framework: null }), { status: 200 })
+      return new Response(JSON.stringify({ framework: null, fonts: null }), { status: 200 })
     }
     if (path === '/admin/api/studio/save') {
       saveCalls.push({ body: init?.body ? JSON.parse(String(init.body)) : {} })

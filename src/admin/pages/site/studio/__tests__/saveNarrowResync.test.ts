@@ -125,7 +125,7 @@ describe('saveSite → narrow board resync', () => {
       if (path === '/admin/api/studio/framework') {
         order.push('framework')
         const body = init?.body ? JSON.parse(String(init.body)) : {}
-        return new Response(JSON.stringify({ ok: true, framework: body.framework ?? null }), { status: 200 })
+        return new Response(JSON.stringify({ ok: true, framework: body.framework ?? null, fonts: body.fonts ?? null }), { status: 200 })
       }
       if (path === '/admin/api/studio/load') {
         order.push('load')

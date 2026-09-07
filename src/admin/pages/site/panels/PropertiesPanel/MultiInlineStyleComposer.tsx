@@ -42,7 +42,7 @@
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import type { CSSPropertyBag } from '@core/page-tree'
-import { styleValueKey } from '@core/page-tree'
+import { canWriteInlineStyleForModule, styleValueKey } from '@core/page-tree'
 import { TokenCatalogProvider } from '@site/property-controls/TokenCatalogProvider'
 import { ALL_CURATED_CSS_PROPERTIES, cssPropertyLabel } from './cssControlTypes'
 import { getActiveStyleTab } from './classStyleSections'
@@ -122,6 +122,27 @@ export function MultiInlineStyleComposer({
   //
   // `STYLE_KEY_PREFIX` is `styleValueKey('')`, i.e. the same `style:` prefix
   // the parser writes into `codeProps`; the reach builder slices it back off.
+  /*
+   * `font-revert` — a node whose MODULE has no `style=""` target at all
+   * (`pkg.*`, a third-party package Studio knows nothing about;
+   * `studio.instance`, a Fragment call site with no box of its own).
+   * `canWriteInlineStyleForModule` is the one predicate the OFFER and the
+   * WRITE must agree on, and this composer was the surface that never asked
+   * it: it wrote the patch into every selected node, the canvas rendered it,
+   * and `fsCodemodAdapter.saveSite` then dropped exactly those nodes' edits —
+   * so the value came back on the next reload with nothing said. Excluded
+   * from the write here and NAMED in the notice below, rather than written
+   * and silently discarded three layers later.
+   *
+   * Per-property `codeProps` locks are a DIFFERENT fact and stay where they
+   * were (`reach`): those block one property on one node, this blocks the
+   * whole element.
+   */
+  const unwritableNodes = nodes.filter((node) => !canWriteInlineStyleForModule(node.moduleId))
+  const writableNodeIds = nodes
+    .filter((node) => canWriteInlineStyleForModule(node.moduleId))
+    .map((node) => node.id)
+
   const reach = buildInlineStyleWriteReach(
     nodes.map((node) => ({
       codeProps: (node.codeProps ?? []).filter((name) => name.startsWith(STYLE_KEY_PREFIX)),
@@ -131,8 +152,8 @@ export function MultiInlineStyleComposer({
   const lockedProperties = blockedProperties(reach)
 
   const writePatch = (patch: Record<string, string | number | null>) => {
-    if (nodeIds.length === 0) return
-    setNodesInlineStyles(nodeIds, patch)
+    if (writableNodeIds.length === 0) return
+    setNodesInlineStyles(writableNodeIds, patch)
   }
 
   const handleChange = (key: keyof CSSPropertyBag, value: string | number | undefined) => {
@@ -154,6 +175,23 @@ export function MultiInlineStyleComposer({
 
   return (
     <TokenCatalogProvider>
+      {unwritableNodes.length > 0 && (
+        <div
+          className={noticeStyles.notice}
+          role="note"
+          data-testid="multi-inline-style-unwritable-modules-notice"
+        >
+          <LockSolidIcon size={14} className={noticeStyles.icon} />
+          <p className={noticeStyles.text}>
+            <strong>{unwritableNodes.map((node) => node.label ?? node.id).join(', ')}</strong>{' '}
+            {unwritableNodes.length === 1 ? 'takes' : 'take'} no style of{' '}
+            {unwritableNodes.length === 1 ? 'its' : 'their'} own here — the style comes from that
+            component&apos;s own source, not this page&apos;s. Edits below skip{' '}
+            {unwritableNodes.length === 1 ? 'it' : 'them'}; assign a CSS class or change the
+            design-system token instead.
+          </p>
+        </div>
+      )}
       {lockedProperties.length > 0 && (
         <div
           className={noticeStyles.notice}
