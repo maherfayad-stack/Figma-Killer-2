@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "name": "Board 1",
+      "frames": [
+        {
+          "id": "3884d231-f0eb-4dcb-a48b-49e01249f3ad",
+          "pageId": "onboarding",
+          "x": 424.0752831573227,
+          "y": 901.2122142435089,
+          "width": 393,
+          "height": 808.3556063558458
+        },
+        {
+          "id": "d7132d36-dbde-434c-b257-1ff2d0ce909f",
+          "pageId": "sms",
+          "x": -2.215753681495851,
+          "y": 901.2122142435089,
+          "width": 393,
+          "height": 804.1839933372852
+        },
+        {
+          "id": "2a978b29-58cf-40b2-bf8c-efb5873db9d3",
+          "pageId": "sign-up",
+          "x": -422.1623337750282,
+          "y": 901.2122142435089,
+          "width": 393,
+          "height": 788.4835965566353
+        }
+      ],
+      "notes": [
+        {
+          "id": "bb7731f0-d5b9-467f-8b72-e2d588782623",
+          "x": -948.6905125546971,
+          "y": 850.938734120892,
+          "w": 216.9538838520047,
+          "h": 126.12189749690015,
+          "text": "Testing the sticky notes",
+          "color": "yellow"
+        },
+        {
+          "id": "f321ff5f-9e7f-42c7-87e2-e29998c37400",
+          "x": -823.4056110830018,
+          "y": 592.1003971086312,
+          "w": 216.9538838520047,
+          "h": 126.12189749690015,
+          "text": "lama was here",
+          "color": "pink"
+        }
+      ],
+      "docs": [
+        {
+          "id": "2f9af55e-0d53-415c-b494-5a42cec1a594",
+          "x": -976.7415028797204,
+          "y": 1106.512272632875,
+          "w": 490.0097483540562,
+          "h": 367.25298435898634,
+          "html": "<h1>Best test for a doc</h1>this doc is amazing<div><br></div><div><h3>hooooray what. a doc</h3><div><ul><li>who made this amazing work</li><li>it's me hehe</li><li>kbasl;dfsdfna;dsf</li></ul></div></div>"
+        }
+      ],
+      "guides": []
+    }
+  ]
+}

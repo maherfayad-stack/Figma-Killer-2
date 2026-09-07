@@ -1,0 +1,91 @@
+/* iPhone status bar with the Dynamic Island. The island spacer is 37px tall,
+   which is what makes the whole bar 59px rather than 44px — same as Figma. */
+.statusBar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 11px var(--space);
+  box-sizing: border-box;
+  width: 100%;
+
+  /* The island is a hardware cutout, so it is pure black in both schemes. No DS
+     token is pure black: the nearest, --icon-base-default-static, is #1C1C1C —
+     which is also the dark-mode value of --background-base-default, so the
+     island vanished on every screen whose status bar sits straight on the page
+     background (Onboarding). Screens behind a sheet scrim happened to hide the
+     collision. Named here rather than inlined at the one use site below. */
+  --status-bar-cutout: #000;
+}
+
+.time {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding-top: 2px;
+  font-family: var(--type-subtitle-family);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  /* Not the -static token: status bar content has to invert in dark mode. */
+  color: var(--text-base-default);
+  white-space: nowrap;
+}
+
+/* In-flow spacer: reserves the island's footprint so the bar takes its height. */
+.islandSpacer {
+  flex-shrink: 0;
+  width: 125px;
+  height: 37px;
+}
+
+.island {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 126px;
+  height: 36px;
+  border-radius: var(--rounded-full);
+  background: var(--status-bar-cutout);
+}
+
+.levels {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 22px;
+  padding-top: 1px;
+  /* The three SVGs paint from currentColor so they invert with the scheme. */
+  color: var(--icon-base-default);
+}
+
+.levels span {
+  display: block;
+}
+
+.levels svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cellular {
+  width: 19.2px;
+  height: 12.226px;
+}
+
+.wifi {
+  width: 17.142px;
+  height: 12.328px;
+}
+
+.battery {
+  width: 27.328px;
+  height: 13px;
+}

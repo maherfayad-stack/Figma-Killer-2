@@ -1,0 +1,389 @@
+/* The shell's own chrome. Everything inside a frame is the project's CSS —
+   these tokens never leak in, and none of them are design-system tokens. */
+:root {
+  --shell-board: #f7f9fa;
+  --shell-surface: #ffffff;
+  /* The tinted surface: option rows and control fills, so a stack of bars
+     reads as one primary row and N qualifiers rather than N equal bars. */
+  --shell-surface-2: #f7f9fa;
+  --shell-text: #1c1c1c;
+  --shell-text-subtle: #66797f;
+  --shell-hover: rgba(0, 0, 0, 0.06);
+  --shell-accent: #0c9ab0;
+  /* ONE hairline colour, for every rule the chrome draws and for the ring
+     around a device. They are the same line at two scales, so they are one
+     token — a second token holding the same value is how they drift apart. */
+  --shell-line: #d8dcde;
+  /* The live-option marker. The only warm colour in the shell, and it earns
+     its place by marking exactly one thing: which option in a row is on. */
+  --shell-marker: #ef4550;
+  /* The canvas dot grid, and the device bezel each frame is set into. */
+  --shell-dot: rgba(0, 0, 0, 0.16);
+  --shell-bezel: #ffffff;
+  /* The sheet's grab handle, and the track a segmented control sits in. */
+  --shell-grabber: #edf1f3;
+}
+
+html[data-theme='dark'] {
+  --shell-board: #232525;
+  --shell-surface: #1c1c1c;
+  --shell-surface-2: #232525;
+  --shell-text: #f8f9f9;
+  --shell-text-subtle: #929fa3;
+  --shell-hover: rgba(255, 255, 255, 0.08);
+  --shell-line: #3c4244;
+  --shell-dot: rgba(255, 255, 255, 0.12);
+  /* Not white in the dark: a white bezel around a dark screen is a lightbox. */
+  --shell-bezel: #1c1c1c;
+  --shell-grabber: #3c4244;
+}
+
+* { box-sizing: border-box; }
+
+/* No scrollbars anywhere the shell draws. A phone has no persistent
+   scrollbar, so one running down the side of a preview both lies about the
+   design and steals width from it. Scrolling itself is untouched — this hides
+   the indicator, not the overflow. Stated once, on *, so a scroll container
+   added later cannot reintroduce one. */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { width: 0; height: 0; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--shell-text);
+  background: var(--shell-board);
+  overscroll-behavior: none;
+}
+
+.shell { display: flex; flex-direction: column; height: 100%; }
+
+/* The bar and every option row move as ONE block. That is what lets the mobile
+   rule be a single position:fixed instead of a chain of sibling selectors that
+   has to be re-derived every time a row is added. */
+.shell__chrome { flex-shrink: 0; }
+
+.shell__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 20px;
+  background: var(--shell-surface);
+  border-bottom: 1px solid var(--shell-line);
+}
+
+/* The project's name. The last word takes the accent — the one decorative use
+   of colour in the shell, and it is a single word in a corner. */
+.shell__title { font-size: 14px; font-weight: 600; color: var(--shell-text); white-space: nowrap; }
+.shell__title em { font-style: normal; color: var(--shell-accent); }
+
+.shell__spacer { flex: 1; }
+
+.shell__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--shell-line);
+  border-radius: 8px;
+  background: var(--shell-surface-2);
+  color: var(--shell-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell__btn:hover { border-color: var(--shell-text-subtle); }
+
+/* Outlined, not filled. A filled button reads as the primary ACTION on the
+   bar; this is reporting which view you are in. */
+.shell__btn[aria-pressed='true'] { border-color: var(--shell-accent); color: var(--shell-accent); }
+
+.shell__btn--icon { padding: 0 8px; }
+.shell__btn svg { display: block; }
+.shell__btn:focus-visible { outline: 2px solid var(--shell-accent); outline-offset: 1px; }
+
+/* A row of options: text links, with a marker under the live one. Buttons
+   stretch the row's full height so that marker lands on the row's own edge
+   rather than floating inside it. */
+.shell__nav {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
+  overflow-x: auto;
+  background: var(--shell-surface);
+  border-bottom: 1px solid var(--shell-line);
+}
+
+/* A row that picks a VARIANT of what you are looking at, rather than what you
+   are looking at, sits on the tinted surface. */
+.shell__nav--group { background: var(--shell-surface-2); }
+
+.shell__nav-label {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+  border-right: 1px solid var(--shell-line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--shell-text);
+  white-space: nowrap;
+}
+
+.shell__nav button {
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--shell-text-subtle);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell__nav button:hover { color: var(--shell-text); }
+
+.shell__nav button[aria-current='true'] {
+  border-bottom-color: var(--shell-marker);
+  color: var(--shell-accent);
+  font-weight: 600;
+}
+
+.shell__nav button:focus-visible { outline: 2px solid var(--shell-accent); outline-offset: -2px; }
+
+/* Flow view — one device, centred, scrollable when the window is short. */
+.shell__stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: clamp(8px, 4vh, 40px) 0;
+  background: var(--shell-board);
+}
+
+/* NOT transform: scale() — a transformed ancestor kills backdrop-filter, and
+   these screens are mostly glass. */
+.shell__phone {
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* Set from JS as custom properties rather than inline width/height, so the
+     mobile rules below can take the device full-bleed without !important. */
+  width: var(--device-w);
+  height: min(var(--device-h), 100%);
+  border-radius: 50px;
+  background: var(--background-base-default);
+  box-shadow: 0 0 0 1px var(--shell-line), 0 20px 60px rgba(0, 0, 0, 0.32);
+}
+
+.shell__empty {
+  margin: auto;
+  max-width: 32rem;
+  padding: 24px;
+  text-align: center;
+  color: var(--shell-text-subtle);
+  line-height: 1.5;
+}
+
+/* On a phone the browser IS the device, so the shell's own chrome is in the
+   way: it squeezed the screen between two bars, clipped the design, and the
+   toolbar itself overflowed a 390px window. There, the bar is replaced by one
+   floating control and a sheet — the screen keeps the whole viewport, which is
+   the only way a phone design previews honestly on a phone. */
+.shell__gear {
+  display: none;
+  position: fixed;
+  z-index: 30;
+  top: 12px;
+  right: 12px;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 100px;
+  background: var(--shell-surface);
+  color: var(--shell-text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+}
+
+.shell__gear svg { display: block; }
+
+.shell__sheet { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; }
+
+/* Blurred, not just dimmed: the sheet is over the design, and a sharp design
+   behind a translucent panel reads as two things at one depth. */
+.shell__sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(20px);
+  border: 0;
+  padding: 0;
+}
+
+.shell__sheet-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: calc(100% - 12px);
+  max-height: 82%;
+  margin: 0 6px 6px;
+  border-radius: 34px;
+  background: var(--shell-surface);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.9), 0 -8px 40px rgba(0, 0, 0, 0.18);
+  animation: shell-sheet-in 280ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes shell-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.shell__sheet-grabber {
+  width: 36px;
+  height: 5px;
+  margin: 8px auto 0;
+  border-radius: 100px;
+  background: var(--shell-grabber);
+}
+
+.shell__sheet-head {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 4px 56px;
+}
+
+.shell__sheet-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--shell-text); }
+.shell__sheet-sub { margin: 0; font-size: 12px; color: var(--shell-text-subtle); }
+
+.shell__sheet-close {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 100px;
+  background: var(--shell-surface-2);
+  color: var(--shell-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.shell__sheet-body { padding: 12px 16px 24px; overflow-y: auto; }
+.shell__sheet-body section + section { margin-top: 20px; }
+
+.shell__sheet-label {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shell-text-subtle);
+}
+
+/* A pill track with the live option lifted out of it in the surface colour —
+   the same shape iOS uses, because that is what the sheet is imitating. */
+.shell__seg { display: flex; gap: 4px; padding: 3px; border-radius: 100px; background: var(--shell-grabber); }
+
+.shell__seg button {
+  flex: 1;
+  height: 28px;
+  border: 0;
+  border-radius: 100px;
+  background: transparent;
+  color: var(--shell-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.shell__seg button[aria-pressed='true'] {
+  background: var(--shell-surface);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.shell__sheet-list { display: flex; flex-direction: column; }
+
+.shell__sheet-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--shell-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.shell__sheet-list button[aria-current='true'] { font-weight: 600; }
+
+.shell__radio {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--shell-line);
+  border-radius: 100px;
+}
+
+/* Filled by thickening its own border, so the dot needs no second element. */
+.shell__sheet-list button[aria-current='true'] .shell__radio {
+  border-width: 5px;
+  border-color: var(--shell-accent);
+}
+
+.shell__gear:focus-visible,
+.shell__sheet-close:focus-visible,
+.shell__seg button:focus-visible,
+.shell__sheet-list button:focus-visible { outline: 2px solid var(--shell-accent); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .shell__sheet-panel { animation: none; }
+}
+
+@media (max-width: 700px) {
+  .shell__gear { display: flex; }
+
+  /* The bar and its rows do not shrink to fit here — they are replaced. */
+  .shell__chrome { display: none; }
+
+  .shell__stage { padding: 0; }
+
+  .shell__phone {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

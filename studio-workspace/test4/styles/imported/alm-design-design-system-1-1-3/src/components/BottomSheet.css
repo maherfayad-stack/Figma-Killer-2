@@ -1,0 +1,272 @@
+/* ── overlay — fills the nearest positioned ancestor (the app/screen root) and
+   centres the phone-width frame. `absolute` (not `fixed`) so it can be contained
+   inside a screen/preview container; mount it in a full-screen root in production. ── */
+.bottom-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;     /* centre the phone-width frame horizontally */
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.bottom-sheet--open {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+/* ── frame — mobile-oriented column (same width as Navbar) holding scrim + panel ── */
+.bottom-sheet__frame {
+  position: relative;
+  width: 100%;
+  max-width: var(--bottom-sheet-width, 390px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;   /* sheet sits at the bottom */
+}
+
+.bottom-sheet--fullscreen .bottom-sheet__frame {
+  justify-content: stretch;
+}
+
+/* ── scrim — dims the presenting screen behind the sheet, on every size ── */
+.bottom-sheet__scrim {
+  position: absolute;
+  inset: 0;
+  /* intentional custom value: a 20% iOS scrim — lighter than the only black-overlay
+     token (--overlay-default = 50%), which there is no semantic alias for */
+  background: rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+/* Android uses the darker Material scrim (--overlay-default = 50%) */
+.bottom-sheet--android .bottom-sheet__scrim { background: var(--overlay-default); }
+/* Android fullscreen is an opaque page from the top — no scrim */
+.bottom-sheet--android.bottom-sheet--fullscreen .bottom-sheet__scrim { display: none; }
+
+/* status-bar top inset for fullscreen — iOS dynamic-island height vs the shorter Android bar */
+.bottom-sheet--ios { --bottom-sheet-top-inset: 54px; }
+.bottom-sheet--android { --bottom-sheet-top-inset: 28px; }
+
+/* ── panel ── */
+.bottom-sheet__panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  /* no explicit width — the flex column stretches the panel to the frame width
+     minus its own margins, so left/right gaps stay symmetric (see iOS margins below) */
+  align-self: stretch;
+  box-sizing: border-box;
+  overflow: hidden;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.bottom-sheet--open .bottom-sheet__panel {
+  transform: translateY(0);
+}
+
+/* ── size min/max heights (both platforms) ── */
+.bottom-sheet--small .bottom-sheet__panel  { min-height: 200px; max-height: 50vh; }
+.bottom-sheet--medium .bottom-sheet__panel { min-height: 400px; max-height: 90vh; }
+
+/* ── iOS medium / small — glass panel ── */
+.bottom-sheet--ios.bottom-sheet--medium .bottom-sheet__panel,
+.bottom-sheet--ios.bottom-sheet--small .bottom-sheet__panel {
+  margin: 0 6px 6px;
+  border-radius: var(--rounded-popover);
+  background: var(--liquid-glass-sheet-bg);
+  backdrop-filter: var(--liquid-glass-sheet-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-sheet-filter);
+  box-shadow: var(--liquid-glass-sheet-shadow);
+}
+
+/* ── Android medium / small — solid panel, 28px Material top corners ── */
+.bottom-sheet--android.bottom-sheet--medium .bottom-sheet__panel,
+.bottom-sheet--android.bottom-sheet--small .bottom-sheet__panel {
+  border-radius: 28px 28px 0 0;
+  background: var(--background-base-default);
+  box-shadow: var(--elevation-floating);
+}
+
+/* ── Android medium header — leading close · left-aligned title · trailing action ── */
+.bottom-sheet__android-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  padding: var(--space);
+  flex-shrink: 0;
+}
+.bottom-sheet__android-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--type-subtitle-family);
+  font-size: var(--type-subtitle-size);
+  font-weight: var(--type-subtitle-weight);
+  line-height: var(--type-subtitle-lh);
+  color: var(--text-base-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── fullscreen — header chrome over the presenting screen; the panel fills below
+   the status bar with rounded top corners. The iOS surface fades white→transparent
+   toward the bottom so the screen behind shows through (Figma 53589-1786). ── */
+.bottom-sheet--fullscreen .bottom-sheet__panel {
+  flex: 1;
+  min-height: 0;
+  /* start below the presenting screen's status bar — it stays visible above the
+     sheet (dimmed by the scrim on iOS). Override --bottom-sheet-top-inset to match the host. */
+  margin-top: var(--bottom-sheet-top-inset, 54px);
+  border-radius: var(--rounded-popover) var(--rounded-popover) 0 0;
+  background: var(--background-base-default);
+}
+/* Android fullscreen is a flat opaque page — square top, no scrim behind it */
+.bottom-sheet--android.bottom-sheet--fullscreen .bottom-sheet__panel {
+  border-radius: 0;
+}
+
+/* ── fullscreen header — toolbar (+ search) with Figma's 16px top/bottom padding
+   and a 10px gap between the toolbar row and the search field ── */
+.bottom-sheet__header {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.bottom-sheet--fullscreen .bottom-sheet__header {
+  padding: var(--space) 0;
+  gap: 10px;
+}
+
+/* ── grabber ── */
+.bottom-sheet__grabber-row {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex-shrink: 0;
+  height: 20px;
+  padding-bottom: 4px;
+}
+
+.bottom-sheet__grabber {
+  width: 36px;
+  height: 5px;
+  border-radius: var(--rounded-full);
+  background: var(--background-neutral-subtle);
+}
+
+.bottom-sheet--android .bottom-sheet__grabber {
+  width: 32px;
+  height: 4px;
+  background: var(--background-neutral-default);
+  opacity: 0.4;
+  margin: 0;
+}
+
+/* Android handle container — 16px all round, matching Figma's _androidHandle */
+.bottom-sheet--android .bottom-sheet__grabber-row {
+  height: auto;
+  padding: var(--space);
+  align-items: center;
+}
+
+/* ── toolbar — the shared _Toolbar-IOS / _Toolbar-Android ── */
+.bottom-sheet__toolbar {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space);
+  flex-shrink: 0;
+  position: relative;
+}
+.bottom-sheet__toolbar--ios { height: 44px; }
+.bottom-sheet__toolbar--android { height: 56px; }
+
+.bottom-sheet__toolbar-lhs,
+.bottom-sheet__toolbar-rhs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.bottom-sheet__toolbar-rhs { margin-inline-start: auto; }
+
+/* shared 24px icon sizing for raw line-icons + consumer action icons */
+.bottom-sheet__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+.bottom-sheet__icon svg { width: 100%; height: 100%; display: block; }
+
+/* android plain icon button */
+.bottom-sheet__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  /* Android sheet toolbar icons are aqua (back arrow + trailing actions) */
+  color: var(--icon-secondary-default);
+  border-radius: var(--rounded-full);
+}
+
+/* ── centred title — absolutely positioned so it stays centred regardless of side widths ── */
+.bottom-sheet__title {
+  position: absolute;
+  left: 68px;
+  right: 68px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.bottom-sheet__title-text {
+  font-family: var(--type-body-semibold-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bottom-sheet__subtitle-text {
+  font-family: var(--type-caption-regular-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── search bar — fullscreen iOS toolbar extension ── */
+.bottom-sheet__search-bar {
+  padding: 0 var(--space) var(--space-sm);
+  flex-shrink: 0;
+}
+
+/* ── content slot ── */
+.bottom-sheet__content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}

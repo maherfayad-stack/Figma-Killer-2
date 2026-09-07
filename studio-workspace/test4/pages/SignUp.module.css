@@ -1,0 +1,141 @@
+.page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--background-base-default);
+}
+
+.banner {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-lg);
+  align-items: center;
+  width: 100%;
+  padding: var(--space) var(--space) var(--space-lg);
+  background: var(--background-base-default);
+  overflow: hidden;
+}
+
+.title {
+  width: 100%;
+  margin: 0;
+  font-family: var(--type-headline-family);
+  font-size: var(--type-headline-size);
+  font-weight: var(--type-headline-weight);
+  line-height: 36px;
+  letter-spacing: -0.5px;
+  color: var(--text-base-default);
+}
+
+.form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-lg);
+  align-items: center;
+  width: 100%;
+}
+
+.fields {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space);
+  width: 100%;
+}
+
+/* ── phone number: a code dropdown butted against the number field ── */
+.phoneRow {
+  display: flex;
+  width: 100%;
+}
+
+.codeField {
+  flex-shrink: 0;
+  width: 101px;
+}
+
+/* The two fields butt together, so the inner corners are squared off. Reached
+   by element selector because the package's own class names are not visible
+   from inside a CSS module. */
+.codeField div {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.numberField {
+  flex: 1;
+  min-width: 0;
+  margin-inline-start: -1px;
+}
+
+.numberField div {
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+/* ── buttons ── */
+.continueSlot,
+.outlineSlot,
+.appleSlot {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* These land on the design-system button itself — it accepts `className`.
+   Fills and label colours are retuned by re-pointing the tokens the package's
+   own rules read, so they win regardless of stylesheet order. */
+.continueButton,
+.outlineButton,
+.appleButton {
+  width: 100%;
+}
+
+.continueButton {
+  --button-primary-default: var(--background-warning-default);
+}
+
+.outlineButton {
+  box-shadow: inset 0 0 0 1px var(--border-secondary-default);
+}
+
+/* The Apple mark paints from `currentColor` (the asset carries no baked fill),
+   so retuning the label token flips the glyph with the theme too. */
+.appleButton {
+  --text-link-default: var(--text-base-default);
+  box-shadow: inset 0 0 0 1px var(--background-brand-apple);
+}
+
+.businessLink {
+  margin: 0;
+  font-family: var(--type-body-semibold-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  text-align: center;
+  color: var(--text-link-default);
+}
+
+/* ── OR divider ── */
+.divider {
+  width: 100%;
+}
+
+.divider span {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  letter-spacing: 0.1px;
+}
+
+/* ── alternative sign-in ── */
+.altSignIn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  width: 100%;
+}

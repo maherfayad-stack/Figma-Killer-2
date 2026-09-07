@@ -1,0 +1,38 @@
+.expander {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: var(--space-sm);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-link-default);
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  white-space: nowrap;
+}
+
+.expander:focus-visible {
+  outline: 2px solid var(--border-secondary-default);
+  outline-offset: 2px;
+  border-radius: var(--rounded-xs);
+}
+
+.expander__label {
+  flex-shrink: 0;
+}
+
+.expander__icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  stroke-width: 1.5;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.expander__icon--expanded {
+  transform: rotate(180deg);
+}
