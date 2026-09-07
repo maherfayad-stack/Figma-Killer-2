@@ -43,6 +43,7 @@ import {
 import { waitForDelay, waitForDocumentQuiet, waitForPromise } from '@site/canvas/canvasCaptureSettle'
 import type { AgentCaptureFrameReport, AgentCaptureNodeRect } from '@core/studio-capture'
 import { AGENT_CAPTURE_FRAME_ATTR } from '@core/studio-capture'
+import { registerSettledFrameDocument } from './frameInspectBridge'
 import styles from './CaptureFrame.module.css'
 
 /** Mirrors `BoardFrameView.tsx`'s `STUDIO_BREAKPOINT_BASE` — the board's one synthetic breakpoint. */
@@ -149,6 +150,11 @@ async function settleAndReport(
     })
     return
   }
+  // Registered only on the settled path: `studio_computed_styles` and
+  // `studio_measure_element` read this document AFTER the readiness report
+  // flips, and a mid-layout frame would hand them fonts that had not loaded
+  // and boxes about to move.
+  registerSettledFrameDocument(pageId, iframeDocument)
   onSettled(measureFrame(pageId, iframeDocument))
 }
 

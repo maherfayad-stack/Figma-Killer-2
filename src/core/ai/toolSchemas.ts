@@ -449,59 +449,6 @@ export const StudioExportFramesInputSchema = Type.Object({
   })),
 })
 
-// ---------------------------------------------------------------------------
-// studio_set_frame_axes / studio_duplicate_frame_as_variant (WS-12 §6.1) —
-// browser-bridged (execution: 'browser', scope: 'site'), same pattern as
-// studio_export_frames above: this file only declares the shape, the real
-// mutation runs client-side against the live board via `EditorStore.setFrameAxes`/
-// `duplicateFrameAsVariant` (`executor.ts`), the same two actions the
-// toolbar's own preview-axes/duplicate-as-variant controls call.
-//
-// Both address a frame by `pageId` (the id every other Studio tool already
-// returns) rather than a raw board `frameId`, which no tool exposes to an
-// agent at all — when a page has more than one frame/variant on the active
-// board, the FIRST one found is targeted; pass `frameId` explicitly
-// (returned by studio_duplicate_frame_as_variant) to address a specific one.
-// ---------------------------------------------------------------------------
-
-const StudioFrameAxesPatchSchema = Type.Object({
-  direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
-  colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
-  locale: Type.Optional(Type.String({ minLength: 1 })),
-})
-
-export const StudioSetFrameAxesInputSchema = Type.Object({
-  pageId: Type.String({ minLength: 1, description: 'Studio page id (from studio_list_pages) whose board frame gets the override.' }),
-  frameId: Type.Optional(Type.String({ description: 'Address a SPECIFIC frame when the page has more than one (a "duplicate as variant" result) — omit to target the first frame found for pageId.' })),
-  axes: StudioFrameAxesPatchSchema,
-})
-
-/**
- * `studio_computed_styles` — what a screen's CSS ACTUALLY resolved to, read off
- * the live canvas.
- *
- * The gap this closes: the agent could see the design's intended values (a
- * Figma connector's variable definitions) and a picture of its own output, but
- * never the values its own stylesheet computed to. So "does this button render
- * at 14px?" was answerable only by squinting at a screenshot, and a label
- * rendering at the wrong size survived four rounds of corrections — each one
- * editing a number that was already right.
- *
- * Deliberately per-NODE rather than per-component: it needs no catalogue of
- * component variants and no knowledge of what `size="default"` means, so it
- * covers buttons, inputs and everything else the same way.
- */
-export const StudioComputedStylesInputSchema = Type.Object({
-  pageId: Type.String({ minLength: 1, description: 'Studio page id (from studio_list_pages) whose live board frame is read.' }),
-  nodeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
-    description: 'Restrict to these node ids (from studio_screenshot\'s nodeRects or studio_find_nodes). Omit to report every node in the frame that renders text or a visible box.',
-  })),
-  textOnly: Type.Optional(Type.Boolean({
-    description: 'Default true — report only nodes with their own text, which is what a type mismatch lives on. Set false to include layout containers (their padding, radius and background).',
-  })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 300, description: 'Cap on reported nodes. Default 80, with an honest truncated count.' })),
-})
-
 /**
  * `studio_page_diagnostics` — the BROWSER leg's input shape (page ids already
  * resolved). The model-facing tool takes screen NAMES and resolves them
@@ -523,12 +470,6 @@ export const StudioPageDiagnosticsInputSchema = Type.Object({
     maximum: 100,
     description: 'Cap on distinct findings reported PER PAGE. Default 25, with an honest truncated count.',
   })),
-})
-
-export const StudioDuplicateFrameAsVariantInputSchema = Type.Object({
-  pageId: Type.String({ minLength: 1, description: 'Studio page id whose board frame is duplicated as a new, independently-addressable variant frame.' }),
-  frameId: Type.Optional(Type.String({ description: 'Duplicate a SPECIFIC frame when the page already has more than one — omit to duplicate the first frame found for pageId.' })),
-  axes: StudioFrameAxesPatchSchema,
 })
 
 // ---------------------------------------------------------------------------
@@ -559,7 +500,8 @@ export const StudioUploadAssetInputSchema = Type.Object({
 // execution class it turns out to need.
 // ---------------------------------------------------------------------------
 
-const DIR_INPUT_DESCRIPTION = 'Absolute project directory. Defaults to the first project under studio-workspace/.'
+/** Exported for `designReferenceToolSchemas.ts`, the one sibling leaf that also declares Studio tool inputs — the `dir` argument means the same thing on every Studio tool, and two copies of this sentence would drift into two answers about what `dir` defaults to. Not re-exported from the barrel: it is a description string, not part of the module's public API. */
+export const DIR_INPUT_DESCRIPTION = 'Absolute project directory. Defaults to the first project under studio-workspace/.'
 
 export const StudioListComponentsInputSchema = Type.Object({
   dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
@@ -630,59 +572,3 @@ export const StudioFetchRemoteAssetInputSchema = Type.Object({
   ),
 })
 
-// ---------------------------------------------------------------------------
-// studio_register_design_reference / studio_list_design_references /
-// studio_read_design_reference / studio_recommend_export_dpr — a durable,
-// per-project, addressable-by-id store for a ground-truth design comp
-// (typically a Figma export) an agent measures a Studio frame against,
-// instead of eyeballing it. All `execution: 'server'`, headless — see
-// `server/handlers/studio/designReferenceStore.ts` for where/why it's
-// stored, and `server/ai/mcp/tools/studio/diffFrames.ts` for how
-// studio_diff_frames' `referenceId` input consumes it.
-// ---------------------------------------------------------------------------
-
-export const StudioRegisterDesignReferenceInputSchema = Type.Object({
-  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
-  url: Type.Optional(Type.String({
-    minLength: 1,
-    description:
-      'An http:// or https:// URL that returns the reference\'s image bytes (e.g. a Figma export/download URL another tool already returned) — fetched SERVER-SIDE, never transiting you, the same studio_fetch_remote_asset pattern. Provide exactly one of url or imageBase64.',
-  })),
-  imageBase64: Type.Optional(Type.String({
-    minLength: 1,
-    description: 'Base64-encoded original image bytes, when you already hold them rather than a URL (e.g. an attachment). Provide exactly one of url, path or imageBase64. Prefer path or url when available — both avoid round-tripping the bytes through your own context.',
-  })),
-  path: Type.Optional(Type.String({
-    minLength: 1,
-    description:
-      'Path to an image file ALREADY ON DISK inside this project, relative to the project root (e.g. ".studio/figma/hero.png"). This is the route to use after any tool that DOWNLOADS an export to disk — a Figma MCP server\'s asset-download tool, a shell fetch, anything. Read server-side; the bytes never transit you. Must resolve inside the project directory. Provide exactly one of url, path or imageBase64.',
-  })),
-  pageId: Type.Optional(Type.String({ description: 'The Studio page id (from studio_list_pages) this is a design reference FOR. Optional, but required for studio_recommend_export_dpr and for filtering studio_list_design_references by page.' })),
-  label: Type.Optional(Type.String({ description: 'A short human-readable name, e.g. "Homepage hero — Figma export".' })),
-  source: Type.Optional(Type.String({ description: 'Free-form provenance, e.g. a Figma file/node URL, so a later reader knows where this came from.' })),
-})
-
-export const StudioListDesignReferencesInputSchema = Type.Object({
-  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
-  pageId: Type.Optional(Type.String({ description: 'Restrict to references registered for one Studio page id.' })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: 'Cap on returned references. Default 50.' })),
-})
-
-export const StudioReadDesignReferenceInputSchema = Type.Object({
-  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
-  referenceId: Type.String({ minLength: 1, description: 'A studio_register_design_reference id (from its own result or studio_list_design_references).' }),
-  includeImage: Type.Optional(Type.Boolean({
-    description: 'When true, also returns the ORIGINAL image bytes as an MCP image block, so you can actually look at the reference (not only its metadata). Costs real context for a large reference — omit (default false) when only the metadata (dimensions, label, pageId) is needed, e.g. before calling studio_recommend_export_dpr or studio_diff_frames.',
-  })),
-})
-
-export const StudioRecommendExportDprInputSchema = Type.Object({
-  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
-  pageId: Type.String({ minLength: 1, description: 'The Studio page id whose board frame you intend to export with studio_export_frames.' }),
-  referenceId: Type.String({ minLength: 1, description: 'A studio_register_design_reference id to match the export resolution to.' }),
-})
-
-export const StudioDeleteDesignReferenceInputSchema = Type.Object({
-  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
-  referenceId: Type.String({ minLength: 1, description: 'A studio_register_design_reference id to remove. Removing an unknown or already-removed id is not an error.' }),
-})

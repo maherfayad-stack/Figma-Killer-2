@@ -249,7 +249,7 @@ import {
   resolveProjectDir,
   writeProjectMeta,
 } from './studioProjects'
-import { readStudioMeta, DEFAULT_TRUST_TIER } from './studio/studioMeta'
+import { readStudioMeta, recordProjectOpened, DEFAULT_TRUST_TIER } from './studio/studioMeta'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
@@ -438,6 +438,13 @@ export async function tryServeStudio(
       // story ROUTES are all still discovered and parsed; only the per-page
       // convert narrows), so a targeted reload can never retract a frame.
       syncStoryBoardFrames(dir, loaded.stories)
+      // W7-2 — the one request that means "this project is on the board".
+      // Recorded here rather than in the launcher's click handler because a
+      // project is also opened by a reload, by the sticky `studioWorkspaceDir`
+      // on a fresh session, and by the agent's own reads — all of which come
+      // through here and none of which pass through the launcher. Best-effort
+      // (see `recordProjectOpened`); W7-5's onboarding checklist reads it.
+      recordProjectOpened(dir)
       const missingPageIds = missingStudioLoadPageIds(pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)

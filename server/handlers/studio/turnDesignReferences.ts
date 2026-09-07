@@ -31,25 +31,46 @@
  * So the transient path now feeds the durable one. Attaching a design is
  * enough; there is no second control to remember.
  *
+ * ## Why an attachment is CONTEXT, not the spec
+ *
+ * Feeding the durable path is not the same as nominating a spec, and
+ * conflating the two produced the flagship bug this module's first version
+ * shipped with. Every chat image registered durably, and resolution picked
+ * the most recently registered reference — so the moment a user pasted a
+ * screenshot to ASK something ("why does this look wrong?"), that crop became
+ * the thing every later `studio_compare` measured against. Live in this
+ * repo's own `test4` fixture: the `sms` page's 375x800 Figma frame is
+ * shadowed by a 943x294 chat crop, so compare refuses on aspect ratio and the
+ * Stop gate can never pass again. The user's real design is still on disk,
+ * still correct, and permanently unreachable.
+ *
+ * A pasted image is therefore registered with `role: 'context'`. It is kept,
+ * it is listed, it is croppable, and it still resolves as the spec when it is
+ * the ONLY candidate for the page — the "paste a comp and build the screen"
+ * flow this module exists for is untouched. What it can no longer do is
+ * outrank a deliberately registered design, or silently win a page that has
+ * several candidates: see `resolveDesignReference`, which refuses that page
+ * by name instead of guessing. Promoting one is an explicit gesture — a
+ * `referenceId` tool argument, or registering it as `role: 'spec'`.
+ *
  * ## Why it takes the turn's active page id
  *
  * Every reference used to register with NO `pageId`, so it could never win
- * `resolveDesignReference`'s ("this page's own" beats "most recent
- * project-wide") branch — only the explicit-id and most-recent-project-wide
- * fallbacks ever fired. Paste screen 1's comp, build it, then paste screen
- * 2's comp anywhere later in the SAME conversation, and every subsequent
- * `studio_compare`/`studio_measure_reference` call for screen 1 silently
- * started measuring against screen 2's design instead — the literal flagship
- * workflow (paste several frames, build several screens) failing with a
- * confident, wrong number instead of an error.
+ * `resolveDesignReference`'s "this page's own" branch. Paste screen 1's comp,
+ * build it, then paste screen 2's comp anywhere later in the SAME
+ * conversation, and every subsequent `studio_compare`/
+ * `studio_measure_reference` call for screen 1 silently started measuring
+ * against screen 2's design instead — the literal flagship workflow (paste
+ * several frames, build several screens) failing with a confident, wrong
+ * number instead of an error.
  *
  * `pageId` here is the turn's live active-page id, threaded in by the caller
  * from the same `StudioAgentSnapshot.activePageId` the live digest is already
  * built from (`chat.ts`) — never re-derived by a second, possibly-stale path.
  * `undefined` when no Studio project is open or the browser posted no/an
- * invalid snapshot; the reference then registers unscoped and only the
- * explicit-id / most-recent-project-wide fallbacks can find it again, exactly
- * as before this fix — an honest degradation, not a silent wrong answer.
+ * invalid snapshot; the reference then registers unscoped, where
+ * `resolveDesignReference` will still find it for any page — but only as the
+ * lowest-precedence tier, and only when it is the sole candidate there.
  *
  * ## Why it is idempotent by content hash
  *
@@ -81,11 +102,8 @@
  * the turn proceeds with whatever armed successfully, which may be nothing.
  */
 import { createHash } from 'node:crypto'
-import type { DesignReference } from './designReferenceSchema'
+import { CHAT_ATTACHMENT_REFERENCE_SOURCE, type DesignReference } from './designReferenceSchema'
 import { findDesignReferenceByContentHash, registerDesignReference } from './designReferenceStore'
-
-/** `source` recorded on a reference armed from a chat attachment, so a human reading the manifest back can tell it apart from a deliberate `studio_register_design_reference` call. */
-export const CHAT_ATTACHMENT_REFERENCE_SOURCE = 'chat-attachment'
 
 /**
  * Register every image attached to this turn as a design reference, skipping
@@ -120,6 +138,11 @@ export async function registerTurnDesignReferences(
       const result = await registerDesignReference(dir, bytes, {
         label: imageBytes.length > 1 ? `Attached in chat (${index + 1})` : 'Attached in chat',
         source: CHAT_ATTACHMENT_REFERENCE_SOURCE,
+        // CONTEXT, never spec — see the module doc's "Why an attachment is
+        // context". Written explicitly rather than left to
+        // `designReferenceRole`'s source-based derivation so the manifest
+        // states the fact rather than implying it.
+        role: 'context',
         ...(pageId ? { pageId } : {}),
       })
       if (!result.ok) {

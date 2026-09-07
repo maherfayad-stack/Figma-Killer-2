@@ -63,6 +63,32 @@ describe('registerDesignReference', () => {
     expect(onDisk).toEqual(Buffer.from(bytes))
   })
 
+  it('persists role and the fidelity fields, and omits them when the caller has no opinion', async () => {
+    const bytes = await pngBytes(10, 10, { r: 1, g: 2, b: 3 })
+    const withMeta = await registerDesignReference(dir, bytes, {
+      role: 'context',
+      mode: 'strict',
+      passScore: 99,
+      maxRegionCoverage: 0.5,
+    })
+    expect(withMeta.ok).toBe(true)
+    if (!withMeta.ok) return
+    expect(withMeta.reference.role).toBe('context')
+    expect(withMeta.reference.mode).toBe('strict')
+    expect(withMeta.reference.passScore).toBe(99)
+    expect(withMeta.reference.maxRegionCoverage).toBe(0.5)
+
+    // Omitted, not defaulted: an entry with no `role` is exactly the legacy
+    // shape `designReferenceRole` derives from `source`, and writing a
+    // speculative default would erase that distinction on disk.
+    const bare = await registerDesignReference(dir, await pngBytes(11, 11, { r: 4, g: 5, b: 6 }), {})
+    expect(bare.ok).toBe(true)
+    if (!bare.ok) return
+    expect(bare.reference.role).toBeUndefined()
+    expect(bare.reference.mode).toBeUndefined()
+    expect(bare.reference.passScore).toBeUndefined()
+  })
+
   it('accepts a real JPEG and reports the correct ext/mimeType', async () => {
     const bytes = await jpegBytes(20, 20)
     const result = await registerDesignReference(dir, bytes, {})

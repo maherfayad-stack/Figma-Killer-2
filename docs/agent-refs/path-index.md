@@ -18,7 +18,8 @@ source) where a plausible-looking change is how a real bug ships ·
 | 🟢 `server/handlers/studio.ts` | **HTTP routing only** for every `/admin/api/studio/*` endpoint. Its module doc lists all routes — read it first. |
 | 🟢 `server/handlers/studioPageLoad.ts` | The parse → inline → CSS → convert pipeline. `resolveModuleId` (element → module) lives here. W5-3 — Storybook stories are a THIRD route-entry producer here (`discoverProjectStories` + `buildStoryRouteEntries`), gated on a filename glob so a project with no stories pays nothing. WS-10 §4.2/§4.4 (Phase 4) — also exports `loadStudioPageInLocale(dir, pageId, locale)`, parsing ONE route under an explicit `preferredKey` override (reuses `parseStandardRouteEntry`/`parseAppRouterRouteEntry`, extracted from the whole-site builders for this). |
 | 🟢 `server/handlers/studio/localizedPage.ts` | WS-10 §4.4 (Phase 4) — `GET /admin/api/studio/localized-page`, the `(pageId, locale) → Page \| null` route `localizedPageSlice.ts` fetches on demand. |
-| 🟢 `server/handlers/studioProjects.ts` | Project discovery, `.studio/meta.json`, `discoverPageFiles`, `projectPagesDir`, `nextPageName`. |
+| 🟢 `server/handlers/studioProjects.ts` | Project discovery, `.studio/meta.json`, `discoverPageFiles`, `projectPagesDir`, `nextPageName`. `studioProjectSummary(dir)` is the ONE builder of `StudioProjectSummary` — the listing, `/create`, `/rename` and `/duplicate` all return one, so a card redrawn from a mutation carries what a card drawn from the listing does. It reads platform / cached-probe framework / trust tier out of the meta the listing was already reading, and `editedAt` from the newest mtime under the pages dir (one walk, one stat per file — a stat of the DIRECTORY reports adds and removes, not edits). Never probes. |
+| 🟢 `server/handlers/studio/projectDuplicate.ts` | `duplicateStudioProject`. `cpSync` of the whole project MINUS `node_modules`, `dist`, `.next`, `.turbo` and `.git` (a copied `.git` points at someone else's remote); the `.studio/` sidecar IS copied, because it is the board. Picks a free DISPLAY name first (`<name> copy`, `<name> copy 2`, …) and slugifies that, clears `lastOpenedAt`, and regenerates the project guide. Same parent-comparison containment check as `projectTrash.ts`. Reached by `POST /admin/api/studio/duplicate` (capability-gated `studio.write`). |
 | 🟢 `server/handlers/studio/projectTrash.ts` | `trashStudioProject`, `PROJECTS_TRASH_DIR_NAME`. Deleting a whole project is RECOVERABLE: the folder moves to `studio-workspace/.trash/<folder>-<timestamp>/`, never `rmSync`. Validates the target by comparing its resolved PARENT to the projects root — one check that rejects `..`, a nested path, and the workspace root. `listStudioProjects` skips `.trash` so it never lists itself. Reached by `POST /admin/api/studio/delete`, the one studio route that checks a capability (`studio.write`). |
 | 🟢 `server/handlers/studio/pageTemplates.ts` | `starterPage(componentName, kind)` — the starter `.tsx` + `.module.css` written for each `PageKind` (screen / popup / small + big bottom sheet). Dependency-free and canonical by construction; gated by `__tests__/pageTemplates.test.ts`. |
 | 🟢 `server/handlers/studio/pageScaffold.ts` | `createScaffoldedPage` — what `POST /admin/api/studio/page` writes (starter `.tsx` + `.module.css`), the file extension it matches, and the root node id it reads back by parsing the file it just wrote. Board placement is delegated to `boardFrames.ts`. |
@@ -336,7 +337,12 @@ source) where a plausible-looking change is how a real bug ships ·
   `server/publish/**` is the removable half. Do not conflate them.
 - 🟢 **`src/admin/pages/dashboard/` is Studio's own launcher** ("Overview") —
   the project grid plus both import CTAs, the first screen a user sees. Not a
-  CMS widget grid.
+  CMS widget grid. One tile is `ProjectCard.tsx` (badges + "Edited 2 days ago"
+  + the Open / Rename / Duplicate / Delete `ContextMenu`, reachable from its ⋯
+  button or a right-click); `DashboardPage.tsx` owns only the server calls
+  behind those verbs, and every one of them redraws through
+  `useStudioProjects`'s `refresh()`. The same projects are reachable from ⌘K
+  via `src/admin/spotlight/providers/projectsProvider.ts`.
 - `src/admin/pages/{content,data,media}/` do not exist on disk. The standalone
   Content / Data / Media / Users **workspace routes were deleted**;
   `src/admin/router.tsx` serves only `/admin/dashboard`, `/admin/site`,
