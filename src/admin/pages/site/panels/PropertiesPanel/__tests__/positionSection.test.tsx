@@ -12,7 +12,9 @@
  *      clicking an edge writes the right property to the right target.
  *   3. F29's constraint side-picker — switching Left/Right MOVES the value
  *      (clears the old property, writes the new one) rather than leaving
- *      both set.
+ *      both set — plus the crosshair diagram that sits beside it, which
+ *      stays disabled-with-a-reason while no canvas frame can confirm the
+ *      element's containing block.
  *   4. The z-index settings affordance — collapsed by default (Law 2),
  *      opens on demand.
  */
@@ -254,6 +256,42 @@ describe('PositionSection — absolute-mode constraints', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Right' }))
 
     expect(calls).toHaveLength(0)
+  })
+
+  it('mounts the crosshair beside the pickers, disabled with a reason when no frame can confirm the containing block', () => {
+    renderPositionSection({
+      currentStyles: { position: 'absolute' },
+      storedStyles: { position: 'absolute' },
+    })
+
+    // Both surfaces are present — the diagram is presentation ON TOP of the
+    // pickers, never a replacement for them.
+    expect(screen.getByLabelText('X anchor side')).toBeTruthy()
+    const diagram = screen.getByTestId('css-constraints-diagram')
+    expect(diagram.getAttribute('data-disabled')).toBe('true')
+
+    // No live canvas frame in this environment, so the parent's containing
+    // block is unverifiable — every control refuses rather than assuming.
+    for (const testId of [
+      'constraint-edge-left',
+      'constraint-edge-right',
+      'constraint-edge-top',
+      'constraint-edge-bottom',
+      'constraint-centre-x',
+      'constraint-centre-y',
+    ]) {
+      expect(screen.getByTestId(testId).getAttribute('aria-disabled')).toBe('true')
+    }
+  })
+
+  it('reads the declared insets back into the crosshair', () => {
+    renderPositionSection({
+      currentStyles: { position: 'absolute', left: '8px', right: '8px' },
+      storedStyles: { position: 'absolute', left: '8px', right: '8px' },
+    })
+
+    expect(screen.getByLabelText(/Horizontal: Left and right/)).toBeTruthy()
+    expect(screen.getByLabelText(/Vertical: not set/)).toBeTruthy()
   })
 })
 
