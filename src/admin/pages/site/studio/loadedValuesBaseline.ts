@@ -33,14 +33,29 @@ let loadedValues = new Map<string, LoadedNodeValues>()
 
 /**
  * Phase 0 item 0.6 — the load-time `classIds` baseline `collectClassIdsDrift`
- * diffs against. Studio (filesystem) mode has no `class` edit kind yet
- * (`StudioEditSchema` is `prop`/`text`/`style`/`literal`/`tag`/`asset`/`css`
- * only — see Track B2 / `setJsxClassName`), so a class add/remove/reorder can
- * never reach disk. Tracked separately from `loadedValues` (a different value
+ * diffs against. Tracked separately from `loadedValues` (a different value
  * shape — an ordered id array, not a scalar) but kept in lockstep with it:
  * every function below that resets/merges `loadedValues` does the same to
  * this map in the same call, so the two baselines can never observe a
  * different "as loaded" moment.
+ *
+ * `class-toast` — EVERY observed node gets an entry, including one with no
+ * classes at all (an empty array). The map used to omit those, which made
+ * "absent" ambiguous between the two things the diff has to tell apart:
+ *
+ *   - **observed with no classes** — the ordinary case, and the one a real
+ *     user class assignment starts from. A drift here is genuine.
+ *   - **never observed** — the node was not in the document when the baseline
+ *     was taken: a clone minted by `duplicateNode`/paste (`cloneSubtree` mints
+ *     a fresh `nanoid()` and COPIES `classIds`), an optimistically inserted
+ *     subtree still waiting for its structural commit's reload, or a node
+ *     whose `line:col` id moved under it. Its classes arrived with it from the
+ *     generator; the user never assigned them.
+ *
+ * Collapsing the second onto the first is what made a whole inlined component
+ * subtree report "added statusBar, added time, added islandSpacer, …" on an
+ * unrelated save. `undefined` from `getLoadedClassIds` now means "never
+ * observed" and NOTHING else.
  */
 let loadedClassIds = new Map<string, readonly string[]>()
 
@@ -93,18 +108,18 @@ export function getLoadedNodeValues(nodeId: string): LoadedNodeValues | undefine
   return loadedValues.get(nodeId)
 }
 
-/** Snapshot every node's current `classIds` — the shape `loadedClassIds` stores. Nodes with no assigned classes are omitted (equivalent to an empty array on read via `getLoadedClassIds`'s `?? []` callers). */
+/** Snapshot every node's current `classIds` — the shape `loadedClassIds` stores. EVERY node gets an entry, an unclassed one included, so an absent entry means "never observed" (see the map's own doc). */
 function snapshotClassIds(pages: readonly Page[]): Map<string, readonly string[]> {
   const snapshot = new Map<string, readonly string[]>()
   for (const page of pages) {
     for (const node of Object.values(page.nodes)) {
-      if (node.classIds.length > 0) snapshot.set(node.id, [...node.classIds])
+      snapshot.set(node.id, [...node.classIds])
     }
   }
   return snapshot
 }
 
-/** The current `classIds` baseline entry for one node id, or `undefined` (no classes as-loaded). */
+/** This node's `classIds` as last observed, or `undefined` when the baseline has NEVER seen this node id — not the same as "no classes", which is an empty array. */
 export function getLoadedClassIds(nodeId: string): readonly string[] | undefined {
   return loadedClassIds.get(nodeId)
 }
@@ -125,10 +140,7 @@ export function resetLoadedValues(pages: readonly Page[]): void {
 export function mergeLoadedValuesBaseline(pages: readonly Page[]): void {
   for (const [nodeId, values] of snapshotNodeValues(pages)) loadedValues.set(nodeId, values)
   for (const page of pages) {
-    for (const node of Object.values(page.nodes)) {
-      if (node.classIds.length > 0) loadedClassIds.set(node.id, [...node.classIds])
-      else loadedClassIds.delete(node.id)
-    }
+    for (const node of Object.values(page.nodes)) loadedClassIds.set(node.id, [...node.classIds])
   }
 }
 
@@ -154,7 +166,17 @@ export function collectClassIdsDrift(pages: readonly Page[]): ClassIdsDrift[] {
   const drift: ClassIdsDrift[] = []
   for (const page of pages) {
     for (const node of Object.values(page.nodes)) {
-      const before = loadedClassIds.get(node.id) ?? []
+      const before = loadedClassIds.get(node.id)
+      // `class-toast` — never observed, so there is no "before" to diff and
+      // nothing here is a user gesture: this node entered the document AFTER
+      // the baseline was taken, carrying whatever classes its generator gave
+      // it (a `cloneSubtree` duplicate/paste, an optimistic insert, a
+      // re-addressed id). Treating a missing entry as `[]` reported every one
+      // of those classes as freshly added and warned the user about class
+      // changes they never made. The next `commitClassIdsBaseline` (every
+      // save runs one) adopts the node, so a LATER real edit on it still
+      // diffs honestly.
+      if (before === undefined) continue
       const after = node.classIds
       if (before.length === after.length && before.every((id, i) => id === after[i])) continue
       const beforeSet = new Set(before)
@@ -187,7 +209,9 @@ export function commitClassIdsBaseline(pages: readonly Page[], refusedNodeIds: r
   loadedClassIds = snapshotClassIds(pages)
   for (const nodeId of refusedNodeIds) {
     const before = previous.get(nodeId)
-    if (before) loadedClassIds.set(nodeId, before)
+    // `undefined` is "never observed", so the honest restore is to make it
+    // unobserved again rather than to record an empty entry.
+    if (before !== undefined) loadedClassIds.set(nodeId, before)
     else loadedClassIds.delete(nodeId)
   }
 }
