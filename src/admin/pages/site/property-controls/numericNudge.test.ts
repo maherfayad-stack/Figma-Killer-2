@@ -20,8 +20,13 @@ describe('nudgeStepFor', () => {
     expect(nudgeStepFor({ shiftKey: true, altKey: true })).toBe(FINE_NUDGE)
   })
 
-  it('uses 8 as the shift nudge and 0.1 as the fine nudge', () => {
-    expect(SHIFT_NUDGE).toBe(8)
+  // The one nudge model (W8-1): 1 / 10 / 0.1, Figma's, everywhere. The ±8
+  // "8px design scale" variant this file used to carry disagreed with
+  // `ScrubInput`'s ±10 — same keypress, different result, depending on which
+  // component rendered the field.
+  it('uses 1 / 10 / 0.1 as the one nudge model', () => {
+    expect(BASE_NUDGE).toBe(1)
+    expect(SHIFT_NUDGE).toBe(10)
     expect(FINE_NUDGE).toBe(0.1)
   })
 })
@@ -49,6 +54,13 @@ describe('parseNudgeableValue', () => {
     expect(parseNudgeableValue('')).toBeNull()
     expect(parseNudgeableValue('#4f46e5')).toBeNull()
   })
+
+  // Shares `evaluateNumericExpression` with the scrub fields, so a field
+  // holding a sum is still a nudge baseline instead of going inert.
+  it('reduces arithmetic to its result', () => {
+    expect(parseNudgeableValue('100/2')).toEqual({ number: 50, unit: '' })
+    expect(parseNudgeableValue('100px + 8')).toEqual({ number: 108, unit: 'px' })
+  })
 })
 
 describe('nudgeCssValue', () => {
@@ -57,9 +69,9 @@ describe('nudgeCssValue', () => {
     expect(nudgeCssValue('16px', 'down', BASE_NUDGE)).toBe('15px')
   })
 
-  it('applies the shift (8) big nudge', () => {
-    expect(nudgeCssValue('16px', 'up', SHIFT_NUDGE)).toBe('24px')
-    expect(nudgeCssValue('16px', 'down', SHIFT_NUDGE)).toBe('8px')
+  it('applies the shift (10) big nudge', () => {
+    expect(nudgeCssValue('16px', 'up', SHIFT_NUDGE)).toBe('26px')
+    expect(nudgeCssValue('16px', 'down', SHIFT_NUDGE)).toBe('6px')
   })
 
   it('applies the alt (0.1) fine nudge without float dust', () => {
@@ -68,11 +80,11 @@ describe('nudgeCssValue', () => {
   })
 
   it('handles unitless values', () => {
-    expect(nudgeCssValue('24', 'up', SHIFT_NUDGE)).toBe('32')
+    expect(nudgeCssValue('24', 'up', SHIFT_NUDGE)).toBe('34')
   })
 
   it('can drive a value negative', () => {
-    expect(nudgeCssValue('4px', 'down', SHIFT_NUDGE)).toBe('-4px')
+    expect(nudgeCssValue('4px', 'down', SHIFT_NUDGE)).toBe('-6px')
   })
 
   it('leaves non-numeric values untouched (returns null)', () => {
@@ -83,8 +95,8 @@ describe('nudgeCssValue', () => {
 
   it('starts an empty field from zero when emptyUnit is given', () => {
     expect(nudgeCssValue('', 'up', BASE_NUDGE, { emptyUnit: 'px' })).toBe('1px')
-    expect(nudgeCssValue('', 'up', SHIFT_NUDGE, { emptyUnit: 'px' })).toBe('8px')
-    expect(nudgeCssValue('   ', 'up', SHIFT_NUDGE, { emptyUnit: 'rem' })).toBe('8rem')
+    expect(nudgeCssValue('', 'up', SHIFT_NUDGE, { emptyUnit: 'px' })).toBe('10px')
+    expect(nudgeCssValue('   ', 'up', SHIFT_NUDGE, { emptyUnit: 'rem' })).toBe('10rem')
     expect(nudgeCssValue('', 'down', BASE_NUDGE, { emptyUnit: 'px' })).toBe('-1px')
   })
 

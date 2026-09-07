@@ -75,7 +75,7 @@ Merged as PRs #4–#33. Verified against the tree, not against the PR titles.
 | **Storybook CSF import** | ◐ **partial** — discovery, 13 named refusals and board sync landed (measured: primer/react 67.2%, Shopify/polaris 97.8%); story `args` do **not** write back — WS-14.3 |
 | **Deploy previews** through the project's own Vercel/Netlify CLI | ✅ landed, Tier-2 gated, no provider token stored — **but never dogfooded against a real deploy** (CI cannot) |
 | **Animation editing** — the Animations inspector section | ✅ landed, including `insertKeyframes` for new `@keyframes` |
-| **Inspector progressive disclosure** (G1–G10) | ✅ landed. ◐ **G6.4** selection colours (WS-14.4) and the **§6 measurement gate** (WS-14.5) did not |
+| **Inspector progressive disclosure** (G1–G10) | ✅ landed, and **G9 finished in W8-1** (`color` → Fill, `textShadow` → Effects). ◐ **G6.4** selection colours (WS-14.4) and the **§6 measurement gate** (WS-14.5) did not |
 | **Studio comments** — board review threads, agent loop | ✅ landed in full, including the MCP reply/resolve tools |
 | **Trust tiers** (§0 of the import roadmap) | ✅ landed — `TrustTierSchema`, the promotion route, the consent banner, the `studio.run.project` capability |
 
@@ -85,6 +85,15 @@ tail, A7 Figma discoverability, and E2.5's unverified panel-surface work. The
 `src/modules/alm/` deletion remains deliberately deferred under `standing-07`,
 and `scripts/bench/studioBoard.bench.ts` still carries uncalibrated budgets and
 has never run.
+
+### Waves 7–10 — updated 2026-09-06
+
+The work-order document is [`STUDIO-WAVE7-PLAN.md`](STUDIO-WAVE7-PLAN.md). Rows
+appear here as they land; an absent task has not started.
+
+| Track | Status |
+|---|---|
+| **W8-1** inspector field ergonomics | ✅ landed — one commit coercion (a typed `50` in Width no longer emits the invalid `width: 50`), ONE nudge model (1 / 10 / 0.1; the ±8 variants are gone) now also covering `opacity`/`zIndex`, arithmetic (`100/2`, `100+8`) in every numeric field through one shared evaluator, Enter commits **and keeps focus** in all three field kinds, Flip H/V on the rotation row via the standalone `scale` property, and **G9 finished** (`color` → Fill, `textShadow` → Effects). Not dogfooded in a browser — see the `w81` handoff in `STATE.md` |
 
 ---
 

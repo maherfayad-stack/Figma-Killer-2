@@ -74,10 +74,14 @@ describe('TypographySection — F23 rows at rest', () => {
     expect(screen.queryByTestId('css-property-row-whiteSpace')).toBeNull()
   })
 
-  it('leaves color and textShadow resident (G6/G8 have not run — see the file header doc)', () => {
+  // G9's target shape, completed in W8-1: a text node's colour is its FILL and
+  // a text shadow is an EFFECT. Both moved out of this section once Fill (G6)
+  // and Effects (G8) existed to receive them, which is what finally makes this
+  // section literally F23's four rows.
+  it('no longer draws color or textShadow — they belong to Fill and Effects now', () => {
     renderSection()
-    expect(screen.getByTestId('css-property-row-color')).toBeTruthy()
-    expect(screen.getByTestId('css-property-row-textShadow')).toBeTruthy()
+    expect(screen.queryByTestId('css-property-row-color')).toBeNull()
+    expect(screen.queryByTestId('css-property-row-textShadow')).toBeNull()
   })
 
   it('clicking a text-align segment writes textAlign', () => {

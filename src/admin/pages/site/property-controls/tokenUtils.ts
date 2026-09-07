@@ -23,6 +23,7 @@ import type {
   FrameworkTypographyGroup,
 } from '@core/framework-schema'
 import { getVariableName } from '@core/framework'
+import { formatNumericExpression } from '@ui/components/ScrubInput'
 
 // ---------------------------------------------------------------------------
 // Token shape — one suggestion entry shared across all scale-driven controls
@@ -110,9 +111,13 @@ export function useTypographyTokens(): ReadonlyArray<Token> {
  *   1. Empty → undefined (caller should treat as a clear).
  *   2. CSS function call (`var(...)`, `calc(...)`, etc.) → keep as-is.
  *   3. Matches a token step (case-insensitive) → resolve to `var(--…)`.
- *   4. Number-only string → append `px` (the convention for length-typed
+ *   4. A number or arithmetic (`12`, `100/2`, `100px + 8`) → evaluated by the
+ *      shared `evaluateNumericExpression`, with `px` supplied when the
+ *      expression carried no unit (the convention for length-typed
  *      properties; callers that mostly take unitless values can skip this
- *      module entirely).
+ *      module entirely). This is the same commit coercion `ScrubInput`
+ *      applies via `resolveCommitValue`, so both field kinds agree on what a
+ *      typed `50` means.
  *   5. Otherwise → keep as-is (lets users type `auto`, `1rem`, `5%`, …).
  */
 export function resolveTokenValue(
@@ -128,8 +133,7 @@ export function resolveTokenValue(
   )
   if (match) return match.valueExpr
 
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return `${trimmed}px`
-  return trimmed
+  return formatNumericExpression(trimmed, 'px') ?? trimmed
 }
 
 /**

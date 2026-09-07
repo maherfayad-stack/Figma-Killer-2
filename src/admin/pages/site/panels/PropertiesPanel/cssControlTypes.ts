@@ -178,14 +178,22 @@ export function getCSSPropertyTokenSource(
 }
 
 /**
- * Properties whose value is a plain CSS length, where arrow-key nudging makes
- * sense and an empty field should start from `0px`. Excludes props with
- * special value spaces that a fixed 1/8/0.1 length step would mishandle —
- * `opacity`/`zIndex` (unitless ratios/integers), `aspectRatio` (`16/9`),
- * grid templates, `flex`, `transform`, shadows, etc. `fontSize` is absent
- * here because it nudges through its token-aware input instead.
+ * Properties whose value is a single number the arrow keys may nudge, with an
+ * empty field starting from `0`. Everything here takes the ONE nudge model
+ * (±1 / ±10 Shift / ±0.1 Alt — `numericNudge.ts`).
+ *
+ * Most members are plain CSS lengths, so the empty-field unit is `px` (or
+ * whatever unit the computed placeholder carries). `opacity` and `zIndex` are
+ * the two unitless members: they are single numbers like the rest — a number
+ * field with no way to nudge it was simply an omission, not a decision — and
+ * `ClassPropertyRow` gives them an empty unit of `''` so a nudge never
+ * invents `opacity: 1px`.
+ *
+ * Still excluded: value spaces where a single number is not the whole value —
+ * `aspectRatio` (`16/9`), grid templates, `flex`, `transform`, shadows.
+ * `fontSize` is absent because it nudges through its token-aware input.
  */
-const LENGTH_NUDGE_PROPS = new Set<keyof CSSPropertyBag>([
+const NUDGE_PROPS = new Set<keyof CSSPropertyBag>([
   // Size
   'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight',
   // Position insets
@@ -202,11 +210,14 @@ const LENGTH_NUDGE_PROPS = new Set<keyof CSSPropertyBag>([
   'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius',
   'borderBottomLeftRadius', 'borderBottomRightRadius',
   'outlineOffset',
+  // Unitless singles — see the note above.
+  'opacity',
+  'zIndex',
 ])
 
-/** True when `prop` is a plain-length property eligible for arrow-key nudging. */
-export function isLengthNudgeProp(prop: keyof CSSPropertyBag): boolean {
-  return LENGTH_NUDGE_PROPS.has(prop)
+/** True when `prop` is a single-number property eligible for arrow-key nudging. */
+export function isNudgeableProp(prop: keyof CSSPropertyBag): boolean {
+  return NUDGE_PROPS.has(prop)
 }
 
 /**
