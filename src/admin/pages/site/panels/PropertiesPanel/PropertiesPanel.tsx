@@ -49,6 +49,7 @@ import { MultiSelectionHeader } from './MultiSelectionInspector'
 import { MultiSelectorHeader } from './MultiSelectorInspector'
 import { type ClassPickerHandle } from './ClassPicker'
 import { useEditorStore } from '@site/store/store'
+import { ProjectVariablesProvider } from '@site/property-controls/ProjectVariablesProvider'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { PanelHeader } from '@admin/shared/PanelHeader'
 import { useDraggablePanel } from '@admin/shared/FloatingWindow'
@@ -180,6 +181,13 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
       }
       className={cn(styles.panel, variant === 'docked' && styles.panelDocked)}
     >
+      {/* Publishes the open project's CSS custom properties to every field
+        * primitive below — the catalog behind the hover-revealed "Apply
+        * variable" button. Mounted at the same altitude as
+        * `data-field-skin="inspector"` and for the same reason: the
+        * affordance has to reach ~40 components down without being threaded
+        * through all of them as a prop. */}
+      <ProjectVariablesProvider>
       {/* ─── Screen-reader live region (Guideline #331) ─────────────────── */}
       <div role="status" aria-live="polite" className={styles.srLiveRegion}>
         {data.statusMessage}
@@ -251,6 +259,7 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
           </>
         )}
       </div>
+      </ProjectVariablesProvider>
 
     </aside>
   )

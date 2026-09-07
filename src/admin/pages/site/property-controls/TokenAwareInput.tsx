@@ -33,6 +33,12 @@ import { createPortal } from 'react-dom'
 import { Input } from '@ui/components/Input'
 import { Tooltip } from '@ui/components/Tooltip'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
+import {
+  LENGTH_VARIABLE_KINDS,
+  parseVarBinding,
+  useVariableAffordance,
+  type VariableKind,
+} from '@ui/components/VariableField'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { cn } from '@ui/cn'
 import {
@@ -119,6 +125,13 @@ interface TokenAwareInputProps {
    * field isn't being edited (used by the narrow per-side spacing inputs).
    */
   tooltipOnOverflow?: boolean
+  /**
+   * Which project-variable kinds the "Apply variable" affordance offers.
+   * Defaults to lengths + bare numbers — every current caller is a length
+   * field. `TokenizedColorField` is the colour counterpart and passes
+   * `COLOR_VARIABLE_KINDS` itself.
+   */
+  variableKinds?: readonly VariableKind[]
   /** React 19: ref is a regular prop on function components. */
   ref?: Ref<TokenAwareInputHandle>
 }
@@ -152,14 +165,49 @@ export function TokenAwareInput({
   'data-testid': dataTestId,
   overlay = false,
   tooltipOnOverflow = false,
+  variableKinds = LENGTH_VARIABLE_KINDS,
   ref,
 }: TokenAwareInputProps) {
+    const [isEditing, setIsEditing] = useState(false)
+    const inputRef = useRef<HTMLInputElement>(null)
+    /** Set by Escape so the blur it triggers discards instead of committing — see `onBlur`. */
+    const revertingRef = useRef(false)
+
+    // ── "Apply variable" ────────────────────────────────────────────────
+    // A binding to one of this field's OWN framework tokens is deliberately
+    // NOT treated as bound here: `displayTokenValue` already round-trips
+    // `var(--space-md)` back to the short `md` this input's autocomplete is
+    // built around, and replacing that with a chip would regress the
+    // spacing/typography UX to gain nothing (the token is already named on
+    // screen). The chip is for the PROJECT's own custom properties — the
+    // ones with no step shorthand and no place in this dropdown.
+    //
+    // Read BEFORE `display`, because a bound field displays nothing: the
+    // chip carries the name, and the empty input is what makes the first
+    // keystroke in edit mode replace the binding with a literal.
+    const binding = parseVarBinding(value)
+    const isFrameworkToken =
+      binding !== null && tokens.some((token) => token.varName === binding.name)
+    const variable = useVariableAffordance({
+      value: mixed || isFrameworkToken ? undefined : value,
+      accept: variableKinds,
+      onCommit,
+      fieldLabel: ariaLabel,
+      mixed,
+      disabled,
+      editing: isEditing,
+      onEnterEdit: () => {
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      },
+    })
+
     // A mixed field has no single value to display — it shows the shared
     // "Mixed" placeholder over an empty draft. Everything downstream (draft
     // sync, token suggestions, commit) then behaves exactly as it does for an
     // unset field, which is what makes the first keystroke replace "mixed"
     // with one value across the whole selection.
-    const display = mixed ? '' : displayTokenValue(value, tokens)
+    const display = mixed ? '' : displayTokenValue(variable.displayValue, tokens)
     // The "Mixed" string itself is `Input`'s job (it owns the shared
     // constant); this only stops a real placeholder from competing with it.
     const placeholderDisplay = displayTokenValue(placeholder, tokens)
@@ -172,10 +220,6 @@ export function TokenAwareInput({
     // Local draft so we don't fire onCommit on every keystroke (which would
     // round-trip through Mutative + re-validate every press).
     const [draft, setDraft] = useState(display)
-    const [isEditing, setIsEditing] = useState(false)
-    const inputRef = useRef<HTMLInputElement>(null)
-    /** Set by Escape so the blur it triggers discards instead of committing — see `onBlur`. */
-    const revertingRef = useRef(false)
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
@@ -216,6 +260,16 @@ export function TokenAwareInput({
           .slice(0, 8)
 
     const commit = (raw: string) => {
+      // A bound field shows an EMPTY input (the chip carries the name), so a
+      // click-away that typed nothing must not read as "the user cleared
+      // this" — that would destroy the binding on every stray focus. The
+      // explicit ways out are typing a literal and the chip's detach ×.
+      if (variable.bound && raw.trim() === '') {
+        onClearPreview?.()
+        onDraftClear?.()
+        setIsEditing(false)
+        return
+      }
       const resolved = resolveTokenValue(raw, tokens)
       onClearPreview?.()
       onCommit(resolved)
@@ -276,6 +330,7 @@ export function TokenAwareInput({
         fieldSize={fieldSize}
         value={draft}
         prefix={prefix}
+        leadingSlot={variable.chip}
         mixed={mixed}
         placeholder={placeholderDisplay}
         spellCheck={spellCheck}
@@ -356,6 +411,9 @@ export function TokenAwareInput({
       <div
         className={cn(overlay ? styles.wrapperOverlay : styles.wrapper, className)}
         style={style}
+        /* Scopes the hover-reveal rule for the trailing variable button.
+         * See VariableField.module.css's `[data-variable-host]` selector. */
+        data-variable-host=""
       >
         {tooltipOnOverflow ? (
           <Tooltip
@@ -368,6 +426,14 @@ export function TokenAwareInput({
         ) : (
           inputEl
         )}
+
+        {/* The trigger is absolutely positioned inside this wrapper, so it
+          * needs the wrapper to be a containing block. In `overlay` mode the
+          * wrapper is `display: contents` (the spacing box positions the
+          * input against its OWN container), so there is nothing to anchor
+          * to — those 38px per-side fields keep the chip and reach the
+          * picker by clicking it, but show no hover button. */}
+        {!overlay && variable.trigger}
 
         {showMenu &&
           createPortal(

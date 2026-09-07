@@ -338,3 +338,18 @@
     border-left-color: transparent;
     background: transparent;
 }
+
+/* Leading interactive slot — the bound-variable chip. Unlike `.prefix` this
+ * keeps pointer events and is not aria-hidden: it holds a real control. Its
+ * left inset matches `.prefix` so a field with either reads the same. */
+.leadingSlot {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 0 0 0 var(--space-3xs);
+}
+
+[data-field-skin='inspector'] .leadingSlot {
+    padding-left: var(--inspector-space-2xs);
+}
