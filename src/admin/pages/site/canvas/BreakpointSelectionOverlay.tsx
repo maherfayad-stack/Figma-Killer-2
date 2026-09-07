@@ -288,14 +288,12 @@ export function BreakpointSelectionOverlay({
   // canvas is a read-only inspection surface for them; selection ribbons
   // would just be visual clutter with no follow-on action available.
   const permissions = useEditorPermissions()
-  const anyEditCap =
+  const showRings =
     permissions.canEditStructure || permissions.canEditContent || permissions.canEditStyle
-  const showRings = anyEditCap
   const showSelectorHighlight = showRings && Boolean(highlightedSelector)
-  const showToolbar =
-    permissions.canEditStructure &&
-    selectedNodeIds.length > 0 &&
-    activeBreakpointId === breakpointId
+  // The toolbar additionally needs a selection; body press-and-drag does not.
+  const canEditStructureHere = permissions.canEditStructure && activeBreakpointId === breakpointId
+  const showToolbar = canEditStructureHere && selectedNodeIds.length > 0
 
   // In-place mini-inspector (Phase 2): single-select only. Unlike
   // `showToolbar` above, this deliberately does NOT gate on
@@ -345,8 +343,11 @@ export function BreakpointSelectionOverlay({
   const reorderDrag = useCanvasReorderDrag({
     viewportRef,
     iframeElement,
+    overlayRoot,
     selectedNodeIds,
+    frameId,
     enabled: showToolbar,
+    bodyDragEnabled: canEditStructureHere,
     panBy: viewportActions?.panBy,
     canvasRootRef: viewportActions?.canvasRootRef,
   })

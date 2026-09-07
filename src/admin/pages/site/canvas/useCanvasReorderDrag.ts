@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { registry } from '@core/module-engine'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import type { CanvasDropResolution } from './canvasDnd'
@@ -9,6 +9,13 @@ import {
   measureCanvasDropCandidates,
 } from './canvasDomGeometry'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
+import {
+  CANVAS_EDITOR_CONTROL_SELECTOR,
+  CANVAS_NODE_SELECTOR,
+  isElementLike,
+} from './canvasEventTargets'
+import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
+import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 
 interface UseCanvasReorderDragOptions {
   viewportRef: React.RefObject<HTMLElement | null>
@@ -26,8 +33,33 @@ interface UseCanvasReorderDragOptions {
    * listeners keep ticking even when the cursor is over a frame.
    */
   iframeElement: HTMLIFrameElement | null
+  /**
+   * The in-iframe overlay host (`CanvasSelectionOverlayInjector`'s root), or
+   * `null`. Two jobs here:
+   *
+   *  1. It is the DESIGN-FRAME gate. The injector is design-mode only, so a
+   *     live/prototype `IframeFrameSurface` never creates one — pressing an
+   *     element in a live frame must behave exactly like the published page,
+   *     never start an editor drag.
+   *  2. It is the handle on the iframe's CURRENT document
+   *     (`overlayRoot.ownerDocument`). A frame reload mints a new document and
+   *     a new overlay root together, so keying the body-drag listener on this
+   *     value re-attaches it to the right document automatically — where
+   *     `iframeElement` alone stays referentially stable across the swap and
+   *     would leave the listener bound to a dead document.
+   */
+  overlayRoot: HTMLElement | null
   selectedNodeIds: readonly string[]
+  /** Frame that owns this overlay, for frame-scoped selection (`selectedNodeFrameId`). */
+  frameId?: string | null
+  /** The selection toolbar's hand-grab handle is available (structural edit + a selection). */
   enabled: boolean
+  /**
+   * Pressing an element's own body may start a drag. Broader than `enabled`:
+   * the toolbar only exists once something is selected, but press-and-drag has
+   * to work on the first gesture, before anything is selected.
+   */
+  bodyDragEnabled: boolean
   panBy?: (dx: number, dy: number) => void
   canvasRootRef?: React.RefObject<HTMLElement | null>
 }
@@ -46,6 +78,19 @@ interface DragSession {
    * commits no move on pointerup — see `DRAG_ACTIVATE_PX`.
    */
   active: boolean
+  /**
+   * Node to select when the gesture becomes a real drag, or `null`.
+   *
+   * Set only by the body-drag path, and only when the pressed element was NOT
+   * already part of the selection. Selecting on POINTERDOWN would make a press
+   * that turns out to be a click select twice (once here, once from
+   * `NodeRenderer`'s click) and would fight Cmd/Shift-click's modifier
+   * semantics; selecting on ACTIVATION leaves the click path untouched and
+   * still puts the ring on what the user is dragging.
+   */
+  selectOnActivate: string | null
+  /** Frame the drag started in, so the activation selection stays frame-scoped. */
+  frameId: string | null
 }
 
 interface CanvasReorderDragState extends CanvasDropResolution {
@@ -81,8 +126,11 @@ const DRAG_ACTIVATE_PX = 4
 export function useCanvasReorderDrag({
   viewportRef,
   iframeElement,
+  overlayRoot,
   selectedNodeIds,
+  frameId = null,
   enabled,
+  bodyDragEnabled,
   panBy,
   canvasRootRef,
 }: UseCanvasReorderDragOptions) {
@@ -229,6 +277,16 @@ export function useCanvasReorderDrag({
       const dy = event.clientY - session.originY
       if (Math.hypot(dx, dy) < DRAG_ACTIVATE_PX) return
       session.active = true
+      // A body drag that started on an UNSELECTED element selects it now, at
+      // the moment the gesture stops being a click — so the ring, the toolbar
+      // and the inspector all follow what is actually moving. Frame-scoped
+      // (`selectedNodeFrameId`) so a "duplicate as variant" sibling frame
+      // sharing these node ids doesn't light up too.
+      if (session.selectOnActivate) {
+        useEditorStore.getState().selectNode(session.selectOnActivate, 'replace', {
+          frameId: session.frameId,
+        })
+      }
       setDragState({ dragging: true, target: null, invalid: null })
     }
 
@@ -265,53 +323,52 @@ export function useCanvasReorderDrag({
     resetDrag()
   }
 
-  const handlePointerDown = (event: React.PointerEvent<HTMLElement>) => {
-    if (!enabled || event.button !== 0) return
-
+  /**
+   * Open a session for `origin` and attach the window listeners that run it.
+   *
+   * The single place a canvas reorder drag begins. Both entry points — the
+   * selection toolbar's hand-grab handle (parent document) and a press on the
+   * element's own body (inside the frame's iframe) — funnel through here, so
+   * activation distance, candidate measurement, the cross-iframe relay flag and
+   * the commit path cannot drift apart between the two gestures.
+   *
+   * `origin.clientX/clientY` are always PARENT-DOCUMENT client coordinates:
+   * every subsequent pointermove reaches the window listeners in that space
+   * (either natively, or translated by `IframeFrameSurface`'s relay), so an
+   * origin measured in any other space would make the activation distance and
+   * the first resolved drop target wrong by the iframe's offset.
+   */
+  const beginDrag = (origin: DragOrigin): boolean => {
     const viewport = viewportRef.current
     const state = useEditorStore.getState()
     const tree = selectActiveCanvasPage(state)
-    if (!viewport || !tree) return
+    if (!viewport || !tree) return false
 
-    const draggedIds = resolveDraggedIds(tree, selectedNodeIds)
-    const draggedId = state.selectedNodeId && draggedIds.includes(state.selectedNodeId)
-      ? state.selectedNodeId
+    const draggedIds = resolveDraggedIds(tree, origin.candidateIds)
+    const draggedId = origin.preferredDraggedId && draggedIds.includes(origin.preferredDraggedId)
+      ? origin.preferredDraggedId
       : draggedIds[draggedIds.length - 1]
 
-    if (!draggedId || draggedIds.length === 0) return
+    if (!draggedId || draggedIds.length === 0) return false
 
-    event.preventDefault()
-    event.stopPropagation()
     resetDrag()
 
-    // Implicit pointer capture is unreliable for left-click mouse drags
-    // across iframe boundaries. Calling setPointerCapture on the drag
-    // handle keeps the parent-doc event stream alive while the cursor is
-    // still inside the parent doc; once it enters an iframe, the iframe's
-    // pointer relay (gated by the data attribute below) takes over.
-    if (typeof event.currentTarget.setPointerCapture === 'function') {
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId)
-      } catch {
-        // Some test envs / older browsers reject setPointerCapture; the
-        // iframe relay path still works without it.
-      }
-    }
-
     sessionRef.current = {
-      pointerId: event.pointerId,
+      pointerId: origin.pointerId,
       draggedId,
       draggedIds,
       // Iframe-aware measurement: queries the iframe's contentDocument for
       // `[data-node-id]` and translates each rect into editor coords.
       candidates: measureCanvasDropCandidates(viewport, tree, iframeElement),
-      originX: event.clientX,
-      originY: event.clientY,
+      originX: origin.clientX,
+      originY: origin.clientY,
       // Not a drag yet — `handleWindowPointerMove` promotes it once the pointer
-      // clears DRAG_ACTIVATE_PX, so a click on the handle stays a click.
+      // clears DRAG_ACTIVATE_PX, so a press that stays put stays a click.
       active: false,
+      selectOnActivate: origin.selectOnActivate,
+      frameId: origin.frameId,
     }
-    latestClientPointRef.current = { x: event.clientX, y: event.clientY }
+    latestClientPointRef.current = { x: origin.clientX, y: origin.clientY }
 
     // Cross-frame drag signal. Every iframe's pointer relay (see
     // `IframeFrameSurface`) reads `data-studio-canvas-dragging` on the parent
@@ -319,7 +376,7 @@ export function useCanvasReorderDrag({
     // the parent when set. We also stash the originating pointerId so the
     // relay can mint events with the matching id — keeps the eventual
     // window listeners' assumptions consistent.
-    markCanvasPointerRelay(event.pointerId)
+    markCanvasPointerRelay(origin.pointerId)
 
     window.addEventListener('pointermove', handleWindowPointerMove)
     window.addEventListener('pointerup', handleWindowPointerUp)
@@ -329,7 +386,148 @@ export function useCanvasReorderDrag({
       window.removeEventListener('pointerup', handleWindowPointerUp)
       window.removeEventListener('pointercancel', handleWindowPointerCancel)
     }
+    return true
   }
+
+  /** Entry point 1 — the selection toolbar's hand-grab handle, in the parent document. */
+  const handlePointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    if (!enabled || event.button !== 0) return
+
+    const state = useEditorStore.getState()
+    const started = beginDrag({
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      candidateIds: selectedNodeIds,
+      preferredDraggedId: state.selectedNodeId,
+      selectOnActivate: null,
+      frameId,
+    })
+    if (!started) return
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    // Implicit pointer capture is unreliable for left-click mouse drags
+    // across iframe boundaries. Calling setPointerCapture on the drag
+    // handle keeps the parent-doc event stream alive while the cursor is
+    // still inside the parent doc; once it enters an iframe, the iframe's
+    // pointer relay (gated by the data attribute above) takes over.
+    if (typeof event.currentTarget.setPointerCapture === 'function') {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Some test envs / older browsers reject setPointerCapture; the
+        // iframe relay path still works without it.
+      }
+    }
+  }
+
+  // Reads the latest render closure (`beginDrag` -> `selectedNodeIds`,
+  // `iframeElement`, `frameId`) without becoming a dependency of the effect
+  // below — the listener must be attached once per iframe document, not
+  // re-attached on every selection change.
+  const beginBodyDrag = useEffectEvent((origin: DragOrigin) => beginDrag(origin))
+
+  /**
+   * Entry point 2 — pressing the element's OWN BODY inside the frame's iframe.
+   *
+   * Until this existed, the only way to move an element on the canvas was the
+   * selection toolbar's hand-grab icon: pressing the element and moving did
+   * nothing at all, which is the opposite of what every design tool does and
+   * what the user reported.
+   *
+   * A NATIVE capture-phase listener on the iframe's own document, not a React
+   * handler on the node:
+   *
+   *  - it must run BEFORE `NodeRenderer`'s `onPointerDownCapture` (which
+   *    focuses the node and latches authored form-control suppression), and a
+   *    document-level capture listener in the iframe is the only position that
+   *    is guaranteed to;
+   *  - it must see presses on EVERY node, and `NodeRenderer` would need the
+   *    handler threaded through a context into every module's prop bag —
+   *    per-node work for a gesture that is global by nature (one pointer, one
+   *    drag);
+   *  - no wrapper element is introduced, which is the canvas's first rule.
+   *
+   * Deliberately NOT deps-keyed on `selectedNodeIds`: the selection is read
+   * fresh from the store inside the handler, so the listener is attached once
+   * per iframe document instead of re-attached on every selection change.
+   */
+  useEffect(() => {
+    if (!bodyDragEnabled) return
+    const iframe = iframeElement
+    const doc = overlayRoot?.ownerDocument ?? null
+    if (!iframe || !doc) return
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || event.defaultPrevented) return
+      // Space + left-drag and middle-drag are the canvas's PAN gesture on the
+      // same button. `IframeFrameSurface`'s relay claims those; starting a
+      // reorder here would make one gesture mean two things.
+      if (shouldStartCanvasPointerPan(event, { spaceHeld: isCanvasSpacePanActive(document) })) return
+
+      const state = useEditorStore.getState()
+      // An inline text edit owns the pointer inside its contentEditable: a
+      // press-and-drag there is selecting text, not moving the element. Same
+      // stand-down the keyboard bridge makes for the same reason.
+      if (state.activeInlineEdit) return
+
+      const target = event.target
+      if (!isElementLike(target)) return
+      // Editor chrome portaled into this SAME document (WS-5.1). The overlay
+      // root is `pointer-events: none`, so in practice only the resize handles
+      // inside it are pressable — and a resize is `useElementResizeDrag`'s
+      // gesture, not this one. Matched on the overlay root rather than the
+      // handle so anything else that opts back into pointer events later is
+      // excluded by default.
+      if (target.closest(CANVAS_EDITOR_CONTROL_SELECTOR)) return
+      if (target.closest('[data-studio-canvas-overlay-root]')) return
+      // Any authored contentEditable region: the caret is the user's target.
+      if (target.closest('[contenteditable]')) return
+
+      const nodeElement = target.closest(CANVAS_NODE_SELECTOR)
+      const nodeId = nodeElement?.getAttribute('data-node-id')
+      if (!nodeId) return
+
+      // Pressing INSIDE the current selection drags the whole selection —
+      // otherwise a multi-select would silently collapse to one node the
+      // moment you tried to move it. Pressing outside it drags just that node.
+      const selected = state.selectedNodeIds
+      const inSelection = selected.includes(nodeId)
+
+      const rect = iframe.getBoundingClientRect()
+      const point = iframeLocalPointToParentClientPoint(
+        rect,
+        { width: iframe.clientWidth, height: iframe.clientHeight },
+        { x: event.clientX, y: event.clientY },
+      )
+
+      const started = beginBodyDrag({
+        pointerId: event.pointerId,
+        clientX: point.x,
+        clientY: point.y,
+        candidateIds: inSelection ? selected : [nodeId],
+        preferredDraggedId: nodeId,
+        selectOnActivate: inSelection ? null : nodeId,
+        frameId,
+      })
+      if (!started) return
+
+      // Cancel the browser's default press behaviour — text selection and the
+      // native image/link drag — both of which fight a pointer drag for the
+      // same gesture. Canceling `pointerdown` suppresses the compatibility
+      // MOUSE events only; `click` still fires, so `NodeRenderer`'s
+      // click-to-select is untouched and a press that never becomes a drag is
+      // still an ordinary click. Focus is not lost either: `NodeRenderer`'s
+      // `onPointerDownCapture` focuses the node explicitly
+      // (`focusNodeWithoutScrolling`) rather than relying on the default.
+      event.preventDefault()
+    }
+
+    doc.addEventListener('pointerdown', onPointerDown, true)
+    return () => doc.removeEventListener('pointerdown', onPointerDown, true)
+  }, [bodyDragEnabled, iframeElement, overlayRoot, frameId])
 
   useEffect(() => resetDrag, [resetDrag])
 
@@ -337,6 +535,20 @@ export function useCanvasReorderDrag({
     ...dragState,
     handlePointerDown,
   }
+}
+
+/** Everything `beginDrag` needs, in whichever coordinate space it was captured. */
+interface DragOrigin {
+  pointerId: number
+  /** PARENT-document client coordinates — see `beginDrag`. */
+  clientX: number
+  clientY: number
+  /** Node ids this gesture proposes to move, before locked/root filtering. */
+  candidateIds: readonly string[]
+  /** The one of `candidateIds` the gesture is "about", when it has an opinion. */
+  preferredDraggedId: string | null
+  selectOnActivate: string | null
+  frameId: string | null
 }
 
 function resolveDraggedIds(

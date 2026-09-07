@@ -21,6 +21,120 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### canvas-dnd — pressing an element on the canvas now drags it
+- **Agent:** canvas-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint + the two touched gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/canvas-drag-drop-after-wave7` off `origin/main` (`71060a8`).
+  Verbatim report: "dragging elements in canvas and dropping doesn't work
+  properly" / "when clicking an element and dragging (not from the icon) it
+  doesn't drag".
+
+**Root cause — a missing affordance, NOT a Wave 7 regression.** The canvas
+reorder drag had exactly one activation point: the selection toolbar's
+hand-grab icon (`SelectionToolbar.tsx:101` → `onDragPointerDown` →
+`useCanvasReorderDrag.handlePointerDown`). Nothing anywhere listened for a
+press on a node in order to move it — `NodeRenderer.tsx`'s only pointer hook is
+`onPointerDownCapture`, for focus + authored-form-control suppression. So a
+press on an element body opened no session and every `pointermove` after it was
+inert. `docs/reference/canvas-dnd.md` documented this as the intended state
+("armed from the selection toolbar's hand-grab button … not by pressing the
+node itself"), and `git log -- src/admin/pages/site/canvas` has no commit since
+`#59`, so none of PRs #62–#74 touched it.
+
+**Fix.** A second activation point that funnels into the SAME session. Both
+entry points now call one `beginDrag(origin)` in `useCanvasReorderDrag.ts`, so
+activation distance, candidate measurement, the cross-iframe relay flag and the
+commit path cannot drift between the two gestures. The body path is a native
+capture-phase `pointerdown` listener on the frame's own `contentDocument`
+(keyed on `overlayRoot.ownerDocument`, so a frame reload re-attaches it) — not
+a React handler on the node, because it must run before `NodeRenderer`'s
+capture handler, must see a press on any node without threading a callback
+through every module's prop bag, and must add no element to the canvas DOM.
+
+- Pressing inside the current selection drags the whole selection; pressing
+  outside it drags just that node and selects it **on activation**, never on
+  pointerdown (a press that stays a click leaves `NodeRenderer`'s Cmd/Shift-aware
+  click-to-select alone).
+- `preventDefault()` on the pointerdown kills native text selection and the
+  browser's image/link drag. `click` is NOT suppressed by canceling
+  `pointerdown`, so click-to-select and double-click-to-inline-edit are intact.
+- Stand-downs, in order: `bodyDragEnabled` (structure cap + active breakpoint),
+  `overlayRoot === null` (design frames only — a live/prototype frame has no
+  injector root), space/middle-button pan, `activeInlineEdit`,
+  `[data-studio-canvas-overlay-root]` (resize handles),
+  `[data-canvas-interactive="true"]`, `[contenteditable]`, no `[data-node-id]`
+  ancestor, and root/locked/absent nodes via the existing `resolveDraggedIds`.
+
+**Files touched:** `src/admin/pages/site/canvas/useCanvasReorderDrag.ts`,
+`src/admin/pages/site/canvas/BreakpointSelectionOverlay.tsx`,
+`src/__tests__/canvas/canvasBodyReorderDrag.test.tsx` (new, 10 cases),
+`docs/reference/canvas-dnd.md`, `docs/agent-refs/canvas-internals.md`.
+
+**Landmines (height ⇄ injectors ⇄ events — the three that fight each other):**
+- **`overlayRoot` is now load-bearing for EVENTS, not just geometry.** It was a
+  rendering detail (WS-5.1: portal rings into the iframe). It is now also the
+  design-frame gate and the document handle for the body-drag listener. If
+  `CanvasSelectionOverlayInjector` ever mounts in a live frame, press-and-drag
+  starts working in live mode — which would be wrong. If it ever stops creating
+  a root in design mode, body drag silently dies with no error.
+- **The drag origin must be in PARENT client coordinates.** A press inside an
+  iframe reports iframe-local coordinates, but every subsequent `pointermove`
+  arrives at the `window` listeners in parent coordinates (natively when the
+  cursor is outside the frame, minted by `IframeFrameSurface`'s relay when it is
+  inside). Storing the raw local point makes the first move read as a jump of
+  the whole iframe offset, clearing the 4px activation distance instantly and
+  turning every click into a drag. Gated by the
+  `translates the press from iframe-local to parent client coordinates` case.
+- **`pointerdown` is the one pointer type the relay must keep NOT forwarding.**
+  `useIframeEventForwarding`'s `maybeForward` excludes it from the drag branch;
+  the body path opens the session locally instead. Forwarding it would open a
+  second session for the same gesture.
+- **`BreakpointSelectionOverlay.tsx` is at exactly 700 lines**, the ceiling. Two
+  redundancies were collapsed to make room (`anyEditCap`/`showRings` were the
+  same value; `showToolbar` now derives from a new `canEditStructureHere`). The
+  next line added to that file must be paid for by a real extraction.
+
+**Ruled out, with evidence (so nobody re-runs these):**
+- **`studioLoadMemo.ts` mtime granularity (the "drop doesn't stick" theory).**
+  The fingerprint is `size:mtimeMs` per file, and a pure sibling reorder can
+  leave `size` identical — so it reduces to `mtimeMs`. Probed under Bun on this
+  machine (APFS): 8 same-size writes in a tight loop produced 8 distinct
+  `mtimeMs` values with sub-microsecond resolution. Not a viable stale-memo
+  path on macOS. It WOULD be on a filesystem with 1s mtime granularity (some
+  Linux/ext3, some network mounts); if a Linux dogfooder ever reports a drop
+  that snaps back, this is the first place to look.
+- PR #64 (`translate` vs `transform`), #63 (Fill/Hug), #65 (panel width 290 /
+  `--inspector-*`): the canvas reorder drag writes **no inline style at all** —
+  it commits `moveNodes(draggedIds, parentId, index)`, a pure tree mutation.
+  There is no `left/top` or `translate` write in this path to conflict with, and
+  no consumer of the old panel-width constant in the drop geometry.
+
+**CUT — named:**
+- **No free-position drag.** Dragging still means *reorder / reparent*, never
+  "write `left/top` on an absolutely-positioned element". That is a separate
+  feature with a separate honest-single-target question and is not in this PR.
+- **No drag cursor change or ghost preview for the body drag** — it reuses the
+  existing `CanvasDropIndicators` only.
+- **No auto-scroll of a scrollable region inside a frame** during a body drag
+  (canvas-level auto-pan is unchanged and still works).
+
+- **Dogfood script (human, `bun run dev` → `/admin/site`, one board, 2+ frames, 100% zoom):**
+  1. Press an **unselected** element and drag it 40px+ — it must select on the
+     way and show the drop indicator; release over another container and confirm
+     it lands there and survives a reload.
+  2. Press a selected element and *release without moving* — it must stay a
+     plain click (selection unchanged, nothing moved).
+  3. Multi-select two siblings (Cmd-click), press one of them, drag — both must
+     move; the selection must not collapse to one.
+  4. Double-click a text layer to inline-edit, then drag across the text — it
+     must select TEXT, not move the element. Cmd+Z must still undo the typing.
+  5. Drag a corner resize handle — it must resize, not reorder.
+  6. Hold **space** and drag over an element — it must pan, not drag the element.
+  7. Zoom to 50% and repeat (1); the drop indicator must track the cursor (this
+     is the coordinate translation).
+  8. Switch to **live** view and press-and-drag an element — nothing must move,
+     and links/buttons must behave like the published page.
+  9. The toolbar hand-grab icon must still work exactly as before.
+
 ### gate-fixes — two Wave 7 architecture gates back to green
 - **Agent:** studio-implementer · **Stage:** done (targeted tests + `tsc -p tsconfig.node.json` + eslint green; draft PR open) — no dogfood needed (no behaviour change).
 - **Branch:** `fix/wave7-gate-regressions` off `origin/main` (`ee5bc9c`). Two regressions, nothing else: (1) `MultiSelectionInspector.module.css:87-133` still reached for the fluid `--space-3xs/2xs/xs` scale — swapped 1:1 to the frozen `--inspector-space-*` tokens, `inspectorGeometryBudget.test.tsx` 10/10 pass; (2) `qualityAudit.ts` was 757 lines against the 700 ceiling — the W9-3 composition audit moved to `server/handlers/studio/compositionAudit.ts` (253 lines) with its tests in `compositionAudit.test.ts`, leaving `qualityAudit.ts` at 550. Shared finding types stay in `qualityAudit.ts`; its four scan primitives (`RULE_BLOCK_RE`, `DECLARATION_RE`, `RAW_PX_RE`, `lineAt`) are now exported so the two audits scan identically instead of restating each other.

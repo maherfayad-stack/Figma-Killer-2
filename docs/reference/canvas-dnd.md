@@ -17,10 +17,21 @@ topology below first.
   `@dnd-kit/core`. dnd-kit cannot reach across the canvas's iframe boundary —
   each breakpoint frame is a real `<iframe>` (see
   `docs/features/canvas-iframe-per-frame.md`) — so this drag was hand-rolled.
-  It is armed from the selection toolbar's hand-grab button
-  (`SelectionToolbar.tsx`), not by pressing the node itself:
-  `NodeRenderer.tsx`'s only pointer hook is `onPointerDownCapture` for
-  selection, not `useDraggable`.
+  It has **two activation points**, both landing in the same
+  `beginDrag` session:
+  1. the selection toolbar's hand-grab button (`SelectionToolbar.tsx` →
+     `onDragPointerDown`), a React handler in the PARENT document; and
+  2. **a press on the element's own body**, a native capture-phase
+     `pointerdown` listener on the frame's own `contentDocument` (the
+     `bodyDragEnabled` effect in `useCanvasReorderDrag.ts`).
+
+  `NodeRenderer.tsx` is still not `useDraggable` and still owns no drag
+  handler — its only pointer hook remains `onPointerDownCapture`, for focus
+  and authored-form-control suppression. The body drag deliberately lives on
+  the document instead of on every node: it must run BEFORE `NodeRenderer`'s
+  capture handler, it must see a press on any node without threading a
+  callback through every module's prop bag, and it adds no element to the
+  canvas DOM.
 - `@dnd-kit/core` genuinely IS used — but only on one surface that never
   crosses an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s
   `<DndContext>`). The Site Explorer used to be the second such surface; its
@@ -59,8 +70,13 @@ topology below first.
 ```text
 Canvas node reorder (move an existing node) — RAW POINTER, not @dnd-kit
 ─────────────────────────────────────────────────────────────────────────
-  SelectionToolbar hand-grab button         ← arms the drag; NodeRenderer
-    │  onPointerDown                          itself is not draggable
+  SelectionToolbar hand-grab button   ─┐    ← parent-document React handler
+    │  onPointerDown                   │
+                                       ├──▶ beginDrag(origin)
+  Press on the element's own body    ─┘     ← native capture pointerdown on
+    │  (iframe contentDocument)               the frame's own document; the
+    │                                         local point is translated to
+    │                                         PARENT client coords first
     ▼
   useCanvasReorderDrag.ts                   ← window pointermove/up/cancel
     │  measures candidates once, from the      listeners
@@ -113,6 +129,7 @@ Drag sources (canvas + DOM panel — the Media workspace is a separate topology,
 | Source                              | Origin                           | Drop result                                                                |
 |--------------------------------------|-----------------------------------|-----------------------------------------------------------------------------|
 | Selection toolbar hand-grab button   | Canvas — the selected node/group | Move the node(s) to the drop target (raw pointer, `useCanvasReorderDrag.ts`) |
+| The element's own body               | Canvas — the pressed node, or the whole selection when the press lands inside it | Same move, same session. Selects the pressed node on ACTIVATION (not on pointerdown, so a press that stays a click leaves `NodeRenderer`'s Cmd/Shift-aware click-to-select alone) |
 | Module inserter item                 | Module picker / inserter dialog  | Insert a new node of the picked module at the drop target (raw pointer, `ModuleInserterDialog.tsx`) |
 | DOM panel tree row                   | The DOM panel tree               | Move the node to the drop target (`@dnd-kit/core`, `useDomPanelDnd.ts`)     |
 
@@ -519,3 +536,41 @@ Track D2 / `docs/audits/2026-08-06/07-drag-and-drop.md` for the full audit):
   contains it (and native HTML5 DnD) to an explicit allowlist so the
   fragmentation cannot silently spread further while the real unification
   is pending.
+
+---
+
+## Body drag: what stands down, and why
+
+The body-drag listener is a *global* gesture on the frame document, so it has
+to hand the pointer back to every other gesture that shares the same button.
+It bails, in this order, on:
+
+| Condition | Whose gesture it is |
+|---|---|
+| `bodyDragEnabled` false | No `site.structure.edit` capability, or this is not the active breakpoint frame |
+| `overlayRoot` is `null` | Not a design frame. `CanvasSelectionOverlayInjector` is design-mode-only, so a live / prototype frame never has one and a press there must behave exactly like the published page |
+| `event.button !== 0`, or space held | The canvas PAN gesture (`shouldStartCanvasPointerPan`) |
+| `activeInlineEdit` is set | The contentEditable inline text editor owns the pointer — a press-and-drag there is selecting text. Same stand-down the keyboard bridge makes (`useIframeEventForwarding`'s `onKeyDown`) |
+| target inside `[data-studio-canvas-overlay-root]` | Editor chrome portaled into this same document (WS-5.1). In practice the resize handles — `useElementResizeDrag`'s gesture |
+| target inside `[data-canvas-interactive="true"]` | An editor control rendered by a module |
+| target inside `[contenteditable]` | The caret is the user's target |
+| no `[data-node-id]` ancestor | Frame background — marquee / body context menu |
+| the node is the tree root, locked, or absent from the ACTIVE tree | Nothing honest to move (`resolveDraggedIds`) |
+
+Two more properties are load-bearing:
+
+- **The origin is translated to parent client coordinates**
+  (`iframeLocalPointToParentClientPoint`) before the session stores it. A press
+  inside an iframe reports iframe-local coordinates, but every subsequent
+  `pointermove` reaches the hook's `window` listeners in parent coordinates —
+  natively once the cursor leaves the frame, or minted by
+  `IframeFrameSurface`'s relay while it is inside. An untranslated origin makes
+  the first move look like a jump of the whole iframe offset, which clears the
+  4px activation distance instantly and turns every click into a drag.
+- **`preventDefault()` on the pointerdown, but nothing else.** Canceling
+  `pointerdown` suppresses the compatibility MOUSE events (and with them native
+  text selection and the browser's image/link drag) — `click` still fires, so
+  `NodeRenderer`'s click-to-select is untouched and a press that never travels
+  4px is still an ordinary click. Focus is unaffected because `NodeRenderer`
+  focuses the node explicitly (`focusNodeWithoutScrolling`) rather than relying
+  on the default action.
