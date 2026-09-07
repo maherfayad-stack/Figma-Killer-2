@@ -135,6 +135,100 @@ through every module's prop bag, and must add no element to the canvas DOM.
      and links/buttons must behave like the published page.
   9. The toolbar hand-grab icon must still work exactly as before.
 
+### apply-variable — Figma's "Apply variable": every inspector field can bind to a project CSS custom property
+- **Agent:** panel-designer · **Stage:** done (typecheck + touched tests + gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `feat/inspector-apply-variable` off `origin/main` (`ee5bc9c`). Worktree `.tmp/wt-apply-variable`.
+
+**What shipped.** A hover-revealed variable button at the trailing edge of
+every inspector field, a searchable picker anchored to it, and a
+leading-edge chip when the field's value IS a `var()` reference. The
+variables offered are the **open project's own CSS custom properties**, not
+only the framework scales.
+
+**New shared primitive — `src/ui/components/VariableField/`**
+- `varBinding.ts` — `parseVarBinding` / `formatVarBinding` / `variableChipLabel`. Bound = the value is EXACTLY one `var()` call (a fallback arg is fine). `calc(var(--x) * 2)` is deliberately not bound.
+- `variableKind.ts` — `classifyVariableValue` (colour / length / number / other) from the RESOLVED value, never the name. `filterVariablesByKind`, `LENGTH_VARIABLE_KINDS`, `COLOR_VARIABLE_KINDS`.
+- `VariableSourceContext.ts` — how a portable `src/ui/` field learns the catalog without importing `src/admin`. Empty outside a provider → no icon at all.
+- `useVariableAffordance.tsx` — returns `{ bound, displayValue, chip, trigger }`. A hook, not a wrapper element, so no caller's layout `className` moves a level.
+- `VariablePickerPopover.tsx` — `InspectorPopover` + `SearchBar` + rows grouped Project / Package / Framework, swatch for colours. Clamps to the viewport for free.
+- `VariableField.module.css`, `index.ts`, `varBinding.test.ts`, `VariableField.test.tsx`.
+
+**Admin wiring**
+- `src/admin/pages/site/property-controls/projectVariables.ts` — scans `studioRawCssStores.ts`'s `authoredCss` + `vendorCss` (already on the client for the canvas) plus a locally generated `generateFrameworkRootCss` block. Resolves `var()` chains (bounded, cycle-safe). **No server change and no new wire format** — the catalog cannot disagree with what the canvas renders, because it is what the canvas renders.
+- `ProjectVariablesProvider.tsx` — mounted on the panel's root `<aside>`, same altitude as `data-field-skin="inspector"`.
+- `projectVariables.test.ts`.
+
+**Files touched**
+- `src/ui/components/ScrubInput/ScrubInput.tsx` — chip + trigger + `data-variable-host`; empty-commit-on-bound is a no-op.
+- `src/ui/components/Input/Input.tsx` + `.module.css` — new `leadingSlot` prop (INTERACTIVE leading content; `prefix` stays decorative/`aria-hidden`/`pointer-events: none`).
+- `src/admin/pages/site/property-controls/TokenAwareInput.tsx` — same, plus hook reordering so the affordance is read before `display`.
+- `src/admin/pages/site/property-controls/TokenizedColorField.tsx` — trigger only (see cuts).
+- `src/admin/pages/site/panels/PropertiesPanel/PropertiesPanel.tsx` — provider mount.
+- `docs/features/inspector-disclosure.md` — new §10.
+
+**Tokens added to `globals.css`: NONE.** Everything reuses `--inspector-*`,
+`--bg-surface-3`, `--radius-sm`, `--overlay-5/20`, `--text-*`.
+
+**Icon: `braces` (`{}`), not a hexagon.** The vendored `pixel-art-icons`
+subset has no hexagon/diamond variable glyph and the upstream private repo is
+not checked out on this machine, so `bun run icons:sync` could not add one.
+`braces` is already vendored (gate stays green) and reads as "variable" in
+every dev tool. **Swap it the moment the upstream checkout is available.**
+
+**Cuts, named**
+1. **No per-variable source FILE.** The client receives the project's
+   stylesheets already concatenated (`studioCss.ts`'s `authoredCssParts.join`),
+   so there is no honest file attribution. The picker groups by bundle
+   (Project / Package / Framework) instead of inventing one.
+2. **Colour fields get the trigger, not the chip.** `TokenizedColorField`'s
+   leading edge is already occupied by the absolutely-positioned swatch
+   button, and the text field already shows `var(--x)` in full.
+3. **The spacing box's per-side 38px fields show no trigger.** In
+   `TokenAwareInput`'s `overlay` mode the wrapper is `display: contents`, so
+   there is no containing block to anchor to. Those fields still show the
+   chip and reach the picker by clicking it.
+4. **A binding to the field's OWN framework scale step is not chipped** —
+   `displayTokenValue` already round-trips it to the short `md`, and
+   replacing that would regress the spacing/typography autocomplete.
+5. **Bound colour fields don't recolour the swatch** from the project
+   catalog (`swatchValue` still resolves framework tokens only). The picker
+   row and chip carry the swatch.
+
+**Verification run:** `bun test src/ui/components/VariableField
+src/admin/pages/site/property-controls/projectVariables.test.ts
+src/admin/pages/site/panels/PropertiesPanel/__tests__/ src/ui/components/{ScrubInput,Input,AddablePropertyField}`
+(521 pass), the four gates (`css-token-policy`,
+`button-primitive-usage`, `no-css-var-fallbacks`, `ui-primitives-location`,
+plus `css-token-vocabulary` and both admin token-policy gates),
+`tsc -p tsconfig.app.json --noEmit` clean, `eslint` clean on every changed file.
+
+**Pre-existing failure, NOT mine:** `inspectorGeometryBudget.test.tsx` →
+"inspector CSS modules use the frozen scale" reports three `var(--space-*)`
+hits in `MultiSelectionInspector.module.css`. That file is untouched in my
+diff and already carried them at `ee5bc9c`; another agent owns it.
+
+**Human action needed — dogfood at these selection states:**
+1. Select any node with a `padding`/`width` set. Hover a Size or Spacing
+   field: the `{}` button should fade in at its right edge with the tooltip
+   "Apply variable". Tab to the field — it should appear on focus too.
+2. Click it. The picker should list only length/number variables from the
+   project's stylesheets, grouped Project / Package / Framework, and clamp
+   to the viewport when opened from the LAST row of a tall panel.
+3. Pick one. The field should show a chip with the bare name (e.g.
+   `space-4`), the rest of the field empty, the resolved value as the chip's
+   tooltip. Undo should restore the literal in one step.
+4. On that bound field: try to scrub the `W` label — it must do nothing.
+   Click the chip — the input should focus empty with the picker open. Press
+   Escape — the binding must survive. Click the chip, then click away
+   without typing — the binding must STILL survive.
+5. Hover the chip → detach ×. Clicking it must write the resolved literal
+   (e.g. `16px`), not an empty value.
+6. Select TWO nodes with different widths. The field reads "Mixed", shows
+   NO chip, and applying a variable must write `var(--x)` to both.
+7. Select a node and open a colour field (Fill / Stroke). The `{}` button
+   should offer only colour variables, each with a swatch.
+8. Confirm no inspector row got taller — compare the Size section against
+   `main`.
 ### gate-fixes — two Wave 7 architecture gates back to green
 - **Agent:** studio-implementer · **Stage:** done (targeted tests + `tsc -p tsconfig.node.json` + eslint green; draft PR open) — no dogfood needed (no behaviour change).
 - **Branch:** `fix/wave7-gate-regressions` off `origin/main` (`ee5bc9c`). Two regressions, nothing else: (1) `MultiSelectionInspector.module.css:87-133` still reached for the fluid `--space-3xs/2xs/xs` scale — swapped 1:1 to the frozen `--inspector-space-*` tokens, `inspectorGeometryBudget.test.tsx` 10/10 pass; (2) `qualityAudit.ts` was 757 lines against the 700 ceiling — the W9-3 composition audit moved to `server/handlers/studio/compositionAudit.ts` (253 lines) with its tests in `compositionAudit.test.ts`, leaving `qualityAudit.ts` at 550. Shared finding types stay in `qualityAudit.ts`; its four scan primitives (`RULE_BLOCK_RE`, `DECLARATION_RE`, `RAW_PX_RE`, `lineAt`) are now exported so the two audits scan identically instead of restating each other.
