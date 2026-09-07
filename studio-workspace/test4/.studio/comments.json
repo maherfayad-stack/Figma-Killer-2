@@ -365,17 +365,16 @@
       "anchor": {
         "frameId": "d7132d36-dbde-434c-b257-1ff2d0ce909f",
         "pageId": "sms",
-        "dx": 52.74561227222406,
-        "dy": 103.02845757242567,
+        "dx": 57,
+        "dy": 91.9609375,
         "node": {
-          "nodeId": "pages/SMS.tsx:11:10~components/SheetHeader.tsx:12:10",
+          "nodeId": "pages/SMS.tsx:11:10~components/SheetHeader.tsx:11:8",
           "indexPath": [
             0,
             0,
             0,
             0,
-            1,
-            0
+            1
           ],
           "moduleId": "base.container",
           "textSnippet": ""

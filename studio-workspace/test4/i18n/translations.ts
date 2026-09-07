@@ -8,7 +8,8 @@
 export const translations = {
   en: {
     sheetHeader: {
-      back: 'Back'
+      back: 'Back',
+      close: 'Close'
     },
     cssProbe: {
       probe: 'probe',
@@ -17,6 +18,11 @@ export const translations = {
     home: {
       home: 'Home',
       startEditingThisPageIn: 'Start editing this page in Studio.'
+    },
+    onboardingHero: {
+      almosafer: 'Almosafer',
+      _941Am: '9:41 AM',
+      goodNewsAFewHotels: 'Good news! A few hotels you were interested in just had a 30% price drop'
     },
     onboarding: {
       completeYourSetupDonT: 'Complete your setup. Don’t miss out on:',
@@ -48,7 +54,13 @@ export const translations = {
       sms: 'SMS',
       at: 'at',
       resendIn: 'Resend in',
-      _29Seconds: '29 seconds'
+      _29Seconds: '29 seconds',
+      digit1: 'Verification code, digit 1',
+      digit2: 'Verification code, digit 2',
+      digit3: 'Verification code, digit 3',
+      digit4: 'Verification code, digit 4',
+      digit5: 'Verification code, digit 5',
+      digit6: 'Verification code, digit 6'
     }
   },
   ar: {
@@ -59,6 +71,11 @@ export const translations = {
     home: {
       home: 'الرئيسية',
       startEditingThisPageIn: 'ابدأ تحرير هذه الصفحة في Studio.'
+    },
+    onboardingHero: {
+      almosafer: 'المسافر',
+      _941Am: '9:41 ص',
+      goodNewsAFewHotels: 'أخبار سارة! انخفضت أسعار بعض الفنادق التي تهتم بها بنسبة 30%'
     },
     onboarding: {
       agree: 'موافق',
@@ -75,7 +92,8 @@ export const translations = {
       youCanOptOutAnytime: 'يمكنك إلغاء الاشتراك في أي وقت.'
     },
     sheetHeader: {
-      back: 'رجوع'
+      back: 'رجوع',
+      close: 'إغلاق'
     },
     signUp: {
       code: 'الرمز',
@@ -93,7 +111,13 @@ export const translations = {
       enterThe6DigitCode: 'أدخل الرمز المكوّن من 6 أرقام المُرسل عبر:',
       enterVerificationCode: 'أدخل رمز التحقق',
       resendIn: 'إعادة الإرسال خلال',
-      sms: 'رسالة نصية'
+      sms: 'رسالة نصية',
+      digit1: 'رمز التحقق، الرقم 1',
+      digit2: 'رمز التحقق، الرقم 2',
+      digit3: 'رمز التحقق، الرقم 3',
+      digit4: 'رمز التحقق، الرقم 4',
+      digit5: 'رمز التحقق، الرقم 5',
+      digit6: 'رمز التحقق، الرقم 6'
     }
   },
 }
