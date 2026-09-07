@@ -5,6 +5,7 @@ import {
 } from '@core/persistence/cmsMedia'
 import { primeCmsMediaAssetCache } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
 import { publishCmsMediaAssetCreated } from '@admin/shared/media/mediaAssetEvents'
+import { saveBlobAsFile } from '@admin/shared/saveBlobAsFile'
 import type { AgentPreviewImage } from './agentImageTypes'
 
 interface AgentImageActionOptions {
@@ -84,18 +85,7 @@ export async function copyAgentImageToClipboard(image: AgentPreviewImage): Promi
 /** Start a native browser download; the browser owns the final save location. */
 export async function downloadAgentImage(image: AgentPreviewImage): Promise<void> {
   const blob = await readAgentImageBlob(image)
-  const objectUrl = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = objectUrl
-  link.download = agentImageFilename(image, blob)
-  link.hidden = true
-  document.body.append(link)
-  try {
-    link.click()
-  } finally {
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
-  }
+  saveBlobAsFile(blob, agentImageFilename(image, blob))
 }
 
 /** Upload through the canonical Media pipeline (permissions, sniffing, variants, storage). */

@@ -27,7 +27,8 @@ field model into it, which added a section without renumbering one.)
 
 ## Status
 
-G1–G10 shipped, G9 completed in W8-1. Two pieces did not, and are tracked as
+G1–G11 shipped: G9 completed in W8-1, G11 (Export) added in W8-4. Two pieces
+did not, and are tracked as
 open workstreams in
 [`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md):
 
@@ -166,7 +167,7 @@ unset companion property, then any project-token apply action.
 
 ---
 
-## §4. The ten goals (G1–G10)
+## §4. The goals (G1–G11)
 
 ### G1 — The empty-section law
 
@@ -191,6 +192,12 @@ any other empty section.
 A section with a value set at a *non-active* breakpoint is **not** empty for the
 purpose of this rule — hiding it would hide the user's own work. Such a section
 carries the existing `indicator` dot.
+
+**Export (G11) obeys this law without the flag.** It is not a set of CSS
+properties, so it is not in `classStyleSections.ts` at all (see G11 for why);
+it implements the same one-line-plus-`+` rest state directly in
+`ExportSection.tsx`. `emptySectionLaw.test.tsx` therefore still covers exactly
+the seven flagged CSS sections and nothing more.
 
 **Acceptance:** a plain `<div>` with two classes set renders a panel that fits a
 900px-tall viewport with no scroll.
@@ -360,6 +367,68 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
   (`50%`, a `var()`, a third z component). Rotation stays live through both —
   the collisions are independent. An unflipped element gets no `scale`
   declaration at all, never a no-op `scale: 1 1`.
+
+### G11 — Export (W8-4)
+
+> **Figma:** the Export block at the bottom of the right panel. Empty ⇒ a title
+> and a `+`; add an export setting and it becomes a row of *format + scale*
+> with a run button.
+
+`ExportSection.tsx`, mounted last in `StyleSurface`'s column. The typed `+`
+menu is `NODE_EXPORT_MENU` (`nodeExportModel.ts`): **PNG @1× / @2× / @3×** and
+**SVG** add a row; **Copy CSS** and **Copy JSX** run immediately, because a
+copy has no settings to keep and parking one in the list would mean "add the
+row, then press its button" for a single verb.
+
+**Why it is not in `classStyleSections.ts`.** Three consumers read that
+registry as *CSS properties on a style target*: `StyleSectionsEditor` renders
+one copy per open target (so a node with both the Element and class blocks
+open would get two Export sections), `StyleCategoryRail` derives a rail button
+**disabled until a class is active** (Export works fine on an unclassed
+element), and the style search filters sections by the properties they claim
+(Export claims none). It is a statement about the *node*, so it mounts once,
+node-level, keyed by node id — the rows are per-selection session state, not
+persisted: Studio's file is the user's repository, and writing an export
+setting into their `.tsx` is not a trade this tool makes.
+
+**PNG** — `POST /admin/api/studio/node-png`. The page is photographed through
+the existing capture pipeline (`captureFrames`, the same one `studio_screenshot`
+and the share snapshot use), and the node's own rectangle is cut out of the
+result. The rect and the scale both come from the capture's own report
+(`nodeRects` + `imageScale`), never from the requested density — the pipeline
+clamps `dpr` against its resolution caps, and deriving the crop from what was
+actually rendered is what keeps the cut correct when it does.
+`resolveNodeCropBox` rounds outward (so a fractional rect never clips the
+element), clamps a rect that overhangs the frame, and refuses two cases by
+name: a 0×0 element, and one that lies entirely outside what was photographed.
+
+**SVG** — no route. Whether a node *has* an honest vector form is a fact about
+the parse the browser already holds, not a rendering question:
+`resolveNodeSvgExport` reads `props.svg` (the markup `inlineSvg.ts` serialised
+for `base.svg`) or an `<img src>` resolving to an `.svg`, and everything else
+is refused **by name** — `rasterized-html`, `raster-image`, `dynamic-svg` —
+rather than wrapped in an `<svg><image href="data:…">` shell. That shell is
+what "export anything as SVG" tools emit; it hands the user a file that claims
+to be vector and is not, which is the read-side version of the write invariant
+in `PROJECT-BRIEF.md`.
+
+**Copy CSS** — `collectNodeCssDeclarations` over the `provenanceByProperty`
+map `StyleSurface` already computes. Only properties something *declares* are
+copied (a full computed bag is the UA's opinion, not the element's design),
+each at its provenance **winner**'s value; a property the panel marks
+`ambiguous` falls back to the frame's real computed value rather than picking
+one of the candidate declarations at random. A node with no class gets bare
+declarations under a comment header, never an invented selector.
+
+**Copy JSX** — `POST /admin/api/studio/node-jsx` returns the node's own source
+verbatim, located with `locateJsxElement.ts` — the same locator every codemod
+resolves its write target with, so "the JSX you copied" and "the JSX an edit
+would rewrite" are the same span by construction. Never regenerated from the
+tree.
+
+Both routes require a session (`nodeExportRoutes.ts`): a capture runs *on
+behalf of* a user id, and the JSX is the contents of a file in their
+repository.
 
 ---
 

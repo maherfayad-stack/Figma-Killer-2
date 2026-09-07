@@ -1255,6 +1255,123 @@ to `docs/features/studio-import.md`'s `className` write-back section.
   confirm the model trigger reads `<model> auto · <effort>` with the router's
   reason on hover.
 
+### panel-16 — W8-4: an Export section, and what it refuses to fake
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-export-section` off `origin/main` (`0d05e1c`).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W8-4, the *Export section* bullet, one PR.
+  Nothing from W8-2/3 or the parallel scrub/fill/multi-select waves.
+- **What landed.** A node-level **Export** section at the bottom of the
+  inspector (`ExportSection.tsx`, mounted last in `StyleSurface`'s column,
+  keyed by node id). One header line and a `+` at rest (Law 1); the typed `+`
+  menu is **PNG @1×/@2×/@3×**, **SVG**, **Copy CSS**, **Copy JSX**. The image
+  formats add a row (format + density + a run button); the two copies run
+  immediately, because a copy has no settings to keep.
+  - **PNG** — `POST /admin/api/studio/node-png`. Photographs the node's page
+    through the existing `captureFrames` pipeline (untouched — consumed via
+    its exported entry) and crops to the node's own rect. `resolveNodeCropBox`
+    (`nodeExportCapture.ts`) derives the crop from the capture's **reported**
+    `nodeRects` + `imageScale`, never the requested `dpr`, so it stays correct
+    when the pipeline clamps a 3× request. Rounds outward, clamps an
+    overhanging rect, and refuses two cases by name (0×0 element; entirely
+    outside what was photographed).
+  - **SVG** — deliberately **no route**. Whether a node has an honest vector
+    form is a fact about the parse the browser already holds (`props.svg` from
+    `inlineSvg.ts`, or an `<img src>` resolving to `.svg` — including the
+    `?path=…svg` shape the parse rewrites local assets to). Everything else is
+    refused BY NAME (`rasterized-html` / `raster-image` / `dynamic-svg`)
+    rather than wrapped in an `<svg><image href="data:…">` shell. That shell
+    is what "export anything as SVG" tools emit and it is a lie about the file
+    the user just saved.
+  - **Copy CSS** — off the `provenanceByProperty` map `StyleSurface` already
+    computes. Only properties something *declares* are copied, each at its
+    provenance **winner**'s value; an `ambiguous` property falls back to the
+    frame's real computed value rather than picking a candidate declaration at
+    random. A node with no class gets bare declarations under a comment
+    header — never an invented selector.
+  - **Copy JSX** — `POST /admin/api/studio/node-jsx`, located with
+    `locateJsxElement.ts` (the same locator every codemod resolves its write
+    target with) and returned verbatim. Never regenerated from the tree.
+- **Why Export is NOT in `classStyleSections.ts`.** Three consumers read that
+  registry as *CSS properties on a style target*: `StyleSectionsEditor`
+  renders one copy per open target (so a node with both the Element and class
+  blocks open would have shown **two** Export sections), `StyleCategoryRail`
+  derives a rail button **disabled until a class is active** (Export works
+  fine on an unclassed element), and the search filters by claimed properties
+  (Export claims none). It follows Law 1 in its own component instead, so
+  `emptySectionLaw.test.tsx` still covers exactly the seven flagged CSS
+  sections — unchanged, still green. Consequence: **there is no rail icon for
+  Export**; `StyleCategoryRail.tsx` belongs to the parallel inspector-fix
+  agent and was not touched. If a rail entry is wanted, it needs a
+  non-`CLASS_STYLE_SECTIONS` entry in that file — a follow-up, not drift.
+- **Cleanups made on the way (CLAUDE.md "fix at the source"):**
+  - `saveBlobAsFile` (`src/admin/shared/saveBlobAsFile.ts`) — the
+    object-URL + hidden-anchor + delayed-revoke idiom existed in two verbatim
+    copies (`downloadStudioCode.ts`, `agentImageActions.ts`) and this would
+    have been a third. Both migrated.
+  - `server/handlers/studio.ts` had grown **four** bespoke "called outside the
+    loop because it needs the `DbClient`" blocks, each restating the same
+    rationale. They are now one `STUDIO_SESSION_SUB_ROUTERS` array + loop,
+    mirroring the existing `STUDIO_SUB_ROUTERS`. Net effect: the file is
+    **698 lines** (was 692) even after gaining a route — but it is still
+    within 2 lines of the 700-line ceiling. **The next agent to add a route
+    there must split the file, not squeeze.** Its module doc is ~250 lines of
+    prose cataloguing routes that already have their own module docs; that is
+    the obvious extraction.
+  - `@core/ast-codemods` now exports the shared JSX locator
+    (`createProject` / `loadSourceFile` / `findJsxElementAtLocation` /
+    `resolveJsxWholeElement`) through its barrel, so Copy JSX finds the exact
+    span a write would land on instead of growing a second locator.
+    `camelToKebabCssProperty` was reused from `@core/css-codemods` rather than
+    adding a third kebab helper — see that file's own note on why the copies
+    are deliberate.
+- **Tests:** `nodeExportCapture.test.ts` (crop math: scaling, outward
+  rounding, edge clamping, both refusals; plus the capture→crop wiring through
+  the injectable `captureFrames` seam, no Chromium) · `nodeExportRoutes.test.ts`
+  (path ownership, non-POST verbs ignored, **session required before the body
+  is even read**, and the two body schemas — notably that a density the menu
+  does not offer is a 400, not a value to clamp) · `nodeExportModel.test.ts`
+  (the `+` menu registry, file naming, all three SVG refusals + all three
+  accept shapes, Copy CSS winner/ambiguous/skip behaviour and its formatting).
+- **Verification:** `bun run build` (tsc -b + vite) clean · `bun run lint`
+  clean · new tests 44/0 · `bun test src/admin/pages/site/panels/PropertiesPanel
+  src/__tests__/panels src/admin/pages/site/studio/__tests__` → 990/0 (a first
+  run showed 2 fail, green on re-run — the documented batch-isolation flake) ·
+  `bun test src/__tests__/architecture/module-size-budgets.test.ts` → 5/0 ·
+  `bun test server/handlers/studio …` → 6 fail, all in the documented
+  environmental cluster (`applyProjectSeed`, `generateStudioProjectGuide`,
+  `buildStoryRouteEntries` — they read Studio's own `node_modules`, empty in a
+  worktree). The architecture suite's icon-catalog and `madge`/driver-isolation
+  timeouts are the same pre-existing clusters `agent-16` documents above; no
+  new icon was added (`arrow-bar-down`, `image-solid`, `image-2-solid`,
+  `loader`, `plus` are all already vendored, so no `icons:sync` run was needed).
+- **Human action needed — dogfood script.** Open `/admin/site` on
+  `studio-workspace/test4` and select a node:
+  1. The **Export** section is the last block in the panel and is **one line
+     with a `+`**. Confirm it is present on an element with **no class** (the
+     rail's CSS icons are greyed out there — Export must not be).
+  2. `+` → **PNG @2×** adds a row reading `PNG 2×`; its run button downloads a
+     file named after the node with an `@2x.png` suffix. Open it: it must be
+     **just that element**, not the whole frame. Needs
+     `bunx playwright install chromium` — the crop is the one thing no test can
+     prove on this machine.
+  3. Select an **inline `<svg>`** (a design-system icon) → `+` → **SVG** → run.
+     The file must open in a browser as a real vector. Then select a plain
+     `<div>` and do the same: expect a **refusal toast naming the reason**
+     ("rasterized HTML … export PNG instead"), not a downloaded file.
+  4. **Copy CSS** on an element with two classes, then paste. Check the
+     selector is the real `.a.b`, the values match what the panel shows, and
+     nothing inherited leaked in. Repeat on an unclassed element: bare
+     declarations, no invented selector.
+  5. **Copy JSX**, paste, and diff against the element in the `.tsx` — it must
+     be character-identical, comments and expressions included.
+  6. Select a different node and back: the rows are gone (per-selection state,
+     by design — say so if that feels wrong; persisting them means writing
+     into the user's repo).
+- **Next step:** review + merge the PR. Nothing is stacked on it. The
+  `StyleCategoryRail` question in the bullet above is the only known follow-up.
+
 ---
 
 ## Blocked
@@ -1278,6 +1395,11 @@ here **verbatim**, so archiving buries no dogfood step.
 
 ### Still in "Recently landed" below — the entry carries the full script
 
+- **`panel-16` — W8-4 the Export section** (in `## Now`, not yet landed to
+  `main`). Six-step script in the entry. The two steps no test can stand in
+  for: whether the PNG crop actually lands on the selected element (needs
+  `bunx playwright install chromium`), and whether the SVG refusal reads as
+  helpful rather than obstructive on a plain `<div>`.
 - **`panel-13` — W8-1 inspector field ergonomics** (in `## Now`, not yet landed
   to `main`). Open the Properties panel on a text node in `studio-workspace/test4`
   and, in one pass: (1) type `50` into Width, press **Enter** — the field must
