@@ -13,6 +13,7 @@ import * as path from 'node:path'
 import { loadStudioPages } from '../studioPageLoad'
 import { createScaffoldedPage } from './pageScaffold'
 import { resolvePageSourceFile } from './pageSourceFile'
+import { CHAT_ATTACHMENT_REFERENCE_SOURCE } from './designReferenceSchema'
 import { registerDesignReference } from './designReferenceStore'
 import { recordPassingCompare } from './pageVerificationStore'
 import { appendTurnWrite, resetTurnWriteLog } from './turnWriteLog'
@@ -91,6 +92,46 @@ describe('computePageWriteVerification', () => {
     expect(entry!.verifiedSinceWrite).toBe(true)
   })
 
+  it('reports an ambiguous page as ambiguous rather than as unarmed', async () => {
+    // Two equally-ranked specs on one page: `resolveDesignReference` refuses to
+    // pick, so `hasReference` is false — but the gate must NOT then tell the
+    // agent to register a design, which is what the unarmed branch says and
+    // what would add a third candidate to a set it already cannot choose from.
+    const { page, rel } = await scaffold('Onboarding')
+    for (const label of ['v1', 'v2']) {
+      const registered = await registerDesignReference(dir, ONE_PIXEL_PNG, { pageId: page.id, label, role: 'spec' })
+      if (!registered.ok) throw new Error(registered.error)
+    }
+    appendTurnWrite(dir, path.join(dir, rel))
+
+    const [entry] = computePageWriteVerification(dir, [page])
+    expect(entry!.hasReference).toBe(false)
+    expect(entry!.referenceAmbiguity).toBeDefined()
+    expect(entry!.referenceAmbiguity).toContain('referenceId')
+
+    const message = describeUnverifiedPage(entry!, false)
+    expect(message).toContain('referenceId')
+    expect(message).not.toContain('has NO design reference registered')
+  })
+
+  it('a page armed with one spec and one chat attachment is NOT ambiguous — the spec simply wins', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const spec = await registerDesignReference(dir, ONE_PIXEL_PNG, { pageId: page.id, role: 'spec' })
+    if (!spec.ok) throw new Error(spec.error)
+    const pasted = await registerDesignReference(dir, ONE_PIXEL_PNG, {
+      pageId: page.id,
+      role: 'context',
+      source: CHAT_ATTACHMENT_REFERENCE_SOURCE,
+    })
+    if (!pasted.ok) throw new Error(pasted.error)
+    appendTurnWrite(dir, path.join(dir, rel))
+
+    const [entry] = computePageWriteVerification(dir, [page])
+    expect(entry!.hasReference).toBe(true)
+    expect(entry!.referenceId).toBe(spec.reference.id)
+    expect(entry!.referenceAmbiguity).toBeUndefined()
+  })
+
   it('counts every write to the same file, and never flags a page nothing wrote to', async () => {
     const onboarding = await scaffold('Onboarding')
     const checkout = await scaffold('Checkout')
@@ -135,6 +176,22 @@ describe('describeUnverifiedPage / describePageForDigest', () => {
     const message = describeUnverifiedPage(armed, false)
     expect(message).toContain('studio_compare')
     expect(message).not.toContain('studio_register_design_reference')
+  })
+
+  it('tells an ambiguous page to PICK a reference, never to register another one', () => {
+    // The instruction the gate owes a model it just blocked. "Register a design
+    // reference" is the opposite of the right move here, so its absence is the
+    // assertion that matters.
+    const ambiguous = {
+      ...base,
+      referenceAmbiguity: '"onboarding" has 2 registered designs ... Pass referenceId to name the one to measure against.',
+    }
+    const message = describeUnverifiedPage(ambiguous, true)
+    expect(message).toContain('2 registered designs')
+    expect(message).toContain('studio_compare')
+    expect(message).toContain('referenceId')
+    expect(message).not.toContain('studio_register_design_reference')
+    expect(message).not.toContain('Figma connector')
   })
 
   it('names the write count as thrash only at or above the threshold', () => {
