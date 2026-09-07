@@ -282,6 +282,127 @@ if (typeof (globalThis as { EventSource?: unknown }).EventSource === 'undefined'
 }
 
 // ---------------------------------------------------------------------------
+// Async budgets, declared once for the whole suite.
+//
+// Both numbers exist because CI runs on a shared 2-4 vCPU Linux runner that is
+// roughly 5-10x slower than a developer laptop at mounting this suite's real
+// iframes, ResizeObservers and canvas frames. Every budget below was picked so
+// that the SLOWEST honest test on that runner still fits, because in this
+// suite a blown budget is not a local failure — see the act() note further
+// down for why one timed-out test used to take the entire run with it.
+//
+// - `asyncUtilTimeout` (@testing-library/dom `waitFor` / `findBy*`) defaults to
+//   1000ms. Canvas suites that mount a breakpoint frame routinely land at
+//   1005-1030ms on a laptop, i.e. they were already passing by ~0ms of margin
+//   and failed outright on the runner. 5000ms.
+// - `setDefaultTimeout` (bun's per-test budget) defaults to 5000ms, which is
+//   the SAME order as the waitFor budget above — so a genuinely failing
+//   `waitFor` would burn the whole test budget and abandon the test mid-await
+//   instead of failing cleanly with a useful message. 20000ms keeps a
+//   comfortable multiple between the two, so a bad `waitFor` always reports
+//   itself rather than tripping the outer timeout.
+//
+// Raise these HERE, never per test: a per-file override only moves the cliff.
+{
+  const { setDefaultTimeout } = await import('bun:test')
+  const { configure } = await import('@testing-library/dom')
+  configure({ asyncUtilTimeout: 5_000 })
+  setDefaultTimeout(20_000)
+}
+
+// ---------------------------------------------------------------------------
+// Repair a leaked React act() scope between tests.
+//
+// This is the single highest-leverage guard in the file. React's `act()` keeps
+// two pieces of module-private state: `actQueue` (the work it will flush) and
+// `actScopeDepth` (how many act scopes are open). Both are unwound in the
+// `.then()` handlers of the promise `await act(async () => …)` returns.
+//
+// When bun's per-test timeout fires, it abandons the test's async frame — so
+// that promise NEVER settles, so those handlers never run, so `actScopeDepth`
+// stays at 1 and `actQueue` stays non-null FOR THE REST OF THE PROCESS. React
+// then takes the `prevActScopeDepth !== 0` branch on every later render: work
+// is pushed onto the orphaned queue and never flushed. Every subsequent
+// `render()` in every subsequent FILE commits nothing — RTL reports an empty
+// `<body><div /></body>` and `renderHook` hands back `result.current === null`.
+//
+// That is not hypothetical: it is what turned ~30 real CI failures into 666.
+// One agent-canvas test exceeding 5000ms on the runner bricked React for the
+// 500+ files that ran after it. `--parallel=4` (see bunfig.toml) contains the
+// blast radius to one file, and the budgets above stop the timeout happening
+// at all — this guard is the third line, so that a future slow test degrades
+// to ONE failure instead of a suite-wide wipeout.
+//
+// The repair: wrap `React.act` so an async callback's thenable is replaced by
+// one we can settle ourselves, and resolve any still-pending wrapper in
+// `afterEach`. Resolving (not rejecting) is deliberate — it drives React's own
+// fulfilment path, which calls `popActScope` and flushes the queue, restoring
+// exactly the state React would have reached on its own. `thrownErrors` is a
+// shared array on the same internals object, so an abandoned act can also
+// deposit an error that surfaces inside an unrelated later test; clear it too.
+//
+// Must run BEFORE the `@testing-library/react` import below: RTL copies
+// `React.act` once at module load (`act-compat.js`), so a later patch is
+// invisible to it. It also has to go through `require`, not `import` — an ESM
+// namespace object is frozen, and the mutable CJS `module.exports` is the same
+// object RTL reads from.
+{
+  const { afterEach } = await import('bun:test')
+  const { createRequire } = await import('node:module')
+
+  type ActInternals = { thrownErrors: unknown[] }
+  type ActCallback = () => unknown
+  type ActFn = (callback: ActCallback) => unknown
+  type ReactCjs = {
+    act?: ActFn
+    __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?: ActInternals
+  }
+
+  const reactModule = createRequire(import.meta.url)('react') as ReactCjs
+  const internals = reactModule.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE
+  const realAct = reactModule.act
+
+  if (typeof realAct === 'function') {
+    let abandonedScopeSettlers: Array<() => void> = []
+
+    reactModule.act = function actWithLeakRepair(callback: ActCallback): unknown {
+      return realAct(() => {
+        const result = callback()
+        const isThenable =
+          result !== null && typeof result === 'object' && typeof (result as PromiseLike<unknown>).then === 'function'
+        if (!isThenable) return result
+
+        return new Promise((resolve, reject) => {
+          let settled = false
+          abandonedScopeSettlers.push(() => {
+            if (settled) return
+            settled = true
+            resolve(undefined)
+          })
+          ;(result as PromiseLike<unknown>).then(
+            (value) => {
+              settled = true
+              resolve(value)
+            },
+            (error: unknown) => {
+              settled = true
+              reject(error)
+            },
+          )
+        })
+      })
+    }
+
+    afterEach(() => {
+      const settlers = abandonedScopeSettlers
+      abandonedScopeSettlers = []
+      for (const settle of settlers) settle()
+      if (internals) internals.thrownErrors.length = 0
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Global React Testing Library cleanup after every test.
 //
 // @testing-library/react auto-registers an `afterEach(cleanup)` ONLY when
