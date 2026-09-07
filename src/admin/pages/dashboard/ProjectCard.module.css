@@ -12,23 +12,80 @@
 /* Card-style project tile — the whole surface opens the project (see the
  * §8.11 button-primitive allowlist entry). Borderless tile: a lifted surface
  * on the page background, `--card-radius`, hover raises the surface tone
- * rather than recoloring a border. */
+ * rather than recoloring a border.
+ *
+ * No padding of its own: the preview runs edge to edge under the card's own
+ * top corners, and `.cardBody` carries the inset for everything below it.
+ * `overflow: hidden` is what makes the image take the corner radius. */
 .card {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: var(--space-2xs);
     width: 100%;
-    padding: var(--space-3xl);
+    padding: 0;
     background: var(--bg-surface-2);
     border: 0;
     border-radius: var(--card-radius);
+    overflow: hidden;
     cursor: pointer;
     text-align: left;
     transition:
         background 120ms ease,
         transform 120ms ease,
         box-shadow 150ms ease;
+}
+
+/*
+  The preview plate. Always present at a fixed 4:3, whether or not there is an
+  image yet — a tile that grew when its screenshot arrived would reflow the
+  whole grid one card at a time as the server's serialised captures land.
+  `--bg-surface-3` is the placeholder ground and also what shows through the
+  transparent padding of a thumbnail whose frame was shorter than 4:3.
+*/
+.preview {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: var(--bg-surface-3);
+    color: var(--accent-2);
+    overflow: hidden;
+}
+
+/*
+  Painted over the glyph rather than instead of it, and transparent until it
+  has decoded: a 404 (the capture has not run yet) or a slow load then shows
+  the plate, never a broken-image icon. `object-position: top` keeps a frame
+  taller than 4:3 anchored to its header — the part of a screen that identifies
+  it — matching how the server crops.
+*/
+.previewImage {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top center;
+    opacity: 0;
+    transition: opacity 160ms ease;
+}
+
+.previewImage[data-loaded='true'] {
+    opacity: 1;
+}
+
+/* Everything the tile says in words. Carries the card's inset, since `.card`
+ * itself has none — see its comment. */
+.cardBody {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2xs);
+    width: 100%;
+    min-width: 0;
+    padding: var(--space-m);
 }
 
 /*
@@ -55,17 +112,15 @@
     outline-offset: 2px;
 }
 
-.cardIcon {
-    display: inline-flex;
-    color: var(--accent-2);
-    margin-bottom: var(--space-2xs);
-}
-
-/* The project's name is the largest thing on the home surface — at `--text-m`
- * it read like the panel chrome inside the editor rather than the title of a
- * document you are about to open. */
+/*
+  W7-1 set this to `--text-xl` because the name was the largest thing the tile
+  could offer — there was nothing else on it. The preview is now that thing, so
+  the name returns to a label scale beneath it: a 20px title over a picture
+  competes with the picture, which is the one part of the tile that actually
+  tells two projects apart.
+*/
 .cardName {
-    font-size: var(--text-xl);
+    font-size: var(--text-m);
     font-weight: 600;
     color: var(--text-bright);
     max-width: 100%;
@@ -142,10 +197,15 @@
   Revealed on hover or focus, so a grid of projects reads as projects rather
   than as a row of menu buttons. `:focus-within` is what keeps it reachable by
   keyboard: tabbing to the (still focusable) control makes it visible.
+
+  Anchored to the BOTTOM row, not the top: the top of the tile is now a
+  screenshot, and a floating control over arbitrary user pixels is both
+  illegible and a lie about what it belongs to. Down here it sits on the card's
+  own `--bg-surface-2`, beside the metadata line it is a peer of.
 */
 .cardMenuButton {
     position: absolute;
-    top: var(--space-s);
+    bottom: var(--space-s);
     right: var(--space-s);
     opacity: 0;
     transition: opacity 120ms ease;

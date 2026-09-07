@@ -28,6 +28,7 @@ const ALPHA = {
   trust: 'static' as const,
   styleToolchains: ['tailwind' as const],
   editedAt: EDITED_AT,
+  hasThumbnail: false,
 }
 const BETA = {
   dir: '/ws/beta',
@@ -36,6 +37,8 @@ const BETA = {
   trust: 'render-packages' as const,
   styleToolchains: ['sass' as const],
   editedAt: EDITED_AT,
+  hasThumbnail: true,
+  thumbnailUpdatedAt: EDITED_AT,
 }
 
 const deleteCalls: string[] = []

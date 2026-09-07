@@ -16,7 +16,7 @@ import * as path from 'node:path'
 import { listStudioProjects } from '../../studioProjects'
 import { ProjectDuplicateError, duplicateStudioProject } from '../projectDuplicate'
 import { readStudioMeta, writeStudioMeta } from '../studioMeta'
-import { PROJECTS_TRASH_DIR_NAME } from '../projectTrash'
+import { PROJECTS_TRASH_DIR_NAME } from '../projectDirGuard'
 
 let root: string
 

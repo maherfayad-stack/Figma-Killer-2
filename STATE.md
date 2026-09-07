@@ -21,6 +21,81 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### server-20 — W7-3: the launcher tile shows the project, not a folder glyph
+- **Agent:** server-engineer
+- **Stage:** done (gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07
+- **Branch:** `feat/launcher-project-thumbnails`, off `origin/main` at `342c67d` (W7-2 / PR #51).
+- **Goal:** `STUDIO-WAVE7-PLAN.md` §W7-3 — capture each project's first screen
+  headlessly, serve it with mtime caching, and rebuild the card around it.
+- **Scope:** NEW `server/handlers/studio/{projectDirGuard,projectThumbnailFile,projectThumbnail,projectThumbnailQueue,projectThumbnailRoute}.ts`
+  + `studio/__tests__/projectThumbnail.test.ts`; edited
+  `server/handlers/{studioProjects,studioWriteback}.ts`,
+  `server/handlers/studio/{projectRoutes,projectTrash,projectDuplicate}.ts`;
+  NEW `src/admin/pages/dashboard/hooks/useProjectThumbnail.ts`; edited
+  `src/admin/pages/dashboard/{ProjectCard.tsx,ProjectCard.module.css,DashboardPage.module.css,DashboardPage.test.tsx,hooks/useStudioProjects.ts}`;
+  docs `agent-refs/{path-index,glossary}.md`, `features/studio-import.md`.
+  **`server/handlers/studio.ts` was deliberately NOT touched** — it is at 699 of
+  `module-size-budgets`' 700-line ceiling, which is why `GET /thumbnail` is
+  registered inside `projectRoutes.ts` rather than as a new `STUDIO_SUB_ROUTERS`
+  entry. Do not "tidy" that by adding an import there.
+- **Done so far:**
+  - `captureProjectThumbnail(dir)` → `captureFrames({ source: \'headless\' })`,
+    `sharp` to 480×360, written to `.studio/thumbnail.png`. `source` is
+    explicit: `auto`\'s fallback is the LIVE editor tab, and hijacking whatever
+    project a user has open to refresh someone else\'s thumbnail is not a trade
+    a background job gets to make.
+  - **No new `CapturePurpose` was needed** and nothing under
+    `server/ai/mcp/capture/` or `src/core/ai/` was touched (two other agents
+    are editing those). The plan allowed for a `purpose: \'thumbnail\'` scale;
+    it would have been dead weight — the capture asks for `dpr: 1`, which the
+    `\'vision\'` cap never binds on, and the downscale is `sharp`\'s job after
+    the fact.
+  - `GET /admin/api/studio/thumbnail?dir=` — mtime+size `ETag`,
+    `Last-Modified`, `must-revalidate`, 304 on a match; 404 + `no-store` while
+    the capture is queued. A same-origin `<img src>`, NOT `apiBlobRequest`:
+    the browser\'s own HTTP cache is the entire point of the validators.
+  - `StudioProjectSummary` gains `hasThumbnail` + `thumbnailUpdatedAt` (one
+    `stat`, in the single `studioProjectSummary(dir)` builder).
+  - Triggers: `GET /projects` backfills every project without one; a debounced
+    (15 s) refresh fires from `applyStudioEditBatch` — the single engine BOTH
+    `/save` and MCP `studio_apply_edits` run through, so the agent\'s writes
+    count too. Both fire-and-forget. `projectThumbnailQueue` serialises them
+    (the browser pool is ONE Chromium) and memoises failures per process; a
+    save clears that memo for its project.
+  - `ProjectCard` is the Figma-file-tile shape now: 4:3 preview on top, name +
+    badges below, ⋯ moved to the bottom row (it used to float over what is now
+    a screenshot), name back to `--text-m` from W7-1\'s `--text-xl`.
+- **Next step:** none for this PR. Merge after `git fetch && git merge origin/main`
+  (W7-4/W7-5 also touch `DashboardPage.*`).
+- **Decisions:**
+  - `PROJECTS_TRASH_DIR_NAME` + the parent-comparison containment check MOVED
+    out of `projectTrash.ts` into a new `projectDirGuard.ts`, because a third
+    caller (`/thumbnail`) would have made three copies of a security check.
+    `/delete`, `/duplicate` and `/thumbnail` all call
+    `resolveWorkspaceProjectDir` now. **W7-4 (trash UX) will conflict here** —
+    resolve by keeping the guard.
+  - The thumbnail lives in the project\'s own `.studio/` sidecar, not a server
+    cache: a duplicated, moved or un-trashed project carries its picture.
+- **Landmines:**
+  - `bun run build` / `tsc -b` time out in a worktree whose `node_modules/` is
+    an empty shadowing directory — run `bun install` in the worktree first.
+    Per-project `tsc -p tsconfig.{app,node}.json --noEmit` is the fast check.
+  - A project with no `.studio/boards.json` frames short-circuits before any
+    browser work. That is what makes enqueueing every project on every launcher
+    render cheap, and what keeps the test suite from launching Chromium.
+- **Verification:** `tsc -p tsconfig.app.json --noEmit` ✅,
+  `tsc -p tsconfig.node.json --noEmit` ✅, `eslint` on every touched file ✅,
+  283 tests across the 18 touched suites ✅ (17 new). Architecture gates ran:
+  `css-token-policy`, `css-token-vocabulary`, `no-css-var-fallbacks`,
+  `module-size-budgets`, `button-primitive-usage` all pass; the icon-catalog
+  cluster and the `ai-driver-isolation` timeouts are the standing pre-existing
+  failures. Full `bun run build` NOT run — see landmines.
+- **Human action needed:** dogfood — open `/admin/dashboard` with two or more
+  projects, confirm each tile\'s folder glyph swaps to a real screenshot within
+  ~40 s, edit a screen on the board and confirm the tile updates ~15 s after
+  the last save, and check the ⋯ menu + inline rename still work on the new
+  card shape.
 ### panel-14 — W8-4: Fill edits `background-image` as N layers, honestly
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; draft PR open) — **needs human dogfood**

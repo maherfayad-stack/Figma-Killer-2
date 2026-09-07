@@ -7,7 +7,18 @@
  *
  *   GET  /admin/api/studio/projects
  *       Lists every on-disk studio project the Overview launcher can open.
- *       Read-only — never creates, clears, or writes a directory.
+ *       Read-only — never creates, clears, or writes a directory. It DOES
+ *       enqueue a preview capture for every project that has no thumbnail yet
+ *       (W7-3), fire-and-forget: the queue serialises them and the response
+ *       never waits on one. See `./projectThumbnailQueue.ts`.
+ *
+ *   GET  /admin/api/studio/thumbnail?dir=<abs>
+ *       That preview: `<dir>/.studio/thumbnail.png`, with mtime-based
+ *       validators and a 304 on a matching `If-None-Match`. Lives here rather
+ *       than in its own sub-router because it answers the same question every
+ *       route in this file answers — "describe this project to the launcher" —
+ *       and shares `./projectDirGuard.ts` with `/delete` and `/duplicate`. The
+ *       serving itself is `./projectThumbnailRoute.ts`.
  *
  *   POST /admin/api/studio/create   body: { name? }
  *       Scaffolds a new project: one slugified folder under
@@ -69,6 +80,8 @@ import { requireCapability } from '../../auth/authz'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { ProjectTrashError, trashStudioProject } from './projectTrash'
 import { ProjectDuplicateError, duplicateStudioProject } from './projectDuplicate'
+import { serveProjectThumbnail } from './projectThumbnailRoute'
+import { projectThumbnailQueue } from './projectThumbnailQueue'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
@@ -169,9 +182,16 @@ const DuplicateProjectBodySchema = Type.Object({
 export async function tryServeStudioProjectRoutes(
   req: Request,
   runtime: { db: DbClient },
-  _url: URL,
+  url: URL,
   pathname: string,
 ): Promise<Response | null> {
+  // The launcher tile's preview image. Read-only and synchronous — the CAPTURE
+  // that produces the file is a background job (`./projectThumbnailQueue.ts`),
+  // never something an image request waits on.
+  if (pathname === '/admin/api/studio/thumbnail' && req.method === 'GET') {
+    return serveProjectThumbnail(req, url.searchParams.get('dir'))
+  }
+
   // Delete a PROJECT — recoverably. Nothing is erased: the folder is moved
   // into `studio-workspace/.trash/`, because `studio-workspace/<project>/` is
   // the user's own repository with no other copy. See `./projectTrash.ts`.
@@ -227,6 +247,14 @@ export async function tryServeStudioProjectRoutes(
   if (pathname === '/admin/api/studio/projects' && req.method === 'GET') {
     try {
       const projects = listStudioProjects(projectsRootDir())
+      // W7-3's lazy backfill. Every project without a preview is enqueued and
+      // the response goes out immediately — the queue is serialised, skips a
+      // project whose capture already failed this process, and short-circuits
+      // on the boards-file read for a project that has no frames to
+      // photograph, so this stays a handful of `stat`s in the common case.
+      for (const project of projects) {
+        if (!project.hasThumbnail) projectThumbnailQueue.backfill(project.dir)
+      }
       return jsonResponse({ projects })
     } catch (err) {
       rethrowProjectDirRefusal(err)
