@@ -40,8 +40,10 @@ Archive section at the bottom of this file indexes them.
 
 **Durable fact — `tsc` does not cover server tests.** `tsconfig.node.json` excludes `server/**/__tests__` and `server/**/*.test.ts`. Every stale call site above was invisible to the Build job and only surfaced as a runtime failure, or (worse) as a silently vacuous assertion. Including them is a 268-error job on the current tree — audited, reverted, NOT attempted here. Whoever takes it: that is the gate that would have caught this whole class.
 
+**The first CI run on the PR proved it: 12354 pass / 3 fail (was ~666 fail).** Two were the known canvas pair. The third was new and CI-only — `importHtmlModal.test.tsx` waiting on CodeMirror's dynamic `import()` inside the global 5 s `asyncUtilTimeout`. That budget is sized for renders, not for a cold chunk fetch on a shared runner; it now gets an explicit 15 s (under the 20 s per-test budget, so a genuine hang still reports itself). Not a weakened assertion — the same element, the same `toBeTruthy`.
+
 **CUT, deliberately, and named:**
-- **The three canvas failures** — `canvasScrollUnrollPinInteraction.test.tsx` (×2) and `selectionToolbar.test.tsx` (×1) — are the only red left in a `bun run test` run and are handed to canvas-engineer separately. Not touched.
+- **The two canvas failures** — `canvasScrollUnrollPinInteraction.test.tsx` (×2) and `selectionToolbar.test.tsx` (×1) — are the only red left in a `bun run test` run and are handed to canvas-engineer separately. Not touched.
 - **The React/DOM half** (`src/admin/**`, `src/ui/**`, `src/__tests__/canvas|panels|layout|admin/**`) belongs to the sibling agent (PR #85). Not touched.
 - **A full `bun test` writes into `studio-workspace/__canonical-fixture/`** — it modifies the tracked `package.json` and drops `index.html`, `vite.config.js`, `.studio/shell.json` and `prototype/`. Reverted out of this diff, not chased. A suite writing into committed user data is a real problem and needs its own owner.
 - **No architecture gate for "a `mock.module` must be restored."** The four offenders are fixed by hand. A gate over `server/**/*.test.ts` would be the durable answer; not written here.
