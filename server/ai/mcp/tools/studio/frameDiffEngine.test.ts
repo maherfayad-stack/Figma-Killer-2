@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { PNG } from 'pngjs'
-import { computeFrameDiff, decodePngBuffer, reconcileReference } from './frameDiffEngine'
+import { computeFrameDiff, cropImageTop, decodePngBuffer, reconcileReference } from './frameDiffEngine'
 
 const W = 200
 const H = 200
@@ -209,10 +209,16 @@ describe('reconcileReference', () => {
   })
 
   it('refuses a large aspect-ratio divergence rather than stretching over a real content difference', async () => {
+    // Landscape reference against a portrait capture. The capture IS taller
+    // than the reference, so only the exact-width guard keeps this out of the
+    // scroll-unroll crop path — which is the point of that guard.
     const wide = new PNG({ width: 400, height: 100 })
     const result = await reconcileReference(PNG.sync.write(wide), 400, 100, W, H)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error).toContain('aspect ratio')
+    if (!result.ok) {
+      expect(result.error).toContain('aspect ratio')
+      expect(result.error).toContain('scroll-unroll')
+    }
   })
 
   it('names the vision-safe capture cap when a resample looks caused by it (A2)', async () => {
@@ -282,5 +288,92 @@ describe('reconcileReference', () => {
       expect(result.result.note).not.toContain('vision-safe')
       expect(result.result.note).toContain('width')
     }
+  })
+})
+
+describe('reconcileReference — cropped-to-reference (W9-3)', () => {
+  it('crops to the reference band instead of refusing when the capture is the same width and scroll-unrolled taller', async () => {
+    // The routine shape: a 390-wide screen captured at dpr 2 lands on the
+    // reference's own 780px width, but the board frame unrolls the FULL
+    // scroll height, so the capture is 3400px against a 1688px artboard. The
+    // aspect delta is ~50% — far past the refusal tolerance — yet nothing
+    // about it is a content mismatch.
+    const reference = new PNG({ width: 780, height: 1688 })
+    const result = await reconcileReference(PNG.sync.write(reference), 780, 1688, 780, 3400)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.method).toBe('cropped-to-reference')
+    expect(result.result.comparedHeight).toBe(1688)
+    expect(result.result.unmeasuredHeight).toBe(3400 - 1688)
+    // Exact pixels: the reference is handed back at its own size, never scaled.
+    const decoded = decodePngBuffer(result.result.pngBuffer, 'ref')
+    expect(decoded.width).toBe(780)
+    expect(decoded.height).toBe(1688)
+  })
+
+  it('names the unmeasured region in the note rather than letting a partial measurement read as a whole-screen one', async () => {
+    const reference = new PNG({ width: 400, height: 500 })
+    const result = await reconcileReference(PNG.sync.write(reference), 400, 500, 400, 2000)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.note).toBeDefined()
+    expect(result.result.note).toContain('UNMEASURED')
+    expect(result.result.note).toContain('1500px')
+    expect(result.result.note).toContain('TOP 500px')
+  })
+
+  it('still refuses when the capture is SHORTER than the reference — that is a missing section, not scroll-unroll', async () => {
+    const reference = new PNG({ width: 400, height: 2000 })
+    const result = await reconcileReference(PNG.sync.write(reference), 400, 2000, 400, 500)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain('aspect ratio')
+  })
+
+  it('still refuses when the widths do not match exactly, even with the capture taller', async () => {
+    // A 2x export against a 1x capture: the widths need scaling, so the band
+    // would be interpolated. That is a dpr question (studio_recommend_export_dpr),
+    // not something to silently absorb here.
+    const reference = new PNG({ width: 780, height: 1688 })
+    const result = await reconcileReference(PNG.sync.write(reference), 780, 1688, 390, 3400)
+    expect(result.ok).toBe(false)
+  })
+
+  it('leaves the exact and resampled paths alone — a same-size pair is still exact', async () => {
+    const result = await reconcileReference(PNG.sync.write(solid(1, 2, 3)), W, H, W, H)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.result.method).toBe('exact')
+  })
+})
+
+describe('cropImageTop', () => {
+  it('returns the top band as a same-width image the diff can score against the reference', () => {
+    const tall = new PNG({ width: 4, height: 10 })
+    tall.data.fill(255)
+    const cropped = cropImageTop(decodePngBuffer(PNG.sync.write(tall), 'tall'), 3)
+    expect(cropped.width).toBe(4)
+    expect(cropped.height).toBe(3)
+    expect(cropped.data.length).toBe(4 * 3 * 4)
+  })
+
+  it('preserves the top rows byte for byte — a crop that shifted rows would score every row against the wrong one', () => {
+    const png = new PNG({ width: 2, height: 4 })
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 2; x++) {
+        const i = (y * 2 + x) * 4
+        png.data[i] = y * 10
+        png.data[i + 1] = y * 10
+        png.data[i + 2] = y * 10
+        png.data[i + 3] = 255
+      }
+    }
+    const cropped = cropImageTop(decodePngBuffer(PNG.sync.write(png), 'p'), 2)
+    expect(cropped.data[0]).toBe(0)
+    expect(cropped.data[8]).toBe(10)
+  })
+
+  it('returns the image unchanged when the band is at or beyond its own height', () => {
+    const image = decodePngBuffer(PNG.sync.write(new PNG({ width: 3, height: 3 })), 'p')
+    expect(cropImageTop(image, 3).height).toBe(3)
+    expect(cropImageTop(image, 99).height).toBe(3)
   })
 })

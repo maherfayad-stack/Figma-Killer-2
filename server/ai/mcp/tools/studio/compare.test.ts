@@ -30,6 +30,11 @@ let bridgeCalls: Array<{ toolName: string; input: unknown }> = []
 let bridgeImpl: ((toolName: string, input: unknown) => Promise<AiToolOutput>) | null = null
 
 mock.module('../../editorBridge', () => ({
+  // `mock.module` REPLACES the module, so every export anything in the import
+  // graph reaches for has to be here — `captureFrames` derives a bridge scope
+  // from the project dir, and without this the whole file fails at import.
+  // A per-dir stable key is all a double owes: nothing here asserts on it.
+  editorBridgeScope: (projectDir: string): string => `site:${projectDir}`,
   awaitEditorBridgeForUser: async (): Promise<AiBrowserBridge | null> => {
     if (!bridgeImpl) return null
     return {

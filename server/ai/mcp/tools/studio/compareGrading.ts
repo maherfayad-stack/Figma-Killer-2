@@ -19,7 +19,7 @@ import {
   scaledMaxRegionPixels,
   type FidelityMode,
 } from '../../../../handlers/studio/fidelityMode'
-import type { FrameDiffResult } from './frameDiffEngine'
+import type { FrameDiffResult, ReferenceReconciliation } from './frameDiffEngine'
 import type { ResolveReferenceResult } from './referenceResolve'
 
 /**
@@ -118,6 +118,7 @@ export function gradeFrameDiff(
   diff: FrameDiffResult,
   grading: PageGrading,
   authoredWidth: number | null,
+  reconciliation?: Pick<ReferenceReconciliation, 'method' | 'comparedHeight' | 'unmeasuredHeight'>,
 ): GradedDiff {
   const { mode, requiredScore, coverageLimit } = grading
   const diffScale = authoredWidth && authoredWidth > 0 ? diff.width / authoredWidth : Number.NaN
@@ -145,5 +146,31 @@ export function gradeFrameDiff(
         ? `Does NOT match at ${mode} fidelity: overall similarity is fine (${score}%) but ${structuralRegions.length} region(s) differ structurally — something in a specific place is wrong, not the whole screen.${areaNote} Start with regions[0].`
         : `Does NOT match at ${mode} fidelity: ${score}% similar (needs ${requiredScore}%), spread thinly rather than concentrated in one region. Usually a colour, a font, or a global spacing value that is slightly off everywhere.`
 
-  return { pass, verdict, structuralRegions, regionPixelLimit }
+  return { pass, verdict: verdict + describeMethod(reconciliation), structuralRegions, regionPixelLimit }
+}
+
+/**
+ * The sentence that keeps a verdict from over-claiming, appended to every
+ * verdict whose comparison was not an exact-size one.
+ *
+ * `exact` says nothing — that is the default the rest of the verdict already
+ * assumes, and adding a clause to the common case would just cost tokens on
+ * every call. The other two methods both weaken the claim, in different ways
+ * an agent has to be able to act on: `resampled` means the pixels were
+ * interpolated (so small differences may be artefacts), and
+ * `cropped-to-reference` means a specific, named part of the screen was NEVER
+ * LOOKED AT (so a pass is a pass on the top band and nothing more). A cropped
+ * pass reported as a plain pass is exactly the confident wrong number strict
+ * mode exists to refuse.
+ */
+function describeMethod(
+  reconciliation: Pick<ReferenceReconciliation, 'method' | 'comparedHeight' | 'unmeasuredHeight'> | undefined,
+): string {
+  if (!reconciliation || reconciliation.method === 'exact') return ''
+  if (reconciliation.method === 'resampled') {
+    return ' Method: resampled — the reference was stretched to the capture\'s size, so this comparison is interpolated rather than exact-pixel and sub-pixel differences may be artefacts.'
+  }
+  const band = reconciliation.comparedHeight
+  const unmeasured = reconciliation.unmeasuredHeight
+  return ` Method: cropped-to-reference — the capture is scroll-unrolled and taller than the reference, so only the top ${band ?? '?'}px was compared and the ${unmeasured ?? '?'}px below it is UNMEASURED. This score covers the artboard's band, not the whole screen; do not report the rest as verified.`
 }

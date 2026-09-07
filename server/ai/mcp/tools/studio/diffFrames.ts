@@ -39,11 +39,13 @@ import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { getDesignReference, readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
 import {
   computeFrameDiff,
+  cropImageTop,
   decodePngBase64,
   decodePngBuffer,
   reconcileReference,
   type DecodedImage,
   type NodeRect,
+  type ReferenceReconciliation,
 } from './frameDiffEngine'
 
 const DEFAULT_TOP_N = 5
@@ -82,7 +84,7 @@ export const diffFramesTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Server-side pixel + region diff between `baseline` (base64 PNG bytes YOU already hold) and EITHER `reference` (base64) OR `referenceId` (a studio_register_design_reference id — its bytes are read here, never transiting you). Returns an overall similarity score, a diff PNG, and the top differing rectangles ranked by differing-pixel count — each with a diffPercent and, when `nodeRects` was supplied, the node ids whose rect intersects it. NOTE: if you are the agent working inside Studio, use studio_compare instead — it captures the screen and measures it in one call, because a capture reaches you as an image you cannot turn back into the base64 `baseline` needs. This tool is for a client that captured the frame in its own process. With `reference`, both images must be the exact same pixel dimensions or this returns ok:false. With `referenceId`, a dimension mismatch is instead RECONCILED by resampling the reference (labelled `dimensionReconciliation.method: "resampled"` — a weaker claim than an exact match, with `dimensionReconciliation.note` naming which axis mismatched and calling out the ~1568px vision-safe capture cap when that looks like the cause) unless the aspect ratios diverge too far to attribute to resolution, in which case it refuses rather than silently stretch the image.',
+    'Server-side pixel + region diff between `baseline` (base64 PNG bytes YOU already hold) and EITHER `reference` (base64) OR `referenceId` (a studio_register_design_reference id — its bytes are read here, never transiting you). Returns an overall similarity score, a diff PNG, and the top differing rectangles ranked by differing-pixel count — each with a diffPercent and, when `nodeRects` was supplied, the node ids whose rect intersects it. NOTE: if you are the agent working inside Studio, use studio_compare instead — it captures the screen and measures it in one call, because a capture reaches you as an image you cannot turn back into the base64 `baseline` needs. This tool is for a client that captured the frame in its own process. With `reference`, both images must be the exact same pixel dimensions or this returns ok:false. With `referenceId`, a dimension mismatch is instead RECONCILED by resampling the reference (labelled `dimensionReconciliation.method: "resampled"` — a weaker claim than an exact match, with `dimensionReconciliation.note` naming which axis mismatched and calling out the ~1568px vision-safe capture cap when that looks like the cause) unless the aspect ratios diverge too far to attribute to resolution. In that case there is ONE shape it still measures: a capture the same width as the reference but TALLER (a scroll-unrolled screen against a fixed-height artboard) is diffed over the top `dimensionReconciliation.comparedHeight` band only, labelled `method: "cropped-to-reference"`, with `unmeasuredHeight` naming the pixels below that this diff says nothing about. Any other aspect divergence — including a capture SHORTER than the reference, which is a missing section — is still refused rather than silently stretched.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, baseline, reference, referenceId, nodeRects, nodeRectsImageScale, topN, threshold } = input as {
@@ -108,7 +110,18 @@ export const diffFramesTool: AiTool = {
     }
 
     let b: DecodedImage
-    let dimensionReconciliation: { method: 'exact' | 'resampled'; referenceId: string; referenceOriginal: { width: number; height: number }; note?: string } | undefined
+    let dimensionReconciliation:
+      | {
+          method: ReferenceReconciliation['method']
+          referenceId: string
+          referenceOriginal: { width: number; height: number }
+          note?: string
+          /** Present only for `cropped-to-reference` — the top band of `baseline`, in its own pixels, that this diff actually covers. */
+          comparedHeight?: number
+          /** Present only for `cropped-to-reference` — `baseline` pixels below the band, which this diff says nothing about. */
+          unmeasuredHeight?: number
+        }
+      | undefined
 
     if (referenceId !== undefined) {
       const dir = resolveToolProjectDir(dirInput, ctx)
@@ -132,7 +145,14 @@ export const diffFramesTool: AiTool = {
         referenceId,
         referenceOriginal: { width: designRef.width, height: designRef.height },
         ...(reconciled.result.note ? { note: reconciled.result.note } : {}),
+        ...(reconciled.result.comparedHeight === undefined ? {} : { comparedHeight: reconciled.result.comparedHeight }),
+        ...(reconciled.result.unmeasuredHeight === undefined ? {} : { unmeasuredHeight: reconciled.result.unmeasuredHeight }),
       }
+      // The reconciliation narrowed the reference to the top band of a
+      // scroll-unrolled baseline; the baseline has to be cropped to the same
+      // band or the two images are different sizes and every row below the
+      // first is scored against the wrong one.
+      if (reconciled.result.comparedHeight !== undefined) a = cropImageTop(a, reconciled.result.comparedHeight)
     } else {
       try {
         b = decodePngBase64(reference as string, 'reference')

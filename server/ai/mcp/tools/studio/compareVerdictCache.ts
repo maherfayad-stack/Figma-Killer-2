@@ -65,7 +65,8 @@
  * compared in this process.
  */
 import { statSync } from 'node:fs'
-import type { DiffRegion } from './frameDiffEngine'
+import type { ReferenceReconciliation } from './frameDiffEngine'
+import type { ExplainedDiffRegion } from './regionExplain'
 
 export interface CachedCompareImages {
   screenBase64: string
@@ -83,11 +84,13 @@ export interface CachedCompareVerdict {
     width: number
     height: number
     dpr: number
-    dimensionMatch: 'exact' | 'resampled'
+    dimensionMatch: ReferenceReconciliation['method']
     dimensionMatchNote?: string
+    /** Present only for `dimensionMatch: 'cropped-to-reference'` — the top band, in capture pixels, that this verdict actually covers. Everything below it is unmeasured. */
+    comparedHeight?: number
   }
   structuralRegionCount: number
-  regions: DiffRegion[]
+  regions: ExplainedDiffRegion[]
   regionsTruncated: boolean
   worstRegionNodeIds?: string[]
   images: CachedCompareImages

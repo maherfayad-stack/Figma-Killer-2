@@ -137,6 +137,12 @@ import { gradeFrameDiff, resolvePageGrading, type PageGrading } from './compareG
 import { captureMissedPages, type PageCapture } from './compareCapture'
 import { readAgentSessionFidelityMode, readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
+import { explainRegionColors, type RegionExplainVocabulary } from './regionExplain'
+import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
+import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
+import { buildProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
+import { buildDesignVariableIndex } from '../../../../handlers/studio/designVariableIndex'
+import { resolveApplicableDesignVariableSets } from '../../../../handlers/studio/designVariableStore'
 import {
   buildCompareCacheKey,
   getCachedCompareVerdict,
@@ -145,6 +151,7 @@ import {
 } from './compareVerdictCache'
 import {
   computeFrameDiff,
+  cropImageTop,
   decodePngBase64,
   decodePngBuffer,
   reconcileReference,
@@ -278,7 +285,7 @@ export const studioCompareTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Measure one or more screens against the design they are supposed to match, and get a verdict instead of an opinion. Captures each screen at the resolution that matches its registered design reference, diffs server-side, and returns { pass, results[] }. It does NOT need a Studio browser tab open and never disturbs one that is: the capture runs headlessly on the server against what is on disk, falling back to an open editor tab only if the headless browser cannot run (`capturedVia` says which answered, and a failure of BOTH names both reasons rather than blaming a missing board). Each results[] entry carries { pass, similarityScore, regions[] } plus, by default (single page only — see includeImages), three images: your screen, the reference, and the diff. Each region is a rectangle that is actually wrong, worst first, with the node ids inside it — so "it looks off" becomes "this 240x88 block at y=412 is 71% different and covers these nodes". Name screens the way you named the files ("Checkout"), or pass several at once ("Checkout", "Cart", "Confirm") to verify a whole flow in one call instead of one round trip per screen — the reference for each is picked up automatically from the one registered for that page. Repeat calls on a page you have not written to since the last compare are usually served from an internal verdict cache (results[].fromCache) — no recapture, no bridge round trip — unless you pass forceRecapture. `pass` is deliberately NOT pixel-identity — a browser and Figma rasterise text differently, so it requires high overall similarity AND no single differing region big enough to be structural; the top-level `pass` is true only when EVERY requested page resolved to a screen and passed — a page with no registered reference or a failed capture becomes a results[] entry with ok:false and always drags the top-level verdict down, never a silent pass. A failing result is a work list: fix the largest region first, then call this again. capture.dimensionMatch is "resampled", not "exact", whenever the captured screen could not be produced at the reference\'s own pixel size — the vision-safe capture cap (~1568px, applied to BOTH width and height) is the usual cause on a tall mobile screen, and capture.dimensionMatchNote names the axis and explains it when this fires: treat that verdict as directional, not exact-pixel. Use this rather than studio_diff_frames — a capture reaches you as an image you cannot turn back into the base64 that tool wants.',
+    'Measure one or more screens against the design they are supposed to match, and get a verdict instead of an opinion. Captures each screen at the resolution that matches its registered design reference, diffs server-side, and returns { pass, results[] }. It does NOT need a Studio browser tab open and never disturbs one that is: the capture runs headlessly on the server against what is on disk, falling back to an open editor tab only if the headless browser cannot run (`capturedVia` says which answered, and a failure of BOTH names both reasons rather than blaming a missing board). Each results[] entry carries { pass, similarityScore, regions[] } plus, by default (single page only — see includeImages), three images: your screen, the reference, and the diff. Each region is a rectangle that is actually wrong, worst first, with the node ids inside it — so "it looks off" becomes "this 240x88 block at y=412 is 71% different and covers these nodes". Name screens the way you named the files ("Checkout"), or pass several at once ("Checkout", "Cart", "Confirm") to verify a whole flow in one call instead of one round trip per screen — the reference for each is picked up automatically from the one registered for that page. Repeat calls on a page you have not written to since the last compare are usually served from an internal verdict cache (results[].fromCache) — no recapture, no bridge round trip — unless you pass forceRecapture. `pass` is deliberately NOT pixel-identity — a browser and Figma rasterise text differently, so it requires high overall similarity AND no single differing region big enough to be structural; the top-level `pass` is true only when EVERY requested page resolved to a screen and passed — a page with no registered reference or a failed capture becomes a results[] entry with ok:false and always drags the top-level verdict down, never a silent pass. A failing result is a work list: fix the largest region first, then call this again. On a FAILING page the worst few regions also carry regions[].colorExplanation — the dominant colour on each side, named in the project\'s own vocabulary where it can be ("the design fills this with #EF4550, which is the design variable coral/100; your screen renders #3B82F6, which is var(--color-primary)") — so a colour mistake is a one-line fix instead of a guess. It is omitted when both sides\' fills agree, which is itself the signal that the region moved or its text differs rather than its colour being wrong. capture.dimensionMatch is "resampled", not "exact", whenever the captured screen could not be produced at the reference\'s own pixel size — the vision-safe capture cap (~1568px, applied to BOTH width and height) is the usual cause on a tall mobile screen, and capture.dimensionMatchNote names the axis and explains it when this fires: treat that verdict as directional, not exact-pixel. capture.dimensionMatch is "cropped-to-reference" when the screen is the reference\'s width but scroll-unrolled taller than it: only the top capture.comparedHeight band was measured, the verdict says so, and everything below that band is UNMEASURED — never report it as verified. Use this rather than studio_diff_frames — a capture reaches you as an image you cannot turn back into the base64 that tool wants.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const {
@@ -396,6 +403,32 @@ export const studioCompareTool: AiTool = {
     // `canonicalProject` (shared per-batch work built exactly once).
     let sharedProject: ReturnType<typeof createWorkspaceProject> | undefined
 
+    // The project's own colour vocabulary, for `regionExplain.ts`. Lazy and
+    // shared for the same reason `sharedProject` is, but with a sharper
+    // trigger: building it compiles the project's styles, whose cache key
+    // hashes every source file — so after a write (which is exactly when a
+    // compare runs) it is a real recompile. A PASSING page has no region
+    // worth explaining, so it never pays this; only a failing one does, and
+    // there the cost buys the difference between "region 0 is 71% different"
+    // and "you wrote var(--color-primary) where the design has coral/100".
+    let projectTokensPromise: Promise<RegionExplainVocabulary['projectTokens']> | undefined
+    const projectColorTokens = (): Promise<RegionExplainVocabulary['projectTokens']> => {
+      projectTokensPromise ??= (async () => {
+        try {
+          const profile = resolveProjectProfile(dir)
+          const compiled = await compileProjectStyles(dir, profile)
+          return buildProjectTokenIndex(compiled.styles.vendorCss, compiled.styles.css)
+        } catch (err) {
+          // Same degrade path `studio_quality_check` uses: without tokens the
+          // explanation still names both hex values, which already beats a
+          // bare rectangle. Never fail a measurement over a naming aid.
+          console.error('[studio_compare] could not build the project token index for region explanations:', err)
+          return undefined
+        }
+      })()
+      return projectTokensPromise
+    }
+
     const results: PageCompareResult[] = []
     const images: AiToolImage[] = []
     const singlePage = ids.length === 1
@@ -498,7 +531,15 @@ export const studioCompareTool: AiTool = {
         continue
       }
 
-      const diff = computeFrameDiff(baseline, referenceImage, {
+      // A `cropped-to-reference` reconciliation narrowed the reference to the
+      // top band of a scroll-unrolled capture; the baseline has to be cropped
+      // to the SAME band or `computeFrameDiff` scores misaligned rows. Node
+      // rects are unaffected — they are top-anchored in the same space.
+      const comparedBaseline = reconciled.result.comparedHeight === undefined
+        ? baseline
+        : cropImageTop(baseline, reconciled.result.comparedHeight)
+
+      const diff = computeFrameDiff(comparedBaseline, referenceImage, {
         nodeRects: frame.nodeRects ? { rects: frame.nodeRects, imageScale: frame.imageScale ?? 1 } : undefined,
         topN: cap,
       })
@@ -506,14 +547,29 @@ export const studioCompareTool: AiTool = {
       const grading = entry.grading!
       const worstRegion = diff.regions[0]
       const { pass, verdict, structuralRegions, regionPixelLimit } =
-        gradeFrameDiff(diff, grading, authoredFrameWidth(dir, entry.pageId))
+        gradeFrameDiff(diff, grading, authoredFrameWidth(dir, entry.pageId), reconciled.result)
+
+      // W9-3 — name what is wrong in each region, not just where it is. Only
+      // on a FAILING page: a pass has no work list, and this is the one place
+      // in the tool that pays for a style compile. The design-variable half
+      // is a cheap manifest read scoped to this page and this reference.
+      const regions = pass
+        ? diff.regions
+        : explainRegionColors(comparedBaseline, referenceImage, diff.regions, {
+            designVariables: buildDesignVariableIndex(resolveApplicableDesignVariableSets(dir, entry.pageId, ref.id)),
+            projectTokens: await projectColorTokens(),
+          })
 
       const captureMeta: CachedCompareVerdict['capture'] = {
-        width: diff.width,
-        height: diff.height,
+        // The CAPTURE's own size, which is `diff` size for every method except
+        // `cropped-to-reference` — there the diff ran over the top band and
+        // `comparedHeight` below says how much of this capture that was.
+        width: baseline.width,
+        height: baseline.height,
         dpr: dpr ?? 1,
         dimensionMatch: reconciled.result.method,
         ...(reconciled.result.note ? { dimensionMatchNote: reconciled.result.note } : {}),
+        ...(reconciled.result.comparedHeight === undefined ? {} : { comparedHeight: reconciled.result.comparedHeight }),
       }
       const referenceBase64 = Buffer.from(referenceBytes).toString('base64')
       const diffBase64 = diff.diffPngBuffer.toString('base64')
@@ -535,7 +591,7 @@ export const studioCompareTool: AiTool = {
         },
         capture: captureMeta,
         structuralRegionCount: structuralRegions.length,
-        regions: diff.regions,
+        regions,
         regionsTruncated: diff.regionsTruncated,
         ...(worstRegion && !pass ? { worstRegionNodeIds: worstRegion.nodeIds } : {}),
       }
@@ -560,7 +616,7 @@ export const studioCompareTool: AiTool = {
           diffPercent: diff.diffPercent,
           capture: captureMeta,
           structuralRegionCount: structuralRegions.length,
-          regions: diff.regions,
+          regions,
           regionsTruncated: diff.regionsTruncated,
           ...(worstRegion && !pass ? { worstRegionNodeIds: worstRegion.nodeIds } : {}),
           images: { screenBase64: capturedImage.data, referenceBase64, referenceMimeType: ref.mimeType, diffBase64 },
