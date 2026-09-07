@@ -21,6 +21,47 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### panel-19 — W7: inspector ⚙ popovers ran off the bottom of the screen
+- **Agent:** panel-designer (`popover-clamp`) · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/inspector-popover-viewport-clamp`, off `origin/main` at `b56ff12`.
+- **The bug (user screenshot):** "Typography settings" opened from a ⚙ low in the Properties panel and
+  its last rows (`margin-block`…) were cut off past the bottom edge of the display.
+- **Root cause:** `useAnchoredFloating`/`computeFloatingPosition` only choose a *side* and clamp
+  `y` against the **measured** height. For a panel taller than the available viewport there is no `y`
+  that fits, so the clamp collapses to the top margin and the tail simply overflows. Two aggravators:
+  the CSS ceiling was a blanket `max-height: calc(100vh - 16px)` unrelated to where the panel actually
+  sits, and the measurement used `getBoundingClientRect()`, which is transform-aware and reads ~3% short
+  during the `scale(0.97)` enter animation (so the panel also landed ~3% too low).
+- **Shipped:**
+  - `src/ui/lib/floatingViewportFit.ts` — new pure, DOM-free `fitFloatingToViewport(...)`:
+    `{x, y, width, height, viewportWidth, viewportHeight, margin} → {x, y, maxHeight}`. Height stops being
+    an input the layout must accommodate and becomes an output it dictates.
+  - `src/ui/lib/floatingViewportFit.test.ts` — 9 unit tests for the geometry (fits / shifted up off a low
+    trigger / oversized pinned + capped / negative-top guard / both horizontal edges / tiny viewport).
+  - `src/ui/components/InspectorPopover/InspectorPopover.tsx` — measures its own `offsetHeight` +
+    viewport into one `PopoverMetrics` state (layout effect, `ResizeObserver`, window `resize` + capture
+    `scroll`; a `samePopoverMetrics` guard stops a re-render per keystroke), runs the fit, and publishes
+    `--inspector-popover-x/y` **and the new `--inspector-popover-max-height`**.
+  - `src/ui/components/InspectorPopover/InspectorPopover.module.css` — `max-height` now reads
+    `var(--inspector-popover-max-height)`, declared in the same rule as its pre-measure default
+    (`calc(100vh - 24px)`) exactly like `--inspector-popover-z-index`. **Not** a `var()` fallback.
+  - Docs: `docs/features/inspector-disclosure.md` §3.1 and `docs/reference/ui-primitives.md`.
+- **No new `globals.css` tokens.** The 12px edge margin is a TS constant (`VIEWPORT_MARGIN`) because it is
+  positioning maths JS owns, not a themeable surface value. It is deliberately wider than
+  `computeFloatingPosition`'s own 8px `viewportMargin`, so this pass always wins.
+- **Cut, deliberately:** (1) `useAnchoredFloating` and `ContextMenu` were left alone — the `offsetHeight`
+  vs `getBoundingClientRect()` fix is applied only in `InspectorPopover`, since switching the shared hook
+  would break the rect-stubbing in `ContextMenu`'s and `InspectorPopover`'s existing tests and this PR is
+  one fix. (2) A tabbed popover's `TabList` lives inside `.body`, so it scrolls away with the content
+  instead of sticking under the header. Cosmetic, not the reported bug.
+- **Human action needed — dogfood (~1 min):** `/admin/site`, select a text element, and **scroll the
+  Properties panel so the Typography section's ⚙ sits in the bottom ~quarter of the screen**, then open
+  it. The popover must sit fully on screen with ~12px clear below it, and its content must scroll inside
+  rather than being clipped. Repeat once with the browser window shortened to ~600px tall (the panel
+  should fill the viewport height and scroll), and once with a ⚙ near the top (position must be
+  unchanged from before). Also open a nested colour popover from a Fill row to confirm neither closes the
+  other.
+
 ### panel-18 — W7-5: fact-driven onboarding checklist, empty-canvas hint, sample project
 - **Agent:** studio-implementer · **Stage:** done (typecheck + touched tests green; draft PR open) — **needs human dogfood**
 - **Branch:** `feat/launcher-onboarding`, off `origin/main` at `342c67d` (W7-2 / PR #51).
