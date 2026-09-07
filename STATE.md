@@ -21,6 +21,47 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### proto-back — the prototype link and the component's own click: you got one or the other, never both, and never on the first press
+- **Agent:** canvas-engineer · **Stage:** done (targeted canvas tests + `tsc -p tsconfig.app.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/prototype-back-first-click` off `origin/main` (`c068b3d`). User report, verbatim: "in the prototype, and also in live mode the back interaction (when wiring prototype) doesn't work on first click for some reason and gets interrupted by the hover, click effects of the component — it should have both".
+
+**Two root causes, both in the canvas event layer. The stack machine and the link resolver are clean** — `applyPlayAction`, `linkForClick`, `resolvedLinkSourceIds` and `playNavigation.ts` all do the right thing on the first call; a repro that drives `back` straight through `followPrototypeLinkAt` pops the stack on click #1. The failure is upstream, in which events ever reach them.
+
+**RC1 — the component's own `onClick` never ran, anywhere.** `NodeRenderer.tsx`'s `onClickCapture` called `e.stopPropagation()` unconditionally. A design-system / package component's editor bag goes on a `display: contents` HOST (`src/modules/alm/register.tsx:582`, `src/admin/pages/site/studio/registerProjectModules.ts:316`) and the component's own `<button>` is a DESCENDANT of it — so the canvas swallowed the click in the capture phase, above the component, and the authored handler was never dispatched. Proven with a test before any fix: `componentClicks === 0`. That is the "it should have both" half, and it was true in live mode and in play mode alike.
+
+**RC2 — the player waited for a `click` that a re-rendering component prevents the browser from dispatching.** A `click` is dispatched at the nearest common ancestor of the mousedown and mouseup targets. When the mousedown target has LEFT the document by the time the button comes up there is no common ancestor and **no click is dispatched at all**. A component whose hover/press effect re-renders under the finger does exactly that on the FIRST press — the pointer arrives, `mouseenter`/`:hover` state swaps the element, the click never happens — and has settled by the second press. From the outside that is precisely "doesn't work on first click ... gets interrupted by the hover, click effects of the component".
+
+**The fix.**
+- The player now reads the **press/release pair on the node**, not the click. `onPointerDownCapture` latches the innermost node under the pointer; `onPointerUpCapture` over that same node follows the link. The node's host element is rendered by `NodeRenderer` and survives whatever the component does to its own DOM. A `click` that does arrive is swallowed by the same latch (`PlayGesture` in `useCanvasNodeInteraction.ts`), so one press is one navigation — including when the click is reported against an ANCESTOR node, which would otherwise have followed a second, wrong link.
+- **A live frame no longer stops propagation.** `ownsAuthoredEvents` (`interaction !== 'live'`) gates the `stopPropagation()`; `preventDefault()` stays in both, because an authored `<a href>` must not navigate the frame away. Design frames are unchanged.
+- New `canvas/canvasNodeGestureLatch.ts` holds the two module-level latches that collapse `pointerdown` → compatibility `mousedown` → `click` into ONE activation (the pre-existing suppressed-control latch moved here, plus the new activated-click one). Extracted because `NodeRenderer.tsx` was at 702 lines against the 700 ceiling; it is now 674.
+- The editor **hover ring stands down while the player is armed** (`useCanvasNodeInteraction.onNodeHover` returns early; `setPlayMode(true)` clears `hoveredNodeId`/`hoveredBreakpointId`/`hoveredFrameId`). It is editing chrome, and it was writing to the store on every pointer arrival mid-playback.
+
+**Canvas files touched:** `canvas/NodeRenderer.tsx`, `canvas/useCanvasNodeInteraction.ts`, `canvas/CanvasContexts.ts` (two new context callbacks), `canvas/canvasNodeGestureLatch.ts` (new), `store/slices/prototypeSlice.ts`, `@core/module-engine/types.ts` (`NodeWrapperProps.onPointerUpCapture`), `src/__tests__/canvas/prototypePlayFirstClick.test.tsx` (new, 5 cases), `docs/features/studio-prototype.md`, `docs/agent-refs/canvas-internals.md`.
+
+**FOR THE EXPORT-GENERATOR AGENT — the same two bugs are in the generated runtime.** `studio-workspace/test4/prototype/` (do not edit; regenerate):
+- `ScreenFrame.jsx`'s delegated listener is `doc.addEventListener('click', onClick, true)` and calls `event.stopPropagation()` — same RC1 and RC2 as Studio had. It needs the same press/release pair, and it must not stop propagation.
+- `Player.jsx`'s `resolveLinkElement(doc, link)` walks `doc.body.children[index]` from the raw `indexPath` on **every click**, so any element the component's own interaction adds or removes above the link's index silently re-points the link at a different element. Studio's own resolver does not have this problem (it matches node ids from the page tree, not live DOM indexes) — the exported one should resolve once and cache, or match a stable attribute.
+- `Player.jsx`'s `back` calls `onPageChange(previous)` from INSIDE the `setHistory` updater — a render-phase update of another component, double-invoked under StrictMode.
+
+**Named cuts:**
+- Double-click and context-menu still `stopPropagation()` in live frames. Only CLICK was in the report; an authored `ondblclick` in a live frame is still swallowed. Same one-line `ownsAuthoredEvents` gate when someone wants it.
+- The board's design frames are untouched — play mode only ever exists in live view (`canvasSlice.ts:224` arms it from `setCanvasView`), so a click on a board frame while armed still resolves against the play screen and does nothing. Left alone deliberately.
+- No browser dogfood (agents don't drive the browser here). The press/release rule is asserted against the browser's documented common-ancestor behaviour, modelled in the test, not observed in Chrome.
+
+**Dogfood checklist for the human** (at `/admin/site`, one project, live view, ONE frame):
+1. Wire a `navigate` link from a design-system button on screen A to screen B, and a `back` link on a button on screen B that has a visible hover/pressed state.
+2. Switch to Live. Play arms automatically. Move the pointer onto the A button — the component's own hover state should show, and NO blue editor hover outline.
+3. Click it once. Exactly ONE navigation to B, with its transition.
+4. Move onto B's back button and click it ONCE — from a cold pointer position, so the first `mouseenter` and the click are the same gesture. It must go back on that first press.
+5. On a screen with a component that does something of its own on click (a tab bar, an accordion), click a tab that also carries a prototype link: the tab must change AND the link must follow, from one press.
+6. Turn Play off. Clicking an element must select it again, and clicking an authored `<input>` in live mode must still focus and type.
+
+**Landmines (height ⇄ injectors ⇄ events — the three that fight each other):**
+- **Match the NATIVE event, never the synthetic one, when de-duplicating across capture and bubble.** React dispatches each phase from its own root listener and mints a SEPARATE `SyntheticEvent` for each, so a synthetic-identity comparison never matches. This cost a debugging round trip: the first version latched `e` and every link fired twice.
+- **`stopPropagation()` in a capture-phase handler on a canvas node is a decision about the USER'S components**, not just about the editor. Every module that carries `nodeWrapperProps` on a `display: contents` host has the authored element BELOW the handler, so anything stopped there is stopped for them.
+- The `onPointerUpCapture` gesture and `useCanvasFormControlSuppression`'s document-level `pointerdown`/`mousedown` cancels are on the same events but never in the same frame — the suppression hook is `enabled: !isLive` (`IframeFrameSurface.tsx:199`) and the player only exists in live. If anyone ever enables suppression in a live frame, they will fight.
+
 ### store-07 — "ctrl z doesn't work": two root causes, both in the panel, plus one half-revert
 - **Agent:** store-engineer · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint + architecture gates green; draft PR open) — **needs human dogfood**
 - **Branch:** `fix/undo-after-wave7` off `origin/main` (`71060a8`). User report, verbatim: "ctrl z ... doesn't work properly" / "if ctrl z it doesn't work" — nothing changes when the key is pressed.

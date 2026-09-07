@@ -234,6 +234,15 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
   setPlayMode: (active) =>
     set((s) => {
       s.playMode = active
+      // The hover ring is editing chrome and the player is not an editing
+      // surface — `useCanvasNodeInteraction` stops WRITING it while armed, so
+      // whatever was lit when Play was pressed has to be cleared here or it
+      // stays lit for the whole session.
+      if (active) {
+        s.hoveredNodeId = null
+        s.hoveredBreakpointId = null
+        s.hoveredFrameId = null
+      }
       // Disarming returns the player to its starting screen. Leaving it three
       // screens deep with the arrow cursor back would make the live frame show
       // a page the editor does not think is open.
