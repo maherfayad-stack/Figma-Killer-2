@@ -7,7 +7,7 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 32px;
+    grid-template-columns: minmax(0, 1fr) var(--inspector-rail-w);
     padding-top: var(--space-2xl);
     padding-bottom: var(--space-7xl);
     gap: 0;
@@ -28,6 +28,26 @@
     gap: var(--space-px);
     min-width: 0;
     padding-bottom: var(--space-7xl);
+    /*
+     * The rail is a sibling grid column, not an overlay, but the scroll
+     * container clips on the X axis at the PANEL edge — so a section whose
+     * intrinsic width beat this column used to paint straight across the
+     * rail's icons instead of being cut at the column boundary (measured at
+     * a 260px panel: Spacing 379px of content in a 217px column, its margin
+     * cluster and box-model gear landing on top of the rail).
+     *
+     * Every such blow-out is fixed at its source below (`min-width: 0` down
+     * each intrinsic-sizing chain — see `Section.module.css`'s `.sectionBody`
+     * and `ExpandableFieldCluster`'s `.root`). This line is the standing
+     * guarantee that the next one degrades to a truncated control rather than
+     * to an unusable rail: `clip` (not `hidden`) because it must not turn this
+     * column into a second scroll container, and it leaves the Y axis visible
+     * so nothing here starts clipping vertically. Every floating surface in
+     * the panel portals out (ContextMenu, InspectorPopover, Select, Tooltip),
+     * and the sticky search bar is positioned against `.panel`, so nothing
+     * that needs to escape is caught by this.
+     */
+    overflow-x: clip;
 }
 
 /*

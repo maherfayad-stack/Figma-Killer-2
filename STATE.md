@@ -251,6 +251,116 @@ are the remaining WS-2 items, not yet dispatched. See
 - **Next step:** W8-2 (scrub unification + the look pass) is unblocked and is
   the natural follow-on — it wires scrubbing into every numeric this PR taught
   to nudge and do maths. W8-3 and W8-4 also list W8-1 as their blocker.
+### panel-15 — the inspector at narrow width: the rail is no longer paved over, and an empty section is no longer an accordion
+- **Agent:** panel-designer
+- **Stage:** done (gates green; draft PR open; **needs a human dogfood pass**)
+- **Updated:** 2026-09-07
+- **Branch:** `fix/inspector-narrow-overlap-empty-sections`, cut from `origin/main`
+  at `f65c4ef` and rebased onto `342c67d` (W8-1 / PR #50 and W7-2 / PR #51 landed
+  mid-flight). W8-1 owns `ScrubInput`, `numericNudge`, `RotationRow` and
+  `TypographySection`; this branch deliberately touches none of them.
+- **Goal:** three bugs the user hit dogfooding the properties panel — (1) section
+  row-end buttons drawing on top of `StyleCategoryRail` at narrow width, (2) the
+  accordion affordance on sections with nothing applied, (3) W/H in Size not
+  reading as equal halves.
+- **Scope:** `src/styles/globals.css` (one new token),
+  `src/ui/components/Section/{Section.tsx,Section.module.css}`,
+  `src/ui/components/ExpandableFieldCluster/ExpandableFieldCluster.module.css`,
+  `src/ui/components/AddablePropertyField/AddablePropertyField.module.css`,
+  `src/admin/pages/site/panels/PropertiesPanel/{StyleSurface.module.css,PropertiesPanel.module.css,LayoutSection.module.css,SizeSection.tsx,SizeSection.module.css,StyleSectionsEditor.tsx,SpacingBoxControl/SpacingSection.module.css,__tests__/emptySectionLaw.test.tsx}`,
+  `docs/{design.md,features/inspector-disclosure.md,reference/ui-primitives.md}`,
+  `STUDIO-WAVE7-PLAN.md` (one W8-2 bullet corrected).
+  **Does not touch** `ScrubInput`, `numericNudge`, `RotationRow`, `TypographySection` —
+  W8-1 owns those.
+- **Done so far:**
+  - **Bug 1 — measured, not guessed.** Drove the real editor at
+    `127.0.0.1:5173/admin/site` at a 260px panel (`SIDEBAR_MIN_WIDTH`) and read
+    geometry back with `getBoundingClientRect`/`scrollWidth`. Four sections were
+    horizontally overflowing their 217px content column: **Spacing 379px**,
+    **Layout 347px**, **Stroke 295px**, **Typography 218px**. The rail is a real
+    grid column (`minmax(0, 1fr) 32px`, `StyleSurface.module.css:10`) — it never
+    floated — but `.surface` clips on x at the *panel* edge, so the overflow
+    painted straight across the rail's icons. One CSS fact, not four bugs: a grid
+    track sized `auto` takes its minimum from its items, and a grid item's own
+    minimum is its content unless it says `min-width: 0`.
+  - The clamp is now declared once per intrinsic-sizing wrapper:
+    `Section.module.css`'s `.sectionBody` **and `.sectionBody > *`** (every section
+    body passes through it), `LayoutSection`'s `.layoutSection` + `.flexBlock > *`,
+    `SpacingSection`'s `.spacingSection`, and — the one that mattered most —
+    `ExpandableFieldCluster`'s `.root`, which padding AND margin both mount and
+    which reported a 339px minimum on its own.
+  - `--inspector-rail-w: 32px` replaces the literal `32` in both surfaces that
+    draw the rail (`StyleSurface`, `SelectorInspector`).
+    `.surfaceContent` gains `overflow-x: clip` as the standing guarantee that the
+    NEXT such control truncates instead of eating the rail. `clip`, not `hidden`:
+    it must not become a second scroll container, and the Y axis stays visible.
+    Every floating surface in the panel portals (ContextMenu, InspectorPopover,
+    Select, Tooltip) and the sticky search bar is positioned against `.panel`, so
+    nothing that must escape is caught.
+  - **After:** every `[data-style-section]` has `scrollWidth === clientWidth` at
+    260px and at 290px, and the rightmost content pixel is exactly the rail's
+    left edge (1237 = rail `left`).
+  - **Bug 2.** `Section` gains **`empty`**: no chevron, no toggle, no body,
+    `children` ignored — a static header whose only control is `actions`.
+    `StyleSectionGroup`'s Law-1 branch passes it instead of `children={null}`.
+    Measured before: clicking an empty Animations header set `aria-expanded=true`
+    and rendered a `.sectionContent` with **0 bytes of HTML**, growing the section
+    33px → 43px. Measured after: no chevron, no `sectionContent`, height stays 33px.
+  - The header "+"s that write a real value (Fill, Effects, Animations) now route
+    through `addAndReveal` so adding the first item OPENS the section. Without it a
+    user with `propertiesSectionsExpanded` off would click "+", write a fill, and
+    be shown a closed section.
+  - **Bug 3.** Size's W/H were always `1fr 1fr` and always equal — the mis-sizing
+    was the mode chevron sitting BESIDE the field, in flow, spending ~20px of an
+    82px cell on chrome next to Layout's padding row where the whole cell is field.
+    The chevron is now drawn inside the field's trailing edge (the idiom
+    `RevealedField`'s "−" in the same module already used), with the input padded
+    clear of it. Measured at 290px: W and H are `97px` each and the ScrubInput
+    shell is the full 97 (was 61 of 82).
+- **Next step:** nothing required. If someone picks up W8-2, the width invariant
+  now written into `docs/features/inspector-disclosure.md` §6
+  (`scrollWidth === clientWidth` for every `[data-style-section]` at 260px) is
+  ready to be turned into a real gate beside the §6 height gate.
+- **Decisions:**
+  - **`empty` on `Section`, not a chevron variant per section.** The primitive is
+    told the fact ("nothing is applied"); it decides the presentation. This is
+    also why `STUDIO-WAVE7-PLAN.md` W8-2's "persistent chevron for collapsed
+    `collapsedWhenEmpty` sections" was rewritten in this change rather than left
+    to contradict the code: a persistent chevron now belongs to a collapsed
+    section that HAS content.
+  - **`min-width: 0` at the source AND `overflow-x: clip` as a backstop.** Either
+    alone is wrong — the clip alone would hide the bug, the clamps alone leave the
+    next section free to reintroduce it silently.
+  - **The chevron overlays the field rather than moving into `ScrubInput`.**
+    Putting it in ScrubInput's shell means a trailing slot on ScrubInput, which
+    W8-1 is actively editing. The overlay is scoped entirely to
+    `AddablePropertyField.module.css` (which already styles the inner `input`
+    for `.wordMode`) and only `SizeSection` consumes that component.
+- **Landmines:**
+  - `min-width: 0` on a flex/grid CONTAINER does not shrink its intrinsic
+    contribution to whatever sizes it — it only removes its own automatic minimum.
+    `ExpandableFieldCluster`'s `.row`/`.cell` both already had it and the cluster
+    still reported 339px; the fix was `min-width: 0` on `.root` itself. Expect to
+    walk the whole chain, not one node of it.
+  - `STUDIO-WAVE7-PLAN.md` is not valid UTF-8 (`file` reports `data`) — plain
+    `grep` silently matches nothing in it. Use `grep -a`.
+  - Full-suite `bun test` shows the known batch-isolation cluster (~28 fails,
+    canvas + architecture gates timing out at 5s under load). Per-directory they
+    are green: `src/__tests__/architecture` alone = 509 pass / 1 fail (the
+    pre-existing `chevron-left` icon-catalog gate).
+- **Verification:** `bun run build` ✅ · `bun test src/admin/pages/site/panels/PropertiesPanel
+  src/ui/components/AddablePropertyField src/ui/components/ExpandableFieldCluster
+  src/__tests__/panels` → 880 pass / 0 fail · `bun test src/__tests__/architecture`
+  → 509 pass / 1 pre-existing fail · `bun run lint` ✅ · live geometry measured in
+  a headless Chromium at 260px and 290px (numbers above).
+- **Human action needed:** dogfood `/admin/site` → select a node → drag the right
+  sidebar to its 260px minimum. Check: (a) no section control touches the icon
+  rail, in either theme; (b) an untouched Fill / Stroke / Effects / Animations /
+  Typography header shows only its title and `+`, and hovering it offers no
+  chevron; (c) clicking Fill's `+` writes a fill AND opens the section — turn
+  "Expand style sections by default" OFF in Settings first, that is the case the
+  reveal exists for; (d) Size's W and H read as equal halves against Layout's H/V
+  padding row underneath, and each chevron still opens Fixed/Hug/Fill.
 
 ### panel-12 — W7-1: the launcher sorts, fails, and redraws honestly
 - **Agent:** studio-implementer
@@ -912,6 +1022,13 @@ here **verbatim**, so archiving buries no dogfood step.
   reason on hover; (7) **Fill** now carries a **Text** row for `color` and an
   "Add text colour" `+`, and **Effects** carries **Text shadow** rows with no
   Spread/Inset fields — check both write to the real `.tsx`/CSS on disk.
+- **`panel-15` — inspector at narrow width** (in `## Now`, not yet landed to
+  `main`). The rail-overlap fix, the empty-section header, and Size's W/H were
+  all measured in a headless browser, but nobody has *used* the panel at 260px:
+  drag the right sidebar to its minimum, confirm no control touches the rail in
+  either theme, confirm an untouched section offers no chevron, turn "Expand
+  style sections by default" OFF and confirm Fill's `+` both writes and opens,
+  and confirm W/H still scrub and still open Fixed/Hug/Fill.
 - **`panel-12` — W7-1 launcher polish** (in `## Now`, not yet landed to `main`).
   Card scale + hover lift in both themes, the rename-then-sort fix, the failed-
   listing retry, and the post-delete refetch. Five-step script in the entry.

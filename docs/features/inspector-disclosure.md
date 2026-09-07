@@ -54,14 +54,19 @@ Figma's Fill, Stroke and Effects sections are *lists*. Empty list ⇒ a title an
 `+`.
 
 **Rule:** a section with zero set properties and no mandatory control renders as
-`▸ Title  [+]` and nothing more.
+`Title  [+]` and nothing more — **and it is not a disclosure**. No chevron, no
+toggle, no body: there is nothing behind the chevron, so offering one is a lie
+that costs a click and grows the header by an empty box. The header earns its
+accordion the moment something is applied.
 
 Implemented as `collapsedWhenEmpty` on `ClassStyleSectionDefinition`
 (`classStyleSections.ts`), applied by `StyleSectionGroup` in
-`StyleSectionsEditor.tsx`, gated by `__tests__/emptySectionLaw.test.tsx`.
-Emptiness is judged **across every context**, not just the active breakpoint — a
-value living on another tab is still the user's own work and must never be
-hidden behind a `+`. Search must not defeat the law either
+`StyleSectionsEditor.tsx` through the `Section` primitive's **`empty`** prop,
+gated by `__tests__/emptySectionLaw.test.tsx`. Callers pass the fact
+("nothing is applied"), never the presentation — no section special-cases its
+own header. Emptiness is judged **across every context**, not just the active
+breakpoint — a value living on another tab is still the user's own work and must
+never be hidden behind a `+`. Search must not defeat the law either
 (`StyleRuleComposer.tsx`).
 
 ### Law 2 — Rare options live in a popover anchored to the thing they modify (F5, F8, F17, F21, F25–F27)
@@ -131,7 +136,8 @@ The Fill / Stroke / Effects list shape (F13, F14, F16, F20). One component,
 three consumers.
 
 - Empty ⇒ renders **nothing but its header's `+`** (Law 1). The header is the
-  existing `Section` with `actions`.
+  existing `Section` with `actions` and `empty` — the second is what takes the
+  chevron and the toggle away, not just the body.
 - Non-empty ⇒ a row per entry: `[leading] [summary] [value] [👁] [−]`.
 
 ### §3.3 `ExpandableFieldCluster` — used by G4, G5, G7
@@ -166,8 +172,13 @@ unset companion property, then any project-token apply action.
 
 > **Figma:** F13. Fill, Stroke and Effects on a plain frame are three lines total.
 
-A section marked `collapsedWhenEmpty` with nothing set renders as `▸ Title [+]`
-and nothing more; `+` reveals the body for that selection only. The flag is set
+A section marked `collapsedWhenEmpty` with nothing set renders as `Title [+]`
+and nothing more — a static header, not a collapsed accordion (`Section`'s
+`empty` prop; see Law 1). `+` reveals the body for that selection only, and a
+`+` that writes a real value (Fill's colour, Effects' shadow, Animations')
+reveals in the same gesture — otherwise a user who keeps
+`propertiesSectionsExpanded` off would add a fill and be shown a closed
+section. The flag is set
 on `spacing`, `fill`, `border`, `effects`, `animations`, `interaction`,
 `typography` — and **not** on `position`, `size`, `layout`, `appearance`, which
 keep their controls always present (`position`/`size`/`layout` are Figma's
@@ -454,6 +465,30 @@ verify rather than trust them.
 Position, Layout, Appearance, Typography, Fill, Stroke and Effects all present,
 fits in **one 900px viewport with no scroll**. Write it as a real test: render
 the panel for the text fixture, assert `scrollHeight <= clientHeight`.
+
+**The width invariant.** Height is what §6 was written to measure, but the panel
+failed on the other axis first. The category rail is a real grid column
+(`--inspector-rail-w`, `minmax(0, 1fr)` beside it) — it does not float over the
+sections — yet the scroll container clips on x at the *panel* edge, so any
+section whose intrinsic width beat its column painted straight across the rail's
+icons. Measured at a 260px panel (`SIDEBAR_MIN_WIDTH`, the narrowest the panel
+can be dragged to): Spacing 379px of content in a 217px column, Layout 347px,
+Stroke 295px, with the margin cluster's gear and the section-header actions
+landing on the rail.
+
+The cause is one CSS fact, not four bugs: a grid track sized `auto` takes its
+minimum from its items, and a grid item's own minimum is its content unless it
+says `min-width: 0`. The clamp is declared once per intrinsic-sizing wrapper —
+`Section.module.css`'s `.sectionBody` (and its children), `LayoutSection`'s and
+`SpacingSection`'s own grids, and `ExpandableFieldCluster`'s `.root`, which is
+the widest block in the panel and is mounted by both padding and margin.
+`.surfaceContent` carries `overflow-x: clip` as the standing guarantee that the
+next one degrades to a truncated control instead of an unusable rail.
+
+**The rule:** every control in the panel shrinks or truncates. Nothing in a
+section body may establish a min-content floor — assert
+`scrollWidth === clientWidth` for every `[data-style-section]` at 260px before
+calling a section done.
 
 Secondary budgets, at rest, panel width 300:
 

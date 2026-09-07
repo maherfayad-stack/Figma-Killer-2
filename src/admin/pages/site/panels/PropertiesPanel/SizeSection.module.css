@@ -24,7 +24,7 @@
 }
 
 .sizeSettingsTrigger {
-    flex-shrink: 0;
+    flex: none;
 }
 
 /* Two equal columns on the inspector's own field gap — the same rhythm

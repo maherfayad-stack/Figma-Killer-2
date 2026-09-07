@@ -20,6 +20,14 @@
  * The optional `indicator` prop renders a small dot next to the title to
  * signal that the section has active state (stored class styles, active
  * breakpoint overrides, etc.).
+ *
+ * `empty` is the other half of the disclosure story. A section with nothing
+ * in it is not a disclosure — there is nothing behind the chevron, so the
+ * chevron is a lie and clicking it opens a body of zero height. Figma draws
+ * that state as the title and its `+`, full stop, and so do we: `empty`
+ * drops the toggle, the chevron and the body, leaving a static header whose
+ * only control is whatever `actions` supplies. Callers pass the fact
+ * ("nothing is applied"), not the presentation.
  */
 
 import { useState } from "react";
@@ -30,7 +38,8 @@ import styles from "./Section.module.css";
 
 interface SectionProps {
   title: string;
-  children: React.ReactNode;
+  /** The disclosed body. Not rendered at all while `empty` is true. */
+  children?: React.ReactNode;
   defaultOpen?: boolean;
   /** Render a small dot next to the title to signal active state. */
   indicator?: boolean;
@@ -44,6 +53,12 @@ interface SectionProps {
    * so its controls are independently clickable and focusable.
    */
   actions?: React.ReactNode;
+  /**
+   * Nothing is applied in this section, so there is nothing to disclose:
+   * renders the header alone — no chevron, no toggle, no body. `children`
+   * are ignored. See the file header for why an empty accordion is a lie.
+   */
+  empty?: boolean;
   /**
    * Drop the section's own vertical padding so spacing comes entirely from the
    * parent container's grid gap (the borderless-tile / 1px-gap card pattern).
@@ -63,10 +78,33 @@ export function Section({
   meta,
   forceOpen = false,
   actions,
+  empty = false,
   flush = false,
 }: SectionProps) {
   const [open, setOpen] = useState(defaultOpen);
-  const expanded = forceOpen || open;
+  const expanded = !empty && (forceOpen || open);
+
+  if (empty) {
+    return (
+      <div className={cn(styles.section, flush && styles.sectionFlush)}>
+        <div className={styles.sectionHeader}>
+          <span className={styles.sectionStaticTitle}>
+            {SectionIcon && (
+              <span className={styles.sectionMarker} aria-hidden="true">
+                <span className={styles.sectionMarkerIcon}>
+                  <SectionIcon size={13} />
+                </span>
+              </span>
+            )}
+            <span className={styles.sectionTitleGroup}>
+              <span className={styles.sectionTitle}>{title}</span>
+            </span>
+          </span>
+          {actions && <span className={styles.sectionActions}>{actions}</span>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn(styles.section, flush && styles.sectionFlush, expanded && styles.sectionOpen)}>
