@@ -82,6 +82,8 @@ function GuideLine({ guide }: { guide: BoardGuide }) {
       const screenPos = guide.axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top
       const pan = guide.axis === 'x' ? t.panX : t.panY
       moveGuide(guide.id, Math.round(screenToBoard(screenPos, t.zoom, pan)))
+      // `store-09` — close the undo-coalescing burst this drag opened.
+      useEditorStore.getState().endBoardGesture()
     }
     document.addEventListener('pointermove', onMove)
     document.addEventListener('pointerup', onUp, { once: true })

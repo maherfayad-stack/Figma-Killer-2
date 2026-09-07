@@ -6,8 +6,18 @@
     <!--
       The headless capture surface (W4-2A). Deliberately NOT index.html:
 
-        - No import map. Plugin canvas module packs are not loaded here, so
-          there is nothing to resolve bare specifiers for, and a plugin bundle
+        - A React-ONLY import map. The project's own design-system components
+          are loaded here the same way the editor loads them: a
+          `component-bundle` artefact `import()`ed at runtime, built with
+          `react`/`react-dom`/the JSX runtimes EXTERNAL (see
+          `server/handlers/studio/componentBundle.ts`). Without these four
+          entries that import throws on a bare specifier and every `pkg.*`
+          component photographs as a placeholder. They resolve to
+          `public/runtime/*.js`, which re-export the page's OWN React off
+          `globalThis.__studio` — one React instance, so hooks work.
+
+          index.html's `@studio/*` entries are deliberately NOT here: plugin
+          canvas module packs are not loaded on this page and a plugin bundle
           must never execute inside a capture.
         - No loader spinner. Whatever is in <div id="root"> at load time can be
           photographed, so it is empty.
@@ -19,6 +29,16 @@
       itself: any body margin would offset the frames without changing what is
       captured, which is harmless but makes the layout lie about itself.
     -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "/runtime/react.js",
+        "react/jsx-runtime": "/runtime/react-jsx-runtime.js",
+        "react/jsx-dev-runtime": "/runtime/react-jsx-dev-runtime.js",
+        "react-dom": "/runtime/react-dom.js"
+      }
+    }
+    </script>
     <style>
       html,
       body {

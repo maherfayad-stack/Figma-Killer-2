@@ -111,21 +111,13 @@ import {
   upsertBoard,
   removeBoard as removeBoardFromFile,
   renameBoard as renameBoardOnBoard,
-  upsertFrame,
-  moveFrame,
-  resizeFrame,
-  removeFrame as removeFrameById,
-  removeFramesForPage,
-  setFrameAxes as setFrameAxesOnBoard,
-  duplicateFrame,
-  defaultFramePosition,
   getActiveBoard,
-  FRAME_WIDTH,
-  VARIANT_GAP,
 } from '@core/studio-board'
 import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
+import { boardCoalesceKey, commitBoardChange, dropBoardHistory } from './boardHistory'
 import * as guideActions from './boardGuideActions'
 import { createFrameSelectionActions } from './boardFrameSelectionActions'
+import { createFrameMutationActions } from './boardFrameSliceActions'
 import { createBulkFrameActions } from './boardBulkFrameSliceActions'
 import {
   createAnnotationActions,
@@ -322,6 +314,13 @@ interface BoardSlice {
   /** Clear the dirty flag after a successful save. */
   markBoardsClean: () => void
   /**
+   * `store-09` — close the in-progress board coalescing burst (pointer-up on a
+   * drag, blur on a note's textarea). Without it, two consecutive drags of the
+   * SAME frame would fold into one undo entry and ⌘Z would jump the frame back
+   * past a position the user deliberately stopped at.
+   */
+  endBoardGesture: () => void
+  /**
    * Replace the active drag's snap guides (Phase 6B). Pass `[]` to clear —
    * furniture drag handlers do this on pointer-up/cancel. Never touches
    * `boardsDirty`: guides are drawn, not persisted.
@@ -344,7 +343,7 @@ interface BoardSlice {
   selectAllFrames: () => void
   /** Empty the frame selection. No-op if already empty. */
   clearFrameSelection: () => void
-  /** viewport-01 — arrow-key nudge: move every selected frame by a board-space delta, in one `set()`. See `boardFrameSelectionActions.ts` (incl. why board layout isn't undoable). */
+  /** viewport-01 — arrow-key nudge: move every selected frame by a board-space delta, in one `set()`. Undoable as one entry per key-hold (`store-09`) — see `boardFrameSelectionActions.ts`. */
   nudgeSelectedFrames: (dx: number, dy: number) => void
 
   // ── Per-project frame size default (WS-7.2 — "apply to all pages") ──────
@@ -442,48 +441,49 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
       // already applies to `activePageId`.
       const openBoardId = get().activeBoardId
       const openBoardStillExists = openBoardId !== null && file.boards.some((b) => b.id === openBoardId)
-      set({
-        boards: file,
-        boardsLoaded: true,
-        boardsDirty: false,
-        boardsLoadFailed: false,
-        activeBoardId: openBoardStillExists ? openBoardId : file.boards[0].id,
+      set((state) => {
+        state.boards = file
+        state.boardsLoaded = true
+        state.boardsDirty = false
+        state.boardsLoadFailed = false
+        state.activeBoardId = openBoardStillExists ? openBoardId : file.boards[0]!.id
+        // `store-09` — every stored board undo entry references the object
+        // graph this read just replaced. See `dropBoardHistory`.
+        dropBoardHistory(state)
       })
       return
     }
 
     const board = createBoard(crypto.randomUUID(), 'Board 1')
-    set({
-      boards: upsertBoard(file, board),
-      boardsLoaded: true,
+    set((state) => {
+      state.boards = upsertBoard(file, board)
+      state.boardsLoaded = true
       // A fresh default board was created locally — it needs to persist.
-      boardsDirty: true,
-      boardsLoadFailed: false,
-      activeBoardId: board.id,
+      state.boardsDirty = true
+      state.boardsLoadFailed = false
+      state.activeBoardId = board.id
+      dropBoardHistory(state)
     })
   },
 
   markBoardsLoadFailed: () => {
     const board = createBoard(crypto.randomUUID(), 'Board 1')
-    set({
-      boards: upsertBoard(createBoardsFile(), board),
-      boardsLoaded: true,
+    set((state) => {
+      state.boards = upsertBoard(createBoardsFile(), board)
+      state.boardsLoaded = true
       // Deliberately NOT dirty — this placeholder must never reach the
       // auto-save effect. See `boardsLoadFailed`'s doc comment.
-      boardsDirty: false,
-      boardsLoadFailed: true,
-      activeBoardId: board.id,
+      state.boardsDirty = false
+      state.boardsLoadFailed = true
+      state.activeBoardId = board.id
+      dropBoardHistory(state)
     })
   },
 
   addBoard: (name) => {
     const { boards } = get()
     const board = createBoard(crypto.randomUUID(), name ?? nextDefaultBoardName(boards.boards))
-    set({
-      boards: upsertBoard(boards, board),
-      activeBoardId: board.id,
-      boardsDirty: true,
-    })
+    commitBoardChange(set, get, null, upsertBoard(boards, board), { activeBoardId: board.id })
     return board.id
   },
 
@@ -491,7 +491,7 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const { boards } = get()
     const board = boards.boards.find((b) => b.id === boardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, renameBoardOnBoard(board, name)), boardsDirty: true })
+    commitBoardChange(set, get, null, upsertBoard(boards, renameBoardOnBoard(board, name)))
   },
 
   removeBoard: (boardId) => {
@@ -505,11 +505,9 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
       activeBoardId === boardId ? nextBoards.boards[0]?.id ?? null : activeBoardId
     // A real, confirmed removal — safe for `boardsSaveGuard.ts` to let through
     // even though it shrinks the aggregate frame set.
-    set({
-      boards: nextBoards,
+    commitBoardChange(set, get, null, nextBoards, {
       activeBoardId: nextActiveBoardId,
-      boardsDirty: true,
-      boardsPendingExplicitRemoval: true,
+      explicitRemoval: true,
     })
   },
 
@@ -525,148 +523,39 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   addGuide: (axis, position) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (board) set({ boards: upsertBoard(boards, guideActions.addGuide(board, axis, position)), boardsDirty: true })
+    if (board) commitBoardChange(set, get, null, upsertBoard(boards, guideActions.addGuide(board, axis, position)))
   },
   moveGuide: (guideId, position) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (board) set({ boards: upsertBoard(boards, guideActions.moveGuide(board, guideId, position)), boardsDirty: true })
+    if (board) commitBoardChange(set, get, boardCoalesceKey.guideMove(guideId), upsertBoard(boards, guideActions.moveGuide(board, guideId, position)))
   },
   removeGuide: (guideId) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (board) set({ boards: upsertBoard(boards, guideActions.removeGuide(board, guideId)), boardsDirty: true })
+    if (board) commitBoardChange(set, get, null, upsertBoard(boards, guideActions.removeGuide(board, guideId)))
   },
   clearGuides: (axis) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     const next = guideActions.clearGuides(board, axis)
-    if (next) set({ boards: upsertBoard(boards, next), boardsDirty: true })
+    if (next) commitBoardChange(set, get, null, upsertBoard(boards, next))
   },
 
-  setFramePosition: (frameId, x, y) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, moveFrame(board, frameId, x, y)), boardsDirty: true })
-  },
-
-  setFrameSize: (frameId, width, height) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, resizeFrame(board, frameId, width, height)), boardsDirty: true })
-  },
-
-  setFrameRect: (frameId, x, y, width, height) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    const moved = moveFrame(board, frameId, x, y)
-    const resized = resizeFrame(moved, frameId, width, height)
-    set({ boards: upsertBoard(boards, resized), boardsDirty: true })
-  },
-
-  removeFrame: (pageId) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    const nextBoard = removeFramesForPage(board, pageId)
-    const removedSomething = nextBoard.frames.length !== board.frames.length
-    set({
-      boards: upsertBoard(boards, nextBoard),
-      boardsDirty: true,
-      ...(removedSomething ? { boardsPendingExplicitRemoval: true } : {}),
-    })
-  },
-
-  removeFrameById: (frameId) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    const nextBoard = removeFrameById(board, frameId)
-    const removedSomething = nextBoard.frames.length !== board.frames.length
-    set({
-      boards: upsertBoard(boards, nextBoard),
-      boardsDirty: true,
-      ...(removedSomething ? { boardsPendingExplicitRemoval: true } : {}),
-    })
-  },
-
-  addFrame: (pageId) => {
-    const { boards, activeBoardId, frameDefaults } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    if (board.frames.some((f) => f.pageId === pageId)) return
-    const { x, y } = defaultFramePosition(board.frames.length)
-    // WS-7.2 — a page added after "apply to all pages" inherits the
-    // project's frame default instead of the hardcoded FRAME_WIDTH/HEIGHT.
-    const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
-    if (frameDefaults.width) frame.width = frameDefaults.width
-    if (frameDefaults.height) frame.height = frameDefaults.height
-    set({ boards: upsertBoard(boards, upsertFrame(board, frame)), boardsDirty: true })
-  },
-
-  seedFramesForActiveBoard: (pageIds) => {
-    const { boards, activeBoardId, frameDefaults } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    const existingIds = new Set(board.frames.map((f) => f.pageId))
-    const missingIds = pageIds.filter((id) => !existingIds.has(id))
-    if (missingIds.length === 0) return
-
-    const nextBoard = missingIds.reduce((acc, pageId, i) => {
-      const { x, y } = defaultFramePosition(board.frames.length + i)
-      const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
-      if (frameDefaults.width) frame.width = frameDefaults.width
-      if (frameDefaults.height) frame.height = frameDefaults.height
-      return upsertFrame(acc, frame)
-    }, board)
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  duplicateFrameAsVariant: (sourceFrameId, axesOverride) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return null
-    const source = board.frames.find((f) => f.id === sourceFrameId)
-    if (!source) return null
-
-    const newFrameId = crypto.randomUUID()
-    const nextBoard = duplicateFrame(board, sourceFrameId, {
-      id: newFrameId,
-      // Beside the source, same row — the primary way users reach this
-      // feature (§4.4), so it must never land exactly on top of its sibling.
-      x: source.x + (source.width ?? FRAME_WIDTH) + VARIANT_GAP,
-      y: source.y,
-      axes: axesOverride,
-    })
-    if (!nextBoard) return null
-
-    set((state) => {
-      state.boards = upsertBoard(boards, nextBoard)
-      state.boardsDirty = true
-      // Select the new frame, mirroring `selectFrame`'s mutual-exclusivity
-      // with node selection — the user's next action is almost always
-      // "look at the variant I just made".
-      state.selectedFrameIds = [source.pageId]
-      if (state.selectedNodeIds.length > 0) {
-        state.selectedNodeIds = []
-        state.selectedNodeId = null
-      }
-    })
-    return newFrameId
-  },
-
-  setFrameAxes: (frameId, axes) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, setFrameAxesOnBoard(board, frameId, axes)), boardsDirty: true })
-  },
+  // ── Frame mutations (position/size/membership/variants) — see
+  // `boardFrameSliceActions.ts`. Same module-size split as the three other
+  // `create*Actions` composed here.
+  ...createFrameMutationActions(set, get),
 
   markBoardsClean: () => set({ boardsDirty: false, boardsPendingExplicitRemoval: false }),
+
+  endBoardGesture: () => {
+    if (get()._historyCoalesceKey === null) return
+    set((state) => {
+      state._historyCoalesceKey = null
+    })
+  },
 
   setBoardSnapGuides: (guides) => set({ boardSnapGuides: guides }),
 

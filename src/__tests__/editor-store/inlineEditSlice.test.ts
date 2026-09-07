@@ -305,9 +305,11 @@ describe('locale-variant frame sessions (WS-10 §4.4)', () => {
     useEditorStore.getState().startInlineEdit(nodeId, 'studio', 'frame-ar')
     useEditorStore.getState().applyInlineEditValue('مرحبا جدا')
     expect(useEditorStore.getState().localizedPages[LOCALE_KEY]?.nodes[nodeId]?.props.text).toBe('مرحبا جدا')
-    // Deliberately undo-EXEMPT (see inlineEditSlice.ts's module doc) —
-    // `boardSlice.ts`'s frame drags are the same "real edit, no undo entry"
-    // precedent.
+    // Deliberately undo-EXEMPT (see inlineEditSlice.ts's module doc). NOTE:
+    // the old "frame drags are the same precedent" justification no longer
+    // holds — `store-09` made board state undoable. A localized preview edit
+    // stays exempt on its own merits: it is a per-frame PREVIEW overlay, not
+    // the document, and `applyInlineEditValue` writes `localizedPages` only.
     expect(useEditorStore.getState()._historyPast.length).toBe(0)
   })
 
@@ -323,8 +325,14 @@ describe('locale-variant frame sessions (WS-10 §4.4)', () => {
 
   it('a frame with NO locale override on the same board resolves localeOverride to null — the ordinary site path', () => {
     setupLocalizedFrame()
-    const board = useEditorStore.getState().boards.boards[0]!
-    board.frames = [...board.frames, { id: 'frame-default', pageId: 'home', x: 900, y: 0 }]
+    // `loadBoards` publishes a frozen file (`store-09` moved it to a Mutative
+    // recipe so it can also purge board history), so build the second frame
+    // into a fresh board rather than mutating the loaded one in place.
+    const loaded = useEditorStore.getState().boards.boards[0]!
+    const board = {
+      ...loaded,
+      frames: [...loaded.frames, { id: 'frame-default', pageId: 'home', x: 900, y: 0 }],
+    }
     useEditorStore.setState({ boards: { version: 1, boards: [board] } })
 
     const { nodeId } = setupSiteWithTextNode()
