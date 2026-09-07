@@ -39,7 +39,7 @@
 
 .title {
   margin: 0;
-  font-family: inherit;
+  font-family:"Open Sans", sans-serif;
   font-size: var(--type-display-size);
   font-weight: 700;
   line-height: 42px;
@@ -81,8 +81,8 @@
   flex: 1;
   min-width: 0;
   font-family: var(--type-body-regular-family);
-  font-size: var(--type-body-size);
-  font-weight: var(--type-body-regular-weight);
+  font-size: var(--type-title-ls);
+  font-weight:300;
   line-height: var(--type-body-lh);
   color: var(--text-base-default);
 }

@@ -118,6 +118,20 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
   const frames = board ? board.frames : []
   const screen = pageId ? SCREEN_BY_ID[pageId] : null
 
+  // The screens THIS board holds, deduped and in the author's frame order.
+  // An empty board falls back to every screen rather than to nothing.
+  const boardScreens = (() => {
+    const seen = {}
+    const out = []
+    for (const frame of frames) {
+      const entry = SCREEN_BY_ID[frame.pageId]
+      if (!entry || seen[entry.key]) continue
+      seen[entry.key] = true
+      out.push(entry)
+    }
+    return out.length > 0 ? out : SCREENS
+  })()
+
   // Which screen "Flow" means when you have not picked one yet: the first
   // frame on the board you are looking at, so the view opens on something you
   // can already see. Falls back to the first screen for a board with no frames.
@@ -203,11 +217,46 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
           </button>
         </header>
 
-        {/* The screens. Hidden on the canvas, which already draws every one of
-            them — a picker for something wholly on screen is noise. */}
-        {view !== 'canvas' && SCREENS.length > 0 && (
+        {/* One tab per board, in `.studio/boards.json` order, in BOTH views.
+            It used to render only in the flow view while the canvas stacked
+            every board as a titled row — so a second board was invisible until
+            you scrolled, and the export read as if it had one board. A board
+            is a tab; the tab row is the thing that says how many there are.
+            Still hidden for a single board: a row offering one option is a
+            caption pretending to be a control. */}
+        {BOARDS.length > 1 && (
+          <nav className="shell__nav shell__nav--group" aria-label="Boards">
+            <span className="shell__nav-label">Boards</span>
+            {BOARDS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                aria-current={entry.id === boardId ? 'true' : undefined}
+                onClick={() => {
+                  onBoard(entry.id)
+                  // Switching to a board that does not hold the screen you
+                  // were on would strand the flow view on a screen this
+                  // board's own row does not list. Land on its first frame.
+                  if (!entry.frames.some((frame) => frame.pageId === pageId)) {
+                    const first = entry.frames.find((frame) => SCREEN_BY_ID[frame.pageId])
+                    onPage(first ? first.pageId : null)
+                  }
+                }}
+              >
+                {entry.name}
+              </button>
+            ))}
+          </nav>
+        )}
+
+        {/* The screens — this board's, not the project's. Hidden on the
+            canvas, which already draws every one of them; a picker for
+            something wholly on screen is noise. A board with no frames of its
+            own falls back to every screen, so an empty tab is still navigable
+            rather than a dead end. */}
+        {view !== 'canvas' && boardScreens.length > 0 && (
           <nav className="shell__nav" aria-label="Screens">
-            {SCREENS.map((entry) => (
+            {boardScreens.map((entry) => (
               <button
                 key={entry.key}
                 type="button"
@@ -219,36 +268,17 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
             ))}
           </nav>
         )}
-
-        {/* Which board the flow view is drawing from. Only when there is a
-            choice: a labelled row offering one option is a caption pretending
-            to be a control. */}
-        {view !== 'canvas' && BOARDS.length > 1 && (
-          <nav className="shell__nav shell__nav--group" aria-label="Boards">
-            <span className="shell__nav-label">Boards</span>
-            {BOARDS.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                aria-current={entry.id === boardId ? 'true' : undefined}
-                onClick={() => { onBoard(entry.id) }}
-              >
-                {entry.name}
-              </button>
-            ))}
-          </nav>
-        )}
       </div>
 
       {view === 'canvas' ? (
         <CanvasPanel
-          rows={BOARDS.map((entry) => ({
-            key: entry.id,
-            title: entry.name,
-            frames: entry.frames.filter((frame) => SCREEN_BY_ID[frame.pageId]),
-            notes: entry.notes,
-            docs: entry.docs,
-          }))}
+          rows={board ? [{
+            key: board.id,
+            title: board.name,
+            frames: frames.filter((frame) => SCREEN_BY_ID[frame.pageId]),
+            notes: board.notes,
+            docs: board.docs,
+          }] : []}
           renderFrame={(frame) => <FramePreview frame={frame} dir={dir} lang={lang} theme={theme} />}
           onOpenFrame={onOpenFrame}
           onClose={
@@ -268,7 +298,12 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
               style={{ '--device-w': FRAME_DEFAULTS.width + 'px', '--device-h': FRAME_DEFAULTS.height + 'px' }}
             >
               {/* The Player, not a bare ScreenFrame: this is where the links
-                  authored on the board actually run. */}
+                  authored on the board actually run. Its link graph stays
+                  project-wide on purpose — a link in `.studio/prototype.json`
+                  addresses a SCREEN, not a board, so scoping it to the active
+                  tab would break a jump to a screen the author placed on a
+                  different board. The tabs scope what you SEE; they do not
+                  amputate the flow. */}
               <Player pageId={pageId} onPageChange={onPage} dir={dir} lang={lang} theme={theme} />
             </div>
           ) : (

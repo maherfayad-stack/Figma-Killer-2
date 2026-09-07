@@ -19,9 +19,9 @@ export default function Onboarding() {
           <OnboardingHero />
 
           <div className={styles.copy}>
-            <h1 className={styles.title}>{t.onboarding.completeYourSetupDonT}</h1>
 
             <ul className={styles.features}>
+              <h1 className={styles.title}>{t.onboarding.completeYourSetupDonT}</h1>
               <li className={styles.feature}>
                 <span className={styles.icon} dangerouslySetInnerHTML={{ __html: smsSvg }} />
                 <span className={styles.featureText}>{t.onboarding.uniqueRatesViaWhatsappEmail}</span>

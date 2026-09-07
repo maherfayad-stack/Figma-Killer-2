@@ -17,20 +17,31 @@ export const SCREENS = [
 export const BOARDS = [
   {
     id: "2fd078d6-209f-44df-842e-4bda43d97ed5",
-    name: "Board 1",
+    name: "Test",
     frames: [
-      {"key":"3884d231-f0eb-4dcb-a48b-49e01249f3ad","pageId":"onboarding","label":"Onboarding","x":422,"y":901,"width":393,"height":808},
+      {"key":"3884d231-f0eb-4dcb-a48b-49e01249f3ad","pageId":"onboarding","label":"Onboarding","x":424,"y":901,"width":393,"height":808},
       {"key":"d7132d36-dbde-434c-b257-1ff2d0ce909f","pageId":"sms","label":"SMS","x":-2,"y":901,"width":393,"height":804},
       {"key":"2a978b29-58cf-40b2-bf8c-efb5873db9d3","pageId":"sign-up","label":"SignUp","x":-422,"y":901,"width":393,"height":788},
     ],
     notes: [
-      {"id":"bb7731f0-d5b9-467f-8b72-e2d588782623","x":-877.4360057479422,"y":812.0238171287045,"w":216.9538838520047,"h":126.12189749690015,"text":"Testing the sticky notes","color":"yellow"},
-      {"id":"48993fd9-84e8-4bdd-8d34-4249605e5846","x":64,"y":64,"w":180,"h":120,"text":"","color":"yellow"},
-      {"id":"0014711e-c44c-4e99-90bb-0d45f16237a4","x":88,"y":88,"w":180,"h":120,"text":"","color":"yellow"},
-      {"id":"f321ff5f-9e7f-42c7-87e2-e29998c37400","x":-1268.6746540517518,"y":980.390375135975,"w":216.9538838520047,"h":126.12189749690015,"text":"lama was here","color":"pink"},
+      {"id":"bb7731f0-d5b9-467f-8b72-e2d588782623","x":-988.4908055234471,"y":838.1512654950589,"w":216.9538838520047,"h":126.12189749690015,"text":"Testing the sticky notes","color":"yellow"},
+      {"id":"f321ff5f-9e7f-42c7-87e2-e29998c37400","x":-988.4908055234471,"y":649.1924076066781,"w":216.9538838520047,"h":126.12189749690015,"text":"lama was here","color":"pink"},
     ],
     docs: [
-      {"id":"2f9af55e-0d53-415c-b494-5a42cec1a594","x":-976.7415028797204,"y":1106.512272632875,"w":490.0097483540562,"h":367.25298435898634,"html":"<h1>Best test for a doc</h1>this doc is amazing<div><br></div><div><h3>hooooray what. a doc</h3><div><ul><li>who made this amazing work</li><li>it's me hehe</li><li>kbasl;dfsdfna;dsf</li></ul></div></div>"},
+      {"id":"2f9af55e-0d53-415c-b494-5a42cec1a594","x":-988.4908055234471,"y":1019.4376876719375,"w":490.0097483540562,"h":367.25298435898634,"html":"<h1>Best test for a doc</h1>this doc is amazing<div><br></div><div><h3>hooooray what. a doc</h3><div><ul><li>who made this amazing work</li><li>it's me hehe</li><li>kbasl;dfsdfna;dsf</li></ul></div></div>"},
+    ],
+  },
+  {
+    id: "b0aeac4a-1ab7-4444-8c3e-c8a871e31818",
+    name: "Testtt",
+    frames: [
+      {"key":"c7721a84-2ed8-43b3-8e69-0acd0f463263","pageId":"onboarding","label":"Onboarding","x":0,"y":0,"width":393,"height":852},
+    ],
+    notes: [
+
+    ],
+    docs: [
+
     ],
   },
 ]
@@ -57,7 +68,6 @@ export const LOCALES = ["en","ar"]
 export const LINKS = [
   {
     "id": "bdb3afb0-d601-4ffc-b1f0-e55daa7a8b49",
-    "origin": "design",
     "source": {
       "pageId": "sign-up",
       "node": {
@@ -81,7 +91,6 @@ export const LINKS = [
   },
   {
     "id": "72c775ca-bd15-481e-b607-6b2e33fd75b4",
-    "origin": "design",
     "source": {
       "pageId": "onboarding",
       "node": {
@@ -102,7 +111,6 @@ export const LINKS = [
   },
   {
     "id": "b14ba0be-ab2c-4ca4-958d-753cd53d678b",
-    "origin": "design",
     "source": {
       "pageId": "sign-up",
       "node": {
@@ -125,7 +133,6 @@ export const LINKS = [
   },
   {
     "id": "ea91ae57-7b4a-46fb-b51f-e05c9bb9ee29",
-    "origin": "design",
     "source": {
       "pageId": "sms",
       "node": {
@@ -148,7 +155,6 @@ export const LINKS = [
   },
   {
     "id": "9ef314f0-8cc3-4167-abb1-37a02d9f4094",
-    "origin": "design",
     "source": {
       "pageId": "sms",
       "node": {
