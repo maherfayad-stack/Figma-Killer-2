@@ -20,6 +20,7 @@ import { createDefaultSiteDocument } from './defaults'
 import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
+import { retainBoardOnlyEntries } from '../boardHistory'
 import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRemap'
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
@@ -147,8 +148,13 @@ export function createLifecycleActions({
         // Mutative draft that isn't assigned to keeps its prior structural
         // sharing, so this is a real "keep", not a copy.
         if (!historySafe) {
-          state._historyPast = []
-          state._historyFuture = []
+          // `store-09` — a `.tsx` reparse says nothing about
+          // `.studio/boards.json`, so board-scoped entries survive a site-side
+          // wipe. Wiping a sticky-note move because a page's line numbers
+          // shifted is the same "one gesture destroys unrelated undo history"
+          // bug `store-08` fixed for the site domain.
+          state._historyPast = retainBoardOnlyEntries(state._historyPast)
+          state._historyFuture = retainBoardOnlyEntries(state._historyFuture)
         }
         // A reload boundary always ends an in-progress coalescing burst —
         // the next edit must not fold into whatever burst was open before
@@ -358,8 +364,13 @@ export function createLifecycleActions({
           historySurvivesReload(state._historyPast, knownNodeIds) &&
           historySurvivesReload(state._historyFuture, knownNodeIds)
         if (!historySafe) {
-          state._historyPast = []
-          state._historyFuture = []
+          // `store-09` — a `.tsx` reparse says nothing about
+          // `.studio/boards.json`, so board-scoped entries survive a site-side
+          // wipe. Wiping a sticky-note move because a page's line numbers
+          // shifted is the same "one gesture destroys unrelated undo history"
+          // bug `store-08` fixed for the site domain.
+          state._historyPast = retainBoardOnlyEntries(state._historyPast)
+          state._historyFuture = retainBoardOnlyEntries(state._historyFuture)
         }
         // A patch that reaches this point changed at least one page or
         // removed one — the same "reload boundary" `loadSite` treats as

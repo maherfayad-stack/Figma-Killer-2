@@ -16,6 +16,7 @@
 import type { EditorStore } from '@site/store/types'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveBoard, moveFrame, upsertBoard } from '@core/studio-board'
+import { boardCoalesceKey, commitBoardChange } from './boardHistory'
 import { firstFrameForPage } from './boardBulkFrameActions'
 
 type FrameSelectionActions = Pick<
@@ -94,11 +95,13 @@ export function createFrameSelectionActions(
      * selection, so a press costs one `Board` reallocation and one
      * `boardsDirty` flip — the same shape `nudgeSelectedAnnotations` uses.
      *
-     * Board layout is NOT in the page-tree undo history. It persists to
-     * `.studio/boards.json` through `AdminCanvasLayout`'s debounced
-     * auto-save (`BOARDS_AUTOSAVE_DEBOUNCE_MS`), which is what actually
-     * coalesces a burst of held-arrow nudges into a single write; ⌘Z does
-     * not (and never did) rewind a frame move.
+     * `store-09` — a nudge IS undoable. Board layout is a second domain on the
+     * SAME history stack (`boardHistory.ts`): one key-HOLD coalesces into one
+     * entry under `board:frame-nudge`, and `useBoardFrameNudge`'s `keyup`
+     * closes the burst. Persistence is unchanged — `.studio/boards.json`
+     * through `AdminCanvasLayout`'s debounced auto-save
+     * (`BOARDS_AUTOSAVE_DEBOUNCE_MS`), which undo re-triggers by re-raising
+     * `boardsDirty`.
      *
      * `selectedFrameIds` is page-id-keyed, so this reaches the FIRST frame
      * of each selected page — the documented WS-10 Phase 2 scope boundary
@@ -122,7 +125,9 @@ export function createFrameSelectionActions(
       // A selection of ids that no longer resolve to frames must not flip
       // `boardsDirty` and trigger a pointless save.
       if (!moved) return
-      set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+      // `store-09` — a held arrow key repeats; one key-hold is one undo entry.
+      // `useBoardFrameNudge` closes the burst on keyup.
+      commitBoardChange(set, get, boardCoalesceKey.frameNudge(), upsertBoard(boards, nextBoard))
     },
   }
 }

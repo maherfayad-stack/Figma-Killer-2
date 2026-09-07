@@ -32,8 +32,9 @@
  * inspectors, and silently moving furniture the user did not see selected is
  * worse than moving less than they asked.
  *
- * Undo: board layout is not in the page-tree undo history — see
- * `nudgeSelectedFrames`' doc in `boardFrameSelectionActions.ts`.
+ * Undo (`store-09`): a nudge IS undoable. One key-HOLD (keydown auto-repeat)
+ * coalesces into a single entry; the `keyup` below closes the burst so the next
+ * hold is its own ⌘Z step.
  */
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -72,7 +73,16 @@ export function useBoardFrameNudge(editable: boolean, isLive: boolean): void {
       state.nudgeSelectedFrames(delta.dx, delta.dy)
     }
 
+    // A key RELEASE ends the nudge burst — see `boardHistory.ts`. Unconditional
+    // (no binding match): releasing any key means the hold is over, and
+    // `endBoardGesture` is a no-op when no burst is open.
+    const onKeyUp = () => useEditorStore.getState().endBoardGesture()
+
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
+    document.addEventListener('keyup', onKeyUp)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keyup', onKeyUp)
+    }
   }, [editable, isLive])
 }
