@@ -8,7 +8,7 @@
  * etc.) are available on the window object — required by @testing-library/dom's
  * querySelectorAll implementation.
  */
-import { GlobalWindow } from 'happy-dom'
+import { GlobalWindow, MutationObserver as HappyMutationObserver, PropertySymbol } from 'happy-dom'
 
 // happy-dom auto-fetches and parses every `<link rel="stylesheet">` inserted
 // into the document — including the Google Fonts CSS that
@@ -30,6 +30,63 @@ const happyWindow = new GlobalWindow({
     disableJavaScriptFileLoading: true,
   },
 })
+
+// ---------------------------------------------------------------------------
+// Keep happy-dom's MutationObserver callbacks alive across a GC.
+//
+// happy-dom registers each observation as `{ options, callback: new WeakRef(
+// (record) => listener.report(record)) }` (`MutationObserverListener`'s
+// constructor) and pushes that object onto the target node's listener array.
+// Nothing else holds a strong reference to that arrow function — so the
+// moment Bun's GC runs, `callback.deref()` returns `undefined` and
+// `Node[PropertySymbol.reportMutation]` silently skips the listener. The
+// observer object itself is still alive and still "connected"; it just never
+// fires again, and `takeRecords()` returns `[]`.
+//
+// That is not a behaviour any real browser has, and it breaks exactly the
+// code that observes long-lived DOM: a canvas injector attaches its
+// MutationObserver in a mount effect, the test then spends seconds in
+// `waitFor` (allocating enough to trigger a collection), and the mutation the
+// test finally makes is never delivered. It looks like a product bug in the
+// injector and is not — verified directly: an observer that fires normally
+// stops firing across a single explicit `Bun.gc(true)`.
+//
+// The repair pins the derefed closures for as long as the observer is
+// observing. A `WeakMap` keyed by the observer is the right lifetime: happy-dom
+// keeps every connected observer in `window[PropertySymbol.mutationObservers]`
+// and removes it on `disconnect()`, so the pinned closures become collectable
+// again at exactly the moment the observer legitimately stops mattering.
+//
+// Patched on the shared implementation class (`happy-dom`'s exported
+// `MutationObserver`), NOT on `happyWindow.MutationObserver` — every window,
+// including each `<iframe>`'s, gets its own empty subclass of that one
+// implementation (`WindowContextClassExtender`), so patching the base covers
+// the iframe canvas frames too, which is where this actually bites.
+{
+  type MutationListenerRecord = { callback?: { deref(): unknown } }
+  type ObservableNode = Record<symbol, unknown>
+
+  const observeProto = HappyMutationObserver.prototype as unknown as {
+    observe(target: unknown, options?: unknown): void
+  }
+  const originalObserve = observeProto.observe
+  const pinnedCallbacks = new WeakMap<object, unknown[]>()
+
+  observeProto.observe = function patchedObserve(target: unknown, options?: unknown): void {
+    originalObserve.call(this, target, options)
+    const listeners = (target as ObservableNode | null)?.[PropertySymbol.mutationListeners]
+    if (!Array.isArray(listeners)) return
+    let pinned = pinnedCallbacks.get(this as object)
+    if (!pinned) {
+      pinned = []
+      pinnedCallbacks.set(this as object, pinned)
+    }
+    for (const listener of listeners as MutationListenerRecord[]) {
+      const callback = listener?.callback?.deref()
+      if (callback && !pinned.includes(callback)) pinned.push(callback)
+    }
+  }
+}
 
 // Assign the window and document globals first — other globals are derived from these
 ;(globalThis as Record<string, unknown>).window = happyWindow

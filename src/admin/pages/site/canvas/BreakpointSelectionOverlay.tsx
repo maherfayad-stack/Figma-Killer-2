@@ -317,12 +317,12 @@ export function BreakpointSelectionOverlay({
     anchorDirtyRef.current = true
   }, [selectedNodeIdsSignature, showToolbar, inspectorNodeId, committedTransform])
 
-  // Prefer the canvas root as the portal target so overlay chrome sits inside
-  // the canvas's stacking + clipping context. The root is captured into state
-  // after mount so the portal target and measurement coordinate space switch
-  // together instead of leaving body-portaled chrome positioned with
-  // canvas-root-local coordinates during the ref-availability race.
-  const portalTarget = portalCanvasRoot ?? document.body
+  // Portal target: the canvas root (so chrome sits inside the canvas's own
+  // stacking + clipping context) — or, under a viewport context, NOTHING until
+  // it resolves. Parking chrome in `document.body` first and relocating it
+  // REMOUNTS the portal subtree, discarding its state. See canvas-internals.md.
+  const portalTarget = portalCanvasRoot ?? (viewportActions ? null : document.body)
+  const chromeTarget = overlayRoot ?? portalTarget
   const toolbarMode = portalCanvasRoot ? 'scoped' : 'fixed'
   const treeLadder = useCanvasTreeLadderOverlay({
     breakpointId,
@@ -691,9 +691,9 @@ export function BreakpointSelectionOverlay({
           drag, and the transform-scaled coordinate path is established for
           them. See `CanvasDropIndicators`. */}
       <CanvasDropIndicators target={reorderDrag.target} invalid={reorderDrag.invalid} />
-      {canvasChrome && createPortal(canvasChrome, overlayRoot ?? portalTarget)}
-      {toolbar && createPortal(toolbar, portalTarget)}
-      {inspector && createPortal(inspector, portalTarget)}
+      {canvasChrome && chromeTarget && createPortal(canvasChrome, chromeTarget)}
+      {toolbar && portalTarget && createPortal(toolbar, portalTarget)}
+      {inspector && portalTarget && createPortal(inspector, portalTarget)}
       {treeLadder.portal}
     </>
   )
