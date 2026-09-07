@@ -131,6 +131,18 @@ portals out of the panel, it sets `data-field-skin="inspector"` on its own root 
 any future portalled inspector surface must do the same, or it renders
 admin-shaped pill controls inside the design tool.
 
+**Viewport fit.** `useAnchoredFloating` only picks a *side*; it cannot help a
+panel that is taller than the viewport, which is every tabbed ⚙ popover opened
+from a trigger low in the Properties panel. `InspectorPopover` therefore runs a
+second, pure pass — `fitFloatingToViewport` in `src/ui/lib/floatingViewportFit.ts`
+— that clamps the origin against a 12px viewport margin and returns a
+`max-height` ceiling, published as `--inspector-popover-max-height`. The panel
+then never extends past the bottom (or any) screen edge; `.body` scrolls the
+overflow instead. Height is read from `offsetHeight`, not
+`getBoundingClientRect()`, because the latter includes the enter animation's
+`scale()` and measures short. Geometry is unit-tested in
+`src/ui/lib/floatingViewportFit.test.ts`.
+
 ### §3.2 `PropertyList` — used by G6, G7, G8
 
 The Fill / Stroke / Effects list shape (F13, F14, F16, F20). One component,
@@ -213,6 +225,40 @@ control folds into the field's own dropdown.
 
 *Shipped deviation:* `aspectRatio` and `boxSizing` went into a **Size** `⚙`
 popover, not the Layout `⚙`.
+
+#### Hug/Fill is resolved against the real parent (W8-4)
+
+`Fixed`/`Hug`/`Fill` are **intents**, and the CSS that expresses an intent
+depends entirely on how the element's parent lays it out. `elementSizing.ts`
+classifies each axis against the parent's *computed* `display`/`flex-direction`
+(`sizingAxisRole`) and writes accordingly:
+
+| Parent / axis | Fill | Hug |
+|---|---|---|
+| flex, **main** axis | `flex: 1 1 0` (clears the axis length) | `width\|height: fit-content` + `flex: 0 0 auto` |
+| flex, **cross** axis | `align-self: stretch` (clears the axis length) | `width\|height: fit-content` |
+| grid | `justify-self` (inline) / `align-self` (block) `: stretch`, clears the axis length | `width\|height: fit-content` |
+| block | `width\|height: 100%` | `width\|height: fit-content` |
+
+The earlier model wrote `fit-content`/`100%` unconditionally. `100%` on a flex
+child resolves against the container's content box and ignores `gap`, so a
+"Fill" item in a gapped row **overflowed the row and shoved its siblings out** —
+the control claimed one thing and the source did another.
+
+**Read-back mirrors the write.** `currentSizingMode` asks the same role
+question and looks for the same marker `sizingPatch` would have left, so the
+picker always reflects what is really in the source. A `width: 100%` on a flex
+child reads as **Fixed** — there it *is* just a literal length.
+
+**No parent layout ⇒ no Hug/Fill.** When the element's parent can't be resolved
+(its parent is a JSX call site in another file, nothing has rendered it on the
+canvas yet, or it has no parent node), the axis stays on `Fixed` and the Hug /
+Fill menu rows render **disabled with a named reason as their tooltip**
+(`AddablePropertyFieldMode.disabledReason`) rather than disappearing. The parent
+layout comes from `useSizingParentLayout` — a live `getComputedStyle` read of
+the parent's rendered element, the same source `SingleNodeAlignRow` uses for
+G10; a stored declaration cannot tell you what the cascade resolved `display`
+to.
 
 ### G3 — Layout: the settings popover (F3–F8)
 

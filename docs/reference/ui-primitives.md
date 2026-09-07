@@ -647,6 +647,7 @@ The primitive must work entirely with existing design tokens. If you need a new 
   - `src/ui/lib/sameOriginDocuments.ts` — `collectSameOriginDocuments`, `isNode`
   - `src/ui/components/ContextMenu/useDeferredClose.ts` — exit-animation deferred close hook
   - `src/ui/lib/useAnchoredFloating.ts` — shared anchor-mode (auto-flip) and point-mode (viewport-fit) positioning hook, also used by `InspectorPopover`
+  - `src/ui/lib/floatingViewportFit.ts` — `fitFloatingToViewport`, the pure final clamp (origin + `max-height` ceiling) `InspectorPopover` applies on top of that hook
 - Gate tests:
   - `src/__tests__/architecture/button-primitive-usage.test.ts`
   - `src/__tests__/architecture/ui-primitives-location.test.ts`

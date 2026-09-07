@@ -13,18 +13,34 @@
  *      Fixed/Hug/Fill segmented row visible; Fixed hides that row.
  *   5. Switching a Hug/Fill axis back to Fixed freezes the MEASURED value
  *      (`currentStyles`), not a reset to empty.
+ *   6. W8-4 — the mode is resolved against the element's REAL parent layout:
+ *      Fill in a flex row writes `flex: 1 1 0` (not `100%`, which overflows a
+ *      gapped row), and with no readable parent Hug/Fill are offered but
+ *      disabled with a named reason rather than silently writing a lie.
+ *
+ * Every case below states the parent it is testing under, because there is
+ * no longer such a thing as a parent-independent answer.
  */
 import { describe, it, expect, afterEach } from 'bun:test'
 import { useState } from 'react'
 import { render, screen, cleanup, within, fireEvent, waitFor } from '@testing-library/react'
 import { SizeSection } from '@site/panels/PropertiesPanel/SizeSection'
 import type { CSSPropertyBag } from '@core/page-tree'
+import type { SizingParentLayout } from '@site/panels/PropertiesPanel/elementSizing'
+
+/** Default harness parent — a plain block container, the one layout where
+ *  `fit-content` / `100%` really are the honest Hug/Fill values. */
+const BLOCK_PARENT: SizingParentLayout = { display: 'block', flexDirection: 'row' }
+const FLEX_ROW_PARENT: SizingParentLayout = { display: 'flex', flexDirection: 'row' }
 
 afterEach(cleanup)
 
 interface RenderOptions {
   storedStyles?: Record<string, unknown>
   currentStyles?: Record<string, unknown>
+  /** `null` models "the parent's layout can't be read" (a cross-file
+   *  component root, or nothing rendered on the canvas yet). */
+  parentLayout?: SizingParentLayout | null
 }
 
 /**
@@ -34,7 +50,11 @@ interface RenderOptions {
  * row once `storedStyles` itself no longer carries the property, exactly as
  * it wouldn't in the live store.
  */
-function renderSizeSection({ storedStyles: initialStored = {}, currentStyles = {} }: RenderOptions = {}) {
+function renderSizeSection({
+  storedStyles: initialStored = {},
+  currentStyles = {},
+  parentLayout = BLOCK_PARENT,
+}: RenderOptions = {}) {
   const calls = {
     onChange: [] as Array<[keyof CSSPropertyBag, string | number | undefined]>,
     onClearProperty: [] as Array<keyof CSSPropertyBag>,
@@ -47,9 +67,15 @@ function renderSizeSection({ storedStyles: initialStored = {}, currentStyles = {
         currentStyles={currentStyles}
         storedStyles={storedStyles}
         activeTab="base"
+        parentLayout={parentLayout}
         onChange={(prop, value) => {
           calls.onChange.push([prop, value])
-          setStoredStyles((prev) => ({ ...prev, [prop]: value }))
+          setStoredStyles((prev) => {
+            const next = { ...prev }
+            if (value === undefined) delete next[prop]
+            else next[prop] = value
+            return next
+          })
         }}
         onRemove={() => {}}
         onClearProperty={(prop) => {
@@ -186,5 +212,78 @@ describe('size section — sizing mode', () => {
     fireEvent.click(within(modeRow).getByRole('button', { name: 'Fixed' }))
 
     expect(calls.onChange).toEqual([['height', '325px']])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. W8-4 — the parent decides what Hug/Fill mean
+// ---------------------------------------------------------------------------
+
+describe('size section — parent-aware sizing', () => {
+  it('Fill on a flex row main axis writes flex: 1 1 0 and drops the stale length', async () => {
+    const { calls } = renderSizeSection({
+      storedStyles: { width: '200px' },
+      currentStyles: { width: '200px' },
+      parentLayout: FLEX_ROW_PARENT,
+    })
+
+    await openWidthMenu()
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Fill container' }))
+
+    expect(calls.onChange).toEqual([
+      ['width', undefined],
+      ['flex', '1 1 0'],
+    ])
+  })
+
+  it('reads that flex back as Fill, and a bare 100% on the same child as Fixed', () => {
+    renderSizeSection({ storedStyles: { flex: '1 1 0' }, parentLayout: FLEX_ROW_PARENT })
+    expect((screen.getByRole('textbox', { name: 'Width' }) as HTMLInputElement).value).toBe('Fill')
+
+    cleanup()
+
+    renderSizeSection({ storedStyles: { width: '100%' }, parentLayout: FLEX_ROW_PARENT })
+    expect((screen.getByRole('textbox', { name: 'Width' }) as HTMLInputElement).value).toBe('100%')
+  })
+
+  it('Fill on the flex CROSS axis stretches instead of setting a length', async () => {
+    const { calls } = renderSizeSection({ parentLayout: FLEX_ROW_PARENT })
+
+    fireEvent.click(screen.getByTestId('css-size-input-height-chevron'))
+    await waitFor(() => {
+      expect(screen.getByRole('menu', { name: 'Height options' })).toBeDefined()
+    })
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Fill container' }))
+
+    expect(calls.onChange).toEqual([['alignSelf', 'stretch']])
+  })
+
+  it('offers Hug/Fill disabled, with a reason, when the parent layout is unreadable', async () => {
+    const { calls } = renderSizeSection({ parentLayout: null })
+
+    await openWidthMenu()
+    const fill = screen.getByRole('menuitemradio', { name: 'Fill container' }) as HTMLButtonElement
+    const hug = screen.getByRole('menuitemradio', { name: 'Hug contents' }) as HTMLButtonElement
+
+    // Visible and named, not hidden — the user is told why, not left guessing.
+    // `Button` converts `disabled` + `tooltip` into `aria-disabled` on purpose
+    // so the reason tooltip still opens on hover (a native `disabled` button
+    // swallows pointer events); see Button's docblock.
+    // The reason itself is a `Tooltip` child, only mounted on hover — the
+    // string is unit-tested in `elementSizing.test.ts`; what matters here is
+    // that the row exists, is inert, and writes nothing.
+    expect(fill.getAttribute('aria-disabled')).toBe('true')
+    expect(hug.getAttribute('aria-disabled')).toBe('true')
+
+    fireEvent.click(fill)
+    expect(calls.onChange).toEqual([])
+  })
+
+  it('leaves the axis on Fixed with an unreadable parent, whatever is stored', () => {
+    renderSizeSection({ storedStyles: { width: 'fit-content' }, parentLayout: null })
+
+    // Not the word "Hug" — the stored value shown for exactly what it is.
+    expect((screen.getByRole('textbox', { name: 'Width' }) as HTMLInputElement).value).toBe('fit-content')
+    expect(screen.queryByTestId('css-size-mode-width')).toBeNull()
   })
 })
