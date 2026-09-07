@@ -1,0 +1,72 @@
+/*
+ * ImageSourcePicker — the three-tab image source chooser used by the Fill
+ * section's header "add image fill" popover and by an image layer's own
+ * popover. Sized for `InspectorPopover`'s 240-264px band; the grid scrolls
+ * rather than growing the popover past the viewport.
+ */
+
+.picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+}
+
+.note {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+}
+
+.uploadPane {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-xs);
+}
+
+/* ── Project asset grid ──────────────────────────────────────────────────── */
+
+.grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.tile {
+    display: block;
+}
+
+.tileButton {
+    gap: var(--inspector-space-s);
+    min-width: 0;
+}
+
+.thumb {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background-color: var(--bg-surface-3);
+}
+
+.tileName {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.tileWarning {
+    flex-shrink: 0;
+    font-size: var(--text-2xs);
+    color: var(--warning-text);
+}

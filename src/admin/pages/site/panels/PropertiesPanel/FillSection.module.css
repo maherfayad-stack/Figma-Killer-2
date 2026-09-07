@@ -96,3 +96,62 @@
     flex: 0 0 auto;
     width: 64px;
 }
+
+/* ── Image fill — preview, fit, 3x3 position puck ────────────────────────── */
+
+.imageEditor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+}
+
+.imagePreviewRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-s);
+    min-width: 0;
+}
+
+.imagePreview {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background-color: var(--bg-surface-3);
+}
+
+.imageName {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+}
+
+.positionGroup {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-caption-gap);
+}
+
+.positionGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-px);
+    width: fit-content;
+    padding: var(--space-px);
+    border-radius: var(--radius);
+    background-color: var(--inspector-field-bg);
+}
+
+.positionDot {
+    display: block;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--radius-sm);
+    background-color: currentColor;
+}
