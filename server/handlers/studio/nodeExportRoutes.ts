@@ -1,11 +1,18 @@
 /**
  * nodeExportRoutes — the inspector's Export section, server side (W8-4).
  *
- *   POST /admin/api/studio/node-png   { dir?, pageId, nodeId, scale }
+ *   POST /admin/api/studio/node-png   { dir?, pageId, nodeId?, scale }
  *       -> `image/png` — the selected node, cut out of a capture of its page
  *          at the requested density. Body validated against
  *          `NodePngBodySchema`; the capture + crop live in
  *          `nodeExportCapture.ts`.
+ *
+ *          `nodeId` is OPTIONAL: omitted, the WHOLE captured frame comes back
+ *          uncropped. That is the "nothing selected" half of ⌘⇧C (Copy as
+ *          PNG) — a page has no addressable root element to crop to
+ *          (`page.rootNodeId` is a `base.body` node whose children ARE the
+ *          iframe body, so nothing in the DOM carries its `data-node-id`), and
+ *          the frame image already IS the answer for that case.
  *
  *   POST /admin/api/studio/node-jsx   { dir?, nodeId }
  *       -> `{ jsx, rel }` — the node's own JSX, read verbatim out of the file
@@ -52,7 +59,8 @@ const NODE_JSX_PATH = '/admin/api/studio/node-jsx'
 export const NodePngBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   pageId: Type.String({ minLength: 1 }),
-  nodeId: Type.String({ minLength: 1 }),
+  /** Omitted = the whole frame, uncropped. See the module doc. */
+  nodeId: Type.Optional(Type.String({ minLength: 1 })),
   scale: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3)]),
 })
 
@@ -91,7 +99,7 @@ export async function tryServeStudioNodeExport(
         userId: user.id,
         dir,
         pageId: body.pageId,
-        nodeId: body.nodeId,
+        ...(body.nodeId === undefined ? {} : { nodeId: body.nodeId }),
         scale: body.scale,
       })
       // 422, not 500: every failure here is a real, explainable state of the

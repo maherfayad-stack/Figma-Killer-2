@@ -227,6 +227,29 @@ pushes an entry that reverts nothing visible. Both rules:
 [`docs/reference/editor-history.md`](../reference/editor-history.md) → "Who
 owns Ctrl/⌘+Z".
 
+**A structural gesture is undone by re-issuing it, not by replaying patches**
+(`store-08`). `saveSite` diffs node VALUES and knows nothing about parent or
+order, so a patch-only undo of a move changes the canvas and leaves the `.tsx`
+saying the opposite. `moveNodes` tags its entry with the pre-move
+`(parentId, index)` (`structuralHistory.ts`) and `undo` re-issues `moveNodes`
+back to it; `deleteNodes` tags its entry `gesture: 'delete'` and `undo`
+REFUSES with a toast, because no writeback kind can put a subtree's source text
+back. Tagging happens only when a source write was actually issued — a CMS or
+Visual Component tree keeps plain patch replay.
+
+**A reparse renumbers `rel:line:col` ids; the stack is re-addressed, not
+wiped.** `buildReparseNodeIdRemap` (`historyNodeIdRemap.ts`) walks the
+pre-reload tree against the reparse in parallel and rewrites every patch path
+and structural node id. `historySurvivesReload` is still the fallback for
+anything the walk can't match. Both run in `loadSite` AND `patchPages`. Do not
+add a third reload path without them.
+
+**Board state is not undoable at all.** Frame move/resize, board CRUD, guides,
+annotations and prototype links live outside `site`, and history records only
+`site`-scoped patches. Named gap, not an oversight — see
+[`docs/reference/editor-history.md`](../reference/editor-history.md) → "What is
+NOT undoable".
+
 ---
 
 ## Boards autosave — the overwrite hazard, and its guard

@@ -67,7 +67,17 @@ export interface NodeExportMenuEntry {
   id: string
   label: string
   /** `add-row` appends a `NodeExportRow`; `copy-*` run immediately and write to the clipboard. */
-  action: { kind: 'add-row'; format: NodeExportFormat; scale: 1 | 2 | 3 } | { kind: 'copy-css' } | { kind: 'copy-jsx' }
+  action:
+    | { kind: 'add-row'; format: NodeExportFormat; scale: 1 | 2 | 3 }
+    | { kind: 'copy-png'; scale: 1 | 2 | 3 }
+    | { kind: 'copy-css' }
+    | { kind: 'copy-jsx' }
+  /**
+   * Keyboard hint rendered after the label — the discoverability half of a
+   * global shortcut. Resolved from the keybindings registry at the call site,
+   * never spelled out here.
+   */
+  commandId?: string
 }
 
 /**
@@ -84,6 +94,11 @@ export const NODE_EXPORT_MENU: ReadonlyArray<NodeExportMenuEntry> = [
   { id: 'png-2x', label: 'PNG @2×', action: { kind: 'add-row', format: 'png', scale: 2 } },
   { id: 'png-3x', label: 'PNG @3×', action: { kind: 'add-row', format: 'png', scale: 3 } },
   { id: 'svg', label: 'SVG', action: { kind: 'add-row', format: 'svg', scale: 1 } },
+  // Copy as PNG is a menu ACTION, not a row, for the reason Copy CSS is: a row
+  // exists so its settings can be kept and re-run, and a copy has no settings.
+  // It carries the ⌘⇧C hint because a global shortcut nobody can see is a
+  // shortcut nobody uses — the density here matches the shortcut's own.
+  { id: 'copy-png', label: 'Copy as PNG', action: { kind: 'copy-png', scale: 2 }, commandId: 'export.copySelectionPng' },
   { id: 'copy-css', label: 'Copy CSS', action: { kind: 'copy-css' } },
   { id: 'copy-jsx', label: 'Copy JSX', action: { kind: 'copy-jsx' } },
 ]

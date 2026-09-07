@@ -66,7 +66,7 @@ import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { FRAME_WIDTH, FRAME_HEIGHT } from '@core/studio-board'
 import { getAgentStoreApi } from './storeRef'
 import { captureAgentRenderSnapshot, waitForAgentRenderFrame } from './renderEvidence'
-import { waitForDelay, waitForDocumentQuiet, waitForPromise } from '../canvas/canvasCaptureSettle'
+import { settleCaptureDocument } from '../canvas/canvasCaptureSettle'
 
 type StudioExportFramesInput = Static<typeof StudioExportFramesInputSchema>
 
@@ -232,19 +232,17 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
   return aiToolOk({ frames: results }, images)
 }
 
-/** Bounded DOM-quiet + fonts-ready wait, reusing the same primitives the CMS transient capture waits on. */
+/**
+ * Bounded settle for a VISIBLE board frame, using the same state machine the
+ * headless capture page uses (`settleCaptureDocument`).
+ *
+ * No `previewReadiness`: an editor frame is already mounted and its preview
+ * lookups are not tracked by a per-capture barrier. Images, fonts and DOM quiet
+ * are, and each of those bounds degrades to "capture it anyway" rather than
+ * stalling out to `SETTLE_TIMEOUT_MS` — the live-bridge half of the same defect
+ * `canvasCaptureSettle.ts`'s module doc describes.
+ */
 async function waitForSettle(doc: Document): Promise<void> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), SETTLE_TIMEOUT_MS)
-  try {
-    if (!await waitForDelay(0, controller.signal)) return
-    if (!await waitForDocumentQuiet(doc, controller.signal)) return
-    const fonts = doc.fonts
-    if (fonts?.status === 'loading') {
-      if (!await waitForPromise(fonts.ready, controller.signal)) return
-    }
-    await waitForDocumentQuiet(doc, controller.signal)
-  } finally {
-    clearTimeout(timeout)
-  }
+  await settleCaptureDocument({ document: doc, signal: controller.signal, timeoutMs: SETTLE_TIMEOUT_MS })
 }

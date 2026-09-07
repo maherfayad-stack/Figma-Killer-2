@@ -24,6 +24,14 @@ interface CanvasSelectionContextValue {
   onNodeHover: (nodeId: string | null, breakpointId?: string, frameId?: string | null) => void
   onNodeContextMenu: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
   onNodeDoubleClick: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
+  /**
+   * The press and the release of ONE pointer gesture on a node, which is how
+   * the armed player follows a link — see `useCanvasNodeInteraction`'s
+   * `onNodePointerDown`. Both are no-ops unless the player is armed; the
+   * editing canvas still activates on `click`.
+   */
+  onNodePointerDown: (nodeId: string) => void
+  onNodePointerUp: (nodeId: string) => void
 }
 
 export const CanvasSelectionContext = createContext<CanvasSelectionContextValue>({
@@ -31,6 +39,8 @@ export const CanvasSelectionContext = createContext<CanvasSelectionContextValue>
   onNodeHover: () => {},
   onNodeContextMenu: () => {},
   onNodeDoubleClick: () => {},
+  onNodePointerDown: () => {},
+  onNodePointerUp: () => {},
 })
 
 interface CanvasViewportActionsContextValue {

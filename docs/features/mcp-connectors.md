@@ -360,11 +360,35 @@ It renders with the SAME code the canvas renders with: `IframeFrameSurface` in
 requested page under its own `CanvasPageContext` (the same mechanism
 `BoardFrameView` uses to render several pages at once). Every design-frame
 injector therefore applies — authored CSS, class CSS, project CSS, the
-animation freeze, the scroll-unroll — and readiness uses `AgentSnapshotFrame`'s
-own settle loop (preview data idle → DOM quiet → fonts ready → DOM quiet
-again). The page publishes a validated report on
-`window.__studioAgentCapture`; the driver polls one expression, then reads it
-in a single `evaluate` and validates it against `AgentCaptureReportSchema`.
+animation freeze, the scroll-unroll — and readiness uses the one shared settle
+machine, `settleCaptureDocument` in
+`src/admin/pages/site/canvas/canvasCaptureSettle.ts` (preview data idle → DOM
+quiet → images → fonts → DOM quiet again). The page publishes a validated
+report on `window.__studioAgentCapture`; the driver polls one expression, then
+reads it in a single `evaluate` and validates it against
+`AgentCaptureReportSchema`.
+
+**A resource that will never load has already settled.** Every phase of that
+loop is bounded (5 s each, inside a 20 s outer bound) and every expired bound
+degrades to a **warning on a successful capture**, never a failed one:
+
+| Phase | Bound | What "settled" means |
+|---|---|---|
+| Preview data | remaining deadline | The `CanvasPreviewReadiness` barrier is idle. A REJECTED preview request releases it, same as a resolved one. |
+| Images | `IMAGE_SETTLE_BUDGET_MS` | Every `<img>` is `complete` — which a 404 sets exactly as a successful load does. An `error` event ends the wait identically to `load`; broken images are counted and reported ("2 images failed to load"). |
+| Fonts | `FONT_SETTLE_BUDGET_MS` | `document.fonts.ready` settled, or the budget expired (a `@font-face` file that never answers cannot stall the capture). |
+| DOM quiet | `DOM_QUIET_BUDGET_MS` | 32 ms with no mutation; a document that never stops changing is captured mid-render with a warning. |
+
+The result names the phase that stalled (`stalledPhase`), so a slow capture
+reports `dom-quiet` or `images` rather than the old message, which listed all
+three phases and refused the export:
+
+> `"onboarding" did not finish rendering within 20000ms — its preview data, fonts, or images never settled.`
+
+That refusal was the bug: the screen was fully painted on the canvas and the
+capture would not hand back a picture of it. The same machine now backs the
+live-bridge path (`studioExportFrames.ts`) and the CMS snapshot frame
+(`AgentSnapshotFrame.tsx`), which each carried their own copy of the loop.
 
 The wire contract for both hops lives in `@core/studio-capture` — the payload
 (server → page) and the report (page → server), TypeBox on both sides.

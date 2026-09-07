@@ -505,9 +505,15 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
 
 `ExportSection.tsx`, mounted last in `StyleSurface`'s column. The typed `+`
 menu is `NODE_EXPORT_MENU` (`nodeExportModel.ts`): **PNG @1× / @2× / @3×** and
-**SVG** add a row; **Copy CSS** and **Copy JSX** run immediately, because a
-copy has no settings to keep and parking one in the list would mean "add the
-row, then press its button" for a single verb.
+**SVG** add a row; **Copy as PNG**, **Copy CSS** and **Copy JSX** run
+immediately, because a copy has no settings to keep and parking one in the list
+would mean "add the row, then press its button" for a single verb.
+
+**Copy as PNG carries a `⌘⇧C` hint**, resolved from the keybindings registry
+via the entry's `commandId` — it is the discoverable half of the global
+shortcut, not a second implementation of it. Both call `copyPngToClipboard`
+(`nodeExportClient.ts`), which is `fetchNodePngBlob` plus
+`navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])`.
 
 **Why it is not in `classStyleSections.ts`.** Three consumers read that
 registry as *CSS properties on a style target*: `StyleSectionsEditor` renders
@@ -530,6 +536,11 @@ actually rendered is what keeps the cut correct when it does.
 `resolveNodeCropBox` rounds outward (so a fractional rect never clips the
 element), clamps a rect that overhangs the frame, and refuses two cases by
 name: a 0×0 element, and one that lies entirely outside what was photographed.
+
+`nodeId` is **optional** on that route. Omitted, the whole captured frame comes
+back uncropped — the "nothing selected" case of ⌘⇧C, where there is no element
+to crop to (`page.rootNodeId` is a `base.body` node whose children *are* the
+iframe body, so nothing in the DOM carries its `data-node-id`).
 
 **SVG** — no route. Whether a node *has* an honest vector form is a fact about
 the parse the browser already holds, not a rendering question:

@@ -24,6 +24,7 @@ import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, toastStructuralRefusal } from './structuralSourceEdits'
+import { tagStructuralGesture } from './structuralHistory'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 /** Leaves first: sort by depth DESC against a frozen tree. */
@@ -78,7 +79,14 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
     }
 
     if (!deleted) return
-    if (plan.commit) void commitStudioDelete(plan.commit)
+    if (plan.commit) {
+      void commitStudioDelete(plan.commit)
+      // `store-08` — the elements are gone from the user's `.tsx` and no
+      // writeback kind can put their markup back, so this entry must never be
+      // patch-replayed (that would re-add nodes the file does not contain).
+      // `undo` reports the limit instead of lying about it.
+      tagStructuralGesture(set, { gesture: 'delete' })
+    }
 
     if (target.vc) {
       set((state) => { pruneCanvasSelectionDraft(state) })

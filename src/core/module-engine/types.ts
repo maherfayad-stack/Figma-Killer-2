@@ -240,6 +240,14 @@ export interface NodeWrapperProps {
    */
   style?: Record<string, string | number>
   onPointerDownCapture?: (e: SyntheticMouseEvent) => void
+  /**
+   * The RELEASE of a pointer gesture. The prototype player follows a link on
+   * the press/release pair rather than on `click`, because a component that
+   * re-renders under the finger can leave the browser with no common ancestor
+   * to dispatch a click at — see `useCanvasNodeInteraction`'s
+   * `onNodePointerDown`.
+   */
+  onPointerUpCapture?: (e: SyntheticMouseEvent) => void
   onMouseDownCapture?: (e: SyntheticMouseEvent) => void
   onFocusCapture?: (e: SyntheticFocusEvent) => void
   onClickCapture?: (e: SyntheticMouseEvent) => void

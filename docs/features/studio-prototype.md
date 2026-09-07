@@ -258,7 +258,38 @@ survive finalization.
 
 Arming the player changes what is **being looked at**, never what is being
 edited. Selection, the properties panel and the page tree all keep pointing at
-the editing page, so disarming puts the editor back exactly where it was.
+the editing page, so disarming puts the editor back exactly where it was. The
+hover ring is the one piece of editing chrome that stands DOWN while armed — a
+visitor clicking through a prototype should see the component's own hover state
+and nothing of ours — so `setPlayMode` clears whatever was lit and
+`useCanvasNodeInteraction` stops writing it.
+
+### The gesture, and why it is not a `click`
+
+A linked element usually has interactions of its OWN — a hover state, a pressed
+state, an `onClick`. **Both have to work**, and neither may cost the other.
+
+Two rules make that true:
+
+- **The player reads the press/release PAIR on the node, not the `click`.** A
+  `click` is dispatched at the nearest common ancestor of the mousedown and
+  mouseup targets, and when the mousedown target has left the document by the
+  time the button comes up there is no common ancestor and the browser
+  dispatches **no click at all**. A component whose hover/press effect
+  re-renders under the finger does exactly that on the FIRST press and has
+  settled by the second — which from the outside is "the link doesn't work on
+  the first click". A node's own host element is rendered by `NodeRenderer` and
+  survives all of it, so `onPointerDownCapture` latches the node and
+  `onPointerUpCapture` over that same node follows the link. The `click` that
+  may or may not follow is swallowed by the latch (`useCanvasNodeInteraction`'s
+  `PlayGesture`), so one press is one navigation.
+- **A live frame does not stop propagation.** The canvas activates a node in the
+  CAPTURE phase, above the authored element — `stopPropagation()` there meant
+  the component's own handlers never ran at all. Live frames now let the event
+  through and use `canvasNodeGestureLatch` to keep the bubble-phase twin from
+  activating the node a second time. `preventDefault()` still applies in both:
+  an authored `<a href>` must not navigate the frame away. Design frames are
+  unchanged — there, a click means "select this node" outright.
 
 ### Two screen slots, and no `key`
 
@@ -381,6 +412,8 @@ indistinguishable from a caller that failed to load its pages.
 | `src/admin/pages/site/canvas/usePrototypePlayback.ts` | which page the live frame shows while armed |
 | `src/admin/pages/site/canvas/usePrototypeLinkKeyboard.ts` | Delete removes a link, Escape deselects |
 | `src/admin/pages/site/studio/playNavigation.ts` | a click in the armed frame → the machine |
+| `src/admin/pages/site/canvas/useCanvasNodeInteraction.ts` | what a pointer gesture on a node does, armed or not |
+| `src/admin/pages/site/canvas/canvasNodeGestureLatch.ts` | one press = one activation, across every event it raises |
 | `src/admin/pages/site/store/slices/prototypeSelectors.ts` | derived reads (never zustand selectors — see its doc) |
 | `src/admin/pages/site/panels/PrototypePanel/` | the inspector |
 

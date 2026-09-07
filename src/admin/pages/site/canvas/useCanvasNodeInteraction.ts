@@ -21,7 +21,7 @@
  * subscribes to its own boolean, so a selection change re-renders two nodes
  * rather than the whole canvas tree (Contribution #495).
  */
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import { useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { followPrototypeLinkAt } from '@site/studio/playNavigation'
@@ -56,6 +56,21 @@ export interface CanvasNodeInteraction {
   onNodeHover: (nodeId: string | null, breakpointId?: string, frameId?: string | null) => void
   onNodeContextMenu: (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => void
   onNodeDoubleClick: (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => void
+  onNodePointerDown: (nodeId: string) => void
+  onNodePointerUp: (nodeId: string) => void
+}
+
+/**
+ * One press-and-release on a node while the player is armed.
+ *
+ * `followed` says the release already ran the link, so the `click` that ends
+ * the same gesture must not run it a second time — and must not run a
+ * DIFFERENT node's link either, which is exactly what happens when the click
+ * lands on an ancestor (see below).
+ */
+interface PlayGesture {
+  nodeId: string
+  followed: boolean
 }
 
 export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions): CanvasNodeInteraction {
@@ -64,17 +79,66 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const startInlineEdit = useEditorStore((s) => s.startInlineEdit)
+  const playGesture = useRef<PlayGesture | null>(null)
+
+  const followLinkAt = (nodeId: string): void => {
+    if (!options.canvasPage) return
+    // Overlay first: it is on top, and a node id alone does not say which of
+    // the two mounted surfaces the click came from.
+    followPrototypeLinkAt(nodeId, [options.overlayPage?.id ?? null, options.canvasPage.id])
+  }
+
+  /**
+   * THE PLAYER FOLLOWS A LINK ON THE PRESS/RELEASE PAIR, NOT ON THE `click`.
+   *
+   * A `click` is dispatched at the nearest common ancestor of the mousedown and
+   * mouseup targets — and when the mousedown target has LEFT the document by
+   * the time the button comes up, there is no common ancestor and the browser
+   * dispatches no click at all. A component with its own hover/press effects
+   * does exactly that on the FIRST press: the pointer arrives, `:hover` /
+   * `mouseenter` state re-renders the component, the element under the finger
+   * is replaced, and the click that would have followed the link never
+   * happens. The second press works because the component has already settled,
+   * which is what "doesn't work on first click" looks like from the outside.
+   *
+   * A node's own host element is rendered by `NodeRenderer` and survives all of
+   * that, so a press and a release ON THE SAME NODE is the reading of the
+   * gesture that a component's internal churn cannot break.
+   */
+  const onNodePointerDown = (nodeId: string) => {
+    if (!options.playMode) return
+    playGesture.current = { nodeId, followed: false }
+  }
+
+  const onNodePointerUp = (nodeId: string) => {
+    if (!options.playMode) return
+    const gesture = playGesture.current
+    if (!gesture || gesture.nodeId !== nodeId) return
+    gesture.followed = true
+    followLinkAt(nodeId)
+  }
 
   const onNodeClick = (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => {
-    e.stopPropagation()
+    // A LIVE frame is the page as a visitor gets it, so the authored
+    // component's own handlers have to run — `NodeRenderer` keeps propagation
+    // alive there and this must not undo it. The design canvas still owns its
+    // clicks outright.
+    if (!options.isLive) e.stopPropagation()
     // An ARMED player owns every click in the live frame. Falling through to
     // selection when no link is found would make the same gesture mean two
     // different things depending on where it landed, which is the exact
     // ambiguity the Play toggle exists to remove.
     if (options.playMode && options.canvasPage) {
-      // Overlay first: it is on top, and a node id alone does not say which of
-      // the two mounted surfaces the click came from.
-      followPrototypeLinkAt(nodeId, [options.overlayPage?.id ?? null, options.canvasPage.id])
+      const gesture = playGesture.current
+      playGesture.current = null
+      // The release already followed this gesture's link. The click that ends
+      // it is the same press, and it may well be reported against an ANCESTOR
+      // node (the common-ancestor rule above) — following that node's link too
+      // would navigate twice off one press.
+      if (gesture?.followed) return
+      // No press was latched: a keyboard Enter/Space, or a gesture that began
+      // before the player was armed. The click is all there is.
+      followLinkAt(nodeId)
       return
     }
     if (breakpointId && breakpointId !== options.activeBreakpointId) {
@@ -96,6 +160,12 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
   }
 
   const onNodeHover = (nodeId: string | null, breakpointId?: string, frameId?: string | null) => {
+    // The hover ring is editing chrome, and an armed player is not an editing
+    // surface — a visitor clicking through a prototype should see the
+    // component's OWN hover state and nothing of ours. Standing it down also
+    // takes a store commit off every pointer arrival mid-playback.
+    // `setPlayMode` clears the ring that was showing when Play was armed.
+    if (options.playMode) return
     hoverNode(nodeId, breakpointId, frameId)
   }
 
@@ -155,5 +225,5 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     startInlineEdit(nodeId, breakpointId ?? options.activeBreakpointId, frameId ?? null)
   }
 
-  return { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick }
+  return { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp }
 }
