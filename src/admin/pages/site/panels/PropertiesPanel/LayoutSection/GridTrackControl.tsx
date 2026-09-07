@@ -19,6 +19,7 @@ import { useRef, useState } from 'react'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
+import { MIXED } from '@ui/components/MixedValue'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { LabeledControl } from './LabeledControl'
@@ -40,6 +41,12 @@ interface GridTrackControlProps {
   ariaLabel: string
   value: string | undefined
   isSet: boolean
+  /**
+   * W8-3 — the selection's members hold different track templates. The
+   * preset segments render indeterminate rather than pressing whichever
+   * count one arbitrary member happens to use.
+   */
+  mixed?: boolean
   onChange: (value: string) => void
   onClear: () => void
 }
@@ -49,13 +56,14 @@ export function GridTrackControl({
   ariaLabel,
   value,
   isSet,
+  mixed = false,
   onChange,
   onClear,
 }: GridTrackControlProps) {
   const presetN = parseGridRepeat(value)
   const isPreset =
     presetN != null && (GRID_PRESETS as ReadonlyArray<number>).includes(presetN)
-  const isCustomValue = value != null && value !== '' && !isPreset
+  const isCustomValue = !mixed && value != null && value !== '' && !isPreset
 
   // Local state for the inline text-input edit mode.
   const [editing, setEditing] = useState(false)
@@ -158,7 +166,7 @@ export function GridTrackControl({
       <SegmentedControl
         fullWidth
         aria-label={ariaLabel}
-        value={isPreset ? String(presetN) : undefined}
+        value={mixed ? MIXED : isPreset ? String(presetN) : undefined}
         onChange={(s) => onChange(`repeat(${s}, 1fr)`)}
         onClear={onClear}
         options={GRID_PRESETS.map((n) => ({

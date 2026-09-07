@@ -6,10 +6,9 @@
  * by the parent `PropertiesPanel.NodeHeader` substitute — see
  * `MultiSelectionHeader` below). This body provides the discoverable action
  * surface for the multi-selection: Duplicate, Wrap..., Copy, Cut, Paste, Delete,
- * and — since W8-3 phase 1 — the shared CSS style sections, editing every
- * selected layer's inline styles at once with Mixed values where they
- * disagree (`MultiInlineStyleComposer`, and
- * `docs/features/inspector-disclosure.md` §9).
+ * and — since W8-3 — the shared CSS style sections, editing every selected
+ * layer at once with Mixed values where they disagree
+ * (`MultiSelectionStyleArea`, and `docs/features/inspector-disclosure.md` §9).
  *
  * Componentize is intentionally NOT exposed in v1 — see the multi-select task
  * notes for the v1 vs v2 scope decision.
@@ -64,18 +63,8 @@ import {
   ContextMenuItem,
 } from '@ui/components/ContextMenu'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
-import { StyleTargetChip } from './StyleTargetChip'
-import { MultiInlineStyleComposer } from './MultiInlineStyleComposer'
+import { MultiSelectionStyleArea } from './MultiSelectionStyleArea'
 import styles from './MultiSelectionInspector.module.css'
-
-/**
- * Why the style sections below the action bar write inline styles and not a
- * class. Shown in the target chip's Element/Class tooltips so the constraint
- * is stated where the user is already looking, not discovered from a refusal
- * after the fact — see `MultiInlineStyleComposer`'s module doc.
- */
-const BULK_TARGET_REASON =
-  'Bulk edits write inline styles — class edits need a single selection'
 
 interface MultiSelectionInspectorProps {
   /** Ordered selection set (anchor last). Must contain 2+ ids. */
@@ -225,20 +214,12 @@ export function MultiSelectionInspector({
         </div>
       </div>
 
-      {/* W8-3 phase 1 — the shared style sections, editing every selected
-          layer's inline styles at once. The chip above them states the pinned
-          target and why it is pinned; `MultiInlineStyleComposer`'s doc has the
-          full reasoning. Style-editing is a permission, so both are hidden
-          from a content-only Client. */}
-      {canEditStyle && (
-        <div className={styles.styleArea} data-testid="multi-select-style-area">
-          <StyleTargetChip
-            elementVisible
-            lockedToElementReason={BULK_TARGET_REASON}
-          />
-          <MultiInlineStyleComposer nodeIds={selectedNodeIds} styleQuery="" />
-        </div>
-      )}
+      {/* W8-3 — the shared style sections, editing every selected layer at
+          once: their inline bags by default, or the one class they all carry
+          once the user switches target and clears the blast-radius gate. The
+          whole surface lives in `MultiSelectionStyleArea`. Style-editing is a
+          permission, so it is hidden from a content-only Client. */}
+      {canEditStyle && <MultiSelectionStyleArea selectedNodeIds={selectedNodeIds} />}
 
       <div className={styles.layerListHeader}>
         Selected layers ({selectedNodeIds.length})

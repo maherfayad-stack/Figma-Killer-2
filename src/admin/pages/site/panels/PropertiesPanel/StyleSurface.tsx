@@ -85,7 +85,7 @@ import { StyleTargetChip, type ClassCssEditability } from './StyleTargetChip'
 import { ClassCssLockedNotice } from './ClassCssLockedNotice'
 import { ExportSection } from './ExportSection'
 import { classCssWriteLockReason, resolveClassCssEditability } from './classCssWritability'
-import { StyleWriteLockContext } from './StyleWriteLockContext'
+import { blockedStyleWriteLock, StyleWriteLockContext } from './StyleWriteLockContext'
 import { useScrollSpy } from './useScrollSpy'
 import { ALL_CURATED_CSS_PROPERTIES, getCSSPropertyDefaultValue } from './cssControlTypes'
 import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
@@ -406,7 +406,7 @@ export function StyleSurface({
       // fact for the whole class; disabling each of those widgets is the
       // full typed-constraint model (Track F / `editConstraint.ts`), not a
       // second copy of this predicate scattered across seven sections.
-      <StyleWriteLockContext.Provider value={classWriteLockReason}>
+      <StyleWriteLockContext.Provider value={blockedStyleWriteLock(classWriteLockReason)}>
         {classWriteLockReason && (
           <ClassCssLockedNotice
             selector={styleRuleSelector(activeClass!)}

@@ -63,6 +63,7 @@ type NodeActions = Pick<
   | 'updateInstanceCallSiteProp'
   | 'setNodeInlineStyles'
   | 'setNodesInlineStyles'
+  | 'setNodesInlineStylesPerNode'
   | 'removeNodeInlineStyleProperty'
   | 'clearNodeInlineStyles'
   | 'setBreakpointOverride'
@@ -409,6 +410,34 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         }
         return changedAny
       })
+    },
+
+    setNodesInlineStylesPerNode: (patches, opts) => {
+      if (patches.length === 0) return
+      const patchByNodeId = new Map(patches.map((entry) => [entry.nodeId, entry.patch]))
+      const nodeIds = patches.map((entry) => entry.nodeId)
+      // Same one-transaction contract as `setNodesInlineStyles`; the only
+      // difference is that each node gets its OWN patch. Selection colours
+      // needs that: one layer's `color` and another's `borderTopColor` are the
+      // same swatch to the user and must move (and undo) together.
+      mutateTreesForNodeIds(
+        nodeIds,
+        (tree, idsOnThisTree) => {
+          let changedAny = false
+          for (const nodeId of idsOnThisTree) {
+            const node = tree.nodes[nodeId]
+            const patch = patchByNodeId.get(nodeId)
+            if (!node || !patch) continue
+            // Per-node all-or-nothing, exactly as the single-node path: a
+            // half-applied patch is a canvas that disagrees with the file it
+            // mirrors.
+            if (!isStylePatchWritableToSource(node, patch)) continue
+            if (applyInlineStylePatch(node, patch)) changedAny = true
+          }
+          return changedAny
+        },
+        opts,
+      )
     },
 
     removeNodeInlineStyleProperty: (nodeId, propKey) => {

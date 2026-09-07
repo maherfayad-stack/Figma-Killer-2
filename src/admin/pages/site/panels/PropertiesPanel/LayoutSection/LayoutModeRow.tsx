@@ -35,6 +35,7 @@ import { FlowRowIcon, FlowColumnIcon } from '@ui/components/InspectorIcons'
 import { Button } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
+import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { getEnumOptions } from '../cssControlTypes'
 import type { LayoutMode } from './layoutMode'
@@ -81,7 +82,7 @@ interface LayoutModeRowProps {
    * `isLayoutModeRepresentable` — the caller applies that gate before
    * passing a mode here, so this component never has to guess).
    */
-  mode: LayoutMode | undefined
+  mode: LayoutMode | Mixed | undefined
   /** Raw `display` value — used only to name it honestly in the ▾ menu. */
   display: string | undefined
   onSelectMode: (mode: LayoutMode) => void
@@ -127,9 +128,12 @@ export function LayoutModeRow({
   // reaches every `display` keyword names the actual value instead of the
   // generic "more values" label, so it's discoverable without a resident row.
   const chevronLabel = mode == null && display ? `Display: ${display}` : 'More display values'
+  // W8-3 — `data-mode` names the highlighted mode for tests and CSS; a
+  // disagreeing selection is neither a mode nor "unset".
+  const modeAttr = isMixed(mode) ? 'mixed' : (mode ?? 'unset')
 
   return (
-    <div className={styles.modeRow} data-testid="css-layout-mode-row" data-mode={mode ?? 'unset'}>
+    <div className={styles.modeRow} data-testid="css-layout-mode-row" data-mode={modeAttr}>
       <SegmentedControl
         fullWidth
         aria-label="Layout mode"
