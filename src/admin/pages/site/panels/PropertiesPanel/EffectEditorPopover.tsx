@@ -4,10 +4,13 @@
  *
  * Three targets, one popover shell:
  *
- *   - `'shadow'`  — a single `box-shadow` layer (F21 exactly): X, Y, Blur,
- *     Spread, Colour, and an inset checkbox. Every field writes back through
- *     `onSave` with the FULL patched layer — `EffectsSection` owns re-joining
- *     the layer list into the stored `box-shadow` string.
+ *   - `'shadow'`  — a single shadow layer. For `box-shadow` that is F21
+ *     exactly: X, Y, Blur, Spread, Colour, and an inset checkbox. For
+ *     `text-shadow` (`variant: 'text'`) the Spread field and the inset
+ *     checkbox are ABSENT, because `text-shadow` has neither — drawing them
+ *     would offer two controls whose writes CSS discards. Every field writes
+ *     back through `onSave` with the FULL patched layer; `EffectsSection`
+ *     owns re-joining the layer list into the stored value.
  *   - `'blur'`    — a single blur radius, backing `filter: blur()` (Layer
  *     blur) or `backdrop-filter: blur()` (Background blur).
  *   - `'raw'`     — the honest-refusal case (docs/features/inspector-disclosure.md
@@ -34,6 +37,8 @@ export type EffectEditorTarget =
   | {
       kind: 'shadow'
       label: string
+      /** `'box'` (default) draws Spread + inset; `'text'` omits both — see the module doc. */
+      variant?: 'box' | 'text'
       layer: BoxShadowLayer
       onSave: (layer: BoxShadowLayer) => void
       /** As-you-drag/type preview — `EffectsSection` re-serialises the WHOLE `box-shadow` value with this one layer patched in. */
@@ -75,6 +80,7 @@ export function EffectEditorPopover({ id, anchorRef, onClose, target }: EffectEd
       {target.kind === 'shadow' ? (
         <ShadowLayerFields
           layer={target.layer}
+          variant={target.variant ?? 'box'}
           onSave={target.onSave}
           onPreview={target.onPreview}
           onClearPreview={target.onClearPreview}
@@ -113,11 +119,13 @@ export function EffectEditorPopover({ id, anchorRef, onClose, target }: EffectEd
 
 function ShadowLayerFields({
   layer,
+  variant,
   onSave,
   onPreview,
   onClearPreview,
 }: {
   layer: BoxShadowLayer
+  variant: 'box' | 'text'
   onSave: (layer: BoxShadowLayer) => void
   onPreview?: (layer: BoxShadowLayer) => void
   onClearPreview?: () => void
@@ -143,10 +151,12 @@ function ShadowLayerFields({
 
   return (
     <div className={styles.shadowFields}>
-      <label className={styles.insetRow}>
-        <Switch checked={layer.inset} onCheckedChange={setInset} switchSize="sm" />
-        <span>Inset</span>
-      </label>
+      {variant === 'box' && (
+        <label className={styles.insetRow}>
+          <Switch checked={layer.inset} onCheckedChange={setInset} switchSize="sm" />
+          <span>Inset</span>
+        </label>
+      )}
       <div className={styles.shadowGrid}>
         <ControlRow propKey="effect-shadow-x" label="X" layout="caption">
           <ScrubInput
@@ -182,17 +192,19 @@ function ShadowLayerFields({
             onClearPreview={onClearPreview}
           />
         </ControlRow>
-        <ControlRow propKey="effect-shadow-spread" label="Spread" layout="caption">
-          <ScrubInput
-            aria-label="Shadow spread radius"
-            label="S"
-            value={layer.spreadRadius}
-            unit="px"
-            onChange={(next) => patch({ spreadRadius: next })}
-            onPreview={(next) => previewPatch({ spreadRadius: next })}
-            onClearPreview={onClearPreview}
-          />
-        </ControlRow>
+        {variant === 'box' && (
+          <ControlRow propKey="effect-shadow-spread" label="Spread" layout="caption">
+            <ScrubInput
+              aria-label="Shadow spread radius"
+              label="S"
+              value={layer.spreadRadius}
+              unit="px"
+              onChange={(next) => patch({ spreadRadius: next })}
+              onPreview={(next) => previewPatch({ spreadRadius: next })}
+              onClearPreview={onClearPreview}
+            />
+          </ControlRow>
+        )}
       </div>
       <ControlRow propKey="effect-shadow-color" label="Colour" layout="caption">
         <ColorValueInput

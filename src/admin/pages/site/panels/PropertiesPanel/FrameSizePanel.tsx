@@ -26,7 +26,8 @@ import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { DEVICE_PRESETS, findMatchingPreset, FRAME_WIDTH, FRAME_HEIGHT, MIN_FRAME_SIZE, type DevicePreset } from '@core/studio-board'
 import { Select } from '@ui/components/Select'
 import { Input } from '@ui/components/Input'
-import { nudgeNumber } from '@site/property-controls/numericNudge'
+import { nudgeNumber, nudgeStepFor } from '@site/property-controls/numericNudge'
+import { resolveCommitValue } from '@ui/components/ScrubInput'
 import styles from './FrameSizePanel.module.css'
 
 /** Presets grouped by `group`, preserving `DEVICE_PRESETS`' own order. */
@@ -114,8 +115,14 @@ export function FrameSizePanel() {
 // Matches the Size section's DimensionCell look (label inside the leading
 // edge, no chunky spinner) while keeping the frame's immediate-commit,
 // integer-clamped numeric semantics. A local draft lets the user type
-// intermediate values without the frame resizing on every keystroke; arrow
-// nudging (±1 / ±8 Shift / ±0.1 Alt, rounded to whole pixels) applies live.
+// intermediate values without the frame resizing on every keystroke.
+//
+// Arrow nudging resolves its step from `nudgeStepFor` — THE one model
+// (±1 / ±10 Shift / ±0.1 Alt), rather than the hand-rolled ±8 ladder this
+// file used to carry, which disagreed with every other field in the panel.
+// Commits go through `resolveCommitValue` so a typed `800/2` lands as 400,
+// the same arithmetic every other numeric field now accepts. Enter commits
+// and KEEPS focus (Figma's behaviour), re-selecting the text.
 // ---------------------------------------------------------------------------
 
 interface FrameDimensionInputProps {
@@ -139,11 +146,16 @@ function FrameDimensionInput({ label, ariaLabel, value, onCommit }: FrameDimensi
 
   const clamp = (n: number) => Math.max(MIN_FRAME_SIZE, Math.round(n))
 
+  /** A frame's size is a bare pixel count, so the commit unit is `''` — a typed `800` stays `800`. */
   const commit = (raw: string) => {
-    const n = Number.parseFloat(raw)
-    if (Number.isFinite(n)) onCommit(clamp(n))
-    else setDraft(String(value))
-    setEditing(false)
+    const n = Number.parseFloat(resolveCommitValue(raw, ''))
+    if (Number.isFinite(n)) {
+      const next = clamp(n)
+      setDraft(String(next))
+      onCommit(next)
+    } else {
+      setDraft(String(value))
+    }
   }
 
   return (
@@ -155,19 +167,28 @@ function FrameDimensionInput({ label, ariaLabel, value, onCommit }: FrameDimensi
       fieldSize="sm"
       value={draft}
       onFocus={() => setEditing(true)}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={(e) => commit(e.target.value)}
+      onChange={(e) => {
+        setEditing(true)
+        setDraft(e.target.value)
+      }}
+      onBlur={(e) => {
+        setEditing(false)
+        commit(e.target.value)
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault()
-          e.currentTarget.blur()
+          const input = e.currentTarget
+          commit(input.value)
+          requestAnimationFrame(() => input.select())
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault()
-          const step = e.altKey ? 0.1 : e.shiftKey ? 8 : 1
           const base = Number.parseFloat(draft)
           const start = Number.isFinite(base) ? base : value
           const next = clamp(
-            nudgeNumber(start, e.key === 'ArrowUp' ? 'up' : 'down', step, { min: MIN_FRAME_SIZE }),
+            nudgeNumber(start, e.key === 'ArrowUp' ? 'up' : 'down', nudgeStepFor(e), {
+              min: MIN_FRAME_SIZE,
+            }),
           )
           setDraft(String(next))
           onCommit(next)

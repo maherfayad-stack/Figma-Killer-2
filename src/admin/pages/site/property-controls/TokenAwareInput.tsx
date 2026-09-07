@@ -159,6 +159,8 @@ export function TokenAwareInput({
     const [draft, setDraft] = useState(display)
     const [isEditing, setIsEditing] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
+    /** Set by Escape so the blur it triggers discards instead of committing — see `onBlur`. */
+    const revertingRef = useRef(false)
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
@@ -272,23 +274,45 @@ export function TokenAwareInput({
         }}
         onChange={(e) => {
           const next = e.target.value
+          // Re-opens the editing session after an Enter commit, which ends it
+          // without blurring — otherwise the token menu would stay shut and
+          // the external-value sync could clobber the new draft mid-typing.
+          setIsEditing(true)
           setDraft(next)
           onDraftChange?.(next)
           previewDraft(next)
         }}
-        onBlur={(e) => commit(e.target.value)}
+        onBlur={(e) => {
+          // Escape reverts, then blurs. The blur fires before React has
+          // re-rendered the reverted draft, so committing `e.target.value`
+          // here would write the very text Escape discarded.
+          if (revertingRef.current) {
+            revertingRef.current = false
+            setDraft(display)
+            return
+          }
+          commit(e.target.value)
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
+            // Figma: Enter commits and KEEPS focus, re-selecting the value so
+            // the next keystroke replaces it. Committing closes the token
+            // menu (that is what `commit` sets `isEditing` false for) without
+            // taking the caret out of the field.
             e.preventDefault()
-            ;(e.target as HTMLInputElement).blur()
+            const input = e.target as HTMLInputElement
+            commit(input.value)
+            requestAnimationFrame(() => input.select())
           } else if (e.key === 'Escape') {
             e.preventDefault()
+            revertingRef.current = true
             setDraft(display)
             setIsEditing(false)
             onDraftClear?.()
             ;(e.target as HTMLInputElement).blur()
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-            // Keyboard nudge: ±1 (plain), ±8 (Shift), ±0.1 (Alt), preserving
+            // Keyboard nudge: the one model from `numericNudge.ts` — ±1
+            // (plain), ±10 (Shift), ±0.1 (Alt) — preserving
             // the unit. No-op for non-numeric values (var tokens, `auto`,
             // `calc(...)`), which fall through to the default caret behaviour.
             // An empty field starts from 0, inheriting the placeholder's unit

@@ -26,4 +26,6 @@ export {
   CornerRadiusIcon,
   CommentBubbleIcon,
   RotateIcon,
+  FlipHorizontalIcon,
+  FlipVerticalIcon,
 } from './InspectorIcons'
