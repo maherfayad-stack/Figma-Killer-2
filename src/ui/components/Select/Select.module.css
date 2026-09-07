@@ -156,6 +156,11 @@
     border-color: transparent;
     border-radius: var(--inspector-field-radius);
     background: var(--inspector-field-bg);
+    /* Match `Input`'s inspector skin. A select and an input share a row in
+       nearly every two-up pair here; at `--text-s` beside `--text-xs` the two
+       halves of the pair had different type sizes, which reads as a
+       misalignment rather than as two sizes. */
+    font-size: var(--text-xs);
 }
 
 [data-field-skin='inspector'] .select:hover {

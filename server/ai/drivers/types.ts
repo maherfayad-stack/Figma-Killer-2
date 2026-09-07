@@ -8,6 +8,7 @@
  */
 
 import type { CoreCapability } from '@core/capabilities'
+import type { FidelityMode } from '../../handlers/studio/fidelityMode'
 import type {
   AiAuthMode,
   AiBrowserBridge,
@@ -144,6 +145,15 @@ export interface AiStreamRequest {
   readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
   /**
+   * W9-2's fidelity mode for this turn, AFTER the chat handler resolved it
+   * through `resolveFidelityMode`. Carried on the request purely so a driver
+   * can report it; no driver maps it onto a provider flag, because the mode
+   * has already done its work by the time a request gets here — it shaped the
+   * system prompt's static prefix and it reaches tools through
+   * `ToolContextBase.fidelityMode`.
+   */
+  readonly fidelityMode?: FidelityMode
+  /**
    * `ai_conversations.session_epoch` — `claudeCli` only, every other driver
    * ignores it. Folded into the derived CLI `--session-id` UUID
    * (`claudeCliSessionId`) so the "Restart agent session" control can force a
@@ -185,6 +195,18 @@ export interface ToolContextBase {
    * `untitled-2`; see `server/ai/mcp/connectorWorkspace.ts` for the account.
    */
   readonly workspaceDir?: string
+  /**
+   * This turn's resolved fidelity mode (W9-2). `studio_compare` reads it as
+   * tier 3 of `resolveFidelityMode` — below its own `fidelityMode` argument
+   * and below the resolved design reference's `mode`, above the project
+   * default on disk.
+   *
+   * `undefined` for a call that did not come from a chat turn at all — an
+   * external MCP client driving the tool directly — which simply means the
+   * chain starts one tier lower and the project default (or the derived
+   * value) answers.
+   */
+  readonly fidelityMode?: FidelityMode
   /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's

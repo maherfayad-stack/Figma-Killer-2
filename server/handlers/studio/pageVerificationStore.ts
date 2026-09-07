@@ -40,12 +40,24 @@ import { dirname, join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { agentCacheDir } from './agentUserScope'
+import { FIDELITY_MODES, type FidelityMode } from './fidelityMode'
 
 const PageVerificationEntrySchema = Type.Object({
   /** When this page last had a PASSING `studio_compare` verdict, epoch ms. */
   passedAtMs: Type.Number(),
   /** Which registered reference it passed against — display/debugging only, never re-validated. */
   referenceId: Type.String({ minLength: 1 }),
+  /**
+   * W9-2 — the fidelity mode this pass was GRADED at, which is not the same
+   * question as "did it pass". A pass at `balanced` (92% / 6%) does not
+   * satisfy a project working at `strict` (99% / 0.5% / area floor), and
+   * before this field the Stop gate could not tell the two apart: it read a
+   * boolean and let a loose pass close a strict turn. Optional so a record
+   * written before this field still validates; `pageWriteVerification.ts`
+   * treats a missing value as "not known to be strict", which is the safe
+   * direction — it asks for one more compare, it never waves a page through.
+   */
+  fidelityMode: Type.Optional(Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)))),
 })
 
 const PageVerificationStoreSchema = Type.Object({
@@ -100,11 +112,12 @@ export function recordPassingCompare(
   userKey: string,
   pageId: string,
   referenceId: string,
+  fidelityMode: FidelityMode,
   atMs: number = Date.now(),
 ): void {
   try {
     const store = readStore(dir, userKey)
-    writeStore(dir, userKey, { ...store, pages: { ...store.pages, [pageId]: { passedAtMs: atMs, referenceId } } })
+    writeStore(dir, userKey, { ...store, pages: { ...store.pages, [pageId]: { passedAtMs: atMs, referenceId, fidelityMode } } })
   } catch (err) {
     console.error('[pageVerificationStore] failed to record a passing compare — continuing:', err)
   }

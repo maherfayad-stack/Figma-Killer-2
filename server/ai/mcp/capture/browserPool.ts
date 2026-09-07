@@ -191,10 +191,51 @@ export async function withCapturePage<T>(
   }
 }
 
+/**
+ * In-flight prewarm, so N concurrent `prewarmCaptureBrowser` calls (two tabs
+ * loading the same project) launch at most one Chromium.
+ */
+let prewarming: Promise<void> | null = null
+
+/**
+ * W9-5 lever 3 — launch the warm Chromium NOW, off the critical path, so the
+ * first capture of a session does not pay the ~300-600 ms cold launch this
+ * module's doc names.
+ *
+ * Called when a project is opened on the board (`GET /admin/api/studio/load`,
+ * full loads only), because that is the moment we learn a capture is likely
+ * and the moment there is idle time to spend. Fire-and-forget by contract:
+ * every failure is swallowed (it is recorded in the launch-failure memo, which
+ * is exactly what the real capture path reads), so an install with no Chromium
+ * pays one failed launch per minute at most and never sees an error surface.
+ *
+ * Cheap and idempotent when there is nothing to do: already warm, already
+ * launching, or a fresh remembered launch failure all return immediately. The
+ * prewarmed browser arms the same `BROWSER_IDLE_MS` teardown a real capture
+ * does, so a project opened and never captured releases it on the same timer.
+ */
+export function prewarmCaptureBrowser(launch: LaunchBrowser<CapturePage> = defaultLaunchBrowser): void {
+  if (prewarming) return
+  if (warm && (warm.browser.isConnected?.() ?? true)) return
+  if (rememberedLaunchFailure()) return
+  prewarming = getWarmBrowser(launch)
+    .then(() => {
+      if (warm) scheduleBrowserTeardown(warm)
+    })
+    .catch(() => {
+      // Recorded in `launchFailure` by `getWarmBrowser`; the capture path is
+      // the only thing that needs to know, and it reads that memo.
+    })
+    .finally(() => {
+      prewarming = null
+    })
+}
+
 /** Test-only: drop the warm browser without waiting for the idle timer. */
 export async function closeWarmCaptureBrowser(): Promise<void> {
   const entry = warm
   warm = null
+  prewarming = null
   if (!entry) return
   if (entry.idleTimer) clearTimeout(entry.idleTimer)
   await entry.browser.close().catch(() => {

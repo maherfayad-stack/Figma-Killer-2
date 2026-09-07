@@ -27,6 +27,7 @@
  * bytes) still validates against the shared schema.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { FIDELITY_MODES, type FidelityMode } from './fidelityMode'
 
 export const DESIGN_REFERENCE_EXTENSIONS = ['png', 'jpg', 'gif', 'webp', 'avif'] as const
 export type DesignReferenceExt = typeof DESIGN_REFERENCE_EXTENSIONS[number]
@@ -94,9 +95,13 @@ const DesignReferenceRoleSchema = Type.Union(DESIGN_REFERENCE_ROLES.map((r) => T
  * per-turn > per-project > derived) is W9-2's, not this file's. Nothing reads
  * it yet: this is the plumbing, deliberately landed with the role fix so the
  * on-disk shape only changes once.
+ *
+ * W9-2 consumes it. The vocabulary itself now lives in `./fidelityMode.ts`
+ * (one list, one meaning) — these two names stay as the aliases this file's
+ * own callers already import.
  */
-export const DESIGN_REFERENCE_FIDELITY_MODES = ['creative', 'balanced', 'strict'] as const
-export type DesignReferenceFidelityMode = typeof DESIGN_REFERENCE_FIDELITY_MODES[number]
+export const DESIGN_REFERENCE_FIDELITY_MODES = FIDELITY_MODES
+export type DesignReferenceFidelityMode = FidelityMode
 
 const DesignReferenceFidelityModeSchema = Type.Union(
   DESIGN_REFERENCE_FIDELITY_MODES.map((m) => Type.Literal(m)),
@@ -124,11 +129,11 @@ export const DesignReferenceSchema = Type.Object({
   source: Type.Optional(Type.String({ minLength: 1 })),
   /** `spec` (the design to match) or `context` (an image from the conversation). Optional so a manifest written before roles existed still validates — `designReferenceRole` derives it from `source` in that case. */
   role: Type.Optional(DesignReferenceRoleSchema),
-  /** How strictly THIS design is meant to be matched. Plumbing for W9-2; nothing reads it yet. */
+  /** How strictly THIS design is meant to be matched. Tier 2 of `resolveFidelityMode`'s precedence — it outranks the per-turn picker and the project default, and is outranked only by an explicit tool argument. */
   mode: Type.Optional(DesignReferenceFidelityModeSchema),
-  /** Overall similarity percentage `studio_compare` must reach for THIS reference to pass, overriding the tool default. Plumbing for W9-2; nothing reads it yet. */
+  /** Overall similarity percentage `studio_compare` must reach for THIS reference to pass, overriding whatever the resolved fidelity mode's table says. */
   passScore: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
-  /** The largest share of the frame (percent) any single differing region may cover and still pass, for THIS reference. Plumbing for W9-2; nothing reads it yet. */
+  /** The largest share of the frame (percent) any single differing region may cover and still pass, for THIS reference, overriding the resolved fidelity mode's table. */
   maxRegionCoverage: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
 })
 export type DesignReference = Static<typeof DesignReferenceSchema>

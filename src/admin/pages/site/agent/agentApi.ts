@@ -165,17 +165,28 @@ export async function fetchStudioDefault(
 }
 
 // ---------------------------------------------------------------------------
-// Studio agent session persistence (WS-12 §5.1) — effort only. `mode` is
-// deliberately never sent here at all — see `studioAgentSession.ts`'s own
-// doc comment for why Bypass's "never persists" rail requires there be
-// nowhere to write it, not just a client that chooses not to.
+// Studio agent session persistence (WS-12 §5.1 effort, W9-2 fidelity mode).
+// `mode` (`--permission-mode`) is deliberately never sent here at all — see
+// `studioAgentSession.ts`'s own doc comment for why Bypass's "never persists"
+// rail requires there be nowhere to write it, not just a client that chooses
+// not to. Fidelity mode carries no such rail: it cannot widen what the agent
+// may do, only how hard it is graded.
+//
+// Each control is sent on its OWN request and the route treats an omitted
+// field as "leave alone", so the two pickers never overwrite each other.
 // ---------------------------------------------------------------------------
 
 const STUDIO_SESSION_PATH = '/admin/api/ai/studio-session'
 const EffortValueSchema = Type.Union([
   Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
 ])
-const StudioSessionResponseSchema = Type.Object({ effort: Type.Union([EffortValueSchema, Type.Null()]) })
+const FidelityModeValueSchema = Type.Union([
+  Type.Literal('creative'), Type.Literal('balanced'), Type.Literal('strict'),
+])
+const StudioSessionResponseSchema = Type.Object({
+  effort: Type.Union([EffortValueSchema, Type.Null()]),
+  fidelityMode: Type.Union([FidelityModeValueSchema, Type.Null()]),
+})
 
 /** Soft fetch, matching `fetchStudioDefault`'s posture: any failure just means "no persisted effort yet". */
 export async function fetchStudioAgentEffort(
@@ -210,6 +221,40 @@ export async function persistStudioAgentEffort(
     // Best-effort — a failed persist just means the next reopen falls back
     // to the server default, not a broken send.
     console.error('[AgentSlice] Failed to persist the studio session effort:', err)
+  }
+}
+
+/** Soft fetch, same posture as the effort pair above: any failure means "no persisted mode", which is a legitimate state (the server then derives one). */
+export async function fetchStudioAgentFidelityMode(
+  dir: string,
+  signal?: AbortSignal,
+): Promise<Static<typeof FidelityModeValueSchema> | null> {
+  try {
+    const body = await apiRequest(STUDIO_SESSION_PATH, {
+      query: { dir },
+      schema: StudioSessionResponseSchema,
+      signal,
+    })
+    return body.fidelityMode
+  } catch (err) {
+    if (signal?.aborted || isAbortError(err)) throw err
+    console.error('[AgentSlice] Failed to fetch the persisted studio fidelity mode:', err)
+    return null
+  }
+}
+
+export async function persistStudioAgentFidelityMode(
+  dir: string,
+  fidelityMode: Static<typeof FidelityModeValueSchema> | null,
+): Promise<void> {
+  try {
+    await apiRequest(STUDIO_SESSION_PATH, {
+      method: 'POST',
+      body: { dir, fidelityMode },
+      schema: StudioSessionResponseSchema,
+    })
+  } catch (err) {
+    console.error('[AgentSlice] Failed to persist the studio fidelity mode:', err)
   }
 }
 

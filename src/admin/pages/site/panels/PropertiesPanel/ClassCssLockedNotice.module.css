@@ -6,12 +6,12 @@
    before-you-edit consequence, so the two read as one vocabulary. */
 .notice {
     display: flex;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
     align-items: flex-start;
     /* Inset to the panel gutter `.targetBlockLabel` already establishes, so
        the banner lines up with the selector name it is talking about. */
-    margin: 0 var(--space-l) var(--space-2xs);
-    padding: var(--space-xs) var(--space-s);
+    margin: 0 var(--inspector-space-l) var(--inspector-space-2xs);
+    padding: var(--inspector-space-xs) var(--inspector-space-s);
     border-radius: var(--radius);
     background: var(--warning-10);
     color: var(--warning-text);
@@ -27,7 +27,7 @@
 .body {
     display: grid;
     justify-items: start;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
     min-width: 0;
 }
 

@@ -6,8 +6,8 @@
 .panel {
     display: flex;
     flex-direction: column;
-    gap: var(--space-s);
-    padding: var(--space-m) var(--space-xl);
+    gap: var(--inspector-space-s);
+    padding: var(--inspector-space-m) var(--inspector-space-xl);
 }
 
 .header {
@@ -19,7 +19,7 @@
 .dimensions {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
 }
 
 .sectionLabel {
@@ -28,19 +28,19 @@
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.02em;
-    margin-top: var(--space-xs);
+    margin-top: var(--inspector-space-xs);
 }
 
 .iconRow {
     display: flex;
     align-items: center;
-    gap: var(--space-2xs);
+    gap: var(--inspector-space-2xs);
 }
 
 .renameRow {
     display: flex;
     align-items: center;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
 }
 
 .renameRow > :first-child {

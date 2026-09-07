@@ -5,13 +5,13 @@
 .panel {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
-    padding: var(--space-m) var(--space-xl);
+    gap: var(--inspector-space-xs);
+    padding: var(--inspector-space-m) var(--inspector-space-xl);
     border-bottom: 1px solid var(--overlay-10);
 }
 
 .dimensions {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
 }

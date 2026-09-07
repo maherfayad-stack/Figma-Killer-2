@@ -30,7 +30,7 @@
 
 /* ── Dropdown menu — section headers + token rows ──────────────────────── */
 .menuHeader {
-    padding: var(--space-xs) var(--space-m) var(--space-3xs);
+    padding: var(--inspector-space-xs) var(--inspector-space-m) var(--inspector-space-3xs);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-weight: 600;
@@ -50,9 +50,9 @@
 .menuItem {
     display: grid;
     grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-    gap: var(--space-s);
+    gap: var(--inspector-space-s);
     align-items: baseline;
-    padding: var(--space-xs) var(--space-m);
+    padding: var(--inspector-space-xs) var(--inspector-space-m);
 }
 
 .menuToken {

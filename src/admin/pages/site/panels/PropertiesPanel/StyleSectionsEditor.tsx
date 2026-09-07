@@ -35,6 +35,7 @@ import { cssPropertyLabel } from './cssControlTypes'
 import { CLASS_STYLE_SECTIONS, type ClassStyleSectionDefinition } from './classStyleSections'
 import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue } from './styleValueUtils'
+import { useSizingParentLayout, type SizingParentResolution } from './useSizingParentLayout'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
@@ -142,6 +143,13 @@ export function StyleSectionsEditor({
   const visibleStyleSections = getVisibleStyleSections(styleQuery)
   const hasActiveQuery = styleQuery.trim().length > 0
 
+  // W8-4 — the selected element's REAL parent layout, which is what decides
+  // whether `SizeSection`'s Fill writes `flex: 1 1 0`, `align-self: stretch`,
+  // or `100%` (and whether Hug/Fill can be offered at all). Resolved here,
+  // once per editor, rather than inside `StyleSectionGroup`, which mounts
+  // once per section.
+  const sizingParent = useSizingParentLayout()
+
   // Default open/closed state for every section, from the user preference.
   // NOTE: this no longer decides whether a `collapsedWhenEmpty` section
   // shows its body — an empty collapsible section is one line regardless of
@@ -192,6 +200,7 @@ export function StyleSectionsEditor({
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
             styleTarget={styleTarget}
+            sizingParent={sizingParent}
           />
         </div>
       ))}
@@ -241,6 +250,10 @@ interface StyleSectionGroupProps {
   onClearPreview: () => void
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
   styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
+  /** Resolved once by the editor and threaded down — only `SizeSection` reads
+   *  it, and resolving it per section would multiply its store reads by the
+   *  section count for no gain. */
+  sizingParent: SizingParentResolution
 }
 
 function StyleSectionGroup({
@@ -261,6 +274,7 @@ function StyleSectionGroup({
   onClearPreview,
   provenanceByProperty,
   styleTarget,
+  sizingParent,
 }: StyleSectionGroupProps) {
   const setCount = section.properties.filter((prop) => hasStyleValue(storedStyles[prop])).length
 
@@ -491,6 +505,8 @@ function StyleSectionGroup({
             onClearProperty={onClearProperty}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
+            parentLayout={sizingParent.layout}
+            parentLayoutReason={sizingParent.reason}
           />
         ) : section.id === TYPOGRAPHY_SECTION_ID ? (
           <TypographySection

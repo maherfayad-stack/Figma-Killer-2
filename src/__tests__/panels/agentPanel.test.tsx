@@ -186,6 +186,8 @@ function createAgentStore(overrides: Partial<AgentSlice> = {}) {
       set({ agentActiveCredentialId: credentialId, agentActiveModelId: modelId, agentError: null })
     },
     loadStudioDefault: async () => {},
+    agentFidelityMode: null,
+    setAgentFidelityMode: (mode) => set({ agentFidelityMode: mode }),
     ...overrides,
   }))
 }

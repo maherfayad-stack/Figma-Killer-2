@@ -60,7 +60,7 @@
  */
 import type { Page } from '@core/page-tree'
 import { safeParseValue, Type } from '@core/utils/typeboxHelpers'
-import type { StudioLoadResult } from '../studioPageLoad'
+import type { StudioLoadResult } from './studioLoadContract'
 
 /** At least one non-empty id — an empty/whitespace-only `pageIds` param is a caller error (400), not "no filter". */
 const StudioLoadPageIdsSchema = Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })

@@ -35,7 +35,6 @@ import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { inspectFrameHeadless } from '../../capture/headlessFrameInspect'
-import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolvePageByName } from './pageNameMatch'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
@@ -71,9 +70,11 @@ const measureElementTool: AiTool = {
       return aiToolError(`No screen matched "${args.page}". This project has: ${known}.`)
     }
 
-    // 2. Awaited, so the measurement below reads the files as they are NOW.
-    await awaitStudioLiveReload(ctx.userId, { dir, pageIds: [page.id], boardsChanged: placed.length > 0 })
-
+    // W9-5 lever 2 — no live-reload wait. `inspectFrameHeadless` has no live
+    // bridge path at all: it always renders server-side and re-parses from
+    // disk on every navigation, so nudging an open tab and waiting for its
+    // answer bought a full browser round trip for a measurement that was
+    // already current.
     const request: AgentFrameInspectRequest = {
       kind: 'measure',
       pageId: page.id,

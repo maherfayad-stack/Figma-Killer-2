@@ -1,16 +1,19 @@
 /**
- * `studio_measure_element` — the three-step ritual and the name resolution, on
- * a real fixture project.
+ * `studio_measure_element` — the board-placement step and the name resolution,
+ * on a real fixture project.
  *
  * Real: the workspace on disk, the board reconciliation
  * (`syncBoardFramesFromDisk`), the `loadStudioPages` parse, and the screen-name
  * matching. Faked: the headless browser (this environment cannot paint a DOM)
- * and the live-reload push (it needs an open editor stream).
+ * and the live-reload push module (it needs an open editor stream).
  *
- * The point of the ritual assertions: an agent measuring a screen it JUST
- * wrote must not have to remember a board-placement call first, and it must
- * not measure the previous version of the file. `studio_screenshot` already
- * proved both are worth pinning; this tool shares them for the same reason.
+ * The point of the ritual assertion: an agent measuring a screen it JUST wrote
+ * must not have to remember a board-placement call first. It must also not
+ * measure the previous version of the file — but W9-5 made that free rather
+ * than awaited: `inspectFrameHeadless` renders server-side and re-parses from
+ * disk on every navigation, so the tool nudges no tab and waits for nothing.
+ * The reload-call assertion below pins that ZERO, which is the property that
+ * would silently regress if someone re-added a bridge round trip here.
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -116,7 +119,7 @@ describe('studio_measure_element', () => {
     }
   })
 
-  it('places the board frame and waits for the parse BEFORE measuring — the whole ritual, in one call', async () => {
+  it('places the board frame before measuring, and never waits on an editor tab to do it', async () => {
     // Model the case this step exists for: a screen the agent wrote itself
     // with `Write`, which places no board frame at all. The scaffolder used in
     // `beforeEach` DOES place one, so drop it.
@@ -132,10 +135,10 @@ describe('studio_measure_element', () => {
 
     const boards = parseBoardsFile(readFileSync(join(dir, '.studio', 'boards.json'), 'utf8'))
     expect(boards.boards[0]!.frames.map((f) => f.pageId)).toEqual(['checkout'])
-    // Awaited before the measurement, so what comes back is the file as it is
-    // NOW rather than the previous parse of it.
-    expect(reloadCalls).toHaveLength(1)
-    expect(reloadCalls[0]).toMatchObject({ dir, pageIds: ['checkout'], boardsChanged: true })
+    // W9-5 lever 2 — NO live-reload round trip. The measurement is headless
+    // and re-parses from disk itself, so waiting for an open tab to re-read
+    // the same files bought nothing and cost a full browser round trip.
+    expect(reloadCalls).toEqual([])
   })
 
   it('forwards nodeIds, selector and limit to the frame read verbatim', async () => {

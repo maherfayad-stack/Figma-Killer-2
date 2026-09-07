@@ -95,8 +95,17 @@ export interface AgentSlice {
   /** WS-12 §5.1 session controls — `claudeCli`-only, every other driver ignores both. Initial values + the "never persists" reasoning live in `agentSessionControls.ts`. */
   agentEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
   agentPermissionMode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
+  /**
+   * W9-2's fidelity mode for this session. `null` means "let the server
+   * decide" — the persisted project default, else the derived value (a design
+   * reference is registered → balanced; none → creative). Null is a real,
+   * useful state and not a missing value: it is how a user says "grade this
+   * the way this project is set up to be graded".
+   */
+  agentFidelityMode: 'creative' | 'balanced' | 'strict' | null
   setAgentEffort(effort: AgentSlice['agentEffort']): void
   setAgentPermissionMode(mode: AgentSlice['agentPermissionMode']): void
+  setAgentFidelityMode(mode: AgentSlice['agentFidelityMode']): void
 
   openAgent(): void
   closeAgent(): void

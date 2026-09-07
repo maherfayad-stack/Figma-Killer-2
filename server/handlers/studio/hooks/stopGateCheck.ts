@@ -17,8 +17,10 @@
  * ## What it blocks on
  *
  * Every page `pageWriteVerification.ts` reports as written this turn AND not
- * `verifiedSinceWrite` — no design reference registered, or a write that
- * happened after the last passing `studio_compare`. Silent (exit 0, no
+ * `verifiedSinceWrite` — no design reference registered, a write that
+ * happened after the last passing `studio_compare`, or (W9-2, strict projects
+ * only) a pass that was graded at a looser fidelity mode than the one this
+ * project works at. Silent (exit 0, no
  * stdout) for every other case: nothing written this turn, or everything
  * written this turn already passed a compare that postdates it.
  *
@@ -41,6 +43,7 @@
 import { loadStudioPages } from '../../studioPageLoad'
 import { computePageWriteVerification, describeUnverifiedPage } from '../pageWriteVerification'
 import { studioAgentUserKeyFromEnv } from '../agentUserScope'
+import { resolveProjectFidelityMode } from '../projectFidelityMode'
 import { buildStudioCapabilityDigest } from '../../../ai/tools/studio/liveDigest'
 
 interface StopHookInput {
@@ -67,7 +70,13 @@ async function main(): Promise<void> {
     const { pages } = await loadStudioPages(dir)
     // Only THIS account's writes and compares gate this turn — the key rides
     // in on the environment the CLI handed down (`agentUserScope.ts`).
-    const entries = computePageWriteVerification(dir, studioAgentUserKeyFromEnv(), pages)
+    // W9-2 — this subprocess has a `cwd` and nothing else, so it resolves
+    // tiers 3-5 of the chain off disk. It cannot see the per-turn picker;
+    // that is acceptable and deliberate, because a per-turn value is a
+    // preference for how THIS turn is graded while the gate's question is
+    // whether the project's own bar has been met.
+    const userKey = studioAgentUserKeyFromEnv()
+    const entries = computePageWriteVerification(dir, userKey, pages, resolveProjectFidelityMode(dir, userKey))
     const blocking = entries.filter((e) => !e.verifiedSinceWrite)
     if (blocking.length === 0) return
 

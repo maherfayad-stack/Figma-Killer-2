@@ -1,6 +1,7 @@
 /**
  * GET/POST /admin/api/ai/studio-session — WS-12 §5.1's per-project
- * persistence for reasoning effort (`.studio/meta.json`'s `agentSession`).
+ * persistence for reasoning effort, and W9-2's for fidelity mode
+ * (`.studio/meta.json`'s `agentSession`).
  *
  * Lives under `server/ai/handlers/` (not `server/handlers/studio/`, where
  * `trustTier.ts`'s equivalent route lives) specifically so it can be wired
@@ -9,6 +10,11 @@
  * session owns this round. The underlying storage (`.studio/meta.json` via
  * `mergeStudioMeta`/`readStudioMeta`) is the SAME file `trustTier.ts` reads
  * and writes — this route only owns the ONE additive field, `agentSession`.
+ *
+ * Fidelity mode joined it in W9-2 and is safe here for the reason the next
+ * paragraph's control is not: the direction a missing value resolves in is
+ * "measure by the derived default", never "silently loosen a gate the user
+ * tightened". Nothing about it widens what the agent may do.
  *
  * `mode` (`--permission-mode`) is deliberately NEVER accepted by this route
  * — see `AgentSessionSchema`'s own doc comment for why Bypass's "never
@@ -28,9 +34,11 @@ import { resolveProjectDir } from '../../handlers/studioProjects'
 import {
   mergeStudioMeta,
   readAgentSessionEffort,
+  readAgentSessionFidelityMode,
   readStudioMeta,
-  withAgentSessionEffort,
+  withAgentSessionControls,
 } from '../../handlers/studio/studioMeta'
+import { FIDELITY_MODES } from '../../handlers/studio/fidelityMode'
 import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 
 const ROUTE_PATH = '/admin/api/ai/studio-session'
@@ -39,9 +47,18 @@ const EffortSchema = Type.Union([
   Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
 ])
 
+const FidelityModeSchema = Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)))
+
+/**
+ * Both controls are OPTIONAL and nullable, and the distinction is load-bearing:
+ * omitted leaves that control alone, `null` clears it. The two pickers save
+ * independently, so a fidelity-mode save that carried no `effort` would
+ * otherwise wipe the effort this account chose.
+ */
 const PostBodySchema = Type.Object({
   dir: Type.String({ minLength: 1 }),
-  effort: Type.Union([EffortSchema, Type.Null()]),
+  effort: Type.Optional(Type.Union([EffortSchema, Type.Null()])),
+  fidelityMode: Type.Optional(Type.Union([FidelityModeSchema, Type.Null()])),
 })
 
 export function tryHandleAiStudioAgentSession(
@@ -64,7 +81,11 @@ async function handleStudioAgentSession(req: Request, db: DbClient): Promise<Res
     const dirParam = url.searchParams.get('dir')
     if (!dirParam) return badRequest('missing dir')
     const dir = resolveProjectDir(dirParam)
-    return jsonResponse({ effort: readAgentSessionEffort(readStudioMeta(dir), userKey) })
+    const meta = readStudioMeta(dir)
+    return jsonResponse({
+      effort: readAgentSessionEffort(meta, userKey),
+      fidelityMode: readAgentSessionFidelityMode(meta, userKey),
+    })
   }
 
   if (req.method === 'POST') {
@@ -75,9 +96,15 @@ async function handleStudioAgentSession(req: Request, db: DbClient): Promise<Res
     // `mergeStudioMeta` merges one level deep — patching `byUser` directly
     // would drop every other account's entry.
     const meta = mergeStudioMeta(dir, {
-      agentSession: withAgentSessionEffort(readStudioMeta(dir), userKey, body.effort),
+      agentSession: withAgentSessionControls(readStudioMeta(dir), userKey, {
+        ...('effort' in body ? { effort: body.effort ?? null } : {}),
+        ...('fidelityMode' in body ? { fidelityMode: body.fidelityMode ?? null } : {}),
+      }),
     })
-    return jsonResponse({ effort: readAgentSessionEffort(meta, userKey) })
+    return jsonResponse({
+      effort: readAgentSessionEffort(meta, userKey),
+      fidelityMode: readAgentSessionFidelityMode(meta, userKey),
+    })
   }
 
   return jsonResponse({ error: 'Method not allowed' }, { status: 405 })

@@ -38,6 +38,7 @@ import { resolvePageSourceFile } from './pageSourceFile'
 import { readTurnWriteLog } from './turnWriteLog'
 import { readPassingCompare } from './pageVerificationStore'
 import { resolveDesignReference } from '../../ai/mcp/tools/studio/referenceResolve'
+import type { FidelityMode } from './fidelityMode'
 
 /** More than this many writes to the same page in one turn is the thrash pattern WS-9 measured (58 writes / 4 screens ≈ 14/screen) — chosen well below that so the digest surfaces the pattern before it reaches double digits, while staying above the 1-Write-plus-a-couple-of-fix-Edits shape of ordinary, healthy work. */
 export const WRITE_THRASH_THRESHOLD = 5
@@ -62,8 +63,26 @@ export interface PageWriteVerificationEntry {
   readonly referenceAmbiguity?: string
   /** Epoch ms of the last PASSING `studio_compare` for this page, if any — regardless of whether it happened before or after the write being reported. */
   readonly passingCompareAtMs?: number
-  /** `true` only when a passing compare exists AND it happened AT OR AFTER `lastWrittenAtMs` — a pass recorded before the write in question proves nothing about the code as it stands now. */
+  /**
+   * `true` only when a passing compare exists AND it happened AT OR AFTER
+   * `lastWrittenAtMs` — a pass recorded before the write in question proves
+   * nothing about the code as it stands now — AND (W9-2) that pass was graded
+   * at a bar this project accepts. See `staleFidelityMode`.
+   */
   readonly verifiedSinceWrite: boolean
+  /**
+   * Set when a passing, post-write compare EXISTS but was graded too loosely
+   * for the mode this project is working at — e.g. the page passed at
+   * `balanced` (92% / 6%) and the project is now `strict` (99% / 0.5% plus an
+   * absolute per-region area floor). Carries the mode it actually passed at.
+   *
+   * Its own field rather than a silent `verifiedSinceWrite: false`, because
+   * the instruction is completely different: this page does not need a design
+   * reference and does not need to be rewritten, it needs ONE more
+   * `studio_compare` call. Telling it what an unverified page is told would
+   * send it to redo work that is probably already correct.
+   */
+  readonly staleFidelityMode?: FidelityMode
 }
 
 /**
@@ -82,6 +101,16 @@ export function computePageWriteVerification(
   dir: string,
   userKey: string,
   pages: readonly Page[],
+  /**
+   * W9-2 — the mode this project is working at, from
+   * `resolveProjectFidelityMode`. Only `strict` changes any verdict here:
+   * under strict, a pass recorded at a looser mode is not a pass, because it
+   * cleared a lower bar than the one the agent was told it was working to.
+   * Omitted (the default) preserves the pre-W9-2 behaviour exactly — any
+   * post-write pass counts — which is correct for `creative` and `balanced`,
+   * whose bars a strict pass also clears.
+   */
+  fidelityMode?: FidelityMode,
 ): PageWriteVerificationEntry[] {
   const writeLog = readTurnWriteLog(dir, userKey)
   if (writeLog.length === 0) return []
@@ -121,7 +150,12 @@ export function computePageWriteVerification(
     }
 
     const passing = readPassingCompare(dir, userKey, page.id)
-    const verifiedSinceWrite = passing !== null && passing.passedAtMs >= writes.lastAtMs
+    const passedAfterWrite = passing !== null && passing.passedAtMs >= writes.lastAtMs
+    // A record with no mode predates W9-2 and is treated as "not known to be
+    // strict" — one extra compare, never a page waved through.
+    const staleFidelityMode = passedAfterWrite && fidelityMode === 'strict' && passing.fidelityMode !== 'strict'
+      ? (passing.fidelityMode ?? 'balanced')
+      : undefined
 
     results.push({
       pageId: page.id,
@@ -132,7 +166,8 @@ export function computePageWriteVerification(
       ...(referenceId ? { referenceId } : {}),
       ...(referenceAmbiguity ? { referenceAmbiguity } : {}),
       ...(passing ? { passingCompareAtMs: passing.passedAtMs } : {}),
-      verifiedSinceWrite,
+      ...(staleFidelityMode ? { staleFidelityMode } : {}),
+      verifiedSinceWrite: passedAfterWrite && staleFidelityMode === undefined,
     })
   }
   return results
@@ -161,6 +196,12 @@ function isThrashing(entry: PageWriteVerificationEntry): boolean {
  */
 export function describeUnverifiedPage(entry: PageWriteVerificationEntry, figmaConfigured: boolean): string {
   const thrashNote = isThrashing(entry) ? ` (written ${entry.writeCount}x this turn — compose the whole screen and write once)` : ''
+  // W9-2, FIRST: this page's problem is the BAR it was measured against, not
+  // a missing measurement. Every branch below would send it to redo work it
+  // has probably already done.
+  if (entry.staleFidelityMode) {
+    return `"${entry.title}"${thrashNote} passed studio_compare at ${entry.staleFidelityMode} fidelity, but this project is working at strict — a strict pass needs 99% similarity, a 0.5%-of-frame region ceiling and the per-region area floor that catches a small element rendered entirely wrong. Re-measure it: studio_compare({pages:["${entry.title}"], fidelityMode:"strict"}). Do not rewrite the screen first; it may already pass.`
+  }
   // Ambiguity FIRST, because an ambiguous page is also `hasReference: false`
   // and the unarmed branch's instruction ("register a design reference") is
   // actively wrong for it — it sends the agent to add a third candidate to a

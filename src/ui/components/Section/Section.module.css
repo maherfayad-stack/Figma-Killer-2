@@ -8,7 +8,7 @@
  * mounted (first, last, inside a search-filtered subset).
  */
 .section {
-    padding: var(--space-2xs) 0;
+    padding: var(--inspector-space-2xs) 0;
     border-top: 1px solid var(--inspector-divider);
 }
 
@@ -32,7 +32,7 @@
 .sectionHeader {
     display: flex;
     align-items: center;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     min-height: var(--inspector-header-h);
     padding-inline: var(--inspector-pad-x);
 }
@@ -40,7 +40,7 @@
 .sectionToggle {
     display: flex;
     align-items: center;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     flex: 1;
     min-width: 0;
     min-height: var(--inspector-header-h);
@@ -110,7 +110,7 @@
     min-width: 0;
     display: inline-flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--inspector-space-xs);
 }
 
 /* Figma's section title: small, bold, full-contrast — the only strong text
@@ -152,7 +152,7 @@
 .sectionActions {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     flex: none;
 }
 
@@ -165,7 +165,7 @@
 .sectionStaticTitle {
     display: flex;
     align-items: center;
-    gap: var(--space-4xs);
+    gap: var(--inspector-space-4xs);
     flex: 1;
     min-width: 0;
     min-height: var(--inspector-header-h);
@@ -174,7 +174,7 @@
 }
 
 .sectionContent {
-    padding: 0 var(--inspector-pad-x) var(--space-m);
+    padding: 0 var(--inspector-pad-x) var(--inspector-space-m);
 }
 
 /**

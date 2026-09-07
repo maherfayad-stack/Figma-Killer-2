@@ -121,6 +121,310 @@ wave preamble).
 `multiSelectInlineStyles` extended with four `setNodesInlineStylesPerNode` cases.
 **One existing test updated, not broken:** `classPropertyRowWriteLock.test.tsx`
 passed a bare string to the provider, which is now an object.
+### perf-04 — W9-5: speed levers 1-3 (one load per turn, no live-reload wait on headless captures, Chromium prewarm)
+- **Agent:** perf-hunter · **Stage:** done (typecheck + touched tests + architecture gates green; draft PR open) — **needs human dogfood**
+- **Updated:** 2026-09-07 · **Branch:** `perf/agent-loop-speed-levers` off `origin/main` at `b56ff12`.
+
+**Before/after — real numbers.** Fixture: `studio-workspace/__canonical-fixture`
+scaled to **36 pages / 100 fingerprinted files**, copied to a temp dir, measured in
+one Bun process (the same process shape the admin server has). Cold Chromium
+measured separately with `playwright-core` on this machine.
+
+| Measurement | Before | After |
+|---|---|---|
+| `loadStudioPages` cold (first call in the process) | 515 ms | 509 ms |
+| `loadStudioPages` **repeat, nothing changed** | 24–32 ms (5 runs, avg 27.5) | **2.3–3.0 ms (avg 2.5)** |
+| `loadStudioPages` after ONE page file edited | 163 ms | 174 ms (memo miss → full recompute; unchanged in substance) |
+| workspace fingerprint check (the memo's own cost) | — | 0.7 ms / 100 files |
+| `structuredClone` of a 36-page load result | — | 1.8 ms |
+| live-reload bridge round trips per `studio_screenshot` / `studio_compare` / `studio_measure_element` when headless answers | **1** | **0** |
+| Chromium launch paid by the first capture of a session | 251–281 ms warm-page-cache, **1486 ms** truly cold | 0 (paid on project open instead) |
+
+**Mechanisms changed (three, one per lever):**
+1. **`server/handlers/studio/studioLoadMemo.ts` (new).** A whole-result memo in
+   front of `loadStudioPages`, keyed on a `relPath:size:mtimeMs` fingerprint of
+   every source-relevant file `listWorkspaceFiles` walks, plus `.studio/meta.json`
+   (which `EXCLUDED_WORKSPACE_DIR_NAMES` hides from that walk). `pageParseCache.ts`
+   already cached the per-route ts-morph parse; this caches everything AROUND it —
+   `createWorkspaceProject`, `compileProjectStyles`, the page/story directory
+   walks, `loadStudioStyles`' site-wide registry, the per-page convert — which is
+   the ~26 ms an agent turn was paying 4+ times over (live digest, `studio_compare`,
+   `studio_screenshot`, `studio_quality_check`, the fidelity tools). Results are
+   `structuredClone`d in and out: two tools holding the same `Page` graph would be
+   a correctness bug, and 1.8 ms is an order of magnitude under what it saves.
+   A **narrowed** load (`options.pageIds`) is served from a stored full result by
+   filtering, but never stored.
+2. **The live-reload wait moved to where it is actually needed.**
+   `awaitStudioLiveReload` was awaited up front by `compare.ts`, `screenshot.ts`
+   and `measureElement.ts` on every call. It only ever mattered to an open editor
+   tab, and headless (the default since W4-2A) re-parses from disk on every
+   navigation. `capture/captureFrames.ts` now owns it and pays it ONLY in the
+   live-bridge fallback, behind the caller's `reloadBeforeLiveFallback` flag —
+   never on the headless path and never for an explicit `source: 'live'` capture,
+   whose whole point is the tab as it stands (unsaved edits included).
+   `studio_measure_element` dropped it outright: `inspectFrameHeadless` has no
+   live path at all, so the round trip was pure waste.
+3. **`prewarmCaptureBrowser()` in `capture/browserPool.ts`,** called from
+   `GET /admin/api/studio/load` (full loads only — a targeted reload is not a
+   project opening). Fire-and-forget, at most one in-flight launch, skipped when
+   already warm or when `rememberedLaunchFailure()` is fresh, and it arms the same
+   `BROWSER_IDLE_MS` teardown a real capture does.
+
+**Budgets added (tests, not comments):**
+- `server/handlers/studio/studioLoadMemo.test.ts` — 9 cases pinning INVALIDATION:
+  edited page, added page, deleted page, edited local component (the case
+  `pageParseCache`'s documented one-level limit misses), changed
+  `.studio/meta.json` `pagesDir`, caller mutation not leaking, and a narrowed load
+  neither poisoning nor being poisoned by the memo.
+- `server/ai/mcp/capture/captureFrames.test.ts` — three new cases pinning that the
+  reload wait is `[]` on headless and on `source: 'live'`, and exactly one call on
+  the live fallback.
+- `server/ai/mcp/capture/browserPool.test.ts` (new) — prewarm launches at most one
+  browser, the following capture reuses it, and a launch failure is swallowed +
+  memoized so a host with no Chromium loads the board unchanged.
+- `measureElement.test.ts`'s ritual test now asserts `reloadCalls` is **empty** —
+  that zero is the thing that would silently regress.
+
+**Structural change that came with it:** `StudioLoadResult`/`StudioLoadOptions`
+moved to `server/handlers/studio/studioLoadContract.ts` (re-exported from
+`studioPageLoad.ts`). Without it the memo and the pipeline import each other and
+`no-circular-dependencies.test.ts` fails; it also put `studioPageLoad.ts` back
+under the 700-line `module-size-budgets` ceiling (722 → 650).
+
+**CUT — named, not forgotten:**
+- **Lever 4 (live-reload nudge from the `PostToolUse` hook).** Needs a new
+  loopback endpoint, a per-turn token mint/validate/expire lifecycle, and a new
+  env var carrying origin + token into every hook subprocess — a genuine auth
+  surface, not a perf tweak. `recordToolWrite.ts` has no HTTP convention to
+  borrow: `stopGateCheck.ts` makes no requests either. Screens still appear at
+  turn end, as before.
+- **Lever 5 (warm-session effort pin)** and **lever 6 (cross-project DS guide
+  cache + `DS_FILE_MAX_BYTES`)** — neither was trivially cheap; not started.
+- **On-disk parse cache for the Stop-hook subprocess.** The hook is a separate
+  process, so it pays the full 509 ms cold load and the in-process memo cannot
+  help it. Explicitly optional in the plan row ("cut if slow"); it is the highest
+  remaining win in this row.
+
+**Landmines / what did NOT help:**
+- **The memo does not help the "one file just changed" case, and cannot.** 163 ms
+  before → 174 ms after. That path is a genuine recompute; the +11 ms is the
+  fingerprint plus the clone. Do not try to make the memo partial — a per-page
+  merge would have to re-derive the site-wide class-id registry, which is exactly
+  the `canvas-14` failure.
+- **`awaitStudioLiveReload` was already free when NO tab is open** (it returns
+  early on a null bridge). The win in lever 2 is entirely in the dogfood case
+  where the human HAS the board open — which is also the only case where the
+  agent's captures were mysteriously slow. Reported as a round-trip count, not a
+  millisecond number: putting a duration on a browser round trip needs a browser,
+  and agents do not run Playwright for this.
+- **Chromium cold launch is bimodal:** 1486 ms on a genuinely cold binary, then
+  251–281 ms once the OS page cache is warm. Quote the range, not one number.
+- **Batch-run test isolation:** `compare.test.ts` run ALONE fails on
+  `SyntaxError: Export named 'editorBridgeScope' not found` — its
+  `mock.module('../../editorBridge')` factory omits that export and only a sibling
+  file's mock supplies it in a batch. Pre-existing on `origin/main`; verified by
+  running the same file in a clean `origin/main` worktree.
+- **22 failures in `bun test server/handlers/studio server/ai/mcp/capture
+  server/ai/tools/studio server/ai/mcp/tools/studio` are identical, test-for-test,
+  on `origin/main`.** Mine adds 15 passes and 0 failures. Do not chase them.
+
+**Dogfood script (human, ~5 min):** `bun run dev`, open a project with ≥10 screens
+at `/admin/site`. (1) Watch the server log/process list right after the board
+loads — a `chromium` process should appear within a second or two and disappear
+about five minutes later if you never capture. (2) Ask the agent to screenshot a
+screen: the first capture should feel immediate rather than pausing ~1.5 s before
+anything happens. (3) With the board OPEN, ask the agent for a `studio_compare` on
+2–3 screens — the canvas should NOT flicker/re-read on the way into the capture
+any more (that flicker was the live-reload push). (4) Then edit a file yourself
+outside Studio and ask the agent to screenshot it — the new content must appear,
+which is the memo invalidation working. If it shows the OLD content, that is the
+fingerprint and it is a correctness bug, not a perf one: reproduce and file it.
+### panel-19 — W8-4: Hug/Fill stops writing `100%` into a flex row
+- **Agent:** panel-designer (`hug-fill`) · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/inspector-parent-aware-sizing`, off `origin/main` at `b56ff12`.
+- **The defect:** `elementSizing.ts` wrote `fit-content` / `100%` for Hug/Fill on
+  every element in every container. `width: 100%` on a flex child resolves
+  against the container's *content box* and ignores `gap`, so a "Fill" item in a
+  gapped row overflowed the row and shoved its siblings out. The control said
+  one thing; the source did another.
+- **Shipped:**
+  - `elementSizing.ts` is now parent-aware and its read-back is the exact mirror
+    of its write. One classifier, `sizingAxisRole(axis, parent)` →
+    `flex-main | flex-cross | grid | block`, and every other function takes its
+    answer instead of re-deriving it. Fill writes `flex: 1 1 0` (main),
+    `align-self: stretch` (cross), `justify-self`/`align-self: stretch` (grid),
+    `100%` (block — the only case the old value was right). Hug writes
+    `fit-content` plus `flex: 0 0 auto` on a main axis only (every other role
+    stretches by default and `fit-content` alone already stops that).
+  - `sizingPatch` returns a **patch**, not a single string — Fill on a flex main
+    axis has to clear the axis length as well as set `flex`. `SizeSection`
+    commits each entry through the same per-property `onChange` the rest of the
+    section uses, so no second write path was opened.
+  - **It only ever touches the axis property and the one companion its own role
+    owns**, and it only clears a companion whose value is a marker this model
+    itself writes — a hand-authored `align-self: center` survives a switch to
+    Fixed.
+  - `useSizingParentLayout.ts` (new) resolves the parent's *computed*
+    `display`/`flexDirection` off a live canvas frame — same source and same
+    shape as `SingleNodeAlignRow`'s `ParentLayoutInfo` (G10). Called **once**
+    in `StyleSectionsEditor` and threaded to `SizeSection`, not per section.
+  - Parent unresolvable → the axis stays Fixed and the Hug / Fill menu rows
+    render **disabled with a named reason as their tooltip** (new
+    `AddablePropertyFieldMode.disabledReason`), never hidden. Three distinct
+    reasons: nothing selected, parent lives outside this file (the cross-file
+    component root case), no live frame yet.
+- **Decisions a future agent must not re-litigate:**
+  - **`width: 100%` on a flex child reads back as `Fixed`, deliberately.** It IS
+    a literal length there. Reporting it as Fill would re-create the lie in the
+    read direction.
+  - **`SizeSection` takes `parentLayout` as a PROP; it does not call the store.**
+    That is what keeps the section unit-testable against all four parent
+    layouts without a live iframe. Don't "simplify" it by moving the hook inside.
+  - **The parent layout is a computed read, never a stored declaration.** Only
+    `getComputedStyle` knows what a class, the cascade, and a media query
+    resolved `display` to.
+- **Cut (deliberate, for speed):** a mode switch that writes two properties
+  files **two** undo entries, not one — `onClearProperties`-style batching for
+  the mixed set+clear case does not exist and building it was out of scope for
+  this row. Also cut: no `PositionConstraints`, `globals.css`, `Button` or
+  `Select` changes (other agents own those this wave); no new CSS/tokens at all
+  — the disabled row reuses `Button`'s existing `disabled` + `tooltip` path.
+- **Files:** `src/admin/pages/site/panels/PropertiesPanel/elementSizing.ts`,
+  `useSizingParentLayout.ts` (new), `SizeSection.tsx`, `StyleSectionsEditor.tsx`,
+  `src/ui/components/AddablePropertyField/AddablePropertyField.tsx`,
+  `__tests__/elementSizing.test.ts` (new, 46 cases incl. a full
+  mode × axis × parent-layout write→read round-trip matrix),
+  `__tests__/sizeSection.test.tsx`, `docs/features/inspector-disclosure.md` (G2).
+- **No CSS modules touched and no tokens added.**
+- **Human action needed — dogfood script:**
+  1. In `studio-workspace/test4`, select a child of a **flex row with a `gap`**.
+     Set Width → **Fill container**. The row must not overflow and siblings must
+     not be shoved out; the source must gain `flex: 1 1 0` and lose `width`.
+     Re-select the node: the Width field must still read **Fill**.
+  2. Same node, Height → **Fill container** → expect `align-self: stretch`, and
+     the field reads Fill on re-selection.
+  3. A child of a **grid** container: Width → Fill must write `justify-self:
+     stretch`, Height → Fill must write `align-self: stretch`.
+  4. A child of a plain **block** container: Fill must still write `100%`.
+  5. Hand-write `width: 100%` on a **flex** child. The Width field must read the
+     literal `100%`, **not** the word "Fill" — that is the point of the change.
+  6. Select a **component root whose parent is a call site in another file**.
+     Open the Width chevron menu: *Hug contents* and *Fill container* must be
+     visible, greyed, and hovering one must explain that the parent lives
+     outside this file. Clicking must write nothing.
+  7. Set Height → Hug, then back to **Fixed**: the box must keep the size it was
+     rendering at, and a hand-written `align-self: center` on the same element
+     must survive that round trip.
+### panel-19 — W7: inspector ⚙ popovers ran off the bottom of the screen
+- **Agent:** panel-designer (`popover-clamp`) · **Stage:** done (targeted tests + `tsc -p tsconfig.app.json` + eslint green; draft PR open) — **needs human dogfood**
+- **Branch:** `fix/inspector-popover-viewport-clamp`, off `origin/main` at `b56ff12`.
+- **The bug (user screenshot):** "Typography settings" opened from a ⚙ low in the Properties panel and
+  its last rows (`margin-block`…) were cut off past the bottom edge of the display.
+- **Root cause:** `useAnchoredFloating`/`computeFloatingPosition` only choose a *side* and clamp
+  `y` against the **measured** height. For a panel taller than the available viewport there is no `y`
+  that fits, so the clamp collapses to the top margin and the tail simply overflows. Two aggravators:
+  the CSS ceiling was a blanket `max-height: calc(100vh - 16px)` unrelated to where the panel actually
+  sits, and the measurement used `getBoundingClientRect()`, which is transform-aware and reads ~3% short
+  during the `scale(0.97)` enter animation (so the panel also landed ~3% too low).
+- **Shipped:**
+  - `src/ui/lib/floatingViewportFit.ts` — new pure, DOM-free `fitFloatingToViewport(...)`:
+    `{x, y, width, height, viewportWidth, viewportHeight, margin} → {x, y, maxHeight}`. Height stops being
+    an input the layout must accommodate and becomes an output it dictates.
+  - `src/ui/lib/floatingViewportFit.test.ts` — 9 unit tests for the geometry (fits / shifted up off a low
+    trigger / oversized pinned + capped / negative-top guard / both horizontal edges / tiny viewport).
+  - `src/ui/components/InspectorPopover/InspectorPopover.tsx` — measures its own `offsetHeight` +
+    viewport into one `PopoverMetrics` state (layout effect, `ResizeObserver`, window `resize` + capture
+    `scroll`; a `samePopoverMetrics` guard stops a re-render per keystroke), runs the fit, and publishes
+    `--inspector-popover-x/y` **and the new `--inspector-popover-max-height`**.
+  - `src/ui/components/InspectorPopover/InspectorPopover.module.css` — `max-height` now reads
+    `var(--inspector-popover-max-height)`, declared in the same rule as its pre-measure default
+    (`calc(100vh - 24px)`) exactly like `--inspector-popover-z-index`. **Not** a `var()` fallback.
+  - Docs: `docs/features/inspector-disclosure.md` §3.1 and `docs/reference/ui-primitives.md`.
+- **No new `globals.css` tokens.** The 12px edge margin is a TS constant (`VIEWPORT_MARGIN`) because it is
+  positioning maths JS owns, not a themeable surface value. It is deliberately wider than
+  `computeFloatingPosition`'s own 8px `viewportMargin`, so this pass always wins.
+- **Cut, deliberately:** (1) `useAnchoredFloating` and `ContextMenu` were left alone — the `offsetHeight`
+  vs `getBoundingClientRect()` fix is applied only in `InspectorPopover`, since switching the shared hook
+  would break the rect-stubbing in `ContextMenu`'s and `InspectorPopover`'s existing tests and this PR is
+  one fix. (2) A tabbed popover's `TabList` lives inside `.body`, so it scrolls away with the content
+  instead of sticking under the header. Cosmetic, not the reported bug.
+- **Human action needed — dogfood (~1 min):** `/admin/site`, select a text element, and **scroll the
+  Properties panel so the Typography section's ⚙ sits in the bottom ~quarter of the screen**, then open
+  it. The popover must sit fully on screen with ~12px clear below it, and its content must scroll inside
+  rather than being clipped. Repeat once with the browser window shortened to ~600px tall (the panel
+  should fill the viewport height and scroll), and once with a ⚙ near the top (position must be
+  unchanged from before). Also open a nested colour popover from a Fill row to confirm neither closes the
+  other.
+
+### look-pass — W8-2: the inspector's look pass + a geometry gate that can outlive happy-dom
+- **Agent:** panel-designer · **Stage:** done (typecheck + touched tests green; draft PR open) — **needs human dogfood**
+- **Branch:** `feat/inspector-look-pass`, off `origin/main` at `b56ff12`.
+- **Shipped (`STUDIO-WAVE7-PLAN.md` W8-2, "Look pass"):**
+  - **Panel default width 360 → 290.** `PROPERTIES_PANEL_DEFAULT_WIDTH` in `uiSlice.ts`. Figma's 240
+    plus this panel's rail (`--inspector-rail-w`) and a scrollbar gutter. The two-up cells go from
+    ~161px to ~104, which was the loudest visual delta. `SIDEBAR_MIN_WIDTH`/`MAX` (260/520) already
+    bracket 290 and are unchanged, so the drag handle still reaches the old roominess.
+  - **Inspector spacing is frozen.** Eight new `--inspector-space-*` tokens in `globals.css`, pinned to
+    the `--space-*` clamp FLOORS (2/3/4/5/6/8/10/12px). 310 `var(--space-*)` reads across 38 CSS modules
+    under `panels/PropertiesPanel/` + `property-controls/`, plus `ui/components/Section/Section.module.css`
+    and the `[data-field-skin='inspector']` rules in `Input.module.css`, now read the frozen scale.
+    Chose the floor, not the max, on purpose: it is both frozen AND never larger than what shipped, so
+    no section can get taller from this change alone.
+  - **`Button` inspector skin.** `[data-field-skin='inspector']` squares `size="xs"`/`size="sm"` icon-only
+    buttons to `--inspector-row-h` at `--inspector-field-radius`; ghost hover is `--inspector-field-bg`
+    (the fill a resting field already has). `size="micro"` is deliberately exempt — it is the mark inside
+    a class pill and growing it to 24 would burst the pill.
+  - **`Select` inspector skin gains `font-size: var(--text-xs)`** to match `Input`. A select and an input
+    share a row in nearly every two-up pair; `--text-s` beside `--text-xs` read as a misalignment.
+  - **`PROPERTY_FIELD_GLYPHS` 6 → 11**: `gap`, `columnGap`, `rowGap`, `borderWidth`, `borderRadius`.
+    One new hand-drawn `RowGapIcon` in `InspectorIcons` (`GapIcon` transposed) so the row/column-gap PAIR
+    in the layout-settings popover differs along the axis it actually differs on. Note the table also
+    grants the drag-scrub gesture, so those five are now scrubbable.
+  - **The gate: `__tests__/inspectorGeometryBudget.test.tsx`** (10 tests).
+- **The measurement substitution, named.** The order asked for `scrollHeight <= clientHeight` at a 900px
+  viewport. **happy-dom does not lay out** — a probe of a 100px box holding a 500px child reports
+  `clientHeight 0, scrollHeight 0`, so that assertion would pass for an empty panel. CSS Modules also
+  resolve to `""` under `bun test`, so class-based structural queries are blind too. The substitute gates
+  the two inputs a height is computed FROM: (1) every `--inspector-*` token is a literal px, no `clamp()`,
+  no `vw`, and no inspector module reaches back into the fluid small steps; (2) row-count budgets — the
+  rendered `<label>` count for a text node's resident panel (a `<label>` is emitted by exactly the
+  caption-bearing `ControlRow` layouts and never by `bare`, so it is an exact, layout-free caption count;
+  today 1, budget 2) plus a per-section caption-capable ceiling. When CI gets a real layout engine, keep
+  part 1 and replace part 2 with the measurement.
+- **Cut, deliberately:**
+  - **The persistent chevron for collapsed sections was DROPPED mid-task** on a user-level course
+    correction that asked for the opposite. Verified the requested behaviour already ships: `Section`'s
+    `empty` mode renders a plain `<div>` header — no `<button>`, no chevron, no `aria-expanded`, no hover
+    cross-fade — and `StyleSectionsEditor`'s `showsAsEmptyHeader` branch already passes it. Already gated
+    by `__tests__/emptySectionLaw.test.tsx` case (e). **No code change was needed or made.**
+  - **`bun run icons:sync` not run** — no vendored `pixel-art-icons` import was added. `RowGapIcon` is
+    hand-drawn under the `icon-catalog-integrity` Gate 3 exemption for `src/ui/`.
+  - **`workspaceLayout.ts:12-13` untouched.** The order named those lines, but they are
+    `SIDEBAR_MIN_WIDTH`/`SIDEBAR_MAX_WIDTH`, which already bracket 290. Changing them would have narrowed
+    the resize range for no reason.
+  - No `--space-*` → frozen swap outside the inspector's own modules.
+- **Pre-existing failures I did not cause and did not fix:**
+  - `icon-catalog-integrity.test.ts` Gate 2 — `node_modules/pixel-art-icons/dist/icons/chevron-left.js`
+    missing. Absent in the main checkout's vendor dist too; needs `bun run icons:sync` by whoever owns it.
+  - `inspectorNumericFields.test.tsx` "corner radius" ×2 — passes per-file, fails only in the combined
+    `PropertiesPanel/__tests__` + `__tests__/panels` batch. **Verified pre-existing**: reverted my
+    `cssPropertyIcons.ts` change and the two still failed. This is the documented batch-run isolation flake.
+- **Human action needed — dogfood at these selection states:**
+  1. **Select any node.** The right panel should open at **290px**, not 360. Drag the handle: still
+     260–520.
+  2. **Select a text node** (a `.map` row's text, or any `<p>`). Confirm section headers, the fields under
+     them, and the header icon buttons all sit on ONE 24px rhythm — the "+" / gear / eye buttons should be
+     24×24 squares with a 5px radius, not 26×22 pills, and hovering one should give it the same quiet fill
+     an unset field already has.
+  3. **Resize the browser window wide and narrow with the panel open.** Section padding and field gutters
+     must NOT change. Before this change they breathed with the viewport.
+  4. **Select a flex or grid container, open the Layout settings popover (the gear).** `row-gap` and
+     `column-gap` should show as two glyph-prefixed fields with NO captions above them, and the two glyphs
+     must be visibly different (bars stacked vs. side by side). Drag either glyph — it should scrub.
+  5. **Open Border → Advanced.** `border-width` and `border-radius` should carry in-field marks instead of
+     captions, and both should scrub.
+  6. **Confirm the cut:** Border / Effects / Animations with nothing set should be a STATIC title row —
+     no chevron, no hover cross-fade, not clickable — with only its "+" on the right.
 
 ### panel-18 — W7-5: fact-driven onboarding checklist, empty-canvas hint, sample project
 - **Agent:** studio-implementer · **Stage:** done (typecheck + touched tests green; draft PR open) — **needs human dogfood**
@@ -2015,6 +2319,154 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### fidelity-modes — W9-2: creative / balanced / strict, one control from prompt to gate
+- **Agent:** mcp-tooling · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/agent-fidelity-modes` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W9-2.
+- **Shipped — the vertical slice, end to end:**
+  - `server/handlers/studio/fidelityMode.ts` — the vocabulary
+    (`FIDELITY_MODES`), the ONE precedence function (`resolveFidelityMode`:
+    tool arg > per-reference `mode` > per-turn > per-project > derived), the
+    threshold table (`FIDELITY_THRESHOLDS`: creative 80/12, balanced 92/6,
+    strict 99/0.5 + a 400px²-at-1x area floor), and `scaledMaxRegionPixels`.
+    Pure, no I/O. `designReferenceSchema.ts`'s
+    `DESIGN_REFERENCE_FIDELITY_MODES` is now an alias of it — one vocabulary.
+  - `server/handlers/studio/projectFidelityMode.ts` — the disk half
+    (`resolveProjectFidelityMode(dir, userKey, turn?)`). Its own module
+    because `studioMeta.ts` imports `fidelityMode.ts` for the vocabulary at
+    module-init time, so a meta read inside that file would close a cycle.
+  - **Wire:** `fidelityMode` on `AiChatRequestBodySchema`, `AiStreamRequest`,
+    `ToolContextBase` and `ToolContext`. Resolved ONCE in `chat.ts` (the only
+    place holding both the turn value and the account key), then fed to the
+    prompt and to tools.
+  - **Prompt:** `MODE_BLOCK` in `server/ai/tools/studio/systemPrompt.ts`,
+    folded into the STATIC prefix (`prefix = base + MODE_BLOCK[mode]`) so each
+    mode is its own cache partition. Each block ends in a DONE definition
+    reachable in that mode; the numbers are interpolated from
+    `FIDELITY_THRESHOLDS` so the prompt cannot state a bar the tool does not
+    apply.
+  - **`studio_compare`:** an optional `fidelityMode` argument; the mode is
+    resolved **per page** (tier 2 is the reference's own `mode`, so two pages
+    in one batch can grade differently); the mode's thresholds replace the old
+    hardcoded 98/1.5; strict adds the scaled area floor AND refuses the
+    project-wide reference fallback by name. Every result reports
+    `thresholds.fidelityMode`. The verdict cache key gained the mode (strict
+    carries a third threshold the two numbers do not encode).
+  - **Stop gate, strict half:** `pageVerificationStore` records the mode each
+    pass was graded at; under strict, `computePageWriteVerification` reports a
+    balanced-graded pass as `staleFidelityMode` and `describeUnverifiedPage`
+    gives it its own branch ("re-measure, do not rewrite"). `stopGateCheck.ts`
+    and `liveDigest.ts` both resolve the mode through
+    `resolveProjectFidelityMode`, so gate and digest can never disagree.
+  - **UI + persistence:** third `ContextMenu` trigger in
+    `AgentSessionControls.tsx` (`Project default` is a first-class option;
+    store value `null` = let the server decide), persisted per project AND per
+    account through the existing `GET/POST /admin/api/ai/studio-session`.
+    `withAgentSessionEffort` was generalised to `withAgentSessionControls`, and
+    the route's fields are now optional-and-nullable — omitted means "leave
+    alone", so the two pickers never wipe each other.
+  - Docs: `docs/features/agent.md` (new "Fidelity modes" section + the
+    threshold and session-control paragraphs), `docs/features/mcp-connectors.md`
+    (strict refuses tier 2). Tests: `fidelityMode.test.ts` (17, precedence +
+    thresholds + area-floor scaling).
+- **CUT — named, for W9-3:**
+  - **The creative and balanced halves of the mode-aware Stop gate.** Creative's
+    DONE is a passing `quality_check` since the last write, which needs a
+    quality-check verification record that does not exist (the store only
+    records compares); balanced's "every deviation named" is not
+    machine-checkable from the gate's side. Both fall through to the pre-W9-2
+    rule (any post-write passing compare) — the safe direction: it asks for a
+    measurement, it never waves a page through. Only the STRICT half is real.
+  - **Creative's numbers (80 / 12%) are chosen, not measured.** Balanced and
+    strict are the spec's; creative's are a judgement call about what
+    "directional" should mean. If a creative-mode compare turns out to pass
+    junk, tighten there first.
+  - **No creative-mode variant plumbing.** The prompt block asks for N
+    variants; nothing in the tool surface batches or scores them.
+- **Dogfood checklist for the human (no browser tests by agents):**
+  1. Open a project at `/admin/site`. The composer row should show a third
+     trigger reading `Fidelity` (project default). Pick `Strict`; reload the
+     page — it should come back Strict. Switch projects and back.
+  2. With a design reference registered for a page, ask the agent to build it
+     at Strict and confirm `studio_compare` reports
+     `thresholds.fidelityMode: "strict"` and 99 / 0.5.
+  3. Register a reference with NO `pageId`, then compare that page at Strict —
+     it must refuse by name rather than grade against the stand-in.
+  4. Compare a page at Balanced (pass), then switch to Strict and try to end
+     the turn: the Stop gate should ask for a re-measure at strict, NOT for a
+     rewrite.
+- **Pre-existing failures I did NOT cause and did not touch:**
+  `server/handlers/studio/pageWriteVerification.test.ts` (3) and
+  `server/ai/tools/studio/liveDigest.test.ts` (1) call
+  `computePageWriteVerification`/`appendTurnWrite` with the pre-W10 arity (no
+  `userKey`); `server/ai/mcp/tools/studio/compare.test.ts` fails to import
+  (`editorBridgeScope` not exported from `editorBridge.ts`); `headlessCapture`,
+  `computedStyles`, `gitTools`, `liveReloadPush`, `pageDiagnostics` failures are
+  sandbox/browser-environment, not code.
+### inspector-w8-4-constraints — Figma's crosshair, over mappings that refuse when they'd lie
+- **Agent:** panel-designer · **Stage:** done (targeted gates green; draft PR open) · **Updated:** 2026-09-07
+- **Branch:** `feat/inspector-constraints` off `origin/main`. Goal:
+  `STUDIO-WAVE7-PLAN.md` §W8-4 **Constraints row only**.
+- **Shipped:**
+  - `constraintMapping.ts` — a pure module owning BOTH directions (style bag →
+    current constraint per axis; constraint choice + bag → one CSS patch, or a
+    named refusal). 46 unit tests in `constraintMapping.test.ts`, written
+    before the UI. Mappings: start/end = one inset, opposite cleared; stretch =
+    both insets, size cleared; **Scale = `%` insets** derived from the measured
+    containing block; **Centre = `50%` + a `-50%` pull-back**.
+  - Centring writes the **standalone `translate` property**, not
+    `transform: translateX(-50%)` — same reasoning as `RotationRow`'s `rotate`
+    and `flipValue.ts`'s `scale`. Two refusals, both named in the disabled
+    control's tooltip: a `transform` already carrying a translate-family
+    function, and a `translate` component on this axis that is somebody else's
+    real value (`10px`, `calc()`, `var()`, a 3D third component). Leaving
+    centre releases only a `-50%` this control itself wrote.
+  - Scale refuses without a measurement (no live frame, or `position: fixed`
+    whose containing block is the viewport this read does not measure) rather
+    than inventing a percentage.
+  - `resolvePositionedContext` gates the whole cluster: `fixed` ok, `absolute`
+    ok only when the element's own parent IS its containing block (computed
+    `position !== static`, or a `transform`), unverifiable → disabled with
+    "Can't verify…" — `resolveAlignWrite`'s posture, reused not re-derived.
+  - `ConstraintsDiagram.tsx` + `.module.css` — the crosshair: two nested 3×3
+    grids, four edge bars and one centring line per axis, all `Button`
+    primitives, tokens only, Figma's own toggle semantics
+    (`nextModeForEdgeToggle`: second pin → stretch, un-pinning the last pin →
+    Scale). Scale is drawn as dashed box edges so it is distinguishable from
+    "no constraint". Mounted to the RIGHT of the existing side pickers, which
+    are unchanged and still the substance.
+  - Docs: `docs/features/inspector-disclosure.md` **§G10.3** (new; existing
+    numbering untouched).
+- **CUT — named:** (a) no drag-to-reposition inside the diagram (Figma lets you
+  drag the inner box); (b) the diagram does not surface a per-axis text caption
+  — the mode is in the group's `aria-label` and each control's tooltip only;
+  (c) `position: fixed` gets no Scale (the viewport is not measured); (d) one
+  crosshair click still lands as 2–3 undo entries — the panel's commit channel
+  is per-property, and widening it means touching
+  `StyleSectionsEditor`/`StyleRuleComposer`/`InlineStyleComposer`, which are
+  other agents' territory this wave.
+- **Files touched:** `src/admin/pages/site/panels/PropertiesPanel/` →
+  `constraintMapping.ts` (new), `constraintMapping.test.ts` (new),
+  `ConstraintsDiagram.tsx` (new), `ConstraintsDiagram.module.css` (new),
+  `PositionConstraints.tsx`, `PositionSection.module.css`,
+  `__tests__/positionSection.test.tsx`. **No new tokens added to
+  `globals.css`** — the widget is built from `--overlay-*`,
+  `--inspector-field-bg`, `--text-subtle`/`--text`/`--text-bright`,
+  `--radius-sm`, `--space-xs`, `--inspector-field-gap`.
+- **Human action needed (dogfood):** open the Position section with a node at
+  `position: absolute` inside a `position: relative` parent, on a live canvas
+  frame, and check: (1) the crosshair's pressed bars match the insets the side
+  pickers show; (2) clicking the right bar while Left is pinned gives Left+Right
+  and clears `width`; (3) the centring line writes `left: 50%` + `translate:
+  -50%` and moves the element on canvas; (4) with `transform: translateX(4px)`
+  already on the node, the centring line is disabled and its tooltip names that
+  transform; (5) select a node whose parent is `position: static` — the whole
+  crosshair should dim and every tooltip should say the parent isn't
+  positioned; (6) at the panel's narrowest, confirm the 76px diagram has not
+  squeezed the `Left ▾` + offset row into an unusable width (it is
+  `minmax(0, 1fr) auto` — this is the one layout risk I could not check
+  without a browser).
 
 ### inspector-w8-3-p1 — multi-select edits inline styles across N nodes, with Mixed
 - **Agent:** studio-implementer · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-07

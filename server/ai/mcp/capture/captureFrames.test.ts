@@ -12,7 +12,9 @@
  *   - `source: 'headless'` refuses to quietly take over someone's tab;
  *   - when BOTH fail, the error names BOTH reasons — the specific regression
  *     this feature was built to end, where every failure read "no board
- *     connected" regardless of cause.
+ *     connected" regardless of cause;
+ *   - (W9-5 lever 2) the live-reload wait is paid ONLY on the bridge fallback,
+ *     never on the headless path and never for `source: 'live'`.
  */
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import type { AiToolOutput } from '@core/ai'
@@ -26,6 +28,17 @@ let headlessImpl: () => Promise<unknown> = async () => ({
 
 mock.module('./headlessCapture', () => ({
   captureFramesHeadless: async () => headlessImpl(),
+}))
+
+let reloadCalls: Array<Record<string, unknown>> = []
+
+// Both exports, always — `mock.module` replaces the WHOLE module for every
+// file in the same `bun test` run, and other suites import the real
+// `pushStudioLiveReload` through the tool under test.
+mock.module('../tools/studio/liveReloadPush', () => ({
+  awaitStudioLiveReload: async (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
+  pushStudioLiveReload: (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
+  STUDIO_LIVE_RELOAD_TOOL_NAME: 'studio_live_reload',
 }))
 
 const { captureFrames } = await import('./captureFrames')
@@ -59,6 +72,7 @@ function request(source?: 'auto' | 'headless' | 'live') {
 
 beforeEach(() => {
   bridgeCalls = []
+  reloadCalls = []
   clearLaunchFailureMemo()
   headlessImpl = async () => ({ ok: false, code: 'headless-browser-unavailable', error: 'no browser' })
 })
@@ -132,6 +146,44 @@ describe('captureFrames routing', () => {
     expect(result.source).toBe('none')
     expect(result.output.ok).toBe(false)
     expect(result.output.error).toContain('no browser')
+  })
+
+  it('W9-5 — a headless capture never pays the live-reload wait, even when the caller asked for one', async () => {
+    headlessImpl = async () => ({ ok: true, output: headlessOk })
+
+    const result = await captureFrames(
+      { ...request(), reloadBeforeLiveFallback: { boardsChanged: true } },
+      { awaitBridge: async () => bridge() },
+    )
+
+    expect(result.source).toBe('headless')
+    // The whole point: headless re-parses from disk, so the round trip to a
+    // tab that would tell it nothing new is not taken.
+    expect(reloadCalls).toEqual([])
+  })
+
+  it('W9-5 — the live-tab FALLBACK does pay it, so the tab does not photograph the previous parse', async () => {
+    const result = await captureFrames(
+      { ...request(), reloadBeforeLiveFallback: { boardsChanged: true } },
+      { awaitBridge: async () => bridge() },
+    )
+
+    expect(result.source).toBe('live')
+    expect(reloadCalls).toEqual([{ dir: '/workspace/p', pageIds: ['p1'], boardsChanged: true }])
+  })
+
+  it('W9-5 — source:"live" never pays it: that path exists to see the tab exactly as it stands', async () => {
+    headlessImpl = async () => {
+      throw new Error('headless must not run for source:"live"')
+    }
+
+    await captureFrames(
+      { ...request('live'), reloadBeforeLiveFallback: { boardsChanged: true } },
+      { awaitBridge: async () => bridge() },
+    )
+
+    expect(bridgeCalls).toHaveLength(1)
+    expect(reloadCalls).toEqual([])
   })
 
   it('names BOTH reasons when neither path can produce an image', async () => {

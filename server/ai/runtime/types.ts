@@ -156,6 +156,14 @@ export interface ToolContext {
    * `ToolContextBase.workspaceDir`, which is where it is set.
    */
   readonly workspaceDir?: string
+  /**
+   * This turn's resolved fidelity mode (W9-2), mirroring
+   * `ToolContextBase.fidelityMode` — where it is set, and where the reasoning
+   * for the precedence lives. `studio_compare` reads it; `undefined` for a
+   * call that did not come from a chat turn (an external MCP client), which
+   * simply starts the chain one tier lower.
+   */
+  readonly fidelityMode?: import('../../handlers/studio/fidelityMode').FidelityMode
   readonly snapshot: unknown
   readonly signal: AbortSignal
 }

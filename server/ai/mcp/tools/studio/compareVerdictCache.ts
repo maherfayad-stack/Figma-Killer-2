@@ -114,11 +114,19 @@ export function buildCompareCacheKey(
   dir: string,
   pageId: string,
   referenceId: string,
+  /**
+   * W9-2's resolved fidelity mode. In the key even though the two numbers
+   * below are already derived from it, because strict carries a THIRD
+   * threshold (`maxRegionPixels`) those two do not encode — without this, a
+   * strict call would be served a `balanced` verdict computed at the same
+   * score and coverage and would never see the area floor fire.
+   */
+  fidelityMode: string,
   passScore: number,
   maxRegionCoverage: number,
   topN: number,
 ): string {
-  return `${dir}::${pageId}::${referenceId}::${passScore}::${maxRegionCoverage}::${topN}`
+  return `${dir}::${pageId}::${referenceId}::${fidelityMode}::${passScore}::${maxRegionCoverage}::${topN}`
 }
 
 /**
