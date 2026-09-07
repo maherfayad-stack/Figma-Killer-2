@@ -7,16 +7,20 @@
  * admin router, the boot probe, the toast provider, the plugin runtime and the
  * authenticated-shell preload — every one of which can mutate state, fire a
  * request, or paint something the capture would then contain. A separate entry
- * cannot: the only things in this bundle are the base modules (so the canvas
- * has renderers), the editor store, the canvas, and the capture app.
+ * cannot: the only things in this bundle are the canvas module set (so the
+ * canvas has renderers), the editor store, the canvas, and the capture app.
  *
- * `registerBaseModules` is imported for its side effect exactly as
- * `AdminEntry.tsx` imports it — the module registry is a global singleton and
- * `NodeRenderer` resolves every node through it.
+ * `@site/studio/canvasModuleSet` is imported for its side effect — the module
+ * registry is a global singleton and `NodeRenderer` resolves every node
+ * through it. It is the SAME entry the editor's canvas mounts, deliberately:
+ * this page listing its own shorter set is what made an exported PNG show
+ * `Unknown module: alm.Button` for a page the canvas rendered fine. Its
+ * project-scoped half (`pkg.*` components) is kicked off by `CaptureApp` once
+ * the payload names a project dir.
  */
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import '@modules/base'
+import '@site/studio/canvasModuleSet'
 import '../../styles/globals.css'
 import { CaptureApp } from './CaptureApp'
 import { markCaptureLoading, publishCaptureError } from './captureReadiness'

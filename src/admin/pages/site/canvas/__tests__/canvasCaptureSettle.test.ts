@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import {
   CAPTURE_SETTLE_TIMEOUT_MS,
   DOM_QUIET_MS,
+  MODULE_REGISTRATION_BUDGET_MS,
   settleCaptureDocument,
   waitForDocumentQuiet,
   waitForImagesSettled,
@@ -235,6 +236,74 @@ describe('settleCaptureDocument', () => {
     } finally {
       churn.stop()
     }
+  })
+
+  it('does not settle before the project\'s module registration lands', async () => {
+    // The PNG-export defect one layer down: `alm.*`/`pkg.*` components register
+    // asynchronously, and a frame photographed before they do is a picture of
+    // placeholders. The shutter must wait.
+    let registered: (() => void) | null = null
+    const moduleRegistration = new Promise<void>((resolve) => { registered = resolve })
+    let settledAt: number | null = null
+
+    const settle = settleCaptureDocument({
+      document,
+      moduleRegistration,
+      signal: new AbortController().signal,
+      timeoutMs: 3_000,
+    }).then((result) => {
+      settledAt = Date.now()
+      return result
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(settledAt).toBeNull() // still waiting on registration, not on the DOM
+
+    const releasedAt = Date.now()
+    registered!()
+    const result = await settle
+
+    expect(result.settled).toBe(true)
+    expect(result.warnings).toEqual([])
+    expect(settledAt!).toBeGreaterThanOrEqual(releasedAt)
+  })
+
+  it('names the module bundle in a warning when it never arrives, and captures anyway', async () => {
+    // Bounded like every other phase: a package that will never bundle has
+    // already reached its final pixels, so the honest answer is the photograph
+    // plus a NAMED reason — never a refusal, and never a silent placeholder.
+    //
+    // The bound here is the caller's outer deadline rather than
+    // `MODULE_REGISTRATION_BUDGET_MS`, because the phase takes whichever is
+    // smaller (a capture cannot spend budget it does not have). In production
+    // the two are 10 s inside 20 s, so the remaining phases still run; at the
+    // 400 ms used here the deadline is spent, and the report says BOTH things.
+    const started = Date.now()
+    const result = await settleCaptureDocument({
+      document,
+      moduleRegistration: new Promise<void>(() => {}), // never resolves
+      signal: new AbortController().signal,
+      timeoutMs: 400,
+    })
+
+    expect(result.aborted).toBe(false)
+    expect(result.warnings[0]).toContain('package components had not finished registering')
+    expect(result.warnings[0]).toContain('captured as a placeholder')
+    expect(Date.now() - started).toBeLessThan(MODULE_REGISTRATION_BUDGET_MS)
+  })
+
+  it('reports `modules` as the phase when the caller aborts during registration', async () => {
+    const controller = new AbortController()
+    const result = settleCaptureDocument({
+      document,
+      moduleRegistration: new Promise<void>(() => {}),
+      signal: controller.signal,
+      timeoutMs: 3_000,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    controller.abort()
+
+    expect(await result).toMatchObject({ aborted: true, stalledPhase: 'modules', warnings: [] })
   })
 
   it('reports `aborted` for a caller that went away, and never as a warning', async () => {

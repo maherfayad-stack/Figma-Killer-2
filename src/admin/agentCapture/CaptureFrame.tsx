@@ -20,6 +20,11 @@
  *      provides its page id so `NodeRenderer` resolves against THAT page
  *      rather than the store's active document (see `BoardFrameView.tsx`).
  *      That is what makes a five-page batch one navigation instead of five.
+ *   3. **The settle waits on module registration.** An editor frame is mounted
+ *      into a session whose modules registered minutes ago and re-renders
+ *      through `registry.subscribe` if one arrives late; this frame is
+ *      photographed once, so it takes `mountCanvasModuleSet`'s promise as a
+ *      settle precondition. See `canvasCaptureSettle.ts`'s `modules` phase.
  *
  * The synthetic breakpoint is the board's own (`id: 'studio'`, the frame's
  * width) — `[data-breakpoint-id="studio"]`-scoped class CSS has to match here
@@ -70,10 +75,17 @@ const FRAME_SETTLE_TIMEOUT_MS = CAPTURE_SETTLE_TIMEOUT_MS
 interface CaptureFrameProps {
   page: Page
   width: number
+  /**
+   * `mountCanvasModuleSet`'s in-flight registration for this project. The
+   * frame must not be measured before it lands or a `pkg.*` node is
+   * photographed as a placeholder — see `canvasCaptureSettle.ts`'s `modules`
+   * phase. Shared by every frame in the batch: the module registry is global.
+   */
+  moduleRegistration: Promise<void>
   onSettled: (report: AgentCaptureFrameReport) => void
 }
 
-export function CaptureFrame({ page, width, onSettled }: CaptureFrameProps) {
+export function CaptureFrame({ page, width, moduleRegistration, onSettled }: CaptureFrameProps) {
   const [previewReadiness] = useState(createCanvasPreviewReadiness)
   const breakpoint: Breakpoint = { ...STUDIO_BREAKPOINT_BASE, width }
 
@@ -91,6 +103,7 @@ export function CaptureFrame({ page, width, onSettled }: CaptureFrameProps) {
               <CaptureSettleReporter
                 pageId={page.id}
                 previewReadiness={previewReadiness}
+                moduleRegistration={moduleRegistration}
                 onSettled={onSettled}
               />
             </CanvasBreakpointContext.Provider>
@@ -118,10 +131,12 @@ export function CaptureFrame({ page, width, onSettled }: CaptureFrameProps) {
 function CaptureSettleReporter({
   pageId,
   previewReadiness,
+  moduleRegistration,
   onSettled,
 }: {
   pageId: string
   previewReadiness: CanvasPreviewReadiness
+  moduleRegistration: Promise<void>
   onSettled: (report: AgentCaptureFrameReport) => void
 }) {
   const iframeDocument = use(CanvasDocumentContext)
@@ -129,9 +144,9 @@ function CaptureSettleReporter({
   useEffect(() => {
     if (!iframeDocument) return
     const controller = new AbortController()
-    void settleAndReport(pageId, iframeDocument, previewReadiness, controller.signal, onSettled)
+    void settleAndReport(pageId, iframeDocument, previewReadiness, moduleRegistration, controller.signal, onSettled)
     return () => { controller.abort() }
-  }, [iframeDocument, pageId, previewReadiness, onSettled])
+  }, [iframeDocument, pageId, previewReadiness, moduleRegistration, onSettled])
 
   return null
 }
@@ -143,12 +158,14 @@ async function settleAndReport(
   pageId: string,
   iframeDocument: Document,
   previewReadiness: CanvasPreviewReadiness,
+  moduleRegistration: Promise<void>,
   signal: AbortSignal,
   onSettled: (report: AgentCaptureFrameReport) => void,
 ): Promise<void> {
   const settle = await settleCaptureDocument({
     document: iframeDocument,
     previewReadiness,
+    moduleRegistration,
     signal,
     timeoutMs: FRAME_SETTLE_TIMEOUT_MS,
   })
