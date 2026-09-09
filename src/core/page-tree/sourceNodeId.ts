@@ -56,6 +56,41 @@ export interface SourceNodeLocation {
 }
 
 /**
+ * Mints the plain (non-composite) id for one source position: `rel:line:col`,
+ * plus an optional `.map`-iteration suffix (already carrying its own
+ * `LOOP_ID_SEPARATOR`, e.g. `#2`). This is the exact string `parsePageFile`
+ * builds for every `ParsedNode` — extracted here so a second reader of the
+ * SAME source position (the Vite plugin in `@core/studio-runtime`, which has
+ * no `.map`/call-site knowledge and therefore never passes `idSuffix`) mints
+ * an id that can only ever agree or disagree with the parser's, never drift
+ * from it through a hand-copied template string.
+ *
+ * `line`/`col` are both 1-based — the convention `parsePageFile`'s own header
+ * comment states and every caller of this function must already produce.
+ */
+export function buildSourceNodeId(rel: string, line: number, col: number, idSuffix?: string): string {
+  return `${rel}:${line}:${col}${idSuffix ?? ''}`
+}
+
+/**
+ * The id a Babel-based, single-file stamp can EVER produce for one JSX host
+ * element — always the plain `rel:line:col` shape, because a Vite transform
+ * sees one file in isolation: it has no call site to prefix (composite ids are
+ * minted only once `inlineLocalComponents` splices a component's file into a
+ * PAGE's tree) and no loop iteration to suffix (a `.map` runs at runtime; the
+ * source has one JSX expression, not N).
+ *
+ * This is why the live DOM needs `liveNodeResolve` at all: a runtime stamp id
+ * is the fixed point both an inlined call site's tail and every row of one
+ * expanded `.map` collapse to, and resolving a specific live element back to
+ * ITS real tree node id is a positional question this function's callers
+ * cannot answer on their own.
+ */
+export function toRuntimeStampId(rel: string, line: number, col: number): string {
+  return buildSourceNodeId(rel, line, col)
+}
+
+/**
  * The source location a node id writes back to, or `null` when it has none —
  * a synthetic node (the `index:body` root), a `.map` iteration, or a CMS nanoid.
  *

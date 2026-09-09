@@ -126,6 +126,19 @@ Grammar lives in **one place**: `src/core/page-tree/sourceNodeId.ts`
    it. That is deliberate: importing the page-parser barrel drags ts-morph into
    the browser bundle and blows the chunk budget. Keep them in sync by hand.
 
+**A second reader mints the same ids (Track L, `live-03`).** `buildSourceNodeId`
+and `toRuntimeStampId` (also `sourceNodeId.ts`) and `classifyJsxTagKind`
+(`jsxTagKind.ts`, same folder) are the parser's own id-minting/tag-kind rules,
+extracted so `@core/studio-runtime`'s Vite plugin — a Babel walk over one file
+at a time, stamping `data-node-id` in a live dev-server frame, no ts-morph —
+can mint identical ids without redefining the grammar. A Babel-only stamp can
+only ever produce the PLAIN shape (no `~` prefix, no `#n` suffix), so
+`liveNodeResolve.ts` resolves a live DOM element back to its real composite/
+loop id by pairing the element's occurrence index among same-stamp DOM
+elements against that stamp's real ids in tree order — see
+`docs/features/studio-import.md`'s "A second reader of the same id grammar"
+for the full contract.
+
 ---
 
 ## The value evaluator — tiers are the boundary

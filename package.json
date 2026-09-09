@@ -41,6 +41,8 @@
     "icons:check": "bun run scripts/sync-icons.ts --check",
     "bootstrap:sync": "bun run scripts/sync-plugin-bootstrap.ts",
     "bootstrap:check": "bun run scripts/sync-plugin-bootstrap.ts --check",
+    "studio-runtime:sync": "bun run scripts/sync-studio-runtime.ts",
+    "studio-runtime:check": "bun run scripts/sync-studio-runtime.ts --check",
     "studio-plugin": "bun run src/core/plugin-sdk/cli/index.ts",
     "bench": "bun run scripts/bench/index.ts",
     "bench:bundle": "bun run scripts/bench/index.ts --only=bundle",
