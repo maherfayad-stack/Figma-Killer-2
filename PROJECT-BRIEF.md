@@ -141,7 +141,12 @@ never silently no-ops.
   (Tier 1), `run-project` (Tier 2) — read/written by
   `server/handlers/studio/trustTier.ts` and driven from the client by
   `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion is an
-  explicit user click, never a side effect of loading a page.
+  explicit user click, never a side effect of loading a page. Tier 2
+  (`run-project`) now has a real gated consumer beyond the MCP visual-audit
+  tool: `server/handlers/studio/devServer.ts`'s dev-server process manager
+  (Track L, `live-01`) — one reused, idle-timed subprocess per project,
+  exposed as a polled `status`/`start`/`stop` route family and prewarmed the
+  instant a Tier-2 project's canvas mounts.
 - npm package components (`pkg-01`/`pkg-02`/E4): manifest → bundle → register
   → render is wired end to end for **any** installed package, not just
   `@alm-design/design-system` — `server/handlers/studio/componentBundle.ts`

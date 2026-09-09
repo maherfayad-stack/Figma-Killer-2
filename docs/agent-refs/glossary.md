@@ -189,8 +189,10 @@ toolchain, stored as `.studio/meta.json`'s `trust` field and read/written by
   (`styleCompileTier1.ts` → `styleCompileWorker.ts`), and its package components
   are bundled and rendered on the canvas (`componentBundle.ts` →
   `componentBundleWorker.ts`).
-- **Tier 2 — `run-project`**. What `deploy.ts` gates on: a preview deploy builds
-  the project, which runs its code.
+- **Tier 2 — `run-project`**. What `deploy.ts` gates on (a preview deploy
+  builds the project, which runs its code) and what `devServer.ts` gates on
+  (Track L, `live-01`: one reused dev-server subprocess per project). Both
+  refuse via the shared `requireTrustTier` helper in `trustGate.ts`.
 
 **The parse itself never executes anything at any tier**, and promotion is always
 an explicit user click (`promoteProjectToTier1`, the consent banner, the
