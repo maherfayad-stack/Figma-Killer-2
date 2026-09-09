@@ -62,7 +62,7 @@ import { readStudioMeta } from '../studioMeta'
 import { readPrototypeFile } from '../prototypeStore'
 import { generatedShellFiles, hasLanguageContext, readBoardsForShell, type ShellScreen } from './registryFile'
 import { playerShellFiles } from './playerTemplate'
-import { staticShellFiles } from './shellFiles'
+import { staticShellFiles, VITE_CONFIG_REL_PATH } from './shellFiles'
 import type { ShellFile } from './shellPaths'
 
 export { PROTOTYPE_SHELL_DIR } from './shellPaths'
@@ -107,6 +107,17 @@ export interface EnsureShellResult {
   created: string[]
   /** Generated files whose contents changed. */
   regenerated: string[]
+  /**
+   * `true` when `vite.config.js` exists, does NOT match the hash Studio last
+   * wrote there, and the workspace already had a manifest (so this isn't a
+   * pre-manifest adoption) — i.e. a human has edited it, so this run left it
+   * alone rather than overwriting a hand-added plugin/alias/proxy config.
+   * L3's `studioRuntimeIdPlugin()` (and any future fix to `VITE_CONFIG`'s own
+   * template text) only reaches a workspace in this state if the user
+   * re-adds the import themselves — surfaced here so a caller can say so
+   * instead of silently wondering why live ids never show up.
+   */
+  viteConfigEditedByUser: boolean
 }
 
 /** `pages/SignUp.tsx` -> `SignUp`. The title the board and the flow tab row show. */
@@ -203,7 +214,7 @@ function mergePackageJson(dir: string): boolean {
  * workspace, never a precondition for reading one.
  */
 export function ensurePrototypeShell(dir: string): EnsureShellResult {
-  const result: EnsureShellResult = { created: [], regenerated: [] }
+  const result: EnsureShellResult = { created: [], regenerated: [], viteConfigEditedByUser: false }
   if (!existsSync(dir)) return result
 
   try {
@@ -235,7 +246,10 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       // record to compare against, and the only files in it are ones Studio
       // itself wrote, so it is adopted once and protected from then on.
       const studioWroteIt = present && manifest.files[file.relPath] === sha256(current ?? '')
-      if (present && !studioWroteIt && hadManifest) continue
+      if (present && !studioWroteIt && hadManifest) {
+        if (file.relPath === VITE_CONFIG_REL_PATH) result.viteConfigEditedByUser = true
+        continue
+      }
 
       mkdirSync(dirname(abs), { recursive: true })
       writeFileSync(abs, file.contents, 'utf8')
