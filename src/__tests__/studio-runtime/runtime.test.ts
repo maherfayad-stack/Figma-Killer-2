@@ -191,6 +191,27 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     expect(inserted?.querySelector('img')).toBeNull()
   })
 
+  it.each(['script', 'SCRIPT', 'Script', 'iframe', 'embed', 'object', 'link', 'base', 'style', 'frame', 'frameset'])(
+    'refuses to insert a dangerous element (%s), in any case',
+    (tagName) => {
+      document.body.innerHTML = `<div data-node-id="parent"></div>`
+      const { fakeWindow } = makeFakeParentWindow()
+      bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+      bridge.handleMessage({
+        type: 'optimistic.insert',
+        nodeId: 'new1',
+        parentNodeId: 'parent',
+        index: 0,
+        tagName,
+        text: undefined,
+      })
+
+      expect(document.querySelector('[data-node-id="new1"]')).toBeNull()
+      expect(document.body.querySelector('script, iframe, embed, object, link, base, style, frame, frameset')).toBeNull()
+    },
+  )
+
   it('delete removes the element', () => {
     document.body.innerHTML = `<div data-node-id="gone"></div>`
     const { fakeWindow } = makeFakeParentWindow()

@@ -20,6 +20,7 @@ export {
 
 export {
   RUNTIME_MESSAGE_SOURCE,
+  DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES,
   InboundRuntimeMessageSchema,
   OutboundRuntimeMessageSchema,
   InboundEnvelopeSchema,

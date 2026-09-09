@@ -36,11 +36,16 @@
  *     without ever reaching a handler.
  *   - `optimistic.insert`/`optimistic.text` never touch `innerHTML` — new
  *     elements are built with `document.createElement` + `tagName` (itself
- *     schema-validated to `^[a-zA-Z][a-zA-Z0-9-]*$`), and all text goes
- *     through `Node.textContent`, never a parsed HTML string.
+ *     schema-validated to `^[a-zA-Z][a-zA-Z0-9-]*$`, and further checked
+ *     case-insensitively against `DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES`
+ *     before `createElement` ever runs — `<script>`/`<iframe>`/etc. are
+ *     refused even though this message is already unreachable from an
+ *     untrusted sender), and all text goes through `Node.textContent`,
+ *     never a parsed HTML string.
  */
 import { Value } from '@sinclair/typebox/value'
 import {
+  DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES,
   InboundEnvelopeSchema,
   RUNTIME_MESSAGE_SOURCE,
   toOutboundEnvelope,
@@ -341,6 +346,12 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
 
   // ---- optimistic DOM ops — structured fields only, never innerHTML --------
   function handleOptimisticInsert(nodeId: string, parentNodeId: string, index: number, tagName: string, text: string | undefined): void {
+    // Case-insensitive: `document.createElement` normalizes an HTML tag
+    // name's case regardless of how it was spelled, so `SCRIPT`/`Script`
+    // must be caught the same as `script` — see `messages.ts`'s
+    // `DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES` doc for why this lives here
+    // and not in the schema's regex.
+    if (DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES.has(tagName.toLowerCase())) return
     const parent = findByNodeId(doc, parentNodeId)
     if (!parent) return
     const el = doc.createElement(tagName)

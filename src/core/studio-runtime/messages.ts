@@ -153,6 +153,17 @@ export const SetModeMessageSchema = Type.Object({
  * HMR reconciles the placeholder with the real component once the file
  * write lands.
  */
+/**
+ * Bare alphanumeric tag names only. This regex is case-SENSITIVE (TypeBox's
+ * `pattern` compiles to a plain `new RegExp(pattern)` with no flags, and
+ * ECMAScript regex has no inline case-insensitive modifier), so it cannot
+ * itself be the guard against a dangerous element name typed in a different
+ * case (`SCRIPT`, `IFrame`, ...) — `document.createElement` normalizes case
+ * for HTML tags regardless of how it was spelled. The case-insensitive
+ * denylist against `DANGEROUS_TAG_NAMES` lives in `runtime.ts`'s
+ * `handleOptimisticInsert`, right next to the `createElement` call it
+ * protects, using a plain `.toLowerCase()` comparison instead.
+ */
 export const OptimisticInsertMessageSchema = Type.Object({
   type: Type.Literal('optimistic.insert'),
   nodeId: Type.String({ minLength: 1 }),
@@ -161,6 +172,30 @@ export const OptimisticInsertMessageSchema = Type.Object({
   tagName: Type.String({ minLength: 1, maxLength: 32, pattern: '^[a-zA-Z][a-zA-Z0-9-]*$' }),
   text: Type.Optional(Type.String()),
 })
+
+/**
+ * Elements that can execute code or load external documents/subresources by
+ * merely being connected to the DOM (`<script>`, `<iframe>`, `<embed>`,
+ * `<object>`, `<link>`, `<base>`) or that would silently reinterpret this
+ * frame's own chrome (`<style>`) — never a legitimate `optimistic.insert`
+ * target. The origin+source+envelope checks in `runtime.ts` already make
+ * this message unreachable from anything but the trusted parent, so this is
+ * defense-in-depth, not the only guard — but it is a single, cheap place to
+ * hold the line if that assumption is ever wrong (a future looser
+ * parent-side caller, a bug upstream of this schema). Compared
+ * case-insensitively — see the module doc on `OptimisticInsertMessageSchema`.
+ */
+export const DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES = new Set([
+  'script',
+  'iframe',
+  'embed',
+  'object',
+  'link',
+  'base',
+  'style',
+  'frame',
+  'frameset',
+])
 
 export const OptimisticDeleteMessageSchema = Type.Object({
   type: Type.Literal('optimistic.delete'),

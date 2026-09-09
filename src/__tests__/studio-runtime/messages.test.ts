@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'bun:test'
 import { Value } from '@sinclair/typebox/value'
 import {
+  DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES,
   InboundEnvelopeSchema,
   InboundRuntimeMessageSchema,
   OutboundEnvelopeSchema,
@@ -92,6 +93,24 @@ describe('InboundRuntimeMessageSchema', () => {
       tagName: '<script>',
     }
     expect(Value.Check(InboundRuntimeMessageSchema, bad)).toBe(false)
+  })
+
+  it("accepts a bare dangerous tag name shape-wise — the schema's regex only excludes markup characters, not specific element names", () => {
+    // The denylist itself is enforced case-insensitively in `runtime.ts`'s
+    // `handleOptimisticInsert` (see `DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES`'s
+    // doc for why a regex can't do this job). This test exists so nobody
+    // "fixes" the schema regex to reject `script` and accidentally makes it
+    // reject `SCRIPT` too while still admitting it — i.e. so the two guards
+    // don't silently drift out of sync.
+    const shapeValid = {
+      type: 'optimistic.insert',
+      nodeId: 'n1',
+      parentNodeId: 'p1',
+      index: 0,
+      tagName: 'script',
+    }
+    expect(Value.Check(InboundRuntimeMessageSchema, shapeValid)).toBe(true)
+    expect(DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES.has('script')).toBe(true)
   })
 })
 
