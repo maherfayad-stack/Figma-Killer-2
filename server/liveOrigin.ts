@@ -78,6 +78,35 @@ function parseLivePath(pathname: string): { projectKey: string; rest: string } |
 }
 
 /**
+ * Build the upstream URL for a proxied request, with `baseUrl`'s authority
+ * pinned no matter what `pathAndSearch` contains.
+ *
+ * `new URL(pathAndSearch, baseUrl)` looks like the obvious way to do this,
+ * and it is a host-override vulnerability: the WHATWG URL parser treats a
+ * relative reference beginning with `//` (or a backslash, which it normalizes
+ * to `/`) as "network-path" — it REPLACES the base's authority instead of
+ * resolving against it. A request to `/p/<projectKey>//evil.example/steal`
+ * parses to `rest = '//evil.example/steal'`, and `new URL(rest, status.url)`
+ * silently resolves to `http://evil.example/steal` — this listener would then
+ * make a server-side fetch (SSRF) to an attacker-chosen host, or open an
+ * attacker-chosen WebSocket, entirely outside the intended project's own dev
+ * server. Verified empirically: `new URL('//evil.com/x', 'http://127.0.0.1:5173').host === 'evil.com'`.
+ *
+ * The fix is to never let path input reach the URL constructor's first
+ * argument at all. Parse `baseUrl` alone (authority fixed, from the trusted
+ * `DevServerStatus.url`), then set `.pathname`/`.search` via their setters —
+ * those setters treat the value as pure path/query text and cannot introduce
+ * a new authority, confirmed the same leading-`//`/backslash input above
+ * still resolves to `baseUrl`'s own host when assigned this way.
+ */
+export function resolveUpstreamUrl(baseUrl: string, pathname: string, search: string): URL {
+  const upstream = new URL(baseUrl)
+  upstream.pathname = pathname
+  upstream.search = search
+  return upstream
+}
+
+/**
  * Strip every header that must never cross the proxy boundary, and rewrite
  * `Host` to the upstream's own authority.
  *
@@ -154,8 +183,58 @@ interface LiveOriginSocketData {
    * this listener's outbound connect to a slower dev server) rather than a
    * hypothetical, so every message before `open` is queued here and flushed
    * once the upstream socket is actually ready.
+   *
+   * Bounded by `MAX_PENDING_MESSAGES`/`MAX_PENDING_BYTES` — an upstream that
+   * never opens (hangs, or the dev server is wedged) must not let a client
+   * grow this array without limit; the socket is closed instead once either
+   * cap is hit. See `PENDING_QUEUE_LIMIT_CLOSE_CODE`.
    */
   pending?: (string | Buffer<ArrayBuffer>)[]
+  pendingBytes?: number
+  /** Cancels `UPSTREAM_CONNECT_TIMEOUT_MS`'s watchdog once the upstream socket actually opens (or the browser socket closes first). */
+  connectTimeout?: ReturnType<typeof setTimeout>
+}
+
+/** Caps on the pre-open message queue described on `LiveOriginSocketData.pending` above. */
+const MAX_PENDING_MESSAGES = 1_000
+const MAX_PENDING_BYTES = 5_000_000
+
+/** How long to wait for the outbound upstream `WebSocket` to open before giving up and closing the browser's socket. */
+const UPSTREAM_CONNECT_TIMEOUT_MS = 15_000
+
+/** Non-standard close code range (private use, RFC 6455 §7.4.2) — closing because this listener, not the upstream, gave up. */
+const PENDING_QUEUE_LIMIT_CLOSE_CODE = 1013 // "Try Again Later"
+const UPSTREAM_CONNECT_TIMEOUT_CLOSE_CODE = 1013
+
+function byteLength(message: string | Buffer<ArrayBuffer>): number {
+  return typeof message === 'string' ? Buffer.byteLength(message) : message.byteLength
+}
+
+/** Mutable queue state `enqueuePendingMessage` operates on — the same shape as the relevant slice of `LiveOriginSocketData`, factored out so the cap logic is testable without a live socket. */
+export interface PendingQueueState {
+  pending: (string | Buffer<ArrayBuffer>)[]
+  pendingBytes: number
+}
+
+/**
+ * Append `message` to `state.pending` unless either cap
+ * (`MAX_PENDING_MESSAGES`/`MAX_PENDING_BYTES`) would be exceeded, in which
+ * case `state` is left untouched and the caller closes the socket instead of
+ * growing it further. An upstream dev server that never opens (hung process,
+ * firewalled port) must not let a client hold unbounded memory on this
+ * listener by flooding messages before the upstream handshake completes.
+ */
+export function enqueuePendingMessage(
+  state: PendingQueueState,
+  message: string | Buffer<ArrayBuffer>,
+): 'queued' | 'limit-exceeded' {
+  const bytes = byteLength(message)
+  if (state.pending.length >= MAX_PENDING_MESSAGES || state.pendingBytes + bytes > MAX_PENDING_BYTES) {
+    return 'limit-exceeded'
+  }
+  state.pending.push(message)
+  state.pendingBytes += bytes
+  return 'queued'
 }
 
 /** Minimal shape `handleLiveOriginFetch` needs from `Bun.Server` — just enough to upgrade a socket, and a test seam. */
@@ -202,7 +281,7 @@ export async function handleLiveOriginFetch(
         publicOrigins,
       )
     }
-    const upstream = new URL(rest + url.search, status.url)
+    const upstream = resolveUpstreamUrl(status.url, rest, url.search)
     upstream.protocol = upstream.protocol === 'https:' ? 'wss:' : 'ws:'
     const ok = server.upgrade(req, { data: { upstreamWsUrl: upstream.toString() } })
     return ok ? undefined : new Response('Upgrade failed', { status: 400 })
@@ -216,7 +295,7 @@ export async function handleLiveOriginFetch(
     )
   }
 
-  const upstream = new URL(rest + url.search, status.url)
+  const upstream = resolveUpstreamUrl(status.url, rest, url.search)
   const upstreamReq = new Request(upstream, {
     method: req.method,
     headers: stripHopByHopAndCookies(req.headers, upstream.host),
@@ -268,17 +347,33 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
         const upstream = new WebSocket(ws.data.upstreamWsUrl)
         ws.data.upstream = upstream
         ws.data.pending = []
+        ws.data.pendingBytes = 0
+        // An upstream dev server that never accepts the connection (wedged
+        // process, firewalled port, a bug in L1's registry) must not hold
+        // this browser socket — and its queued messages — open forever.
+        ws.data.connectTimeout = setTimeout(() => {
+          ws.close(UPSTREAM_CONNECT_TIMEOUT_CLOSE_CODE, 'Upstream dev server did not respond')
+          upstream.close()
+        }, UPSTREAM_CONNECT_TIMEOUT_MS)
         upstream.addEventListener('open', () => {
+          clearTimeout(ws.data.connectTimeout)
           for (const message of ws.data.pending ?? []) {
             upstream.send(message)
           }
           ws.data.pending = []
+          ws.data.pendingBytes = 0
         })
         upstream.addEventListener('message', (event) => {
           ws.send(event.data)
         })
-        upstream.addEventListener('close', () => ws.close())
-        upstream.addEventListener('error', () => ws.close(1011))
+        upstream.addEventListener('close', () => {
+          clearTimeout(ws.data.connectTimeout)
+          ws.close()
+        })
+        upstream.addEventListener('error', () => {
+          clearTimeout(ws.data.connectTimeout)
+          ws.close(1011)
+        })
       },
       message(ws, message) {
         const upstream = ws.data.upstream
@@ -287,11 +382,22 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
         } else {
           // The browser's socket can open (and start sending) before this
           // listener's own outbound connect to the upstream dev server
-          // finishes — queue rather than drop or throw.
-          ws.data.pending?.push(message)
+          // finishes — queue rather than drop or throw, but only up to a
+          // bounded size: an upstream that never opens must not let a client
+          // grow this listener's memory without limit.
+          const state: PendingQueueState = { pending: ws.data.pending ?? [], pendingBytes: ws.data.pendingBytes ?? 0 }
+          const result = enqueuePendingMessage(state, message)
+          ws.data.pending = state.pending
+          ws.data.pendingBytes = state.pendingBytes
+          if (result === 'limit-exceeded') {
+            clearTimeout(ws.data.connectTimeout)
+            ws.close(PENDING_QUEUE_LIMIT_CLOSE_CODE, 'Too many messages queued before upstream connected')
+            upstream?.close()
+          }
         }
       },
       close(ws) {
+        clearTimeout(ws.data.connectTimeout)
         ws.data.upstream?.close()
       },
     },

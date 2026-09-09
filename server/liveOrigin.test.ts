@@ -74,8 +74,15 @@ mock.module('./handlers/studio/devServer', () => ({
   getDevServerStatus: (projectKey: string): DevServerStatus | undefined => registry[projectKey],
 }))
 
-const { handleLiveOriginFetch, stripHopByHopAndCookies, stripSetCookie, startLiveOriginServer, getLiveOriginRuntimeOrigin } =
-  await import('./liveOrigin')
+const {
+  handleLiveOriginFetch,
+  stripHopByHopAndCookies,
+  stripSetCookie,
+  resolveUpstreamUrl,
+  enqueuePendingMessage,
+  startLiveOriginServer,
+  getLiveOriginRuntimeOrigin,
+} = await import('./liveOrigin')
 const { readServerConfig } = await import('./config')
 
 const PUBLIC_ORIGIN = 'http://localhost:5173'
@@ -151,6 +158,56 @@ describe('stripSetCookie', () => {
   })
 })
 
+describe('resolveUpstreamUrl', () => {
+  it('pins the upstream authority even when the path is a network-path reference (leading //)', () => {
+    // `new URL('//evil.example/steal', 'http://127.0.0.1:5173')` resolves to
+    // `http://evil.example/steal` per WHATWG URL semantics — this is exactly
+    // the host-override this function exists to prevent. A request to
+    // `/p/<projectKey>//evil.example/steal` parses to this `pathname`.
+    const upstream = resolveUpstreamUrl('http://127.0.0.1:5173', '//evil.example/steal', '')
+    expect(upstream.host).toBe('127.0.0.1:5173')
+    expect(upstream.hostname).not.toBe('evil.example')
+  })
+
+  it('pins the upstream authority for a backslash-prefixed path (browsers normalize \\ to /)', () => {
+    const upstream = resolveUpstreamUrl('http://127.0.0.1:5173', '\\\\evil.example/steal', '')
+    expect(upstream.host).toBe('127.0.0.1:5173')
+  })
+
+  it('still forwards a normal path and query string onto the pinned authority', () => {
+    const upstream = resolveUpstreamUrl('http://127.0.0.1:5173', '/assets/main.js', '?v=2')
+    expect(upstream.href).toBe('http://127.0.0.1:5173/assets/main.js?v=2')
+  })
+})
+
+describe('enqueuePendingMessage', () => {
+  it('queues messages up to the count cap, then reports limit-exceeded without mutating state further', () => {
+    const state = { pending: [] as (string | Buffer<ArrayBuffer>)[], pendingBytes: 0 }
+    let exceededAt = -1
+    for (let i = 0; i < 1_005; i++) {
+      const result = enqueuePendingMessage(state, 'x')
+      if (result === 'limit-exceeded') {
+        exceededAt = i
+        break
+      }
+    }
+    expect(exceededAt).toBe(1_000)
+    expect(state.pending).toHaveLength(1_000)
+  })
+
+  it('reports limit-exceeded once the total buffered byte size cap is crossed, even under the count cap', () => {
+    const state = { pending: [] as (string | Buffer<ArrayBuffer>)[], pendingBytes: 0 }
+    const bigMessage = 'x'.repeat(1_000_000)
+    const results: string[] = []
+    for (let i = 0; i < 6; i++) {
+      results.push(enqueuePendingMessage(state, bigMessage))
+    }
+    expect(results.slice(0, 5)).toEqual(['queued', 'queued', 'queued', 'queued', 'queued'])
+    expect(results[5]).toBe('limit-exceeded')
+    expect(state.pending).toHaveLength(5)
+  })
+})
+
 describe('handleLiveOriginFetch', () => {
   it('returns 404 with code unknown-project for an unregistered projectKey', async () => {
     const req = stubRequest('http://live.local/p/never-heard-of-it/')
@@ -176,6 +233,19 @@ describe('handleLiveOriginFetch', () => {
     const req = stubRequest('http://live.local/p/acme-app/assets/main.js?v=2')
     await handleLiveOriginFetch(req, { upgrade: () => false }, [PUBLIC_ORIGIN], fakeUpstreamFetch(recorded))
     expect(recorded[0].url).toBe(`${UPSTREAM_ORIGIN}/assets/main.js?v=2`)
+  })
+
+  it('never fetches an attacker-chosen host embedded in the path as a network-path reference', async () => {
+    registerProject('acme-app', 'ready')
+    const recorded: RecordedUpstreamRequest[] = []
+    // `//evil.example/steal` is a "network-path reference" per WHATWG URL —
+    // naively resolving it against a base URL replaces the base's authority.
+    // The fetched URL's HOST must stay pinned to the real upstream; the
+    // attacker-chosen text is only legitimate as harmless path content on
+    // that pinned host, never as the host itself.
+    const req = stubRequest('http://live.local/p/acme-app//evil.example/steal')
+    await handleLiveOriginFetch(req, { upgrade: () => false }, [PUBLIC_ORIGIN], fakeUpstreamFetch(recorded))
+    expect(new URL(recorded[0].url).host).toBe(new URL(UPSTREAM_ORIGIN).host)
   })
 
   it('sets a CSP frame-ancestors header scoped to the configured public origin, and no X-Frame-Options', async () => {
@@ -239,6 +309,27 @@ describe('handleLiveOriginFetch', () => {
     )
     expect(res).toBeUndefined()
     expect(capturedUpstreamWsUrl).toBe('ws://127.0.0.1:5173/vite-hmr')
+  })
+
+  it('never derives an attacker-chosen WebSocket host from a network-path reference in the URL', async () => {
+    registerProject('ws-app', 'ready')
+    let capturedUpstreamWsUrl: string | undefined
+    const req = stubRequest('http://live.local/p/ws-app//evil.example/steal', {
+      upgrade: 'websocket',
+      connection: 'Upgrade',
+    })
+    await handleLiveOriginFetch(
+      req,
+      {
+        upgrade: (_req, options) => {
+          capturedUpstreamWsUrl = options.data.upstreamWsUrl
+          return true
+        },
+      },
+      [PUBLIC_ORIGIN],
+      fakeUpstreamFetch([]),
+    )
+    expect(new URL(capturedUpstreamWsUrl!).host).toBe('127.0.0.1:5173')
   })
 })
 
