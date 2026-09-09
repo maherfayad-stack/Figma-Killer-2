@@ -2,7 +2,7 @@
 
 This index maps supported deployment targets to the files, variables, and persistence rules they need.
 
-Studio is one Bun server packaged by the root `Dockerfile`. The server reads runtime configuration from `server/config.ts`: `PORT`, `DATABASE_URL`, `UPLOADS_DIR`, `STATIC_DIR`, `PUBLIC_ORIGIN`, and `TRUSTED_PROXY_CIDRS`. Reversible server secrets, including AI provider credentials, plugin secret settings, and MFA TOTP seeds, are encrypted with `STUDIO_SECRET_KEY` when configured. Database migrations run automatically on boot in `server/index.ts`.
+Studio is one Bun process packaged by the root `Dockerfile`, but it opens TWO listeners: the admin `Bun.serve` on `PORT`, and a second, independent, cookie-free `Bun.serve` on `LIVE_PORT` (`server/liveOrigin.ts`) that proxies a Tier 2 project's own dev server for the live canvas. The server reads runtime configuration from `server/config.ts`: `PORT`, `DATABASE_URL`, `UPLOADS_DIR`, `STATIC_DIR`, `PUBLIC_ORIGIN`, `TRUSTED_PROXY_CIDRS`, `LIVE_PORT`, and `LIVE_ORIGIN`. Reversible server secrets, including AI provider credentials, plugin secret settings, and MFA TOTP seeds, are encrypted with `STUDIO_SECRET_KEY` when configured. Database migrations run automatically on boot in `server/index.ts`.
 
 ---
 
@@ -32,9 +32,15 @@ STATIC_DIR    built admin SPA directory; /app/dist in the Docker image
 STUDIO_SECRET_KEY  base64 32-byte key for encrypted server secrets
 PUBLIC_ORIGIN        comma-separated public origin(s) the CSRF check trusts; auto-detected from RENDER_EXTERNAL_URL / RAILWAY_PUBLIC_DOMAIN on those platforms
 TRUSTED_PROXY_CIDRS  optional; trusts proxy socket peers for forwarded client-IP attribution only (audit logs, rate-limit keys) — NOT used for CSRF
+LIVE_PORT     port for the second, cookie-free Bun.serve listener that proxies live Tier 2 dev servers; defaults to PORT + 1
+LIVE_ORIGIN   public origin of that second listener; defaults to http://localhost:${LIVE_PORT} for local dev — self-hosted/tunneled deployments must set it explicitly
 ```
 
 Generate `STUDIO_SECRET_KEY` with `bun run scripts/generate-secret-key.ts` before adding Anthropic, OpenAI, or OpenRouter credentials or enabling TOTP MFA in production. Without it, the admin can load but saving reversible secrets fails because there is no stable encryption key.
+
+### The live origin needs its own reachable URL
+
+A Tier 2 project (one promoted to run its own dev server for the live canvas) also needs `LIVE_ORIGIN` reachable at whatever URL you set it to — behind a tunnel or reverse proxy this means tunneling/proxying **two** ports/services, not one, and `LIVE_ORIGIN` must match that second public URL exactly the same way `PUBLIC_ORIGIN` must match the first. Getting `LIVE_ORIGIN` wrong does not open a security hole (no cookies ever flow on this origin, correctly configured or not) — it fails closed, as a blank iframe (CSP framing error) or a silently dropped `postMessage` from a target-origin mismatch. If a live frame won't load, check `LIVE_ORIGIN` and the second tunnel/proxy leg before assuming a product bug.
 
 The Docker image sets:
 
