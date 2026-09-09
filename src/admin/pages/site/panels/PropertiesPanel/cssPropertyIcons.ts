@@ -34,6 +34,8 @@ import {
   RowGapIcon,
   CornerRadiusIcon,
   StrokeWeightIcon,
+  WrapIcon,
+  WrapReverseIcon,
 } from '@ui/components/InspectorIcons'
 
 // ---------------------------------------------------------------------------
@@ -69,6 +71,15 @@ export interface IconEnumOption {
  * decode, which is the opposite of the point. `flexDirection`,
  * `justifyContent` and `alignItems` are absent for a different reason:
  * `LayoutSection` already draws them, direction-aware, in its own control.
+ *
+ * `flexWrap` (panel-22, Rule 4) is the one enum here that is NOT the
+ * property's only home: `WrapToggleButton` collapses the common
+ * `nowrap`↔`wrap` choice to a single toggle at the resident row, and this
+ * three-way group is what makes `wrap-reverse` reachable at all, inside the
+ * Layout settings `⚙` (`LayoutSettingsButton`). `WrapIcon`/`WrapReverseIcon`
+ * are drawn in `InspectorIcons.tsx` rather than sourced from the vendored
+ * pixel-art-icons catalogue, which has no wrap glyph — mirrored top-to-bottom
+ * the same way `FlowRowIcon`/`FlowRowReverseIcon` are.
  */
 const ICON_ENUM_OPTIONS = new Map<keyof CSSPropertyBag, ReadonlyArray<IconEnumOption>>([
   ['textAlign', [
@@ -91,6 +102,11 @@ const ICON_ENUM_OPTIONS = new Map<keyof CSSPropertyBag, ReadonlyArray<IconEnumOp
     { value: 'uppercase',  label: 'AG',         tooltip: 'Uppercase' },
     { value: 'lowercase',  label: 'ag',         tooltip: 'Lowercase' },
     { value: 'capitalize', label: 'Ag',         tooltip: 'Capitalize' },
+  ]],
+  ['flexWrap', [
+    { value: 'nowrap',       icon: NoneSlashIcon,   tooltip: 'No wrap' },
+    { value: 'wrap',         icon: WrapIcon,        tooltip: 'Wrap' },
+    { value: 'wrap-reverse', icon: WrapReverseIcon, tooltip: 'Wrap (reverse)' },
   ]],
 ])
 
