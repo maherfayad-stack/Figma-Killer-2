@@ -123,3 +123,21 @@ Bun.serve({
 })
 
 console.log(`[server] Listening on http://localhost:${config.port}`)
+
+// The live origin: a second, cookie-free Bun.serve listener that proxies
+// `/p/<projectKey>/*` to a Tier 2 project's own dev server. Dynamic import
+// matches this file's existing pattern (`handleServerRequest`,
+// `activateInstalledServerPlugins` are both dynamic imports above) and keeps
+// `liveOrigin.ts` out of the startup path if it ever throws before the
+// primary listener is up. Always started (unconditional on trust tier — the
+// live origin gates per-request by reading a project's own dev-server phase,
+// not globally). A bind failure here must not take down the admin server —
+// caught and logged, not rethrown; `GET /admin/api/studio/live-origin`
+// reports `liveOrigin: null` when this failed.
+try {
+  const { startLiveOriginServer } = await import('./liveOrigin')
+  startLiveOriginServer(config)
+  console.log(`[server] Live origin listening on http://localhost:${config.livePort}`)
+} catch (err) {
+  console.error('[server] Live origin listener failed to start:', err)
+}

@@ -2,7 +2,9 @@
 
 Deep dive on the server-side of Studio — the Bun process, the router, the handlers, the auth model, the DB adapter, and how a request becomes a response.
 
-The server is a single `Bun.serve` process that boots the DB, runs migrations, activates installed plugins, then accepts HTTP requests and dispatches them through an ordered route table. There are no separate service processes or message queues. The runtime entrypoint is `server/index.ts`; CPU-heavy image variants and plugin server code run in `Bun.Worker`s owned by this process.
+The server is a single OS process, `server/index.ts`, that boots the DB, runs migrations, activates installed plugins, then accepts HTTP requests and dispatches them through an ordered route table on the admin `Bun.serve` listener. There are no separate service processes or message queues. CPU-heavy image variants and plugin server code run in `Bun.Worker`s owned by this process.
+
+That same process also starts a SECOND, independent `Bun.serve` listener — the live origin (`server/liveOrigin.ts`, on `LIVE_PORT`) — which proxies `/p/<projectKey>/*` (HTTP + WebSocket) to a Tier 2 project's own dev server. It is not a sub-router of the admin listener: no shared code path, no cookies in either direction, its own CSP. See "The live origin" below.
 
 ---
 
@@ -585,6 +587,26 @@ Three static handlers, in order:
 - **Admin shell path-specific serving** (`serveAdminApp`): the two visitor paths inject different content into the shell HTML to minimize perceived load time:
   - **Unauthenticated** (no session cookie): injects a styled login skeleton into `<div id="root">` and a `BOOT_API_KICKOFF` inline script that fires `setupStatus`, `/me`, and `publicSite` fetches at HTML-parse time. FCP shifts from ~400 ms (React mount) to ~DCL (~50 ms), and `useAdminBoot` finds pre-resolved promises instead of waiting for `useEffect`.
   - **Authenticated**: keeps the existing spinner shell, but injects `BOOT_API_KICKOFF`, an `__studioAuthed = 1` flag (lets `main.tsx` skip the post-Suspense concurrent re-render delay), and `<link rel="modulepreload">` hints for the authenticated shell chunk (`AuthenticatedAdmin-*.js`). Only the shell chunk is preloaded here; workspace-page pre-warming is handled in `AuthenticatedAdmin` via `requestIdleCallback` after first paint.
+
+---
+
+## The live origin
+
+`server/liveOrigin.ts` is a SECOND, independent `Bun.serve` listener, started from `server/index.ts` right after the admin listener boots (`startLiveOriginServer(config)`, on `LIVE_PORT`/`config.livePort`). It proxies `/p/<projectKey>/*` (HTTP + WebSocket) to a Tier 2 project's own dev server so a live-running project can be framed on the canvas without ever exposing the admin session to that project's code.
+
+It is deliberately **not** a route on the admin `Bun.serve` — a same-origin proxy would attach the admin session cookie to every request the user's own dependencies make. The live origin is a different TCP socket with its own header policy:
+
+- `Cookie` is stripped from every inbound request before it reaches the upstream dev server; `Set-Cookie` is stripped from every upstream response before it reaches the client. Unconditional, not upstream-behavior-dependent — `stripHopByHopAndCookies` / `stripSetCookie`.
+- `Host` is rewritten to the upstream dev server's own authority (never the client's `Host`), because Vite 7 rejects a Host it doesn't recognize.
+- Every response carries `Content-Security-Policy: frame-ancestors <PUBLIC_ORIGIN...>; frame-src 'none'` (or `'none'` if `PUBLIC_ORIGIN` is unconfigured — fails closed) and `X-Content-Type-Options: nosniff`. No `X-Frame-Options` (no multi-origin form).
+- `projectKey` is looked up against `server/handlers/studio/devServer.ts`'s `getDevServerStatus(projectKey)` (an in-memory, per-process registry L1 owns — see that file). An unknown key is a `404 { code: 'unknown-project' }`; a project whose dev server isn't `phase: 'ready'` is a `503 { code: 'not-ready', phase }`, checked on every proxied request (and re-checked immediately before a WebSocket upgrade) — not once per page load. Trust-tier gating (`trust === 'run-project'`) happens in L1's `ensureDevServer`; the live origin trusts a `ready` phase as sufficient authorization and does not re-read `.studio/meta.json` itself.
+- WebSocket/HMR traffic is terminated and bridged, not tunneled: Bun can't forward a WS handshake through `fetch`, so the live origin calls `server.upgrade` on the browser's socket and opens its own outbound `WebSocket` to the upstream, relaying messages both ways.
+
+`GET /admin/api/studio/live-origin` (`server/handlers/studio/liveOriginInfo.ts`, admin-origin, no project param) returns `{ liveOrigin: string | null }` — the origin the client should target for the frame `src` / postMessage checks, `null` if the listener failed to bind at boot.
+
+Architecture gate: `src/__tests__/architecture/live-origin-isolation.test.ts` asserts `server/liveOrigin.ts` never imports `server/router.ts` or `server/auth/security.ts`, never writes `Set-Cookie`, and that `startLiveOriginServer` has exactly one production call site.
+
+Env vars: `LIVE_PORT` (default `port + 1`) and `LIVE_ORIGIN` (default `http://localhost:${LIVE_PORT}`; self-hosted/tunneled deployments must set it explicitly, exactly like `PUBLIC_ORIGIN` — see `docs/deployment/README.md`).
 
 ---
 

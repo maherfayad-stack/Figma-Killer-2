@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { normalizeOrigin, readServerConfig, resolvePublicOrigins } from '../../../server/config'
+import { normalizeOrigin, readServerConfig, resolveLiveOrigin, resolveLivePort, resolvePublicOrigins } from '../../../server/config'
 
 describe('normalizeOrigin', () => {
   it('lowercases scheme and host and strips the trailing slash', () => {
@@ -99,6 +99,8 @@ describe('readServerConfig', () => {
       staticDir: './dist',
       trustedProxyCidrs: [],
       publicOrigins: [],
+      livePort: 3002,
+      liveOrigin: 'http://localhost:3002',
     })
   })
 
@@ -121,6 +123,46 @@ describe('readServerConfig', () => {
       staticDir: '/srv/studio/dist',
       trustedProxyCidrs: ['10.0.0.0/8', '192.168.0.0/16'],
       publicOrigins: ['https://cms.example.com', 'http://localhost:5173'],
+      livePort: 4322,
+      liveOrigin: 'http://localhost:4322',
     })
+  })
+
+  it('reads LIVE_PORT and LIVE_ORIGIN from env when set', () => {
+    const config = readServerConfig({ PORT: '3001', LIVE_PORT: '6000', LIVE_ORIGIN: 'https://Live.Example.com/' })
+    expect(config.livePort).toBe(6000)
+    expect(config.liveOrigin).toBe('https://live.example.com')
+  })
+})
+
+describe('resolveLivePort', () => {
+  it('defaults to port + 1 when LIVE_PORT is unset', () => {
+    expect(resolveLivePort({}, 3001)).toBe(3002)
+  })
+
+  it('uses LIVE_PORT when set and distinct from port', () => {
+    expect(resolveLivePort({ LIVE_PORT: '6000' }, 3001)).toBe(6000)
+  })
+
+  it('falls back to port + 1 when LIVE_PORT collides with port', () => {
+    expect(resolveLivePort({ LIVE_PORT: '3001' }, 3001)).toBe(3002)
+  })
+
+  it('falls back to port + 1 for a non-numeric LIVE_PORT', () => {
+    expect(resolveLivePort({ LIVE_PORT: 'nope' }, 3001)).toBe(3002)
+  })
+})
+
+describe('resolveLiveOrigin', () => {
+  it('defaults to http://localhost:<livePort> when LIVE_ORIGIN is unset', () => {
+    expect(resolveLiveOrigin({}, 3002)).toBe('http://localhost:3002')
+  })
+
+  it('normalizes an explicit LIVE_ORIGIN the same way PUBLIC_ORIGIN is normalized', () => {
+    expect(resolveLiveOrigin({ LIVE_ORIGIN: 'HTTPS://Live.Example.com/' }, 3002)).toBe('https://live.example.com')
+  })
+
+  it('falls back to the default when LIVE_ORIGIN is not a valid URL', () => {
+    expect(resolveLiveOrigin({ LIVE_ORIGIN: 'not a url' }, 3002)).toBe('http://localhost:3002')
   })
 })
