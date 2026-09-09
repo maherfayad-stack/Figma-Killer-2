@@ -1,0 +1,120 @@
+{
+  "$schema": "penpot-inspector-baseline/measurements-v1",
+  "meta": {
+    "penpotVersion": "2.17.2",
+    "capturedAt": "2026-09-09",
+    "viewportPx": "1600x1000",
+    "zoom": "100%",
+    "themeSetting": "per-account: Dashboard > Your account > Settings > UI THEME (Penpot Dark (default) | Penpot Light | System theme); applies live to open workspace tabs, no reload needed",
+    "note": "Schema authored fresh by panel-designer for this run -- the architect's original schema (referenced from STATE.md panel-20) was never persisted anywhere this execution could read. This file is now the canonical source of truth; 02-measurements.md is generated from it."
+  },
+  "panel": {
+    "widthPx": 318,
+    "horizontalPaddingPx": 12,
+    "backgroundColor": { "dark": "#18181A", "light": "#FFFFFF" },
+    "inspectTabBackgroundColor": { "dark": "#121214", "light": "#FAFAFA" }
+  },
+  "tabBar": {
+    "heightPx": 32,
+    "tabs": ["Design", "Prototype", "Inspect"],
+    "activeTabTextColor": { "dark": "#7EFFF5", "light": "#6911D4" },
+    "inactiveTabTextColor": { "dark": "#8F9DA3", "light": "#495E74" }
+  },
+  "sectionHeader": {
+    "heightPx": 32,
+    "labelFontSizePx": 12,
+    "labelFontWeight": 500,
+    "labelTextTransform": "uppercase",
+    "labelLetterSpacing": "normal",
+    "labelColor": { "dark": "#8F9DA3", "light": "#495E74" },
+    "collapsedEmptyStateHeightPx": 32,
+    "collapsedEmptyStateShowsChevron": false
+  },
+  "field": {
+    "rowHeightPx": 32,
+    "cornerRadiusPx": 8,
+    "backgroundColor": { "dark": "#212426", "light": "#F3F4F6" },
+    "fontSizePx": 14,
+    "textColor": { "dark": "#FFFFFF", "light": "#000000" },
+    "iconLabelSizePx": 16,
+    "innerGlyphSizePx": 12,
+    "internalGapPx": 4
+  },
+  "rowRhythm": {
+    "withinGroupGapPx": 4,
+    "betweenGroupGapPx": 16,
+    "measuredRowOriginsYPxDarkTheme": {
+      "note": "absolute page Y at 100% zoom, viewport top-anchored; illustrates the 4px/16px alternating rhythm, not an api contract",
+      "opacityBlendRow": 132,
+      "widthHeightRow": 180,
+      "xyRow": 216,
+      "rotationRadiusRow": 252
+    }
+  },
+  "nudgeLadder": {
+    "arrowUpDownStep": 1,
+    "shiftArrowUpDownStep": 10,
+    "altArrowUpDownStep": 0.1,
+    "measuredOn": "F1 rectangle, X axis field",
+    "supersedes": "the ±8 value tried and abandoned on origin/fix/inspector-field-ergonomics -- that was a guess, this is measured. The real value matches what that branch called 'Figma's model' (Shift=±10)."
+  },
+  "scrub": {
+    "dragHandle": "the field's own 16x16 icon-label glyph (e.g. the character-x icon left of the X axis input), not a separate strip or the label text",
+    "ratioPxPerUnit": 1,
+    "shiftRatioPxPerUnit": 0.1,
+    "shiftMultiplier": 10,
+    "note": "shiftRatioPxPerUnit expressed as unit-per-px inverse would be 10 units per 1px; kept as measured: a 100px shift-drag moved the value by 1000, a 100px unmodified drag moved it by 100"
+  },
+  "tabOrderFromWidthField": [
+    "Width", "Height", "Lock ratio", "X axis", "Y axis", "Rotation",
+    "Radius", "Show independent radius", "Add layout",
+    "(Fill section controls follow in reading order)"
+  ],
+  "keyboardBehavior": {
+    "enter": "commits the field and blurs it",
+    "escape": "does NOT revert. Measured: focused the X axis field (value 100), selected all text, typed 500, pressed Escape -- field blurred with value permanently set to 500, shape moved on canvas. Treat any 'Esc reverts' assumption in Studio's own inspector as unverified against Penpot and worth re-checking on its own merits, not inherited from this baseline.",
+    "arithmeticInFields": "supported inline -- typing '100+50' into a numeric field and pressing Enter commits 150"
+  },
+  "duplicateShortcut": {
+    "labeled": "⌘D / Ctrl+D",
+    "reliableTrigger": "shape right-click context menu > Duplicate",
+    "note": "the raw keyboard shortcut did not reliably reach the app under browser automation; the context-menu entry is authoritative and is what building the F1 mixed-value sub-case used"
+  },
+  "mixedValueRendering": {
+    "designTab": {
+      "numericField": "the literal text 'Mixed' replaces the value (e.g. the X field shows the word Mixed instead of a number, still inside the normal field chrome)",
+      "fillSection": "collapses to a single row reading the text 'Mixed' in place of a swatch+hex+opacity row, with only a remove ('-') button retained",
+      "strokeSection": "if the property is NOT mixed across the selection (e.g. both shapes share the same stroke), it renders normally -- Mixed is per-property, not per-selection",
+      "selectedColorsSection": "a section separate from Fill/Stroke that lists EVERY distinct color used anywhere in the selection, each as its own full swatch+hex+opacity row plus a 'select items using this style' icon that re-selects just the shapes using that color"
+    },
+    "inspectTab": {
+      "header": "shows '<N> Selected' (e.g. '2 Selected') instead of a layer name",
+      "perPropertyRendering": "does NOT use the word Mixed -- repeats the property's label as its own row once per distinct value (e.g. two separate 'Background' rows, one per fill color, each with its own swatch+hex+opacity)",
+      "geometrySection": "the 'Size and position' section is omitted entirely (not shown with Mixed placeholders) when values would be mixed across the selection"
+    }
+  },
+  "colorFieldChrome": {
+    "inlineRowComposition": ["swatch (click target for the full picker)", "hex text input", "% opacity number field", "remove button"],
+    "inlineRowHeightPx": 28,
+    "fullPickerPopover": "not captured -- clicking the swatch under synthetic pointer automation did not reliably open the saturation/hue popover; not blocking since the inline row above is what the large majority of edits use"
+  },
+  "addPropertyConvention": {
+    "emptySectionRender": "Title + trailing '+' button, one 32px row, no chevron",
+    "onAddClick": "reveals the section's fields AND writes a real default value immediately (e.g. clicking Stroke's '+' writes a visible 1px solid black stroke, not a zero/placeholder value)",
+    "contrastWithStudio": "Studio's own AddablePropertyField (docs/features/inspector-disclosure.md Law 3) explicitly reveals a row and writes NOTHING until the user commits a value -- this is a deliberate, already-decided difference (Studio edits real source files; a silent default write would be a surprising diff), not a gap to close"
+  },
+  "clickCountsToCommonEdit": {
+    "f1_changeFillColor": { "clicks": 2, "steps": ["select the rectangle", "type into the Fill hex field"] },
+    "f1_resizeViaWidthField": { "clicks": 2, "steps": ["select the rectangle", "type into the W field"] },
+    "f1_addStrokeFromEmpty": { "clicks": 2, "steps": ["select the rectangle", "click Stroke's '+' (writes a real default stroke on click, no further input needed for a visible result)"] },
+    "f2_changeFontSize": { "clicks": 2, "steps": ["select the text layer", "type into the Font Size field"] },
+    "f3_changeGapOnBoard": { "clicks": 2, "steps": ["select the board", "type into the column-gap field (row-gap is disabled in single-row mode)"] },
+    "f4_downloadSourceImage": { "clicks": 2, "steps": ["select the image, switch to Inspect tab", "click DOWNLOAD SOURCE IMAGE"] }
+  },
+  "fixtureGeometrySnapshot": {
+    "f1Rectangle": { "xPx": 100, "yPx": 100, "wPx": 240, "hPx": 160, "radiusPx": 8, "fillHex": "1e88e5", "strokeHex": "000000", "strokeWidthPx": 1 },
+    "f2Text": { "xPx": 100, "yPx": 100, "wPx": 300, "hPx": 24, "fontFamily": "Source Sans Pro", "fontSizePx": 24, "fontWeight": 400, "lineHeight": 1.2 },
+    "f3FlexBoard": { "xPx": 100, "yPx": 100, "wPx": 480, "hPx": 200, "columnGapPx": 16, "paddingPx": 24, "childAOriginPx": { "x": 24, "y": 24 }, "childBOriginPx": { "x": 160, "y": 24 } },
+    "f4Image": { "xPx": 100, "yPx": 100, "wPx": 300, "hPx": 200, "fillKind": "image" }
+  }
+}
