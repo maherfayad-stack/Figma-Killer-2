@@ -7,8 +7,10 @@
  *
  * Inline styles are BASE-ONLY — a real HTML `style=""` attribute cannot be
  * media-queried — so this editor ignores the breakpoint / condition switcher
- * entirely and always edits the single inline bag (sectionKey `'base'`). The
- * canvas hover-preview channel is class-keyed, so preview is a no-op here.
+ * entirely and always edits the single inline bag (sectionKey `'base'`).
+ * Hover-preview writes to `previewNodeStyles` (Rule 7, panel-22) — the
+ * inline mirror of the class target's `previewClassStyles` — so a hovered
+ * suggestion shows on the canvas before it commits, with zero undo history.
  *
  * Per-property lock (finding R1 / S4 in docs/audits/2026-08-06/09-refusal-states.md).
  * A node's `codeProps` can name individual inline-style properties that were
@@ -82,6 +84,8 @@ export function InlineStyleComposer({
 }: InlineStyleComposerProps) {
   const setNodeInlineStyles = useEditorStore((s) => s.setNodeInlineStyles)
   const removeNodeInlineStyleProperty = useEditorStore((s) => s.removeNodeInlineStyleProperty)
+  const setPreviewNodeStyles = useEditorStore((s) => s.setPreviewNodeStyles)
+  const clearPreviewNodeStyles = useEditorStore((s) => s.clearPreviewNodeStyles)
 
   const stored: Record<string, unknown> = inlineStyles ?? EMPTY_STYLES
   // Track F1 — same computed-truth-as-base-layer fold `StyleRuleComposer`
@@ -114,6 +118,17 @@ export function InlineStyleComposer({
     const writable = Object.entries(patch).filter(([key]) => !lockedPropertySet.has(key))
     if (writable.length === 0) return
     setNodeInlineStyles(nodeId, Object.fromEntries(writable))
+  }
+
+  // Preview a transient style patch on the canvas while a property control's
+  // hover-suggestion menu is open — the inline mirror of
+  // `StyleRuleComposer.handlePreview`. Lives entirely in store UI state: no
+  // `node.inlineStyles` mutation, no history entry.
+  const handlePreview = (patch: Partial<CSSPropertyBag>) => {
+    setPreviewNodeStyles({ nodeIds: [nodeId], styles: patch })
+  }
+  const handleClearPreview = () => {
+    clearPreviewNodeStyles(nodeId)
   }
 
   return (
@@ -152,9 +167,8 @@ export function InlineStyleComposer({
         onClearProperty={handleRemove}
         onClearProperties={handleClearProperties}
         onChangeMany={handleChangeMany}
-        // Hover-preview is class-keyed in the store; skip it for inline editing.
-        onPreview={noop}
-        onClearPreview={noop}
+        onPreview={handlePreview}
+        onClearPreview={handleClearPreview}
         provenanceByProperty={provenanceByProperty}
         styleTarget={styleTarget}
         textFirst={textFirst}
@@ -162,5 +176,3 @@ export function InlineStyleComposer({
     </>
   )
 }
-
-function noop() {}

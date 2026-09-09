@@ -62,6 +62,7 @@ import {
 } from './canvasFormPreview'
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
+import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
 import { findEnclosingComponentRef, findEnclosingInstance, type AnnotatedPageNode } from './canvasSelectionUtils'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
@@ -172,8 +173,19 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   const endInlineEdit = useEditorStore((s) => s.endInlineEdit)
   const cancelInlineEdit = useEditorStore((s) => s.cancelInlineEdit)
   const editableRef = useRef<HTMLElement | null>(null)
-  const previewClassAssignment = useEditorStore(
-    (s) => s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null,
+  // Canvas preview state for THIS node — the class-target hover preview
+  // (`previewClassAssignment`) and its Rule 7 (panel-22) Element-target
+  // mirror (`previewNodeStyles`), collapsed into one `useShallow`
+  // subscription for the same reason the `activeInlineEdit` triple above is
+  // one: a new per-node preview fact rides an EXISTING subscription instead
+  // of costing another entry against `per-node-selector-budget.test.ts`'s
+  // budget. Both are filtered to this node's id so unrelated nodes never
+  // re-render while a preview is live elsewhere.
+  const { previewClassAssignment, previewNodeStyles } = useEditorStore(
+    useShallow((s) => ({
+      previewClassAssignment: s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null,
+      previewNodeStyles: s.previewNodeStyles?.nodeIds.includes(nodeId) ? s.previewNodeStyles : null,
+    })),
   )
   const editorFormPreviewState = useEditorStore((s) => resolveEditorFormPreviewState(s, nodeId))
   const editorFormPreviewSuccessMessage = useEditorStore((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId))
@@ -304,7 +316,9 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     sel.addRange(range)
   }, [isInlineEditing, inlineEditInitialValue])
 
-  const inlineStyle = useResponsiveBackgroundStyle(node?.inlineStyles)
+  const inlineStyle = useResponsiveBackgroundStyle(
+    mergePreviewedInlineStyles(node?.inlineStyles, previewNodeStyles, nodeId),
+  )
 
   if (!node) return null
   if (node.hidden) return null
