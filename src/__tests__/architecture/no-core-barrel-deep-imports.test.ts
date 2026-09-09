@@ -54,6 +54,13 @@ const BARRELLED_MODULES = [
   // navigation code. `codeFlow.ts`'s AST rules are what the connector layer and
   // the panel both read; neither may reach past the barrel to a looser variant.
   'studio-prototype',
+  // The live-frame runtime bridge (Track L, `live-04`). `runtime.ts` is built
+  // to one standalone ESM file served to a real browser from the live
+  // origin, and the four rule modules it shares with the portal-mode canvas
+  // injectors (`hoverSuppressionRules`/`scrollUnrollRules`/
+  // `animationFreezeRules`/`selectionChromeCss`) must stay ONE implementation
+  // each — a deep import is how a second, drifted copy would get made.
+  'studio-runtime',
 ]
 
 // Scan production + test sources in both the app and the server.
