@@ -26,6 +26,7 @@
  */
 import { useEffect, useRef, type RefObject } from 'react'
 import type { Page } from '@core/page-tree'
+import { resolvePortalDocument } from '../frameAdapter/resolvePortalDocument'
 import { getFramePoster, setFramePoster } from './frameSnapshotCache'
 
 /** Let images/fonts/layout settle before rasterizing a freshly on-screen frame. */
@@ -51,7 +52,12 @@ export function useFramePosterCapture(
     const timer = setTimeout(() => {
       if (cancelled) return
       const iframe = frameBodyRef.current?.querySelector('iframe')
-      if (!iframe?.contentDocument?.documentElement) return
+      // Portal-mode only: `html-to-image` needs a real, same-origin
+      // `documentElement` to rasterize — a bridge-registered iframe (or an
+      // unregistered one) resolves `null` here and this poster is simply
+      // skipped, same deferral as every other pixel-capture concern this
+      // migration has logged (`live-05`, STATE.md).
+      if (!iframe || !resolvePortalDocument(iframe)?.documentElement) return
       inFlightRef.current = { page, width }
       void capturePoster(iframe, page, width)
     }, POSTER_SETTLE_DELAY_MS)
@@ -65,7 +71,7 @@ export function useFramePosterCapture(
 
 async function capturePoster(iframe: HTMLIFrameElement, page: Page, width: number): Promise<void> {
   try {
-    const documentElement = iframe.contentDocument?.documentElement
+    const documentElement = resolvePortalDocument(iframe)?.documentElement
     if (!documentElement) return
     const captureWidth = iframe.clientWidth || width
     const captureHeight = iframe.clientHeight || captureWidth
