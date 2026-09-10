@@ -20,7 +20,26 @@ import {
 } from './canvasTreeLadder'
 import { escapeCssAttributeValue } from './canvasNodeLookup'
 import { measureCanvasElementRect } from './canvasOverlayGeometry'
+import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import styles from './BreakpointSelectionOverlay.module.css'
+
+/**
+ * The frame's `Document`, through the portal-mode escape hatch (`live-05`,
+ * STATE.md, Batch 6) instead of a direct `iframeElement.contentDocument`
+ * reach-in. `null` for an unregistered iframe (not booted yet — callers
+ * already poll/retry, unchanged) OR a bridge-registered one — a genuine,
+ * documented gap: Alt-hover tree-ladder inspection has no bridge-mode
+ * equivalent yet (it needs real DOM `mousemove`/`keydown` listeners inside
+ * the frame document, the same class of thing `useIframeEventForwarding.ts`'s
+ * keyboard-forwarding gap already flags), not silently unsupported.
+ */
+function resolvePortalDocument(iframeElement: HTMLIFrameElement | null): Document | null {
+  if (!iframeElement) return null
+  const adapter = listFrameAdapters().get(iframeElement)
+  if (!adapter || !isPortalFrameAdapter(adapter)) return null
+  return adapter.getPortalWindow()?.document ?? null
+}
 
 const EMPTY_STYLE_RULES: StyleRuleRegistry = {}
 const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
@@ -145,7 +164,7 @@ export function useCanvasTreeLadderOverlay({
 
     const attach = () => {
       if (iframeDoc) return
-      const nextDoc = iframeElement?.contentDocument ?? null
+      const nextDoc = resolvePortalDocument(iframeElement)
       if (!nextDoc) {
         frame = requestAnimationFrame(attach)
         return
@@ -240,7 +259,7 @@ export function useCanvasTreeLadderOverlay({
     let frame = 0
     const attachIframeDocument = () => {
       if (iframeDoc) return
-      const nextDoc = iframeElement?.contentDocument ?? null
+      const nextDoc = resolvePortalDocument(iframeElement)
       if (!nextDoc) {
         frame = requestAnimationFrame(attachIframeDocument)
         return
@@ -349,7 +368,7 @@ function positionTreeLadder(
     return
   }
 
-  const iframeDoc = iframe.contentDocument
+  const iframeDoc = resolvePortalDocument(iframe)
   if (!iframeDoc) {
     ladder.style.display = 'none'
     return
