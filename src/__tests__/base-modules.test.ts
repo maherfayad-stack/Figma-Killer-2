@@ -21,7 +21,8 @@ import './matchers'  // Register toBeCleanHTML
 import { runModuleConformanceSuite, renderModule, withBannedGlobals } from './helpers'
 import { escapeProps } from '@core/publisher'
 import { resolveHtmlTagBadge } from '@core/module-engine'
-import { CanvasDocumentContext } from '@site/canvas/CanvasContexts'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 
 // ---------------------------------------------------------------------------
 // Import base modules (self-register into global registry on import)
@@ -427,17 +428,26 @@ describe('base.body — render() specifics', () => {
   })
 
   it('applies editor identity to the iframe body without wrapping children', () => {
-    const editorDocument = document.implementation.createHTMLDocument('canvas')
+    // Registered through the same portal-mode escape hatch every real
+    // canvas frame uses (`live-05`, STATE.md) — a bare
+    // `document.implementation.createHTMLDocument()` has no `defaultView`,
+    // so `PortalFrameAdapter.getPortalWindow()` would resolve to `null` and
+    // `BodyEditor` would silently no-op. A real iframe's `contentDocument`
+    // has one.
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const editorDocument = iframe.contentDocument!
     editorDocument.body.className = 'frame-default'
     editorDocument.body.dataset.breakpointId = 'desktop'
     editorDocument.body.style.backgroundColor = 'rgb(1, 2, 3)'
     const mount = editorDocument.createElement('div')
     editorDocument.body.appendChild(mount)
+    const adapter = new PortalFrameAdapter(editorDocument)
 
     const { container, unmount } = renderReact(
       React.createElement(
-        CanvasDocumentContext.Provider,
-        { value: editorDocument },
+        CanvasFrameAdapterContext.Provider,
+        { value: adapter },
         React.createElement(BodyModule.component, {
           props: {
             htmlAttributes: {
@@ -500,6 +510,9 @@ describe('base.body — render() specifics', () => {
     expect(editorDocument.body.hasAttribute('data-module-id')).toBe(false)
     expect(editorDocument.body.hasAttribute('data-canvas-selected')).toBe(false)
     expect(editorDocument.body.hasAttribute('tabindex')).toBe(false)
+
+    adapter.dispose()
+    iframe.remove()
   })
 
   it('does not access DOM globals during publish render', () => {

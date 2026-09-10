@@ -19,20 +19,35 @@ import { use, useEffect } from 'react'
 import type { ModuleComponentProps, NodeWrapperProps as NodeWrapperPropsType } from '@core/module-engine'
 import { applyIframeBodyPresentation } from '@site/canvas/iframeBodyPresentation'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
-import { CanvasDocumentContext } from '@site/canvas/CanvasContexts'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { isPortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 
 type BodyProps = { htmlAttributes?: unknown }
 
+/**
+ * Portal-mode only (`live-05`, STATE.md, matching `CanvasComposedTree.tsx`'s
+ * `IframeBodyPresentationOwner`): claiming the iframe's `<body>` as this
+ * node's own element — attributes, selection/hover state, and every DOM
+ * event listener the editor wires up — needs a real, mutable `HTMLElement`,
+ * which a cross-origin bridge frame can't hand across the origin boundary.
+ * Reached via the sanctioned `isPortalFrameAdapter`/`getPortalWindow()`
+ * escape hatch instead of the deprecated `CanvasDocumentContext`. A
+ * bridge-mode Tier 2 frame's `<body>` stays exactly as the dev server
+ * rendered it — no selection/hover/click wiring on the body element yet;
+ * see the bridge-mode gaps already logged for `useIframeEventForwarding.ts`
+ * and `CanvasDiagnosticsInjector.tsx`.
+ */
 export const BodyEditor = ({
   children,
   mcClassName,
   nodeWrapperProps,
   props,
 }: ModuleComponentProps<BodyProps>) => {
-  const iframeDocument = use(CanvasDocumentContext)
+  const adapter = use(CanvasFrameAdapterContext)
 
   useEffect(() => {
-    const body = iframeDocument?.body
+    if (!adapter || !isPortalFrameAdapter(adapter)) return
+    const body = adapter.getPortalWindow()?.document.body
     if (!body) return
     return applyEditorAttrsToBody(
       body,
@@ -40,7 +55,7 @@ export const BodyEditor = ({
       nodeWrapperProps,
       htmlAttributesForReact(props.htmlAttributes),
     )
-  }, [iframeDocument, mcClassName, nodeWrapperProps, props.htmlAttributes])
+  }, [adapter, mcClassName, nodeWrapperProps, props.htmlAttributes])
 
   return children
 }
