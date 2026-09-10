@@ -17,6 +17,7 @@
 import { getColorSchemeCapability } from '@site/studio/previewAxesCapability'
 import type { PreviewAxes } from '@core/studio-board'
 import {
+  OVERLAY_ID_ATTR,
   SELECTION_CHROME_RULES,
   SELECTION_OVERLAY_ROOT_ID,
   SELECTION_STYLE_TAG_ID,
@@ -41,21 +42,24 @@ import type {
 
 const NODE_ID_ATTR = 'data-node-id'
 const OVERLAY_STYLE_ID_PREFIX = 'studio-portal-adapter-overlay-'
-const OVERLAY_ID_ATTR = 'data-studio-overlay-id'
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-portal-adapter-scroll-unroll'
 const RUNTIME_ANIMATION_STYLE_ID = 'studio-portal-adapter-animation-freeze'
 
 /**
  * The page-content stylesheets hover suppression is allowed to rewrite, by
- * the `id` each injector gives its `<style>` element — an ALLOWLIST, not a
- * denylist, so the editor's own chrome (selection overlay, resize handles)
- * never has its real `:hover` affordances suppressed. Mirrors
+ * the LOGICAL id each of the five CSS-text injectors passes to
+ * `applyOverlay` (`mc-vendor`, `mc-authored`, `mc-classes`, `mc-user-styles`)
+ * — an ALLOWLIST, not a denylist, so the editor's own chrome (selection
+ * overlay, resize handles) never has its real `:hover` affordances
+ * suppressed. Matched against `owner.getAttribute(OVERLAY_ID_ATTR)`, NOT
+ * `owner.id` — every `applyOverlay`-managed style element's physical DOM
+ * `id` is prefixed (`OVERLAY_STYLE_ID_PREFIX`), so the bare logical name
+ * only ever appears in this attribute. Mirrors
  * `CanvasHoverSuppressionInjector.tsx`'s own `CONTENT_STYLE_IDS` exactly;
  * duplicated here (not imported) because that component is itself migrating
- * to call THIS adapter in Batch 5 — see `STATE.md`'s `live-05` entry. Once
- * that batch lands, this is the one copy; until then it is a second,
- * intentionally-identical one that nothing calls yet (Batch 1 is additive
- * only).
+ * to call THIS adapter in a later batch — see `STATE.md`'s `live-05` entry.
+ * Once that batch lands, this is the one copy; until then it is a second,
+ * intentionally-identical one.
  */
 const CONTENT_STYLE_IDS = new Set(['mc-vendor', 'mc-authored', 'mc-classes', 'mc-user-styles'])
 
@@ -316,7 +320,10 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       this.animationController = null
       return
     }
-    this.hoverController ??= startHoverSuppression(this.doc, (owner) => CONTENT_STYLE_IDS.has(owner.id))
+    this.hoverController ??= startHoverSuppression(
+      this.doc,
+      (owner) => CONTENT_STYLE_IDS.has(owner.getAttribute(OVERLAY_ID_ATTR) ?? owner.id),
+    )
     this.scrollController ??= startScrollUnroll(this.doc, RUNTIME_SCROLL_UNROLL_STYLE_ID)
     this.animationController ??= startAnimationFreeze(this.doc, RUNTIME_ANIMATION_STYLE_ID)
   }

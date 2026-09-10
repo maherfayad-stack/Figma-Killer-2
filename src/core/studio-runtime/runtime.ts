@@ -62,12 +62,12 @@ import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
 import { findNthNodeById, occurrenceIndexOf } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
+import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
 const NODE_ID_ATTR = 'data-node-id'
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
 const RUNTIME_ANIMATION_STYLE_ID = 'studio-runtime-animation-freeze'
 const OVERLAY_STYLE_ID_PREFIX = 'studio-runtime-overlay-'
-const OVERLAY_ID_ATTR = 'data-studio-overlay-id'
 
 /** A generic RTL stand-in — mirrors `previewAxesFrameEffect.ts`'s `RTL_PREVIEW_LANG` (Studio has no real per-project locale to reach for here; see `setAxes` below for why this file does not import that module directly). */
 const RTL_PREVIEW_LANG = 'ar'

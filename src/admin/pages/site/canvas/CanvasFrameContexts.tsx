@@ -20,19 +20,32 @@
  */
 import type { ReactNode } from 'react'
 import type { PreviewAxes } from '@core/studio-board'
-import { CanvasDocumentContext, CanvasFrameElementContext, CanvasInteractionContext } from './CanvasContexts'
+import {
+  CanvasDocumentContext,
+  CanvasFrameAdapterContext,
+  CanvasFrameElementContext,
+  CanvasInteractionContext,
+} from './CanvasContexts'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import type { IframeInteraction } from './iframeBodyReset'
 import { FramePreviewAxesContext } from './previewAxesFrameEffect'
 
 export function CanvasFrameContexts({
   frameElement,
   frameDocument,
+  adapter,
   axes,
   interaction,
   children,
 }: {
   frameElement: HTMLIFrameElement | null
   frameDocument: Document
+  /**
+   * The frame's `FrameDocumentAdapter` — see `CanvasFrameAdapterContext`'s
+   * own doc. `IframeFrameSurface` constructs this (`PortalFrameAdapter` for
+   * `documentMode: 'portal'`, today's only real mode).
+   */
+  adapter: FrameDocumentAdapter | null
   /** The frame's EFFECTIVE axes — see `FramePreviewAxesContext` for why a component may need these and `html[dir]` is not enough. */
   axes: PreviewAxes
   /** Editing surface or live page — see `CanvasInteractionContext`. */
@@ -41,11 +54,16 @@ export function CanvasFrameContexts({
 }) {
   return (
     <CanvasFrameElementContext.Provider value={frameElement}>
-      <CanvasDocumentContext.Provider value={frameDocument}>
-        <CanvasInteractionContext.Provider value={interaction}>
-          <FramePreviewAxesContext.Provider value={axes}>{children}</FramePreviewAxesContext.Provider>
-        </CanvasInteractionContext.Provider>
-      </CanvasDocumentContext.Provider>
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        {/* `CanvasDocumentContext` is deprecated — remaining consumers are
+            migrating to `CanvasFrameAdapterContext` above (STATE.md,
+            `live-05`). Deleted once none are left. */}
+        <CanvasDocumentContext.Provider value={frameDocument}>
+          <CanvasInteractionContext.Provider value={interaction}>
+            <FramePreviewAxesContext.Provider value={axes}>{children}</FramePreviewAxesContext.Provider>
+          </CanvasInteractionContext.Provider>
+        </CanvasDocumentContext.Provider>
+      </CanvasFrameAdapterContext.Provider>
     </CanvasFrameElementContext.Provider>
   )
 }

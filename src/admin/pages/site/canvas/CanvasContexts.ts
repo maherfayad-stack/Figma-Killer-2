@@ -2,6 +2,7 @@ import { createContext, type MouseEvent, type RefObject } from 'react'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import type { CanvasTransform } from '@site/hooks/useCanvas'
 import type { IframeInteraction } from './iframeBodyReset'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
 /**
  * WS-10 Phase 2 — `frameId` is a SEPARATE dimension from `breakpointId`, not
@@ -70,8 +71,27 @@ export const CanvasBreakpointContext = createContext<string | undefined>(undefin
  */
 export const CanvasPageContext = createContext<string | null>(null)
 export const CanvasTemplateContext = createContext<TemplateRenderDataContext | undefined>(undefined)
-/** Final srcDoc document owned by the nearest IframeFrameSurface. */
+/**
+ * Final srcDoc document owned by the nearest IframeFrameSurface.
+ *
+ * @deprecated `live-05` (STATE.md) is migrating every consumer to
+ * `CanvasFrameAdapterContext` — a raw `Document` reach-in cannot be
+ * satisfied by a cross-origin Tier 2 bridge frame. This context is deleted
+ * outright (not widened to `Document | null`) once every consumer below has
+ * migrated — see that entry's "batch ordering is load-bearing" note. Do not
+ * add a new consumer of this context.
+ */
 export const CanvasDocumentContext = createContext<Document | null>(null)
+/**
+ * The `FrameDocumentAdapter` for the nearest `IframeFrameSurface` — `null`
+ * only before the surface's iframe document exists yet (never null once a
+ * frame has actually loaded). Every injector/hook under `canvas/` reads the
+ * frame's document through this adapter instead of a raw `Document`, so the
+ * SAME call sites drive a same-origin portal frame (`PortalFrameAdapter`) or
+ * a cross-origin Tier 2 bridge frame (`BridgeFrameAdapter`) — see
+ * `frameAdapter/FrameDocumentAdapter.ts` and `STATE.md`'s `live-05` entry.
+ */
+export const CanvasFrameAdapterContext = createContext<FrameDocumentAdapter | null>(null)
 /** Host iframe element owned by the nearest IframeFrameSurface. */
 export const CanvasFrameElementContext = createContext<HTMLIFrameElement | null>(null)
 /**

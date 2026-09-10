@@ -11,25 +11,46 @@
 import { describe, expect, it, afterEach } from 'bun:test'
 import { render, cleanup } from '@testing-library/react'
 import { EditorChromeInjector } from '@site/canvas/EditorChromeInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 
-afterEach(cleanup)
+let adapter: PortalFrameAdapter | null = null
 
-/** A detached document whose :root carries admin typography and spacing tokens. */
-function makeParentDoc(): Document {
+const ADMIN_TOKEN_PROPS = ['--font-sans', '--text-xs', '--text-s', '--space-s', '--space-xl']
+
+afterEach(() => {
+  cleanup()
+  adapter?.dispose()
+  adapter = null
+  for (const prop of ADMIN_TOKEN_PROPS) document.documentElement.style.removeProperty(prop)
+})
+
+/**
+ * `EditorChromeInjector` always reads the ADMIN's own top-level `document`
+ * (never a `parentDocument` prop — see that component's own doc) for its
+ * token forwarding, so this sets the tokens directly on the real global
+ * `document.documentElement` rather than a detached stand-in.
+ */
+function setAdminTokens(): void {
   document.documentElement.style.setProperty('--font-sans', '"Inter Variable", system-ui, sans-serif')
   document.documentElement.style.setProperty('--text-xs', 'clamp(10px, calc(9.629px + 0.095vw), 11px)')
   document.documentElement.style.setProperty('--text-s', 'clamp(11px, calc(10.629px + 0.095vw), 12px)')
   document.documentElement.style.setProperty('--space-s', 'clamp(6px, calc(5.257px + 0.19vw), 8px)')
   document.documentElement.style.setProperty('--space-xl', 'clamp(12px, calc(11.257px + 0.19vw), 14px)')
-  return document
 }
 
 describe('EditorChromeInjector font isolation', () => {
   it('forwards editor chrome tokens under chrome-namespaced variables, never site Framework tokens', () => {
+    setAdminTokens()
     const target = document.implementation.createHTMLDocument('iframe')
-    render(<EditorChromeInjector targetDocument={target} parentDocument={makeParentDoc()} />)
+    adapter = new PortalFrameAdapter(target)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <EditorChromeInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
-    const css = target.getElementById('studio-editor-chrome')?.textContent ?? ''
+    const css = target.querySelector('[data-studio-overlay-id="studio-editor-chrome"]')?.textContent ?? ''
     expect(css).not.toBe('')
 
     // The chrome font is exposed as a namespaced var carrying the editor font…

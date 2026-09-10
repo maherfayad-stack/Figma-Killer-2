@@ -55,35 +55,25 @@
  * now writes `data-theme` explicitly in BOTH schemes for exactly the reason
  * this pin existed. See `VENDOR_THEME_ATTR` there.
  */
-import { useEffect, useSyncExternalStore } from 'react'
+import { useContext, useEffect, useSyncExternalStore } from 'react'
 import { getStudioVendorCss, subscribeStudioVendorCss } from '@site/studio/fsCodemodAdapter'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 import { buildVendorCss } from './canvasVendorCss'
 
 const STYLE_TAG_ID = 'mc-vendor'
 
-export function ProjectCssInjector({ targetDocument }: { targetDocument?: Document } = {}) {
+export function ProjectCssInjector() {
   const projectVendorCss = useSyncExternalStore(subscribeStudioVendorCss, getStudioVendorCss, getStudioVendorCss)
+  const adapter = useContext(CanvasFrameAdapterContext)
 
   useEffect(() => {
-    const doc = targetDocument ?? document
-    let styleEl = doc.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
-    if (!styleEl) {
-      styleEl = doc.createElement('style')
-      styleEl.id = STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'ProjectCssInjector')
-      // Prepend so this stylesheet — and the layer-order declaration it opens
-      // with — is read before any `@layer user-authored` stylesheet, giving
-      // the pre-declaration the best chance of being the very first mention
-      // of either layer name. See `canvasCssLayers.ts` for why every side
-      // repeats the declaration regardless.
-      doc.head.insertBefore(styleEl, doc.head.firstChild)
-    }
-    styleEl.textContent = buildVendorCss(projectVendorCss)
+    if (!adapter) return
+    adapter.applyOverlay(STYLE_TAG_ID, buildVendorCss(projectVendorCss))
+  }, [adapter, projectVendorCss])
 
-    return () => {
-      doc.getElementById(STYLE_TAG_ID)?.remove()
-    }
-  }, [targetDocument, projectVendorCss])
+  useEffect(() => {
+    return () => adapter?.removeOverlay(STYLE_TAG_ID)
+  }, [adapter])
 
   return null
 }

@@ -23,13 +23,21 @@
  * allowlist: a live frame IS the project's own document.)
  */
 import { useEffect } from 'react'
-import { startHoverSuppression } from '@core/studio-runtime'
+import { OVERLAY_ID_ATTR, startHoverSuppression } from '@core/studio-runtime'
 
 /**
- * The page-content stylesheets, by the `id` each injector gives its `<style>`
- * element. Kept here rather than imported from four modules that each keep it
- * as a private `STYLE_TAG_ID` const — the list is this component's own
- * question ("whose CSS belongs to the page?"), not those modules' API.
+ * The page-content stylesheets, by the LOGICAL id each of the five CSS-text
+ * injectors passes to `adapter.applyOverlay` (`mc-vendor`, `mc-authored`,
+ * `mc-classes`, `mc-user-styles`) — kept here rather than imported from those
+ * modules' own private `STYLE_TAG_ID` consts, since the list is this
+ * component's own question ("whose CSS belongs to the page?"), not those
+ * modules' API.
+ *
+ * Matched against `owner.getAttribute(OVERLAY_ID_ATTR)`, not `owner.id`:
+ * since `live-05` (STATE.md), those four injectors mount through
+ * `PortalFrameAdapter.applyOverlay`, whose managed style elements carry a
+ * PREFIXED physical DOM `id` and store the bare logical name in this
+ * attribute instead — see `overlayStyleAttr.ts`'s own doc.
  */
 const CONTENT_STYLE_IDS = new Set(['mc-vendor', 'mc-authored', 'mc-classes', 'mc-user-styles'])
 
@@ -41,7 +49,10 @@ export function CanvasHoverSuppressionInjector({ targetDocument }: CanvasHoverSu
   useEffect(() => {
     const doc = targetDocument
     if (!doc) return
-    const controller = startHoverSuppression(doc, (owner) => CONTENT_STYLE_IDS.has(owner.id))
+    const controller = startHoverSuppression(
+      doc,
+      (owner) => CONTENT_STYLE_IDS.has(owner.getAttribute(OVERLAY_ID_ATTR) ?? owner.id),
+    )
     return () => controller.dispose()
   }, [targetDocument])
 

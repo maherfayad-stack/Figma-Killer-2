@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import React from 'react'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { ClassStyleInjector } from '@site/canvas/ClassStyleInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { useEditorStore } from '@site/store/store'
 import { classKindSelector, DEFAULT_BREAKPOINTS, type StyleRule } from '@core/page-tree'
 import { refreshCmsMediaAssetCache } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
@@ -67,6 +69,8 @@ function resetEditorStore() {
 }
 
 describe('ClassStyleInjector media backgrounds', () => {
+  let adapter: PortalFrameAdapter | null = null
+
   beforeEach(() => {
     cleanup()
     document.head.replaceChildren()
@@ -82,6 +86,8 @@ describe('ClassStyleInjector media backgrounds', () => {
 
   afterEach(() => {
     cleanup()
+    adapter?.dispose()
+    adapter = null
     document.head.replaceChildren()
     document.body.replaceChildren()
     refreshCmsMediaAssetCache()
@@ -90,7 +96,12 @@ describe('ClassStyleInjector media backgrounds', () => {
   })
 
   it('rewrites persisted class background images after the site loads during editor reload', async () => {
-    render(<ClassStyleInjector targetDocument={document} />)
+    adapter = new PortalFrameAdapter(document)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ClassStyleInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
     await act(async () => {
       useEditorStore.setState({
@@ -105,7 +116,7 @@ describe('ClassStyleInjector media backgrounds', () => {
     })
 
     await waitFor(() => {
-      const css = document.head.querySelector<HTMLStyleElement>('style#mc-classes')?.textContent ?? ''
+      const css = document.head.querySelector<HTMLStyleElement>('[data-studio-overlay-id="mc-classes"]')?.textContent ?? ''
       expect(css).toContain(`background-image: url("${variantPath}");`)
       expect(css).toContain('background-image: image-set(')
       expect(css).not.toContain(backgroundPath)

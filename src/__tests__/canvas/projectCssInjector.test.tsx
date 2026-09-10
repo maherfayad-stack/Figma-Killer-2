@@ -15,11 +15,29 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, render } from '@testing-library/react'
 import { ProjectCssInjector } from '@site/canvas/ProjectCssInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { createVendorCssMemo } from '@site/canvas/canvasVendorCss'
 import { fsCodemodAdapter, getStudioVendorCss } from '@admin/pages/site/studio/fsCodemodAdapter'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER, VENDOR_LAYER } from '@site/canvas/canvasCssLayers'
 
-afterEach(cleanup)
+let adapters: PortalFrameAdapter[] = []
+
+afterEach(() => {
+  cleanup()
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
+})
+
+function makeAdapter(target: Document): PortalFrameAdapter {
+  const adapter = new PortalFrameAdapter(target)
+  adapters.push(adapter)
+  return adapter
+}
+
+function overlayCss(target: Document, logicalId: string): string {
+  return target.querySelector(`[data-studio-overlay-id="${logicalId}"]`)?.textContent ?? ''
+}
 
 const originalFetch = globalThis.fetch
 
@@ -59,9 +77,14 @@ describe('ProjectCssInjector', () => {
     await loadVendorCss('.btn--primary { color: hotpink }')
 
     const target = document.implementation.createHTMLDocument('iframe')
-    render(<ProjectCssInjector targetDocument={target} />)
+    const adapter = makeAdapter(target)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ProjectCssInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
-    const css = target.getElementById('mc-vendor')?.textContent ?? ''
+    const css = overlayCss(target, 'mc-vendor')
     expect(css).toContain(CANVAS_CSS_LAYER_ORDER)
     expect(css).toContain(`@layer ${VENDOR_LAYER} {`)
     expect(css).toContain('.btn--primary { color: hotpink }')
@@ -75,9 +98,14 @@ describe('ProjectCssInjector', () => {
     await loadVendorCss('')
 
     const target = document.implementation.createHTMLDocument('iframe')
-    render(<ProjectCssInjector targetDocument={target} />)
+    const adapter = makeAdapter(target)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ProjectCssInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
-    const css = target.getElementById('mc-vendor')?.textContent ?? ''
+    const css = overlayCss(target, 'mc-vendor')
     expect(css).toContain(CANVAS_CSS_LAYER_ORDER)
     // The bundled @alm-design/design-system CSS is a second, always-present
     // source (see the module doc) — real component rules are still expected,
@@ -88,9 +116,14 @@ describe('ProjectCssInjector', () => {
     await loadVendorCss('.acme-btn { color: teal }')
 
     const target = document.implementation.createHTMLDocument('iframe')
-    render(<ProjectCssInjector targetDocument={target} />)
+    const adapter = makeAdapter(target)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ProjectCssInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
-    const css = target.getElementById('mc-vendor')?.textContent ?? ''
+    const css = overlayCss(target, 'mc-vendor')
     const layerOpen = css.indexOf(`@layer ${VENDOR_LAYER} {`)
     const acmeIndex = css.indexOf('.acme-btn')
     expect(layerOpen).toBeGreaterThanOrEqual(0)
@@ -100,14 +133,23 @@ describe('ProjectCssInjector', () => {
   it('reflects a fresh vendor CSS value after a reload (reactive, not a stale snapshot)', async () => {
     await loadVendorCss('.first { color: red }')
     const target = document.implementation.createHTMLDocument('iframe')
-    const { rerender } = render(<ProjectCssInjector targetDocument={target} />)
+    const adapter = makeAdapter(target)
+    const { rerender } = render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ProjectCssInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
-    expect(target.getElementById('mc-vendor')?.textContent ?? '').toContain('.first { color: red }')
+    expect(overlayCss(target, 'mc-vendor')).toContain('.first { color: red }')
 
     await loadVendorCss('.second { color: blue }')
-    rerender(<ProjectCssInjector targetDocument={target} />)
+    rerender(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ProjectCssInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
-    const css = target.getElementById('mc-vendor')?.textContent ?? ''
+    const css = overlayCss(target, 'mc-vendor')
     expect(css).toContain('.second { color: blue }')
     expect(css).not.toContain('.first { color: red }')
   })
@@ -118,8 +160,13 @@ describe('ProjectCssInjector', () => {
     expect(getStudioVendorCss()).toBe(raw)
 
     const target = document.implementation.createHTMLDocument('iframe')
-    render(<ProjectCssInjector targetDocument={target} />)
-    expect(target.getElementById('mc-vendor')?.textContent ?? '').toContain(raw)
+    const adapter = makeAdapter(target)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ProjectCssInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
+    expect(overlayCss(target, 'mc-vendor')).toContain(raw)
   })
 
   it('rewrites+concatenates the vendor bytes ONCE across every mounted frame', async () => {
@@ -148,10 +195,15 @@ describe('ProjectCssInjector', () => {
   it('removes its <style> tag on unmount', async () => {
     await loadVendorCss('.gone { color: red }')
     const target = document.implementation.createHTMLDocument('iframe')
-    const { unmount } = render(<ProjectCssInjector targetDocument={target} />)
+    const adapter = makeAdapter(target)
+    const { unmount } = render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ProjectCssInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
 
-    expect(target.getElementById('mc-vendor')).not.toBeNull()
+    expect(target.querySelector('[data-studio-overlay-id="mc-vendor"]')).not.toBeNull()
     unmount()
-    expect(target.getElementById('mc-vendor')).toBeNull()
+    expect(target.querySelector('[data-studio-overlay-id="mc-vendor"]')).toBeNull()
   })
 })

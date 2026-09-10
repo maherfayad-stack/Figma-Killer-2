@@ -24,6 +24,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { cleanup, render } from '@testing-library/react'
 import { ClassStyleInjector } from '@site/canvas/ClassStyleInjector'
 import { UserStylesheetInjector } from '@site/canvas/UserStylesheetInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { useEditorStore } from '@site/store/store'
 import {
   CANVAS_CSS_LAYER_ORDER,
@@ -42,29 +44,46 @@ function resetEditorStore() {
   } as Parameters<typeof useEditorStore.setState>[0])
 }
 
+let adapter: PortalFrameAdapter | null = null
+
+function overlayCss(logicalId: string): string {
+  return document.querySelector(`[data-studio-overlay-id="${logicalId}"]`)?.textContent ?? ''
+}
+
 beforeEach(() => {
   cleanup()
   document.head.replaceChildren()
   resetEditorStore()
+  adapter = new PortalFrameAdapter(document)
 })
 
 afterEach(() => {
   cleanup()
+  adapter?.dispose()
+  adapter = null
   document.head.replaceChildren()
   resetEditorStore()
 })
 
 describe('CANVAS_CSS_LAYER_ORDER pre-declaration', () => {
   it('ClassStyleInjector opens "mc-classes" with it, even with an empty class registry', () => {
-    render(<ClassStyleInjector targetDocument={document} />)
-    const css = document.getElementById('mc-classes')?.textContent ?? ''
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ClassStyleInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
+    const css = overlayCss('mc-classes')
     expect(css.startsWith(CANVAS_CSS_LAYER_ORDER)).toBe(true)
     expect(css).toContain('/* no classes */')
   })
 
   it('never populates the reset layer — Studio pages ship their own CSS baseline', () => {
-    render(<ClassStyleInjector targetDocument={document} />)
-    const css = document.getElementById('mc-classes')?.textContent ?? ''
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ClassStyleInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
+    const css = overlayCss('mc-classes')
     // Layer order stays pinned even with no rules in the reset layer.
     expect(css.startsWith(CANVAS_CSS_LAYER_ORDER)).toBe(true)
     expect(css).not.toContain(`@layer ${RESET_LAYER} {`)
@@ -72,8 +91,12 @@ describe('CANVAS_CSS_LAYER_ORDER pre-declaration', () => {
   })
 
   it('UserStylesheetInjector opens "mc-user-styles" with it, even when there are no user stylesheets', () => {
-    render(<UserStylesheetInjector targetDocument={document} />)
-    const css = document.getElementById('mc-user-styles')?.textContent ?? ''
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <UserStylesheetInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
+    const css = overlayCss('mc-user-styles')
     expect(css.startsWith(CANVAS_CSS_LAYER_ORDER)).toBe(true)
     expect(css).toContain('/* no user stylesheets */')
   })
@@ -101,8 +124,12 @@ describe('CANVAS_CSS_LAYER_ORDER pre-declaration', () => {
       },
     } as unknown as Parameters<typeof useEditorStore.setState>[0])
 
-    render(<ClassStyleInjector targetDocument={document} />)
-    const css = document.getElementById('mc-classes')?.textContent ?? ''
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <ClassStyleInjector />
+      </CanvasFrameAdapterContext.Provider>,
+    )
+    const css = overlayCss('mc-classes')
     const declarationIndex = css.indexOf(CANVAS_CSS_LAYER_ORDER)
     const layerOpenIndex = css.indexOf(`@layer ${USER_AUTHORED_LAYER} {`)
     expect(declarationIndex).toBe(0)

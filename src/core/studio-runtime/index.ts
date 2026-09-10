@@ -159,3 +159,5 @@ export {
   collectScrollDeficits,
   type FrameFitMetrics,
 } from './frameFitRules'
+
+export { OVERLAY_ID_ATTR } from './overlayStyleAttr'

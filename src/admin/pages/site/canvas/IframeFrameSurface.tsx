@@ -88,6 +88,8 @@ import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
 import { CanvasFrameContexts } from './CanvasFrameContexts'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
 import type { PreviewAxes } from '@core/studio-board'
+import { PortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -163,6 +165,13 @@ export interface IframeFrameSurfaceHandle {
    * element they track.
    */
   contentOverlayRoot: HTMLDivElement | null
+  /**
+   * The frame's `FrameDocumentAdapter` (`live-05`, STATE.md) — `null` until
+   * the iframe document exists. `contentDocument`/`contentBody`/
+   * `contentOverlayRoot` above are migrating to this one field batch by
+   * batch; both coexist until every consumer has moved over.
+   */
+  adapter: FrameDocumentAdapter | null
 }
 
 type IframeWithCleanup = HTMLIFrameElement & { _studioCleanup?: () => void }
@@ -194,6 +203,22 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const iframeRef = useRef<HTMLIFrameElement | null>(null)
       const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
+      const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
+
+    // `live-05` (STATE.md) — every canvas frame publishes a `FrameDocumentAdapter`
+    // regardless of `documentMode` (only `'portal'` exists so far; the
+    // `'bridge'` fork and its `BridgeFrameAdapter` construction land in a
+    // later batch). Constructed/disposed with the iframe document's own
+    // lifecycle, exactly like every other per-document resource here.
+    useEffect(() => {
+      if (!iframeDoc) {
+        setAdapter(null)
+        return
+      }
+      const next = new PortalFrameAdapter(iframeDoc)
+      setAdapter(next)
+      return () => next.dispose()
+    }, [iframeDoc])
 
     useIframeCursorBridge(iframeRef, iframeDoc, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(iframeDoc, { breakpointId, enabled: !isLive })
@@ -212,8 +237,9 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         contentDocument: iframeDoc,
         contentBody: (iframeDoc?.body ?? null) as HTMLBodyElement | null,
         contentOverlayRoot: overlayRoot,
+        adapter,
       }),
-      [iframeDoc, overlayRoot],
+      [iframeDoc, overlayRoot, adapter],
     )
 
     // Wire up the iframe document once it's ready. Capture both onLoad and
@@ -398,11 +424,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
             <CanvasFrameContexts
               frameElement={iframeRef.current}
               frameDocument={iframeDoc}
+              adapter={adapter}
               axes={frameAxes}
               interaction={interaction}
             >
               {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
-              <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
+              <EditorChromeInjector />
               {/* Runtime diagnostics: window errors, unhandled rejections,
                   console.error, failed assets/modules and failed fetches from
                   THIS frame, buffered for studio_page_diagnostics. Mounted
@@ -422,7 +449,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               {/* Vendor package CSS (Alm design-system + the open project's own
                   bare-specifier package CSS) — read-only, @layer vendor,
                   ordered below @layer user-authored. See canvasCssLayers.ts. */}
-              <ProjectCssInjector targetDocument={iframeDoc} />
+              <ProjectCssInjector />
               {/* Design frames only: animations play once and hold their last
                   keyframe, so an imported app's infinite shimmers/spinners
                   don't run forever behind the selection ring. Live mode is a
@@ -442,10 +469,17 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   it keeps real motion above. Mounted AFTER the CSS injectors it
                   rewrites so its first pass has sheets to walk. */}
               {!isLive && <CanvasHoverSuppressionInjector targetDocument={iframeDoc} />}
-              {/* Author CSS — @layer user-authored (board-27's raw AuthoredCssInjector always precedes mc-classes; see its own doc) */}
-              <AuthoredCssInjector targetDocument={iframeDoc} viewport={viewport} />
-              <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
-              <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
+              {/* Author CSS — @layer user-authored. Cascade priority within
+                  that layer is DOM source order, which for adapter-managed
+                  overlays is now first-`applyOverlay`-call order — i.e. this
+                  JSX order. AuthoredCssInjector (raw, on-disk) must keep
+                  mounting/rendering before ClassStyleInjector (session
+                  edits) so an edited class still wins for the same selector
+                  — see AuthoredCssInjector.tsx's "Raw vs. overlay" doc. Do
+                  not reorder these three. */}
+              <AuthoredCssInjector viewport={viewport} />
+              <ClassStyleInjector viewport={viewport} />
+              <UserStylesheetInjector viewport={viewport} />
               {children}
               {/* Runtime scripts (opt-in) run against the node tree mounted
                   above. Empty list = no-op, so this is safe to always mount. */}
