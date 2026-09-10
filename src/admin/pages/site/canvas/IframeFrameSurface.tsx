@@ -435,7 +435,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   THIS frame, buffered for studio_page_diagnostics. Mounted
                   first so a failure during the rest of this subtree's own mount
                   is still collected. Inserts no DOM — see its docblock. */}
-              <CanvasDiagnosticsInjector targetDocument={iframeDoc} />
+              <CanvasDiagnosticsInjector />
               {/* Design frames only: selection/hover rings + the node-name badge
                   render INSIDE this document (WS-5.1) so they track the element
                   with zero zoom/pan conversion. See its own docblock. */}

@@ -52,23 +52,40 @@
  * Every frame, both interaction modes. A live/preview frame's runtime errors
  * are as real as a design frame's, and collecting costs nothing until something
  * actually fails.
+ *
+ * Portal mode only (`live-05`, STATE.md, Batch 5) — reads the frame's
+ * `Window` through `PortalFrameAdapter`'s escape hatch. **Bridge mode is
+ * explicitly OUT of scope for this batch, not silently skipped**: per the
+ * design section's own note, this component may need a new outbound
+ * `frame:diagnostic` message, and having read the file in full, that is a
+ * materially large addition, not a mechanical prop swap —
+ * `patchConsoleError`/`patchFetch`/the error/rejection listeners below are a
+ * bespoke instrumentation mechanism with no existing `@core/studio-runtime`
+ * counterpart (unlike hover/scroll/animation, which already had one to share
+ * with `runtime.ts`), `canvasDiagnosticsBuffer.ts` keys its buffer by a real
+ * `Window` reference (meaningless for a cross-origin frame), and a new wire
+ * message here needs the same `security-guard` review already flagged for
+ * `occurrenceIndex`/`frame:resize` — untrusted strings/URLs/stacks crossing
+ * the postMessage boundary. Named follow-up for whoever builds
+ * `documentMode==='bridge'` diagnostics for real (likely paired with
+ * `studio_page_diagnostics`'s own bridge-mode read path).
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import {
   disposeFrameDiagnostics,
   ensureFrameDiagnostics,
   recordFrameDiagnostic,
 } from './canvasDiagnosticsBuffer'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
-interface CanvasDiagnosticsInjectorProps {
-  /** The iframe document whose runtime is observed. */
-  targetDocument: Document
-}
+export function CanvasDiagnosticsInjector() {
+  const adapter = useContext(CanvasFrameAdapterContext)
 
-export function CanvasDiagnosticsInjector({ targetDocument }: CanvasDiagnosticsInjectorProps) {
   useEffect(() => {
-    const view = targetDocument.defaultView
+    if (!isPortalFrameAdapter(adapter)) return
+    const view = adapter.getPortalWindow()
     if (!view) return
     ensureFrameDiagnostics(view)
 
@@ -88,7 +105,7 @@ export function CanvasDiagnosticsInjector({ targetDocument }: CanvasDiagnosticsI
       restoreFetch?.()
       disposeFrameDiagnostics(view)
     }
-  }, [targetDocument])
+  }, [adapter])
 
   return null
 }
@@ -193,7 +210,7 @@ function recordRejectionEvent(view: Window, event: Event): void {
 // Both live in plain functions rather than inline in the effect, for the same
 // reason `CanvasAnimationInjector.patchReducedMotionMatchMedia` does: a direct
 // `view.x = …` assignment inside the component body reads to the React
-// Compiler as mutating something reachable from the `targetDocument` prop.
+// Compiler as mutating something reachable from `adapter`.
 // Both restore the EXACT original reference on cleanup.
 // ---------------------------------------------------------------------------
 

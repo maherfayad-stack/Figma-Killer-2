@@ -18,9 +18,21 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render } from '@testing-library/react'
 import { CanvasDiagnosticsInjector } from '../CanvasDiagnosticsInjector'
 import { readFrameDiagnostics } from '../canvasDiagnosticsBuffer'
+import { CanvasFrameAdapterContext } from '../CanvasContexts'
+import { PortalFrameAdapter } from '../frameAdapter/PortalFrameAdapter'
+
+let adapters: PortalFrameAdapter[] = []
+
+function makeAdapter(doc: Document): PortalFrameAdapter {
+  const adapter = new PortalFrameAdapter(doc)
+  adapters.push(adapter)
+  return adapter
+}
 
 afterEach(() => {
   cleanup()
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
   document.body.innerHTML = ''
 })
 
@@ -41,7 +53,7 @@ describe('CanvasDiagnosticsInjector', () => {
   it('installs a buffer and inserts nothing into the frame', () => {
     const { view, doc } = mountIframe()
     const bodyHtmlBefore = doc.body.innerHTML
-    render(<CanvasDiagnosticsInjector targetDocument={doc} />)
+    render(<CanvasFrameAdapterContext.Provider value={makeAdapter(doc)}><CanvasDiagnosticsInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(readFrameDiagnostics(view)).not.toBeNull()
     expect(doc.body.innerHTML).toBe(bodyHtmlBefore)
@@ -50,7 +62,7 @@ describe('CanvasDiagnosticsInjector', () => {
 
   it('records an uncaught error with its file and line', () => {
     const { view, doc } = mountIframe()
-    render(<CanvasDiagnosticsInjector targetDocument={doc} />)
+    render(<CanvasFrameAdapterContext.Provider value={makeAdapter(doc)}><CanvasDiagnosticsInjector /></CanvasFrameAdapterContext.Provider>)
 
     const event = new Event('error') as Event & { message?: string; filename?: string; lineno?: number }
     event.message = "TypeError: Cannot read properties of undefined (reading 'map')"
@@ -66,7 +78,7 @@ describe('CanvasDiagnosticsInjector', () => {
 
   it('classifies a module specifier failure apart from an ordinary throw', () => {
     const { view, doc } = mountIframe()
-    render(<CanvasDiagnosticsInjector targetDocument={doc} />)
+    render(<CanvasFrameAdapterContext.Provider value={makeAdapter(doc)}><CanvasDiagnosticsInjector /></CanvasFrameAdapterContext.Provider>)
 
     const event = new Event('error') as Event & { message?: string }
     event.message = 'TypeError: Failed to resolve module specifier "@acme/ui"'
@@ -78,7 +90,7 @@ describe('CanvasDiagnosticsInjector', () => {
 
   it('records a failed asset load against the node that referenced it', () => {
     const { view, doc } = mountIframe()
-    render(<CanvasDiagnosticsInjector targetDocument={doc} />)
+    render(<CanvasFrameAdapterContext.Provider value={makeAdapter(doc)}><CanvasDiagnosticsInjector /></CanvasFrameAdapterContext.Provider>)
 
     const host = doc.createElement('div')
     host.setAttribute('data-node-id', 'pages/Checkout.tsx:42:7')
@@ -102,7 +114,7 @@ describe('CanvasDiagnosticsInjector', () => {
     const { view, doc } = mountIframe()
     const seen: unknown[][] = []
     view.console.error = (...args: unknown[]) => { seen.push(args) }
-    render(<CanvasDiagnosticsInjector targetDocument={doc} />)
+    render(<CanvasFrameAdapterContext.Provider value={makeAdapter(doc)}><CanvasDiagnosticsInjector /></CanvasFrameAdapterContext.Provider>)
 
     view.console.error('Warning: Each child in a list should have a unique "key" prop.')
     view.console.error('Warning: Each child in a list should have a unique "key" prop.')
@@ -118,7 +130,7 @@ describe('CanvasDiagnosticsInjector', () => {
   it('restores console.error and drops the buffer on unmount', () => {
     const { view, doc } = mountIframe()
     const original = view.console.error
-    const { unmount } = render(<CanvasDiagnosticsInjector targetDocument={doc} />)
+    const { unmount } = render(<CanvasFrameAdapterContext.Provider value={makeAdapter(doc)}><CanvasDiagnosticsInjector /></CanvasFrameAdapterContext.Provider>)
     expect(view.console.error).not.toBe(original)
 
     unmount()
@@ -129,7 +141,7 @@ describe('CanvasDiagnosticsInjector', () => {
 
   it('records an unhandled rejection with the reason it carried', () => {
     const { view, doc } = mountIframe()
-    render(<CanvasDiagnosticsInjector targetDocument={doc} />)
+    render(<CanvasFrameAdapterContext.Provider value={makeAdapter(doc)}><CanvasDiagnosticsInjector /></CanvasFrameAdapterContext.Provider>)
 
     const event = new Event('unhandledrejection') as Event & { reason?: unknown }
     event.reason = new Error('checkout session expired')
