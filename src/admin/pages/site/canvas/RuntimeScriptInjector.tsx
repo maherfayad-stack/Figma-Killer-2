@@ -26,15 +26,26 @@
  * scripts. Removing a `<script>` element does not undo side effects it already
  * caused (listeners, injected nodes) — re-running is the "refresh", which is
  * why the toggle UI surfaces a manual Refresh too.
+ *
+ * Portal mode only (`live-05`, STATE.md, Batch 5) — reads the frame's
+ * `Document` through `PortalFrameAdapter`'s escape hatch. Bridge mode does
+ * not mount this component at all: a Tier 2 project's own dev server already
+ * serves its own real bundled JS, so there is no separate "runtime script"
+ * concept once Tier 2 is real (a preview of L9's own cleanup, correctly
+ * arriving here since it costs nothing to skip a mount for a documentMode
+ * that doesn't exist as a prop yet). `withCanvasDomReadyReplay`
+ * (`canvasDomReadyReplay.ts`) stays untouched for the same reason it was
+ * deferred in Batch 3 — a portal-only bootstrap concept with no
+ * `documentMode==='bridge'` branch to write until that prop exists.
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { withCanvasDomReadyReplay } from './canvasDomReadyReplay'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
 interface RuntimeScriptInjectorProps {
-  /** The iframe document to inject into. `null` until the iframe has loaded. */
-  targetDocument: Document | null
   scripts: InjectableRuntimeScript[]
 }
 
@@ -59,8 +70,12 @@ function injectScriptsWithDomReadyReplay(
   )
 }
 
-export function RuntimeScriptInjector({ targetDocument, scripts }: RuntimeScriptInjectorProps) {
+export function RuntimeScriptInjector({ scripts }: RuntimeScriptInjectorProps) {
+  const adapter = useContext(CanvasFrameAdapterContext)
+
   useEffect(() => {
+    if (!isPortalFrameAdapter(adapter)) return
+    const targetDocument = adapter.getPortalWindow()?.document
     if (!targetDocument) return
     const head = targetDocument.head
     const body = targetDocument.body
@@ -71,7 +86,7 @@ export function RuntimeScriptInjector({ targetDocument, scripts }: RuntimeScript
     return () => {
       for (const el of elements) el.remove()
     }
-  }, [targetDocument, scripts])
+  }, [adapter, scripts])
 
   return null
 }

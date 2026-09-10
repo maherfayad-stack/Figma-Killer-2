@@ -479,7 +479,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               {children}
               {/* Runtime scripts (opt-in) run against the node tree mounted
                   above. Empty list = no-op, so this is safe to always mount. */}
-              <RuntimeScriptInjector targetDocument={iframeDoc} scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
+              <RuntimeScriptInjector scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
             </CanvasFrameContexts>,
             iframeDoc.body,
           )}
