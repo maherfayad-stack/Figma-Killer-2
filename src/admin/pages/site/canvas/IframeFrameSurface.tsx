@@ -91,6 +91,7 @@ import type { PreviewAxes } from '@core/studio-board'
 import { PortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { BridgeFrameAdapter, type BridgeFrameChannel } from './frameAdapter/BridgeFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { registerFrameAdapter, unregisterFrameAdapter } from './frameAdapter/canvasFrameAdapterRegistry'
 import { resolveLiveFrameSrc, type LiveFrameSource } from './resolveLiveFrameSrc'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
@@ -240,7 +241,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       if (documentMode === 'bridge') {
         const iframe = iframeRef.current
         const frameWindow = iframe?.contentWindow
-        if (!frameWindow || !liveFrame) {
+        if (!iframe || !frameWindow || !liveFrame) {
           setAdapter(null)
           return
         }
@@ -257,15 +258,29 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           nodeIdsInTreeOrder: liveFrame.nodeIdsInTreeOrder,
         })
         setAdapter(next)
-        return () => next.dispose()
+        // `live-05` (STATE.md, architect's Batch 4 resolution) — every
+        // constructed adapter registers itself under its own iframe element
+        // so a Class B (cross-frame) caller can enumerate every mounted
+        // canvas frame without ever reaching for `document.querySelectorAll
+        // ('iframe')` + `contentDocument`. Same lifecycle both branches.
+        registerFrameAdapter(iframe, next)
+        return () => {
+          unregisterFrameAdapter(iframe)
+          next.dispose()
+        }
       }
-      if (!iframeDoc) {
+      const iframe = iframeRef.current
+      if (!iframeDoc || !iframe) {
         setAdapter(null)
         return
       }
       const next = new PortalFrameAdapter(iframeDoc)
       setAdapter(next)
-      return () => next.dispose()
+      registerFrameAdapter(iframe, next)
+      return () => {
+        unregisterFrameAdapter(iframe)
+        next.dispose()
+      }
     }, [documentMode, iframeDoc, liveFrame])
 
     useIframeCursorBridge(iframeRef, adapter, { onCursorMove, onCursorLeave })
