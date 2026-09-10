@@ -342,10 +342,22 @@ export const MeasureResultMessageSchema = Type.Object({
  * "The frame-height gap L4 did not cover"). Throttled to one post per
  * animation frame in `runtime.ts`, the same rAF-coalescing shape as
  * `scheduleReposition` there.
+ *
+ * `maximum` is a defense-in-depth bound, not a real content ceiling — an
+ * honest `runtime.ts` never reports anywhere near it (`frameFitRules.ts`'s
+ * own `MAX_FRAME_FIT_HEIGHT` caps the fit PIN at 20000, and real page
+ * content is finite). It exists because `sec-06`'s "same-realm spoofing"
+ * finding applies to THIS message too: a script co-resident with `runtime.ts`
+ * in the live frame's document can forge a `frame:resize` postMessage
+ * directly, bypassing the honest sender entirely. `minimum`/`Type.Number`
+ * already reject `NaN`/`Infinity`; this additionally rejects an absurd but
+ * finite forged value (e.g. `1e20`) from ever reaching
+ * `useIframeFrameAutoHeight.ts`'s arithmetic and being written as the outer
+ * `<iframe>` element's height on the trusted parent canvas.
  */
 export const FrameResizeMessageSchema = Type.Object({
   type: Type.Literal('frame:resize'),
-  height: Type.Number({ minimum: 0 }),
+  height: Type.Number({ minimum: 0, maximum: 1_000_000 }),
 })
 
 export const OutboundRuntimeMessageSchema = Type.Union([

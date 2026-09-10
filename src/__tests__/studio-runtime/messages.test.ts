@@ -157,6 +157,17 @@ describe('OutboundRuntimeMessageSchema', () => {
   it('rejects a non-numeric frame:resize height', () => {
     expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: '100' })).toBe(false)
   })
+
+  it('rejects NaN and Infinity as a frame:resize height', () => {
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: NaN })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: Infinity })).toBe(false)
+  })
+
+  it('rejects an absurd but finite frame:resize height (defense-in-depth against a forged same-realm message)', () => {
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: 1e20 })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: 1_000_000 })).toBe(true)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: 1_000_001 })).toBe(false)
+  })
 })
 
 describe('occurrenceIndex (L5) — adversarial shape coverage on every node-naming message', () => {
