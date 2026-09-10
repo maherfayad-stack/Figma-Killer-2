@@ -407,4 +407,52 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     this.overlayRoot?.remove()
     this.overlayRoot = null
   }
+
+  /**
+   * The narrow, portal-mode-only escape hatch (`STATE.md`, `live-05`
+   * entry, Batch 3). NOT part of `FrameDocumentAdapter` — leaking a
+   * `Window`/`Document`-shaped operation into that shared interface would
+   * force `BridgeFrameAdapter` to either fake one or throw, exactly the
+   * "band-aid instead of fixing the abstraction" this work order exists to
+   * remove.
+   *
+   * A handful of hooks (`useIframeCursorBridge`, `useCanvasFormControl
+   * Suppression`, `useIframeEventForwarding`, `canvasDomGeometry`, …) need
+   * raw native DOM primitives no curated `FrameDocumentAdapter` method
+   * covers — arbitrary `addEventListener` types, `getComputedStyle`,
+   * `ResizeObserver`/`MutationObserver` construction against the frame's
+   * own realm. For portal mode this is always available and always was —
+   * the SAME `Document`/`Window` those hooks read via a `targetDocument`
+   * prop before this work order, just reached through the adapter instead
+   * of threaded separately. For bridge mode there is no local `Window` at
+   * all (a different origin, a different JS realm), so callers MUST guard
+   * with `isPortalFrameAdapter` and have an explicit bridge-mode behavior
+   * (a `postMessage`-based equivalent, or a documented no-op) rather than
+   * assume this method exists.
+   *
+   * Callers should never write an explicit `: Window`/`: Document` type
+   * annotation on the result — let it infer — so the isolation gate's
+   * textual scan (`frame-document-adapter-isolation.test.ts`) still proves
+   * every OTHER file never holds a *named* `Document` reference, even
+   * though, transitively, this accessor still hands one out. The real
+   * boundary this work order enforces is "no file besides this one
+   * DECIDES to keep a persistent Document reference across renders" — a
+   * hook reading `adapter.getPortalWindow()?.document` inside one effect
+   * body, every time, from the adapter, is that same discipline; a `const
+   * [doc, setDoc] = useState<Document>()` duplicating `IframeFrameSurface`'s
+   * own state is not.
+   */
+  getPortalWindow(): (Window & typeof globalThis) | null {
+    return this.doc.defaultView
+  }
+}
+
+/**
+ * Type guard narrowing a `FrameDocumentAdapter` to `PortalFrameAdapter` so a
+ * caller can reach {@link PortalFrameAdapter.getPortalWindow}. Every call
+ * site MUST branch on this rather than assume portal mode — see that
+ * method's own doc.
+ */
+export function isPortalFrameAdapter(adapter: FrameDocumentAdapter | null): adapter is PortalFrameAdapter {
+  return adapter instanceof PortalFrameAdapter
 }

@@ -220,8 +220,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       return () => next.dispose()
     }, [iframeDoc])
 
-    useIframeCursorBridge(iframeRef, iframeDoc, { onCursorMove, onCursorLeave })
-    useCanvasFormControlSuppression(iframeDoc, { breakpointId, enabled: !isLive })
+    useIframeCursorBridge(iframeRef, adapter, { onCursorMove, onCursorLeave })
+    useCanvasFormControlSuppression(adapter, { breakpointId, enabled: !isLive })
     useIframeFrameAutoHeight({ iframeRef, iframeDoc, isLive })
     // WS-10 — direction/color-scheme, an attribute effect (never `srcDoc`/a
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
@@ -385,7 +385,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // layers — wheel → canvas pan/zoom, pointer → pan + cross-frame canvas drag,
     // keyboard → the global shortcut listeners. Called HERE so its effects keep
     // their original position in this component's effect order.
-    useIframeEventForwarding(iframeRef, iframeDoc, isLive)
+    useIframeEventForwarding(iframeRef, adapter, isLive)
 
     const dataAttrSpread = dataAttrs
       ? Object.fromEntries(

@@ -53,11 +53,20 @@ function isTextArea(target: EventTarget | null): boolean {
   )
 }
 
-function install(doc: Document): void {
+/**
+ * Always installs against the ADMIN's own global `document` — this tracks
+ * focus/typing in the admin chrome (inspector fields, agent prompt, search
+ * boxes, …), never a canvas frame's document, so it has nothing to do with
+ * `FrameDocumentAdapter` (`live-05`, STATE.md). No parameter, so this file
+ * never writes an explicit `Document` type annotation — see
+ * `EditorChromeInjector.tsx`'s `buildTokenBlock` for the same pattern and
+ * why.
+ */
+function install(): void {
   if (installed) return
   installed = true
 
-  doc.addEventListener(
+  document.addEventListener(
     'input',
     (event) => {
       pendingElement = event.target
@@ -65,7 +74,7 @@ function install(doc: Document): void {
     true,
   )
 
-  doc.addEventListener(
+  document.addEventListener(
     'focusin',
     () => {
       pendingElement = null
@@ -73,7 +82,7 @@ function install(doc: Document): void {
     true,
   )
 
-  doc.addEventListener(
+  document.addEventListener(
     'keydown',
     (event) => {
       const e = event as KeyboardEvent
@@ -96,7 +105,7 @@ function install(doc: Document): void {
  * and correctly reads as "not a text field".
  */
 export function hasPendingTextEdit(target: EventTarget | null): boolean {
-  if (typeof document !== 'undefined') install(document)
+  if (typeof document !== 'undefined') install()
   return target !== null && target === pendingElement
 }
 

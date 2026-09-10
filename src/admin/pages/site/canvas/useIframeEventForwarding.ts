@@ -40,16 +40,32 @@
  *
  * All of it is canvas-only: live frames pan nothing, host no cross-frame drag,
  * and scroll natively.
+ *
+ * Portal mode only (`live-05`, STATE.md, Batch 3) — reads the frame's native
+ * `Document` through `PortalFrameAdapter`'s escape hatch (`getPortalWindow`).
+ * Bridge mode is a documented, real gap, not a silent one: the pointer half
+ * has a genuine analog in `runtime.ts`'s outbound `pointer` message, but
+ * there is no wire message for keyboard forwarding at all today, and the
+ * space-held / cross-frame-drag flags this file reads/writes on the PARENT
+ * `<html>` dataset have no bridge-mode equivalent either — building either
+ * would mean designing and security-reviewing new `messages.ts` traffic
+ * (mirroring the `occurrenceIndex`/`frame:resize` additions already flagged
+ * for a second `security-guard` look), which is real, separate work, not a
+ * mechanical prop-to-adapter swap. A Tier 2 design-board frame therefore
+ * does not yet pan/keyboard-forward through this hook; flag this to whoever
+ * wires up `documentMode==='bridge'` for real.
  */
 
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
 export function useIframeEventForwarding(
   iframeRef: RefObject<HTMLIFrameElement | null>,
-  iframeDoc: Document | null,
+  adapter: FrameDocumentAdapter | null,
   isLive: boolean,
 ): void {
   // ── Forward wheel events to the canvas gesture layer ─────────────────
@@ -64,6 +80,8 @@ export function useIframeEventForwarding(
   useEffect(() => {
     // Live frames scroll natively — no pan to forward to.
     if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
     if (!iframeDoc) return
     const iframe = iframeRef.current
     if (!iframe) return
@@ -102,7 +120,7 @@ export function useIframeEventForwarding(
     return () => {
       iframeDoc.removeEventListener('wheel', onWheel)
     }
-  }, [iframeDoc, iframeRef, isLive])
+  }, [adapter, iframeRef, isLive])
 
   // ── Forward pointer events for canvas pan gestures + parent-doc canvas drags ────
   // The canvas pan gesture (useCanvas via @use-gesture) and the canvas
@@ -133,6 +151,8 @@ export function useIframeEventForwarding(
     // Pan-gesture / parent-doc canvas-drag relay is canvas-only. Live frames
     // neither pan nor host the cross-frame canvas drag.
     if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
     if (!iframeDoc) return
     const iframe = iframeRef.current
     if (!iframe) return
@@ -312,5 +332,5 @@ export function useIframeEventForwarding(
       iframeDoc.removeEventListener('pointerup', maybeForward)
       iframeDoc.removeEventListener('pointercancel', maybeForward)
     }
-  }, [iframeDoc, iframeRef, isLive])
+  }, [adapter, iframeRef, isLive])
 }
