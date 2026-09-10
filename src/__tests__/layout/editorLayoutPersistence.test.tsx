@@ -456,11 +456,12 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     const primaryButtons = within(screen.getByTestId('panel-rail-primary')).getAllByRole('button')
     const globalButtons = within(screen.getByTestId('panel-rail-global')).getAllByRole('button')
 
+    // `panel-21` moved Inspect out of the left sidebar into the Properties
+    // panel's own inspector shell — no rail button for it anymore.
     expect(primaryButtons.map((button) => button.getAttribute('data-testid'))).toEqual([
       'panel-rail-explorer',
       'panel-rail-framework',
       'panel-rail-selectors',
-      'panel-rail-inspect',
       'panel-rail-content',
       'panel-rail-git',
     ])
@@ -468,7 +469,6 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'database-solid',
       'colors-swatch',
       'paint-bucket',
-      'eye-solid',
       'globe-solid',
       'cloud-upload',
     ])
@@ -481,7 +481,6 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'gold', // explorer  — navigate
       'mint', // framework — style
       'mint', // selectors — style
-      'sky', //  inspect   — inspect
       'lilac', // content  — content
       'gold', // git       — navigate (project-level, like the explorer)
     ])
@@ -550,22 +549,14 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     expect(useEditorStore.getState().isAgentOpen).toBe(false)
     expect(within(sidebar).getByTestId('explorer-panel')).toBeDefined()
 
-    fireEvent.click(within(rail).getByRole('button', { name: /open inspect panel/i }))
-
-    expect(sidebar.getAttribute('data-expanded')).toBe('true')
-    expect(sidebar.getAttribute('data-active-panel')).toBe('inspect')
-    expect(sidebar.getAttribute('style')).toContain('--left-sidebar-panel-width: 320px')
-    expect(useEditorStore.getState().inspectPanelOpen).toBe(true)
-    expect(useEditorStore.getState().explorerPanelOpen).toBe(false)
-    expect(useEditorStore.getState().isAgentOpen).toBe(false)
-
+    // Inspect moved out of the left sidebar into the Properties panel's own
+    // inspector shell (`panel-21`) — no rail button for it here anymore.
     fireEvent.click(within(rail).getByRole('button', { name: /open ai assistant panel/i }))
 
     expect(sidebar.getAttribute('data-expanded')).toBe('true')
     expect(sidebar.getAttribute('data-active-panel')).toBe('agent')
     expect(sidebar.getAttribute('style')).toContain('--left-sidebar-panel-width: 320px')
     expect(useEditorStore.getState().isAgentOpen).toBe(true)
-    expect(useEditorStore.getState().inspectPanelOpen).toBe(false)
     expect(useEditorStore.getState().explorerPanelOpen).toBe(false)
     expect(within(sidebar).getByTestId('agent-panel')).toBeDefined()
   })

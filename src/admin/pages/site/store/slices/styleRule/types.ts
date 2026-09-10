@@ -63,6 +63,20 @@ interface ClassStylesPreview {
   styles: Partial<CSSPropertyBag>
 }
 
+/**
+ * Transient style patch previewed directly on a NODE's own `style=""` layer
+ * — the Track P / P2 rule-7 mirror of `ClassStylesPreview` for the
+ * Element (inline) write target, which had no preview channel at all before
+ * this (`InlineStyleComposer`/`MultiInlineStyleComposer` wired `onPreview`
+ * to a no-op). The canvas's `NodeStylePreviewInjector` reads this and emits
+ * a higher-specificity `[data-node-id]` rule so a scrub/drag is visible
+ * without committing to history, exactly like the class preview overlay.
+ */
+export interface NodeStylesPreview {
+  nodeId: string
+  styles: Partial<CSSPropertyBag>
+}
+
 export type CssRuleApplyMode = 'merge' | 'replace'
 
 export interface CssRuleApplyResult {
@@ -117,6 +131,11 @@ export interface StyleRuleSlice {
   previewClassStyles: ClassStylesPreview | null
   setPreviewClassStyles(preview: ClassStylesPreview): void
   clearPreviewClassStyles(classId?: string): void
+
+  /** Transient style patch previewed directly on a node's inline layer — see `NodeStylesPreview`'s doc. */
+  previewNodeStyles: NodeStylesPreview | null
+  setPreviewNodeStyles(preview: NodeStylesPreview): void
+  clearPreviewNodeStyles(nodeId?: string): void
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
   /**

@@ -2,7 +2,6 @@ import { useEffect, useRef, type CSSProperties } from 'react'
 import { selectRightSidebarExpanded, useEditorStore } from '@site/store/store'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel'
 import { CommentsPanel } from '@site/panels/CommentsPanel'
-import { PrototypePanel } from '@site/panels/PrototypePanel'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import type { RightSidebarTab } from '@site/store/slices/uiSlice'
@@ -67,7 +66,6 @@ export function RightSidebar({ mode }: RightSidebarProps) {
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const selectedSelectorClassId = useEditorStore((s) => s.selectedSelectorClassId)
   const hasFrameSelection = useEditorStore((s) => s.selectedFrameIds.length > 0)
-  const boardMode = useEditorStore((s) => s.boardMode)
 
   const commentsAvailable = mode === 'site' && commentsPaneOpen
   const propertiesAvailable = mode === 'site' && isDocked && sitePropertiesExpanded
@@ -155,15 +153,14 @@ export function RightSidebar({ mode }: RightSidebarProps) {
               inert={isExpanded ? undefined : true}
             >
               {/*
-                Prototype mode swaps this panel's BODY rather than adding a
-                third tab (`STUDIO-PROTOTYPE-PLAN.md` §5, and Figma's own
-                Design/Prototype arrangement): Properties and Comments are two
-                panels you choose between, whereas this is the same inspector
-                showing a different layer of the same selection. The tab strip
-                above is therefore untouched — a mode is not a choice you make
-                per-selection.
+                Track P / `panel-21` — Prototype is now a tab INSIDE
+                `PropertiesPanel`'s own inspector shell
+                (`src/admin/pages/site/inspector/InspectorShell.tsx`), not a
+                board-mode swap of this whole slot. This tab strip (Properties
+                vs. Comments) is a different, still-real choice: which PANEL
+                you're looking at, not which layer of the same selection.
               */}
-              {boardMode === 'prototype' ? <PrototypePanel /> : <PropertiesPanel variant="docked" />}
+              <PropertiesPanel variant="docked" />
             </div>
           )
         )}
