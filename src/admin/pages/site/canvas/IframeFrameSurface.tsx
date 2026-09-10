@@ -89,7 +89,9 @@ import { CanvasFrameContexts } from './CanvasFrameContexts'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
 import type { PreviewAxes } from '@core/studio-board'
 import { PortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import { BridgeFrameAdapter, type BridgeFrameChannel } from './frameAdapter/BridgeFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { resolveLiveFrameSrc, type LiveFrameSource } from './resolveLiveFrameSrc'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -147,6 +149,22 @@ interface IframeFrameSurfaceProps {
   runtimeScripts?: InjectableRuntimeScript[]
   /** WS-10 Phase 2 — a "duplicate as variant" frame's `BoardFrame.axes`, merged onto the board-global axes in `useApplyPreviewAxes`. `undefined` outside board context. */
   axesOverride?: Partial<PreviewAxes>
+  /**
+   * How this frame's DOM is reached (`live-05`, STATE.md). `'portal'`
+   * (Tier 0/1, same-origin React portal — today's ONLY real mode) is the
+   * default and is entirely inert for every existing Tier 0/1 call site:
+   * omitting this prop reproduces today's behavior exactly, byte-for-byte.
+   * `'bridge'` (Tier 2, cross-origin `postMessage` to a real dev-server
+   * page) requires `liveFrame` and constructs a `BridgeFrameAdapter`
+   * instead of a `PortalFrameAdapter` — the fork itself is real, committed,
+   * tested code, but `liveFrame.liveOrigin`/`screenKey` cannot resolve to a
+   * genuinely working URL until L6's `/__screen/<key>` route exists (see
+   * `resolveLiveFrameSrc.ts`). No injector subtree is portaled into a
+   * bridge-mode frame — see the render fork below.
+   */
+  documentMode?: 'portal' | 'bridge'
+  /** Bridge-mode-only inputs. Required (and only read) when `documentMode === 'bridge'`. */
+  liveFrame?: LiveFrameSource
 }
 
 export interface IframeFrameSurfaceHandle {
@@ -192,6 +210,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       runtimeScripts,
       onReadonlyOpen,
       axesOverride,
+      documentMode = 'portal',
+      liveFrame,
     },
     ref,
     ) {
@@ -205,12 +225,40 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
       const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
 
-    // `live-05` (STATE.md) — every canvas frame publishes a `FrameDocumentAdapter`
-    // regardless of `documentMode` (only `'portal'` exists so far; the
-    // `'bridge'` fork and its `BridgeFrameAdapter` construction land in a
-    // later batch). Constructed/disposed with the iframe document's own
-    // lifecycle, exactly like every other per-document resource here.
+    // `live-05` (STATE.md) — every canvas frame publishes a `FrameDocumentAdapter`,
+    // constructed/disposed with its own lifecycle. `documentMode==='bridge'`
+    // constructs a `BridgeFrameAdapter` wrapping a real cross-origin
+    // `postMessage` channel against the iframe's own `contentWindow` instead
+    // of a `PortalFrameAdapter` wrapping `contentDocument` — the two are
+    // mutually exclusive by construction (a cross-origin frame has no
+    // readable `contentDocument` to wrap, a portal frame needs no message
+    // channel). `expectedSource` mirrors `runtime.ts`'s own defense-in-depth
+    // check from the other side (STATE.md's `sec-06`) — inbound messages are
+    // additionally verified to come from THIS iframe's own window, not just
+    // the right origin.
     useEffect(() => {
+      if (documentMode === 'bridge') {
+        const iframe = iframeRef.current
+        const frameWindow = iframe?.contentWindow
+        if (!frameWindow || !liveFrame) {
+          setAdapter(null)
+          return
+        }
+        const frameOrigin = new URL(resolveLiveFrameSrc(liveFrame)).origin
+        const channel: BridgeFrameChannel = {
+          postMessage: (message, targetOrigin) => frameWindow.postMessage(message, targetOrigin),
+          addEventListener: (type, handler) => window.addEventListener(type, handler),
+          removeEventListener: (type, handler) => window.removeEventListener(type, handler),
+        }
+        const next = new BridgeFrameAdapter({
+          channel,
+          frameOrigin,
+          expectedSource: frameWindow,
+          nodeIdsInTreeOrder: liveFrame.nodeIdsInTreeOrder,
+        })
+        setAdapter(next)
+        return () => next.dispose()
+      }
       if (!iframeDoc) {
         setAdapter(null)
         return
@@ -218,7 +266,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const next = new PortalFrameAdapter(iframeDoc)
       setAdapter(next)
       return () => next.dispose()
-    }, [iframeDoc])
+    }, [documentMode, iframeDoc, liveFrame])
 
     useIframeCursorBridge(iframeRef, adapter, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(adapter, { breakpointId, enabled: !isLive })
@@ -398,6 +446,29 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // device-like value. Pinning `vh`/`vmax`/… to this stops authored
     // viewport units from feeding the grow-to-content height loop above.
     const viewport: CanvasViewport = { width, height: CANVAS_VIEWPORT_HEIGHT }
+
+    // Bridge mode's iframe points at a REAL `src=` URL (the project's own
+    // live dev server, proxied — see `resolveLiveFrameSrc.ts`), never
+    // `srcDoc`, and portals nothing into it: the page inside is the
+    // project's own real, separately-bundled React app, not a tree this
+    // process renders. Every editor-chrome injector below (selection rings,
+    // CSS-text injectors, `children` itself) is portal-mode-only by
+    // construction — a bridge frame's own in-frame runtime (`runtime.ts`,
+    // already built) owns the equivalent behavior on its side of the
+    // `postMessage` boundary instead.
+    if (documentMode === 'bridge') {
+      return (
+        <iframe
+          ref={iframeRef}
+          src={liveFrame ? resolveLiveFrameSrc(liveFrame) : undefined}
+          className={cn(styles.iframe, isLive && styles.iframeLive, className)}
+          style={isLive ? { ...style, width: '100%', height: '100%' } : { ...style, width: `${width}px` }}
+          title={`Canvas frame for ${breakpointId}`}
+          data-preview-scheme={frameAxes.colorScheme}
+          {...dataAttrSpread}
+        />
+      )
+    }
 
     return (
       <>
