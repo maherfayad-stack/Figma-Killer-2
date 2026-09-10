@@ -60,6 +60,8 @@ import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRu
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
 import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_ID } from './selectionChromeCss'
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
+import { findNthNodeById, occurrenceIndexOf } from './nodeIdIndexing'
+import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
 
 const NODE_ID_ATTR = 'data-node-id'
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
@@ -114,16 +116,21 @@ function isRuntimeOwnedStyleOwner(owner: Element): boolean {
   )
 }
 
-/** Finds the element carrying node id `nodeId`, without building an attribute-selector string (a node id may contain `:`, `~`, `#`, `.`, `/`). */
-function findByNodeId(doc: Document, nodeId: string): Element | null {
-  for (const el of doc.querySelectorAll(`[${NODE_ID_ATTR}]`)) {
-    if (el.getAttribute(NODE_ID_ATTR) === nodeId) return el
-  }
-  return null
+/**
+ * Finds the `occurrenceIndex`-th (0-based, document order) element carrying
+ * `data-node-id="nodeId"` — see `messages.ts`'s "occurrenceIndex" doc for why
+ * every caller passes one now, and `nodeIdIndexing.ts` for the shared count.
+ * Defaults to `0`, the common non-`.map()` case.
+ */
+function findByNodeId(doc: Document, nodeId: string, occurrenceIndex = 0): Element | null {
+  return findNthNodeById(doc, nodeId, occurrenceIndex)
 }
 
-function nearestNodeId(el: Element | null): string | null {
-  return (el?.closest(`[${NODE_ID_ATTR}]`) as Element | null)?.getAttribute(NODE_ID_ATTR) ?? null
+/** The nearest node-id-carrying ancestor (inclusive) of `el`, paired with its own occurrence index — `null` if no ancestor carries a node id. */
+function nearestNodeOccurrence(doc: Document, el: Element | null): { nodeId: string; occurrenceIndex: number } | null {
+  const anchor = el?.closest(`[${NODE_ID_ATTR}]`) as Element | null
+  if (!anchor) return null
+  return occurrenceIndexOf(doc, anchor)
 }
 
 /** `el`'s box relative to `body`'s border box — both rects are viewport-relative, so scroll cancels out of the difference. */
@@ -187,11 +194,16 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
       scrollController = null
       animationController?.dispose()
       animationController = null
+      // A live/preview frame renders at its own real intended size — clear
+      // any pin the frame carried while it was a design-board frame, same
+      // as portal mode never pinning one for `isLive` at all.
+      if (doc.body) doc.body.style.height = ''
       return
     }
     hoverController ??= startHoverSuppression(doc, (owner) => !isRuntimeOwnedStyleOwner(owner))
     scrollController ??= startScrollUnroll(doc, RUNTIME_SCROLL_UNROLL_STYLE_ID)
     animationController ??= startAnimationFreeze(doc, RUNTIME_ANIMATION_STYLE_ID)
+    resetFrameFit()
   }
 
   // ---- selection / hover rings (new: the frame owns DOM + positioning) ----
@@ -250,8 +262,12 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
     return el
   }
 
-  function positionRingOnNode(ringEl: HTMLDivElement, nodeId: string): void {
-    const target = findByNodeId(doc, nodeId)
+function ringKey(nodeId: string, occurrenceIndex: number): string {
+    return `${nodeId}#${occurrenceIndex}`
+  }
+
+  function positionRingOnNode(ringEl: HTMLDivElement, nodeId: string, occurrenceIndex: number): void {
+    const target = findByNodeId(doc, nodeId, occurrenceIndex)
     if (!target || !doc.body) {
       ringEl.style.display = 'none'
       return
@@ -263,13 +279,13 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
     ringEl.style.transform = `translate(${rect.x}px, ${rect.y}px)`
   }
 
-  const selectionRings = new Map<string, HTMLDivElement>()
+  const selectionRings = new Map<string, { nodeId: string; occurrenceIndex: number; el: HTMLDivElement }>()
   let hoverRing: HTMLDivElement | null = null
-  let hoverNodeId: string | null = null
+  let hoverRef: { nodeId: string; occurrenceIndex: number } | null = null
 
   function repositionAllRings(): void {
-    for (const [nodeId, ring] of selectionRings) positionRingOnNode(ring, nodeId)
-    if (hoverRing && hoverNodeId !== null) positionRingOnNode(hoverRing, hoverNodeId)
+    for (const { nodeId, occurrenceIndex, el } of selectionRings.values()) positionRingOnNode(el, nodeId, occurrenceIndex)
+    if (hoverRing && hoverRef) positionRingOnNode(hoverRing, hoverRef.nodeId, hoverRef.occurrenceIndex)
   }
 
   let repositionRaf: number | null = null
@@ -282,45 +298,50 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
     })
   }
 
-  function handleSelect(nodeIds: readonly string[]): void {
-    const next = new Set(nodeIds)
-    for (const [nodeId, ring] of selectionRings) {
-      if (!next.has(nodeId)) {
-        ring.remove()
-        selectionRings.delete(nodeId)
+  function handleSelect(refs: readonly { nodeId: string; occurrenceIndex: number }[]): void {
+    const next = new Set(refs.map((ref) => ringKey(ref.nodeId, ref.occurrenceIndex)))
+    for (const [key, { el }] of selectionRings) {
+      if (!next.has(key)) {
+        el.remove()
+        selectionRings.delete(key)
       }
     }
-    for (const nodeId of nodeIds) {
-      let ring = selectionRings.get(nodeId)
-      if (!ring) {
-        ring = createRing('selection')
-        selectionRings.set(nodeId, ring)
+    for (const ref of refs) {
+      const key = ringKey(ref.nodeId, ref.occurrenceIndex)
+      let entry = selectionRings.get(key)
+      if (!entry) {
+        entry = { ...ref, el: createRing('selection') }
+        selectionRings.set(key, entry)
       }
-      positionRingOnNode(ring, nodeId)
+      positionRingOnNode(entry.el, ref.nodeId, ref.occurrenceIndex)
     }
   }
 
-  function handleHover(nodeId: string | null): void {
-    hoverNodeId = nodeId
+  function handleHover(nodeId: string | null, occurrenceIndex: number): void {
+    hoverRef = nodeId === null ? null : { nodeId, occurrenceIndex }
     if (nodeId === null) {
       if (hoverRing) hoverRing.style.display = 'none'
       return
     }
     hoverRing ??= createRing('hover')
-    positionRingOnNode(hoverRing, nodeId)
+    positionRingOnNode(hoverRing, nodeId, occurrenceIndex)
   }
 
   // ---- measure ------------------------------------------------------------
-  function handleMeasure(requestId: string, nodeIds: readonly string[], properties: readonly string[] | undefined): void {
+  function handleMeasure(
+    requestId: string,
+    refs: readonly { nodeId: string; occurrenceIndex: number }[],
+    properties: readonly string[] | undefined,
+  ): void {
     const props = properties?.length ? properties : DEFAULT_MEASURED_PROPERTIES
-    const measurements: NodeMeasurement[] = nodeIds.map((nodeId) => {
-      const el = findByNodeId(doc, nodeId)
-      if (!el || !doc.body) return { nodeId, rect: null, computedStyle: {} }
+    const measurements: NodeMeasurement[] = refs.map(({ nodeId, occurrenceIndex }) => {
+      const el = findByNodeId(doc, nodeId, occurrenceIndex)
+      if (!el || !doc.body) return { nodeId, occurrenceIndex, rect: null, computedStyle: {} }
       const rect = rectRelativeToBody(el, doc.body)
       const computed = view.getComputedStyle(el)
       const computedStyle: Record<string, string> = {}
       for (const prop of props) computedStyle[prop] = computed.getPropertyValue(prop)
-      return { nodeId, rect, computedStyle }
+      return { nodeId, occurrenceIndex, rect, computedStyle }
     })
     postOutbound({ type: 'measure:result', requestId, measurements })
   }
@@ -345,14 +366,21 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
   }
 
   // ---- optimistic DOM ops — structured fields only, never innerHTML --------
-  function handleOptimisticInsert(nodeId: string, parentNodeId: string, index: number, tagName: string, text: string | undefined): void {
+  function handleOptimisticInsert(
+    nodeId: string,
+    parentNodeId: string,
+    parentOccurrenceIndex: number,
+    index: number,
+    tagName: string,
+    text: string | undefined,
+  ): void {
     // Case-insensitive: `document.createElement` normalizes an HTML tag
     // name's case regardless of how it was spelled, so `SCRIPT`/`Script`
     // must be caught the same as `script` — see `messages.ts`'s
     // `DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES` doc for why this lives here
     // and not in the schema's regex.
     if (DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES.has(tagName.toLowerCase())) return
-    const parent = findByNodeId(doc, parentNodeId)
+    const parent = findByNodeId(doc, parentNodeId, parentOccurrenceIndex)
     if (!parent) return
     const el = doc.createElement(tagName)
     el.setAttribute(NODE_ID_ATTR, nodeId)
@@ -361,19 +389,25 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
     parent.insertBefore(el, parent.children[index] ?? null)
   }
 
-  function handleOptimisticDelete(nodeId: string): void {
-    findByNodeId(doc, nodeId)?.remove()
+  function handleOptimisticDelete(nodeId: string, occurrenceIndex: number): void {
+    findByNodeId(doc, nodeId, occurrenceIndex)?.remove()
   }
 
-  function handleOptimisticMove(nodeId: string, parentNodeId: string, index: number): void {
-    const el = findByNodeId(doc, nodeId)
-    const parent = findByNodeId(doc, parentNodeId)
+  function handleOptimisticMove(
+    nodeId: string,
+    occurrenceIndex: number,
+    parentNodeId: string,
+    parentOccurrenceIndex: number,
+    index: number,
+  ): void {
+    const el = findByNodeId(doc, nodeId, occurrenceIndex)
+    const parent = findByNodeId(doc, parentNodeId, parentOccurrenceIndex)
     if (!el || !parent) return
     parent.insertBefore(el, parent.children[index] ?? null)
   }
 
-  function handleOptimisticText(nodeId: string, text: string): void {
-    const el = findByNodeId(doc, nodeId)
+  function handleOptimisticText(nodeId: string, occurrenceIndex: number, text: string): void {
+    const el = findByNodeId(doc, nodeId, occurrenceIndex)
     if (el) el.textContent = text
   }
 
@@ -386,10 +420,12 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
     const target = ev.target instanceof Element ? ev.target : null
     const anchor = target?.closest(`[${NODE_ID_ATTR}]`) ?? null
     const rect = anchor && doc.body ? rectRelativeToBody(anchor, doc.body) : null
+    const occurrence = nearestNodeOccurrence(doc, target)
     postOutbound({
       type: 'pointer',
       phase,
-      nodeId: nearestNodeId(target),
+      nodeId: occurrence?.nodeId ?? null,
+      occurrenceIndex: occurrence?.occurrenceIndex ?? 0,
       rect,
       clientX: ev.clientX,
       clientY: ev.clientY,
@@ -415,7 +451,8 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
     if (!target?.hasAttribute('contenteditable')) return
     const nodeId = target.getAttribute(NODE_ID_ATTR)
     if (!nodeId) return
-    postOutbound({ type: 'text:edit', nodeId, text: target.textContent ?? '' })
+    const occurrence = occurrenceIndexOf(doc, target)
+    postOutbound({ type: 'text:edit', nodeId, occurrenceIndex: occurrence?.occurrenceIndex ?? 0, text: target.textContent ?? '' })
   }
   doc.addEventListener('input', onInput, true)
 
@@ -425,12 +462,118 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
   if (doc.body) {
     const MutationObserverCtor = view.MutationObserver ?? MutationObserver
     try {
-      layoutObserver = new MutationObserverCtor(scheduleReposition)
+      layoutObserver = new MutationObserverCtor((records) => {
+        scheduleReposition()
+        // A genuine DOM mutation may mean the page got shorter — re-derive
+        // the fit pin from scratch instead of only ever growing it. See the
+        // "frame:resize" section's module comment below for the known
+        // simplification (undebounced) vs. portal mode's own scheduler.
+        //
+        // MUST ignore a record that is ONLY this adapter's own chrome: (1)
+        // `doc.body`'s own `style` attribute (`resetFrameFit`/
+        // `reportFrameHeight`'s pin write — without this, the pin write
+        // re-triggers `resetFrameFit`, which pins again, forever), or (2)
+        // anything inside the selection/hover ring overlay root (repositioning
+        // a ring on every select/hover would otherwise spuriously reset the
+        // fit pin, since ring elements live inside `doc.body`'s observed
+        // subtree too). Any OTHER mutation — real content added/removed
+        // anywhere, or a non-chrome attribute change — still resets normally.
+        const isIgnorable = (record: MutationRecord): boolean => {
+          if (record.target === doc.body && record.type === 'attributes' && record.attributeName === 'style') return true
+          return record.target instanceof Element && record.target.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null
+        }
+        if (records.every(isIgnorable)) return
+        resetFrameFit()
+      })
       layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
     } catch (_err) {
       // Some browser realms reject observing a cross-realm node. Rings still
       // reposition on the next explicit select/hover/resize.
       layoutObserver = null
+    }
+  }
+
+  // ---- frame:resize — the cross-origin replacement for portal mode's
+  // ResizeObserver on `contentWindow` (impossible here by construction). See
+  // `frameFitRules.ts`'s module doc and `live-05`'s STATE.md entry.
+  //
+  // Mirrors `useIframeFrameAutoHeight.ts`'s (portal) split of concerns as
+  // closely as a cross-origin frame allows: BODY's definite height (the pin
+  // that resolves a `height: 100%` chain and stops internal scrolling) is a
+  // child-side write only this in-frame code can make; the OUTER `<iframe>`
+  // element's box on the parent canvas is a parent-side concern the reported
+  // `height` here feeds (Batch 5, `useIframeFrameAutoHeight.ts`'s bridge
+  // branch, via the SAME `resolveCanvasFrameHeight` portal mode already
+  // uses). Only active in `mode === 'design'` — a live/preview frame renders
+  // at its own real intended size and must not be artificially fit, exactly
+  // matching portal mode's `isLive` early return.
+  //
+  // Coalesced to one post per animation frame, the same shape as
+  // `scheduleReposition` above — deliberately a SEPARATE raf handle, since
+  // ring repositioning and height reporting are independent concerns that
+  // shouldn't drop each other's frame.
+  //
+  // KNOWN SIMPLIFICATION vs. portal mode, flagged rather than silently
+  // claimed as full parity: portal mode resets the pin to the viewport
+  // height (allowing it to SHRINK) only on a genuine content mutation,
+  // debounced through `frameFitMutationScheduler.ts` so a burst of
+  // inline-text-edit keystrokes doesn't each pay the O(all elements)
+  // `collectScrollDeficits` scan. This reuses the SAME `layoutObserver`
+  // MutationObserver already installed for ring repositioning as the reset
+  // trigger, undebounced — correct in direction (an edit that removes
+  // content can shrink the frame again) but not yet perf-hardened against a
+  // rapid-fire real-content-edit burst the way portal mode is. Untestable
+  // against a real cross-origin ResizeObserver feedback loop until L1-L4 are
+  // real running services (see this file's own PR description) — a
+  // dedicated `frameFitMutationScheduler`-equivalent port is a reasonable
+  // Batch 5 follow-up if that turns out to matter in practice.
+  let pinnedHeight = DEFAULT_FRAME_FIT_HEIGHT
+  let frameFitPassesUsed = 0
+  let lastReportedHeight: number | null = null
+  function reportFrameHeight(): void {
+    if (!doc.body || mode !== 'design') return
+    const fitted = resolveFrameFitHeight({
+      pinnedHeight,
+      scrollDeficits: collectScrollDeficits(doc),
+      passesUsed: frameFitPassesUsed,
+    } satisfies FrameFitMetrics)
+    if (fitted !== null) {
+      pinnedHeight = fitted
+      frameFitPassesUsed += 1
+      doc.body.style.height = `${fitted}px`
+    }
+    const height = doc.body.scrollHeight
+    if (height === lastReportedHeight) return
+    lastReportedHeight = height
+    postOutbound({ type: 'frame:resize', height })
+  }
+  let resizeRaf: number | null = null
+  function scheduleFrameResize(): void {
+    if (resizeRaf !== null) return
+    const raf = view.requestAnimationFrame?.bind(view) ?? requestAnimationFrame
+    resizeRaf = raf(() => {
+      resizeRaf = null
+      reportFrameHeight()
+    })
+  }
+  /** A genuine content mutation resets the pin so a page that got SHORTER can shrink again — see the module comment above. */
+  function resetFrameFit(): void {
+    if (mode !== 'design') return
+    pinnedHeight = DEFAULT_FRAME_FIT_HEIGHT
+    frameFitPassesUsed = 0
+    if (doc.body) doc.body.style.height = `${DEFAULT_FRAME_FIT_HEIGHT}px`
+    scheduleFrameResize()
+  }
+  let frameResizeObserver: ResizeObserver | null = null
+  if (doc.body) {
+    const ResizeObserverCtor = view.ResizeObserver ?? ResizeObserver
+    try {
+      frameResizeObserver = new ResizeObserverCtor(scheduleFrameResize)
+      frameResizeObserver.observe(doc.body)
+    } catch (_err) {
+      // Some browser realms reject observing a cross-realm node — same
+      // posture as `layoutObserver` above.
+      frameResizeObserver = null
     }
   }
 
@@ -444,13 +587,13 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
         removeOverlay(message.id)
         return
       case 'select':
-        handleSelect(message.nodeIds)
+        handleSelect(message.refs)
         return
       case 'hover':
-        handleHover(message.nodeId)
+        handleHover(message.nodeId, message.occurrenceIndex)
         return
       case 'measure':
-        handleMeasure(message.requestId, message.nodeIds, message.properties)
+        handleMeasure(message.requestId, message.refs, message.properties)
         return
       case 'setAxes':
         handleSetAxes(message.axes)
@@ -459,16 +602,23 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
         applyMode(message.mode)
         return
       case 'optimistic.insert':
-        handleOptimisticInsert(message.nodeId, message.parentNodeId, message.index, message.tagName, message.text)
+        handleOptimisticInsert(
+          message.nodeId,
+          message.parentNodeId,
+          message.parentOccurrenceIndex,
+          message.index,
+          message.tagName,
+          message.text,
+        )
         return
       case 'optimistic.delete':
-        handleOptimisticDelete(message.nodeId)
+        handleOptimisticDelete(message.nodeId, message.occurrenceIndex)
         return
       case 'optimistic.move':
-        handleOptimisticMove(message.nodeId, message.parentNodeId, message.index)
+        handleOptimisticMove(message.nodeId, message.occurrenceIndex, message.parentNodeId, message.parentOccurrenceIndex, message.index)
         return
       case 'optimistic.text':
-        handleOptimisticText(message.nodeId, message.text)
+        handleOptimisticText(message.nodeId, message.occurrenceIndex, message.text)
         return
     }
   }
@@ -515,6 +665,8 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
       doc.removeEventListener('input', onInput, true)
       layoutObserver?.disconnect()
       if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)
+      frameResizeObserver?.disconnect()
+      if (resizeRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(resizeRaf)
 
       hoverController?.dispose()
       scrollController?.dispose()
@@ -523,7 +675,7 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
       for (const el of overlayStyles.values()) el.remove()
       overlayStyles.clear()
 
-      for (const ring of selectionRings.values()) ring.remove()
+      for (const { el } of selectionRings.values()) el.remove()
       selectionRings.clear()
       hoverRing?.remove()
       hoverRing = null

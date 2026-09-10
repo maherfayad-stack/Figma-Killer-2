@@ -43,6 +43,27 @@
  * there is no `innerHTML` injection surface for what is, in the end, a
  * placeholder HMR replaces within milliseconds. `runtime.ts`'s handler uses
  * `document.createElement` + `Node.textContent`, never `innerHTML`.
+ *
+ * ## `occurrenceIndex` (L5) — every node-naming message carries one
+ *
+ * `runtime.ts`'s `findByNodeId` finds the FIRST DOM element matching a bare
+ * stamped `data-node-id` — silently wrong for row 2+ of any `.map()`, since
+ * every row's element shares the identical stamp (`idStamp.ts` has no
+ * per-iteration information to mint a unique one with; see
+ * `liveNodeResolve.ts`'s module doc for the full picture). Every message
+ * below that names a node — inbound (`select`'s `refs`, `hover`, `measure`,
+ * the four `optimistic.*`) and outbound (`pointer`, `text:edit`,
+ * `measure:result`'s echoed-back measurements) — pairs the stamp id with a
+ * 0-based `occurrenceIndex`: "the Nth element sharing this stamp, in
+ * document order" (`nodeIdIndexing.ts`'s `findNthNodeById`/
+ * `occurrenceIndexOf`, the ONE implementation of that count, shared with
+ * `hmrState.ts`). Defaults to `0` — the common non-`.map()` case, and safe
+ * for a sender that doesn't yet know about the sibling-index problem.
+ *
+ * The stamp id itself is never a canonical tree node id — only
+ * `BridgeFrameAdapter` (the L5 parent-side caller) ever sees a bare stamp;
+ * every message here already speaks the frame's own stamped-id vocabulary,
+ * which `runtime.ts` (in-frame) reads and writes directly.
  */
 import { Type, type Static } from '@sinclair/typebox'
 
@@ -98,16 +119,23 @@ export const RemoveOverlayMessageSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
 })
 
+/** A stamp id paired with which same-stamp DOM occurrence it addresses — see "occurrenceIndex" in the module doc. */
+const NodeRefSchema = Type.Object({
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+})
+
 /** Sets the `data-*` attributes the ring CSS keys on, and shows/positions the selection ring(s). */
 export const SelectMessageSchema = Type.Object({
   type: Type.Literal('select'),
-  nodeIds: Type.Array(Type.String({ minLength: 1 })),
+  refs: Type.Array(NodeRefSchema),
 })
 
 /** Same, for the hover ring — `null` clears it. */
 export const HoverMessageSchema = Type.Object({
   type: Type.Literal('hover'),
   nodeId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
 })
 
 /**
@@ -120,7 +148,7 @@ export const HoverMessageSchema = Type.Object({
 export const MeasureMessageSchema = Type.Object({
   type: Type.Literal('measure'),
   requestId: Type.String({ minLength: 1 }),
-  nodeIds: Type.Array(Type.String({ minLength: 1 })),
+  refs: Type.Array(NodeRefSchema),
   properties: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 })
 
@@ -168,6 +196,7 @@ export const OptimisticInsertMessageSchema = Type.Object({
   type: Type.Literal('optimistic.insert'),
   nodeId: Type.String({ minLength: 1 }),
   parentNodeId: Type.String({ minLength: 1 }),
+  parentOccurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   index: Type.Number({ minimum: 0 }),
   tagName: Type.String({ minLength: 1, maxLength: 32, pattern: '^[a-zA-Z][a-zA-Z0-9-]*$' }),
   text: Type.Optional(Type.String()),
@@ -200,12 +229,15 @@ export const DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES = new Set([
 export const OptimisticDeleteMessageSchema = Type.Object({
   type: Type.Literal('optimistic.delete'),
   nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
 })
 
 export const OptimisticMoveMessageSchema = Type.Object({
   type: Type.Literal('optimistic.move'),
   nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   parentNodeId: Type.String({ minLength: 1 }),
+  parentOccurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   index: Type.Number({ minimum: 0 }),
 })
 
@@ -213,6 +245,7 @@ export const OptimisticMoveMessageSchema = Type.Object({
 export const OptimisticTextMessageSchema = Type.Object({
   type: Type.Literal('optimistic.text'),
   nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   text: Type.String(),
 })
 
@@ -270,6 +303,7 @@ export const PointerMessageSchema = Type.Object({
   type: Type.Literal('pointer'),
   phase: PointerPhaseSchema,
   nodeId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   rect: Type.Union([NodeRectSchema, Type.Null()]),
   clientX: Type.Number(),
   clientY: Type.Number(),
@@ -280,11 +314,14 @@ export const PointerMessageSchema = Type.Object({
 export const TextEditMessageSchema = Type.Object({
   type: Type.Literal('text:edit'),
   nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   text: Type.String(),
 })
 
 const NodeMeasurementSchema = Type.Object({
   nodeId: Type.String({ minLength: 1 }),
+  /** Echoes back the `occurrenceIndex` from the matching {@link NodeRefSchema} this measurement was requested for. */
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   rect: Type.Union([NodeRectSchema, Type.Null()]),
   computedStyle: Type.Record(Type.String(), Type.String()),
 })
@@ -297,6 +334,20 @@ export const MeasureResultMessageSchema = Type.Object({
   measurements: Type.Array(NodeMeasurementSchema),
 })
 
+/**
+ * Posted whenever the frame's own `documentElement` content height changes —
+ * the cross-origin replacement for portal mode's `ResizeObserver` on the
+ * iframe's own `contentWindow` (impossible by construction for a bridge
+ * frame; see `frameFitRules.ts`'s module doc and `live-05`'s STATE.md entry,
+ * "The frame-height gap L4 did not cover"). Throttled to one post per
+ * animation frame in `runtime.ts`, the same rAF-coalescing shape as
+ * `scheduleReposition` there.
+ */
+export const FrameResizeMessageSchema = Type.Object({
+  type: Type.Literal('frame:resize'),
+  height: Type.Number({ minimum: 0 }),
+})
+
 export const OutboundRuntimeMessageSchema = Type.Union([
   ReadyMessageSchema,
   HmrBeforeMessageSchema,
@@ -304,6 +355,7 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   PointerMessageSchema,
   TextEditMessageSchema,
   MeasureResultMessageSchema,
+  FrameResizeMessageSchema,
 ])
 export type OutboundRuntimeMessage = Static<typeof OutboundRuntimeMessageSchema>
 

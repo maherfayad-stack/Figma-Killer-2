@@ -4,7 +4,7 @@
  * that makes sections flicker in and out.
  */
 import { describe, expect, it } from 'bun:test'
-import { MAX_FRAME_FIT_HEIGHT, MAX_FRAME_FIT_PASSES, resolveFrameFitHeight } from '../resolveFrameFitHeight'
+import { MAX_FRAME_FIT_HEIGHT, MAX_FRAME_FIT_PASSES, resolveFrameFitHeight } from '@core/studio-runtime'
 
 describe('resolveFrameFitHeight', () => {
   it('returns null when the frame already fits', () => {

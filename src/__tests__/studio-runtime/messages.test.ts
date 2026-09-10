@@ -21,11 +21,22 @@ import {
 const inboundSamples: InboundRuntimeMessage[] = [
   { type: 'applyOverlay', id: 'selection-chrome', css: '.x { color: red }' },
   { type: 'removeOverlay', id: 'selection-chrome' },
-  { type: 'select', nodeIds: ['src/App.tsx:1:1', 'src/App.tsx:2:2'] },
-  { type: 'hover', nodeId: 'src/App.tsx:1:1' },
-  { type: 'hover', nodeId: null },
-  { type: 'measure', requestId: 'r1', nodeIds: ['src/App.tsx:1:1'] },
-  { type: 'measure', requestId: 'r2', nodeIds: ['src/App.tsx:1:1'], properties: ['color', 'width'] },
+  {
+    type: 'select',
+    refs: [
+      { nodeId: 'src/App.tsx:1:1', occurrenceIndex: 0 },
+      { nodeId: 'src/App.tsx:2:2', occurrenceIndex: 1 },
+    ],
+  },
+  { type: 'hover', nodeId: 'src/App.tsx:1:1', occurrenceIndex: 0 },
+  { type: 'hover', nodeId: null, occurrenceIndex: 0 },
+  { type: 'measure', requestId: 'r1', refs: [{ nodeId: 'src/App.tsx:1:1', occurrenceIndex: 0 }] },
+  {
+    type: 'measure',
+    requestId: 'r2',
+    refs: [{ nodeId: 'src/App.tsx:1:1', occurrenceIndex: 2 }],
+    properties: ['color', 'width'],
+  },
   { type: 'setAxes', axes: { direction: 'ltr', colorScheme: 'light' } },
   { type: 'setAxes', axes: { direction: 'rtl', colorScheme: 'dark', locale: 'ar' } },
   { type: 'setMode', mode: 'design' },
@@ -34,13 +45,21 @@ const inboundSamples: InboundRuntimeMessage[] = [
     type: 'optimistic.insert',
     nodeId: 'n1',
     parentNodeId: 'p1',
+    parentOccurrenceIndex: 0,
     index: 0,
     tagName: 'div',
     text: 'hello',
   },
-  { type: 'optimistic.delete', nodeId: 'n1' },
-  { type: 'optimistic.move', nodeId: 'n1', parentNodeId: 'p2', index: 1 },
-  { type: 'optimistic.text', nodeId: 'n1', text: 'updated' },
+  { type: 'optimistic.delete', nodeId: 'n1', occurrenceIndex: 0 },
+  {
+    type: 'optimistic.move',
+    nodeId: 'n1',
+    occurrenceIndex: 0,
+    parentNodeId: 'p2',
+    parentOccurrenceIndex: 1,
+    index: 1,
+  },
+  { type: 'optimistic.text', nodeId: 'n1', occurrenceIndex: 0, text: 'updated' },
 ]
 
 const outboundSamples: OutboundRuntimeMessage[] = [
@@ -51,6 +70,7 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     type: 'pointer',
     phase: 'down',
     nodeId: 'n1',
+    occurrenceIndex: 0,
     rect: { x: 0, y: 0, width: 10, height: 10 },
     clientX: 5,
     clientY: 5,
@@ -60,17 +80,21 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     type: 'pointer',
     phase: 'click',
     nodeId: null,
+    occurrenceIndex: 0,
     rect: null,
     clientX: 0,
     clientY: 0,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
   },
-  { type: 'text:edit', nodeId: 'n1', text: 'typed text' },
+  { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
   {
     type: 'measure:result',
     requestId: 'r1',
-    measurements: [{ nodeId: 'n1', rect: { x: 0, y: 0, width: 1, height: 1 }, computedStyle: { color: 'red' } }],
+    measurements: [
+      { nodeId: 'n1', occurrenceIndex: 0, rect: { x: 0, y: 0, width: 1, height: 1 }, computedStyle: { color: 'red' } },
+    ],
   },
+  { type: 'frame:resize', height: 1234 },
 ]
 
 describe('InboundRuntimeMessageSchema', () => {
@@ -106,6 +130,7 @@ describe('InboundRuntimeMessageSchema', () => {
       type: 'optimistic.insert',
       nodeId: 'n1',
       parentNodeId: 'p1',
+      parentOccurrenceIndex: 0,
       index: 0,
       tagName: 'script',
     }
@@ -123,6 +148,71 @@ describe('OutboundRuntimeMessageSchema', () => {
 
   it('rejects a measure:result missing requestId', () => {
     expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'measure:result', measurements: [] })).toBe(false)
+  })
+
+  it('rejects a negative frame:resize height', () => {
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: -1 })).toBe(false)
+  })
+
+  it('rejects a non-numeric frame:resize height', () => {
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'frame:resize', height: '100' })).toBe(false)
+  })
+})
+
+describe('occurrenceIndex (L5) — adversarial shape coverage on every node-naming message', () => {
+  it('rejects a select ref missing occurrenceIndex entirely', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'select', refs: [{ nodeId: 'n1' }] })).toBe(false)
+  })
+
+  it('rejects a negative occurrenceIndex', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'hover', nodeId: 'n1', occurrenceIndex: -1 })).toBe(false)
+  })
+
+  it('rejects a non-integer occurrenceIndex', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'hover', nodeId: 'n1', occurrenceIndex: 1.5 })).toBe(false)
+  })
+
+  it('rejects a string occurrenceIndex', () => {
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.delete', nodeId: 'n1', occurrenceIndex: '0' }),
+    ).toBe(false)
+  })
+
+  it('rejects an optimistic.move missing parentOccurrenceIndex', () => {
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, {
+        type: 'optimistic.move',
+        nodeId: 'n1',
+        occurrenceIndex: 0,
+        parentNodeId: 'p1',
+        index: 0,
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects an outbound pointer message with a negative occurrenceIndex', () => {
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, {
+        type: 'pointer',
+        phase: 'click',
+        nodeId: 'n1',
+        occurrenceIndex: -1,
+        rect: null,
+        clientX: 0,
+        clientY: 0,
+        modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects a measure:result measurement missing occurrenceIndex', () => {
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, {
+        type: 'measure:result',
+        requestId: 'r1',
+        measurements: [{ nodeId: 'n1', rect: null, computedStyle: {} }],
+      }),
+    ).toBe(false)
   })
 })
 
@@ -148,7 +238,7 @@ describe('envelopes', () => {
   })
 
   it('rejects an envelope from an unrelated postMessage sender', () => {
-    const foreign = { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'select', nodeIds: [] } }
+    const foreign = { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'select', refs: [] } }
     expect(Value.Check(InboundEnvelopeSchema, foreign)).toBe(false)
   })
 })

@@ -1,5 +1,16 @@
 /**
- * How tall a design frame's `<body>` has to be for nothing inside it to scroll.
+ * frameFitRules — how tall a design frame's `<body>` has to be for nothing
+ * inside it to scroll.
+ *
+ * Shared verbatim by BOTH `useIframeFrameAutoHeight.ts` (portal mode: a
+ * `ResizeObserver` on the iframe's own `contentWindow`) and `runtime.ts`
+ * (bridge mode: a `ResizeObserver` inside the cross-origin frame itself,
+ * which posts the RESULT as a `frame:resize` message rather than measuring
+ * it from outside — a cross-origin frame's `contentWindow` is unobservable
+ * from the parent by construction). Ported here (L5) rather than left
+ * portal-only, following L4's own established "one pure behaviour module,
+ * two consumers" pattern for hover-suppression / scroll-unroll /
+ * animation-freeze.
  *
  * A design frame shows a whole screen at once. Two things make that fail on an
  * imported app screen, and both are solved by the same number:
@@ -25,10 +36,23 @@
  * out while it runs. Only ever growing, with a hard ceiling, terminates.
  */
 
-import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from '@core/studio-runtime'
+import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from './scrollUnrollRules'
 
 /** Ceiling on the fitted height. A pathological page (a `88vh` hero feeding its own container) stops here instead of growing without bound. */
 export const MAX_FRAME_FIT_HEIGHT = 20000
+
+/**
+ * The starting/reset pin height — a device-sized viewport, matching
+ * `useIframeFrameAutoHeight.ts`'s (portal mode) own `CANVAS_VIEWPORT_HEIGHT`
+ * (`src/admin/pages/site/canvas/resolveViewportUnits.ts`). Kept as a second
+ * literal rather than imported: that module is admin-only (it feeds
+ * `resolveViewportUnits`'s viewport-unit rewriting, out of scope for a
+ * runtime bundle shipped to a real browser with zero admin imports by
+ * design — see this module's own doc and `messages.ts`'s equivalent note on
+ * `liveNodeResolve.ts`). Both values must stay in sync by hand if either
+ * changes.
+ */
+export const DEFAULT_FRAME_FIT_HEIGHT = 800
 
 /**
  * How many times one document may grow before the canvas accepts that it will

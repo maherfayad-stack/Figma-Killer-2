@@ -27,7 +27,7 @@
  * needs a dogfood pass).
  */
 import { afterEach, describe, expect, it } from 'bun:test'
-import { collectScrollDeficits } from '@site/canvas/resolveFrameFitHeight'
+import { collectScrollDeficits } from '@core/studio-runtime'
 
 function stubBox(
   el: HTMLElement,

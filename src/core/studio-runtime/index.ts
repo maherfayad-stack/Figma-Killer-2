@@ -34,6 +34,9 @@ export {
 } from './liveNodeResolve'
 export type { LiveElementLike, LiveNodeMatch, ResolveLiveNodeOptions } from './liveNodeResolve'
 
+export { findNthNodeById, occurrenceIndexOf } from './nodeIdIndexing'
+export type { NodeIdOccurrence } from './nodeIdIndexing'
+
 export {
   STUDIO_PARENT_ORIGIN_ENV,
   STUDIO_PROJECT_KEY_ENV,
@@ -74,6 +77,7 @@ export {
   PointerMessageSchema,
   TextEditMessageSchema,
   MeasureResultMessageSchema,
+  FrameResizeMessageSchema,
   toInboundEnvelope,
   toOutboundEnvelope,
   type InboundRuntimeMessage,
@@ -146,3 +150,12 @@ export {
   buildSelectionChromeTokenBlock,
   buildSelectionChromeStylesheet,
 } from './selectionChromeCss'
+
+export {
+  MAX_FRAME_FIT_HEIGHT,
+  MAX_FRAME_FIT_PASSES,
+  DEFAULT_FRAME_FIT_HEIGHT,
+  resolveFrameFitHeight,
+  collectScrollDeficits,
+  type FrameFitMetrics,
+} from './frameFitRules'

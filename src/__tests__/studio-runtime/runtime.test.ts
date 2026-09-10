@@ -100,13 +100,13 @@ describe('createStudioRuntimeBridge — selection / hover rings', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'select', nodeIds: ['n1', 'n2'] })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }, { nodeId: 'n2', occurrenceIndex: 0 }] })
     expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(2)
 
-    bridge.handleMessage({ type: 'select', nodeIds: ['n1'] })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
     expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(1)
 
-    bridge.handleMessage({ type: 'select', nodeIds: [] })
+    bridge.handleMessage({ type: 'select', refs: [] })
     expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
   })
 
@@ -114,7 +114,7 @@ describe('createStudioRuntimeBridge — selection / hover rings', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    expect(() => bridge!.handleMessage({ type: 'select', nodeIds: ['missing'] })).not.toThrow()
+    expect(() => bridge!.handleMessage({ type: 'select', refs: [{ nodeId: 'missing', occurrenceIndex: 0 }] })).not.toThrow()
     const ring = document.querySelector('[data-canvas-selection-ring]') as HTMLElement | null
     expect(ring?.style.display).toBe('none')
   })
@@ -124,10 +124,10 @@ describe('createStudioRuntimeBridge — selection / hover rings', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'hover', nodeId: 'n1' })
+    bridge.handleMessage({ type: 'hover', nodeId: 'n1', occurrenceIndex: 0 })
     expect(document.querySelectorAll('[data-canvas-hover-ring]')).toHaveLength(1)
 
-    bridge.handleMessage({ type: 'hover', nodeId: null })
+    bridge.handleMessage({ type: 'hover', nodeId: null, occurrenceIndex: 0 })
     expect((document.querySelector('[data-canvas-hover-ring]') as HTMLElement).style.display).toBe('none')
   })
 
@@ -136,9 +136,9 @@ describe('createStudioRuntimeBridge — selection / hover rings', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'select', nodeIds: ['n1'] })
-    bridge.handleMessage({ type: 'select', nodeIds: [] })
-    bridge.handleMessage({ type: 'select', nodeIds: ['n1'] })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
+    bridge.handleMessage({ type: 'select', refs: [] })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
 
     expect(document.querySelectorAll('#studio-canvas-selection-overlay-root')).toHaveLength(1)
   })
@@ -179,6 +179,7 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
       type: 'optimistic.insert',
       nodeId: 'new1',
       parentNodeId: 'parent',
+      parentOccurrenceIndex: 0,
       index: 0,
       tagName: 'span',
       text: '<img onerror=alert(1)>',
@@ -202,6 +203,7 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
         type: 'optimistic.insert',
         nodeId: 'new1',
         parentNodeId: 'parent',
+        parentOccurrenceIndex: 0,
         index: 0,
         tagName,
         text: undefined,
@@ -217,7 +219,7 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'gone' })
+    bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'gone', occurrenceIndex: 0 })
     expect(document.querySelector('[data-node-id="gone"]')).toBeNull()
   })
 
@@ -229,7 +231,7 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'optimistic.move', nodeId: 'item', parentNodeId: 'to', index: 0 })
+    bridge.handleMessage({ type: 'optimistic.move', nodeId: 'item', occurrenceIndex: 0, parentNodeId: 'to', parentOccurrenceIndex: 0, index: 0 })
 
     const to = document.querySelector('[data-node-id="to"]')
     expect(to?.querySelector('[data-node-id="item"]')).not.toBeNull()
@@ -240,7 +242,7 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'optimistic.text', nodeId: 't1', text: '<b>bold</b>' })
+    bridge.handleMessage({ type: 'optimistic.text', nodeId: 't1', occurrenceIndex: 0, text: '<b>bold</b>' })
 
     const el = document.querySelector('[data-node-id="t1"]')
     expect(el?.textContent).toBe('<b>bold</b>')
@@ -254,7 +256,7 @@ describe('createStudioRuntimeBridge — measure', () => {
     const { fakeWindow, posted } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'measure', requestId: 'req-1', nodeIds: ['m1'], properties: ['display'] })
+    bridge.handleMessage({ type: 'measure', requestId: 'req-1', refs: [{ nodeId: 'm1', occurrenceIndex: 0 }], properties: ['display'] })
 
     const reply = posted.at(-1)!.data as { message: { type: string; requestId: string; measurements: unknown[] } }
     expect(reply.message.type).toBe('measure:result')
@@ -270,7 +272,7 @@ describe('createStudioRuntimeBridge — measure', () => {
     const { fakeWindow, posted } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'measure', requestId: 'req-2', nodeIds: ['missing'] })
+    bridge.handleMessage({ type: 'measure', requestId: 'req-2', refs: [{ nodeId: 'missing', occurrenceIndex: 0 }] })
 
     const reply = posted.at(-1)!.data as { message: { measurements: Array<{ rect: unknown }> } }
     expect(reply.message.measurements[0]!.rect).toBeNull()
@@ -313,7 +315,7 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: PARENT_ORIGIN,
       source: fakeWindow,
-      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', nodeIds: ['n1'] } },
+      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
     })
 
     expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(1)
@@ -327,7 +329,7 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: 'https://attacker.test',
       source: fakeWindow,
-      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', nodeIds: ['n1'] } },
+      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
     })
 
     expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
@@ -341,7 +343,7 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: PARENT_ORIGIN,
       source: { postMessage: () => {} },
-      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', nodeIds: ['n1'] } },
+      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
     })
 
     expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
@@ -355,7 +357,7 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: PARENT_ORIGIN,
       source: fakeWindow,
-      data: { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'select', nodeIds: ['n1'] } },
+      data: { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
     })
 
     expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
@@ -388,7 +390,7 @@ describe('createStudioRuntimeBridge — dispose', () => {
     const localBridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
     localBridge.handleMessage({ type: 'applyOverlay', id: 'x', css: '.a{}' })
-    localBridge.handleMessage({ type: 'select', nodeIds: ['n1'] })
+    localBridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
     localBridge.handleMessage({ type: 'setMode', mode: 'design' })
 
     localBridge.dispose()

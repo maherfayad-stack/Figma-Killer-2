@@ -37,7 +37,13 @@
  * many rows exist, the surplus/deficit entries are silently dropped/left
  * unmatched — honest degradation, not a crash, matching L3's own
  * `liveNodeResolve.ts` posture on the same ambiguity.
+ *
+ * The position-counting loop itself is `nodeIdIndexing.ts`'s
+ * `occurrenceIndexOf`/`findNthNodeById` — shared with `runtime.ts`'s
+ * `findByNodeId` and outbound pointer/text-edit forwarders (L5), not
+ * reimplemented a second time here.
  */
+import { findNthNodeById, occurrenceIndexOf } from './nodeIdIndexing'
 
 interface StoredValue {
   kind: 'value'
@@ -79,16 +85,9 @@ const NODE_ID_ATTR = 'data-node-id'
 function keyFor(el: Element, doc: Document): string | null {
   const anchor = el.closest(`[${NODE_ID_ATTR}]`)
   if (!anchor) return null
-  const nodeId = anchor.getAttribute(NODE_ID_ATTR)
-  if (!nodeId) return null
-  const siblings = doc.querySelectorAll(`[${NODE_ID_ATTR}]`)
-  let index = 0
-  for (const sibling of siblings) {
-    if (sibling.getAttribute(NODE_ID_ATTR) !== nodeId) continue
-    if (sibling === anchor) break
-    index += 1
-  }
-  return `${nodeId}#${index}`
+  const occurrence = occurrenceIndexOf(doc, anchor)
+  if (!occurrence) return null
+  return `${occurrence.nodeId}#${occurrence.occurrenceIndex}`
 }
 
 function isCheckable(el: HTMLInputElement): boolean {
@@ -149,13 +148,7 @@ function resolveKey(doc: Document, key: string): Element | null {
   const nodeId = key.slice(0, hashIndex)
   const index = Number.parseInt(key.slice(hashIndex + 1), 10)
   if (!Number.isFinite(index) || index < 0) return null
-  let seen = 0
-  for (const el of doc.querySelectorAll(`[${NODE_ID_ATTR}]`)) {
-    if (el.getAttribute(NODE_ID_ATTR) !== nodeId) continue
-    if (seen === index) return el
-    seen += 1
-  }
-  return null
+  return findNthNodeById(doc, nodeId, index)
 }
 
 /**

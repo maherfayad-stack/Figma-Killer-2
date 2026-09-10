@@ -1,8 +1,8 @@
 import { useEffect, type RefObject } from 'react'
+import { collectScrollDeficits, resolveFrameFitHeight } from '@core/studio-runtime'
 import { isCanvasGestureActive, onCanvasGestureSettle } from './canvasGesture'
 import { resolveCanvasFrameHeight } from './iframeFrameHeight'
 import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
-import { collectScrollDeficits, resolveFrameFitHeight } from './resolveFrameFitHeight'
 import {
   createFrameFitMutationScheduler,
   FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
