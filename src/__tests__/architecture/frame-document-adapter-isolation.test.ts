@@ -3,23 +3,39 @@
  *
  * "The canvas DOM must be the DOM React renders" (`canvas-engineer`'s own
  * rule book) is enforced structurally, not just by review: after `live-05`,
- * `PortalFrameAdapter.ts` is the ONLY file under
- * `src/admin/pages/site/canvas/` allowed to hold a `Document` reference for
- * canvas rendering purposes. Every other injector/hook reads a
- * `FrameDocumentAdapter` from context instead of a raw `targetDocument`/
- * `contentDocument`/`contentWindow`, so a cross-origin Tier 2 frame
- * (`BridgeFrameAdapter`) can drive the exact same call sites a same-origin
- * frame does.
+ * a raw `iframe.contentDocument`/`iframe.contentWindow` reach-in is banned
+ * everywhere under `src/admin/pages/site/canvas/` except through one of the
+ * sanctioned escape hatches — `PortalFrameAdapter`'s own internals, its
+ * `getPortalWindow()` accessor, and `frameAdapter/resolvePortalDocument.ts`,
+ * the one shared helper every other portal-mode-only caller goes through.
+ * Every other injector/hook reads a `FrameDocumentAdapter` from context
+ * instead, so a cross-origin Tier 2 frame (`BridgeFrameAdapter`) can drive
+ * the exact same call sites a same-origin frame does.
+ *
+ * This does NOT ban a bare `Document`/`Window`-typed function parameter —
+ * only the literal property reads `.contentDocument`/`.contentWindow`. A
+ * portal-mode-only Class A function (`ownElementForNode(doc: Document, …)`
+ * in `canvasNodeLookup.ts`, `isCanvasSpacePanActive(doc: Document)` in
+ * `canvasPanInput.ts`, and many more) legitimately receives an
+ * already-resolved `Document`/`Window` from a caller that went through the
+ * registry — banning the parameter TYPE, not just the reach-in, would have
+ * meant allowlisting most of this directory file-by-file for no real safety
+ * gain: none of those functions could reach into an iframe on their own even
+ * if they wanted to, they only ever see what their caller already resolved.
+ * An earlier version of this gate banned `: Document`/`<Document>` outright;
+ * un-skipping it against the ACTUAL shape the `live-05` migration converged
+ * on turned up ~15 legitimate Class A files, which is what motivated this
+ * narrower, more precise pattern set.
  *
  * Modeled on `live-origin-isolation.test.ts`'s grep-based scan pattern —
  * this is a structural gate proven by source text, not a running-canvas
  * test.
  *
- * `frameAdapter/BridgeFrameAdapter.ts` legitimately uses the word `Document`
- * in prose comments (documenting why it does NOT hold one) but must not
- * declare a `Document`-typed field or parameter — the scan below strips
- * comments first so prose never trips it, matching `live-origin-isolation`'s
- * own "blank out comments, check code" technique.
+ * `frameAdapter/BridgeFrameAdapter.ts` legitimately uses the word
+ * `contentDocument`/`contentWindow` in prose comments (documenting why it
+ * does NOT hold one) — the scan below strips comments first so prose never
+ * trips it, matching `live-origin-isolation`'s own "blank out comments,
+ * check code" technique.
  */
 import { describe, expect, it } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
@@ -28,18 +44,40 @@ import { extname, join, relative } from 'path'
 const REPO_ROOT = join(import.meta.dir, '../../../')
 const CANVAS_DIR = join(REPO_ROOT, 'src/admin/pages/site/canvas')
 
-/** Files allowed to hold a real `Document` — the portal adapter itself, and its own direct test file. */
+/**
+ * Files allowed to hold a raw `.contentDocument`/`.contentWindow` reach-in.
+ *
+ *   - `PortalFrameAdapter.ts` + its own test file: the portal adapter's
+ *     literal implementation.
+ *   - `IframeFrameSurface.tsx`: the actual origin point. It reads the
+ *     iframe's `srcDoc` document/window to CONSTRUCT the `PortalFrameAdapter`
+ *     and the `iframeDoc.body` `createPortal` target in the first place —
+ *     every other file's `Document` traces back to this one having already
+ *     done the reach-in.
+ *   - `iframeFrameObservers.ts`: `useIframeFrameAutoHeight.ts`'s own
+ *     portal-mode-only observer wiring needs live `ResizeObserver`/
+ *     `MutationObserver` constructors from the FRAME's window specifically
+ *     (not the parent's) — richer than a single `Document` reference, so
+ *     that hook's portal branch reaches in directly, by design (see its own
+ *     doc comment).
+ *   - `ModuleSandboxFrame.tsx`: a Tier 1 `pkg.*` component sandbox iframe —
+ *     its own `postMessage` bridge protocol, not a `FrameDocumentAdapter`-
+ *     governed canvas breakpoint frame. Out of `live-05`'s scope entirely.
+ *   - Three test files that legitimately assert on the raw DOM a portal-mode
+ *     `IframeFrameSurface`/adapter construction actually produced.
+ */
 const ALLOWLIST = new Set([
   'src/admin/pages/site/canvas/frameAdapter/PortalFrameAdapter.ts',
   'src/__tests__/canvas/frameAdapter/PortalFrameAdapter.test.ts',
+  'src/admin/pages/site/canvas/IframeFrameSurface.tsx',
+  'src/admin/pages/site/canvas/iframeFrameObservers.ts',
+  'src/admin/pages/site/canvas/ModuleSandboxFrame.tsx',
+  'src/admin/pages/site/canvas/__tests__/useIframeFrameAutoHeight.test.tsx',
+  'src/admin/pages/site/canvas/__tests__/canvasDiagnosticsInjector.test.tsx',
+  'src/admin/pages/site/canvas/__tests__/iframeFrameSurfaceDocumentMode.test.tsx',
 ])
 
-const BANNED_PATTERNS: RegExp[] = [
-  /\bcontentDocument\b/,
-  /:\s*Document\b/,
-  /<\s*Document\s*>/,
-  /\bcontentWindow\b/,
-]
+const BANNED_PATTERNS: RegExp[] = [/\bcontentDocument\b/, /\bcontentWindow\b/]
 
 function collectFiles(dir: string): string[] {
   const out: string[] = []
@@ -73,16 +111,7 @@ describe('frame-document-adapter isolation gate', () => {
     expect(files.length).toBeGreaterThan(0)
   })
 
-  // SKIPPED until Batches 2-7 of `live-05` (STATE.md) actually migrate every
-  // injector/hook off a direct `Document` reference — as of Batch 1 (this
-  // commit), the new adapter files exist but nothing calls them yet, so
-  // every one of the ~47 files listed in that entry's file-by-file plan
-  // still legitimately holds a `Document`. This gate is written and correct
-  // NOW so batches 2-7 have an exact, ready-to-run pass/fail bar — but it
-  // must stay skipped (not deleted, not weakened) until the migration is
-  // actually done, or `bun test` breaks for everyone on a half-finished
-  // work order. Un-skip this in the SAME commit that finishes Batch 7.
-  it.skip('no stray Document/contentDocument/contentWindow usage outside PortalFrameAdapter.ts and its own test file', () => {
+  it('no stray contentDocument/contentWindow reach-in outside the sanctioned escape hatches', () => {
     const violations: string[] = []
     for (const file of files) {
       const relPath = relative(REPO_ROOT, file).replaceAll('\\', '/')
@@ -100,7 +129,7 @@ describe('frame-document-adapter isolation gate', () => {
     }
     if (violations.length > 0) {
       throw new Error(
-        `[frame-document-adapter-isolation] Document/contentDocument/contentWindow usage found outside PortalFrameAdapter.ts:\n${violations.join('\n')}`,
+        `[frame-document-adapter-isolation] contentDocument/contentWindow usage found outside the allowlist:\n${violations.join('\n')}`,
       )
     }
     expect(violations).toHaveLength(0)
