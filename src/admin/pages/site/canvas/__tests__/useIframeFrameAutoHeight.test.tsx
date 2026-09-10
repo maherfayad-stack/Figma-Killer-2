@@ -18,9 +18,22 @@ import type { RefObject } from 'react'
 import { useIframeFrameAutoHeight } from '../useIframeFrameAutoHeight'
 import { FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS } from '../frameFitMutationScheduler'
 import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from '@core/studio-runtime'
+import { PortalFrameAdapter } from '../frameAdapter/PortalFrameAdapter'
+import { BridgeFrameAdapter, type BridgeFrameChannel } from '../frameAdapter/BridgeFrameAdapter'
+import { toOutboundEnvelope } from '@core/studio-runtime'
+
+let adapters: PortalFrameAdapter[] = []
+
+function makeAdapter(doc: Document): PortalFrameAdapter {
+  const adapter = new PortalFrameAdapter(doc)
+  adapters.push(adapter)
+  return adapter
+}
 
 afterEach(() => {
   cleanup()
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
   document.body.innerHTML = ''
 })
 
@@ -68,7 +81,7 @@ describe('useIframeFrameAutoHeight — mutation-triggered rescan cost', () => {
     const { iframe, frameDoc, textNode, getScanCount } = setUpFrame()
     const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
 
-    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, isLive: false }))
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, adapter: makeAdapter(frameDoc), isLive: false }))
 
     // The initial mount measurement runs the scan exactly once.
     const afterMountScans = getScanCount()
@@ -106,7 +119,7 @@ describe('useIframeFrameAutoHeight — mutation-triggered rescan cost', () => {
     const { iframe, frameDoc, getScanCount } = setUpFrame()
     const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
 
-    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, isLive: false }))
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, adapter: makeAdapter(frameDoc), isLive: false }))
     const afterMountScans = getScanCount()
 
     const newNode = frameDoc.createElement('div')
@@ -117,5 +130,70 @@ describe('useIframeFrameAutoHeight — mutation-triggered rescan cost', () => {
     // `FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS` wait required for the count to
     // move, unlike the text-only burst above.
     expect(getScanCount()).toBeGreaterThan(afterMountScans)
+  })
+})
+
+/**
+ * The bridge-mode branch (`live-05`, STATE.md, Batch 5) — driven by a
+ * `BridgeFrameAdapter` against a stubbed message channel, the same
+ * unteastable-any-other-way pattern `BridgeFrameAdapter.test.ts` itself
+ * uses (happy-dom's `MessageEvent` cannot carry a real cross-window
+ * `source`). No `iframeDoc` at all here — the whole point is that a
+ * cross-origin frame's document is never reachable from the parent side.
+ */
+describe('useIframeFrameAutoHeight — bridge-mode branch', () => {
+  function makeBridgeAdapter(): BridgeFrameAdapter {
+    let handler: ((ev: MessageEvent) => void) | null = null
+    const channel: BridgeFrameChannel = {
+      postMessage: () => {},
+      addEventListener: (type, h) => {
+        if (type === 'message') handler = h
+      },
+      removeEventListener: (type, h) => {
+        if (type === 'message' && handler === h) handler = null
+      },
+    }
+    const adapter = new BridgeFrameAdapter({
+      channel,
+      frameOrigin: 'https://live.studio.test',
+      nodeIdsInTreeOrder: [],
+    })
+    adapters.push(adapter)
+    // Stash the dispatcher on the adapter itself (test-only convenience) so
+    // the test below can fire a `frame:resize` message without re-deriving
+    // the envelope shape `BridgeFrameAdapter.test.ts` already owns.
+    ;(adapter as unknown as { __dispatch: (data: unknown) => void }).__dispatch = (data: unknown) =>
+      handler?.({ origin: 'https://live.studio.test', source: undefined, data } as MessageEvent)
+    return adapter
+  }
+
+  it('resizes the outer iframe element to the reported frame:resize height', () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
+    const adapter = makeBridgeAdapter()
+
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: null, adapter, isLive: false }))
+
+    const dispatch = (adapter as unknown as { __dispatch: (data: unknown) => void }).__dispatch
+    dispatch(toOutboundEnvelope({ type: 'frame:resize', height: 950 }))
+
+    expect(iframe.style.height).toBe('950px')
+    iframe.remove()
+  })
+
+  it('does nothing while isLive is true', () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
+    const adapter = makeBridgeAdapter()
+
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: null, adapter, isLive: true }))
+
+    const dispatch = (adapter as unknown as { __dispatch: (data: unknown) => void }).__dispatch
+    dispatch(toOutboundEnvelope({ type: 'frame:resize', height: 950 }))
+
+    expect(iframe.style.height).toBe('')
+    iframe.remove()
   })
 })

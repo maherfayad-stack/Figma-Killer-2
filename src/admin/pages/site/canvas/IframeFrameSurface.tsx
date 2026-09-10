@@ -222,7 +222,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
 
     useIframeCursorBridge(iframeRef, adapter, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(adapter, { breakpointId, enabled: !isLive })
-    useIframeFrameAutoHeight({ iframeRef, iframeDoc, isLive })
+    useIframeFrameAutoHeight({ iframeRef, iframeDoc, adapter, isLive })
     // WS-10 — direction/color-scheme, an attribute effect (never `srcDoc`/a
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
     // per-frame override merged onto the board-global axes inside the hook.
