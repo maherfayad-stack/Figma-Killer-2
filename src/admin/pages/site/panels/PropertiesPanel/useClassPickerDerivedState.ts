@@ -1,6 +1,9 @@
 /** useClassPickerDerivedState — derives suggestions, pills, and canvas state for the ClassPicker. */
 
 import { isUserVisibleClass, type PageNode, type StyleRule } from '@core/page-tree'
+// Portal-mode only (`live-05`, STATE.md) — this hook needs a real `Element`
+// for `Element.matches()` (`selectorPickerModel.ts`'s ambient-rule
+// evaluation), which only exists for a same-origin portal frame.
 import { findRenderedCanvasNodeElement } from '@site/canvas/canvasNodeLookup'
 import { useClassPickerSuggestions } from './useClassPickerSuggestions'
 import { deriveSelectorPickerModel } from './selectorPickerModel'

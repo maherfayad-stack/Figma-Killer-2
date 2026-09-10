@@ -4,12 +4,28 @@ import {
   findRenderedCanvasNodeElement,
   RenderedCanvasNodeCache,
 } from '@site/canvas/canvasNodeLookup'
+import {
+  registerFrameAdapter,
+  unregisterFrameAdapter,
+} from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+
+let adapters: PortalFrameAdapter[] = []
 
 afterEach(() => {
   document.body.innerHTML = ''
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
 })
 
-/** Append an iframe whose body is tagged as a canvas breakpoint frame. */
+/**
+ * Append an iframe and register a `PortalFrameAdapter` for it — since
+ * `live-05` (STATE.md, the architect's Batch 4 resolution), membership in
+ * `canvasFrameAdapterRegistry.ts` IS "is a canvas frame" for every Class B
+ * lookup in `canvasNodeLookup.ts`; a frame with no registered adapter is
+ * invisible to them, the same way an iframe missing `data-breakpoint-id`
+ * used to be invisible to the old `canvasFrameDocuments` scan.
+ */
 function addCanvasFrame(html: string, breakpointId = 'bp-desktop'): HTMLIFrameElement {
   const frame = document.createElement('iframe')
   document.body.appendChild(frame)
@@ -17,6 +33,9 @@ function addCanvasFrame(html: string, breakpointId = 'bp-desktop'): HTMLIFrameEl
   if (!frameDoc) throw new Error('Test iframe did not create a contentDocument')
   frameDoc.body.setAttribute('data-breakpoint-id', breakpointId)
   frameDoc.body.innerHTML = html
+  const adapter = new PortalFrameAdapter(frameDoc)
+  adapters.push(adapter)
+  registerFrameAdapter(frame, adapter)
   return frame
 }
 
@@ -47,14 +66,23 @@ describe('findRenderedCanvasNodeElement', () => {
     expect(el).not.toBe(treeRow)
   })
 
-  it('ignores iframes that are not canvas breakpoint frames', () => {
+  it('ignores an iframe with no registered adapter', () => {
+    // e.g. a plugin or preview iframe — IframeFrameSurface never constructed
+    // an adapter for it, so it was never registered.
     const frame = document.createElement('iframe')
     document.body.appendChild(frame)
     const frameDoc = frame.contentDocument
     if (!frameDoc) throw new Error('Test iframe did not create a contentDocument')
-    // No data-breakpoint-id on the body — e.g. a plugin or preview iframe.
     frameDoc.body.innerHTML = '<div data-node-id="title"></div>'
 
+    expect(findRenderedCanvasNodeElement('title')).toBeNull()
+  })
+
+  it('ignores a registered adapter once its frame is unregistered', () => {
+    const frame = addCanvasFrame('<h1 data-node-id="title"></h1>')
+    expect(findRenderedCanvasNodeElement('title')).not.toBeNull()
+
+    unregisterFrameAdapter(frame)
     expect(findRenderedCanvasNodeElement('title')).toBeNull()
   })
 
@@ -75,12 +103,12 @@ describe('findRenderedCanvasNodeElement', () => {
 //
 // The properties/inspect panels re-run this lookup once per KEYSTROKE that
 // edits the selected node's style (`useInspectComputedStyle.ts`). Before this
-// cache, every one of those renders redid the FULL scan `findRenderedCanvasNodes`
-// does: `document.querySelectorAll('iframe')` over the admin document, then a
-// cross-document `querySelector` inside EACH breakpoint frame's own page. These
-// tests spy on the frame document's `querySelector` to prove that inner,
-// per-frame scan collapses to one call while the resolved element stays
-// connected, and self-heals the moment it doesn't.
+// cache, every one of those renders redid the FULL scan
+// `findRenderedCanvasElements` does: iterate every registered frame adapter,
+// then a cross-document `querySelector` inside EACH breakpoint frame's own
+// page. These tests spy on the frame document's `querySelector` to prove
+// that inner, per-frame scan collapses to one call while the resolved
+// element stays connected, and self-heals the moment it doesn't.
 // ---------------------------------------------------------------------------
 
 /** Wraps `frameDoc.querySelector` with a call counter, in place. */

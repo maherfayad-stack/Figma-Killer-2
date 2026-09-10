@@ -34,14 +34,28 @@ import {
   useInspectComputedStyle,
   useFrameComputedStyleValues,
 } from '@site/panels/InspectPanel/useInspectComputedStyle'
+import { registerFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+
+let frameAdapters: PortalFrameAdapter[] = []
 
 afterEach(() => {
   cleanup()
   document.body.innerHTML = ''
+  for (const adapter of frameAdapters) adapter.dispose()
+  frameAdapters = []
 })
 
-/** A canvas breakpoint frame with one styled node, plus a spy counting the
- *  cross-document `[data-node-id]` queries made against its document. */
+/**
+ * A canvas breakpoint frame with one styled node, plus a spy counting the
+ * cross-document `[data-node-id]` queries made against its document.
+ *
+ * Registers a `PortalFrameAdapter` for the frame — since `live-05`
+ * (STATE.md, the architect's Batch 4 resolution), both hooks under test
+ * resolve elements only through registered frames
+ * (`canvasFrameAdapterRegistry.ts`), not every iframe carrying
+ * `data-breakpoint-id`.
+ */
 function setUpCanvasFrame(nodeId: string, breakpointId = 'bp-desktop') {
   const frame = document.createElement('iframe')
   document.body.appendChild(frame)
@@ -62,6 +76,10 @@ function setUpCanvasFrame(nodeId: string, breakpointId = 'bp-desktop') {
     queries++
     return originalQuerySelector(selector)
   }) as typeof frameDoc.querySelector
+
+  const adapter = new PortalFrameAdapter(frameDoc)
+  frameAdapters.push(adapter)
+  registerFrameAdapter(frame, adapter)
 
   return { frame, node, queries: () => queries }
 }

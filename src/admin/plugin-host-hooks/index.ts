@@ -24,7 +24,7 @@
  */
 import { use, useEffect, useState } from 'react'
 import { useEditorStore as useHostEditorStore } from '@site/store/store'
-import { findRenderedCanvasNodes, type RenderedCanvasNode } from '@site/canvas/canvasNodeLookup'
+import { findRenderedCanvasElements, type RenderedCanvasElement } from '@site/canvas/canvasNodeLookup'
 import { measureCanvasElementRect } from '@site/canvas/canvasOverlayGeometry'
 import type { EditorStore } from '@site/store/types'
 import type { PluginPermission } from '@core/plugin-sdk'
@@ -160,14 +160,19 @@ function findCanvasOverlayLayer(): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[${CANVAS_OVERLAY_LAYER_ATTRIBUTE}]`)
 }
 
-function findCanvasNode(nodeId: string): RenderedCanvasNode | null {
+function findCanvasNode(nodeId: string): RenderedCanvasElement | null {
   if (typeof document === 'undefined') return null
   // Canvas nodes render exclusively inside the per-breakpoint canvas iframes —
   // the admin document's `data-node-id` carriers (layers-tree rows, overlay
   // rings, import previews) are chrome, not the node. The node typically
   // renders once per breakpoint frame; pick the first VISIBLE one, like the
   // host's selection overlay does.
-  const candidates = findRenderedCanvasNodes(nodeId)
+  //
+  // Portal-mode only (`live-05`, STATE.md) — this hook needs a real
+  // `Element` for `getBoundingClientRect()`, which only exists for a
+  // same-origin portal frame; a bridge-registered frame is silently skipped
+  // by `findRenderedCanvasElements`, never attempted.
+  const candidates = findRenderedCanvasElements(nodeId)
   for (const candidate of candidates) {
     const rect = candidate.element.getBoundingClientRect()
     if (rect.width > 0 || rect.height > 0) return candidate

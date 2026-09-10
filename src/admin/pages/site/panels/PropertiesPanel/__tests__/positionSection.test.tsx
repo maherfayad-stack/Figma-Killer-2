@@ -24,6 +24,8 @@ import userEvent from '@testing-library/user-event'
 import { PositionSection } from '@site/panels/PropertiesPanel/PositionSection'
 import { resolveAlignWrite, type ParentLayoutInfo } from '@site/panels/PropertiesPanel/resolveAlignWrite'
 import { useEditorStore } from '@site/store/store'
+import { registerFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { makeSite, makePage, makeNode } from '../../../../../../__tests__/fixtures'
 
 afterEach(cleanup)
@@ -115,6 +117,8 @@ describe('PositionSection — single-node align row', () => {
     return { site, activePageId, activeDocument, selectedNodeId, activeBreakpointId }
   })()
 
+  let frameAdapters: PortalFrameAdapter[] = []
+
   afterEach(() => {
     // Restoring the shared store singleton can still notify a component this
     // very test just rendered (global `cleanup()` — registered before this
@@ -125,9 +129,19 @@ describe('PositionSection — single-node align row', () => {
       useEditorStore.setState(pristine)
     })
     document.body.innerHTML = ''
+    for (const adapter of frameAdapters) adapter.dispose()
+    frameAdapters = []
   })
 
-  /** A canvas breakpoint frame with one styled element for a given node id. */
+  /**
+   * A canvas breakpoint frame with one styled element for a given node id.
+   *
+   * Registers a `PortalFrameAdapter` for the frame — since `live-05`
+   * (STATE.md, the architect's Batch 4 resolution), the align row's
+   * computed-style read resolves elements only through registered frames
+   * (`canvasFrameAdapterRegistry.ts`), not every iframe carrying
+   * `data-breakpoint-id`.
+   */
   function mountCanvasNode(nodeId: string, style: Partial<CSSStyleDeclaration>) {
     const frame = document.createElement('iframe')
     document.body.appendChild(frame)
@@ -137,6 +151,9 @@ describe('PositionSection — single-node align row', () => {
     el.setAttribute('data-node-id', nodeId)
     Object.assign(el.style, style)
     frameDoc.body.appendChild(el)
+    const adapter = new PortalFrameAdapter(frameDoc)
+    frameAdapters.push(adapter)
+    registerFrameAdapter(frame, adapter)
     return el
   }
 

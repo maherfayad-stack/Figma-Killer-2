@@ -29,7 +29,7 @@ import {
   type ScrollUnrollController,
 } from '@core/studio-runtime'
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
-import { escapeCssAttributeValue } from '../canvasNodeLookup'
+import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
 import type {
   FrameDocumentAdapter,
   FrameRuntimeEvent,

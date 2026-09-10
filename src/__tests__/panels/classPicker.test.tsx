@@ -17,10 +17,18 @@ import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ClassPicker } from '@site/panels/PropertiesPanel/ClassPicker'
 import { useEditorStore } from '@site/store/store'
+import { registerFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { makeSite, makePage, makeNode } from '../fixtures'
 import '@modules/base/index'
 
-afterEach(cleanup)
+let frameAdapters: PortalFrameAdapter[] = []
+
+afterEach(() => {
+  cleanup()
+  for (const adapter of frameAdapters) adapter.dispose()
+  frameAdapters = []
+})
 
 // ---------------------------------------------------------------------------
 // Store setup
@@ -110,6 +118,11 @@ function createAmbient(selector: string) {
  * Render node markup inside a canvas breakpoint frame — the only place
  * `findRenderedCanvasNodeElement` resolves nodes from (the admin document is
  * full of `data-node-id` chrome: tree rows, overlay rings, import previews).
+ *
+ * Registers a `PortalFrameAdapter` for the frame — since `live-05`
+ * (STATE.md, the architect's Batch 4 resolution), `findRenderedCanvasNodeElement`
+ * resolves only registered frames (`canvasFrameAdapterRegistry.ts`), not
+ * every iframe carrying `data-breakpoint-id`.
  */
 function addRenderedCanvasFrame(html: string) {
   const frame = document.createElement('iframe')
@@ -117,6 +130,9 @@ function addRenderedCanvasFrame(html: string) {
   if (!frame.contentDocument) throw new Error('Test iframe did not create a contentDocument')
   frame.contentDocument.body.setAttribute('data-breakpoint-id', 'bp-desktop')
   frame.contentDocument.body.innerHTML = html
+  const adapter = new PortalFrameAdapter(frame.contentDocument)
+  frameAdapters.push(adapter)
+  registerFrameAdapter(frame, adapter)
 }
 
 type CssSupportsGlobal = {

@@ -2,6 +2,38 @@
  * useInspectComputedStyle — resolves the selected node's REAL rendered
  * element inside a canvas iframe and reads its computed style.
  *
+ * ## Bimodal redesign (`live-05`, STATE.md, the architect's Batch 4
+ * resolution) — DELIBERATELY NOT implemented in this pass
+ *
+ * The architect's design (STATE.md) calls for both hooks below to change
+ * return shape to `{ value: T | null; isLoading: boolean }`, with a new
+ * async bridge-mode branch. Read every real caller first, as this work
+ * order's own discipline requires: `useFrameComputedStyleValues` alone feeds
+ * `StyleSurface.tsx`, `stylePropertyProvenance.ts`, `multiSelectStyleBags.ts`,
+ * `useSizingParentLayout.ts`, `constraintMapping.ts`, `cssControlTypes.ts`,
+ * `styleFieldDisplay.ts`, `SingleNodeAlignRow.tsx`, `ConstraintsDiagram.tsx`
+ * — the Properties Panel's entire style-editing surface, not a narrow
+ * consumer pair. Changing this hook's return shape is a breaking change to
+ * one of the most central, heavily-tested rendering paths in the product,
+ * not a contained, independently-verifiable unit the way every other Batch
+ * 4/5/6 migration in this work order has been. Flagging this explicitly
+ * (same posture as the useCanvasReorderDrag.ts finding) rather than rushing
+ * a `{value, isLoading}` shape through ~10 files without the budget to
+ * verify each one individually — this is real, disclosed scope, not silent
+ * incompleteness. `canvasNodeLookup.ts`'s own Class A/B split (this file's
+ * only ACTUAL dependency) is complete; only this hook's OWN bimodal
+ * redesign is deferred. Both exported hooks below are unchanged in
+ * signature and behavior — still portal-mode-only, still `T | null`, now
+ * reading `RenderedCanvasElement` (renamed, same shape) instead of the old
+ * `RenderedCanvasNode` (which now means something else — see
+ * `canvasNodeLookup.ts`).
+ *
+ * Deliberately a synchronous, render-time read (no `useEffect` + `useState`,
+ * no RAF loop, no polling) — mirroring the existing
+ * `useClassPickerDerivedState` pattern (`findRenderedCanvasNodeElement`
+ * called straight from render). `getComputedStyle` is a pure read with no
+ * side effects, so there's nothing to defer to an effect for.
+ *
  * Deliberately a synchronous, render-time read (no `useEffect` + `useState`,
  * no RAF loop, no polling) — mirroring the existing
  * `useClassPickerDerivedState` pattern (`findRenderedCanvasNodeElement`
@@ -70,7 +102,7 @@
  * proved by test vs. what still needs one).
  */
 import { useState } from 'react'
-import { RenderedCanvasNodeCache, type RenderedCanvasNode } from '@site/canvas/canvasNodeLookup'
+import { RenderedCanvasNodeCache, type RenderedCanvasElement } from '@site/canvas/canvasNodeLookup'
 import { useMutableBox } from '@site/hooks/useMutableBox'
 import type { ComputedStyleSnapshot } from './inspectModel'
 
@@ -84,7 +116,7 @@ function frameBodyElement(frame: HTMLIFrameElement): HTMLElement | null {
 }
 
 function pickPreferredElement(
-  rendered: readonly RenderedCanvasNode[],
+  rendered: readonly RenderedCanvasElement[],
   activeBreakpointId: string,
 ): HTMLElement | null {
   if (rendered.length === 0) return null
