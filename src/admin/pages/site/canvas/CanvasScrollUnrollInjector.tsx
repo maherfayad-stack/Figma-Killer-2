@@ -25,30 +25,45 @@
  * not a page-tree mutation, and none of it is written back to source.
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import { startScrollUnroll } from '@core/studio-runtime'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
 const STYLE_TAG_ID = 'studio-canvas-scroll-unroll'
 
 interface CanvasScrollUnrollInjectorProps {
-  /** The iframe document to inject the stylesheet + tagging pass into. */
-  targetDocument: Document
   /** Toggleable per board ("Unroll scroll" in the canvas toolbar). Default on. */
   enabled?: boolean
 }
 
-export function CanvasScrollUnrollInjector({
-  targetDocument,
-  enabled = true,
-}: CanvasScrollUnrollInjectorProps) {
+/**
+ * Portal mode only (`live-05`, STATE.md, Batch 5) — reads the frame's
+ * `Document` through `PortalFrameAdapter`'s escape hatch, calling
+ * `startScrollUnroll` directly exactly as before rather than
+ * `adapter.setInteractionMode`. Kept independent of `setInteractionMode` for
+ * the same reason as `CanvasAnimationInjector`: this component has its own
+ * `enabled` toggle (the canvas toolbar's "Unroll scroll" switch) that
+ * `setInteractionMode`'s binary design/live coupling doesn't model, and
+ * `setInteractionMode`'s own scroll-unroll controller (built in Batch 1 for
+ * a future bridge-mode caller) uses a DIFFERENT style-tag id — no literal
+ * collision either way, but running both would be pure redundant work with
+ * no real caller needing it yet.
+ */
+export function CanvasScrollUnrollInjector({ enabled = true }: CanvasScrollUnrollInjectorProps) {
+  const adapter = useContext(CanvasFrameAdapterContext)
+
   useEffect(() => {
+    if (!isPortalFrameAdapter(adapter)) return
+    const targetDocument = adapter.getPortalWindow()?.document
+    if (!targetDocument) return
     if (!enabled) {
       targetDocument.getElementById(STYLE_TAG_ID)?.remove()
       return
     }
     const controller = startScrollUnroll(targetDocument, STYLE_TAG_ID, 'CanvasScrollUnrollInjector')
     return () => controller.dispose()
-  }, [targetDocument, enabled])
+  }, [adapter, enabled])
 
   return null
 }

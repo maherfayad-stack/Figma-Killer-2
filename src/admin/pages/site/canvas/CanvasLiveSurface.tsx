@@ -29,7 +29,6 @@
  */
 
 import {
-  use,
   useCallback,
   useEffect,
   useRef,
@@ -45,7 +44,6 @@ import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import {
   CanvasBreakpointContext,
-  CanvasDocumentContext,
   CanvasPageContext,
   CanvasTemplateContext,
 } from './CanvasContexts'
@@ -342,14 +340,14 @@ export function CanvasLiveSurface({
 }
 
 /**
- * Hides the scrollbars of the frame this renders INSIDE, reading that frame's
- * own document from the context `IframeFrameSurface` publishes. A component
- * rather than a prop because the document is only knowable from within the
- * portal, which is the whole reason the old ref-based wiring reached one frame
- * and missed three.
+ * Hides the scrollbars of the frame this renders INSIDE — `DeviceScrollbarInjector`
+ * itself reads the frame's adapter from `CanvasFrameAdapterContext`
+ * (`IframeFrameSurface` publishes it), so this wrapper only needs to exist
+ * because the adapter is only knowable from within the portal, which is the
+ * whole reason the old ref-based wiring reached one frame and missed three.
  */
 function FrameScrollbars({ hidden }: { hidden: boolean }) {
-  return <DeviceScrollbarInjector targetDocument={use(CanvasDocumentContext)} hidden={hidden} />
+  return <DeviceScrollbarInjector hidden={hidden} />
 }
 
 /**

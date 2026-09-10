@@ -450,12 +450,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   keyframe, so an imported app's infinite shimmers/spinners
                   don't run forever behind the selection ring. Live mode is a
                   visitor preview, so it keeps the real motion. */}
-              {!isLive && <CanvasAnimationInjector targetDocument={iframeDoc} />}
+              {!isLive && <CanvasAnimationInjector />}
               {/* Design frames only: internal scroll regions (a flex:1
                   overflow:auto app shell) become content-sized so the whole
                   screen is visible instead of a scrollable box. Live mode
                   scrolls natively and keeps the app's own clipping. */}
-              {!isLive && <CanvasScrollUnrollInjector targetDocument={iframeDoc} />}
+              {!isLive && <CanvasScrollUnrollInjector />}
               {/* Design frames only: the page's own `:hover` rules are rewritten
                   so they cannot match. Moving the pointer across a board to
                   reach a node should not repaint every button and card it
@@ -464,7 +464,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   mode is a visitor preview, so it keeps real hover, exactly as
                   it keeps real motion above. Mounted AFTER the CSS injectors it
                   rewrites so its first pass has sheets to walk. */}
-              {!isLive && <CanvasHoverSuppressionInjector targetDocument={iframeDoc} />}
+              {!isLive && <CanvasHoverSuppressionInjector />}
               {/* Author CSS — @layer user-authored. Cascade priority within
                   that layer is DOM source order, which for adapter-managed
                   overlays is now first-`applyOverlay`-call order — i.e. this

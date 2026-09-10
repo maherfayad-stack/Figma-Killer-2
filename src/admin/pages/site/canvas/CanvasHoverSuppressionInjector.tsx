@@ -21,9 +21,24 @@
  * live runtime uses the opposite shape — a DENYLIST of its own overlay ids —
  * because it has no separate "editor chrome" stylesheet namespace to
  * allowlist: a live frame IS the project's own document.)
+ *
+ * Portal mode only (`live-05`, STATE.md, Batch 5) — reads the frame's
+ * `Document` through `PortalFrameAdapter`'s escape hatch, calling
+ * `startHoverSuppression` directly rather than `adapter.setInteractionMode`,
+ * for the same reason as its `CanvasAnimationInjector`/
+ * `CanvasScrollUnrollInjector` siblings: `setInteractionMode`'s own hover
+ * controller (Batch 1, for a future bridge-mode caller) uses a DENYLIST
+ * allowlist shape unrelated to this component's own CONTENT_STYLE_IDS
+ * allowlist, and coupling them now would mean this component stops
+ * controlling ITS OWN mount/unmount lifecycle independently of scroll-unroll
+ * and animation-freeze, which today it correctly does (`IframeFrameSurface`
+ * mounts these three as three separate, independently-toggleable
+ * components, not one bundle).
  */
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import { OVERLAY_ID_ATTR, startHoverSuppression } from '@core/studio-runtime'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
 /**
  * The page-content stylesheets, by the LOGICAL id each of the five CSS-text
@@ -41,20 +56,19 @@ import { OVERLAY_ID_ATTR, startHoverSuppression } from '@core/studio-runtime'
  */
 const CONTENT_STYLE_IDS = new Set(['mc-vendor', 'mc-authored', 'mc-classes', 'mc-user-styles'])
 
-interface CanvasHoverSuppressionInjectorProps {
-  targetDocument: Document | null
-}
+export function CanvasHoverSuppressionInjector() {
+  const adapter = useContext(CanvasFrameAdapterContext)
 
-export function CanvasHoverSuppressionInjector({ targetDocument }: CanvasHoverSuppressionInjectorProps) {
   useEffect(() => {
-    const doc = targetDocument
+    if (!isPortalFrameAdapter(adapter)) return
+    const doc = adapter.getPortalWindow()?.document
     if (!doc) return
     const controller = startHoverSuppression(
       doc,
       (owner) => CONTENT_STYLE_IDS.has(owner.getAttribute(OVERLAY_ID_ATTR) ?? owner.id),
     )
     return () => controller.dispose()
-  }, [targetDocument])
+  }, [adapter])
 
   return null
 }

@@ -20,11 +20,23 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { CanvasAnimationInjector } from '@site/canvas/CanvasAnimationInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 
 const STYLE_TAG_ID = 'studio-canvas-animation'
 
+let adapters: PortalFrameAdapter[] = []
+
+function makeAdapter(): PortalFrameAdapter {
+  const adapter = new PortalFrameAdapter(document)
+  adapters.push(adapter)
+  return adapter
+}
+
 afterEach(() => {
   cleanup()
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
   document.getElementById(STYLE_TAG_ID)?.remove()
 })
 
@@ -34,7 +46,8 @@ function injectedCss(): string {
 
 describe('CanvasAnimationInjector', () => {
   it('injects a stylesheet into the target document', () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     const styleEl = document.getElementById(STYLE_TAG_ID)
     expect(styleEl).not.toBeNull()
@@ -43,21 +56,24 @@ describe('CanvasAnimationInjector', () => {
   })
 
   it('runs a looping animation exactly once', () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(injectedCss()).toContain('animation-iteration-count: 1 !important')
   })
 
   it('holds the last keyframe instead of snapping back', () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(injectedCss()).toContain('animation-fill-mode: forwards !important')
   })
 
   it('covers pseudo-elements, which `*` alone does not match', () => {
+    const adapter = makeAdapter()
     // The eSIM radar's orbiting dot is a `::before`; a spinner or shimmer
     // overlay on generated content is a common pattern.
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     const css = injectedCss()
     expect(css).toContain('*::before')
@@ -65,9 +81,10 @@ describe('CanvasAnimationInjector', () => {
   })
 
   it('leaves animation duration and delay alone', () => {
+    const adapter = makeAdapter()
     // Each animation should still play through once at its authored speed —
     // this freezes the END state, it does not suppress motion outright.
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     const css = injectedCss()
     expect(css).not.toContain('animation-duration')
@@ -78,22 +95,25 @@ describe('CanvasAnimationInjector', () => {
   })
 
   it('kills transitions — a transition mid-flight during a layout change reads as canvas jitter', () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(injectedCss()).toContain('transition: none !important')
   })
 
   it('disables smooth scrolling', () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(injectedCss()).toContain('scroll-behavior: auto !important')
   })
 
   it('freezePoint "start" pauses instead of holding the end keyframe', () => {
+    const adapter = makeAdapter()
     // Correct for motion whose END state should stay hidden (a fade-out
     // ping) — pausing wherever it currently is, mounted before it has had
     // time to run, holds it near its 0% keyframe instead.
-    render(<CanvasAnimationInjector targetDocument={document} freezePoint="start" />)
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint="start" /></CanvasFrameAdapterContext.Provider>)
 
     const css = injectedCss()
     expect(css).toContain('animation-play-state: paused !important')
@@ -102,11 +122,12 @@ describe('CanvasAnimationInjector', () => {
   })
 
   it('freezePoint "end" (default) is distinct from "start"', () => {
-    const end = render(<CanvasAnimationInjector targetDocument={document} freezePoint="end" />)
+    const adapter = makeAdapter()
+    const end = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint="end" /></CanvasFrameAdapterContext.Provider>)
     const endCss = injectedCss()
     end.unmount()
 
-    const start = render(<CanvasAnimationInjector targetDocument={document} freezePoint="start" />)
+    const start = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint="start" /></CanvasFrameAdapterContext.Provider>)
     const startCss = injectedCss()
     start.unmount()
 
@@ -116,7 +137,8 @@ describe('CanvasAnimationInjector', () => {
   })
 
   it('removes the stylesheet on unmount', () => {
-    const view = render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    const view = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
     expect(document.getElementById(STYLE_TAG_ID)).not.toBeNull()
 
     view.unmount()
@@ -125,8 +147,9 @@ describe('CanvasAnimationInjector', () => {
   })
 
   it('does not stack duplicate style elements when re-rendered', () => {
-    const view = render(<CanvasAnimationInjector targetDocument={document} />)
-    view.rerender(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    const view = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
+    view.rerender(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(document.querySelectorAll(`#${STYLE_TAG_ID}`)).toHaveLength(1)
   })
@@ -135,10 +158,13 @@ describe('CanvasAnimationInjector', () => {
 describe('CanvasAnimationInjector — media pause', () => {
   afterEach(() => {
     cleanup()
+    for (const adapter of adapters) adapter.dispose()
+    adapters = []
     document.getElementById(STYLE_TAG_ID)?.remove()
   })
 
   it('pauses a <video autoplay> present at mount and strips the autoplay attribute', () => {
+    const adapter = makeAdapter()
     const video = document.createElement('video')
     video.setAttribute('autoplay', '')
     document.body.appendChild(video)
@@ -149,7 +175,7 @@ describe('CanvasAnimationInjector — media pause', () => {
       originalPause()
     }
     try {
-      render(<CanvasAnimationInjector targetDocument={document} />)
+      render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
       expect(video.hasAttribute('autoplay')).toBe(false)
       expect(pauseCalls).toBeGreaterThan(0)
     } finally {
@@ -158,11 +184,12 @@ describe('CanvasAnimationInjector — media pause', () => {
   })
 
   it('pauses an <audio autoplay> present at mount and strips the autoplay attribute', () => {
+    const adapter = makeAdapter()
     const audio = document.createElement('audio')
     audio.setAttribute('autoplay', '')
     document.body.appendChild(audio)
     try {
-      render(<CanvasAnimationInjector targetDocument={document} />)
+      render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
       expect(audio.hasAttribute('autoplay')).toBe(false)
     } finally {
       audio.remove()
@@ -170,7 +197,8 @@ describe('CanvasAnimationInjector — media pause', () => {
   })
 
   it('pauses a <video> inserted AFTER mount — the MutationObserver path', async () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     const video = document.createElement('video')
     video.setAttribute('autoplay', '')
@@ -193,7 +221,8 @@ describe('CanvasAnimationInjector — media pause', () => {
   })
 
   it('pauses a <video> nested inside a subtree inserted after mount', async () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     const wrapper = document.createElement('div')
     const video = document.createElement('video')
@@ -214,20 +243,24 @@ describe('CanvasAnimationInjector — media pause', () => {
 describe('CanvasAnimationInjector — prefers-reduced-motion', () => {
   afterEach(() => {
     cleanup()
+    for (const adapter of adapters) adapter.dispose()
+    adapters = []
     document.getElementById(STYLE_TAG_ID)?.remove()
   })
 
   it('patches matchMedia so a JS-driven reduced-motion check reports "reduce"', () => {
+    const adapter = makeAdapter()
     const view = document.defaultView!
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(view.matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(true)
     expect(view.matchMedia('(prefers-reduced-motion: no-preference)').matches).toBe(false)
   })
 
   it('leaves unrelated matchMedia queries working', () => {
+    const adapter = makeAdapter()
     const view = document.defaultView!
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
 
     const result = view.matchMedia('(min-width: 100px)')
     expect(typeof result.matches).toBe('boolean')
@@ -235,9 +268,10 @@ describe('CanvasAnimationInjector — prefers-reduced-motion', () => {
   })
 
   it('restores the native matchMedia on unmount', () => {
+    const adapter = makeAdapter()
     const view = document.defaultView!
     const original = view.matchMedia
-    const rendered = render(<CanvasAnimationInjector targetDocument={document} />)
+    const rendered = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
     expect(view.matchMedia).not.toBe(original)
 
     rendered.unmount()

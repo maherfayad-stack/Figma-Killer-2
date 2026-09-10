@@ -39,7 +39,8 @@
  * exists for.
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 
 const STYLE_ELEMENT_ID = 'studio-device-scrollbars'
 
@@ -49,31 +50,34 @@ const HIDE_SCROLLBARS_CSS = `
 `.trim()
 
 interface DeviceScrollbarInjectorProps {
-  /** The live iframe's document. `null` until it loads. */
-  targetDocument: Document | null
   /** True only while a device mockup is drawn. */
   hidden: boolean
 }
 
-export function DeviceScrollbarInjector({ targetDocument, hidden }: DeviceScrollbarInjectorProps) {
+/**
+ * A genuine static-CSS toggle (`live-05`, STATE.md, Batch 5) — routes
+ * through `adapter.applyOverlay`/`removeOverlay` rather than the portal
+ * escape hatch, since (unlike its `Canvas*Injector` siblings) it has no
+ * document-walking pass, no controller, and no bridge-mode ambiguity: "show
+ * or hide this one static rule" is exactly what `applyOverlay` exists for,
+ * and it works identically for a future bridge-mode caller with zero
+ * changes.
+ */
+export function DeviceScrollbarInjector({ hidden }: DeviceScrollbarInjectorProps) {
+  const adapter = useContext(CanvasFrameAdapterContext)
+
   useEffect(() => {
-    const head = targetDocument?.head
-    if (!head) return
-    // Removed rather than emptied when the author switches to desktop, so the
-    // iframe document is left exactly as it would be had no device ever been
-    // drawn — no inert element for the next person to wonder about.
+    if (!adapter) return
     if (!hidden) {
-      head.querySelector(`#${STYLE_ELEMENT_ID}`)?.remove()
+      adapter.removeOverlay(STYLE_ELEMENT_ID)
       return
     }
-    const existing = head.querySelector(`#${STYLE_ELEMENT_ID}`)
-    if (existing) return
-    const style = targetDocument.createElement('style')
-    style.id = STYLE_ELEMENT_ID
-    style.textContent = HIDE_SCROLLBARS_CSS
-    head.appendChild(style)
-    return () => style.remove()
-  }, [targetDocument, hidden])
+    adapter.applyOverlay(STYLE_ELEMENT_ID, HIDE_SCROLLBARS_CSS)
+  }, [adapter, hidden])
+
+  useEffect(() => {
+    return () => adapter?.removeOverlay(STYLE_ELEMENT_ID)
+  }, [adapter])
 
   return null
 }

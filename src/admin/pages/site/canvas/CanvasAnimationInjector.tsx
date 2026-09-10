@@ -38,7 +38,7 @@
  * would see it, and the publisher never emits this rule at all.
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import { useCanvasAnimationScrub } from './animationScrubStore'
 import {
   applyAnimationFreezeStylesheet,
@@ -46,12 +46,12 @@ import {
   startMediaFreeze,
   type CanvasAnimationFreezePoint,
 } from '@core/studio-runtime'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
 const STYLE_TAG_ID = 'studio-canvas-animation'
 
 interface CanvasAnimationInjectorProps {
-  /** The iframe document to inject the stylesheet into. */
-  targetDocument: Document
   /**
    * Which keyframe a looping/entrance animation settles on — `'end'`,
    * `'start'`, or a 0…1 fraction of its own timeline. Defaults to `'end'`.
@@ -61,10 +61,30 @@ interface CanvasAnimationInjectorProps {
   freezePoint?: CanvasAnimationFreezePoint
 }
 
-export function CanvasAnimationInjector({
-  targetDocument,
-  freezePoint = 'end',
-}: CanvasAnimationInjectorProps) {
+/**
+ * Portal mode only (`live-05`, STATE.md, Batch 5) — reads the frame's
+ * `Document` through `PortalFrameAdapter`'s escape hatch, calling
+ * `applyAnimationFreezeStylesheet`/`startMediaFreeze` directly exactly as
+ * before, rather than `adapter.setInteractionMode`.
+ *
+ * `PortalFrameAdapter.setInteractionMode('design')` already starts its OWN
+ * animation-freeze controller (`startAnimationFreeze`, fixed at freeze point
+ * `'end'`) alongside hover-suppression and scroll-unroll — built in Batch 1
+ * for a future bridge-mode caller, where `runtime.ts`'s `setMode` handler
+ * needs exactly that one coupled on/off switch. This component's real
+ * product behavior does NOT fit that coupling: the inspector's animation
+ * scrub (`animationScrubStore.ts`) needs a variable, frequently-updated
+ * freeze point/phase with no `enabled`-style on/off — routing it through
+ * `setInteractionMode` would either need a new interface method (scrub isn't
+ * expressible through the existing 7) or would run TWO independent freeze
+ * controllers simultaneously (this one, scrub-aware; `setInteractionMode`'s,
+ * fixed) with two separate `startMediaFreeze` calls each patching
+ * `window.matchMedia` — a real, if likely harmless-looking, double-patch
+ * bug, not just redundant work. Keeping this fully independent avoids both
+ * problems and changes nothing about portal mode's actual behavior.
+ */
+export function CanvasAnimationInjector({ freezePoint = 'end' }: CanvasAnimationInjectorProps) {
+  const adapter = useContext(CanvasFrameAdapterContext)
   // A scrub set from the inspector overrides this frame's own freeze point;
   // with none set, `freezePoint` decides exactly as it did before W5-5.
   const { progress, phase } = useCanvasAnimationScrub()
@@ -75,20 +95,30 @@ export function CanvasAnimationInjector({
   // its own — removing and recreating the element on every scrub tick would
   // be pure churn. Removal happens once, on unmount, in the next effect.
   useEffect(() => {
+    if (!isPortalFrameAdapter(adapter)) return
+    const targetDocument = adapter.getPortalWindow()?.document
+    if (!targetDocument) return
     applyAnimationFreezeStylesheet(targetDocument, STYLE_TAG_ID, effectiveFreezePoint, phase, 'CanvasAnimationInjector')
-  }, [targetDocument, effectiveFreezePoint, phase])
+  }, [adapter, effectiveFreezePoint, phase])
 
   useEffect(() => {
-    return () => removeAnimationFreezeStylesheet(targetDocument, STYLE_TAG_ID)
-  }, [targetDocument])
+    return () => {
+      if (!isPortalFrameAdapter(adapter)) return
+      const targetDocument = adapter.getPortalWindow()?.document
+      if (targetDocument) removeAnimationFreezeStylesheet(targetDocument, STYLE_TAG_ID)
+    }
+  }, [adapter])
 
   // Mount-once half: media pause/watch + the matchMedia patch. Independent
   // of freeze point/phase, so this effect's own deps array is exactly
-  // [targetDocument] with nothing to suppress.
+  // [adapter] with nothing to suppress.
   useEffect(() => {
+    if (!isPortalFrameAdapter(adapter)) return
+    const targetDocument = adapter.getPortalWindow()?.document
+    if (!targetDocument) return
     const controller = startMediaFreeze(targetDocument)
     return () => controller.dispose()
-  }, [targetDocument])
+  }, [adapter])
 
   return null
 }
