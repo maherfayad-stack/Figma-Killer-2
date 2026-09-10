@@ -17,10 +17,12 @@ import {
   nextPageName,
   projectPagesDir,
   renameProjectDisplayName,
+  resolveExistingProjectDir,
   routeFromAppPageRelPath,
   writeProjectMeta,
 } from '../studioProjects'
 import { pageIdFromRelPath } from '../studioPageIds'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 describe('projectPagesDir', () => {
   let tmpDir: string
@@ -479,5 +481,69 @@ describe('discoverPageFiles — unaffected by App Router filenames (regression)'
     expect(discoverPageFiles(tmpDir).sort()).toEqual(
       ['(marketing)/page.tsx', 'layout.tsx', 'page.tsx', 'template.tsx'].sort(),
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveExistingProjectDir — added for live-05's server/liveOrigin.ts
+// integration fix (STATE.md, sec-08): resolveProjectDir's containment check
+// (W10, already covered by isRealpathContainedAllowingMissing's own suite in
+// workspacePackageResolve.test.ts) PLUS a genuine on-disk existence check, so
+// a caller can tell "no such project" apart from "a real project whose own
+// state just isn't ready yet." Never throws — returns null for both a
+// workspace-escape attempt and a directory that doesn't exist.
+// ---------------------------------------------------------------------------
+
+describe('resolveExistingProjectDir', () => {
+  let previousRoot: string | undefined
+
+  beforeEach(() => {
+    previousRoot = process.env.STUDIO_WORKSPACE_DIR
+  })
+
+  afterEach(() => {
+    if (previousRoot === undefined) delete process.env.STUDIO_WORKSPACE_DIR
+    else process.env.STUDIO_WORKSPACE_DIR = previousRoot
+  })
+
+  it('returns the real dir for an existing, contained project', async () => {
+    await withOutsideWorkspaceDir('resolve-existing-project-dir', async () => {
+      const root = process.env.STUDIO_WORKSPACE_DIR!
+      const projectDir = path.join(root, 'real-project')
+      fs.mkdirSync(projectDir, { recursive: true })
+      // `resolveProjectDir` (which this wraps) returns `path.resolve(requested)`,
+      // not a realpath — symlink resolution happens only inside the
+      // containment CHECK (`isRealpathContainedAllowingMissing`), not the
+      // returned value. Compare against the same non-realpath resolution.
+      expect(resolveExistingProjectDir(projectDir)).toBe(path.resolve(projectDir))
+    })
+  })
+
+  it('returns null for a directory that is contained but does not exist on disk yet', async () => {
+    await withOutsideWorkspaceDir('resolve-existing-project-dir', async () => {
+      const root = process.env.STUDIO_WORKSPACE_DIR!
+      const notYetCreated = path.join(root, 'not-scaffolded-yet')
+      expect(fs.existsSync(notYetCreated)).toBe(false)
+      expect(resolveExistingProjectDir(notYetCreated)).toBeNull()
+    })
+  })
+
+  it('returns null (never throws) for a "../.." traversal escape, even when the target exists on disk', async () => {
+    await withOutsideWorkspaceDir('resolve-existing-project-dir', async (outside) => {
+      // `outside` is a real, existing sibling of the workspace root (see
+      // `withOutsideWorkspaceDir`'s own doc) — a realistic adversarial
+      // `projectKey` resolution (`join(projectsRootDir(), '..', 'outside')`)
+      // lands exactly here.
+      const root = process.env.STUDIO_WORKSPACE_DIR!
+      const escapeAttempt = path.join(root, '..', path.basename(outside))
+      expect(fs.existsSync(escapeAttempt)).toBe(true)
+      expect(resolveExistingProjectDir(escapeAttempt)).toBeNull()
+    })
+  })
+
+  it('returns null (never throws) for an absolute-path escape outside the workspace root', async () => {
+    await withOutsideWorkspaceDir('resolve-existing-project-dir', async (outside) => {
+      expect(resolveExistingProjectDir(outside)).toBeNull()
+    })
   })
 })

@@ -31,8 +31,34 @@
  * the active page's node id set changes — NOT part of the
  * `FrameDocumentAdapter` interface (every other adapter has no such concept),
  * called by whichever Batch 6 wiring owns the page's current tree.
+ *
+ * ## Inbound (frame -> parent) messages get the SAME three-layer check `runtime.ts` uses
+ *
+ * `sec-06` (STATE.md) established the bar for the other side of this bridge:
+ * origin + envelope `source`/`direction` tags checked BEFORE the TypeBox
+ * schema runs, schema checked BEFORE any handler reads a field. `sec-06`'s
+ * own "same-realm spoofing" finding is exactly why this direction needs the
+ * identical discipline: `runtime.ts` shares a JS realm with the user's own
+ * (potentially compromised) project dependencies, so any script co-resident
+ * in that document can call `window.parent.postMessage(forgedPayload,
+ * parentOrigin)` directly — origin/source alone narrow WHERE a message can
+ * come from, never WHAT shape it is. `handleWindowMessage` below checks
+ * `data.source === RUNTIME_MESSAGE_SOURCE` and runs
+ * `Value.Check(OutboundEnvelopeSchema, data)` before `dispatchOutboundMessage`
+ * ever reads a single field off `message` — the same ordering
+ * `runtime.ts`'s `onWindowMessage` already uses, just for the opposite
+ * direction.
  */
-import { buildStampIndex, toInboundEnvelope, toStampId, type OutboundEnvelope, type OutboundRuntimeMessage } from '@core/studio-runtime'
+import { Value } from '@sinclair/typebox/value'
+import {
+  buildStampIndex,
+  OutboundEnvelopeSchema,
+  RUNTIME_MESSAGE_SOURCE,
+  toInboundEnvelope,
+  toStampId,
+  type OutboundEnvelope,
+  type OutboundRuntimeMessage,
+} from '@core/studio-runtime'
 import type { PreviewAxes } from '@core/studio-board'
 import type {
   FrameDocumentAdapter,
@@ -229,12 +255,17 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   private handleWindowMessage(ev: MessageEvent): void {
     if (ev.origin !== this.frameOrigin) return
     if (this.expectedSource !== undefined && ev.source !== this.expectedSource) return
-    const data = ev.data as Partial<OutboundEnvelope> | undefined
-    if (!data || typeof data !== 'object') return
-    if (data.direction !== 'to-parent') return
-    const message = data.message as OutboundRuntimeMessage | undefined
-    if (!message) return
-    this.dispatchOutboundMessage(message)
+    const data: unknown = ev.data
+    if (
+      typeof data !== 'object' ||
+      data === null ||
+      (data as { source?: unknown }).source !== RUNTIME_MESSAGE_SOURCE ||
+      (data as { direction?: unknown }).direction !== 'to-parent'
+    ) {
+      return
+    }
+    if (!Value.Check(OutboundEnvelopeSchema, data)) return
+    this.dispatchOutboundMessage((data as OutboundEnvelope).message)
   }
 
   private dispatchOutboundMessage(message: OutboundRuntimeMessage): void {

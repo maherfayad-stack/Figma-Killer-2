@@ -244,6 +244,40 @@ describe('BridgeFrameAdapter — origin/source checks', () => {
     expect(() => stub.dispatch('not an object')).not.toThrow()
     expect(() => stub.dispatch({ direction: 'to-parent' })).not.toThrow()
   })
+
+  it('ignores a same-shaped message missing the envelope source tag (a stray postMessage sender, not the runtime)', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const received: unknown[] = []
+    adapter.on('ready', (msg) => received.push(msg))
+
+    // Same `direction`/`message` shape as a real envelope, but no `source`
+    // tag — e.g. React DevTools, a browser extension, or a forged message
+    // from a co-resident script that doesn't know the exact tag value.
+    stub.dispatch({ direction: 'to-parent', message: { type: 'ready' } })
+
+    expect(received).toHaveLength(0)
+  })
+
+  it('ignores an outbound message whose payload fails TypeBox validation, even with a correct source/direction tag', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const heights: number[] = []
+    adapter.on('frame:resize', (msg) => heights.push(msg.height))
+
+    // A same-realm co-resident script (sec-06's "same-realm spoofing" note)
+    // can forge the envelope tags exactly, but the payload itself must still
+    // pass schema validation before any handler reads a field off it.
+    stub.dispatch({ source: 'studio-live-runtime', direction: 'to-parent', message: { type: 'frame:resize', height: 'not-a-number' } })
+    stub.dispatch({ source: 'studio-live-runtime', direction: 'to-parent', message: { type: 'frame:resize', height: -1 } })
+    stub.dispatch({ source: 'studio-live-runtime', direction: 'to-parent', message: { type: 'not-a-real-message-type' } })
+
+    expect(heights).toHaveLength(0)
+  })
 })
 
 describe('BridgeFrameAdapter — frame:resize', () => {
