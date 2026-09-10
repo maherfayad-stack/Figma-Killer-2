@@ -12,7 +12,6 @@ export type LeftSidebarPanelId =
   | 'selectors'
   | 'framework'
   | 'dependencies'
-  | 'inspect'
   | 'content'
   | 'git'
   | 'agent'
@@ -138,9 +137,6 @@ interface UiSlice {
   /** Whether the Manage Core Framework dialog is open. */
   frameworkManagerOpen: boolean
   dependenciesPanelOpen: boolean
-  /** Read-only "what actually rendered" panel — computed colors/typography/
-   *  box model/CSS for the selected node (Phase 6C). */
-  inspectPanelOpen: boolean
   /** Bilingual content panel — the project's own locale dictionary as an editable en/ar table. */
   contentPanelOpen: boolean
   /**
@@ -198,7 +194,6 @@ interface UiSlice {
   setFrameworkPanelTab: (tab: FrameworkPanelTab) => void
   setFrameworkManagerOpen: (open: boolean) => void
   setDependenciesPanelOpen: (open: boolean) => void
-  setInspectPanelOpen: (open: boolean) => void
   setContentPanelOpen: (open: boolean) => void
   setGitPanelOpen: (open: boolean) => void
   setLeftSidebarPanel: (panel: LeftSidebarPanelId | null) => void
@@ -319,7 +314,6 @@ function getActiveLeftSidebarPanel(state: EditorStore): LeftSidebarPanelId | nul
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
-  if (state.inspectPanelOpen) return 'inspect'
   if (state.contentPanelOpen) return 'content'
   if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
@@ -351,7 +345,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   frameworkPanelTab: 'home',
   frameworkManagerOpen: false,
   dependenciesPanelOpen: false,
-  inspectPanelOpen: false,
   contentPanelOpen: false,
   gitPanelOpen: false,
   activePluginPanelId: null,
@@ -479,8 +472,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   setDependenciesPanelOpen: (open) => set({ dependenciesPanelOpen: open }),
 
-  setInspectPanelOpen: (open) => set({ inspectPanelOpen: open }),
-
   setContentPanelOpen: (open) => set({ contentPanelOpen: open }),
 
   setGitPanelOpen: (open) => set({ gitPanelOpen: open }),
@@ -491,7 +482,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.selectorsPanelOpen = panel === 'selectors'
       state.frameworkPanelOpen = panel === 'framework'
       state.dependenciesPanelOpen = panel === 'dependencies'
-      state.inspectPanelOpen = panel === 'inspect'
       state.contentPanelOpen = panel === 'content'
       state.gitPanelOpen = panel === 'git'
       state.isAgentOpen = panel === 'agent'
@@ -517,7 +507,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.selectorsPanelOpen = false
       state.frameworkPanelOpen = false
       state.dependenciesPanelOpen = false
-      state.inspectPanelOpen = false
       state.contentPanelOpen = false
       state.gitPanelOpen = false
       state.isAgentOpen = false

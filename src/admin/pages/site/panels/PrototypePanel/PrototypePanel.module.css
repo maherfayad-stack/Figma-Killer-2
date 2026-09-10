@@ -1,6 +1,5 @@
-/* The prototype inspector — the right sidebar's body while the board is in
-   prototype mode. Mirrors CommentsPanel's shell so the sidebar does not change
-   shape when the mode does. */
+/* The Prototype tab's content, inside `InspectorShell` (Track P / P1) —
+   the shell owns the header and tab bar; this is the scrolling body only. */
 
 .panel {
     display: flex;
@@ -11,14 +10,7 @@
     min-height: 0;
     height: 100%;
     overflow-y: auto;
-    /* No padding at the top: `PanelHeader` is a full-bleed bar with its own
-       inset, exactly as in CommentsPanel. */
     padding: 0 var(--space-s) var(--space-s);
-}
-
-/* Undo the panel's own horizontal padding for the full-bleed header bar. */
-.panel > header {
-    margin: 0 calc(-1 * var(--space-s));
 }
 
 .section {

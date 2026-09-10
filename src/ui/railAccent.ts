@@ -48,28 +48,30 @@ const RAIL_ACCENT_TOKEN: Record<RailAccent, string> = {
 }
 
 /**
- * What a rail item is FOR. The five jobs the editor's rails actually do:
+ * What a rail item is FOR. The jobs the editor's rails actually do:
  *
- *   - `navigate` — move around the document (Explorer).
+ *   - `navigate` — move around the document (Explorer, version control).
  *   - `style`    — change how things look (Framework, Classes, and the
  *                  Colors / Typography / Spacing surfaces inside Framework).
- *   - `inspect`  — read what is already there (Inspect, Properties,
- *                  Dependencies).
  *   - `content`  — the words on the page and the conversation about them
  *                  (Content, Comments).
  *   - `assist`   — hand the work to something else (AI assistant).
+ *
+ * `inspect` (read what is already there — Inspect, Dependencies) retired
+ * with `panel-21`'s move of the Inspect panel out of the left sidebar and
+ * into the Properties panel's own inspector shell; nothing on the rail
+ * claims that job anymore.
  */
-export type RailAccentGroup = 'navigate' | 'style' | 'inspect' | 'content' | 'assist'
+export type RailAccentGroup = 'navigate' | 'style' | 'content' | 'assist'
 
 /**
  * Two of these are unchanged from what shipped: Explorer was already pinned to
- * `gold` and Comments to `lilac`. The other three replace a hash draw, so the
- * whole rail now reads as four jobs instead of five unrelated colours.
+ * `gold` and Comments to `lilac`. The other two replace a hash draw, so the
+ * whole rail now reads as jobs instead of unrelated colours.
  */
 const RAIL_GROUP_ACCENT: Record<RailAccentGroup, RailAccent> = {
   navigate: 'gold',
   style: 'mint',
-  inspect: 'sky',
   content: 'lilac',
   assist: 'violet',
 }

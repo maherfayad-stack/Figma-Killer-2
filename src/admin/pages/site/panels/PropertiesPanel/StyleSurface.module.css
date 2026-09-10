@@ -1,13 +1,15 @@
-/* StyleSurface — unified properties editor (scroll-anchor layout). */
+/* StyleSurface — unified properties editor (Track P, P1: one scrolling column, no rail). */
 
-/* ── Outer shell: THE scroll container, two-column grid ────────────────────── */
-/*    Left column  = content (search bar + sections)                           */
-/*    Right column = sticky rail (32px)                                        */
+/* ── Outer shell: THE scroll container, one column ──────────────────────────
+   P1 deletes the sticky icon rail (`STUDIO-LIVE-CANVAS-PLAN.md` §P1/§4.0
+   names it chrome that "costs a click or a glance and buys nothing") — the
+   panel is a single flow now, top to bottom, matching P2 rule 1 (fixed
+   order) and rule 2 (everything at rest). */
 .surface {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--inspector-rail-w);
+    grid-template-columns: minmax(0, 1fr);
     padding-top: var(--space-2xl);
     padding-bottom: var(--space-7xl);
     gap: 0;
@@ -61,43 +63,21 @@
     min-width: 0;
 }
 
-/* ── Sticky search bar ───────────────────────────────────────────────────── */
-.searchBarRow {
-    position: absolute;
-    bottom: -1px;
-    right: 0;
-    left: 0;
-    z-index: 99;
-    padding: var(--space-4xl);
-    padding-top: var(--space-8xl);
-    padding-bottom: var(--inspector-space-l);
-    background: linear-gradient(0, var(--panel-fade-bg) 50%, transparent);
-}
-
-/* ── Right column: sticky rail ───────────────────────────────────────────── */
-.railSticky {
-    position: sticky;
-    top: 0;
-    align-self: start;
-    padding-top: var(--inspector-space-3xs);
-}
-
 /* ── Generated utility lock wrapper ─────────────────────────────────────── */
 .lockedContent {
     padding: 0;
 }
 
-/* ── Track F1 / S6 — Element + Class blocks, shown together ─────────────────
-   Each write target's own composer gets a small label so it's always clear
-   which one a row belongs to — the two blocks are independent, not tabs. */
-.targetBlock {
-    display: grid;
-    gap: var(--space-px);
+/* ── Module section — a fixed block, not an accordion (P2 rule 2) ──────── */
+.moduleHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-2xs);
+    padding: var(--inspector-space-l) var(--inspector-space-xl) var(--inspector-space-2xs);
+    color: var(--text-subtle);
 }
 
-.targetBlockLabel {
-    padding: var(--inspector-space-2xs) var(--inspector-space-l);
-    color: var(--text-subtle);
+.moduleTitle {
     font-size: var(--text-2xs);
     font-weight: 700;
     letter-spacing: 0.02em;

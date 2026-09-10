@@ -255,3 +255,30 @@ export function generateForcedStateCSS(
 function escapeCssAttribute(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
+
+/**
+ * `panel-21` / P2 rule 7 — the Element (inline) target's preview channel,
+ * the mirror of `generatePreviewClassCSS` above. A scrub/drag targeting the
+ * inline write target has no class rule to double-select against, so this
+ * doubles the node's own `[data-node-id]` attribute selector instead — the
+ * same specificity trick `generateForcedStateCSS` already uses to paint a
+ * forced state onto one node. Known, accepted limitation (shared with that
+ * function): a doubled attribute selector cannot outrank a REAL `style=""`
+ * value already present for the same property (inline attributes always
+ * win over any selector-based rule) — previewing a change to a property the
+ * element already sets inline will not visually update until commit. This
+ * only affects the rare case of editing an already-inline-set property via
+ * scrub; every other case (nothing set yet, or the winner is a class) is
+ * previewed correctly.
+ */
+export function generateNodePreviewCSS(
+  nodeId: string,
+  styles: Record<string, unknown>,
+  responsiveOptions: ResponsiveCssOptions = {},
+): string {
+  const decls = bagToCSS(styles, responsiveOptions)
+  if (!decls) return ''
+  const rawSelector = `[data-node-id="${escapeCssAttribute(nodeId)}"]`
+  const selector = `${rawSelector}${rawSelector}`
+  return `${selector} {\n${decls}\n}`
+}
