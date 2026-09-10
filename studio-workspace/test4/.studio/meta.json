@@ -75,8 +75,8 @@
   ],
   "previewAxes": {
     "colorScheme": "dark",
-    "direction": "ltr",
-    "locale": "en"
+    "direction": "rtl",
+    "locale": "ar"
   },
-  "lastOpenedAt": 1788786695886
+  "lastOpenedAt": 1789042602530
 }

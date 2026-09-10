@@ -22,7 +22,8 @@
           "height": 804.1839933372852,
           "axes": {
             "direction": "ltr",
-            "locale": "en"
+            "locale": "en",
+            "colorScheme": "light"
           }
         },
         {
@@ -38,6 +39,14 @@
           "pageId": "page",
           "x": 967.90625,
           "y": 984.5723294331506,
+          "width": 393,
+          "height": 852
+        },
+        {
+          "id": "bba6ec51-c87a-4e75-bce9-d4c174a69e01",
+          "pageId": "sheet",
+          "x": 0,
+          "y": 1760,
           "width": 393,
           "height": 852
         }

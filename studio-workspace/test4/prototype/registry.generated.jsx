@@ -52,7 +52,7 @@ export const PROJECT_NAME = "test4"
 export const FRAME_DEFAULTS = {"width":393,"height":852}
 
 /** What the board was last previewing in Studio — the shell opens on the same thing. */
-export const PREVIEW_AXES = {"direction":"ltr","colorScheme":"dark","locale":"en"}
+export const PREVIEW_AXES = {"direction":"rtl","colorScheme":"dark","locale":"ar"}
 
 /** Locale codes this project's dictionary declares. */
 export const LOCALES = ["en","ar"]

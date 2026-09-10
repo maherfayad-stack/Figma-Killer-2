@@ -48,7 +48,10 @@ export default function SheetHeader({ size = 'large', leading = 'back', title }:
   return (
     <div className={styles.sheet} data-size={size}>
       {size === 'large' ? (
-        <IOSStatusBar />
+        <>
+          <span className={styles.scrim} aria-hidden="true" />
+          <IOSStatusBar />
+        </>
       ) : (
         <div className={styles.grabberRow}>
           <span className={styles.grabber} />

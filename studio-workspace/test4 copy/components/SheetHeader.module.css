@@ -19,16 +19,20 @@
 
 /* The scrim darkens whatever the sheet is covering, behind the status bar
    only — so it belongs to the large sheet, which HAS a status bar. A small
-   sheet floats over the page and has none to scrim. */
-.sheet[data-size='large']::before {
-  content: '';
+   sheet floats over the page and has none to scrim.
+
+   A real element, not a `::before` — this project's capture pipeline does
+   not paint CSS-generated pseudo-element content, so a scrim drawn that way
+   is invisible in every screenshot and comparison even though the rule is
+   correct. */
+.scrim {
   position: absolute;
   inset: 0 0 32px 0;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.15) 45.192%, rgba(0, 0, 0, 0) 100%);
+  background: linear-gradient(180deg, var(--color-gainsboro) 45.192%, rgba(217, 217, 217, 0) 100%);
   pointer-events: none;
 }
 
-.sheet > * {
+.sheet > *:not(.scrim) {
   position: relative;
 }
 

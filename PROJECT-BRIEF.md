@@ -112,6 +112,7 @@ never silently no-ops.
 | Base branch for PRs | `main` (protected — never push to it). Branch per change, `<type>/<kebab>` |
 | Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the feature plan (WS-1…WS-9). **Intent, not status** — most of it has shipped; check §0a below before believing a "not built" claim there. [`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md) carries the workstreams beyond it (WS-10…WS-14) |
 | Defect + parity plan | [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) — **§0a is the granular per-track status ledger.** When you need finer detail than the two lists below, read it there, not here |
+| Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — Tier 2 live runtime frames, refusals-as-choices, and the Penpot-measured inspector rebuild. Proposed 2026-09-08, nothing started |
 | Live coordination | [`STATE.md`](STATE.md) — **read at the start of every task, write at the end** |
 | Entry point in the app | `/admin/site` — `src/admin/router.tsx` renders the studio editor there unconditionally; there is no mode flag and no `?studio` param. Which project is open comes from `src/admin/pages/site/studio/studioWorkspaceDir.ts` (localStorage-sticky, set by the Overview launcher; the server falls back to the first project on disk) |
 | Test projects on disk | `studio-workspace/` — `test`, `esim-journey`, `my-workspace`, `untitled*` |

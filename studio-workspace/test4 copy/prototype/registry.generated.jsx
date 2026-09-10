@@ -5,6 +5,7 @@
 import Onboarding from '../pages/Onboarding'
 import Page from '../pages/Page'
 import Sms from '../pages/SMS'
+import Sheet from '../pages/Sheet'
 import SignUp from '../pages/SignUp'
 
 /** Every screen in `pages/`, by the same id Studio addresses it with. */
@@ -12,6 +13,7 @@ export const SCREENS = [
   { key: "onboarding", label: "Onboarding", Component: Onboarding },
   { key: "page", label: "Page", Component: Page },
   { key: "sms", label: "SMS", Component: Sms },
+  { key: "sheet", label: "Sheet", Component: Sheet },
   { key: "sign-up", label: "SignUp", Component: SignUp },
 ]
 
@@ -22,9 +24,10 @@ export const BOARDS = [
     name: "Test",
     frames: [
       {"key":"3884d231-f0eb-4dcb-a48b-49e01249f3ad","pageId":"onboarding","label":"Onboarding","x":416,"y":910,"width":393,"height":808},
-      {"key":"d7132d36-dbde-434c-b257-1ff2d0ce909f","pageId":"sms","label":"SMS","x":-2,"y":901,"width":393,"height":804,"axes":{"direction":"ltr","locale":"en"}},
+      {"key":"d7132d36-dbde-434c-b257-1ff2d0ce909f","pageId":"sms","label":"SMS","x":-2,"y":901,"width":393,"height":804,"axes":{"direction":"ltr","colorScheme":"light","locale":"en"}},
       {"key":"2a978b29-58cf-40b2-bf8c-efb5873db9d3","pageId":"sign-up","label":"SignUp","x":-422,"y":901,"width":393,"height":788},
       {"key":"7d3d15c3-ce92-4901-8411-935a853f8aea","pageId":"page","label":"Page","x":968,"y":985,"width":393,"height":852},
+      {"key":"bba6ec51-c87a-4e75-bce9-d4c174a69e01","pageId":"sheet","label":"Sheet","x":0,"y":1760,"width":393,"height":852},
     ],
     notes: [
       {"id":"bb7731f0-d5b9-467f-8b72-e2d588782623","x":-988.4908055234471,"y":838.1512654950589,"w":216.9538838520047,"h":126.12189749690015,"text":"asd","color":"pink"},

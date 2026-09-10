@@ -9,7 +9,9 @@ export default function Page() {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center"
+        justifyContent: "center",
+        gap: "var(--btn-px)",
+        overflow: "hidden"
     }}>
       <p className={styles.subtitle} style={{ width: "394px",
           textAlign: "center"
@@ -18,7 +20,9 @@ export default function Page() {
           width: "213px",
           backgroundColor: "#000000"
     }}>
-        <p style={{ textAlign: "center" }}>{"asdasdasd"}</p>
+        <p className="text-ai-background" style={{ textAlign: "center",
+            backgroundColor: "#ffffff"
+        }}>{"asdasdasd"}</p>
       </div>
     </main>
   )
