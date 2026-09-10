@@ -509,7 +509,6 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           createPortal(
             <CanvasFrameContexts
               frameElement={iframeRef.current}
-              frameDocument={iframeDoc}
               adapter={adapter}
               axes={frameAxes}
               interaction={interaction}

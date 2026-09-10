@@ -343,24 +343,24 @@ export interface CanvasFrameDocument {
 }
 
 /**
- * Every mounted canvas frame document, in frame order.
+ * Every mounted, portal-mode canvas frame document, in registration order.
  *
- * The `data-breakpoint-id` check on `<body>` is what distinguishes a canvas
- * frame from any other iframe in the admin shell (a plugin surface, a preview,
- * a dev tool). Shared so every lookup here agrees on what counts as a canvas
- * frame instead of re-deciding it.
+ * Registry-based (`live-05`, STATE.md, Batch 7) instead of a
+ * `document.querySelectorAll('iframe')` scan + raw `frame.contentDocument`
+ * reach-in — `listFrameAdapters()` (`canvasFrameAdapterRegistry.ts`) is
+ * already the shared answer to "what counts as a canvas frame" for every
+ * other Class B lookup in this module, so this one now agrees with them
+ * instead of re-deciding it via a DOM scan.
+ *
+ * Portal-mode only: a bridge-registered adapter has no `Document` to return,
+ * so a Tier 2 frame contributes nothing here (`findCanvasNodeRectSource`'s
+ * `BoardPrototypeLayer` callers don't have a bridge-mode story yet either).
  */
-export function canvasFrameDocuments(root: Document = document): CanvasFrameDocument[] {
+export function canvasFrameDocuments(): CanvasFrameDocument[] {
   const docs: CanvasFrameDocument[] = []
-  for (const frame of root.querySelectorAll('iframe')) {
-    let frameDoc: Document | null
-    try {
-      // Throws for cross-origin frames (a plugin or dev tool may add one to
-      // the admin shell); may be null before the frame has loaded.
-      frameDoc = frame.contentDocument
-    } catch (_err) {
-      frameDoc = null
-    }
+  for (const [frame, adapter] of listFrameAdapters()) {
+    if (!isPortalFrameAdapter(adapter)) continue
+    const frameDoc = adapter.getPortalWindow()?.document ?? null
     if (!frameDoc?.body?.hasAttribute('data-breakpoint-id')) continue
     docs.push({ doc: frameDoc, frame })
   }
@@ -388,10 +388,9 @@ export interface CanvasNodeRectSource {
 export function findCanvasNodeRectSource(
   nodeId: string,
   tree?: NodeTree<PageNode> | null,
-  root: Document = document,
 ): CanvasNodeRectSource | null {
   const selector = `[data-node-id="${escapeCssAttributeValue(nodeId)}"]`
-  for (const { doc, frame } of canvasFrameDocuments(root)) {
+  for (const { doc, frame } of canvasFrameDocuments()) {
     const element = doc.querySelector<HTMLElement>(selector)
     if (element) return { source: element, frame, doc }
     const fragment = tree ? fragmentNodeRectSource(doc, tree, nodeId) : null

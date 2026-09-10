@@ -141,7 +141,7 @@ export function CanvasComposedTree({ page }: CanvasComposedTreeProps) {
  * and there shouldn't be one, since a cross-origin bridge frame can't expose
  * a live `HTMLElement` across the origin boundary. Reached via the sanctioned
  * `isPortalFrameAdapter`/`getPortalWindow()` escape hatch instead of the
- * deprecated `CanvasDocumentContext`. A bridge-mode Tier 2 frame simply renders
+ * removed `CanvasDocumentContext`. A bridge-mode Tier 2 frame simply renders
  * the wrapper template body's presentation as authored server-side (its own
  * `<body>` in the dev server's real document), so this owner is a no-op there
  * — not a gap, since bridge mode has no editor-owned body to override.

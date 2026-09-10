@@ -31,7 +31,7 @@ type BodyProps = { htmlAttributes?: unknown }
  * event listener the editor wires up — needs a real, mutable `HTMLElement`,
  * which a cross-origin bridge frame can't hand across the origin boundary.
  * Reached via the sanctioned `isPortalFrameAdapter`/`getPortalWindow()`
- * escape hatch instead of the deprecated `CanvasDocumentContext`. A
+ * escape hatch instead of the removed `CanvasDocumentContext`. A
  * bridge-mode Tier 2 frame's `<body>` stays exactly as the dev server
  * rendered it — no selection/hover/click wiring on the body element yet;
  * see the bridge-mode gaps already logged for `useIframeEventForwarding.ts`
