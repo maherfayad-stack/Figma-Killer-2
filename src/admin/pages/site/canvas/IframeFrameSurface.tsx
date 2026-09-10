@@ -226,7 +226,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // WS-10 — direction/color-scheme, an attribute effect (never `srcDoc`/a
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
     // per-frame override merged onto the board-global axes inside the hook.
-    const frameAxes = useApplyPreviewAxes(iframeDoc, axesOverride)
+    const frameAxes = useApplyPreviewAxes(adapter, axesOverride)
 
     // Bridge the iframe handle out to the parent (selection overlay reads
     // `iframeElement` to translate inside-iframe rects into editor coordinates).
