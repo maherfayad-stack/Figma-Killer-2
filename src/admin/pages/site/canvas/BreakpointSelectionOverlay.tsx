@@ -39,9 +39,8 @@
  *
  * Everything else
  * ────────────────
- * - One overlay per breakpoint frame. Drop indicators stay inside the
- *   breakpoint viewport (they only appear during a drag, and the
- *   transform-scaled coordinate path is established for them).
+ * - One overlay per breakpoint frame. Drop indicators stay inside the breakpoint viewport
+ *   (they only appear during a drag, and the transform-scaled coordinate path is established for them).
  * - Resolves the rendered element via `[data-node-id="X"]` — each module
  *   spreads `nodeWrapperProps` onto its own root tag, so the match IS the
  *   rendered `<article>` / `<h1>` / `<div>`. Box-less (`display: contents`)
@@ -87,6 +86,7 @@ import {
   type CanvasOverlayRect,
 } from './canvasOverlayGeometry'
 import type { CanvasRectSource } from './canvasDomGeometry'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import {
   hideOverlayElement,
   measureSelectorHighlightRects,
@@ -380,7 +380,7 @@ export function BreakpointSelectionOverlay({
   //     pointermove) is the whole point of WS-5.1's bounded-cost requirement.
   const tickOnce = useEffectEvent((iframe: HTMLIFrameElement | null) => {
     const canvasRoot = portalCanvasRoot
-    const iframeDoc = iframe?.contentDocument ?? null
+    const iframeDoc = resolvePortalDocument(iframe) // portal-mode only; see its own doc
     const elementCache = nodeElementCacheRef.current!
 
     if (!iframe || !iframeDoc) {

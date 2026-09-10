@@ -20,26 +20,14 @@ import {
 } from './canvasTreeLadder'
 import { escapeCssAttributeValue } from './canvasNodeLookup'
 import { measureCanvasElementRect } from './canvasOverlayGeometry'
-import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
-import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import styles from './BreakpointSelectionOverlay.module.css'
 
-/**
- * The frame's `Document`, through the portal-mode escape hatch (`live-05`,
- * STATE.md, Batch 6) instead of a direct `iframeElement.contentDocument`
- * reach-in. `null` for an unregistered iframe (not booted yet — callers
- * already poll/retry, unchanged) OR a bridge-registered one — a genuine,
- * documented gap: Alt-hover tree-ladder inspection has no bridge-mode
- * equivalent yet (it needs real DOM `mousemove`/`keydown` listeners inside
- * the frame document, the same class of thing `useIframeEventForwarding.ts`'s
- * keyboard-forwarding gap already flags), not silently unsupported.
- */
-function resolvePortalDocument(iframeElement: HTMLIFrameElement | null): Document | null {
-  if (!iframeElement) return null
-  const adapter = listFrameAdapters().get(iframeElement)
-  if (!adapter || !isPortalFrameAdapter(adapter)) return null
-  return adapter.getPortalWindow()?.document ?? null
-}
+// Alt-hover tree-ladder inspection has no bridge-mode equivalent yet (`live-05`,
+// STATE.md) — `resolvePortalDocument` resolves `null` for a bridge-registered
+// iframe (a real DOM `mousemove`/`keydown` inside a cross-origin frame document
+// isn't reachable this way), the same class of gap `useIframeEventForwarding.ts`'s
+// keyboard-forwarding already flags. Disclosed, not silently unsupported.
 
 const EMPTY_STYLE_RULES: StyleRuleRegistry = {}
 const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
