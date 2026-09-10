@@ -5,8 +5,31 @@ import type {
   CanvasDropCandidate,
   CanvasRect,
 } from './canvasDnd'
+import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
 const CANVAS_NODE_SELECTOR = '[data-node-id]'
+
+/**
+ * The frame's `Document`, through the portal-mode escape hatch (`live-05`,
+ * STATE.md, Batch 3/4) instead of a direct `iframe.contentDocument` reach-in
+ * — `null` for an unregistered iframe OR a bridge-registered one (a
+ * cross-origin frame has no readable `contentDocument`, full stop).
+ *
+ * Bridge-mode drop-candidate enumeration is a genuinely separate, larger
+ * design question this function does NOT attempt: unlike a single-node
+ * measurement (`adapter.measure([{nodeId}])`), "every draggable node's rect,
+ * for drop-target scoring" has no adapter method shaped for it yet — it
+ * would mean calling `adapter.measure` for every node id in the tree, a
+ * fundamentally more expensive operation than one DOM scan, not a drop-in
+ * replacement. Named here as the concrete blocker, not silently unsupported.
+ */
+function portalDocumentForIframe(iframe: HTMLIFrameElement | null | undefined): Document | null {
+  if (!iframe) return null
+  const adapter = listFrameAdapters().get(iframe)
+  if (!adapter || !isPortalFrameAdapter(adapter)) return null
+  return adapter.getPortalWindow()?.document ?? null
+}
 
 export function getViewportLocalPoint(
   viewport: HTMLElement,
@@ -109,7 +132,7 @@ export function measureCanvasDropCandidates(
   iframe?: HTMLIFrameElement | null,
 ): CanvasDropCandidate[] {
   const depths = buildDepthMap(tree)
-  const queryScope: ParentNode = iframe?.contentDocument ?? viewport
+  const queryScope: ParentNode = portalDocumentForIframe(iframe) ?? viewport
   const wrappers = Array.from(queryScope.querySelectorAll<HTMLElement>(CANVAS_NODE_SELECTOR))
   const iframeRect = iframe?.getBoundingClientRect() ?? null
   // Inner rects come back unscaled (iframe document is its own viewport);
