@@ -55,18 +55,16 @@
  * `body`'s OWN className/style/attributes, never `body`'s children, so
  * appending this sibling node is invisible to it by construction.
  */
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import {
   SELECTION_OVERLAY_ROOT_ID,
   SELECTION_STYLE_TAG_ID,
   buildSelectionChromeStylesheet,
 } from '@core/studio-runtime'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
 interface CanvasSelectionOverlayInjectorProps {
-  /** The iframe document to inject the overlay stylesheet + root into. */
-  targetDocument: Document
-  /** The parent (editor) document to read ring/badge tokens from. */
-  parentDocument: Document
   /**
    * Called with the overlay root element once it exists (mount, or a
    * document swap), and with `null` on cleanup (unmount, or before the next
@@ -75,13 +73,30 @@ interface CanvasSelectionOverlayInjectorProps {
   onRootReady: (root: HTMLDivElement | null) => void
 }
 
-export function CanvasSelectionOverlayInjector({
-  targetDocument,
-  parentDocument,
-  onRootReady,
-}: CanvasSelectionOverlayInjectorProps) {
+/**
+ * Portal mode only (`live-05`, STATE.md, Batch 4) — reads the frame's
+ * `Document` through `PortalFrameAdapter`'s escape hatch. This is
+ * DELIBERATELY unchanged behavior for portal mode: it still creates its own
+ * `<style>` + overlay-root `<div>` directly by LITERAL id (not through
+ * `adapter.applyOverlay`), because `PortalFrameAdapter.select`/`hover`
+ * (built in Batch 1, for a future bridge-mode caller) independently check
+ * for an EXISTING `SELECTION_STYLE_TAG_ID`/`SELECTION_OVERLAY_ROOT_ID` by
+ * that exact literal id before creating their own — routing this through
+ * `applyOverlay`'s prefixed-id scheme would make that existence check miss,
+ * and the two mechanisms would fight. Nothing in the real, running app calls
+ * `adapter.select`/`hover` yet (portal mode's selection is driven entirely
+ * by `BreakpointSelectionOverlay`'s own `createPortal`, unchanged by this
+ * work order) — that only starts mattering once a bridge-mode caller for
+ * `CanvasSelectionOverlayInjector` exists (a later batch).
+ */
+export function CanvasSelectionOverlayInjector({ onRootReady }: CanvasSelectionOverlayInjectorProps) {
+  const adapter = useContext(CanvasFrameAdapterContext)
+
   // Stylesheet: ring/badge appearance + forwarded tokens.
   useEffect(() => {
+    if (!isPortalFrameAdapter(adapter)) return
+    const targetDocument = adapter.getPortalWindow()?.document
+    if (!targetDocument) return
     let styleEl = targetDocument.getElementById(SELECTION_STYLE_TAG_ID) as HTMLStyleElement | null
     if (!styleEl) {
       styleEl = targetDocument.createElement('style')
@@ -89,20 +104,26 @@ export function CanvasSelectionOverlayInjector({
       styleEl.setAttribute('data-source', 'CanvasSelectionOverlayInjector')
       targetDocument.head.appendChild(styleEl)
     }
-    styleEl.textContent = buildSelectionChromeStylesheet(parentDocument)
-  }, [targetDocument, parentDocument])
+    // The parent (editor) document to read ring/badge tokens from is always
+    // the admin's own global `document` — never an iframe's, regardless of
+    // documentMode. See EditorChromeInjector.tsx's buildTokenBlock for the
+    // same pattern and why.
+    styleEl.textContent = buildSelectionChromeStylesheet(document)
+  }, [adapter])
 
   useEffect(() => {
-    const targetDoc = targetDocument
     return () => {
-      targetDoc.getElementById(SELECTION_STYLE_TAG_ID)?.remove()
+      if (!isPortalFrameAdapter(adapter)) return
+      adapter.getPortalWindow()?.document.getElementById(SELECTION_STYLE_TAG_ID)?.remove()
     }
-  }, [targetDocument])
+  }, [adapter])
 
   // Overlay root: a zero-size, out-of-flow div appended to <body>. See the
   // module docblock for why zero-size is load-bearing.
   useEffect(() => {
-    if (!targetDocument.body) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const targetDocument = adapter.getPortalWindow()?.document
+    if (!targetDocument?.body) return
     let root = targetDocument.getElementById(SELECTION_OVERLAY_ROOT_ID) as HTMLDivElement | null
     if (!root) {
       root = targetDocument.createElement('div')
@@ -125,7 +146,7 @@ export function CanvasSelectionOverlayInjector({
       root?.remove()
       onRootReady(null)
     }
-  }, [targetDocument, onRootReady])
+  }, [adapter, onRootReady])
 
   return null
 }

@@ -440,11 +440,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   render INSIDE this document (WS-5.1) so they track the element
                   with zero zoom/pan conversion. See its own docblock. */}
               {!isLive && !isCapture && (
-                <CanvasSelectionOverlayInjector
-                  targetDocument={iframeDoc}
-                  parentDocument={document}
-                  onRootReady={setOverlayRoot}
-                />
+                <CanvasSelectionOverlayInjector onRootReady={setOverlayRoot} />
               )}
               {/* Vendor package CSS (Alm design-system + the open project's own
                   bare-specifier package CSS) — read-only, @layer vendor,
