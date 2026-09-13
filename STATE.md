@@ -25,6 +25,158 @@ Archive section at the bottom of this file indexes them.
 - **Verification:** see above — full `bun run build && bun test --parallel=4 && bun run lint`, run on the actual merged tree, not assumed from the individual branches' own prior verification notes.
 - **Human action needed:** none blocking. The nine original branches/PRs (#90-99) can be closed/abandoned once this branch itself ships, or kept open in parallel — orchestrator did not make that call. `studio-workspace/__canonical-fixture/`'s absence on this branch is worth a real decision (cherry-pick it from `main`, or accept the 27 tests as permanently not-runnable on this branch) whenever this branch's own divergence from `main` gets reconciled.
 
+### store-10 — R2: `RefusalDialog`
+- **Agent:** store-engineer (Phase A — plan/store plumbing, DONE) → panel-designer (Phase B — the dialog component + its mount, DONE)
+- **Stage:** done — PR #100 open (draft) against `feat/alm-figma-killer-studio-shell`
+- **Updated:** 2026-09-13
+- **Roadmap:** `STUDIO-LIVE-CANVAS-PLAN.md` §3, R2 (between R1/`refusal-01` and R3/`panel-24`, both already shipped and merged — see `meta-09`).
+- **Goal:** replace the plain refusal TOAST for a **committed canvas structural gesture** (move/delete/insert/duplicate/wrap) with a real `Dialog` (`src/ui/components/Dialog`) whenever the refusal has at least one runnable remedy, reusing R1/R3's existing dispatch/render layer (`resolveConstraintAction`, `ConstraintActionButtons`) rather than building a second one. Detach/Extract are the two remedies that change what the refused node's id even IS (a full board reload lands after either), so clicking one **re-issues the ORIGINAL gesture** against whatever node now occupies the same call-site position, once the reload lands. **Done when:** (1) dragging/deleting/duplicating/wrapping a `shared-component` call site, or inserting into/onto one, opens a modal `Dialog` titled per `STRUCTURAL_REFUSAL_TITLE` with the engine's explanation plus real "Open the component definition" / "Detach this instance" / "Duplicate as a new file and edit that" buttons (not a toast); (2) clicking Detach or Extract, on success, silently re-runs the original delete/move/duplicate/wrap/insert once the reload has landed, with no further user action; (3) a refusal whose `EditConstraint.actions` is empty (`reparent`, plain `insert`, `duplicate`, `wrap`, `multi-select`, `no-sibling-anchor` per R1's table) still shows the existing toast, byte-for-byte unchanged; (4) the live drag-preview refusal (`explainGestureConstraint`, `canvasDnd.ts` — shown WHILE the pointer is still down) is explicitly untouched — popping a modal mid-drag would be a worse UX than today's inline drop-line, and nothing in R2's plan text asks for it.
+- **Recon findings (read the real code, not the plan's one paragraph):**
+  - **The toast this replaces is `toastStructuralRefusal`** in `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts:257`. It has exactly 9 call sites, all inside the structural-edit gate: `nodeActions.ts:308` (`deleteNode`, single), `nodeActions.ts:518` (`moveNodes`), `deleteNodesAction.ts:63` (`deleteNodes`, multi-page), and 6 in `studioSourceWrites.ts` — `refuseInsertInto` (:82, shared by `insertImportedNodes` and `insertComponentRef`), `writeInsertToSource`'s real refusal (:103) and its hardcoded "editor building block" refusal (:138, always `actions: []` — never reaches the dialog), `writeDuplicateToSource` (:164), `writeWrapToSource`'s real refusal (:184) and its own hardcoded building-block refusal (:201, also always `[]`).
+  - **Only `detach` and `extract` need the retry mechanism.** Per R1's table (`refusal-01`), the only `StructuralRefusalReason` with runnable, node-changing actions is `shared-component` (`edit-component` / `detach` / `extract`). `edit-component` and every other actionable reason (`list-row`→`edit-array`, `route-chrome`/`code-placed`/`cross-file`→`jump-to-source`) only open a file — they don't change the refused node, so there is nothing to retry: the dialog just closes after `jumpToSource` runs. `detach`/`extract` are different: `detachInstance`/`extractInstanceCopy` (`studioSaveRequests.ts:226`/`:337`) both call `requestCmsSiteReload()` on success — a FULL `loadSite()`, confirmed by `studioBoardResync.ts`'s own doc, which lists both in the "always full reload" bucket because each rewrites imports/mints a file. A full reload re-parses everything, so **every node id derived from the call site changes** (or the call site simply ceases to be a `shared-component` id at all, for detach).
+  - **The id-remapping problem, solved with a grammar fact already in `sourceNodeId.ts`.** A `shared-component` node id is `<callSite rel:line:col>~<component-definition rel:line:col>` (`INLINE_ID_SEPARATOR = '~'`). `decodeSourceNodeId` deliberately decodes the LAST segment (the definition file — that's why `edit-component`'s target is correct). Nothing today decodes the FIRST segment — the call site's own position, which is exactly what stays stable across detach (the inlined JSX's top element starts at ~the same position) and extract (only the tag name + import change; the call site's own position is untouched). **New helper needed, symmetric to `decodeSourceNodeId`:** `callSitePosition(nodeId): string` (`nodeId.split(INLINE_ID_SEPARATOR)[0]!`) and `matchesCallSitePosition(nodeId, position): boolean` (`nodeId === position || nodeId.startsWith(position + INLINE_ID_SEPARATOR)`) — both belong in `src/core/page-tree/sourceNodeId.ts` beside the id grammar they read, exported through `@core/page-tree`'s barrel.
+  - **`requestCmsSiteReload()` is fire-and-forget** (`src/admin/state/adminEvents.ts:35` — dispatches a bare `window` event; `usePersistence.ts`'s listener asynchronously does `await adapter.loadSite(id); store.loadSite(site)` sometime later). There is no promise, and no "reload applied" event, to await. **Do not add one** — a React component can already watch for the applied change the same way `SitePage.tsx` itself already does today (`useEditorStore.subscribe(() => { ... })`, no selector arg — this codebase's zustand major version is used bare, not through `subscribeWithSelector`, so match that exact pattern, not a 2-arg selector subscribe). The dialog component subscribes once after triggering detach/extract, checks `useEditorStore.getState().site` on every fire, and unsubscribes the moment it finds a node whose id `matchesCallSitePosition` the captured position (plus a ~8s timeout that unsubscribes and quietly gives up — the detach/extract itself already succeeded and needs no further reporting; only the automatic retry is skipped).
+  - **The retry closure is trivial once you have `get()`.** Every one of the 9 call sites above already sits inside a store action with the full composed store's `get`/`set` in scope (`SiteSliceHelpers`). Each already knows exactly what to re-call: `deleteNode`→`get().deleteNode(newId)`, `deleteNodes`→`get().deleteNodes(nodeIds.map(id => id === refusedId ? newId : id))`, `moveNodes`→`get().moveNodes([newId, ...nodeIds.slice(1)], newParentId, newIndex)` (the refused node in a move plan is always `nodeIds[0]` — confirmed in `planSourceMove`'s own code), `writeDuplicateToSource`/`writeWrapToSource`/`writeInsertToSource`/`refuseInsertInto`'s two callers → call themselves again with the one id substituted. **No discriminated `PendingGesture` union, no serialization** — a plain `(newNodeId: string) => void` closure captured at the refusal site is the entire "gesture" the dialog needs to know about; it stays completely agnostic to which of the 5 gesture kinds it's showing.
+  - **`StructuralPlan<TCommit>`'s failure branch is missing the one thing the retry closure needs to build itself: WHICH node refused.** Today it's `{ ok: false; constraint: EditConstraint }` — every `planSource*` function (`planSourceMove`, `planSourceDelete`, `planSourceInsert`, `planSourceDuplicate`, `planSourceWrap`) already has the offending `node` in scope at the point it returns this, it just doesn't forward `node.id`. Widen it to `{ ok: false; constraint: EditConstraint; nodeId?: string }` (optional — `planSourceInsert`'s `resolveSourceContainer`-failure branch genuinely has no node) and thread `node.id`/`container.node.id` through in all five. This is the ONE core-layer edit this ticket needs.
+  - **`ConstraintActionButtons`/`ConstraintNotice` stay the render+dispatch layer — extend, don't fork.** `resolveConstraintAction` (`constraintActions.ts`) already returns a `() => void` for `detach`/`extract`, built from `runInstanceCodemod` (fire-and-forget, `void`). The dialog needs to know WHEN that async codemod settles (to start/stop the retry-wait), which the current signature cannot report. Add one optional field to `ConstraintActionContext`: `onSettled?: (ok: boolean) => void`, and have `runInstanceCodemod` call it in both its success/failure and its catch branches. Add one optional prop to `ConstraintActionButtons`: `onActionSettled?: (action: EditConstraintAction, ok: boolean) => void`, forwarded into `resolveConstraintAction`'s context as `onSettled: (ok) => onActionSettled?.(action, ok)`. **Every existing caller (`ConstraintNotice` → `LayerNodeContextMenu`'s footer, `SourceConstraintNotice`, `CodeValueControl`'s popover) omits the new prop and is completely unaffected** — this is additive, not a second table.
+  - **The `Dialog` primitive (`src/ui/components/Dialog/Dialog.tsx`)** already has everything R2 needs off the shelf: `open`/`onClose`, `title`, `children` (body), `footer`, `tone="danger"`, Escape/backdrop close, focus trap/restore. No new primitive.
+  - **Where the dialog's trigger state has to live: the store, not a component.** A canvas gesture (Delete key, a layers-tree drag, a context-menu action) has no JSX render tree to hand a constraint to — that's exactly why `pushToast` is a global bus. `uiSlice.ts` (`src/admin/pages/site/store/slices/uiSlice.ts`) already holds this kind of ephemeral, non-document UI state (`ActiveDocument`, panel layout, etc.) and is the right home for a new `structuralRefusalDialog: StructuralRefusalDialogState | null` field + `dismissStructuralRefusalDialog()` action.
+  - **Mount point:** `src/admin/pages/site/SitePage.tsx` — the `/admin/site` route's own top-level component, which already mounts nothing but `<AdminCanvasLayout/>` and already uses the exact `useEditorStore.subscribe(() => {...})` idiom the retry-wait needs (its own pending-spotlight-action effect). Mirrors `main.tsx`'s single `<ToastProvider/>` mount, scoped correctly to the site editor instead of the whole admin app.
+- **Contracts:**
+  ```ts
+  // src/core/page-tree/sourceNodeId.ts (+ exported from the @core/page-tree barrel)
+  /** The call site's own `rel:line:col` — the head of a composite id, symmetric to decodeSourceNodeId's tail. Returns the id unchanged when it isn't composite. */
+  export function callSitePosition(nodeId: string): string
+  /** True when `nodeId` is the same call site as `position` (itself, or inlined/re-inlined from it). */
+  export function matchesCallSitePosition(nodeId: string, position: string): boolean
+
+  // src/admin/pages/site/store/slices/site/structuralSourceEdits.ts
+  export type StructuralPlan<TCommit> =
+    | { ok: true; commit: TCommit | null }
+    | { ok: false; constraint: EditConstraint; nodeId?: string }   // + nodeId, was missing
+
+  /** Replaces `toastStructuralRefusal` at all 9 call sites (renamed, not duplicated). */
+  export function presentStructuralRefusal(
+    title: string,
+    constraint: EditConstraint,
+    context: {
+      nodeId?: string
+      /** Re-run the gesture this refusal blocked, with the node that replaced `nodeId` after a detach/extract lands. */
+      retry?: (newNodeId: string) => void
+      getState?: () => SourceFileOpener
+      set: EditorStoreSetter   // opens the dialog when constraint.actions.length > 0; identical toast body otherwise
+    },
+  ): void
+
+  // src/admin/pages/site/store/constraintActions.ts — ONE new optional field, existing callers unaffected
+  export interface ConstraintActionContext {
+    nodeId?: string
+    openSource?: (origin: SourceOrigin) => void
+    onSettled?: (ok: boolean) => void   // NEW — fired by the detach/extract branches only
+  }
+
+  // src/admin/pages/site/ui/ConstraintNotice/ConstraintActionButtons.tsx — ONE new optional prop
+  interface ConstraintActionButtonsProps {
+    constraint: EditConstraint
+    nodeId?: string
+    onActionSettled?: (action: EditConstraintAction, ok: boolean) => void   // NEW
+  }
+
+  // src/admin/pages/site/store/slices/uiSlice.ts
+  export interface StructuralRefusalDialogState {
+    title: string
+    constraint: EditConstraint
+    nodeId?: string
+    retry?: (newNodeId: string) => void
+  }
+  // new SiteSlice/uiSlice fields: structuralRefusalDialog: StructuralRefusalDialogState | null
+  //                               dismissStructuralRefusalDialog: () => void
+
+  // src/admin/pages/site/ui/RefusalDialog/findReplacementNode.ts (new, co-located with the component — pure, unit-testable)
+  export function findReplacementNodeId(site: SiteDocument, position: string): string | undefined
+  // Scans site.pages[].nodes and (if the active document is a Visual Component) site.visualComponents[].tree.nodes
+  // for the first id where matchesCallSitePosition(id, position) — verify the VC's tree field name in
+  // src/core/visualComponents/schemas.ts before wiring (recon strongly implies `.tree`, not spelled out verbatim).
+
+  // src/admin/pages/site/ui/RefusalDialog/RefusalDialog.tsx (new)
+  export function RefusalDialog(): JSX.Element | null
+  // Reads uiSlice's structuralRefusalDialog; renders <Dialog open title=... tone="danger" footer={<ConstraintActionButtons .../>}>
+  // On onActionSettled(action, ok): action.kind !== 'detach' && action.kind !== 'extract' → dismiss immediately (jump-to-source
+  //   already ran). !ok → leave the dialog open (the codemod's own refusal toast already fired via runInstanceCodemod;
+  //   the user can try a different remedy — e.g. Detach failed on `uses-hooks`, try Extract next, same relationship
+  //   `detachInstance`'s own doc comment already documents for the Properties panel's Component section).
+  //   ok && (no nodeId or no retry) → dismiss (nothing to remap). ok && nodeId && retry → enter a brief "retrying…"
+  //   state, subscribe via useEditorStore.subscribe(() => {...}) (bare form, matching SitePage.tsx), poll
+  //   findReplacementNodeId(state.site, callSitePosition(nodeId)) on every fire, call retry(found) + dismiss on a hit,
+  //   or give up silently after ~8s. Manually closing the dialog (Escape/backdrop/X) before a hit MUST cancel the
+  //   subscription + timeout — never fire retry() after the user has backed out.
+  ```
+- **Files:**
+  - modify `src/core/page-tree/sourceNodeId.ts` — add `callSitePosition`/`matchesCallSitePosition`
+  - modify `src/core/page-tree/index.ts` — export both
+  - modify `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts` — widen `StructuralPlan`'s failure branch with `nodeId`; thread `node.id`/`container.node.id` through `planSourceMove`/`planSourceDelete`/`planSourceInsert`/`planSourceDuplicate`/`planSourceWrap`'s failure returns; rename `toastStructuralRefusal` → `presentStructuralRefusal` with the widened contract above (old-toast body preserved verbatim inside the `actions.length === 0` branch)
+  - modify `src/admin/pages/site/store/slices/site/nodeActions.ts` — `deleteNode`/`moveNodes` build a `retry` closure and call `presentStructuralRefusal` (needs `set` in scope, already destructured); `insertComponentRef` passes a retry closure into `refuseInsertInto`
+  - modify `src/admin/pages/site/store/slices/site/deleteNodesAction.ts` — same, for `deleteNodes`
+  - modify `src/admin/pages/site/store/slices/site/studioSourceWrites.ts` — `refuseInsertInto` gains an optional `retryWithParent` param; `writeInsertToSource`/`writeDuplicateToSource`/`writeWrapToSource` build their own retry closures (their two hardcoded "editor building block" refusals pass no `nodeId`/`retry` — always `actions: []`, unaffected); `insertImportedNodes`'s call to `refuseInsertInto` passes its own retry closure
+  - modify `src/admin/pages/site/store/constraintActions.ts` — `ConstraintActionContext.onSettled`, wired through `resolveConstraintAction`'s `detach`/`extract` branches and `runInstanceCodemod`
+  - modify `src/admin/pages/site/store/slices/uiSlice.ts` — `structuralRefusalDialog` field + `dismissStructuralRefusalDialog` action
+  - modify `src/admin/pages/site/ui/ConstraintNotice/ConstraintActionButtons.tsx` — optional `onActionSettled` prop
+  - create `src/admin/pages/site/ui/RefusalDialog/RefusalDialog.tsx` + `.module.css`
+  - create `src/admin/pages/site/ui/RefusalDialog/findReplacementNode.ts` (+ co-located test)
+  - create `src/admin/pages/site/ui/RefusalDialog/index.ts`
+  - modify `src/admin/pages/site/SitePage.tsx` — mount `<RefusalDialog/>` beside `<AdminCanvasLayout/>`
+  - delete nothing — `toastStructuralRefusal` is renamed in place, not left beside its replacement
+- **Explicitly out of scope:** `explainGestureConstraint`/`canvasDnd.ts`'s live drag-preview refusal (mid-drag, pointer still down — stays whatever inline UI it already has); `explainDetachConstraint`'s own Detach-fails-with-a-reason surface in the Properties panel's Component section (a pre-existing, different feature — see `extractInstanceCopy`'s doc comment — not the toast this ticket replaces); `explainMintedInsertConstraint` (already out of scope per `refusal-01`).
+- **Sequencing — Phase A (store-engineer) before Phase B (panel-designer):** Phase B's `RefusalDialog` needs `presentStructuralRefusal`, the widened `StructuralPlan`, the `structuralRefusalDialog` store field, and `ConstraintActionContext.onSettled` to exist first. Phase A leaves the tree building with the toast behavior completely unchanged (every `presentStructuralRefusal` call site still only has the `actions.length === 0` toast path reachable, since nothing yet writes `structuralRefusalDialog`) — Phase B is what actually starts opening the dialog instead of the empty branch. Land Phase A, confirm `bun test src/core/page-tree/__tests__ src/admin/pages/site/store` green + `bun run build`, then start Phase B.
+- **Gates:**
+  - `src/core/page-tree/__tests__/editConstraint.test.ts` / a new co-located `sourceNodeId.test.ts` case — `callSitePosition`/`matchesCallSitePosition` round-trip against a plain id and a composite `shared-component` id.
+  - A new `structuralRefusalDialog.test.ts` (or extend `structuralSourceEdits.test.ts`) — asserts `presentStructuralRefusal` takes the toast path for every `actions: []` reason (regression guard: the 6 R1 rows with no remedies must never open the dialog) and the dialog path for `shared-component`.
+  - A new RTL test for `RefusalDialog.tsx` — mount with a `shared-component` `structuralRefusalDialog` state, click Detach, assert `retry` is called with the id `findReplacementNodeId` resolves once a mocked `site` update lands, and assert it is NOT called if the dialog is dismissed first.
+  - No architecture gate changes — this doesn't touch a banned-import list, a token policy, or a folder-layout rule.
+- **Risks:**
+  - Detach/extract's codemod could, in principle, reformat multi-line JSX such that the new top element's line/col drifts from the exact call-site position captured before the write → `findReplacementNodeId` finds nothing → silent no-retry (documented above as the deliberate, honest fallback, not a bug to chase further in this ticket).
+  - A user who fires a SECOND structural gesture while one dialog's retry-wait is still pending would presently just overwrite `structuralRefusalDialog` (last-write-wins) — acceptable for v1; flag as a known limitation, not a blocker, since a modal dialog already prevents most other input while open (only agent/spotlight-driven concurrent gestures could reach this).
+  - Reusing `runInstanceCodemod`'s `onSettled` add is the one place a change had to reach INTO the layer R1/R3 built rather than only building beside it — kept intentionally minimal (one optional field, one call site fires it) to avoid the "second dispatch table" trap the recon above explicitly checked for.
+- **Phase A — done (store-engineer, 2026-09-13).** Worked in `.tmp/wt-store-10` on branch `feat/refusal-dialog-r2` (cut from `origin/feat/alm-figma-killer-studio-shell`, per `meta-09`'s pause-note update — R1/R3 are already on that branch). Pushed to `origin/feat/refusal-dialog-r2` (one commit, `2a165c7`); **no PR opened yet** — Phase B lands on the same branch/worktree first, then the whole R2 ticket goes up as one PR.
+  - **Files touched, exactly the Phase-A subset of the ticket's file list:**
+    - `src/core/page-tree/sourceNodeId.ts` + `index.ts` — added `callSitePosition`/`matchesCallSitePosition`, exported through the barrel. New test `src/core/page-tree/__tests__/sourceNodeId.test.ts` (round-trips + the "not a string-prefix match" guard the naive `startsWith(position)` bug would have missed).
+    - `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts` — `StructuralPlan<TCommit>`'s failure branch widened to `{ ok: false; constraint; nodeId?: string }`; threaded `node.id`/`container.node.id` through all 5 `planSource*` failure returns; `toastStructuralRefusal` renamed to `presentStructuralRefusal` with the widened `{ nodeId?, retry?, getState?, set }` context.
+    - `src/admin/pages/site/store/slices/site/nodeActions.ts` — `deleteNode`/`moveNodes` build retry closures (`actions.deleteNode(newNodeId)` / `actions.moveNodes([newNodeId, ...nodeIds.slice(1)], newParentId, newIndex)`, following the file's own pre-existing `actions.X` self-reference pattern rather than `get().X` — same closure-created-before-fully-assigned trick `moveNode`'s wrapper already used); `insertComponentRef`/`insertImportedNodes` pass a `retryWithParent` closure into `refuseInsertInto`.
+    - `src/admin/pages/site/store/slices/site/deleteNodesAction.ts` — same shape, using `get().deleteNodes(...)` (this module has no sibling-actions object to close over, unlike `nodeActions.ts`).
+    - `src/admin/pages/site/store/slices/site/studioSourceWrites.ts` — `refuseInsertInto` gained an optional `retryWithParent` param; `writeInsertToSource`/`writeDuplicateToSource`/`writeWrapToSource` build self-recursive retry closures (call themselves again with one id substituted); both hardcoded "editor building block" refusals updated to the new `presentStructuralRefusal` signature (still always `actions: []`, so always the toast — unaffected in behavior).
+    - `src/admin/pages/site/store/constraintActions.ts` — `ConstraintActionContext.onSettled?: (ok) => void`, wired through the `detach`/`extract` branches of `resolveConstraintAction` into `runInstanceCodemod`'s success/refusal/catch paths (all three now call `onSettled`).
+    - `src/admin/pages/site/store/slices/site/types.ts` — new `EditorStoreSetter` type alias (`= (recipe: SiteSliceRecipe) => void`), so `structuralSourceEdits.ts` doesn't need the whole `SiteSliceHelpers` contract just to spell `set`.
+    - `src/admin/pages/site/store/slices/uiSlice.ts` — new `StructuralRefusalDialogState` interface (`{ title, constraint, nodeId?, retry? }`) + `structuralRefusalDialog: StructuralRefusalDialogState | null` field + `dismissStructuralRefusalDialog()` action (plain `set({ structuralRefusalDialog: null })` — bare `set`, not `mutateSite`/`mutateActiveTree`, so this correctly does **not** create an undo-history entry, matching every other ephemeral `uiSlice` field).
+    - `src/admin/pages/site/ui/ConstraintNotice/ConstraintActionButtons.tsx` — new optional `onActionSettled?: (action, ok) => void` prop, forwarded into `resolveConstraintAction`'s context as `onSettled: (ok) => onActionSettled(action, ok)`. Every existing caller (`ConstraintNotice`, `SourceConstraintNotice`, `CodeValueControl`) omits it and is unaffected.
+    - `src/__tests__/studio/constraintRefusalSurfaces.test.ts` — updated (not net-new) to the renamed function and the new toast/dialog split; this file already existed and directly imported `toastStructuralRefusal`, so it would not have compiled otherwise. See Decisions below for the fixture changes.
+    - Docs: `docs/agent-refs/editor-store.md` and `docs/agent-refs/studio-pipeline.md` updated to describe the rename and the toast/dialog split (left the two `docs/audits/2026-08-06/*.md` snapshots and `docs/state-archive/` alone — historical records, not living docs).
+  - **Decision — the toast-vs-dialog split is keyed on `constraint.actions.length > 0`, not on "does this caller's context have a runnable handler for at least one action."** The ticket's Goal text says "whenever the refusal has at least one runnable remedy" but its own criterion (3) enumerates the toast-preserving set as exactly the 6 R1 reasons whose `actions` array the engine (`editConstraint.ts`) always returns empty (`reparent`, plain `insert`, `duplicate`, `wrap`, `multi-select`, `no-sibling-anchor`). Every OTHER reason — `shared-component`, but also `list-row`/`route-chrome`/`code-placed`/`cross-file` — gets a non-empty `actions` array in production and therefore now opens the dialog too, not just `shared-component`. In production this is equivalent to "has a runnable remedy" anyway, since every real call site always passes a working `getState`; the two readings only diverge in a bare unit test that omits it. Chose the array-length reading because it is a pure function of the constraint (matches the "byte-for-byte" wording literally) rather than a property of which caller happened to wire `openSource`. **If Phase B or product review wants `list-row`/`route-chrome`/`cross-file` to keep toasting (single jump-to-source action) and reserve the dialog for `shared-component` alone, this is the one line to change** (`if (constraint.actions.length > 0)` in `presentStructuralRefusal`) — flagging explicitly since the Goal prose and the enumerated criterion don't quite say the same thing and a human should make that call, not an agent inferring it.
+  - **Decision — retry closures use `actions.X(...)` inside `nodeActions.ts`, `get().X(...)` inside `deleteNodesAction.ts`.** The recon notes in this ticket's own text suggested `get().X` uniformly; I matched each file's own existing self-reference idiom instead (`nodeActions.ts`'s `moveNode` wrapper already calls `actions.moveNodes(...)` from inside the same object literal — same "closure invoked later, after `actions` is fully assigned" trick applies to a retry closure). Purely stylistic — both resolve to the identical function at call time.
+  - **Landmine avoided, not hit:** `writeDuplicateToSource`/`writeWrapToSource`'s retry closures call themselves recursively by name from inside their own `const` initializer. This is legal (the inner arrow function is not invoked until well after the `const` binding completes — the TDZ is long over by the time a user clicks "Detach") but looks like it shouldn't typecheck; if you're re-reading this code and it looks wrong, it isn't — `bun run build`/`tsc -b` confirm it compiles clean.
+  - **What Phase B still needs to build, per the ticket's own file list (untouched by this phase):** `src/admin/pages/site/ui/RefusalDialog/{RefusalDialog.tsx,RefusalDialog.module.css,findReplacementNode.ts,index.ts}` (+ co-located test), and the `<RefusalDialog/>` mount in `SitePage.tsx`. Everything Phase B needs already exists and typechecks: `presentStructuralRefusal`, the widened `StructuralPlan`, `uiSlice.structuralRefusalDialog`/`dismissStructuralRefusalDialog`, `ConstraintActionButtons`'s `onActionSettled` prop, and `callSitePosition`/`matchesCallSitePosition` from `@core/page-tree`.
+  - **Verification (Phase A only):** `bunx tsc -b` clean. `bun run build` clean (`AdminCanvasEditorBody` unchanged at 824.92 kB — Phase A touches no render path). `bun test src/__tests__/editor src/__tests__/architecture/centralized-site-mutation-history.test.ts src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts src/core/page-tree src/admin/pages/site/store src/__tests__/studio/constraintRefusalSurfaces.test.ts` → 708 pass / 0 fail. `bun run lint` → the same pre-existing 6 `'os' is defined but never used` errors this plan has logged repeatedly (`server/handlers/__tests__/*.test.ts`, `server/handlers/studio/referenceUpload.test.ts` — none of them touched by this change).
+- **Human action needed (Phase A):** the one open question flagged above (toast-vs-dialog split scope for `list-row`/`route-chrome`/`code-placed`/`cross-file`) — Phase B kept Phase A's `actions.length > 0` reading as-is (see below), so this is still an open product call, not a blocker.
+- **Phase B — done (panel-designer, 2026-09-13).** Continued in the SAME worktree/branch (`.tmp/wt-store-10`, `feat/refusal-dialog-r2`, no new worktree). Confirmed the handoff first: `bun run build` clean, Phase A's own targeted suite 708/0, matching its verification notes exactly, before writing any code.
+  - **Files created:**
+    - `src/admin/pages/site/ui/RefusalDialog/RefusalDialog.tsx` — reads `structuralRefusalDialog` off `useEditorStore`, renders a `<Dialog tone="danger">` with the constraint's `explanation` in the body and `<ConstraintActionButtons onActionSettled={...}>` in the footer. Same `useEditorStore.subscribe(() => {...})` bare-form idiom `SitePage.tsx` already uses for its pending-spotlight-action effect.
+    - `src/admin/pages/site/ui/RefusalDialog/RefusalDialog.module.css` — two rules (`.explanation`, `.retrying`), both existing tokens (`--text-s`, `--text-2xs`, `--text-muted`, `--space-xs`). **No new tokens needed.**
+    - `src/admin/pages/site/ui/RefusalDialog/findReplacementNode.ts` — `findReplacementNodeId(site, position)`, pure, scans `site.pages[].nodes` then `site.visualComponents[].tree.nodes` (confirmed the field name is `.tree.nodes`, per the ticket's own recon) for the first id `matchesCallSitePosition` matches. **Deviated from the contract's parenthetical** ("scans VC trees only if the active document is a Visual Component") — the exported signature only takes `(site, position)`, with no `activeDocument` parameter, so there is nothing to gate on; scanning both unconditionally is strictly safer (a call-site position is a real file's `rel:line:col`, so a page and a VC colliding on the exact same position is not a real ambiguity) and matches the signature the ticket itself specified. Flagging in case a reviewer wanted the gating literally.
+    - `src/admin/pages/site/ui/RefusalDialog/index.ts` — barrel, one export.
+    - `src/admin/pages/site/ui/RefusalDialog/RefusalDialog.test.tsx` + `findReplacementNode.test.ts` — RTL + unit tests, see Gates below.
+  - **Files modified:**
+    - `src/admin/pages/site/SitePage.tsx` — mounted `<RefusalDialog/>` beside `<AdminCanvasLayout/>`, exactly the spot the ticket named.
+    - `src/admin/pages/site/store/constraintActions.ts` — **one substantive change beyond wiring the two new files together.** Found a real gap between the ticket's own spec text and what Phase A actually built: the spec says `RefusalDialog`'s `onActionSettled(action, ok)` handler should dismiss the dialog immediately for any action that isn't `detach`/`extract` ("jump-to-source already ran"). But `resolveConstraintAction`'s target-carrying branch (`jump-to-source`/`edit-array`/`edit-component`) never called `context.onSettled` at all — Phase A's own doc comment on the field said so explicitly ("every other action kind ignores this... has nothing to settle"). Without a fix, clicking "Open the component definition" would open the file and leave the modal sitting on screen, never dismissing itself. Fixed by having that branch call `onSettled?.(true)` right after `openSource(target)` — one `const onSettled = context.onSettled` + a 2-line body change, additive: every existing caller (`ConstraintNotice`, `SourceConstraintNotice`, `CodeValueControl`) still omits `onSettled` and is unaffected. Updated the field's doc comment to describe the now-uniform contract ("fired once an action has run to completion", not "detach/extract only").
+  - **The retry-after-reload race, and why the mechanism isn't a literal "check on every fire" as the ticket's prose describes.** Traced the actual call order: `detachInstance`/`extractInstanceCopy` call `requestCmsSiteReload()` **synchronously, before returning** `{ ok: true }` — so by the time `RefusalDialog`'s `onActionSettled(true)` fires and starts the retry-wait subscription, the reload event has already been dispatched but `usePersistence.ts`'s listener hasn't yet awaited `loadSite`/called `store.loadSite(site)`. `useEditorStore.subscribe(() => {...})` (bare form) fires on ANY store-wide `set()` — not just `site` changes — so the very first incidental update (a hover, a selection change) would run the check while `site` still holds the OLD, refused node at that exact call-site position, and `matchesCallSitePosition(nodeId, callSitePosition(nodeId))` is trivially true for the node's own id. A literal "resolve on first match" would therefore very likely retry with the STALE id, before the real reload landed. **Fix: the wait only resolves when `findReplacementNodeId` returns an id DIFFERENT from the one that was refused** (`found !== originalNodeId`) — a real detach/extract always changes the full id string (detach drops the `~component-def` tail entirely; extract's tail points at a different file), so this cleanly distinguishes "the stale node, still there" from "a genuine replacement landed" without changing `findReplacementNodeId`'s own pure, position-only signature. Documented inline in `RefusalDialog.tsx`'s own doc comment — flagging here too since it's a deliberate refinement of the ticket's literal prose, not a bug.
+  - **The "fire-and-forget reload" landmine, confirmed and handled as prescribed:** no promise added, no new event. `RefusalDialog` subscribes to the existing store, checks `getState().site` on each fire (with the "found !== original" refinement above), and gives up quietly after an 8s timeout — the codemod itself already succeeded and already reported any refusal via its own toast; only the automatic re-issue is skipped on timeout.
+  - **Manual-close cancellation:** `cancelWaitRef` is cleared both eagerly (inside `handleClose`) and via a `useEffect` keyed on `[dialogState]` (covers the case where a NEW refusal — or a store-driven `dismissStructuralRefusalDialog()` from anywhere else — replaces/clears the dialog state without going through `handleClose`). Verified by the RTL test: dismiss before the reload lands, then land it anyway → `retry` is never called.
+  - **Gates:**
+    - `src/admin/pages/site/ui/RefusalDialog/findReplacementNode.test.ts` — 5 cases: plain-id match (detach), re-inlined composite-id match (extract), scans VC trees too, no match, and a naive-`startsWith`-would-false-positive guard (mirrors the same guard Phase A's `sourceNodeId.test.ts` already has for `matchesCallSitePosition` itself).
+    - `src/admin/pages/site/ui/RefusalDialog/RefusalDialog.test.tsx` — 3 cases: (1) click Detach → mocked `detachInstance` resolves `ok:true` → dialog shows a "retrying" status → simulated reload (`useEditorStore.setState({ site: ... })` with a replacement node at the same call site) → `retry` called with the NEW id, dialog dismissed; (2) same setup but the user clicks the dialog's own Close button before the simulated reload → `retry` is never called even after the reload lands; (3) a `list-row`/`edit-array` (jump-to-source-style) refusal dismisses the dialog immediately on click, proving the `constraintActions.ts` fix above actually closes the loop. `detachInstance`/`extractInstanceCopy` mocked via `mock.module('@site/studio/studioSaveRequests', ...)` — no network, no real `.tsx` file touched.
+    - Re-ran Phase A's own gate list plus the two new test files plus `sourceConstraintNotice.test.tsx` (regression guard for the `ConstraintActionButtons`/`resolveConstraintAction` shared table) — **725 pass / 0 fail** (708 Phase A + 17 new).
+  - **Verification (Phase B, full):** `bunx tsc -b` clean. `bun run build` clean — `AdminCanvasEditorBody` 825.01 kB (+0.09 kB over Phase A's 824.92 kB baseline, expected: one new mounted component). `bun test src/__tests__/editor src/__tests__/architecture/centralized-site-mutation-history.test.ts src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts src/core/page-tree src/admin/pages/site/store src/admin/pages/site/ui/RefusalDialog src/__tests__/studio/constraintRefusalSurfaces.test.ts src/__tests__/panels/sourceConstraintNotice.test.tsx` → 725 pass / 0 fail. `bun run lint` → the same 6 pre-existing `'os' is defined but never used` errors (`server/handlers/__tests__/*.test.ts`, `server/handlers/studio/referenceUpload.test.ts`), none touched by this change.
+  - **PR:** pushed `feat/refusal-dialog-r2` (commit `b3abbe0`, on top of Phase A's `2a165c7`) and opened **#100** as a draft against `feat/alm-figma-killer-studio-shell` (the branch this work was cut from — confirmed via `git merge-base`, not `main`).
+  - **Human action needed (Phase B):** dogfood in the browser — open a studio-imported project, select a shared-component call site, and try Delete (or a layers-tree drag). Confirm a MODAL opens (not a toast) with real "Open the component definition" / "Detach this instance" / "Duplicate as a new file and edit that" buttons; confirm clicking Detach or Extract auto-closes the dialog once the board reloads and the original delete/move actually lands against the new node; confirm a `.map`-row refusal (no remedies) still shows the old-style toast, byte-for-byte unchanged. Also worth a human call: Phase A's still-open toast-vs-dialog scope question (above) — Phase B did not change that decision.
+
 ## Now
 
 **M1 — "It opens" is complete.** Every WS-1.x/WS-8.x work order for M1 has
@@ -223,6 +375,580 @@ export function useDevServerReadiness(dir: string | null): { phase: DevServerSta
 - Live-frame poster capture is explicitly NOT extended to cross-origin content this pass — recorded as a known gap, not solved with a new screenshot pipeline.
 
 **DELEGATE TO:** canvas-engineer (Phase A) — flag the pause-note discrepancy to the user before starting; perf-hunter (Phase B, and Phase A's `useDevServerReadiness`/bench-fixture halves are also reasonable perf-hunter scope if a human prefers one owner).
+
+### live-07 — L7: save → HMR loop
+- **Agent:** store-engineer (implementation + verification; `studio-architect` did the original design pass below — the entry's own note that the `Agent` field was ambiguous is now resolved)
+- **Stage:** done
+- **Updated:** 2026-09-13
+- **Implementation summary (read this first, the design below is background):**
+  Built exactly what the design specified, in the order it specified (broadcast
+  helper + 3 call sites, then the `runtime.ts` ghost sweep, then the
+  `IframeFrameSurface.tsx` effect split), in worktree `.tmp/wt-live-07` on
+  branch `feat/live-save-hmr-loop` off `origin/feat/alm-figma-killer-studio-shell`
+  (commit `38a2320`, which already carries the `Co-Authored-By: Claude Sonnet 5
+  <noreply@anthropic.com>` trailer — verified, no amend needed). Pushed and
+  opened as a draft PR against `feat/alm-figma-killer-studio-shell` (per the
+  orchestrator's explicit instruction — NOT `main`):
+  **https://github.com/maherfayad-stack/Figma-Killer-2/pull/102**.
+  See **Done so far** / **Decisions** / **Landmines** /
+  **Verification** below, appended after the original design content (kept
+  verbatim as background — it turned out accurate end to end, including the
+  exact line-number references).
+- **Done so far:**
+  - `src/admin/pages/site/canvas/frameAdapter/optimisticStructuralBroadcast.ts` (NEW) — `broadcastOptimisticInsert/Delete/Move`, exactly the three functions the design sketched, filtering `listFrameAdapters()` down to non-portal adapters via `isPortalFrameAdapter`.
+  - `nodeActions.ts`: `moveNodes` now calls `broadcastOptimisticMove(primaryId, newParentId, newIndex)` once, gated on `mutateActiveTree`'s own boolean return, placed BEFORE the `commit?.destinationParentNodeId`/`commit?.anchorNodeId` branches (not duplicated into either, per the design's explicit instruction). `deleteNode` calls `broadcastOptimisticDelete(plan.commit[0]!)` right where `commitStudioDelete` already fires.
+  - `deleteNodesAction.ts`: `deleteNodes` loops `for (const id of plan.commit) broadcastOptimisticDelete(id)` — one call per source-derived id in a multi-select batch.
+  - `studioSourceWrites.ts`: `writeInsertToSource` calls `broadcastOptimisticInsert` with a `` `optimistic:${crypto.randomUUID()}` `` placeholder id right before EACH of its two `commitStudioInsert` call sites — `'div'` for the `sourceImport` (design-system component) branch, `intrinsic.tag`/`intrinsic.text` (an honest match) for the `sourceIntrinsic` branch.
+  - `src/core/studio-runtime/runtime.ts`: added `OPTIMISTIC_ATTR` const (replacing a bare string literal `handleOptimisticInsert` already used), a `sweepOptimisticGhosts()` function, and wired it into the `wireHmrStateAcrossUpdates` `vite:afterUpdate` callback ahead of the existing `postOutbound({ type: 'hmr:after' })` call.
+  - `IframeFrameSurface.tsx`: split the single bridge-adapter effect into (1) construct/dispose, keyed on `[documentMode, iframeDoc, liveFrame?.liveOrigin, liveFrame?.screenKey]`, reading the CURRENT `liveFrame` through a new `liveFrameRef` (a plain `useRef` updated at render time, not in an effect) so the effect body can still seed `BridgeFrameAdapter`'s `nodeIdsInTreeOrder` at construction without that value being a re-trigger dependency; (2) a new, second effect keyed on `[adapter, liveFrame?.nodeIdsInTreeOrder]` that calls `adapter.setNodeIds(liveFrame.nodeIdsInTreeOrder)` when `isBridgeFrameAdapter(adapter)`.
+  - `BridgeFrameAdapter.ts`: added `isBridgeFrameAdapter` type guard (symmetric to `PortalFrameAdapter.ts`'s `isPortalFrameAdapter`), needed by (2) above since `setNodeIds` isn't part of the shared `FrameDocumentAdapter` interface.
+  - Tests (15 new, all pass): `src/__tests__/canvas/frameAdapter/optimisticStructuralBroadcast.test.ts` (6 — the broadcast-helper unit tests the GATES section specified verbatim, using real `BridgeFrameAdapter`/`PortalFrameAdapter` instances registered in the real registry); `src/__tests__/editor-store/structuralOptimisticBroadcast.test.ts` (4 — `moveNodes`/`deleteNode`/`deleteNodes`/`writeInsertToSource` exercised through the real store on a studio-imported fixture tree, asserting the real call sites fire); 3 new cases appended to `src/__tests__/studio-runtime/runtime.test.ts` (the ghost-sweep, using a fake `ViteHotContext` stub); `src/__tests__/canvas/iframeFrameSurfaceBridgeAdapterSplit.test.tsx` (2 — the id-only-reconcile and liveOrigin/screenKey-reconstruct behaviours, via `@testing-library/react` + a `BridgeFrameAdapter.prototype.setNodeIds` spy).
+- **Goal:** at Tier 2, a structural gesture (drag-reorder, delete, insert) on a
+  live bridge frame paints into the frame's REAL DOM on the same tick —
+  exactly like the portal path already does — ahead of the async write
+  landing; a style-only write triggers zero reload/resync signal to a live
+  frame (already true, verified below, no code change needed); a structural
+  write still re-syncs the STORE's tree (for real ids) but must not force the
+  bridge iframe to remount. Done when: dragging a node in a Tier 2 board
+  frame moves it in the live DOM immediately, the file write lands moments
+  later, Fast Refresh reconciles without a visible flash/reload, and the
+  `bun test` gates below are green.
+- **Relationship to `perf-06` (L8, immediately above):** independent, can be
+  built in either order at the unit level — this entry's call sites are
+  testable today via `registerFrameAdapter`-backed stub adapters, with no
+  dependency on `perf-06`'s Phase A (`documentMode='bridge'` production
+  wiring, currently nonexistent — confirmed by `perf-06`'s own recon: "zero
+  production call site ever passes `documentMode='bridge'`"). But the FULL
+  end-to-end dogfood ("drag a node on a real live Tier-2 board and watch it
+  move") needs BOTH this entry AND `perf-06` Phase A landed — this entry alone
+  cannot be dogfooded in a browser yet, only unit-verified.
+- **Scope:** see FILES below. No CSS-writeback file needs to change — verified
+  that path already satisfies the trap-5 rule for live mode for free (see
+  Decisions #1).
+
+**Why this is scoped the way it is — read before touching call sites**
+
+`adapter.optimistic.insert/delete/move/text` (`FrameDocumentAdapter.ts`,
+`BridgeFrameAdapter.ts`, `runtime.ts` — all L4/L5, already shipped) has **zero
+real call sites anywhere in the tree today** — confirmed by grep
+(`grep -rn "adapter.optimistic\." src`): every hit is either the interface/impl
+itself or a test. `live-05`'s own note that `useCanvasReorderDrag.ts` needed no
+changes because its real mutation path is the plain store action `moveNodes`
+is correct, and the reason cuts deeper than that note says: **every one of the
+four structural gestures posts through a plain store-slice action
+(`nodeActions.ts`, `deleteNodesAction.ts`, `studioSourceWrites.ts`), never
+through a React component that could `useContext(CanvasFrameAdapterContext)`.**
+Those slices are plain TS with no React tree in scope, so the call site cannot
+be "wherever the hook already has the adapter" — it has to reach the adapter
+through the ONE non-React handle that already exists for exactly this reason:
+`canvasFrameAdapterRegistry.ts`'s `listFrameAdapters()` (built by `live-05`
+Batch 4 for "a Class B (cross-frame) caller [to] enumerate every mounted
+canvas frame"). This work order is the first real Class B caller.
+
+In PORTAL mode the same-tick paint is not a DOM trick at all — it is the store
+mutating its OWN `NodeTree` (`mutateActiveTree`) and React re-rendering the
+portal, which is why `useCanvasReorderDrag.ts` needed zero changes. In BRIDGE
+mode that store tree is NOT what drives the live DOM (the live DOM belongs to
+the project's own dev-server React tree), so mutating Studio's tree does
+nothing visible in a bridge frame — `adapter.optimistic.*` exists specifically
+to cover that gap until the file write lands and Vite's Fast Refresh takes
+over for real.
+
+**FILES**
+- create `src/admin/pages/site/canvas/frameAdapter/optimisticStructuralBroadcast.ts`
+  — the three call-site helpers (see "out of scope" below for why `text` has
+  no helper here):
+  ```ts
+  import { listFrameAdapters } from './canvasFrameAdapterRegistry'
+  import { isPortalFrameAdapter } from './PortalFrameAdapter'
+
+  function bridgeAdapters() {
+    return [...listFrameAdapters().values()].filter((a) => !isPortalFrameAdapter(a))
+  }
+
+  export function broadcastOptimisticInsert(nodeId: string, parentNodeId: string, index: number, tagName: string, text?: string): void {
+    for (const adapter of bridgeAdapters()) adapter.optimistic.insert(nodeId, parentNodeId, index, tagName, text)
+  }
+  export function broadcastOptimisticDelete(nodeId: string): void {
+    for (const adapter of bridgeAdapters()) adapter.optimistic.delete(nodeId)
+  }
+  export function broadcastOptimisticMove(nodeId: string, parentNodeId: string, index: number): void {
+    for (const adapter of bridgeAdapters()) adapter.optimistic.move(nodeId, parentNodeId, index)
+  }
+  ```
+  Portal adapters are skipped on purpose (`isPortalFrameAdapter`, already
+  exported from `PortalFrameAdapter.ts:456`) — they already got their paint
+  for free from the tree mutation; calling `.optimistic.*` on a portal adapter
+  too would be a second, redundant DOM write racing the first. Broadcasting to
+  EVERY registered bridge adapter (not just "the one frame this gesture came
+  from") is deliberate and safe: `runtime.ts`'s `findByNodeId` — the thing
+  every `handleOptimistic*` handler calls first — returns `null`/no-ops when
+  the id isn't present in that frame's DOM (verified: `handleOptimisticInsert`
+  returns early on `!parent`; `handleOptimisticDelete`/`handleOptimisticMove`/
+  `handleOptimisticText` use `findByNodeId(...)?.` optional chaining). There is
+  no cheaper, correct way to know "which frame(s) show this page" outside the
+  store (the store's own `_nodeIdToPageIds`/`selectCanvasPageFor` indices are
+  keyed for a different purpose and are not iframe-aware) — do not build a new
+  `pageId → frames` registry for this; the no-op-is-safe property makes it
+  unnecessary.
+
+- modify `src/admin/pages/site/store/slices/site/nodeActions.ts`
+  - `moveNodes` (~line 510-554): after `mutateActiveTree((draft) => { moveNodes(draft, nodeIds, newParentId, newIndex); return true })` succeeds, call
+    `broadcastOptimisticMove(primaryId, newParentId, newIndex)` unconditionally
+    right there (both the reparent and same-parent-move branches below it
+    represent the identical DOM effect, so ONE call covers both — do not
+    duplicate it into the `commit?.destinationParentNodeId` / `commit?.anchorNodeId`
+    branches).
+  - `deleteNode` (~line 296-320): right where `if (deleted && plan.commit) void commitStudioDelete(plan.commit)` already is, add
+    `if (deleted && plan.commit) broadcastOptimisticDelete(plan.commit[0]!)`
+    — `plan.commit` is `string[]` but `planSourceDelete([single node])` only
+    ever pushes one id (`structuralSourceEdits.ts:123-133` loops the
+    single-element array this call site passes in — re-verify at
+    implementation time, see Risks).
+- modify `src/admin/pages/site/store/slices/site/deleteNodesAction.ts` (~line
+  81-89): `plan.commit` here IS potentially multi-element (`string[]`, one per
+  deleted node whose id is source-derived — `structuralSourceEdits.ts:190-201`).
+  Right before `void commitStudioDelete(plan.commit)`, add
+  `for (const id of plan.commit) broadcastOptimisticDelete(id)`.
+- modify `src/admin/pages/site/store/slices/site/studioSourceWrites.ts`
+  (`writeInsertToSource`, ~line 96-140): this is the ONE genuinely new
+  decision — **there is no real node id to broadcast with**, because (per this
+  function's own doc comment) the element does not exist until the codemod
+  writes it. Mint a throwaway id purely for the optimistic ghost —
+  `` `optimistic:${crypto.randomUUID()}` `` — and pass it to
+  `broadcastOptimisticInsert`. This is safe because, unlike `move`/`delete`,
+  `BridgeFrameAdapter.optimistic.insert` calls `toStampId(nodeId)` directly
+  (never looks the id up in `stampIndex` — see `BridgeFrameAdapter.ts:137-144`),
+  so a fabricated id is never compared against anything; it only ever becomes
+  the ghost element's own `data-node-id` attribute, and the ghost is removed
+  wholesale on the next Fast Refresh (see the `runtime.ts` change below), never
+  reconciled against the real id the parser eventually mints. Call it right
+  before each of the two `void commitStudioInsert({...})` call sites
+  (`sourceImport` branch ~line 113, `sourceIntrinsic` branch ~line 127):
+  `broadcastOptimisticInsert(placeholderId, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, tagName, text)`
+  where `tagName` is `intrinsic.tag` for the intrinsic branch (a real, honest
+  match) and the literal string `'div'` for the `sourceImport` (component)
+  branch — there is no way to know a design-system component's real root tag
+  without executing it, and `'div'` is the least disruptive generic
+  placeholder. **Known, accepted cosmetic gap:** this placeholder box is
+  briefly present with no visual styling and can shift a `:nth-child`/flex-item
+  count in the parent for the sub-second window before Fast Refresh lands —
+  same category of documented imperfection as L4's own "optimistic.insert
+  never carries HTML," not a new one, and self-heals on the next HMR tick.
+- modify `src/core/studio-runtime/runtime.ts` — add a ghost sweep at the SAME
+  `vite:afterUpdate` hook `wireHmrStateAcrossUpdates` already fires
+  `postOutbound({ type: 'hmr:after' })` from (this file's own doc says
+  `vite:afterUpdate` fires "once the new DOM exists" — exactly the moment a
+  leftover `[data-studio-optimistic]` ghost has been superseded by the real,
+  Vite-rendered element and is now redundant):
+  `doc.querySelectorAll('[data-studio-optimistic]').forEach((el) => el.remove())`.
+  Without this, every successful optimistic insert leaves a permanent
+  duplicate element sitting next to the real one after the very first Fast
+  Refresh.
+- modify `src/admin/pages/site/canvas/IframeFrameSurface.tsx` (~line 227-284)
+  — **the one real remount-safety bug this design pass found.** The bridge
+  `useEffect` that constructs `BridgeFrameAdapter` is keyed on
+  `[documentMode, iframeDoc, liveFrame]`, and `liveFrame` (a `LiveFrameSource`,
+  see `resolveLiveFrameSrc.ts`) is a NEW OBJECT on every render where
+  `nodeIdsInTreeOrder` changed — which is exactly what happens on every
+  structural resync (`resyncBoardAfterWrite`'s narrow-patch or full-reload both
+  re-parse and re-mint the touched page's node id list). Today that effect
+  DISPOSES the whole `BridgeFrameAdapter` and constructs a fresh one every
+  time — not a DOM remount (the `<iframe src=...>` itself never changes,
+  confirmed: `resolveLiveFrameSrc` depends only on `liveOrigin`+`screenKey`,
+  both stable across a resync), but it does drop every pending `measure()`
+  promise, event-handler subscription, and the adapter's own identity out from
+  under any code still holding a reference — real breakage, just not the
+  specific "iframe remounts" symptom the plan's prose names. `BridgeFrameAdapter`
+  already ships exactly the right tool for this and it is currently NEVER
+  called: `setNodeIds(nodeIdsInTreeOrder)` ("Rebuilds the canonical<->stamp
+  index — call whenever the active page's node id set changes," doc comment
+  already says this). Split the effect: keep adapter construct/dispose keyed on
+  `[documentMode, iframeDoc, liveFrame?.liveOrigin, liveFrame?.screenKey]`
+  (the things that actually mean "this is a different frame/document"), and
+  add a second, smaller effect keyed on `[adapter, liveFrame?.nodeIdsInTreeOrder]`
+  that calls `adapter.setNodeIds(liveFrame.nodeIdsInTreeOrder)` when only the id
+  list changed. This is the concrete mechanism that makes "re-parse the tree
+  but never remount the frame" literally true instead of aspirationally true.
+  (Note: `perf-06`, immediately above, also touches `BreakpointFrame.tsx`/
+  `BoardFrameView.tsx` in this same area but never touches this file's
+  internals — no file-level collision.)
+
+**What is explicitly OUT of scope for L7 — do not build these here**
+- `optimistic.text` has **no call site in this work order.** Traced the real
+  text-editing path (`src/modules/base/shared/inlineText.ts`): portal-mode
+  inline text editing works by making the element itself `contentEditable` and
+  letting the BROWSER paint keystrokes natively — there is no store round trip
+  to intercept, and therefore nothing for `optimistic.text` to race against in
+  portal mode. The bridge-mode equivalent needs the LIVE frame's own DOM
+  element to become `contentEditable` and its native input forwarded back —
+  a materially different, unbuilt mechanism (the inbound `text:edit` wire
+  message exists in `messages.ts`/`BridgeFrameAdapter.ts`/`PortalFrameAdapter.ts`
+  but has **no subscriber anywhere in application code** — confirmed by grep,
+  `grep -n "'text:edit'" src/admin/pages/site/canvas --include="*.tsx"` outside
+  `frameAdapter/` returns nothing). Building live inline-text-edit is its own
+  work order (propose calling it L7b, or folding it into whichever work order
+  finally wires `.on('text:edit', ...)` up) — do not invent a fake call site
+  here just to exercise the fourth `OptimisticDomOps` method.
+- `commitStudioDuplicate`/`commitStudioWrap` get NO optimistic op — the
+  interface only has four methods (insert/delete/move/text) and duplicate/wrap
+  were never in it. They keep today's "nothing shows until the reload" — that
+  is `studioStructuralCommits.ts`'s own documented, deliberate behaviour for
+  those two, unrelated to this work order.
+- No revert of an optimistic bridge mutation on a refusal. Portal mode has the
+  identical, already-documented "KNOWN LIMITATION" (`studioStructuralCommits.ts`'s
+  `commitStructural` doc, point 1) that a refused move/delete stays visually
+  applied until a later, unrelated reload happens to resync it — building a
+  targeted revert is `STUDIO-FIGMA-PARITY-PLAN.md`'s own already-deferred
+  follow-up (finding E3). Bridge mode inherits the exact same limitation for
+  the exact same reason; do not build a bridge-only revert that portal mode
+  doesn't have — that would make the two modes disagree on what a refused
+  gesture leaves behind, a worse inconsistency than the shared gap.
+- No change to `studioBoardResync.ts`, `studioSaveRequests.ts`'s save-response
+  schema, or the CSS write-back path. See Decisions #1.
+
+**DECISIONS**
+1. **Style-only writes already trigger zero resync/reload in both modes —
+   verified, no code change.** `resyncBoardAfterWrite` is only ever called
+   when `result.written > 0 && (result.shifted || result.sharedComponents)`
+   (`fsCodemodAdapter.ts:650`, `studioStructuralCommits.ts:306`). A plain CSS
+   `set` (an existing, already-editable stylesheet) writes through
+   `setDeclaration`, a formatting-preserving postcss CST edit, which changes
+   neither the `.tsx`'s line count nor any shared component — `shifted` stays
+   false server-side (`server/handlers/studioWriteback.ts:631-636` computes
+   `shifted` purely from a before/after line-count diff per touched file), so
+   nothing calls the store patch/reload path at all. Vite's own CSS-module HMR
+   independently hot-swaps the stylesheet with zero Studio involvement. This
+   was the task's central open question and it resolves to "already correct,"
+   not "needs building."
+2. **Broadcast to every registered bridge adapter, never try to resolve "the"
+   owning frame first.** See the FILES note above — the alternative (build a
+   `pageId`/`frameId` → adapter lookup) is real, new machinery for a problem
+   the existing no-op-when-absent behavior already solves for free.
+3. **The call sites live in the store slices, not in canvas hooks/components.**
+   `useCanvasReorderDrag.ts` is UNCHANGED by this work order — it already
+   fully delegates to the `moveNodes` store action, which is where the
+   broadcast belongs. Do not thread `CanvasFrameAdapterContext` down into
+   `BreakpointSelectionOverlay.tsx`/`useCanvasReorderDrag.ts` for this; that
+   would solve a problem (reaching AN adapter) this already-built registry
+   solves more simply (reaching ALL of them, safely).
+4. **Fabricate an ephemeral id for the one case with no real id yet
+   (`insert`).** Justified above; do not attempt to "reserve" a real
+   `rel:line:col` id ahead of the write — that id does not exist until
+   ts-morph has actually written the file and does not admit reservation.
+
+**RISKS**
+- The `IframeFrameSurface.tsx` effect-split (FILES, item 5) is a canvas-layer
+  file outside `store-engineer`'s usual territory but is load-bearing for this
+  work order's own "must not remount" requirement — without it, the fix is
+  aspirational. If `store-engineer` is not comfortable owning it, hand that one
+  file to `canvas-engineer` mid-task rather than skip it or half-do it.
+- A refused structural edit's optimistic ghost has no sweep trigger if the
+  refusal means NO file changed at all (no Vite HMR event ever fires, so the
+  `vite:afterUpdate` sweep never runs for that gesture). Accepted, symmetric
+  with the pre-existing portal-mode limitation (Decisions/FILES "out of
+  scope" above) — flag it in the PR description, do not silently leave it
+  undocumented.
+- `plan.commit[0]!` in `nodeActions.ts`'s `deleteNode` assumes
+  `planSourceDelete` never returns more than one id for a single-node call —
+  true by construction today but re-verify this at implementation time in
+  case a future change widens that call site.
+- This entry's mechanism is unit-testable today but NOT end-to-end dogfoodable
+  until `perf-06`'s Phase A lands (no production call site mounts a bridge
+  frame yet) — see the "Relationship to `perf-06`" note above. Don't let that
+  block landing this work order; the two are independently valuable and
+  independently gated.
+
+**GATES**
+- new: a broadcast-helper test (e.g.
+  `src/__tests__/canvas/frameAdapter/optimisticStructuralBroadcast.test.ts`)
+  asserting: (a) every registered non-portal adapter receives the call with
+  the right args, (b) a registered `PortalFrameAdapter` receives NOTHING, (c)
+  zero registered adapters is a silent no-op. Use the same stubbed
+  `{ postMessage, addEventListener }` channel pattern
+  `BridgeFrameAdapter.test.ts` already establishes.
+- extend whichever test file covers `nodeActions.ts`'s `moveNodes`/`deleteNode`
+  and `deleteNodesAction.ts`/`studioSourceWrites.ts`'s `writeInsertToSource` to
+  register a stub bridge adapter (`registerFrameAdapter`) before the action
+  runs and assert the broadcast fired with the expected `(nodeId, parentId,
+  index[, tagName, text])`, then `unregisterFrameAdapter` in cleanup.
+- extend `src/__tests__/studio-runtime/runtime.test.ts` to assert a
+  `[data-studio-optimistic]` element is removed after a simulated
+  `vite:afterUpdate` fire.
+- new coverage for `IframeFrameSurface.tsx` (no existing test file for it today
+  — confirmed, `find src/__tests__/canvas -iname "*IframeFrameSurface*"`
+  returns nothing) asserting: changing only `liveFrame.nodeIdsInTreeOrder`
+  (same `liveOrigin`/`screenKey`) calls `adapter.setNodeIds(...)` and does NOT
+  construct a new adapter instance; changing `liveOrigin`/`screenKey` (or
+  `documentMode`) DOES construct a new one.
+- `saveNarrowResync.test.ts` already covers Decisions #1 end to end and needs
+  NO changes for this work order — do not "fix" it.
+- architecture gate to update: none.
+
+**Next step (as designed):** implementer starts with `optimisticStructuralBroadcast.ts` +
+the three store-slice call sites (self-contained, unit-testable in isolation
+today, no dependency on `perf-06`'s Phase A), THEN the `runtime.ts` ghost
+sweep, THEN the `IframeFrameSurface.tsx` effect split last.
+- **Human action needed (as designed):** none blocking. The real browser dogfood (drag a
+  node in a live Tier-2 board and watch it move before the write completes)
+  is only possible once `perf-06`'s Phase A also lands — flag that dependency
+  rather than expecting this entry alone to be dogfoodable.
+
+---
+
+**IMPLEMENTATION — everything below this line was added by `store-engineer` closing this entry out. The design above (through "Human action needed (as designed)") is the original `studio-architect` pass, kept verbatim.**
+
+- **Decisions (implementation):**
+  - `moveNodes`'s `mutateActiveTree(...)` call result is now captured (`const moved = mutateActiveTree(...)`) so the broadcast can be gated on it — previously the return value was discarded. This matches "after `mutateActiveTree(...)` succeeds" from the design precisely, rather than firing unconditionally even when `resolveActiveTreeTarget` found no active tree.
+  - `deleteNode`'s `plan.commit[0]!` non-null assertion was re-verified against `planSourceDelete`'s actual body (`structuralSourceEdits.ts:123-133`) at implementation time, per the design's own flagged Risk — confirmed still true: a single-node call always pushes at most one id.
+  - Test-file placement deviates from the GATES section's literal suggestion in one place: no existing test file covers `planSourceInsert`/`writeInsertToSource`/`commitStudioInsert` at all (confirmed by grep — a genuine, pre-existing gap, not something to fix here), and `structuralMoveUndo.test.ts`/`deleteNodesDepthOrder.test.ts` either use non-source-derived (CMS) fixture ids or are already long-established files better left untouched. Built one new, purpose-built test file (`structuralOptimisticBroadcast.test.ts`) covering all four call sites (`moveNodes`, `deleteNode`, `deleteNodes`, `writeInsertToSource`) against a shared studio-imported fixture, instead of scattering assertions across three different existing files with three different fixture shapes.
+  - `runtime.ts`'s `sweepOptimisticGhosts` doc comment was written full-length first, then compressed to one line — see Landmines below for why.
+- **Landmines:**
+  - **`module-size-budgets.test.ts`'s 700-line CEILING nearly broke on `runtime.ts`.** Baseline was 688 lines; the ghost-sweep addition with a normal multi-line doc comment pushed it to 706, tripping `no new module exceeds the ceiling`. Fixed by compressing the comment to one line (697 lines final) rather than grandfathering or splitting the file — but the margin is now thin (3 lines to the ceiling). Any FUTURE work order touching `runtime.ts` should `wc -l` it first.
+  - **`react-hooks/exhaustive-deps` vs. a deliberately narrow effect dependency array.** The construct effect needs `liveFrame.nodeIdsInTreeOrder` at construction time but must NOT re-fire when only that field changes. This codebase already has precedent for member-path-precise deps (`BoardFrameView.tsx`'s `frame.axes?.locale`) — the lint rule tracks specific access PATHS, not just root identifiers, as long as the effect body never uses the BARE root object elsewhere (e.g. `if (!liveFrame)` forces the whole object into the required deps regardless of what's separately listed). Fixed with a "latest ref" (`useRef` + render-time assignment — not an effect) so the construct-effect body never references the bare `liveFrame` prop at all. Tried an `eslint-disable-next-line react-hooks/exhaustive-deps` first — do NOT do this: it trips `react-compiler/react-compiler` ("React Compiler has skipped optimizing this component because one or more React ESLint rules were disabled"), confirmed by `bunx eslint` before backing it out.
+  - **A documentMode-toggle (bridge → portal) test case crashes `@testing-library/react`'s `cleanup()`** (`DOMException: Failed to execute 'removeChild'`) — tried, then dropped rather than debugged into a possibly-unrelated RTL/happy-dom interaction. The two REQUIRED behaviours (id-only reconcile via `setNodeIds`, liveOrigin/screenKey-change reconstructs) are each independently covered and pass reliably; a same-session documentMode flip is not a real production transition anyway (a frame's `documentMode` is decided once by trust tier, not toggled live). Flagged, not silently dropped.
+  - **The system was under extreme load throughout this task's full-suite verification** (35+ one-minute load average, many other parallel agent sessions' `bun test`/`eslint`/`tsc`/`madge` processes running concurrently). `bun test --parallel=4` took ~1585s here (vs. the ~294s `meta-09` measured on a quiet system) and produced ~55 failures; a from-scratch baseline run of the SAME base commit (no changes), run under the SAME contention, independently produced ~51 failures — a completely different, non-overlapping set from this run's, confirmed by diffing the two fail lists. Every failure unique to this branch's run was re-run in isolation and PASSED, except one real regression this branch introduced and then fixed (the `module-size-budgets` ceiling trip above). **Triage any future full-suite run against an actual baseline run captured under the SAME load, never against `meta-09`'s quiet-system numbers** — a naive diff against those numbers here would have wrongly flagged ~14 phantom regressions.
+  - `runtime.ts`/`messages.ts` — per this plan's own standing rule, a security follow-up look is owed for the `sweepOptimisticGhosts` addition to `runtime.ts` (touches the in-frame runtime `sec-06`/`sec-08` already reviewed twice). The change itself only removes DOM elements by attribute selector (no new inbound message type, no new trust boundary), but flagging per convention rather than asserting it's obviously fine.
+- **Verification:**
+  - `bun test src/__tests__/editor src/__tests__/architecture/centralized-site-mutation-history.test.ts src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts src/__tests__/architecture/module-size-budgets.test.ts src/__tests__/architecture/bundle-size-budgets.test.ts src/__tests__/canvas/frameAdapter src/__tests__/studio-runtime src/__tests__/editor-store/structuralOptimisticBroadcast.test.ts src/__tests__/editor-store/structuralMoveUndo.test.ts src/__tests__/canvas/iframeFrameSurfaceBridgeAdapterSplit.test.tsx` → 809 pass / 1 fail. The one fail is the pre-existing `AdminCanvasEditorBody` bundle-size-budgets overage, confirmed identical on an unmodified baseline of the same base commit (824,600 B on this branch vs. 824,923 B on baseline — this branch is actually 323 B SMALLER, not a regression).
+  - `bun run build` → clean (`tsc -b && vite build`).
+  - `bun run lint` → clean on every file this entry touched. The only repo-wide lint errors are the same pre-existing 6 `'os' is defined but never used` errors every prior work order in this plan has logged, in files this entry never touched.
+  - Full `bun test --parallel=4` run twice (this branch, and a from-scratch `origin/feat/alm-figma-killer-studio-shell` baseline worktree), under identical heavy system load — see Landmines above for the triage methodology and the one real regression found and fixed along the way.
+- **Human action needed:** none blocking landing this branch. Same standing dependency the design flagged: the end-to-end browser dogfood ("drag a node on a real live Tier-2 board and watch it move before the write completes, no flash") remains blocked on `perf-06`'s Phase A (`documentMode='bridge'` production wiring) — this entry's own mechanism is unit-verified and ready, not yet reachable from a running project. A short security follow-up look at the `runtime.ts` ghost-sweep addition (see Landmines) would also be worthwhile before/alongside that dogfood, per this plan's own standing convention for `runtime.ts`/`messages.ts` changes.
+
+### panel-25 — P3: sections in Penpot order
+- **Agent:** panel-designer
+- **Stage:** in progress — Step 0 + Section 1 (Layer) DONE (PR #101, draft); Sections 2-11 not started
+- **Updated:** 2026-09-13
+- **Goal:** `STUDIO-LIVE-CANVAS-PLAN.md` §P3 — replace the 11 old Figma-modeled CSS-property sections + 4 node-level panels currently rendered inside `StyleSectionsEditor.tsx`/`StyleSurface.tsx` with 11 new sections in Penpot's own order (Layer, Align, Measures, Layout, Fill, Stroke, Shadow, Blur, Text, Export, Studio extras), each mounted as its own entry in the `INSPECTOR_SECTIONS` manifest P4 already built (`panel-23`), each matching the geometry P0 actually measured (`docs/audits/penpot-inspector-baseline/`), each PR deleting the old component(s) it replaces. **Done when:** all 11 manifest entries exist and render in Penpot order with `appliesTo` predicates; every old `panels/PropertiesPanel/*Section.tsx` file this entry names as superseded is deleted (not left beside its replacement); `--inspector-row-h`/`--inspector-field-radius`/`--inspector-pad-x` read `32px`/`8px`/`12px`; no section a user can populate has a manual collapse toggle once populated (rule 2 — see the "Rule-2 gap" finding below); `bun run build && bun test && bun run lint` pass after EVERY section's own PR, not just at the end.
+
+#### Read this first — what P1/P2/P4 actually shipped (their own STATE.md entries are long; this is what P3 needs from them)
+
+- **The manifest mechanism (`panel-23` Phase B) is real and this is the ONLY thing P3 touches to add a section:** `src/admin/pages/site/inspector/sections/index.ts` exports `INSPECTOR_SECTIONS: InspectorSectionDefinition[]`, currently ONE entry (`{ id: 'styles', order: 0, appliesTo: () => true, Component: StyleSectionsComposer }`). `StyleSurface.tsx` already mounts `INSPECTOR_SECTIONS.filter((s) => s.appliesTo(model)).sort((a,b) => a.order - b.order).map((s) => <s.Component key={s.id} />)` — confirmed by reading the file, not assumed. **Never touch `StyleSurface.tsx`'s mount loop itself** — growing the array is the whole job.
+- **`useSelectionModel()`/`useInspectorCommit(model)` (`src/admin/pages/site/inspector/{selectionModel,commitApi}.ts`) are the ONLY store surface a new section may read/write through.** Every new section component calls `const model = useSelectionModel(); const commit = useInspectorCommit(model)` and uses `model.selectedNode`/`model.assignedClassRules`/`model.provenanceByProperty`/`model.computedValues`/`commit.commitStyle`/`commit.commitStyleMany`/`commit.commitProp`. Do not call `resolveWriteTarget`/raw store style actions directly from a section — that is exactly the "25 ad-hoc commit paths" P4 deleted; a new section reintroducing one is a straight regression of P4's own work.
+- **`StyleSectionsComposer.tsx` (the CURRENT single manifest entry) is what P3 dismantles, one CSS-category slice at a time.** It wraps ONE `<StyleSectionsEditor>` over the WHOLE curated CSS bag. As each of the 11 new sections below migrates out, `StyleSectionsEditor.tsx`'s internal `CLASS_STYLE_SECTIONS` registry (`classStyleSections.ts`) loses that category's entry and `StyleSectionsComposer.tsx`'s bag narrows correspondingly, until the last section's PR deletes `StyleSectionsComposer.tsx`, `StyleSectionsEditor.tsx`, and `classStyleSections.ts` outright and removes the `'styles'` manifest entry, replaced by the 11 new ones. **`StyleSectionsComposer.tsx`'s locked-properties notice (the `codeProps`-derived read-only banner) has no per-category equivalent yet — each new section must reproduce its OWN slice of that check** (filter `selectedNode.codeProps` for `style:<prop>` keys the section's own properties include) since there is no longer one composer aggregating the whole bag. Port the exact logic (`STYLE_KEY_PREFIX` + `codeProps.filter(...).map(...)`), do not approximate it.
+- **P0's baseline (`docs/audits/penpot-inspector-baseline/`) is real, measured Penpot 2.17.2 data, not a guess** — `02-measurements.md`, `03-operating-behaviors.md`, `04-token-gaps.md`, `measurements.json`, plus screenshots under `screenshots/`. Every geometry number below is cited from there, not invented. **Re-read `04-token-gaps.md` in full before touching `globals.css`** — it already flags exactly which tokens are wrong and by how much.
+
+#### Step 0 — global geometry + the Rule-2 gap this pass closes (lands once, first, before any section PR)
+
+**Token changes to `src/styles/globals.css` (the `--inspector-*` block, lines ~238-270):**
+
+| Token | Old | New | Blast radius (files referencing it today) |
+|---|---|---|---|
+| `--inspector-row-h` | `24px` | `32px` | 14 |
+| `--inspector-pad-x` | `8px` | `12px` | 9 |
+| `--inspector-field-radius` | `5px` | `8px` | 10 |
+| `--inspector-header-h` | `32px` | `32px` (unchanged — already matched) | 4 |
+
+Apply these four **now, globally, as a single Step 0 change** — they are pure 1:1 value corrections (the token already means the same thing, just the wrong number), not a restructuring, so every section (migrated or not) becomes visually more Penpot-accurate immediately. This is a deliberate, disclosed side effect: old, not-yet-rebuilt sections will visibly grow ~8px taller per row before their own PR touches their content — that is correct, not a regression to "fix" later.
+
+**Do NOT touch the 9-step `--inspector-space-4xs…xl` scale, `--inspector-label-w`, or `--inspector-rail-w` in Step 0.** 46 files reference the space scale across the whole inspector tree (grepped, not estimated) — a global rescale to Penpot's real two-value rhythm (`4px` within a tightly-paired row, `16px` between row groups — `02-measurements.md` → "Row rhythm") would touch every one of those 46 files in one shot, most of which P3 hasn't rebuilt yet and would silently mis-map to the wrong one of the two new values. Instead: **add two new tokens additively**, `--inspector-gap-tight: 4px` and `--inspector-gap-group: 16px`, and require every NEW section built by this work order to use ONLY these two (never the old 9-step names). The old scale keeps serving old, not-yet-migrated sections until literally nothing references it — at that point (naturally, when the last old section's PR deletes its `.module.css`) delete the 9-step scale, `--inspector-label-w`, and `--inspector-rail-w` for real. `--inspector-rail-w` in particular has zero legitimate new consumers (Penpot has no icon rail — `04-token-gaps.md` already calls this "obsolete once P1 lands"; P1 didn't delete it because `SelectorInspector.tsx`'s ambient-selector surface still uses `StyleCategoryRail`, out of scope for P1 AND for P3 — leave both alone).
+
+**Three new color tokens, additive** (`04-token-gaps.md`'s own proposal — verify none of the three already has a close match in `globals.css`'s existing vocabulary before adding, per that doc's own instruction; this check was NOT done by P0 and is P3's to do):
+```css
+--inspector-accent-dark: #7EFFF5;   /* teal */
+--inspector-accent-light: #6911D4;  /* purple — hue changes per theme, not just lightness */
+--inspector-field-bg: #212426;      /* dark; #F3F4F6 light — redefine, don't reuse --overlay-5 */
+--inspector-section-label-color: #8F9DA3; /* dark; #495E74 light */
+```
+Resolve these through the existing `:root`/`[data-theme='light']` (or equivalent) split `globals.css` already uses for every other dual-value token — read the file's own pattern for `--text-*`/`--bg-*` before adding these, do not invent a new mechanism for per-theme tokens.
+
+**The Rule-2 gap — found during this design, not previously documented:** `StyleSectionsEditor.tsx` reads a persisted preference (`propertiesSectionsExpanded`, `preferences/catalog.ts`) and passes it as `Section`'s `defaultOpen` for every `collapsedWhenEmpty` section (fill/border/effects/animations/typography/interaction — 6 of the 11 old sections) — meaning a user can manually collapse a POPULATED section today via `Section.tsx`'s hover-revealed chevron, and that collapse persists. This is a real, live violation of P2 rule 2 ("Everything is at rest. No accordion to open.") that neither `panel-21` nor `panel-22` caught (`panel-21`'s own "Module section un-accordioned" note was about the CMS module settings block, not this). **`Section.tsx` itself does NOT need to change** — it already has a `forceOpen` prop that, combined with `empty={<nothing set>}`, gives exactly "one static header line when empty, always-expanded with no chevron once populated" (confirmed by reading `Section.tsx:60-140`: `forceOpen` suppresses both the toggle button's click handler and the chevron glyph). **Every new Penpot section this work order builds must pass `forceOpen` and must never read `propertiesSectionsExpanded`.** `Section.tsx` is also used by `GitPanel`/`FrameworkScalePanel` (ordinary admin panels, not the Penpot-modeled inspector) — do not change its default behavior globally, only how the 11 new sections call it. `propertiesSectionsExpanded` (`catalog.ts`) and its `useEditorPreference` read in `StyleSectionsEditor.tsx`/`CustomPropertiesSection.tsx` get deleted in whichever PR deletes the LAST of those two files (Studio extras, item 11, or P6 if any straggler remains).
+
+#### The 11-section mapping — every old file accounted for, nothing silently dropped
+
+The plan's own item list (§P3) names 11 sections but the CURRENT tree has 11 CSS-category sections (`classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`: position/size/layout/spacing/appearance/fill/border/effects/animations/typography/interaction) **plus 4 node-level panels** (Export, ComponentParamsOverview, InstanceCallSiteView, HtmlAttributesPanel) that live outside that registry. Mapping old → new is not 1:1 — three old categories (spacing/animations/interaction) and two node-level panels plus one old section's leftover popover have no named Penpot section to land in at all, because Penpot has no concept for them. Resolving that silently would be a feature loss; resolving it explicitly is this table:
+
+| # | New section (Penpot order) | Pulls from (old files) | Properties/concerns claimed | Key P0 finding |
+|---|---|---|---|---|
+| 1 | **Layer** | NEW — see full template below. `AppearanceSection.tsx`'s opacity + `AppearanceSectionActions`' blend-mode trigger. Structural hide/lock are NEW UI (see template). | `opacity`, `mixBlendMode`, node.`hidden`, node.`locked` | `02-measurements.md`'s Y-origin sequence (opacity/blend row `y=132`) puts this as the FIRST content row below the tab bar, no section header text above it. |
+| 2 | **Align** | `SingleNodeAlignRow.tsx` (already a separate file, currently mounted as Row 1 of `PositionSection.tsx`) | `alignSelf`, `justifySelf` (or parent `justifyContent` inline, via `resolveAlignWrite.ts`, unchanged) | Penpot shows this as its own dedicated top area, not folded into Measures or Layout — `01-fixtures.md`/screenshots confirm a standalone align/distribute row. |
+| 3 | **Measures** | `PositionSection.tsx` (minus Align, minus PositionSwitcher's parent-relationship rows — see Decisions) + `SizeSection.tsx` (W/H) + `AppearanceSection.tsx`'s radius `ExpandableFieldCluster` + `RotationRow.tsx` + `ZIndexSettingsRow.tsx` + `PositionConstraints.tsx`/`ConstraintsDiagram.tsx` | `width`,`height`,`min*`,`max*`,`aspectRatio`,`boxSizing`,`position`,`top`,`right`,`bottom`,`left`,`rotate`,`scale`,`zIndex`, all 4 `border*Radius` | **`02-measurements.md`'s own Y-origins prove radius sits in the SAME section as W/H/X/Y/rotation** (`W/H y=180`, `X/Y y=216 (Δ4)`, `rotation/radius y=252 (Δ4)`) — NOT bundled with opacity/blend as `AppearanceSection.tsx` currently does. This is the single most load-bearing geometry finding in this design: it directly contradicts the current file's grouping and is not optional to apply. `03-operating-behaviors.md`'s CONSTRAINTS-vs-FLEX-ELEMENT structural swap (see Decisions) lives here, not in Layout. |
+| 4 | **Layout** | `LayoutSection/` folder (FlexDirectionControl, GapInput, GridTrackControl, LayoutModeRow, PaddingCluster, ClipContentRow, WrapToggleButton, LayoutSettingsButton, ScrubTokenField, SingleSideField, LinkedAxisField) + `SpacingBoxControl/{SpacingSection,SpacingBoxControl}.tsx` (margin, folded in — see Decisions) | `display`,`flexDirection`,`flexWrap`,`alignItems`,`justifyContent`,`justifyItems`,`flex`,`gap`,`rowGap`,`columnGap`,`gridTemplateColumns/Rows`,`gridColumn/Row`,`overflow*`,`padding*`,`margin*` | Container-side only (Penpot's "FLEX BOARD"/"GRID BOARD"); the per-child face (hug/fill/z-index) moved to Measures's FLEX ELEMENT face — see Decisions for exactly where the container/element line falls. |
+| 5 | **Fill** | `FillSection.tsx` + `FillSectionParts.tsx` | `color`,`backgroundColor`,`background`,`backgroundImage`+6 satellites,`objectFit`,`objectPosition` | `02-measurements.md`'s "Color field chrome": one 28px row — swatch → hex → `%` opacity → remove. `fillModel.ts`/`backgroundLayers.ts`/`gradientValue.ts`/`imageFillValue.ts` are pure value logic, reused unchanged. |
+| 6 | **Stroke** | `StrokeSection.tsx` | the `border*Width/Style/Color` longhands + `outline`/`outlineOffset` (+ shorthands, Advanced disclosure) | Lowest-risk re-skin after Layer — its own doc already states "colour/style are uniform, only weight is per-side," which already matches Penpot's model closely; likely a geometry-only pass, not a redesign. Good second pick to "prove the pattern" if the team wants a second easy win before Measures/Layout. |
+| 7 | **Shadow** | Split out of `EffectsSection.tsx`: the `boxShadow`+`textShadow` `PropertyList` rows only | `boxShadow`, `textShadow` | `boxShadowLayers.ts` reused verbatim. `EffectsSection.tsx` is NOT deleted until Blur (item 8) also migrates. |
+| 8 | **Blur** | Split out of `EffectsSection.tsx`: `filter: blur()` ("Layer blur") + `backdrop-filter: blur()` ("Background blur") rows | `filter`, `backdropFilter` | Once Shadow AND Blur have both migrated, delete `EffectsSection.tsx`+`.module.css`+`EffectsSectionActions` wholesale and remove `classStyleSections.ts`'s `effects` entry. `EffectsSectionActions`' transform/transformOrigin ⚙ popover has no Penpot home — moves to Studio extras (item 11), not stranded on whichever of Shadow/Blur happens to land last. |
+| 9 | **Text** | `TypographySection.tsx` (+ `StackedPropertyGrid.tsx`, `useFontVariationAxes.ts`, `fontWeightOptions.ts` — kept, reused) | `fontFamily`,`fontSize`,`fontWeight`,`fontStyle`,`lineHeight`,`letterSpacing`,`textAlign`,`textDecoration`,`textTransform`,`whiteSpace`,`textOverflow`,`textIndent`,`marginBlock`,4 font-variant/-feature props | Already close to Penpot's F23 4-row shape per its own doc's ASCII mock — mostly a geometry re-skin (row height/field radius/icon sizes), not a redesign. `verticalAlignWrite.ts` (no CSS equivalent) stays, unchanged. |
+| 10 | **Export** | `ExportSection.tsx` (+ `nodeExportModel.ts`, `nodeExportClient.ts` — kept, reused) | node-level, not a `CLASS_STYLE_SECTIONS` member today (confirmed by its own doc comment) | Already the CLOSEST section to P3-shaped: node-level, single mount, already 2 clicks per `02-measurements.md`'s own click-count table. Mostly falls out of the Step 0 token change for free — good early or late pick, minimal net-new work either way. |
+| 11 | **Studio extras** | `ComponentParamsOverview.tsx`, `InstanceCallSiteView.tsx`, `HtmlAttributesPanel.tsx`(+`htmlAttributesModel.ts`), `CustomPropertiesSection.tsx`, `InteractionSection.tsx` (folded in), `AnimationsSection.tsx`(+`AnimationEditorPopover.tsx`,`AnimationScrubRow.tsx`,`animationValue.ts`,`keyframesModel.ts` — folded in), `EffectsSectionActions`'s transform/transformOrigin popover (folded in from item 8) | Component call-site props, HTML attributes, custom (uncurated) CSS properties + `--custom-*`, `cursor`/`pointerEvents`/`userSelect`/`scrollBehavior`, `animation*`/`transition*`, `transform`/`transformOrigin` | **This is the "no Penpot equivalent" bucket, made explicit** — see Decisions for why Interaction, Animations, and the transform popover all land here despite not being named in the plan's literal 6-word gloss ("Component props / Attributes / Custom properties"). The LAST section to migrate: once this PR lands, `classStyleSections.ts`, `StyleSectionsEditor.tsx`, `StyleSectionsComposer.tsx`, and the `'styles'` manifest entry are ALL deleted in the same PR — nothing from the old registry survives past this point. |
+
+**Margin's fate (Decisions):** Penpot has no CSS-margin concept at all (its shapes are absolutely positioned; there is nothing in `01-fixtures.md`/`02-measurements.md`/screenshots resembling a margin control). Rather than exiling `marginTop/Right/Bottom/Left` to the Studio-extras bucket, this design folds margin into **Layout (item 4)**, directly below the padding cluster it already visually neighbors in `LayoutSection.tsx` today (`classStyleSections.ts`'s own comment: "Padding lives in the Layout cluster now... Margin stays in Spacing... a relationship with siblings") — same box-model mental model, smaller cognitive jump for a user than hunting for it in extras. `SpacingSection.tsx`/`SpacingBoxControl.tsx` are deleted when Layout (item 4) migrates, not held back for item 11.
+
+#### Decisions (the ambiguous calls this design makes explicitly, so a later agent doesn't silently reverse them)
+
+- **Radius moves from Appearance to Measures, opacity+blend stay and become Layer.** Directly required by `02-measurements.md`'s measured Y-origins — not a style preference, a measured fact about where Penpot actually puts these three properties relative to each other.
+- **The container/element line for Layout vs. Measures:** Layout (item 4) owns only the flex/grid CONTAINER's own settings (direction/wrap/align/justify/gap/padding/margin/grid tracks/clip). Measures (item 3) owns the ELEMENT's own sizing/position facts, including `03-operating-behaviors.md`'s CONSTRAINTS-vs-FLEX-ELEMENT structural swap: when the selected node's PARENT is not a flex/grid layout, Measures shows Constraints (`PositionConstraints.tsx`/`ConstraintsDiagram.tsx`, left/top anchor + "fix when scrolling"); the moment the parent IS a flex/grid layout, Measures shows the FLEX ELEMENT face instead (Static/Absolute toggle, hug/fill-equivalent sizing buttons reusing `SizeSection.tsx`'s existing `elementSizing.ts` resolution, `ZIndexSettingsRow.tsx`) — **the section changes identity structurally, per Penpot's own confirmed behavior ("the panel never shows both... and never shows a disabled/grayed version of the one that doesn't apply")**, not a mode toggle the user picks. Reuse `LayoutSection/layoutMode.ts`'s existing "is this node's parent a flex/grid container" check for the gate — do not write a second one.
+- **The CSS `visibility` toggle (currently `AppearanceSectionActions`' eye, writes `visibility:hidden`, keeps box in flow) is DISTINCT from the new Layer section's structural hide (`toggleNodeHidden`, removes the node from the page).** Both are kept, both stay reachable, but Penpot models only the structural one. This design puts the structural toggle as Layer's PRIMARY eye icon (matching Penpot's real semantics and icon position) and keeps the CSS `visibility:hidden` toggle as a SECONDARY control in the same row (rule 3 — "rare options live in a popover on the field they modify"), tooltipped distinctly exactly as `AppearanceSection.tsx`'s own doc comment already insists the two "hides" must never be confused. Do not drop either.
+- **Interaction (`cursor`/`pointerEvents`/`userSelect`/`scrollBehavior`), Animations (`animation*`/`transition*`+keyframes), and the transform/transformOrigin raw-text popover all fold into Studio extras (item 11).** None of the three has a Penpot equivalent (Penpot's own "Prototype" tab covers screen-to-screen interaction, a completely different concept from CSS `cursor`/`transition`) — `classStyleSections.ts`'s own pre-existing comment already says as much for Interaction ("Figma has no CSS-cursor/pointer-events concept... so both stay at the end"), and the same reasoning applies unchanged to Penpot. This is the one point where this design fills a real gap in the plan's own 6-word gloss for item 11 ("Component props (call-site), Attributes, Custom properties") — the plan's prose undercounts what item 11 actually has to absorb; flagging explicitly rather than leaving Interaction/Animations/transform stranded with no destination.
+- **The node's `label`/name stays where P1 already put it** (`NodeHeader.tsx`, rendered in `PanelHeader`'s persistent `titleContent`, ABOVE the Design/Prototype/Inspect tab strip — confirmed by reading `PropertiesPanel.tsx`/`InspectorShell.tsx`). P0 never measured a distinct "name row" inside Penpot's Design-tab BODY separate from panel chrome, so there is no measured contradiction forcing a move, and moving it would mean re-touching `PropertiesPanel.tsx`'s header wiring that P1 already built and works. The Layer section (item 1) therefore does NOT re-render the name — it starts directly with visibility/lock/opacity/blend.
+- **`toggleNodeLocked` has ZERO existing UI call sites anywhere in the admin today** (grepped: only `nodeActions.ts`/`types.ts` reference it; `toggleNodeHidden` has a real call site in `LayerNodeContextMenu.tsx`, `toggleNodeLocked` has none). Layer's lock icon is the FIRST real UI for this store action, not a re-skin of an existing control — budget it as new UI work, not a port. `pixel-art-icons` has `lock-solid` but no unlock/unlocked variant — follow `panel-22`'s own precedent for `flexWrap`'s missing wrap glyph exactly: hand-draw the missing unlocked-state glyph in `@ui/components/InspectorIcons`, do not invent a second icon-sourcing mechanism.
+
+#### Section 1 template — Layer (concrete enough to implement directly)
+
+**New files:**
+- `src/admin/pages/site/inspector/sections/LayerSection.tsx`
+- `src/admin/pages/site/inspector/sections/LayerSection.module.css`
+
+**Deletes (this section's own PR):**
+- `src/admin/pages/site/panels/PropertiesPanel/AppearanceSection.tsx` + `.module.css` — but ONLY once Measures (item 3) has also taken the radius half; if Layer lands before Measures, temporarily keep `AppearanceSection.tsx`'s radius-only remainder alive (strip its opacity/blend/eye/droplet code, leave the `ExpandableFieldCluster` body) rather than leaving two components racing to write `opacity`. Sequence Layer before Measures or Measures before Layer, never land one without immediately following with the other — they are the ONE old file this design splits across two new sections, everything else maps one-old-file(s)-to-one-new-section cleanly.
+- `classStyleSections.ts`'s `appearance` entry — split: `opacity`/`mixBlendMode`/`visibility` move to Layer's own claim (or, if `CLASS_STYLE_SECTIONS` is being kept alive as a shared registry until item 11's PR — see the mapping table's own note that the file survives until then — leave a `layer`-id entry there with just those three properties, purely for the "N set"/search bookkeeping other code may still read; if nothing reads it once P1's search bar is gone, confirm with a grep before assuming it must be kept), `border*Radius` moves to Measures.
+
+**Component shape:**
+
+```tsx
+// src/admin/pages/site/inspector/sections/LayerSection.tsx
+import { useEditorStore } from '@site/store/store'
+import { useEditorPermissions } from '@site/editorPermissionsContext'
+import { useSelectionModel } from '../selectionModel'
+import { useInspectorCommit } from '../commitApi'
+import { ScrubInput } from '@ui/components/ScrubInput'
+import { Button } from '@ui/components/Button'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/components/ContextMenu'
+import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
+import { EyeOffSolidIcon } from 'pixel-art-icons/icons/eye-off-solid'
+import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
+import { UnlockedIcon } from '@ui/components/InspectorIcons' // NEW hand-drawn glyph, see Decisions
+import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
+import { readString, hasStyleValue, plainString } from '../../panels/PropertiesPanel/styleValueUtils'
+// ... blend-mode groups/label ported VERBATIM from AppearanceSection.tsx (BLEND_MODE_GROUPS, blendModeLabel) — do not rewrite, move.
+import styles from './LayerSection.module.css'
+
+export function LayerSection() {
+  const model = useSelectionModel()
+  const commit = useInspectorCommit(model)
+  const toggleNodeHidden = useEditorStore((s) => s.toggleNodeHidden)
+  const toggleNodeLocked = useEditorStore((s) => s.toggleNodeLocked)
+  const canEditStructure = useEditorPermissions().canEditStructure
+  const { selectedNodeId, selectedNode } = model
+  if (!selectedNodeId || !selectedNode) return null
+
+  const isHidden = selectedNode.hidden === true          // structural — Penpot's real eye semantics
+  const isLocked = selectedNode.locked === true            // ZERO prior UI — new surface, see Decisions
+  const isCssHidden = readString(selectedNode.inlineStyles ?? {}, 'visibility') === 'hidden' // secondary, Studio-only
+
+  const opacityValue = /* read from model.provenanceByProperty / node bag exactly as AppearanceSection.tsx did, ported not rewritten */
+  const blendValue = /* same port */
+
+  return (
+    <div className={styles.layerRow} data-testid="inspector-layer-row">
+      <Button iconOnly size="xs" variant="ghost" pressed={isHidden}
+        aria-label={isHidden ? 'Show on canvas' : 'Hide on canvas'}
+        tooltip={isHidden ? 'Show on canvas' : 'Hide on canvas'}
+        onClick={() => toggleNodeHidden(selectedNodeId)}>
+        {isHidden ? <EyeOffSolidIcon size={14} /> : <EyeSolidIcon size={14} />}
+      </Button>
+      {canEditStructure && (
+        <Button iconOnly size="xs" variant="ghost" pressed={isLocked}
+          aria-label={isLocked ? 'Unlock element' : 'Lock element'}
+          tooltip={isLocked ? 'Unlock element' : 'Lock element'}
+          onClick={() => toggleNodeLocked(selectedNodeId)}>
+          {isLocked ? <LockSolidIcon size={14} /> : <UnlockedIcon size={14} />}
+        </Button>
+      )}
+      <ScrubInput fieldSize="sm" label="%" value={opacityValue} unit="%" min={0} max={100}
+        aria-label="Opacity"
+        onChange={(v) => commit.commitStyle('opacity', v || null)}
+        onPreview={(v) => commit.commitStyle('opacity', v || null, { preview: true })}
+        onClearPreview={commit.clearStylePreview} />
+      {/* Blend-mode trigger + ContextMenu — ported VERBATIM from AppearanceSectionActions, calling commit.commitStyle('mixBlendMode', ...) instead of the old onChange prop */}
+      {/* Secondary CSS-visibility toggle — a smaller, visually de-emphasized icon in the same row (rule 3), calling commit.commitStyle('visibility', isCssHidden ? null : 'hidden') */}
+    </div>
+  )
+}
+```
+
+Geometry: row height `32px` (`--inspector-row-h`), no section header/title text (per the Y-origin finding — this is the very first content row, unlabeled), field gaps use the new `--inspector-gap-tight` (`4px`) between the icon buttons and `--inspector-gap-group` is not needed within this one row. Register in the manifest:
+
+```ts
+// sections/index.ts
+{ id: 'layer', order: 0, appliesTo: (m) => m.selectedNode != null, Component: LayerSection },
+```
+(`StyleSectionsComposer`'s existing entry keeps `order: 0` too until it's fully dismantled — bump it as sections peel off, or renumber all entries each PR; either is fine as long as `order` reflects the CURRENT Penpot sequence after that PR lands.)
+
+**Locked-properties notice, ported per this design's own top-level note:** filter `selectedNode.codeProps` for `style:opacity`/`style:mixBlendMode` keys; if either is code-locked, disable that one field (not the whole row) with the same lock icon + tooltip pattern `StyleSectionsComposer.tsx` already uses — do not disable the whole Layer row for one locked property.
+
+**Gate for this section:** a new `layerSection.test.tsx` under `src/admin/pages/site/inspector/sections/__tests__/` asserting: eye toggles `node.hidden` (not `visibility`) and reads back correctly; lock is hidden without `canEditStructure`; opacity commits through `commitApi`'s existing preview channel (assert `previewNodeStyles`/`previewClassStyles` fire, not a direct store write, mid-drag); blend-mode menu writes `mixBlendMode` through `commitStyle`, `undefined` for `'normal'` (port the existing `AppearanceSection` test assertions for this, don't re-derive them).
+
+#### Sections 2-11 — sequencing and per-section verification discipline
+
+Implement in this order (matches the plan's own Penpot frequency-of-use order, already sensible — Layer first because it is genuinely the simplest new build and proves the "no manual collapse, forceOpen, Studio-extras-for-orphans" pattern the same way `live-05`'s Batch 2 was picked specifically because it was low-risk):
+
+1. Layer (full template above)
+2. Measures (must follow Layer immediately — see the `AppearanceSection.tsx` split note above)
+3. Align
+4. Layout
+5. Stroke (flagged above as the next-lowest-risk pick — do this before Fill if the team wants a second easy win)
+6. Fill
+7. Shadow
+8. Blur (must follow Shadow immediately — both share `EffectsSection.tsx`, whose deletion is gated on both landing)
+9. Text
+10. Export (can move earlier in this order if desired — it is nearly free after Step 0's token change; not a dependency for anything else, purely a scheduling convenience)
+11. Studio extras (last, by construction — deletes `classStyleSections.ts`/`StyleSectionsEditor.tsx`/`StyleSectionsComposer.tsx` and the old `'styles'` manifest entry)
+
+**For sections 2-11, this design intentionally does NOT paste field-by-field JSX the way Layer's template does** — each old source file is already named per-section in the mapping table above, and each is different enough (Measures needs the CONSTRAINTS/FLEX-ELEMENT structural swap; Layout needs the container/element line drawn; Fill/Stroke are largely geometry re-skins of already-close code; Text is the closest to done) that pre-writing their JSX here would either be wrong in a way nobody catches until implementation, or would balloon this entry past the point of being readable. **Read the named old file(s) in full immediately before starting that section's own PR** (the same discipline `live-05`'s Batch 5 note establishes: "if it's bigger than expected, split it into its own follow-up rather than block the rest"). Each section's own PR must independently:
+  - Re-read its slice of `02-measurements.md`/`03-operating-behaviors.md`/the relevant fixture screenshot before writing geometry, not rely on this entry's summary table alone.
+  - Build its section as its own manifest entry with a real `appliesTo` (e.g., Text: `(m) => isTextNode(m.selectedNode)`, reusing `styleSectionOrder.ts`'s existing `isTextNode` — do not duplicate that check).
+  - Pass `forceOpen` to `Section` (or build lighter custom chrome if `Section`'s toggle-suppression doesn't fit — Penpot's own section header IS a plain uppercase label + trailing icons, `02-measurements.md`'s "Section headers" table, so `Section`'s icon-marker-doubles-as-chevron design may not even be the right primitive; evaluate per section, don't assume `Section` is reused unchanged everywhere the way Layer's template does — Layer has NO header at all, most of the other 10 DO have a Penpot uppercase header and should keep using `Section` with `forceOpen`).
+  - Reuse every pure value-logic file named in the mapping table verbatim (`fillModel.ts`, `backgroundLayers.ts`, `boxShadowLayers.ts`, `elementSizing.ts`, `resolveAlignWrite.ts`, etc.) — none of these need to change; only the RENDERING components around them do.
+  - Delete its own old file(s) in the SAME PR, per the plan's "each deletes its predecessor" rule — never leave an old and new section rendering side by side, and never defer a deletion to "P3 cleanup at the end."
+  - Shrink `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS` array by removing whichever entries just migrated (or their claimed-properties subset, where a category splits across two new sections — Layer/Measures, Shadow/Blur).
+  - Run `bun run build && bun test && bun run lint` before considering that section's PR done — the plan's own text requires each PR leave the tree building, not just the final one.
+
+#### Contracts
+
+`InspectorSectionDefinition`/`SelectionModel`/`InspectorCommitApi` are UNCHANGED from `panel-23` — paste is unnecessary, read that entry's own Contracts block. The only NEW shape this design introduces is the `LayerSection`/per-section component pattern shown above, which every other section's own component should structurally mirror (reads `useSelectionModel()`+`useInspectorCommit(model)`, takes no props, returns `null` on no selection, is registered in `sections/index.ts` with a real `appliesTo`).
+
+#### Gates
+
+- `src/admin/pages/site/inspector/sections/__tests__/layerSection.test.tsx` (new, section 1) — see Layer's own gate note above.
+- Each subsequent section gets its own `<name>Section.test.tsx` under the same `__tests__/` folder, porting (not re-deriving) the OLD section's existing test assertions from `src/admin/pages/site/panels/PropertiesPanel/__tests__/<oldName>.test.tsx` onto the new component — the old test files get deleted alongside their component, per the same "no old and new side by side" rule.
+- `src/admin/pages/site/panels/PropertiesPanel/__tests__/emptySectionLaw.test.tsx` and `inspectorGeometryBudget.test.tsx` reference `StyleSectionsEditor`/`CLASS_STYLE_SECTIONS` directly — both need updating EVERY time a section migrates out (their assertions about which sections are `collapsedWhenEmpty` and their `FROZEN_INSPECTOR_TOKENS` table both shrink/change per section), and get deleted outright in item 11's PR when their subject file is deleted. `inspectorGeometryBudget.test.tsx`'s own `FROZEN_INSPECTOR_TOKENS` table needs its `row-h`/`pad-x`/`field-radius` rows updated to `32px`/`12px`/`8px` as part of Step 0, immediately — this is a live, currently-passing assertion against the OLD wrong numbers that Step 0's token change will otherwise silently break.
+- No NEW architecture gate is required by this pass — P4's `no-full-site-scan-in-selectors.test.ts` extension already covers every new section (they all read through `useSelectionModel`, which that gate is scoped to). The eventual full-registry deletion (`StyleSectionsEditor.tsx` et al.) is P6's gate (`src/__tests__/inspector/measurement.test.ts`, not yet written) — do not build that gate now; P6 owns it, once ALL 11 sections have landed.
+- `module-size-budgets.test.ts` — several old files this design pulls apart (`PositionSection.tsx`, `EffectsSection.tsx`) are already split across sibling files for exactly this budget; the new per-section files should stay under the same ceiling, watch it per-PR rather than assume it holds.
+
+#### Risks
+
+| Risk | Mitigation |
+|---|---|
+| Landing Layer without Measures (or vice versa) leaves `AppearanceSection.tsx` half-deleted and two components both able to write `opacity`/radius | Sequence them back-to-back, never separately verified-green in between (this design's only exception to "each section is independently gated green") |
+| A section's re-skin silently drops a property from `classStyleSections.ts`'s claim list, making it invisible to whatever still reads "N set" counts | Grep for `CLASS_STYLE_SECTIONS` consumers before each section's properties move — confirm nothing besides the (soon fully retired) search/count machinery still needs the claim, and if something does, keep a claim entry until item 11 removes the whole file |
+| The 46-file `--inspector-space-*` blast radius gets touched piecemeal and drifts into a half-4px/half-16px/half-old-scale mess across sections migrated at different times | Only ever use the two NEW tokens in NEW section files; never edit an old, not-yet-migrated file's `.module.css` space usage as a "quick fix" mid-pass |
+| `toggleNodeLocked`'s total lack of prior UI means its first real exercise is inside a brand-new component with no existing test to port from | Layer's own gate (above) is written from scratch specifically because there is no old test to port — budget real time for this one section's tests, unlike sections 2-11 which mostly port existing assertions |
+| Escape-reverts assumption: P0 measured that Penpot's Escape does NOT revert a field (`02-measurements.md`) — do not let a reflex "make Escape cancel like Figma" slip into any new section's field wiring without checking Studio's own existing keyboard contract first (P2 rule 6 already says Esc reverts is Studio's OWN existing behavior, kept, not borrowed from Penpot) | Read P2 rule 6's own text before touching any field's `onKeyDown` in any of these 11 sections — this baseline explicitly warns against copying Penpot's Escape behavior by mistake |
+
+#### DELEGATE TO
+
+`panel-designer`, one section per implementation session, in the order above. Each session updates this entry's own "Done so far" (or opens a fresh `panel-2N` entry per section, whichever this file's own convention favors when picked up — either is acceptable as long as the NEXT section's implementer can tell exactly which of the 11 have landed without re-reading every PR).
+
+#### Done so far — Step 0 + Section 1 (Layer), 2026-09-13
+
+**PR #101 (draft), branch `feat/inspector-section-layer`, cut from `origin/feat/alm-figma-killer-studio-shell`.** Worktree `.tmp/wt-panel-25-layer` (now removable). Scope: Step 0's global token corrections and Section 1 (Layer) ONLY — sections 2-11 untouched, dispatched separately per this entry's own sequencing discipline.
+
+**Step 0 — `src/styles/globals.css`:**
+- `--inspector-row-h` 24px→32px, `--inspector-pad-x` 8px→12px, `--inspector-field-radius` 5px→8px (`--inspector-header-h` already correct, untouched).
+- New additive tokens: `--inspector-gap-tight: 4px`, `--inspector-gap-group: 16px` — every NEW P3 section (Layer included) uses ONLY these two, never the old 9-step `--inspector-space-*` scale.
+- New tokens: `--inspector-accent-dark: #7efff5` (teal), `--inspector-accent-light: #6911d4` (purple) — added to `:root` ONLY, as two separately-named, non-theme-conditional constants (NOT a dark/light pair of one token — see the token's own comment in `globals.css` for why; `04-token-gaps.md`'s "hue changes per theme, not just lightness" note describes the contrast BETWEEN these two names, not an admin dark/light override). Neither is consumed by Layer itself; they exist for a later section (most likely Fill/Stroke swatches).
+- `--inspector-field-bg` redefined off `--overlay-5` to a literal `#212426` dark / `#f3f4f6` light (per the standard `:root`/`[data-editor-theme='light']` split).
+- New token `--inspector-section-label-color: #8f9da3` dark / `#495e74` light — not yet consumed (no section built by this PR has a Penpot-style uppercase header; Layer has none per the Y-origin finding).
+- Updated `inspectorGeometryBudget.test.tsx`'s `FROZEN_INSPECTOR_TOKENS` table to the corrected values (was asserting the OLD wrong numbers — would have gone red the moment Step 0 landed if left alone).
+- **Rule-2 gap:** no code change was needed. `propertiesSectionsExpanded`/`useEditorPreference` stay exactly as-is in `StyleSectionsEditor.tsx`/`CustomPropertiesSection.tsx` for the NOT-yet-migrated old sections. `LayerSection` (the first migrated section) structurally cannot read this preference — it has no `Section` wrapper, no header, no chevron at all (per the Y-origin finding: it's the first, unlabeled content row). This is the "closes the gap" outcome the Step 0 instruction anticipated: the preference stops applying to migrated sections by construction, one section at a time, not by a global deletion (which stays correctly deferred to whichever PR deletes the last old file, per this entry's own note).
+
+**Section 1 (Layer):**
+- New files: `src/admin/pages/site/inspector/sections/LayerSection.tsx` + `.module.css`, `src/admin/pages/site/inspector/sections/__tests__/layerSection.test.tsx` (8 tests, written from scratch — no old test existed for `toggleNodeLocked`, per this entry's own risk note).
+- Manifest: registered in `sections/index.ts` as `{ id: 'layer', order: 0, appliesTo: (m) => m.selectedNode != null, Component: LayerSection }`; `'styles'` (the still-monolithic `StyleSectionsComposer`) bumped to `order: 1`.
+- Claims `opacity`, `mixBlendMode`, structural `node.hidden`/`node.locked`, and the secondary CSS `visibility` toggle (Decisions' "two different hides," both kept, distinct tooltips). Reads/writes exclusively through `useSelectionModel()`/`useInspectorCommit(model)` — no raw store style actions, no `resolveWriteTarget` reintroduced.
+- **`AppearanceSection.tsx` deletion deferred, not skipped** — per this entry's own explicit fallback ("if Layer lands before Measures, temporarily keep the radius-only remainder"): opacity/blend/eye/droplet code and the `AppearanceSectionActions` export were REMOVED from `AppearanceSection.tsx` in this same PR (so nothing races `LayerSection` to write `opacity`/`mixBlendMode`); only the corner-radius `ExpandableFieldCluster` remains. `StyleSectionsEditor.tsx`'s `APPEARANCE_SECTION_ID` header-actions branch (the old eye+droplet) was deleted along with the import. `classStyleSections.ts`'s `appearance` entry now claims only the four `border*Radius` properties. **The next agent to touch Measures (P3 item 2) is the one who deletes `AppearanceSection.tsx`/`.module.css` and the `appearance` classStyleSections entry outright** — do not leave it half-done a second time.
+- **New problem found and solved, not in the original design:** removing `opacity`/`mixBlendMode`/`visibility` from `CLASS_STYLE_SECTIONS` entirely would have (a) leaked them into the generic Custom Properties editor (`isCuratedProperty`/`getCustomProperties` derive straight from that registry) and (b) dropped them from `ALL_CURATED_CSS_PROPERTIES`, silently breaking `useFrameComputedStyleValues`'s fetch for them — `LayerSection`'s own "prefill with the real computed value" would have gone dark. Adding a full `ClassStyleSectionDefinition` entry for them was rejected too: `StyleSectionsEditor`'s generic per-property fallback would render them a SECOND time (the exact "two components racing to write opacity" hazard). Fix: a new export, `MIGRATED_SECTION_PROPERTIES` in `classStyleSections.ts` — properties claimed by a P3 manifest section that has no `CLASS_STYLE_SECTIONS` entry at all — unioned into `CLAIMED_PROPERTIES`/`ALL_CURATED_CSS_PROPERTIES` in `cssControlTypes.ts`, never iterated by `getVisibleStyleSections`. This is the reusable pattern for every future section that fully exits the legacy registry (Align, Shadow/Blur before Effects is fully retired, etc.) — read this before assuming a migrated section's properties can just be dropped from `classStyleSections.ts`.
+- Hand-drew `UnlockedIcon` in `@ui/components/InspectorIcons` (barrel-exported) — `toggleNodeLocked` had zero prior UI call sites (confirmed by grep, matches this entry's own risk note) and `pixel-art-icons` has no open-padlock glyph. Same precedent as `panel-22`'s missing `flexWrap` glyph.
+- Opacity is read/written as a `%` string (`unit="%"`, Penpot's own convention — CSS accepts `opacity: 50%` directly, computing identically to `0.5`), with a `toPercentString` normalizer so an inherited/computed bare-float value (`getComputedStyle` always reports `opacity` as `0–1`) displays correctly as `"50%"` instead of the lying `"0.5%"` — read `LayerSection.tsx`'s own doc before touching this field.
+- Locked (code-valued) `opacity`/`mixBlendMode` disable ONLY their own field (`ScrubInput`'s native `disabled`; `Button`'s `disabled`+`tooltip` combo converts to `aria-disabled` so the lock-reason tooltip stays reachable on hover — this is `Button`'s own existing behavior, not new).
+
+**Gates run:** `bun test src/admin/pages/site/inspector/sections/__tests__/layerSection.test.tsx` (8/8), `bun test src/admin/pages/site/panels/PropertiesPanel src/admin/pages/site/inspector` (592/592), `bun run build` (clean), `bun run lint` (0 errors in touched files). Pre-existing failures triaged against a stashed clean-base rebuild, confirmed NOT caused by this PR: `icon-catalog-integrity.test.ts` (missing `chevron-left.js` dist artifact — present on `feat/alm-figma-killer-studio-shell` before this branch existed), `no-core-barrel-deep-imports.test.ts` (`studioRuntimeShellFile.ts`, untouched by this PR), `no-circular-dependencies.test.ts` (madge timeout under parallel-worktree load), `bundle-size-budgets.test.ts` (`AdminCanvasEditorBody` was already 824.92 kB against a 761.7 kB cap on the clean base, before any edit here — this PR adds ~3 kB on top of an already-red gate).
+
+**Human action needed:** dogfood the Layer row. Open any project in `/admin/site`, select a leaf element (e.g. a `base.div` or `base.text` node), and confirm: (1) the FIRST row under the Design tab strip is unlabeled and shows eye / lock / opacity / blend-mode / small secondary-eye icons, no header text above it; (2) the primary eye removes the element from the canvas (layer-tree hide), while the small secondary eye at the row's end sets CSS `visibility: hidden` (element stays in the layout, just invisible) — hover both to confirm the tooltips say which is which; (3) the lock icon toggles a padlock glyph (hand-drawn `UnlockedIcon` — sanity-check it reads as "open" at a glance); (4) dragging the opacity field's `%`-glyph label scrubs live on canvas; (5) the blend-mode droplet opens Figma's grouped menu and picking a mode changes canvas compositing; (6) select a node with a component-driven `opacity` prop (or fake one via `codeProps`) and confirm the opacity field alone goes visibly disabled with a lock tooltip, NOT the whole row; (7) confirm the corner-radius block (still `AppearanceSection`, now titled "Appearance") no longer shows an opacity field or the eye/droplet icons in its own header.
+
+
 
 ### panel-23 — P4: SelectionModel, section manifest, one commit API
 - **Agent:** store-engineer (Phase A DONE) + panel-designer (Phase B DONE — see its own subsection below; PR #99 open, draft)
@@ -1091,6 +1817,210 @@ The assertion is un-skipped and **actually green**: `bun test src/__tests__/arch
 2. **L1-L4 (PRs #91/#92/#93/#94) are still all open, unmerged** — this is the actual blocker on L5's own PR opening, not remaining engineering work. Whoever owns the overall Track L rollout should prioritize landing those four; L5's core migration is essentially feature-complete and waiting on them, not the other way around.
 3. **What's left of `live-05` itself, if anyone wants to close it out completely before L1-L4 land**: the `selection:reflow` wire message + `BreakpointSelectionOverlay.tsx`'s bridge branch (the one real remaining implementation gap — see Landmines), and `useInspectComputedStyle.ts`'s bimodal shape. Both are genuinely optional-for-now: nothing else in the tree depends on either, and both only matter once a real Tier 2 dev server (L6+) exists to dogfood bridge mode against at all.
 4. **Dogfood note, unchanged in substance from every prior session**: nothing in this session's diff is observably different in the running app for Tier 0/1 usage — proven by the identical scoped-test-suite pass counts before/after each commit, not by eye. There is still no way to dogfood bridge mode until L6 (the real Tier 2 dev-server route) exists; this session's changes are exclusively refactors of HOW existing portal-mode code reaches the DOM, not WHAT it does.
+
+### live-06 — L6: per-screen routes in the shell
+- **Agent:** server-engineer
+- **Stage:** done
+- **Updated:** 2026-09-13
+- **Branch:** `feat/live-per-screen-routes`, worktree `.tmp/wt-live-06`, cut from `origin/feat/alm-figma-killer-studio-shell`. Committed, pushed, draft PR open: https://github.com/maherfayad-stack/Figma-Killer-2/pull/103 (base `feat/alm-figma-killer-studio-shell`, not `main`).
+- **Done so far:**
+  - Part A shipped exactly as designed: `SCREEN_ROUTE_PATTERN` suffix regex + `ScreenRoute`/`ScreenRouteInner` in the generated `App.jsx` (`server/handlers/studio/prototypeShell/shellFiles.ts`), rendering `screen.Component` directly (never nested in `ScreenFrame`), `RESET` exported from the generated `ScreenFrame.jsx` (`screenFrameTemplate.ts`) and imported by name.
+  - Part B shipped largely as designed: `devServer.ts` exports `STUDIO_LIVE_BASE_PATH_ENV` and threads the ORIGINAL `dir` (not `resolveAppRoot(dir)`) through `spawnEntry`/`ensureEntry` to compute `registeredMcpServerProjectKey(dir)` and set it as an env var on every spawn; `shellFiles.ts`'s `VITE_CONFIG` reads it via `base: process.env.STUDIO_LIVE_BASE_PATH || '/'`; `liveOrigin.ts`'s `parseLivePath` drops `rest`, both `resolveUpstreamUrl` call sites now forward `url.pathname` unstripped.
+  - **One deviation from the architect's Part B step 3, found and fixed by dogfooding, not by the plan:** `INDEX_HTML`'s entry script tag stayed a PLAIN root-absolute path (`src="/prototype/main.jsx"`), NOT `%BASE_URL%prototype/main.jsx` as specified. Vite's own dev/build HTML transform ALREADY rewrites every root-absolute `src`/`href` it finds to carry a non-root `base` automatically (confirmed against this repo's pinned Vite 7.3.6) — adding `%BASE_URL%` on top double-prefixed it (`/p/test4/p/test4/prototype/main.jsx`, a real 404 observed against a real running dev server, both direct and proxied). See the doc comments left in `shellFiles.ts`/`liveOrigin.ts`/the updated `prototypeShell.test.ts` assertion for the full account.
+  - **A second, more serious bug found ONLY by the mandated real-browser-plus-real-dev-server dogfood, not by any unit test:** the live-origin proxy's WebSocket bridge (`server/liveOrigin.ts`'s `websocket.close(ws)` handler, `live-02`'s code, untouched by this work order's own design) explicitly calls `ws.data.upstream?.close()` when the browser socket closes. Against a REAL spawned Vite dev server, this reliably (3/3 real end-to-end repros) CRASHES THE ENTIRE DEV SERVER PROCESS with an unhandled `ECONNRESET` on a raw `net.Socket` inside Vite's own `ws`-based HMR server — because Bun's outbound WebSocket *client* `.close()` does not perform a graceful closing handshake against this peer (RSTs the TCP connection instead), and Vite's `ws` layer has no `'error'` listener on that raw socket. Confirmed independent of close code (`close()`, `close(1000, 'reason')`) and of timing (immediate vs. a deferred `setTimeout`). Confirmed NOT to happen when a real browser talks to Vite directly with no proxy in the loop (2/2 clean repros) — the crash is specific to Bun's client-side `WebSocket.close()` implementation talking to Vite's server, which nothing had ever exercised through this proxy before this work order (per Part B's own module-doc note: nobody had gotten a working live frame through the proxy until now). Fixed by NOT calling `.close()` on the upstream in that handler at all — see the (long, deliberately so) comment left in `server/liveOrigin.ts` at that call site for the full evidence trail and the accepted resource-lingering tradeoff. The other two `upstream.close()` call sites in the same file (boot-timeout watchdog, pending-queue-overflow guard) were left UNCHANGED — both close a connection that has not yet reached `OPEN`, and a synthetic close-while-`CONNECTING` test against the same real dev server did NOT reproduce a crash. Not fixed without evidence; flagged below as a follow-up verification target.
+  - Re-verified, dogfooded for real per the RISKS section's own mandate — see Verification below. This is not a "should work per Vite's docs" claim; it is a real spawned Vite 7.3.6 dev server + a real Playwright Chromium browser, both directly and through a real `startLiveOriginServer` listener, driven through 5+ navigations across 3 screens and both axes with zero console errors, zero failed/4xx requests, and zero crashes after the fix.
+  - `resolveLiveFrameSrc.ts` rewritten per the CONTRACTS block (`axes: PreviewAxes`, builds `?dir=&theme=&lang=`), `IframeFrameSurface.tsx`'s bridge-mode doc comment updated (the URL shape is now real; the bridge-mode CALLER is still the only remaining gap), the one existing bridge-mode test's `liveFrame` literal gained `axes`, new `resolveLiveFrameSrc.test.ts` created.
+  - `STUDIO-LIVE-CANVAS-PLAN.md`'s L6 section rewritten to describe the shipped shape (including both Part B findings) instead of the original "inside ScreenFrame" line, per the FILES note (architects only write STATE.md/docs; this is the implementer doing it in the same change, as instructed).
+- **Decisions:**
+  - Kept the architect's `%BASE_URL%` idea OUT of `index.html` — plain root-absolute path — because Vite already does this rewrite automatically; verified empirically, not assumed. This is the one place the architect's own pseudocode was wrong, corrected here rather than shipped broken.
+  - Did not touch the boot-timeout/queue-overflow `upstream.close()` call sites — no evidence they share the WS-bridge crash, and "fix it anyway" without a repro risks removing a legitimate safety net for a hypothetical.
+  - `STUDIO_LIVE_BASE_PATH_ENV`'s string constant lives in `devServer.ts` and is imported into `shellFiles.ts`'s `VITE_CONFIG` template (interpolated via the outer template literal) rather than duplicating the literal string in both places — the file's own "no backticks/${ in EMITTED code" convention is about the generated JS text staying free of stray backticks, not about the TS-level authoring template avoiding all interpolation; a plain identifier-shaped interpolation introduces no such risk and keeps the two ends from drifting.
+- **Landmines:**
+  - **Do not resurrect `%BASE_URL%` in `index.html`.** It looks like the textbook-correct Vite pattern and is wrong here specifically because this repo already relies on Vite's automatic root-absolute rewriting; combining both double-prefixes every asset URL under a non-root `base`. Confirmed by three independent dogfood runs, not a guess.
+  - **`server/liveOrigin.ts`'s WS bridge `close(ws)` handler deliberately does NOT close the upstream socket.** Do not "clean this up" by adding `.close()` back without re-running the real dogfood (a real Vite dev server + a real browser through a real `startLiveOriginServer` listener) — see the in-code comment for the exact reproduction. This is a Bun-runtime limitation (an outbound `WebSocket` client's `.close()` against a Node `ws`-based server), not a logic bug fixable by changing arguments/timing.
+  - **The boot-timeout and queue-overflow `upstream.close()` call sites are UNVERIFIED, not confirmed-safe.** A synthetic close-while-CONNECTING test against a real dev server didn't crash it, but that's a narrower test than the full "browser navigates through a working proxy" scenario that found the other bug. Worth a dedicated dogfood pass (force a boot timeout / flood messages before the upstream opens) before anyone treats these as proven safe.
+  - **Dogfooding this required real subprocess/port juggling** — the sandbox already had an unrelated parallel session's Vite dev server bound to `127.0.0.1:5173`, and this repo's own scratch spawns bound `[::1]:5173` (dual-stack coexistence, not a conflict) — `localhost` resolution was empirically confirmed deterministic-to-IPv6 in this environment, but don't assume that holds elsewhere; use an explicit host/port if repeating this. All scratch processes and the scratch project copy were cleaned up; nothing was left running, nothing touched `studio-workspace/` in the worktree or the primary checkout.
+  - **`@alm-design/design-system` is not on the public npm registry** — a scratch dogfood project needs it copied in from a real `node_modules/@alm-design/design-system` (or vendored equivalent) rather than `bun install`ed; `bun install` 404s otherwise.
+- **Verification:**
+  - `bun run build` — clean (`tsc -b && vite build`), no errors.
+  - `bun test server/handlers/studio/__tests__/prototypeShell.test.ts server/handlers/studio/__tests__/devServer.test.ts` together: 48 pass. `bun test server/liveOrigin.test.ts` alone: 19 pass. `bun test src/admin/pages/site/canvas`: 147 pass. All three together in one invocation show 2 failures from a PRE-EXISTING, confirmed-on-base-branch (`git stash` + re-run reproduced the identical two failures before any of this session's changes) cross-file `mock.module` leak between `liveOrigin.test.ts` and its siblings when bundled in the same test run — not a regression, matches the standing "batch-run isolation flake" note.
+  - `bun run lint` on the ten touched/created files: clean. Whole-repo `bun run lint` shows 6 pre-existing `'os' is defined but never used` errors in five files this session never touched (`components.test.ts`, `previewAxes.test.ts`, `reloadScope.test.ts`, `styleCompileConsent.test.ts`, `trustTier.test.ts`, `referenceUpload.test.ts`) — not mine.
+  - Full-repo `bun test`: 10869 pass / 206 fail / 136 errors, run under heavy concurrent load from other parallel sessions on the same machine (visible in `ps aux` at the time — multiple other `bun test`/`vite build` processes, one apparently hung since Thursday). Grepped the full output for every module this change touched (`liveOrigin`, `devServer`, `prototypeShell`, `resolveLiveFrameSrc`, `iframeFrameSurface`) — zero hits in the failure/error lines. The visible failures are `ECONNREFUSED`/SQL-adapter/5000ms-timeout shaped — contention noise, not this diff. Did not attempt to fully triage 206 failures against a clean baseline given the load; flagging so nobody mistakes this number for a regression this change introduced.
+  - **Real dogfood, done exactly as the architect's own RISKS section demanded (not skipped):** copied `studio-workspace/test4` to an isolated scratch dir, `bun install`ed real deps (`react`, `react-dom`, `vite`, `@vitejs/plugin-react`, `@alm-design/design-system` copied in manually), regenerated the shell with THIS session's `ensurePrototypeShell`, then:
+    1. Direct hit, no proxy, no base path: `GET /__screen/onboarding` in a real Playwright Chromium — 200, correct screen rendered full-viewport, no board chrome, 47 `data-node-id`-stamped elements present, zero console errors, zero failed requests.
+    2. Direct hit WITH `STUDIO_LIVE_BASE_PATH=/p/test4/` set (matching what the real dev-server manager now sets) — same result at `http://localhost:5173/p/test4/__screen/onboarding`.
+    3. Through a REAL `startLiveOriginServer` listener proxying to that real dev server: 5 navigations across `onboarding`/`sms`/`sign-up` and both `dir`/`theme` axes — 200s throughout, zero console errors, zero 4xx/failed requests, correct single (not doubled) asset path prefixing, `dir`/`theme` attributes applied correctly, HMR websocket opened successfully, and — critically — no crash of the dev server process across the whole sequence (the pre-fix code crashed the dev server on the SECOND navigation, 3/3 times, before the `close(ws)` fix above).
+    4. All scratch processes/files cleaned up afterward; confirmed via `git status` that neither the worktree nor `studio-workspace/` carry any trace of this.
+- **Human action needed:** none for landing this work order's own scope. Recommend: (a) a follow-up dogfood specifically targeting the boot-timeout and queue-overflow `upstream.close()` paths (see Landmines) before anyone relies on them being safe; (b) per the original entry's own instruction, this diff should get a short security look before anyone considers it fully done, since it touches `server/liveOrigin.ts` again (already reviewed once by `sec-07`, again by `sec-08`) — flagging explicitly, not skipping this because it's "just a base-path fix": it changes what pathname reaches the upstream fetch/WebSocket-upgrade construction and removes an explicit socket-close call, both worth a second pair of eyes given this file's history.
+- **Goal:** `STUDIO-LIVE-CANVAS-PLAN.md` §2, L6. `prototype/App.jsx` (generated shell, hash-tracked) serves `/__screen/<key>?dir=&theme=&lang=` for every entry in `registry.generated.jsx`'s `SCREENS`, so `resolveLiveFrameSrc.ts` (L5's deliberately-isolated seam, `src/admin/pages/site/canvas/resolveLiveFrameSrc.ts`) can point a bridge-mode iframe at a real, working URL instead of its current best-effort placeholder. **Done when:** (1) a Tier-2 project's dev server, hit directly (`npm run dev`, no Studio proxy) at `http://localhost:<port>/__screen/<pageId>?dir=rtl&theme=dark&lang=ar`, renders that one screen full-viewport in the requested axes, with no board chrome; (2) the SAME URL shape, proxied through Studio's own live origin (`<LIVE_ORIGIN>/p/<projectKey>/__screen/<pageId>?...`), also works — this is the part nobody checked yet and turned out to be broken for a reason unrelated to the route itself (see Part B); (3) `resolveLiveFrameSrc`'s own doc comment no longer says "not yet exercised end-to-end" for the URL shape (it can still say so for the still-nonexistent caller that flips `documentMode` to `'bridge'` — see Explicitly out of scope).
+
+**This turned into two parts, not one, because reading the actual code found a second, pre-existing bug that blocks the first part from ever being reachable through Studio's own proxy. Both land in this same work order — splitting them would ship a route nobody can actually hit from the canvas.**
+
+#### Part A — the route itself, in `App.jsx`
+
+Everything here lives in ONE generated file: `APP_JSX` in `server/handlers/studio/prototypeShell/shellFiles.ts` (a template-literal string; the emitted file is `prototype/App.jsx`, one of the "written once, then yours" static shell files — untouched-hash workspaces get this automatically on next open, per `ensurePrototypeShell`'s existing self-healing mechanism; a workspace whose `App.jsx` a human has already hand-edited will not get it, and that is the existing, accepted tradeoff of this file's own "written once" contract — do not build a second delivery path for that case).
+
+**Deliberate deviation from the plan's literal wording — do NOT wrap the routed screen in `ScreenFrame`.** The plan text says "rendering that screen inside ScreenFrame." `ScreenFrame.jsx` (`screenFrameTemplate.ts`) is a NESTED `<iframe>` — it exists so the shell's own multi-screen board/flow UI gives each preview its own real viewport. Nesting it here would put the screen's real DOM (and L3's `data-node-id` stamps) inside a SECOND, separate `contentDocument` that `virtual:studio-runtime` (injected once, into `main.jsx`, at the TOP of this same page) can never see or measure — silently breaking selection/overlay for every live frame, which is the entire point of Track L. Instead: render `screen.Component` directly at the top level of this document. It already gets the correct viewport size for free, because the OUTER element sizing it — Studio's own canvas bridge iframe (`IframeFrameSurface`, sized to the breakpoint's width/height) in Studio's case, or the browser window in the "hit it directly" case — already IS the device viewport; there is no second CSS-isolation problem left to solve with a nested iframe. Reuse only `ScreenFrame.jsx`'s `RESET` CSS text (scrollbar-hiding, margin reset) for visual parity — export it (`export const RESET = ...`, one-word change in `screenFrameTemplate.ts`'s template) and import it into `APP_JSX`, rather than duplicating the literal CSS string across two generated files.
+
+**Route matching must be a pathname SUFFIX match, not an exact/prefix match — this is load-bearing, not a style choice.** `server/liveOrigin.ts`'s proxy is transparent (no redirect): a browser that navigated to `<LIVE_ORIGIN>/p/<projectKey>/__screen/<key>` still shows that FULL path in `window.location.pathname` inside the frame, even though the proxy forwards a shorter/rewritten path to the upstream dev server (see Part B). The SAME generated `App.jsx` also has to work when the dev server is hit directly (download-the-zip / local `npm run dev`), where `window.location.pathname` is exactly `/__screen/<key>` with no prefix at all. One regex handles both:
+
+```js
+const SCREEN_ROUTE_PATTERN = /\/__screen\/([^/?#]+)\/?$/
+```
+
+Matched against `window.location.pathname` at the top of `App()`; a match short-circuits to the new route component instead of the existing board/flow UI. `App()`'s existing body (board tabs, flow view, settings sheet) is otherwise untouched.
+
+Concrete shape (pseudocode — implementer writes the real JSX inside the `APP_JSX` template string):
+
+```jsx
+export default function App() {
+  const screenMatch = typeof window !== 'undefined'
+    ? SCREEN_ROUTE_PATTERN.exec(window.location.pathname)
+    : null
+  if (screenMatch) return <ScreenRoute screenKey={decodeURIComponent(screenMatch[1])} />
+  // ...existing App body, unchanged...
+}
+
+function ScreenRoute({ screenKey }) {
+  const params = getUrlParams() // already-existing helper, urlState.js — unchanged
+  const screen = SCREEN_BY_ID[screenKey]
+  const dir = params.dir === 'rtl' ? 'rtl' : params.dir === 'ltr' ? 'ltr' : (PREVIEW_AXES.direction || 'ltr')
+  const theme = params.theme === 'dark' ? 'dark' : (PREVIEW_AXES.colorScheme || 'light')
+  const lang = params.lang || undefined
+  return (
+    <Providers>
+      <ScreenRouteInner dir={dir} theme={theme} lang={lang} screen={screen} screenKey={screenKey} />
+    </Providers>
+  )
+}
+
+function ScreenRouteInner({ dir, theme, lang, screen, screenKey }) {
+  const { setLang, locales } = useShellLanguage() // only reachable BELOW <Providers>, same reason Shell already needs it
+  // Apply '?lang=' once, same rule Shell already enforces (only a locale the
+  // project actually declares) — factor Shell's existing urlLangApplied
+  // ref+effect into a small shared helper both call, OR duplicate the ~6
+  // lines if factoring risks changing Shell's own already-subtle behavior
+  // (its effect ALSO writes '?lang=' back to the URL on every non-first
+  // render — ScreenRoute does not need that reflect-back half). Implementer's
+  // call; the required behavior is just "apply once, only if declared."
+  useEffect(() => {
+    const html = document.documentElement
+    // Independent 'dir' override — sets the CSS attribute only, same
+    // fidelity FramePreview's own per-frame axes override already has
+    // (it does not force the design system's OWN JS-computed direction,
+    // which follows the language context, not this attribute). Pre-existing
+    // gap, not new here — see Risks.
+    html.setAttribute('dir', dir)
+    if (lang) html.setAttribute('lang', lang)
+    html.setAttribute('data-theme', theme)
+    html.style.colorScheme = theme
+    applyColorSchemeGate(html, theme) // already imported at the top of APP_JSX
+  }, [dir, theme, lang])
+
+  return (
+    <>
+      <style>{RESET}</style>
+      {screen ? <screen.Component /> : <p className="shell__empty">Unknown screen: {screenKey}</p>}
+    </>
+  )
+}
+```
+
+`screenKey` IS the `pageId` `registry.generated.jsx`'s `SCREENS`/`SCREEN_BY_ID` already key on (`assignPageIds`'s output, `server/handlers/studioPageIds.ts`) — always a single kebab-case path segment for the Vite-first Pages-style discovery this shell already does (`collectScreens` in `prototypeShell/index.ts`), so the single-segment regex above is safe. (App Router's OWN id shape, `assignAppRouterPageIds`, embeds `/` and would break this — irrelevant today: Track L is Vite-only per the plan's own §1.3 decision, Next/CRA stay at Tier 0/1, and `collectScreens` doesn't even branch on App Router. Do not "fix" this for App Router as part of L6.)
+
+**Never crash the whole page for a stale key** — a canvas tab or a bookmarked URL can point at a `pageId` that got renamed/deleted since. `screen` undefined renders the fallback paragraph, not a thrown error.
+
+#### Part B — found while verifying Part A is actually reachable: the live-origin proxy has no base-path story, so nothing past the first HTML response would ever load through it
+
+**Confirmed by reading the code, not assumed.** `server/liveOrigin.ts`'s `handleLiveOriginFetch` strips the `/p/<projectKey>` prefix before forwarding (`parseLivePath` returns `rest`, forwarded via `resolveUpstreamUrl(upstreamUrl, rest, url.search)` — line ~313 and ~328, both the HTTP and the WebSocket-upgrade branch). The shell's own `VITE_CONFIG` template (`shellFiles.ts`) sets no `base`, and Vite defaults to `base: '/'`. So: the FIRST request (`<LIVE_ORIGIN>/p/<projectKey>/__screen/<key>`) correctly proxies through and returns `index.html` — but that HTML contains `<script type="module" src="/prototype/main.jsx">`, an origin-ABSOLUTE path. The browser resolves it against `<LIVE_ORIGIN>`'s ROOT (absolute paths ignore the current path entirely), producing a request to `<LIVE_ORIGIN>/prototype/main.jsx` — which does NOT match `/p/<projectKey>/*` at all, so it 404s at the live-origin listener before ever reaching Vite. The same is true of every asset Vite's own dev-server middleware injects (`/@vite/client`, the HMR websocket, `/@react-refresh`). **This is not specific to `/__screen/<key>` — it breaks EVERY page proxied through the live origin today**, which is presumably why nobody dogfooding portal/Tier-0/1 work has hit it yet: nothing has tried to load a live frame through the proxy until now. Confirmed nobody flagged this in `live-01`/`live-02`/`sec-07`'s own STATE.md entries (grepped for "base path"/"asset prefix"/"sub-path" — no hits).
+
+**Fix — give the dev server a real base path, and stop stripping the prefix before forwarding:**
+
+1. `server/handlers/studio/devServer.ts` (`live-01`'s file) — `spawnEntry` needs the project's own `registeredMcpServerProjectKey(dir)` (`server/ai/drivers/registeredMcpServers.ts` — the SAME key `server/liveOrigin.ts` already uses for the `/p/<projectKey>` segment) so it can pass it to the spawned subprocess as an env var: `minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, { STUDIO_LIVE_BASE_PATH: \`/p/${projectKey}/\` })` (that function already accepts an `overrides` third-shape param — no new plumbing needed there). `projectKey` must be derived from `dir` — the ORIGINAL project directory `ensureDevServer`/`startDevServer` receive — BEFORE `resolveAppRoot(dir)` narrows it to a possibly-nested app root; a monorepo's `apps/web/` app root must not be asked to compute its own, different, wrong key. Thread `projectKey` (or `dir`) down through `ensureEntry`/`spawnEntry`'s existing call chain.
+2. `server/handlers/studio/prototypeShell/shellFiles.ts` — `VITE_CONFIG` template gains `base: process.env.STUDIO_LIVE_BASE_PATH || '/'`. Standalone `npm run dev` (no env var set) is byte-identical to today — `base: '/'`, unaffected.
+3. Same file — `INDEX_HTML` template's `<script type="module" src="/prototype/main.jsx">` becomes `<script type="module" src="%BASE_URL%prototype/main.jsx">` — Vite's own documented mechanism for exactly this ("reference the configured base in `index.html`"), resolved both in dev and in a production build. This is the one place a hardcoded absolute path in OUR OWN template needs to change; every JS `import`/CSS `@import`/asset import Vite's module graph touches is already rewritten automatically according to `base` — do not go hunting for more.
+4. `server/liveOrigin.ts` — `handleLiveOriginFetch`'s two `resolveUpstreamUrl(upstreamUrl, rest, url.search)` call sites (HTTP + WebSocket-upgrade branches) change to `resolveUpstreamUrl(upstreamUrl, url.pathname, url.search)` — forward the FULL, un-stripped incoming pathname (including `/p/<projectKey>`) unchanged, since Vite is now configured to expect it. `parseLivePath` still needs to exist (extracts `projectKey` for the dev-server registry lookup, still validates the `/p/` shape) but its `rest` field becomes unused by both call sites — simplify its return shape to just `{ projectKey }` rather than leaving a dead field. `resolveUpstreamUrl`'s existing SSRF protections (`.pathname =` setter, never a `new URL(path, base)` construction) are unaffected either way — verified the existing `//evil.example/steal`-shaped test still can't take over the host once the leading segment is `/p/<projectKey>/...` instead of bare `//...`.
+
+**Required test updates, not new breakage — call these out explicitly so they aren't mistaken for a regression:**
+- `server/liveOrigin.test.ts`'s `'forwards the remaining path and query string onto the upstream origin'` (~line 253) currently asserts `recorded[0].url === \`${UPSTREAM_ORIGIN}/assets/main.js?v=2\`` (no `/p/acme-app` prefix) — this MUST change to assert the prefix IS now present (`${UPSTREAM_ORIGIN}/p/acme-app/assets/main.js?v=2`). This is the point of the fix, not a side effect to work around.
+- `server/handlers/studio/__tests__/devServer.test.ts` — add a test asserting `spawnEntry`'s recorded/injected env (via the existing `overrides.spawn` test seam) carries `STUDIO_LIVE_BASE_PATH: '/p/<projectKey>/'` for a known `dir`.
+
+#### Explicitly out of scope (name it so nobody assumes L6 alone finishes Track L's exit criteria)
+
+- **Nothing calls `documentMode='bridge'` in production yet.** `IframeFrameSurface`'s bridge branch (`live-05`) has no real caller — no code anywhere decides "this is a Tier-2 board frame, construct a `LiveFrameSource` and flip to bridge mode." That caller is a separate, not-yet-named piece of work (plausibly L7/L9 territory) — L6 only makes the URL `resolveLiveFrameSrc` builds actually resolve to a real page once something does call it.
+- **Cross-screen prototype-link navigation while embedded live** (the Track L exit criteria's "the last [digit] navigates to `/onboarding` inside the frame") is NOT built by this route. The download shell's OWN link-following (`Player.jsx`'s `resolveLinkElement`/`indexPath` walk) is fundamentally tied to `ScreenFrame`'s nested-iframe document — deliberately not used here (see Part A). Real cross-screen navigation for a live Tier-2 frame needs its own bridge command (a `navigate(targetScreenKey)` message L4's `runtime.ts` doesn't have yet, causing a `history.pushState` to the new `/__screen/<key>` URL) — flag as a follow-up for whoever builds the bridge-mode caller above, not this work order.
+- **The `dir` query param's independent-of-language limitation** (sets the CSS `dir` attribute only, not the design system's own JS-computed direction, which follows `useLanguage()`) is a PRE-EXISTING pattern already accepted by `FramePreview`'s per-frame `axes.direction` override in the same file — not a new gap L6 introduces. Do not try to solve it here.
+
+#### FILES
+- `modify` `server/handlers/studio/prototypeShell/shellFiles.ts` — `APP_JSX` gains the route (Part A); `VITE_CONFIG` gains `base`; `INDEX_HTML` gains `%BASE_URL%`.
+- `modify` `server/handlers/studio/prototypeShell/screenFrameTemplate.ts` — export `RESET`.
+- `modify` `server/handlers/studio/devServer.ts` — `spawnEntry`/its callers thread `projectKey` → `STUDIO_LIVE_BASE_PATH` env var.
+- `modify` `server/liveOrigin.ts` — `parseLivePath` drops `rest`; both `resolveUpstreamUrl` call sites forward `url.pathname`.
+- `modify` `src/admin/pages/site/canvas/resolveLiveFrameSrc.ts` — `LiveFrameSource` gains `axes: PreviewAxes` (`@core/studio-board`); `resolveLiveFrameSrc` builds `<liveOrigin>/__screen/<key>?dir=&theme=&lang=` (via `URL`/`searchParams`, `lang` omitted when `axes.locale` is unset); doc comment updated to say the URL shape is now real (see Explicitly out of scope for what still isn't).
+- `modify` `src/admin/pages/site/canvas/IframeFrameSurface.tsx` — doc comment only (lines ~159-166): `liveFrame.axes` is now required too; the caller that constructs one still doesn't exist.
+- `modify` `src/admin/pages/site/canvas/__tests__/iframeFrameSurfaceDocumentMode.test.tsx` — the `liveFrame={{ liveOrigin, screenKey, nodeIdsInTreeOrder }}` literal (~line 69) needs an `axes` field; the `src` assertion (~line 73) needs to expect the query string.
+- `create` `src/admin/pages/site/canvas/__tests__/resolveLiveFrameSrc.test.ts` — new, no test file exists for this function today.
+- `modify` `server/handlers/studio/__tests__/prototypeShell.test.ts` — new `describe` block asserting the generated `App.jsx` contains the route match + imports `RESET` from `./ScreenFrame`.
+- `modify` `server/handlers/studio/__tests__/devServer.test.ts` — new test for the `STUDIO_LIVE_BASE_PATH` env var (Part B).
+- `modify` `server/liveOrigin.test.ts` — fix the now-intentionally-changed prefix-forwarding assertion (Part B).
+- `modify` `STUDIO-LIVE-CANVAS-PLAN.md` §2 L6 — the implementer (not this architect entry — architects only write STATE.md/docs/agent-refs) should correct the "rendering that screen inside ScreenFrame" line to describe the real, shipped shape once built, and note Part B as an L6-discovered/L6-fixed gap in L1/L2's own files. Documentation tracks code — do this in the same change.
+
+#### STEPS
+1. `screenFrameTemplate.ts`: export `RESET`. → leaves tree building: yes (additive).
+2. `shellFiles.ts`: `INDEX_HTML`'s `%BASE_URL%` change, `VITE_CONFIG`'s `base` line. → yes.
+3. `shellFiles.ts`: `APP_JSX`'s route (Part A, above). → yes.
+4. `devServer.ts`: thread `projectKey` → `STUDIO_LIVE_BASE_PATH`. → yes.
+5. `liveOrigin.ts`: `parseLivePath`/`resolveUpstreamUrl` call-site change. → yes, but `server/liveOrigin.test.ts`'s one assertion goes red until step 6.
+6. Fix the test assertions named above (`liveOrigin.test.ts`, add `devServer.test.ts` case, add `prototypeShell.test.ts` block). → yes, green again.
+7. `resolveLiveFrameSrc.ts` + its doc comment, `IframeFrameSurface.tsx` doc comment, the one existing test's `liveFrame` literal, new `resolveLiveFrameSrc.test.ts`. → yes.
+8. Update `STUDIO-LIVE-CANVAS-PLAN.md`'s L6 line per the FILES note above. → yes (docs-only).
+9. Manual dogfood (see Risks) — not a tree-building step, but do not mark this entry `done` without it.
+
+#### CONTRACTS
+```ts
+// src/admin/pages/site/canvas/resolveLiveFrameSrc.ts
+import type { PreviewAxes } from '@core/studio-board'
+
+export interface LiveFrameSource {
+  liveOrigin: string // already project-scoped by whatever future caller builds it, e.g. `${LIVE_ORIGIN}/p/${projectKey}` — unchanged contract
+  screenKey: string
+  nodeIdsInTreeOrder: readonly string[]
+  axes: PreviewAxes // NEW — direction/colorScheme/locale, same shape the board/canvas axes system already uses everywhere else
+}
+
+export function resolveLiveFrameSrc(source: LiveFrameSource): string {
+  const url = new URL(`${source.liveOrigin}/__screen/${encodeURIComponent(source.screenKey)}`)
+  url.searchParams.set('dir', source.axes.direction)
+  url.searchParams.set('theme', source.axes.colorScheme)
+  if (source.axes.locale) url.searchParams.set('lang', source.axes.locale)
+  return url.toString()
+}
+```
+```ts
+// server/liveOrigin.ts
+function parseLivePath(pathname: string): { projectKey: string } | null // `rest` field removed
+// both call sites: resolveUpstreamUrl(upstreamUrl, url.pathname, url.search)
+```
+```ts
+// server/handlers/studio/devServer.ts — env var name, exact string, used by both the spawn call and the VITE_CONFIG template's process.env read
+const STUDIO_LIVE_BASE_PATH_ENV = 'STUDIO_LIVE_BASE_PATH' // value: `/p/${projectKey}/` — leading AND trailing slash, Vite's own `base` convention
+```
+
+#### GATES
+- `server/handlers/studio/__tests__/prototypeShell.test.ts` — new block: generated `App.jsx` string contains the `/__screen/` route match and imports `RESET`.
+- `src/admin/pages/site/canvas/__tests__/resolveLiveFrameSrc.test.ts` (new) — asserts the exact URL shape (path + `dir`/`theme`/`lang` query params, `lang` omitted when no locale).
+- `src/admin/pages/site/canvas/__tests__/iframeFrameSurfaceDocumentMode.test.tsx` — existing bridge-mode test updated for the new required `axes` field and the query-string-bearing `src`.
+- `server/liveOrigin.test.ts` — the prefix-forwarding assertion flips to expect the prefix; SSRF tests re-verified still pass with the full pathname forwarded.
+- `server/handlers/studio/__tests__/devServer.test.ts` — new `STUDIO_LIVE_BASE_PATH` env-injection test.
+- Architecture gate to update: none identified — `live-origin-isolation.test.ts` (checked) asserts `server/liveOrigin.ts` doesn't import the admin router/cookie helpers, unaffected by this change; no gate exists yet for the shell's generated-file shape beyond the existing `prototypeShell.test.ts` suite.
+
+#### RISKS
+- **Part B was found by reading the code, not by running it — nobody has actually driven a browser through `<LIVE_ORIGIN>/p/<projectKey>/__screen/<key>` against a real spawned Vite process yet.** Vite's `base`-driven HMR-websocket path computation is asserted here as "handled automatically once `base` is set," per Vite's documented behavior, not verified against this repo's pinned Vite version. **Before marking this entry done, dogfood it for real**: promote a Tier-2 project (`test4` or `test4 copy`, both confirmed to have an untouched `App.jsx`/`vite.config.js` today, so they pick up every template change automatically), start its dev server, and load `/__screen/<pageId>` both directly and through the live-origin proxy in an actual browser, confirming HMR reconnects and the console has no failed asset requests. → mitigation: this is step 9 above, not optional.
+- **`registeredMcpServerProjectKey(dir)` must be computed from `dir`, not `resolveAppRoot(dir)`** — get this backwards and a monorepo project's base path silently mismatches the live-origin's own routing key, and it will look like it works for every project that ISN'T nested (i.e., almost all current fixtures) while quietly breaking the one case it exists to handle. → mitigation: named explicitly in Part B step 1 and the FILES note; add a devServer test with a nested `appRoot` fixture if one is cheap to construct.
+- **`iframeFrameSurfaceDocumentMode.test.tsx`'s bridge-mode test is the ONLY place in the whole tree that constructs a `LiveFrameSource` literal today** — confirmed by grep before writing this entry, so the blast radius of adding a required `axes` field is genuinely one call site plus this test, not a wider search-and-fix.
+- **Do not let this work order grow into building the bridge-mode caller.** It is tempting once the route works to also flip a real board frame into `documentMode='bridge'` to "prove it end to end" — that decision (which frames, when, gated on what) belongs to a separate work order with its own design (see Explicitly out of scope); L6's own done-when criteria only require the route + proxy path to work when driven directly (curl/browser against the URL), not from inside Studio's canvas.
+
+#### DELEGATE TO: `server-engineer`
 
 ### sec-08 — security review of the live-05 wire-protocol diff (occurrenceIndex, frame:resize, liveOrigin.ts integration fix)
 - **Agent:** security-guard
