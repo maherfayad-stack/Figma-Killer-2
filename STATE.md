@@ -190,8 +190,8 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ### live-08 — wire createStudioRuntimeBridge into the generated shell's real bootstrap
 - **Agent:** server-engineer (see "Decisions" for why not `parser-surgeon`, and the one file inside it that IS `parser-surgeon`'s file if a hand-off happens)
-- **Stage:** design
-- **Updated:** 2026-09-13
+- **Stage:** done — implemented, tested, and REAL-dogfooded (real Vite dev server, real cross-origin iframe, real Playwright Chromium — see "Implementation — done" below). Draft **PR #106** open against `feat/alm-figma-killer-studio-shell`.
+- **Updated:** 2026-09-13 (implementation)
 - **Goal:** the generated `prototype/main.jsx` every scaffolded workspace ships actually boots `createStudioRuntimeBridge` when (and only when) Studio's own `devServer.ts` spawned that dev server process — closing the exact gap `perf-06`'s Phase A dogfood found: a real bridge iframe loads a real, correctly-rendered Tier-2 screen but never reaches `ready` because nothing in the generated shell ever calls the L4 bridge that has existed, tested and security-reviewed since `live-04`/`sec-06`.
 - **Done so far — the full work order (read in full before touching code):**
 
@@ -525,11 +525,183 @@ are the remaining WS-2 items, not yet dispatched. See
     Clean up every scratch process/file/DB after, `git status studio-workspace/`
     before committing, per the standing note on this exact failure mode.
 
-- **Human action needed:** dogfood the two items above once implemented —
-  neither is provable from `bun test` alone (a real cross-origin
-  `postMessage` handshake and a real `vite build` resolution both need a real
-  browser/real Vite, same limitation `live-04`'s own handoff already
-  documented for the postMessage half).
+- **Human action needed (design phase — superseded, see below):** dogfood the
+  two items above once implemented — neither is provable from `bun test`
+  alone (a real cross-origin `postMessage` handshake and a real `vite build`
+  resolution both need a real browser/real Vite, same limitation `live-04`'s
+  own handoff already documented for the postMessage half).
+
+#### Implementation — done (server-engineer, 2026-09-13)
+
+Worked in `.tmp/wt-live-08` on branch `feat/live-runtime-bootstrap`, cut from
+`origin/feat/alm-figma-killer-studio-shell`, merged `origin/feat/live-per-screen-routes`
+(#103) and `origin/feat/live-frame-activation` (#104) locally first (both
+clean merges, no conflicts), confirmed `bun install && bun run build` green
+on that merged base before writing any of this work order's own code. Pushed,
+opened **PR #106** as a draft against `feat/alm-figma-killer-studio-shell`.
+
+**Built exactly the four pieces the design specified, no deviation:**
+- **(A) `devServer.ts`.** Found `spawnEntry(appRoot, dir, overrides)` already
+  had `dir` threaded through and already injected `STUDIO_LIVE_BASE_PATH_ENV`
+  — PR #103 (`live-per-screen-routes`) had already done that half. Added the
+  two NEW env vars this work order actually needed:
+  `extraEnv[STUDIO_PROJECT_KEY_ENV] = projectKey` (reusing the SAME
+  `registeredMcpServerProjectKey(dir)` call already there) and, when
+  `resolvePublicOrigins(process.env)[0]` is defined,
+  `extraEnv[STUDIO_PARENT_ORIGIN_ENV] = parentOrigin`.
+- **(B) `vitePlugin.ts`.** Split `studioRuntimeIdPlugin()` into
+  `runtimeConfigPlugin` (no `apply` restriction) + `idStampPlugin`
+  (`apply: 'serve'`, byte-identical `transform` logic to before), returning
+  `Plugin[]`. Confirmed against `node_modules/vite/dist/node/index.d.ts`
+  directly (not from memory) that `apply` is `Plugin`-level only in this
+  installed Vite before writing this — did NOT hand off to `parser-surgeon`;
+  the design's own exact code made this mechanical.
+- **(C) `scripts/sync-studio-runtime.ts`.** Added `bundleRuntimeBridge()`
+  (`target: 'browser'`, unlike the plugin bundle's `target: 'node'` — this
+  runs IN the live frame, not the workspace's Vite/Node process).
+  `buildStudioRuntimeArtifact()` now returns an array of both artifacts;
+  `renderArtifactFile` takes a `BundleSpec` so both bundles share one
+  render/write/check path. Ran `bun run studio-runtime:sync` to produce
+  `generated/runtimeBridgeBundle.ts`.
+- **(D) `runtimeBridgeShellFile.ts`** (new) — structurally identical to
+  `studioRuntimeShellFile.ts`, deep-imports the new bundle, wired into
+  `registryFile.ts`'s `generatedShellFiles()` as a fourth entry.
+- **(E) `MAIN_JSX`** in `shellFiles.ts` — exact template from the design spec
+  (import `virtual:studio-runtime` + the bridge, construct gated on
+  `STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window`).
+
+**Tests added, all green:**
+- `devServer.test.ts` — two new cases: `STUDIO_PROJECT_KEY_ENV` equals
+  `registeredMcpServerProjectKey(dir)`; `STUDIO_PARENT_ORIGIN_ENV` present
+  when `PUBLIC_ORIGIN` is set (mutates/restores `process.env.PUBLIC_ORIGIN`
+  in a `try/finally`, since `spawnEntry` reads it directly rather than
+  through an injectable override) and absent (key not even present on the
+  env object, checked via `hasOwnProperty`) when unset.
+- `prototypeShell.test.ts` — new `describe` block: `main.jsx` contains both
+  new imports and the gate; `studioRuntimeBridge.generated.js` is written and
+  contains `createStudioRuntimeBridge`; it comes back after being wiped
+  (always-rewritten); a hand-edited `main.jsx` is left alone (static,
+  hash-protected) while the bridge bundle still refreshes underneath it.
+- New `src/core/studio-runtime/__tests__/vitePlugin.test.ts` (8 cases) — the
+  split returns exactly 2 plugins; the config plugin carries no `apply` and
+  its `resolveId`/`load` behavior (including the inert
+  `{ projectKey: 'unknown', parentOrigin: null }` degradation) is unchanged;
+  the id-stamp plugin's `transform` (including the prototype-shell/
+  node_modules exclusions) is byte-identical to before the split and its
+  `apply` is still `'serve'`.
+- Extended `src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts`
+  to iterate both artifacts.
+
+**Decisions confirmed, none deviated from the design:** all four in the
+design's own "Decisions" section held up exactly as written — `dir` (not
+`appRoot`) feeds `registeredMcpServerProjectKey`; two plugin objects (not a
+hook-level `apply`, which doesn't exist in this Vite); the boot gate is
+`parentOrigin !== null` AND `window.parent !== window`, neither alone;
+`runtimeBridgeShellFile.ts` is always-rewritten, not hash-protected.
+
+**Landmines hit, and how they were handled:**
+- **The exact `bun test server/handlers` batch-run isolation flake this
+  repo's own memory already names** (`Cannot find module '@core/capabilities'
+  from mcpConnectorSchemas.ts`) reproduced when running
+  `src/core/studio-runtime` + `devServer.test.ts` + `prototypeShell.test.ts`
+  together in one `bun test` invocation — confirmed PRE-EXISTING by
+  reproducing the identical failure on the merged base via `git stash`
+  BEFORE any of this work order's own edits. Every file passes 100% green
+  run individually or in same-directory batches (`devServer.test.ts` +
+  `prototypeShell.test.ts` together: 54/54; the three studio-runtime/
+  architecture files together: separately, both 100%). Not this PR's
+  regression — verify per-directory, not in one giant mixed-path `bun test`
+  invocation, until someone fixes the cross-file module-resolution flake
+  itself.
+- **`studio-workspace/test4 copy`'s checked-in fixture currently has an
+  in-flight, broken edit from a different parallel session** —
+  `components/SheetHeader.tsx` no longer has a named `SheetHeader` export
+  (default export only), while `pages/Sheet.tsx` still does a named import.
+  Discovered only via the real dogfood below (a `vite build` against a
+  scratch copy of it failed on this, NOT on `virtual:studio-runtime`
+  resolution). Fixed only in the ephemeral scratch copy used for the
+  dogfood, NEVER in the checked-in fixture — confirmed via `git status
+  studio-workspace/` in both this worktree and the PRIMARY checkout that
+  neither carries any trace after cleanup. Flagging so nobody wastes time
+  re-diagnosing this as a live-08 regression: it is pre-existing content
+  drift in shared user data, unrelated to this PR.
+- **This sandbox has an unrelated admin frontend dev server already bound to
+  `127.0.0.1:5173` (`--strictPort`, a parallel session's `bun run dev`).**
+  Vite's default `localhost` binding tries every resolved address and only
+  auto-increments the port if ALL fail — so the scratch project's own Vite
+  also claimed port 5173, bound only on `::1` (IPv6), coexisting silently
+  with the unrelated IPv4-only process. `curl`/Chromium resolving
+  `localhost` to IPv4 first hit the WRONG server (the admin app's own JSON
+  404 handler) — cost real debugging time before being traced to address
+  families, not a code bug. The dogfood driver script explicitly probes
+  both `127.0.0.1` and `[::1]` and picks whichever one actually serves real
+  Vite-rendered HTML (checked for `<div id="root">`, not just a 2xx/4xx
+  status) before constructing the iframe `src`. Flagging for the next agent
+  who dogfoods a spawned dev server in this same shared sandbox — an
+  unrelated process squatting the SAME port number across the OTHER address
+  family is a real, reproducible confounder here, not a one-off.
+
+**Verification:**
+- `bun run studio-runtime:sync` regenerated both artifacts;
+  `studio-runtime-bundle-fresh.test.ts` green.
+- `bun test src/core/studio-runtime` → 16 pass.
+- `bun test server/handlers/studio/__tests__/devServer.test.ts
+  server/handlers/studio/__tests__/prototypeShell.test.ts` → 54 pass.
+- `bun test src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts
+  src/__tests__/architecture/babel-not-in-admin-bundle.test.ts` → 3 pass.
+- `bun run build` clean.
+- `bun run lint` on every touched file individually: clean. Whole-repo
+  `bun run lint` shows the same 6 pre-existing `'os' is defined but never
+  used` errors this repo's own memory/prior entries already name
+  (`server/handlers/__tests__/{components,previewAxes,reloadScope,
+  styleCompileConsent,trustTier}.test.ts`,
+  `server/handlers/studio/referenceUpload.test.ts`) — none touched by this
+  change, confirmed via `git diff --name-only`.
+- **Real dogfood — both items from the design's own "Verification" section,
+  done, not simulated:** copied `studio-workspace/test4 copy` (rsync'd from
+  the PRIMARY checkout's copy, including its already-installed
+  `node_modules` — no network `npm install` needed) to an ephemeral
+  `studio-workspace/__dogfood-live08/` inside the worktree, ran
+  `ensurePrototypeShell` on it to pick up the new `main.jsx`/generated-bridge
+  templates, then a driver script:
+  1. Called `ensureDevServer(dir)` directly (the exact primitive
+     `spawnEntry`'s env injection lives in) with `process.env.PUBLIC_ORIGIN`
+     set to a real `Bun.serve` harness page's own origin — a REAL spawned
+     Vite dev server booted successfully.
+  2. Served the harness page (plain HTML + a `message` listener) from that
+     exact origin, embedding the dev server's real `/__screen/sms` route in
+     a cross-origin `<iframe>`.
+  3. Drove a real Playwright Chromium browser to the harness page and
+     polled for the bridge's outbound envelope. **Result: `{ origin:
+     'http://[::1]:5173', data: { source: 'studio-live-runtime', direction:
+     'to-parent', message: { type: 'ready' } } }` arrived at the parent** —
+     the exact `postMessage` handshake `perf-06`'s own Phase A dogfood
+     stopped short of, now firing for real. Zero console errors; the iframe
+     body showed the real, correctly `data-node-id`-stamped SMS screen DOM
+     (`components/SheetHeader.tsx:49:6`, etc.) — confirming L3's id-stamping
+     survived the plugin split too.
+  4. Ran `npx vite build` in the same scratch copy afterward — succeeded,
+     confirming `virtual:studio-runtime` still resolves at build time (the
+     regression piece (B) exists to prevent). No "could not resolve
+     virtual:studio-runtime" error anywhere in the output.
+  5. Cleaned up: `stopDevServer`, harness `Bun.serve` stopped, scratch
+     directory `rm -rf`'d, temp driver scripts deleted. `git status
+     studio-workspace/` confirmed clean in BOTH this worktree and the
+     primary checkout before committing anything.
+- **Did not attempt the stretch goal** ("type six digits in the SMS screen,
+  see it update without a remount") — that exercises L4's optimistic-edit/
+  HMR-survival machinery, which is already shipped, unit-tested, and
+  security-reviewed (`live-04`/`sec-06`); this work order's own scope is the
+  boot wiring, and the `ready` handshake above is the specific, previously-
+  unproven claim it exists to establish. Flagging as a natural next dogfood
+  for whoever picks up `live-07`'s own save→HMR loop or `perf-06` Phase B.
+
+- **Human action needed:** none blocking merge — every claim in this work
+  order is now proven with a real browser/real Vite, not just unit-tested.
+  The one open item is Track L's OWN wider exit criterion (a user dragging a
+  node on a live board with no flash) — that still needs `perf-06`'s Phase B
+  pool/budgets and `live-07`'s save→HMR loop, neither of which this PR
+  touches or blocks.
 
 ### perf-06 — L8: warm, posters, pool
 - **Agent:** canvas-engineer (Phase A — done) + perf-hunter (Phase B — not started)
