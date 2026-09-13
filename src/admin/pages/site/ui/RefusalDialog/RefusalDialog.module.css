@@ -1,0 +1,14 @@
+.explanation {
+    margin: 0;
+    font-size: var(--text-s);
+    line-height: 1.5;
+    color: var(--text);
+}
+
+/* Status text while a detach/extract's reload is being awaited — not an
+   error, so it reads as info rather than the dialog's danger tone. */
+.retrying {
+    margin: var(--space-xs) 0 0;
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+}

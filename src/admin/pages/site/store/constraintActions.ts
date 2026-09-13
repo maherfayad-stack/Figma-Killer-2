@@ -56,17 +56,21 @@ export interface ConstraintActionContext {
    */
   openSource?: (origin: SourceOrigin) => void
   /**
-   * Fired when `detach`/`extract`'s codemod settles — `true` once it actually
-   * landed, `false` on a refusal or a thrown error. Every other action kind
-   * ignores this (they either open a file synchronously, with nothing to
-   * settle, or have no handler at all).
+   * Fired once an action has run to completion — `detach`/`extract` call it
+   * `true`/`false` once their codemod actually settles; a target-carrying
+   * action (`jump-to-source`, `edit-array`, `edit-component`) calls it `true`
+   * right after opening the file, since it has nothing async to await. An
+   * action with no runnable handler at all (rendered as plain advice text,
+   * never a button) never fires this — there is no click to settle.
    *
-   * `RefusalDialog` (R2, `store-10`) is the one caller that needs this: it has
-   * to know WHEN the async codemod finishes to start (and later stop) waiting
-   * for the board reload that follows a successful detach/extract, so it can
-   * re-issue the gesture the codemod's own refusal blocked. Every existing
-   * caller (`ConstraintNotice`, `SourceConstraintNotice`, `CodeValueControl`)
-   * omits this field and is completely unaffected.
+   * `RefusalDialog` (R2, `store-10`) is the one caller that needs this: for
+   * `detach`/`extract` it has to know WHEN the async codemod finishes to
+   * start (and later stop) waiting for the board reload that follows a
+   * success, so it can re-issue the gesture the codemod's own refusal
+   * blocked; for every other action kind it just dismisses the dialog once
+   * the click has done its job. Every existing caller (`ConstraintNotice`,
+   * `SourceConstraintNotice`, `CodeValueControl`) omits this field and is
+   * completely unaffected.
    */
   onSettled?: (ok: boolean) => void
 }
@@ -89,7 +93,17 @@ export function resolveConstraintAction(
   const openSource = context.openSource
   if (action.target && openSource) {
     const target = action.target
-    return () => openSource(target)
+    // `RefusalDialog` (R2, `store-10`) is the one caller that supplies
+    // `onSettled` and needs to know when a synchronous, always-succeeds
+    // action like this one has "settled" — it dismisses the dialog on any
+    // non-detach/extract action once it fires. Every other caller
+    // (`ConstraintNotice`, `SourceConstraintNotice`, `CodeValueButtons`)
+    // omits `onSettled`, so this stays a no-op for them.
+    const onSettled = context.onSettled
+    return () => {
+      openSource(target)
+      onSettled?.(true)
+    }
   }
   if (action.kind === 'detach' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
