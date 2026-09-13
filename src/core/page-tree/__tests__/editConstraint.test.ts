@@ -23,7 +23,7 @@ import {
   explainUnexplainedSkip,
   type EditConstraint,
 } from '../editConstraint'
-import type { StructuralMovePreview } from '../sourceStructure'
+import type { StructuralMovePreview, StructuralRefusalReason } from '../sourceStructure'
 
 /** Every non-null constraint must carry a real sentence and a real (possibly empty) actions array. */
 function assertWellFormed(constraint: EditConstraint | null): asserts constraint is EditConstraint {
@@ -161,28 +161,39 @@ describe('explainStructuralConstraint', () => {
     expect(constraint.actions[0]?.target?.rel).toBe('src/screens/Home.jsx')
   })
 
-  it('row 8 — shared-component delete refusal offers a detach action', () => {
+  it('row 8 — shared-component delete refusal offers 3 real remedies: open the definition, detach, or extract', () => {
     const node = { id: 'pages/Home.jsx:77:19~components/Icon.jsx:3:6' }
     const constraint = explainStructuralConstraint({ kind: 'delete', node })
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('shared-component')
+    expect(constraint.actions).toHaveLength(3)
+    // `edit-component` resolves to the COMPONENT's file (the id's tail past
+    // `~`), not the call site's page — see `jumpToSourceAction`'s doc.
+    const editComponent = constraint.actions.find((a) => a.kind === 'edit-component')
+    expect(editComponent?.target).toEqual({ rel: 'components/Icon.jsx', line: 3, col: 6 })
     expect(constraint.actions.some((a) => a.kind === 'detach')).toBe(true)
+    expect(constraint.actions.some((a) => a.kind === 'extract')).toBe(true)
   })
 
-  it('row 9 — route-chrome refuses with no action (honestly terminal)', () => {
+  it('row 9 — route-chrome now offers a jump-to-source action, not the old empty terminal refusal', () => {
     const node = { id: 'app/layout.tsx:5:3' }
     const constraint = explainStructuralConstraint({ kind: 'delete', node })
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('route-chrome')
-    expect(constraint.actions).toEqual([])
+    expect(constraint.actions).toEqual([
+      { label: 'Open it in code', kind: 'jump-to-source', target: { rel: 'app/layout.tsx', line: 5, col: 3 } },
+    ])
   })
 
-  it('row 10 — code-placed refuses with no action', () => {
+  it('row 10 — code-placed also offers a jump-to-source action alongside its explanation', () => {
     const node = { id: 'src/screens/Home.jsx:9:1', lockReason: 'one branch of several — chosen in code' }
     const constraint = explainStructuralConstraint({ kind: 'delete', node })
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('code-placed')
     expect(constraint.explanation).toContain('one branch of several')
+    expect(constraint.actions).toEqual([
+      { label: 'Open it in code', kind: 'jump-to-source', target: { rel: 'src/screens/Home.jsx', line: 9, col: 1 } },
+    ])
   })
 
   // Rows 11-13, rewritten by W4-1: reparent, duplicate and wrap WRITE now, so
@@ -221,13 +232,19 @@ describe('explainStructuralConstraint', () => {
     expect(constraint.reason).toBe('multi-select')
   })
 
-  it('row 14 — multi-select reorder refuses with an actionable instruction', () => {
+  it('row 14 — multi-select reorder refuses with no action: the old "one at a time" button was permanently unwired dead code', () => {
     const node = { id: 'src/screens/Home.jsx:9:1' }
     const anchor = { id: 'src/screens/Home.jsx:11:1' }
     const constraint = explainStructuralConstraint({ kind: 'reorder', node, anchor, multi: true })
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('multi-select')
-    expect(constraint.actions[0]?.label).toContain('one at a time')
+    // The instruction still reaches the user — it's in `explanation`
+    // (`refuseStructuralEdit`'s own sentence, "Drag them one by one").
+    // `actions` is empty because `constraintActions.ts` never wired
+    // `select-container` to anything: a button that does nothing is worse
+    // than no button.
+    expect(constraint.explanation).toContain('one by one')
+    expect(constraint.actions).toEqual([])
   })
 
   it('row 15 — no-sibling-anchor refuses with no action', () => {
@@ -272,6 +289,61 @@ describe('explainStructuralConstraint', () => {
 })
 
 // ---------------------------------------------------------------------------
+// R1 — every StructuralRefusalReason maps to a real remedy or an explicit
+// `[]`, never an unreviewed fallback. The production table
+// (`STRUCTURAL_ACTIONS` in `editConstraint.ts`) is a `Record<StructuralRefusalReason,
+// ...>` literal with no `default` branch, so `tsc` already refuses to compile
+// if `sourceStructure.ts` grows a 12th reason without a matching entry there.
+// This block is the runtime half of that gate: `ALL_REASONS` below is typed
+// `satisfies Record<StructuralRefusalReason, true>`, so if this TEST FILE
+// itself ever drifts out of sync with the union (a reason renamed, added, or
+// removed), `tsc` fails here too — the list can't silently go stale.
+// ---------------------------------------------------------------------------
+
+describe('structuralActions — compile-time-exhaustive remedy map (R1)', () => {
+  const ALL_REASONS = {
+    'list-row': true,
+    'shared-component': true,
+    'route-chrome': true,
+    'code-placed': true,
+    'reparent': true,
+    'insert': true,
+    'duplicate': true,
+    'wrap': true,
+    'multi-select': true,
+    'cross-file': true,
+    'no-sibling-anchor': true,
+  } satisfies Record<StructuralRefusalReason, true>
+
+  it('produces a well-formed EditConstraint for every reason, with or without a node', () => {
+    for (const reason of Object.keys(ALL_REASONS) as StructuralRefusalReason[]) {
+      assertWellFormed(describeStructuralRefusal({ refusal: { reason, message: 'test message' } }))
+      assertWellFormed(
+        describeStructuralRefusal({ refusal: { reason, message: 'test message' }, node: { id: 'src/screens/Home.jsx:9:1' } }),
+      )
+    }
+  })
+
+  it('the reasons with no honest way forward all resolve to an explicit empty array, not a missing one', () => {
+    const node = { id: 'src/screens/Home.jsx:9:1' }
+    for (const reason of ['reparent', 'insert', 'duplicate', 'wrap', 'no-sibling-anchor', 'multi-select'] as const) {
+      expect(describeStructuralRefusal({ refusal: { reason, message: 'test message' }, node }).actions).toEqual([])
+    }
+  })
+
+  it('the reasons with a real remedy each produce at least one action when a node is supplied', () => {
+    const shared = { id: 'pages/Home.jsx:77:19~components/Icon.jsx:3:6' }
+    const plain = { id: 'src/screens/Home.jsx:9:1' }
+    const row = { id: 'src/screens/Home.jsx:70:21#2' }
+    expect(describeStructuralRefusal({ refusal: { reason: 'shared-component', message: 'x' }, node: shared }).actions.length).toBeGreaterThan(0)
+    expect(describeStructuralRefusal({ refusal: { reason: 'route-chrome', message: 'x' }, node: plain }).actions.length).toBeGreaterThan(0)
+    expect(describeStructuralRefusal({ refusal: { reason: 'code-placed', message: 'x' }, node: plain }).actions.length).toBeGreaterThan(0)
+    expect(describeStructuralRefusal({ refusal: { reason: 'cross-file', message: 'x' }, node: plain }).actions.length).toBeGreaterThan(0)
+    expect(describeStructuralRefusal({ refusal: { reason: 'list-row', message: 'x' }, node: row }).actions.length).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Row 18 — minted-node insert refusal
 // ---------------------------------------------------------------------------
 
@@ -305,7 +377,10 @@ describe('describeStructuralRefusal', () => {
     })
     assertWellFormed(constraint)
     expect(constraint.origin).toEqual({ rel: 'pages/Home.tsx', line: 77, col: 19 })
-    expect(constraint.actions[0]?.kind).toBe('detach')
+    // `shared-component` offers 3 actions (R1) — `edit-component` sorts
+    // first because it, like `origin`, comes from decoding the node id, but
+    // `detach` is still one of the three.
+    expect(constraint.actions.some((a) => a.kind === 'detach')).toBe(true)
   })
 
   it('accepts a refusal with no node at all — the store synthesises those', () => {

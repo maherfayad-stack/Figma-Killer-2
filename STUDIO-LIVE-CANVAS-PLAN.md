@@ -264,18 +264,46 @@ behaviour.
 
 ### R1 — Remedies on the reason (S/M) · `parser-surgeon`
 
-In `src/core/page-tree/sourceStructure.ts`, every `StructuralRefusalReason`
-maps to `RefusalRemedy[]`:
+**Shipped 2026-09-08.** `structuralActions()` in
+`src/core/page-tree/editConstraint.ts` already existed as a reason→remedy map
+before this work order (5 of 11 reasons handled, 6 falling through an
+unchecked `default: []`) — R1 was "finish it," not "build it." It is now a
+compile-time-exhaustive `Record<StructuralRefusalReason, ...>` literal (no
+`default` branch, so a 12th reason added to `sourceStructure.ts` without a
+matching entry fails `tsc`), reusing the existing `EditConstraintAction[]`
+shape — **not** a new `RefusalRemedy[]` type, which would have been a second
+shape for the same data.
+
+The real, corrected 11-row table (the version above omitted `reparent`,
+`duplicate`, and `wrap`, and disagreed with shipped code on two more —
+`multi-select`/`insert` had a `select-container` action `constraintActions.ts`
+itself documents as permanently unwired dead code; the plan said they should
+have none, which is now true):
 
 | Reason | Remedies |
 |---|---|
-| `shared-component` | **Edit the component** (select it in its own frame, or open the file) · **Detach here, then apply** · **Extract a copy** |
-| `list-row` | **Edit the template** (select the `.map` source row) |
-| `cross-file` | **Open the target file** · (move-into-file codemod: follow-up, listed, not promised) |
-| `code-placed` / `route-chrome` | **Open source** at the line |
-| `multi-select`, `no-sibling-anchor`, `insert` | none — reason text only |
+| `list-row` | **Open the array in code** — best-effort jump near the `.map()` call |
+| `shared-component` | **Open the component definition** · **Detach this instance** · **Duplicate as a new file and edit that** |
+| `route-chrome` | **Open it in code** |
+| `code-placed` | **Open it in code** |
+| `cross-file` | **Open it in code** (the node's own file) |
+| `reparent` | none — no destination was named at all; nothing to jump to |
+| `insert` | none — some of these refusals name a container the parser couldn't resolve, with no element to point at |
+| `duplicate` | none — unreachable via an ordinary element today (W4-1 already lets that write); kept for the type's exhaustiveness |
+| `wrap` | none — unreachable via an ordinary element today (W4-1 already lets that write); kept for the type's exhaustiveness |
+| `multi-select` | none — the sentence already says "one at a time"; the dead `select-container` button was removed, not replaced |
+| `no-sibling-anchor` | none |
 
-Gate: a test asserts every reason has remedies or an explicit `none`.
+Explicitly out of scope: `explainMintedInsertConstraint`'s own `insert`
+reason (a canvas-only node dropped into a source-backed container — a
+genuinely different situation from the ambiguous-root `insert` refusals
+above, reachable through a different code path with its own `select-container`
+action already wired).
+
+Gate: `structuralActions — compile-time-exhaustive remedy map (R1)` in
+`src/core/page-tree/__tests__/editConstraint.test.ts` asserts every reason
+produces a well-formed constraint and that the terminal reasons resolve to an
+explicit `[]`.
 
 ### R2 — `RefusalDialog` (M) · `store-engineer` + `panel-designer`
 

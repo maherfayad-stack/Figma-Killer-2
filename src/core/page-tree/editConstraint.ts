@@ -23,8 +23,12 @@
  * **The §2 invariant this whole module exists to enforce:** every edit
  * surface either WRITES, REFUSES with a reason and a way forward, or IS NOT
  * OFFERED. A refusal with an empty `actions` array is still honest — some
- * reasons (`route-chrome`, `code-placed`, `no-sibling-anchor`) truly have no
- * way forward yet — but it must be a deliberate empty array, not a missing one.
+ * reasons (`reparent` with no destination, `duplicate`, `wrap`,
+ * `no-sibling-anchor`, `multi-select`, `insert`) truly have no way forward
+ * beyond the sentence — but it must be a deliberate empty array, not a
+ * missing one. `route-chrome`/`code-placed` used to be in this list too;
+ * R1 gave both a jump-to-source action, since "go look at the file that
+ * decided this" is always true for them.
  *
  * W4-1 retired one of this module's own entries rather than reword it:
  * `explainInstanceDuplicateConstraint` existed because duplicate refused every
@@ -165,6 +169,7 @@ export interface EditConstraintAction {
   kind:
     | 'jump-to-source'
     | 'edit-array'
+    | 'edit-component'
     | 'detach'
     | 'extract'
     | 'select-container'
@@ -328,54 +333,90 @@ export function explainStyleConstraint(node: ConstraintPropSource, property: str
 // ---------------------------------------------------------------------------
 
 /**
- * Which `EditConstraintAction`s make sense for a given structural reason — one
- * small, honest table.
+ * Jump to wherever `node`'s own id decodes to — shared by every reason whose
+ * only honest way forward is "go look at the source", so `cross-file` /
+ * `route-chrome` / `code-placed` don't each reimplement the same three lines.
+ * For `shared-component`'s composite id this resolves to the COMPONENT's
+ * file, not the call site's page — `decodeSourceNodeId` splits on `~` and
+ * keeps the tail on purpose (see `sourceNodeId.ts`), and that tail is exactly
+ * the file `edit-component` means to open.
+ */
+function jumpToSourceAction(node?: SourceStructureNode): EditConstraintAction[] {
+  const target = node ? decodeSourceNodeId(node.id) : null
+  return target ? [{ label: 'Open it in code', kind: 'jump-to-source', target }] : []
+}
+
+/**
+ * Which `EditConstraintAction`s make sense for a given structural reason —
+ * a compile-time-exhaustive table (`Record<StructuralRefusalReason, ...>`,
+ * no `default` branch): a 12th reason added to `sourceStructure.ts` without a
+ * matching entry here fails `tsc`, rather than silently falling through to an
+ * unreviewed `default: []`.
  *
  * `node` is optional because a refusal does not always name one: the store
  * synthesises a handful of `insert` refusals about a CONTAINER it could not
  * resolve at all ("this page has several top-level elements…"), which have a
  * reason and a sentence but no element to point at.
  */
+const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructureNode) => EditConstraintAction[]> = {
+  'list-row': (node) => {
+    if (!node) return []
+    // Row 3/7 — "edit the array it maps over", made actionable: jump to the
+    // row's own source position (best-effort — `decodeSourceNodeId` cannot
+    // match a `.map`-row id at all, see `bestEffortRowLocation`), which
+    // sits inside or immediately beside the `.map()` call the taxonomy
+    // names as the real target.
+    const rowLocation = bestEffortRowLocation(node.id)
+    return rowLocation ? [{ label: 'Open the array in code', kind: 'edit-array', target: rowLocation }] : []
+  },
+  'shared-component': (node) => {
+    // Row 8 — three real ways forward, not one: look at the definition,
+    // detach this one call site, or duplicate the definition as a new file
+    // and edit that instead. `detach`/`extract` mutate editor state this
+    // pure module cannot reach (`InstanceCallSiteView`'s own codemods,
+    // wired by `constraintActions.ts`) — named here as action KINDS so the
+    // caller that DOES have store access can wire the `run` handler.
+    const editComponent = node ? decodeSourceNodeId(node.id) : null
+    return [
+      ...(editComponent ? [{ label: 'Open the component definition', kind: 'edit-component' as const, target: editComponent }] : []),
+      { label: 'Detach this instance', kind: 'detach' },
+      { label: 'Duplicate as a new file and edit that', kind: 'extract' },
+    ]
+  },
+  // Rows 9-10 — a layout/template file or a code-placed element: the one
+  // honest next step is looking at the source that decided this, not a dead
+  // `select-container` action (R8's fix — see `bestEffortRowLocation`'s
+  // sibling doc above for why the identical action wasn't wired for these
+  // two before).
+  'route-chrome': jumpToSourceAction,
+  'code-placed': jumpToSourceAction,
+  // W4-1 — a reparent refused for crossing files, or a reorder whose anchor
+  // is in another file. The one useful next step is to look at where the
+  // element actually lives, which `origin` already names.
+  'cross-file': jumpToSourceAction,
+  // `multi-select` and `insert` used to carry a `select-container` action
+  // that `constraintActions.ts` itself documents as permanently unwired
+  // dead code (three different refusals share that kind and only one of
+  // them — `explainMintedInsertConstraint`'s own, unrelated, `insert`
+  // reason — actually means "select something"). An honest empty array,
+  // not a button that does nothing.
+  'multi-select': () => [],
+  'insert': () => [],
+  // `reparent` (no destination named at all), `duplicate`, `wrap`, and
+  // `no-sibling-anchor` are the residual gesture-only refusals W4-1 left
+  // behind for ordinary elements: a gesture with no second location to
+  // write against, and nothing on disk to jump to. Empty on purpose.
+  'reparent': () => [],
+  'duplicate': () => [],
+  'wrap': () => [],
+  'no-sibling-anchor': () => [],
+}
+
 function structuralActions(
   reason: StructuralRefusalReason,
   node?: SourceStructureNode,
 ): EditConstraintAction[] {
-  switch (reason) {
-    case 'list-row': {
-      if (!node) return []
-      // Row 3/7 — "edit the array it maps over", made actionable: jump to the
-      // row's own source position (best-effort — `decodeSourceNodeId` cannot
-      // match a `.map`-row id at all, see `bestEffortRowLocation`), which
-      // sits inside or immediately beside the `.map()` call the taxonomy
-      // names as the real target.
-      const rowLocation = bestEffortRowLocation(node.id)
-      return rowLocation ? [{ label: 'Open the array in code', kind: 'edit-array', target: rowLocation }] : []
-    }
-    case 'shared-component':
-      // Row 8 — the real escape hatch lives in `InstanceCallSiteView`
-      // (Detach/Swap/Duplicate), which this pure module cannot dispatch to
-      // (it would need editor-store access). Named here as an action KIND so
-      // the caller (which DOES have store access) can wire the `run` handler.
-      return [{ label: 'Detach or edit the component definition', kind: 'detach' }]
-    case 'multi-select':
-      return [{ label: 'Do them one at a time', kind: 'select-container' }]
-    case 'insert':
-      return [{ label: 'Select the container to insert into', kind: 'select-container' }]
-    case 'cross-file':
-      // W4-1 — a reparent refused for crossing files, or a reorder whose anchor
-      // is in another file. The one useful next step is to look at where the
-      // element actually lives, which `origin` already names.
-      return node && decodeSourceNodeId(node.id)
-        ? [{ label: 'Open it in code', kind: 'jump-to-source', target: decodeSourceNodeId(node.id)! }]
-        : []
-    // `route-chrome`, `code-placed`, `no-sibling-anchor`, and the residual
-    // `reparent`/`duplicate`/`wrap` (W4-1 lifted those three for ordinary
-    // elements; what still refuses under those names is a gesture with no
-    // second location to write against) genuinely have no way forward today.
-    // An empty array here is the honest answer, not a gap.
-    default:
-      return []
-  }
+  return STRUCTURAL_ACTIONS[reason](node)
 }
 
 /**
