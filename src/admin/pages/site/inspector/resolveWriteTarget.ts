@@ -6,16 +6,18 @@
  * element's own class if it has exactly one editable class; otherwise
  * inline. This module is that rule, and nothing else.
  *
- * ## Explicitly disposable scaffolding
+ * ## Reused by P4, not replaced
  *
- * `STATE.md` (`panel-21`) is explicit: this is the minimum-viable version of
- * the rule, and P4's `SelectionModel` / `commitStyle` unification REPLACES
- * it wholesale rather than extending it. Accordingly this module has no
- * preview channel, no coalescing across a multi-property patch, and no
- * per-field override menu — a caller writing several properties in one
- * gesture (`onChangeMany`) resolves the target once, from the first key in
- * the patch, and writes the whole patch there. Do not grow this file to
- * cover those cases; P4 owns that shape.
+ * `STATE.md` (`panel-21`) predicted P4's `SelectionModel` / `commitStyle`
+ * unification would replace this module wholesale. Reading the actual rule
+ * once P4 landed, that turned out to be wrong: the rule itself is already
+ * pure and target-agnostic — what was disposable was the WIRING around it in
+ * `WriteTargetStyleComposer.tsx` (resolve-once-from-the-first-key for a
+ * multi-property patch, no preview unification, no per-field override hook).
+ * `SelectionModel.writeTargetFor` and `commitApi.ts`'s `commitStyle`/
+ * `commitStyleMany` call `resolveWriteTarget`/`resolveExistingWriteTarget`
+ * PER PROPERTY now, fixing that landmine without reinventing this rule — see
+ * `STATE.md` `panel-23`'s own "Decisions" for the full account.
  *
  * ## "Most specific" is what `stylePropertyProvenance.ts` already decided
  *
