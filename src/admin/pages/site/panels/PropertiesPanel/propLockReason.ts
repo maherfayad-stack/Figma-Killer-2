@@ -19,19 +19,23 @@
  *  3. **The generic `'set in code'` fallback** — a structured/JSX value, which
  *     carries no `Resolution` at all (see `tryResolvePropValue`'s doc comment).
  *
- * This lives in its own module rather than in `renderModuleTabContent.tsx`
- * because both that file and `InstanceCallSiteView.tsx` need it, and
- * `renderModuleTabContent` renders `InstanceCallSiteView` — importing the
- * helper back out of the renderer closed a real import cycle
- * (`no-circular-dependencies.test.ts`). A leaf with no panel imports of its own
- * keeps that graph one-directional, the same reasoning
+ * This lives in its own module (rather than inline in a single caller)
+ * because it started with two callers and keeping it a leaf with no panel
+ * imports of its own avoided a real import cycle
+ * (`no-circular-dependencies.test.ts`), the same reasoning
  * `server/handlers/studio/projectProfileSchema.ts` uses on the server side.
  *
  * `src/core/page-tree/editConstraint.ts` builds the same fact as a typed
  * `EditConstraint` (reason + explanation + actions) for surfaces that need
- * more than a string — this function stays a thin, string-returning wrapper
- * so the two off-limits callers above (`InPlaceInspector.tsx`, canvas-owned;
- * `InstanceCallSiteView.tsx`, Component-section-owned) keep working unchanged.
+ * more than a string, real remedy actions among them. R3
+ * (`STUDIO-LIVE-CANVAS-PLAN.md` Track R) moved every live UI caller —
+ * `renderModuleTabContent.tsx`, `InstanceCallSiteView.tsx`'s props list, and
+ * `InPlaceInspector.tsx` (a forced follow of `PropertyControlRenderer`'s
+ * `constraint` prop rename, not a redesign of that panel) — onto
+ * `explainPropConstraint`. This function is not deleted: `resolvedTextEditing.test.ts`
+ * still exercises it directly as a regression guard for the R2 per-prop
+ * resolution logic (`resolvedProps[propKey]`, read the same way by both
+ * functions), independent of which UI surface renders the result.
  */
 import { isPropWritableToSource } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'

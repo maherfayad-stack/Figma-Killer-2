@@ -12,6 +12,7 @@
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render, screen } from '@testing-library/react'
+import type { EditConstraint } from '@core/page-tree'
 import { SourceConstraintNotice } from '@site/panels/PropertiesPanel/SourceConstraintNotice'
 
 afterEach(cleanup)
@@ -88,5 +89,55 @@ describe('SourceConstraintNotice', () => {
     const notice = screen.getByTestId('source-constraint-notice')
     expect(notice.textContent).toMatch(/One piece of source renders every row/)
     expect(notice.textContent).toContain('src/i18n/translations.js')
+  })
+
+  // R3 (`STUDIO-LIVE-CANVAS-PLAN.md` Track R) — the structural half used to
+  // stop at the sentence. When the caller hands over a real `EditConstraint`
+  // (`refusePlacement` + `describeStructuralRefusal`), the SAME remedy
+  // buttons `LayerNodeContextMenu`'s footer renders must show up here too.
+  describe('R3 — real remedy buttons for the structural half', () => {
+    const sharedComponentConstraint: EditConstraint = {
+      reason: 'shared-component',
+      scope: 'node',
+      explanation: "markup that lives in a shared component's own file",
+      origin: { rel: 'src/components/Header.tsx', line: 8, col: 1 },
+      actions: [
+        { label: 'Open the component definition', kind: 'edit-component', target: { rel: 'src/components/Header.tsx', line: 8, col: 1 } },
+        { label: 'Detach this instance', kind: 'detach' },
+        { label: 'Duplicate as a new file and edit that', kind: 'extract' },
+      ],
+    }
+
+    it('renders every action as a real button, below the bespoke prose', () => {
+      render(
+        <SourceConstraintNotice
+          lockReason="from Header.tsx"
+          hasWritableLocation
+          constraint={sharedComponentConstraint}
+          nodeId="node-1"
+        />,
+      )
+
+      const notice = screen.getByTestId('source-constraint-notice')
+      // The hand-written prose is still there — the nuance an `EditConstraint`
+      // alone doesn't carry.
+      expect(notice.textContent).toMatch(CANNOT_MOVE)
+      expect(screen.getByRole('button', { name: /open the component definition/i })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /detach this instance/i })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /duplicate as a new file/i })).toBeTruthy()
+    })
+
+    it('renders nothing extra when the constraint has no actions', () => {
+      const noActions: EditConstraint = {
+        reason: 'code-placed',
+        scope: 'node',
+        explanation: 'The code decides where this element goes.',
+        actions: [],
+      }
+      render(
+        <SourceConstraintNotice lockReason="code-placed" hasWritableLocation constraint={noActions} />,
+      )
+      expect(screen.queryByRole('button')).toBeNull()
+    })
   })
 })

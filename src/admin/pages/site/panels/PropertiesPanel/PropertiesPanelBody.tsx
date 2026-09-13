@@ -22,7 +22,7 @@ import { useState } from 'react'
 import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import type { AnyModuleDefinition } from '@core/module-engine'
-import { hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
+import { describeStructuralRefusal, hasWritableSourceLocation, isPropWritableToSource, refusePlacement } from '@core/page-tree'
 import type { StyleRule, PageNode } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
@@ -162,6 +162,22 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
   const showConvertToComponent =
     permissions.canEditStructure && canComponentizeNode(activeDocument, selectedNode)
 
+  // R3 (`STUDIO-LIVE-CANVAS-PLAN.md` Track R) — `SourceConstraintNotice`'s
+  // structural half used to reconstruct its facts independently of the
+  // engine; this is the SAME two calls `explainPropConstraint`'s own
+  // `list-row` branch makes internally, so the notice and every per-prop
+  // control agree on which reason a given node has. `null` when the node
+  // isn't structurally locked at all (`refusePlacement` needs a `lockReason`
+  // to ever return non-null here — see that function's own doc comment).
+  const structuralConstraint = selectedNode.lockReason === undefined
+    ? null
+    : (() => {
+        const refusal = refusePlacement(
+          { id: selectedNode.id, lockReason: selectedNode.lockReason },
+          'Moved or deleted',
+        )
+        return refusal ? describeStructuralRefusal({ refusal, node: selectedNode }) : null
+      })()
 
   return (
     <div className={styles.nodeArea}>
@@ -183,6 +199,8 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
         textOrigin={selectedNode.textOrigin}
         sharedWith={sharedTextOriginCount}
         hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
+        constraint={structuralConstraint}
+        nodeId={selectedNodeId ?? undefined}
       />
       {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
           its structure), but the fact that OTHER branches exist and weren't
