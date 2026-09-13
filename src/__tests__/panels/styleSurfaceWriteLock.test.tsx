@@ -48,26 +48,39 @@ function makeClass(id: string): StyleRule {
   } as StyleRule
 }
 
-/** A board page (`<pageId>:body` root) with one source-derived node. */
-function loadStudioPage() {
+/**
+ * A board page (`<pageId>:body` root) with one source-derived node, carrying
+ * `cls` in its `classIds` so `useSelectionModel()` resolves the SAME
+ * `assignedClassRules` this file used to pass to `StyleSurface` as a prop
+ * directly (P4 — `StyleSurface` reads the selection out of the store now,
+ * not props; see `selectionModel.ts`).
+ */
+function loadStudioPage(cls: StyleRule) {
   const rootId = 'page-studio:body'
   const page = makePage({
     id: 'page-studio',
     rootNodeId: rootId,
     nodes: {
       [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [STUDIO_NODE_ID] }),
-      [STUDIO_NODE_ID]: makeNode({ id: STUDIO_NODE_ID, moduleId: 'base.text', children: [] }),
+      [STUDIO_NODE_ID]: makeNode({
+        id: STUDIO_NODE_ID,
+        moduleId: 'base.text',
+        children: [],
+        classIds: [cls.id],
+      }),
     },
   })
   useEditorStore.setState({
-    site: makeSite({ pages: [page] }),
+    site: makeSite({ pages: [page], styleRules: { [cls.id]: cls } }),
     activePageId: 'page-studio',
+    selectedNodeId: STUDIO_NODE_ID,
+    activeBreakpointId: 'desktop',
     inlineStyleEditing: false,
   } as Parameters<typeof useEditorStore.setState>[0])
 }
 
 /** The same shape, but a CMS page — a nanoid root, no source locations. */
-function loadCmsPage() {
+function loadCmsPage(cls: StyleRule) {
   const rootId = 'root-1'
   const nodeId = 'text-1'
   const page = makePage({
@@ -75,19 +88,21 @@ function loadCmsPage() {
     rootNodeId: rootId,
     nodes: {
       [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
-      [nodeId]: makeNode({ id: nodeId, moduleId: 'base.text', children: [] }),
+      [nodeId]: makeNode({ id: nodeId, moduleId: 'base.text', children: [], classIds: [cls.id] }),
     },
   })
   useEditorStore.setState({
-    site: makeSite({ pages: [page] }),
+    site: makeSite({ pages: [page], styleRules: { [cls.id]: cls } }),
     activePageId: 'page-1',
+    selectedNodeId: nodeId,
+    activeBreakpointId: 'desktop',
     inlineStyleEditing: false,
   } as Parameters<typeof useEditorStore.setState>[0])
   return nodeId
 }
 
-function renderSurface(cls: StyleRule, nodeId: string) {
-  return render(<StyleSurface assignedClassRules={[cls]} activeBreakpointId="desktop" nodeId={nodeId} />)
+function renderSurface() {
+  return render(<StyleSurface />)
 }
 
 beforeEach(() => {
@@ -97,11 +112,11 @@ beforeEach(() => {
 
 describe('StyleSurface — pre-flight class write lock', () => {
   it('announces a compiled class before the user types, struck through in the write-target chip row', () => {
-    loadStudioPage()
     const cls = makeClass('sc-abc1234567')
     setStudioStyleRuleSources({ [cls.id]: { file: 'dist/style.css', selector: '.card' } }, {})
+    loadStudioPage(cls)
 
-    renderSurface(cls, STUDIO_NODE_ID)
+    renderSurface()
 
     const chip = screen.getByTestId(`write-target-chip-${cls.id}`)
     expect(chip.getAttribute('data-locked')).toBe('true')
@@ -114,24 +129,24 @@ describe('StyleSurface — pre-flight class write lock', () => {
   })
 
   it('locks an imported class Studio could not map to any file', () => {
-    loadStudioPage()
-    renderSurface(makeClass('sc-tailwind001'), STUDIO_NODE_ID)
+    loadStudioPage(makeClass('sc-tailwind001'))
+    renderSurface()
     expect(screen.getByTestId('write-target-chip-sc-tailwind001').getAttribute('data-locked')).toBe('true')
   })
 
   it('does not lock a class whose source is a hand-authored .css file', () => {
-    loadStudioPage()
     const cls = makeClass('sc-abc1234567')
     setStudioStyleRuleSources({ [cls.id]: { file: 'src/pages/Home.css', selector: '.card' } }, {})
+    loadStudioPage(cls)
 
-    renderSurface(cls, STUDIO_NODE_ID)
+    renderSurface()
 
     expect(screen.getByTestId(`write-target-chip-${cls.id}`).getAttribute('data-locked')).toBe('false')
   })
 
   it('locks nothing outside a Studio session, where "unmapped" costs the user nothing', () => {
-    const nodeId = loadCmsPage()
-    renderSurface(makeClass('sc-tailwind001'), nodeId)
+    loadCmsPage(makeClass('sc-tailwind001'))
+    renderSurface()
     expect(screen.getByTestId('write-target-chip-sc-tailwind001').getAttribute('data-locked')).toBe('false')
   })
 })

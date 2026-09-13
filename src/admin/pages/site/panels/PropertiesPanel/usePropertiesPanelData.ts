@@ -11,10 +11,24 @@
  * that into a dedicated hook drops the panel's own complexity to single
  * digits and gives every future "add another derived prop / store field"
  * change a single place to land.
+ *
+ * P4 (`STATE.md` `panel-23`) removed this hook's `const site = useEditorStore
+ * ((s) => s.site)` line — the site document's ROOT object, replaced wholesale
+ * by Mutative on every mutation anywhere in the project, which forced this
+ * hook (and everything reading its bundle) to re-render on every keystroke
+ * typed ANYWHERE, not just on the selected node. `activeVc`/`activePage` and
+ * the style-rule lookups below now read `s.site?.visualComponents`/
+ * `s.site?.pages`/`s.site?.styleRules` as their OWN narrow selectors, never
+ * `s.site` itself — Mutative's structural sharing keeps each of those
+ * references stable across a mutation that doesn't touch that branch. The
+ * style/class/provenance slice this hook used to own for the single-node
+ * composer (`assignedClassRules`, write-target resolution, provenance) moved
+ * to `@site/inspector/selectionModel.ts`'s `useSelectionModel()` — this hook
+ * keeps only module/prop resolution and panel-chrome state.
  */
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { useEditorStore, selectSelectedNode } from '@site/store/store'
+import { useEditorStore, selectActiveCanvasPage, selectSelectedNode } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { resolveProps } from '@core/page-tree'
 import { NO_CLASS_TOKEN_USAGE, buildClassTokenUsageMap, resolveSelectorUsage } from '../selectorUsage'
@@ -54,15 +68,6 @@ interface PropertiesPanelData {
   // ─── Class context ─────────────────────────────────────────────────────
   activeClass: StyleRule | null
   activeClassId: string | null
-  /**
-   * EVERY class assigned to the selected node (not just `activeClass`),
-   * resolved in `classIds` order. Track F1 — per-property provenance needs
-   * to know about every source that could shadow another, not just the one
-   * class currently "open" for editing (`usePropertiesPanelData.ts:165-168`'s
-   * `activeClass` derivation only ever consulted one). Empty when there's no
-   * selected node or it has no classes.
-   */
-  assignedClassRules: StyleRule[]
   selectedSelectorClass: StyleRule | null
   selectedSelectorClassId: string | null
   selectedSelectorClassIds: string[]
@@ -103,8 +108,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   const deleteClass = useEditorStore((s) => s.deleteClass)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   const renameNode = useEditorStore((s) => s.renameNode)
-  const site = useEditorStore((s) => s.site)
-  const activePageId = useEditorStore((s) => s.activePageId)
   const activeClassId = useEditorStore((s) => s.activeClassId)
   const selectedSelectorClassId = useEditorStore((s) => s.selectedSelectorClassId)
   const selectedSelectorClassIds = useEditorStore(useShallow((s) => s.selectedSelectorClassIds))
@@ -114,6 +117,23 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   const focusedPanel = useEditorStore((s) => s.focusedPanel)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const activeDocument = useEditorStore((s) => s.activeDocument)
+  // Narrow, per-branch selectors — never `s.site` itself (`no-full-site-scan-
+  // in-selectors.test.ts`'s `WHOLE_SITE_SELECTOR_RE` gate would only catch
+  // this under `inspector/`, but the fix is the same rule everywhere: read
+  // the branch each fact actually lives on, so Mutative's structural sharing
+  // keeps the reference stable across an unrelated mutation).
+  const styleRules = useEditorStore((s) => s.site?.styleRules)
+  const activeVc = useEditorStore((s) =>
+    activeDocument?.kind === 'visualComponent'
+      ? (s.site?.visualComponents?.find((v) => v.id === activeDocument.vcId) ?? null)
+      : null,
+  )
+  // `selectActiveCanvasPage`, not a raw `s.site?.pages.find(...)` — the raw
+  // pattern only searches the page tree and silently returns null for a
+  // node that lives inside a VC's own tree (`canvas-aware-selectors.test.ts`
+  // Gate 2). Memoised via WeakMap in `store.ts`, so its reference is stable
+  // across renders that don't touch the active VC/page.
+  const activePage = useEditorStore(selectActiveCanvasPage)
   // The site-slice class-usage index (see `nodeIndex.ts`). Its Map identity
   // changes only when a class assignment actually changes, so subscribing to
   // it re-renders the usage badge when it must and never on a prop keystroke.
@@ -131,11 +151,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   // single-selector one, reachable for the identical selection by clicking
   // the row instead of its checkbox.
   const isSelectorMultiSelect = selectedSelectorClassIds.length > 1
-
-  // Resolve active VC for ComponentParamsOverview (null when not in VC canvas mode).
-  const activeVc = activeDocument?.kind === 'visualComponent'
-    ? site?.visualComponents?.find((v) => v.id === activeDocument.vcId) ?? null
-    : null
 
   const definition: AnyModuleDefinition | null = selectedNode
     ? registry.get(selectedNode.moduleId) ?? null
@@ -164,7 +179,7 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     selectedSelectorClassId ??
     (selectedSelectorClassIds.length === 1 ? selectedSelectorClassIds[0] : null)
   const selectedSelectorClass = soleSelectorClassId
-    ? site?.styleRules[soleSelectorClassId] ?? null
+    ? styleRules?.[soleSelectorClassId] ?? null
     : null
   // Ambient rules report "Unused" only when provably dead; class rules report
   // an exact reference count. `null` means "no badge" (unassessable ambient).
@@ -179,23 +194,14 @@ export function usePropertiesPanelData(): PropertiesPanelData {
         selectedSelectorClass,
         classUsageById,
         selectedSelectorClass.kind === 'ambient'
-          ? buildClassTokenUsageMap(site?.styleRules ?? {}, classUsageById)
+          ? buildClassTokenUsageMap(styleRules ?? {}, classUsageById)
           : NO_CLASS_TOKEN_USAGE,
       ).label
     : null
   const activeClass =
     !selectedSelectorClass && activeClassId && selectedNode
-      ? site?.styleRules[activeClassId] ?? null
+      ? styleRules?.[activeClassId] ?? null
       : null
-  // Track F1 — every class the node actually carries, in assignment order,
-  // for per-property provenance (StyleSurface builds the class chain from
-  // this). `site.styleRules` is already subscribed above; no new store read.
-  const assignedClassRules: StyleRule[] = selectedNode
-    ? selectedNode.classIds
-        .map((id) => site?.styleRules[id])
-        .filter((rule): rule is StyleRule => rule != null)
-    : []
-  const activePage = site?.pages.find((page) => page.id === activePageId) ?? null
 
   // ─── Prop change handler ────────────────────────────────────────────────
   //
@@ -249,7 +255,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
 
     activeClass,
     activeClassId,
-    assignedClassRules,
     selectedSelectorClass,
     selectedSelectorClassId: soleSelectorClassId,
     selectedSelectorClassIds,

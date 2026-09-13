@@ -58,8 +58,6 @@ interface PropertiesPanelBodyProps {
   definition: AnyModuleDefinition | null | undefined
   activeDocument: ActiveDocument | null
   activeVc: VisualComponent | null
-  /** Track F1 — every class assigned to the node, for per-property provenance. */
-  assignedClassRules: StyleRule[]
   moduleTabContent: React.ReactNode
   classPickerRef: React.RefObject<ClassPickerHandle | null>
   onFocusClassPicker: () => void
@@ -81,7 +79,6 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     definition,
     activeDocument,
     activeVc,
-    assignedClassRules,
     moduleTabContent,
     classPickerRef,
     onFocusClassPicker,
@@ -227,28 +224,17 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
         </div>
       )}
 
-      {/* Unified StyleSurface: Module section + CSS sections (scroll-anchor) */}
+      {/* Unified StyleSurface: Module section + CSS sections (scroll-anchor).
+          P4 — `StyleSurface` now reads `useSelectionModel()` itself for
+          every style/class/lock fact (inline writability already folds in
+          the `.map`-row / structural-lock / module-ownership gate that used
+          to be threaded here as `sourceLockReason`/`nodeModuleId`/
+          `codeProps` props — see `selectionModel.ts`'s own doc). Only the
+          module/panel-chrome concerns SelectionModel deliberately doesn't
+          own are still passed down. */}
       {activeNodeView === 'styles' ? (
         <StyleSurface
           definition={definition}
-          assignedClassRules={assignedClassRules}
-          activeBreakpointId={activeBreakpointId}
-          nodeId={selectedNodeId}
-          inlineStyles={selectedNode.inlineStyles}
-          // Only the case where NO inline-style edit can ever land: a `.map` row,
-          // whose single piece of source JSX renders every row, so a `style={{}}`
-          // write there would restyle all of them. A structurally locked element
-          // with a real source location of its own (a ternary branch, a spread
-          // bearer) takes ordinary inline styles — `setJsxStyle` merges into the
-          // literal object at that line. Per-property `codeProps` refusals (a
-          // single `style:<prop>` resolved from an expression) are handled
-          // inside `InlineStyleComposer` itself, per property — see its own
-          // doc comment; they do NOT gate this whole-node prop.
-          sourceLockReason={
-            hasWritableSourceLocation(selectedNode.id) ? undefined : selectedNode.lockReason
-          }
-          nodeModuleId={selectedNode.moduleId}
-          codeProps={selectedNode.codeProps}
           moduleContent={moduleTabContent}
           onFocusClassPicker={onFocusClassPicker}
         />
