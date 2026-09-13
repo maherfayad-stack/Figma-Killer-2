@@ -34,17 +34,195 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
-**Track L orchestration is PAUSED pending human PR review (2026-09-10).**
-`live-05` (L5, `FrameDocumentAdapter`) is implementation-complete and verified
-in `.tmp/wt-live-05` (see its own entry) but deliberately has NOT opened a PR
-— its own setup instructions require rebasing onto a real merged `origin/main`
-first. That means PRs #91/#92/#93/#94 (L1-L4) landing is the actual blocker on
-the rest of Track L, not more agent work. The user has chosen to review/merge
-those four themselves before any further Track L dispatch. **Do not dispatch
-more Track L work orders (L6+) until L1-L4 are confirmed merged to `main`** —
-if you are an agent reading this before that happened, stop and flag it
-rather than proceeding. Track P (P3+) and Track R (R2/R3) are NOT blocked by
-this pause and may continue independently — see their own entries below.
+**Track L orchestration is UNPAUSED (2026-09-13) — `feat/alm-figma-killer-studio-shell` is the active integration point, by explicit user instruction.** The pause below (originally 2026-09-10) asked for L1-L4 to be "confirmed merged to `main`" before dispatching L6+. That literal condition never happened — instead the user directed all nine Track L/P/R branches (L1-L5, R1, R3, P0-P2, P4) to be merged into `feat/alm-figma-killer-studio-shell` (see `meta-09`), then explicitly said to continue the plan. **`feat/alm-figma-killer-studio-shell` is therefore the real integration branch every subsequent Track L/P/R work order should target and verify against — not bare `origin/main`.** Any work order below that says "wait for `main`" or "PRs #91-94 must merge to `main` first" is reading the ORIGINAL, now-superseded condition; treat `feat/alm-figma-killer-studio-shell`'s current state (verified in `meta-09`) as the real base instead. PRs #90-99 themselves are untouched and their fate (close/keep open) is a separate, not-yet-made human call.
+
+### perf-06 — L8: warm, posters, pool
+- **Agent:** canvas-engineer (Phase A, unassigned) + perf-hunter (Phase B)
+- **Stage:** design
+- **Updated:** 2026-09-13
+- **Goal:** `STUDIO-LIVE-CANVAS-PLAN.md` §L8. A Tier 2 board frame that isn't ready yet shows something better than a blank box (its own last poster, or its Tier 0 static render) and swaps to the real live iframe the instant it boots; only viewport-visible live frames plus a small LRU stay real, expensive cross-origin iframes — the rest degrade back to posters. Four budgets land in `bun run bench`. **Done when:** the bench reports the two now-buildable budgets (below) with real numbers, the other two are explicitly recorded as blocked with their real blocker named, and a human can open a Tier-2 board, pan 20 frames off-screen and back, and see posters swap to live content without the tab's memory climbing unbounded.
+
+**⚠️ Read this whole entry before starting. L8 is NOT "add a pool on top of an existing live-frame mechanism" — there is no live-frame mechanism to pool yet.** Confirmed by reading the code, not assuming from the plan prose:
+
+- `IframeFrameSurface.tsx`'s `documentMode='bridge'` fork (L5) exists and is real, tested code — but **zero production call site ever passes `documentMode='bridge'` or a `liveFrame` prop.** `BreakpointFrame.tsx` (the only caller of `IframeFrameSurface` for board/CMS frames) doesn't even declare those props — it always renders portal mode. Grepped the whole tree; the only non-test file mentioning `documentMode: 'bridge'` is `resolveLiveFrameSrc.ts`'s own doc comment describing itself.
+- `resolveLiveFrameSrc.ts` (L5) builds `<liveOrigin>/__screen/<key>` — but L6 (`/__screen/<key>` route) has not landed (no `server/handlers/studio` file serves it, no STATE.md entry past `live-05`/`sec-08`), so that URL 404s even if something did construct it.
+- **No client code ever learns the live origin's actual URL.** `server/config.ts`'s `resolveLiveOrigin` is server-only. `devServerRequests.ts`'s `DevServerStatusSchema` explicitly does NOT carry a URL ("Sending a bare `localhost:<port>` to the browser would invite the same same-origin misuse...") — that's the *dev server's* internal URL, a separate concern from L2's already-public live-origin base, but nothing exposes the latter to the browser either today.
+- **No client code polls dev-server status.** `getDevServerStatus` (`devServerRequests.ts`) is defined and never called. `useDevServerPrewarm.ts` only fires `startDevServer` once, fire-and-forget, and never checks whether it reached `ready`.
+- **No project in this tree is at Tier 2.** Checked `studio-workspace/*/​.studio/meta.json` — every one is `trust: 'static'` or unset. `test4 copy` (the Track L exit-criterion project, has real `node_modules`) has never been promoted.
+
+None of that is this work order's fault — it's exactly what "L6/L7 haven't shipped" means concretely. But it means **L8 as literally scoped in the plan (a pooling policy over an existing mechanism) cannot be built today**, and treating the plan's "(S)" size as accurate would under-deliver badly. This entry splits the real work into two phases so a human can decide how much of Phase A to fund before Phase B (the actual pool + budgets) can do anything beyond design.
+
+#### Phase A (missing prerequisite — not owned by any existing work order; recommend canvas-engineer + a thin server-engineer slice)
+
+The wiring that decides, per board frame, whether to render `documentMode='portal'` (today's only real path) or `documentMode='bridge'`, and what to show before the bridge iframe is ready.
+
+**FILES**
+```
+create  src/admin/pages/site/studio/useLiveOrigin.ts
+  — fetches the live-origin base once per project load. Cheapest shape: add
+    `liveOrigin: string | null` to the existing `/admin/api/studio/load`
+    response (server-engineer, one field, same response `studioProjectTrust.ts`
+    already reads `trust` off of) rather than a new round trip. `null` when
+    trust !== 'run-project' (no live origin to expose). Exposed as an external
+    store, same pattern as `studioProjectTrust.ts` (`getLiveOrigin`/
+    `subscribeLiveOrigin`/`setLiveOrigin`) — not a Zustand slice, for the same
+    "ephemeral per-load client state" reason that file gives.
+
+create  src/admin/pages/site/studio/useDevServerReadiness.ts
+  — polls `getDevServerStatus(dir)` (already exists, never called) every
+    ~1s while trust === 'run-project' and phase !== 'ready'/'failed', stops
+    polling once settled. Exposes `{ phase, log }` via `useSyncExternalStore`
+    (matches `useDevServerPrewarm.ts`'s existing `useSyncExternalStore`
+    pattern for `trustTier`). This is the ONLY new poll loop this repo needs —
+    do not build a second one per frame; one poll feeds every frame on the
+    board, since dev-server readiness is project-wide, not per-page.
+
+modify  server/handlers/studio/load.ts (or wherever the `/admin/api/studio/load`
+  response is assembled — confirm exact file at implementation time)
+  — add `liveOrigin: resolveLiveOrigin(...) | null` to the response body,
+    `null` below Tier 2. Reuses `server/config.ts`'s existing
+    `resolveLiveOrigin`/`resolveLivePort`; no new config surface.
+
+modify  src/admin/pages/site/canvas/BreakpointFrame.tsx
+  — add `documentMode?: 'portal' | 'bridge'` and `liveFrame?: LiveFrameSource`
+    props (same shape `IframeFrameSurface` already declares), forwarded
+    straight through. `BreakpointFrame` itself stays dumb about WHY — the
+    decision lives one level up, in `BoardFrameView`/`BoardFramesLayer`.
+
+modify  src/admin/pages/site/canvas/BoardFramesLayer/BoardFrameView.tsx
+  — new prop `isLiveMounted: boolean` (see Phase B's pool below — this is
+    the hot-set membership flag, separate from `isOnScreen`). Render fork:
+      - `!isLiveMounted` → today's `FramePosterPlaceholder` path, unchanged.
+      - `isLiveMounted && trust !== 'run-project'` → today's `BreakpointFrame`
+        (portal), unchanged — Tier 0/1 boards are BYTE-FOR-BYTE untouched by
+        this whole work order. This is the one line that matters for
+        "don't build a new mechanism for something already solved."
+      - `isLiveMounted && trust === 'run-project'` → the new
+        `<LiveBoardFrame>` (below), which owns the ready-swap.
+
+create  src/admin/pages/site/canvas/BoardFramesLayer/LiveBoardFrame.tsx
+  — mounts BOTH subtrees stacked (poster/portal-fallback on top via CSS
+    visibility, bridge iframe underneath, loading concurrently) so the
+    bridge iframe's cold boot isn't paid AFTER the fallback is shown — it was
+    always booting in the background. Owns one `useState<boolean>` flipped by
+    `adapter.on('ready', ...)` (already-built `FrameDocumentAdapter` method,
+    confirmed working in both `PortalFrameAdapter` and `BridgeFrameAdapter`
+    today) — no new "ready" concept needed, L5 already built the exact
+    signal L8 needs. Renders:
+      - not ready + poster cached (`getFramePoster(page, width)`) → poster
+        stacked over the (hidden) bridge iframe.
+      - not ready + no poster cached → `<BreakpointFrame documentMode="portal">`
+        (the Tier 0 fallback — literally the SAME component Tier 0/1 boards
+        render, sourced from the SAME `Page` tree the store already holds,
+        since the static parse is trust-tier-independent) stacked over the
+        (hidden) bridge iframe.
+      - ready → bridge iframe visible, fallback/poster subtree unmounted.
+```
+
+**Known, accepted gap — no poster mechanism exists for live content itself.** `useFramePosterCapture.ts`'s own doc already states this: a bridge-registered iframe resolves `resolvePortalDocument(iframe)` to `null` (cross-origin, `html-to-image` cannot read into it) and capture is skipped — this was `live-05`'s own deliberate deferral, not new to this entry. Consequence for the "swap" story: **once a live frame reaches `ready`, no further poster is ever captured for it.** If it's later evicted from the LRU (Phase B), the best available fallback is whatever poster was last captured from its Tier-0-fallback subtree *before* it went live — which gets more stale the longer the frame has been running. Recommend: keep calling `useFramePosterCapture` against the Tier-0-fallback subtree while it's the visible one (it's a real same-origin portal at that moment, so capture works normally) so there's always SOMETHING better than a blank box, and accept the staleness — do not spend this work order's budget inventing a cross-origin screenshot pipeline (would need either a screenshot library bundled into `runtime.ts` and posted back as a blob, or a server-side CDP capture; both are genuinely new, much bigger features). Document this as a known limitation, not a silent one.
+
+#### Phase B (perf-hunter's actual "L8" — the pool + budgets, buildable once Phase A exists)
+
+**Pooling policy.** Key = `BoardFrame.id` (not `page.id` — "duplicate as variant" frames share a `page.id` but are independent live iframes; confirmed via `BoardFrameView.tsx`'s own `CanvasFrameContext` comment on why frame-scoped ids exist at all). Only applies when `trust === 'run-project'` — Tier 0/1 boards keep today's "every on-screen frame mounts, unconditionally" behavior, unchanged, forever (portal frames are same-process/same-origin and cheap; there is nothing to pool).
+
+```
+create  src/admin/pages/site/canvas/BoardFramesLayer/liveFramePool.ts
+
+  export const LIVE_FRAME_POOL_SIZE = 8   // the plan's own default
+
+  /**
+   * Pure, no React — same posture as frameVirtualization.ts. `visibleIds` is
+   * this render pass's on-screen (Tier-2) frame ids (from the EXISTING
+   * isFrameOnScreen/FRAME_VIEWPORT_MARGIN test — no new geometry). `previousHot`
+   * is last render's hot-set, most-recently-visible first. Returns the new
+   * hot-set in the same order: every visible id first (order among them
+   * doesn't matter — they're all "now"), then as many previously-hot,
+   * now-invisible ids as fit under `poolSize`, most-recent first; the rest
+   * are dropped (evicted — their BoardFrameView flips isLiveMounted=false
+   * next render, tearing down the bridge iframe same as an offscreen Tier
+   * 0/1 frame does today).
+   */
+  export function computeHotFrameIds(
+    visibleIds: readonly string[],
+    previousHot: readonly string[],
+    poolSize: number,
+  ): string[]
+```
+
+Called once per `BoardFramesLayer.tsx` render (the same `.map()` that already computes `isOnScreen` per frame today, `BoardFramesLayer.tsx:230-239`) — a board-level resource shared across frames, not a per-frame local decision. Store the previous hot-set in a `useRef<string[]>` there (mirrors `frameVirtualization.ts`'s own "pure function, caller owns the state" split). `BoardFrameView` receives the new `isLiveMounted` prop alongside today's `isOnScreen` (kept — `isOnScreen` still gates `CanvasEmptyPageHint`/interactive chrome exactly as today; `isLiveMounted` is the pool's separate concern).
+
+**Budgets — buildability, read honestly, not optimistically:**
+
+| Budget | Buildable now? | Why |
+|---|---|---|
+| `applyOverlay` visible ≤ 16ms | **Partially, today.** `BridgeFrameAdapter.test.ts` already stubs the postMessage channel — a micro-bench timing `applyOverlay()` call → stub-received round trip proves the JS glue is fast, with zero dependency on L6/Phase A. That is NOT the same claim as "a real paint lands in 16ms in a real cross-origin frame" — the visual-paint version needs a real live board (blocked on Phase A). Ship the glue-latency micro-check now as a `bun test` perf assertion (not `bun run bench` — no browser needed), fold the real e2e version into `studioBoard.bench.ts` once Phase A exists. |
+| Warm reopen → first live paint ≤ 1.5s | **Blocked on Phase A + a bootable Tier-2 bench fixture.** The existing bench fixture (`generateSyntheticProject` in `studioBoard.bench.ts`) writes bare `.tsx` files with no `package.json`/`node_modules` — it cannot boot a real Vite dev server at all. Recommend reusing `studio-workspace/test4 copy` (already real, already has `node_modules`, already the Track L dogfood target) rather than trying to make the 20k-node synthetic fixture npm-installable — COPY it (not the checked-in original — it has in-flight uncommitted edits from other sessions right now) into an ephemeral `studio-workspace/__bench-live-synth/` per panel-23's own `__bench-synth` precedent, with `.studio/meta.json`'s `trust` set to `run-project` before the bench opens it. Copying `node_modules` (not symlinking — confirm symlink resolution works with Vite's own module resolution before trusting it under time pressure) avoids a network `npm install` per bench run. |
+| Save → HMR reflected in frame ≤ 400ms | **Blocked on L7, explicitly — do not build this by assuming L7 exists.** L7's own plan section is real, unbuilt scope (the "reload only when a write landed" rule, optimistic DOM ops running first). The WIRE signal L7 will eventually drive (`hmr:before`/`hmr:after` on `FrameDocumentAdapter`) is already built and tested (L4/L5) — but nothing today connects a Studio writeback commit to a real Vite HMR update reaching a live frame, because nothing today HAS a live frame in the first place. |
+| Memory per live frame — baseline + regression gate | **Buildable but not trustworthy from this sandbox alone.** Confirmed installed: Chromium + `playwright-core`. Approach: `page.context().newCDPSession(page)` → `Performance.getMetrics` → `JSHeapUsedSize`, measured with `poolSize` live frames hot vs. `poolSize - 1`, delta = approx per-frame cost (page-level heap, not truly per-iframe-isolated — an approximation, say so in the doc). Blocked on the same Tier-2 fixture as the warm-reopen budget. Separately: `panel-23`'s own Phase B numbers (2/2 runs, absolute timings varying up to 2x run-to-run on this shared, software-rendered, frequently-12x-relaunched sandbox) are the strongest evidence yet that an absolute baseline captured here is not safe to gate on directly — recommend the `docs/audits/` baseline note explicitly record the sandbox conditions it was measured under and flag that a dedicated quiet machine should re-baseline before the regression gate is trusted in CI. |
+
+**FILES (Phase B, additive to Phase A's)**
+```
+create  src/admin/pages/site/canvas/BoardFramesLayer/liveFramePool.ts — computeHotFrameIds, LIVE_FRAME_POOL_SIZE
+modify  src/admin/pages/site/canvas/BoardFramesLayer/BoardFramesLayer.tsx — call computeHotFrameIds per render, thread isLiveMounted
+modify  src/admin/pages/site/canvas/BoardFramesLayer/BoardFrameView.tsx — isLiveMounted prop + render fork (also touched by Phase A)
+modify  src/admin/pages/site/canvas/BoardFramesLayer/useFramePosterCapture.ts — also fires against a mounted Tier-0-fallback subtree (see "known gap" above); no change to its bridge-skip branch
+modify  scripts/bench/studioBoard.bench.ts — new rows: applyOverlay-visible (glue-latency version, buildable now), warm-reopen (blocked), memory-per-frame (blocked); keep the four existing WS-5.6 rows untouched
+create  scripts/bench/lib/liveFrameFixture.ts — copies studio-workspace/test4 copy into __bench-live-synth, sets trust, cleans up in finally (mirrors panel-23's __bench-synth containment fix — MUST generate under studio-workspace/ or resolveProjectDir 404s exactly as panel-23 found)
+create  docs/audits/2026-09-13-live-frame-memory-baseline.md — the recorded baseline, with sandbox conditions caveat
+modify  STUDIO-LIVE-CANVAS-PLAN.md §L8 — record that L8 required an unassigned prerequisite (Phase A above) the original plan didn't name; keep the budget table, add the buildability notes
+```
+
+**STEPS**
+  1. Phase A: `useLiveOrigin`/`useDevServerReadiness` + server `liveOrigin` field → leaves tree building? yes (additive, no existing call site touched)
+  2. Phase A: `BreakpointFrame` prop passthrough (no behavior change for existing callers — all omit the new props) → yes
+  3. Phase A: `LiveBoardFrame` + `BoardFrameView` render fork, gated on `trust==='run-project'` so Tier 0/1 boards take zero new code paths → yes
+  4. Phase A dogfood gate (human): promote `test4 copy` to Tier 2 for real, confirm a frame boots, shows the Tier-0 fallback, then swaps to the live iframe on `ready` — before Phase B starts, so Phase B isn't built against an imagined mechanism
+  5. Phase B: `liveFramePool.ts` (pure, unit-tested like `frameVirtualization.ts`) → yes
+  6. Phase B: wire into `BoardFramesLayer`/`BoardFrameView` → yes
+  7. Phase B: `applyOverlay` glue-latency micro-check (buildable now, do this regardless of Phase A timing) → yes
+  8. Phase B: `liveFrameFixture.ts` + warm-reopen/memory bench rows, once Phase A is dogfooded → yes
+  9. Phase B: `docs/audits/` baseline note + plan doc update → yes
+
+**CONTRACTS**
+```ts
+// src/admin/pages/site/canvas/BoardFramesLayer/liveFramePool.ts
+export const LIVE_FRAME_POOL_SIZE = 8
+export function computeHotFrameIds(
+  visibleIds: readonly string[],
+  previousHot: readonly string[],
+  poolSize: number,
+): string[]
+
+// src/admin/pages/site/studio/useLiveOrigin.ts
+export function getLiveOrigin(): string | null
+export function subscribeLiveOrigin(listener: () => void): () => void
+export function setLiveOrigin(next: string | null): void   // called by loadSite, same pattern as setStudioTrustTier
+
+// src/admin/pages/site/studio/useDevServerReadiness.ts
+export function useDevServerReadiness(dir: string | null): { phase: DevServerStatus['phase']; log: string }
+```
+
+**GATES**
+- `src/__tests__/canvas/liveFramePool.test.ts` (new) — pure-function table tests on `computeHotFrameIds`: visible ids always win; LRU order preserved; eviction at exactly `poolSize`; empty/shrinking board.
+- `src/admin/pages/site/canvas/__tests__/iframeFrameSurfaceDocumentMode.test.tsx` (exists, L5) — extend, don't replace, to cover `LiveBoardFrame`'s ready-swap once it exists.
+- `bun test src/admin/pages/site` full sweep, per `panel-23`'s own precedent of not trusting a narrow-scoped run.
+- Architecture gate: none new required — this doesn't cross a barrel/import boundary. If `useLiveOrigin`/`useDevServerReadiness` end up importing `@core/studio-runtime` directly instead of through its barrel, that's already gated by `no-core-barrel-deep-imports.test.ts`.
+- `bun run bench` — the two buildable-now rows must show real PASS/FAIL numbers, not "skipped"; the two blocked rows must be present in the file as explicitly-skipped/TODO-linked-to-L7/Phase-A, not silently absent (a future reader must be able to tell "not built" from "built and green").
+
+**RISKS**
+- **The standing Track-L pause note (this file, immediately above) blocks L6+ dispatch until L1-L4 are confirmed merged to `main`.** They are merged to `feat/alm-figma-killer-studio-shell` (this branch), not `main` (`meta-09`). Get explicit human sign-off that this branch is the right integration point before implementing — do not silently treat the feature-branch merge as satisfying the pause.
+- **Phase A is not "(S)" sized and is not perf-hunter's usual territory** (it's canvas rendering-mode wiring + a small server field) — if a human wants perf-hunter to own the whole thing anyway rather than splitting agents, that's a legitimate call, but it changes the size estimate materially; flagging so it isn't silently absorbed into "L8, small."
+- **Live-frame posters cannot be captured once a frame is ready** (cross-origin, `html-to-image` can't read in) — eviction of an already-ready frame shows a stale pre-ready snapshot, not a fresh one. Documented above as accepted, not silently degraded.
+- **Bench numbers from this shared sandbox are not calibration-grade** (`panel-23`'s own 2x run-to-run variance, 12 Chromium relaunches in one session, parallel-session CPU contention) — the memory baseline this entry asks for must say so in `docs/audits/`, or a future session will wrongly gate CI on a noise-floor number.
+- **`bun run bench`'s own process does not reliably exit** (`panel-23`'s Phase B landmine, unresolved) — anyone running the new rows should check the report file directly rather than assume a "stuck" terminal means a hang.
+
+**DECISIONS**
+- Pool key is `BoardFrame.id`, not `page.id` — because "duplicate as variant" frames share a `page.id` but must have independent live iframes and independent hot/cold state.
+- Tier 0/1 boards get zero new code paths — the `trust !== 'run-project'` branch in `BoardFrameView` is byte-identical to today's rendering, forever. No new mechanism replaces `frameVirtualization.ts`'s existing unconditional-mount-when-onscreen behavior for portal frames.
+- The Tier-0 fallback during a not-ready bridge boot is the SAME `BreakpointFrame` component Tier 0/1 boards already render (`documentMode="portal"`, no new component) — reuse, not a second renderer.
+- Live-frame poster capture is explicitly NOT extended to cross-origin content this pass — recorded as a known gap, not solved with a new screenshot pipeline.
+
+**DELEGATE TO:** canvas-engineer (Phase A) — flag the pause-note discrepancy to the user before starting; perf-hunter (Phase B, and Phase A's `useDevServerReadiness`/bench-fixture halves are also reasonable perf-hunter scope if a human prefers one owner).
 
 ### panel-23 — P4: SelectionModel, section manifest, one commit API
 - **Agent:** store-engineer (Phase A DONE) + panel-designer (Phase B DONE — see its own subsection below; PR #99 open, draft)
