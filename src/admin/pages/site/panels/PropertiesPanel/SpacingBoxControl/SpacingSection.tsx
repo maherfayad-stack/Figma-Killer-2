@@ -66,7 +66,7 @@ export function SpacingSection({
   const values = MARGIN_SIDES.map((prop) => readString(storedStyles, String(prop)))
   const anySet = values.some((v) => hasStyleValue(v))
   // Law 4: linked purely from the data — every side equal, OR nothing set at
-  // all (see `PaddingCluster`'s identical derivation and `AppearanceSection`'s
+  // all (see `PaddingCluster`'s identical derivation and `RadiusCluster`'s
   // `radiusLinked`, which this mirrors).
   const linked = !anySet || values.every((v) => v === values[0])
 

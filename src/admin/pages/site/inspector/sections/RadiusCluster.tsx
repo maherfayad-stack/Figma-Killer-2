@@ -1,25 +1,18 @@
 /**
- * AppearanceSection — the corner-radius remainder
- * (docs/features/inspector-disclosure.md §4 G5, F10-F12).
+ * RadiusCluster — the corner-radius row of Penpot's Measures section
+ * (`STATE.md` `panel-25`, P3 item 3 — `02-measurements.md`'s own Y-origins:
+ * `rotation/radius row y=252 (Δ4)`, the SAME tight group as W/H and X/Y, not
+ * bundled with opacity/blend the way the old `AppearanceSection.tsx` grouped
+ * them). Docs/features/inspector-disclosure.md §4 G5, F10-F12.
  *
- * Figma's Appearance block used to be one row at rest — opacity beside
- * corner radius, an expand icon for the four corners — plus two icons in
- * its own header: an eye that hides the element without deleting it, and a
- * droplet that opens the blend-mode menu.
- *
- * `STATE.md` `panel-25` (P3 item 1, Layer) moved opacity, `mixBlendMode`,
- * and the CSS `visibility` toggle out to the new `LayerSection` — Penpot's
- * own measured Y-origins (`02-measurements.md`) put radius in the SAME
- * section as W/H/X/Y/rotation (Measures, P3 item 3), NOT bundled with
- * opacity/blend the way this file used to group them. This file is the
- * DELIBERATE, temporary remainder: only the radius `ExpandableFieldCluster`
- * survives here until Measures' own PR claims it and deletes this file
- * outright (Layer's own "Deletes" note — sequence Layer and Measures
- * back-to-back, never leave two components racing to write the same
- * property in between).
- *
- * `AppearanceSectionActions` (the header's eye + droplet) is gone — both
- * moved to `LayerSection` verbatim.
+ * Formerly `AppearanceSection.tsx`. `STATE.md` `panel-25` (P3 item 1, Layer)
+ * already moved opacity/`mixBlendMode`/the CSS `visibility` toggle out to
+ * `LayerSection`, leaving this file as radius-only — Layer's own PR left it
+ * in place as a deliberate temporary remainder specifically so Measures (this
+ * PR) could claim it and delete the old file outright, per Layer's own
+ * "Deletes" note (never leave two components racing to write the same
+ * property in between). `MeasuresSection.tsx` renders this beside
+ * `RotationRow` on one paired row.
  *
  * This section deliberately does NOT do corner-smoothing (⚙). Figma's F11
  * shows one; it is a vector feature with no CSS equivalent, and inventing a
@@ -31,11 +24,11 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import { ExpandableFieldCluster } from '@ui/components/ExpandableFieldCluster'
 import { CornerRadiusIcon } from '@ui/components/InspectorIcons'
 import { parseNudgeableValue } from '@site/property-controls/numericNudge'
-import { resolveStyleFieldDisplay } from './styleFieldDisplay'
+import { resolveStyleFieldDisplay } from '../../panels/PropertiesPanel/styleFieldDisplay'
 import { isMixed, MIXED, type Mixed } from '@ui/components/MixedValue'
-import { pickMixedString, plainString } from './styleValueUtils'
+import { pickMixedString, plainString } from '../../panels/PropertiesPanel/styleValueUtils'
 import { ScrubInput } from '@ui/components/ScrubInput'
-import styles from './AppearanceSection.module.css'
+import styles from './RadiusCluster.module.css'
 
 // ---------------------------------------------------------------------------
 // Corner radius — shared key + read helpers
@@ -69,10 +62,10 @@ function cornerLabel(corner: Corner): string {
 }
 
 // ---------------------------------------------------------------------------
-// AppearanceSection — the body: the radius cluster
+// RadiusCluster — the body: the radius cluster
 // ---------------------------------------------------------------------------
 
-interface AppearanceSectionProps {
+interface RadiusClusterProps {
   storedStyles: Record<string, unknown>
   currentStyles: Record<string, unknown>
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
@@ -80,13 +73,13 @@ interface AppearanceSectionProps {
   onClearPreview?: () => void
 }
 
-export function AppearanceSection({
+export function RadiusCluster({
   storedStyles,
   currentStyles,
   onChange,
   onPreview,
   onClearPreview,
-}: AppearanceSectionProps) {
+}: RadiusClusterProps) {
   const radiusState = readCorners(storedStyles)
   const radiusFallback = readCorners(currentStyles)
   // Law 4: linked purely from the data — every corner equal (or nothing set,
@@ -149,7 +142,7 @@ export function AppearanceSection({
       unit={parseNudgeableValue(collapsedPlaceholder)?.unit ?? 'px'}
       min={0}
       aria-label="Corner radius, all corners"
-      data-testid="appearance-radius-all"
+      data-testid="measures-radius-all"
       onChange={(next) => writeAllCorners(next || undefined)}
       onPreview={previewProperty ? (next) => writeAllCornerPreviews(next) : undefined}
       onClearPreview={onClearPreview}
@@ -170,7 +163,7 @@ export function AppearanceSection({
         unit={parseNudgeableValue(placeholder)?.unit ?? 'px'}
         min={0}
         aria-label={`Border radius, ${cornerLabel(corner)}`}
-        data-testid={`appearance-radius-${corner}`}
+        data-testid={`measures-radius-${corner}`}
         onChange={(next) => onChange(radiusKey(corner), next || undefined)}
         onPreview={
           previewProperty ? (next) => previewProperty(radiusKey(corner), next || undefined) : undefined

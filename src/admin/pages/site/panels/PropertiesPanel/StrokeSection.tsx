@@ -109,7 +109,7 @@ interface SideFieldState {
 /** Read every side's value for one field; report whether all four agree. */
 function readSideField(bag: Record<string, unknown>, field: SideField): SideFieldState {
   // `pickMixedString` keeps W8-3's MIXED sentinel intact — see
-  // `AppearanceSection.readCorners`, which this mirrors exactly.
+  // `RadiusCluster's readCorners`, which this mirrors exactly.
   const perSide = {} as Record<Side, string | Mixed>
   for (const side of SIDES) perSide[side] = pickMixedString(bag[sideKey(side, field)])
   const values = SIDES.map((s) => perSide[s])
@@ -196,7 +196,7 @@ export function StrokeSection({
   const anyStrokeSet = widthState.anySet || styleState.anySet || colorState.anySet
 
   // Law 4: linked purely from the data — every side equal (or nothing set,
-  // trivially uniform). Mirrors `AppearanceSection`'s radius cluster exactly.
+  // trivially uniform). Mirrors `RadiusCluster`'s radius cluster exactly.
   const widthLinked = widthState.uniform || !widthState.anySet
 
   // Explicit "show me all four" request from the sides menu — see the file

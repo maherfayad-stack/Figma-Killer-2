@@ -1,9 +1,10 @@
 /**
  * styleSectionOrder — which style section comes first, for THIS selection.
  *
- * `CLASS_STYLE_SECTIONS` is one fixed, Figma-shaped order (Position → Size →
- * Auto layout → Spacing → Appearance → Fill → Stroke → Effects → Typography →
- * Animations → Interaction) and stays that way: it is the panel's registry,
+ * `CLASS_STYLE_SECTIONS` is one fixed order (Layout → Spacing → Fill →
+ * Stroke → Effects → Typography → Animations → Interaction — see that file's
+ * own doc for what migrated out to the P3 `INSPECTOR_SECTIONS` manifest,
+ * `STATE.md` `panel-25`) and stays that way: it is the panel's registry,
  * read by the category rail and the scroll order alike, and a registry that
  * reshuffles itself is a registry nobody can reason about.
  *

@@ -30,7 +30,7 @@
 
 /* Every clickable line. The Button primitive brings its own padding, min
  * size, and radius; the doubled class out-specifies them without
- * `!important`, the same way `PositionSection.module.css` overrides the
+ * `!important`, the same way `PositionControls.module.css` overrides the
  * clear button. */
 .bar.bar {
     display: flex;

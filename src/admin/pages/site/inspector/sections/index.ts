@@ -13,11 +13,11 @@
  * CSS categories (Spacing/Layout/Position/Size/Typography/Appearance/Fill/
  * Interaction/Effects/Animations/Border) out into independently-manifested
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
- * node), one section per PR, Penpot-ordered. `layer` (item 1) and `align`
- * (item 2) are the first two migrated, each built on a separate branch and
- * merged together here; `styles` is what remains of the old registry until
- * the next section peels off — its `order` is bumped down each time so
- * `order` always reflects the CURRENT Penpot sequence.
+ * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
+ * 2), and `measures` (item 3 — W/H/X/Y/rotation/radius/Hug-Fill/Constraints-
+ * vs-Flex-element) are the first three migrated; `styles` is what remains of
+ * the old registry until the next section peels off — its `order` is bumped
+ * down each time so `order` always reflects the CURRENT Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'

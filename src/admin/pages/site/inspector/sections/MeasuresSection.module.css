@@ -1,0 +1,60 @@
+/*
+ * MeasuresSection — Penpot's Measures section (`STATE.md` `panel-25`, P3
+ * item 3). `02-measurements.md`'s own Y-origins: W/H row `y=180` (Δ16 from
+ * Layer/Align above it — a section-boundary gap), X/Y row `y=216` (Δ4 —
+ * tightly paired), rotation/radius row `y=252` (Δ4 — tightly paired). The
+ * whole block is unlabeled — there is no "MEASURES" header text in the real
+ * panel, matching Layer's own template.
+ */
+
+.measures {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-gap-tight);
+    padding-inline: var(--inspector-pad-x);
+    padding-block: var(--inspector-space-2xs);
+}
+
+/* The FLEX ELEMENT face's own body padding — `Section` already draws the
+ * header row's own inline padding; the body needs the same tight rhythm the
+ * unlabeled face uses so switching faces doesn't change row spacing. */
+.flexElementBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-gap-tight);
+    padding-inline: var(--inspector-pad-x);
+    padding-block: var(--inspector-space-2xs);
+}
+
+/* Position switcher + directions/constraints, paired with the small z-index
+ * settings trigger on the SAME row — z-index stays resident regardless of
+ * which face (Constraints vs. Flex element) is showing; see this file's own
+ * component doc for why it is not gated behind the flex/grid check. */
+.positionSettingsRow {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--inspector-field-gap);
+}
+
+.positionBlock {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-gap-tight);
+}
+
+/* Rotation paired with the radius cluster on one row — the measured
+ * `rotation/radius row` (`02-measurements.md`), replacing the old
+ * `PositionSection.tsx` rotation+z-index pairing. */
+.rotationRadiusRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.rotationCellWrap,
+.radiusCellWrap {
+    flex: 1 1 0;
+    min-width: 0;
+}
