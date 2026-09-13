@@ -170,6 +170,62 @@ describe('ensurePrototypeShell — scaffolding', () => {
   })
 })
 
+/**
+ * L3 — the workspace-side id-stamping plugin. `vite.config.js` is a STATIC
+ * file (frozen the moment a user edits it); the plugin's actual logic lives
+ * in the ALWAYS-rewritten `studioRuntime.generated.js` so a fix reaches an
+ * already-scaffolded project regardless of `vite.config.js`'s freeze state.
+ */
+describe('ensurePrototypeShell — the studio-runtime id-stamping plugin', () => {
+  it('writes a vite.config.js that imports the plugin, and the always-rewritten bundle it imports', () => {
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('vite.config.js')).toContain(
+      "import { studioRuntimeIdPlugin } from './prototype/studioRuntime.generated.js'",
+    )
+    expect(read('vite.config.js')).toContain('studioRuntimeIdPlugin()')
+    expect(read('prototype/studioRuntime.generated.js')).toContain('studioRuntimeIdPlugin')
+  })
+
+  it('re-running on an untouched scaffold picks up a newer plugin template', () => {
+    ensurePrototypeShell(tmpDir)
+    // Simulate "an older Studio scaffolded this workspace before the plugin
+    // wiring existed": vite.config.js on disk (and its recorded hash) predate
+    // today's template, exactly like the "DOES replace a static file nobody
+    // has touched" case above.
+    const stale = "import { defineConfig } from 'vite'\nexport default defineConfig({})\n"
+    fs.writeFileSync(path.join(tmpDir, 'vite.config.js'), stale)
+    const manifestPath = path.join(tmpDir, '.studio', 'shell.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+      version: number
+      files: Record<string, string>
+    }
+    manifest.files['vite.config.js'] = createHash('sha256').update(stale, 'utf8').digest('hex')
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const result = ensurePrototypeShell(tmpDir)
+
+    expect(result.viteConfigEditedByUser).toBe(false)
+    expect(result.regenerated).toContain('vite.config.js')
+    expect(read('vite.config.js')).toContain('studioRuntimeIdPlugin')
+  })
+
+  it('leaves a hand-edited vite.config.js alone and reports it', () => {
+    ensurePrototypeShell(tmpDir)
+    const mine = "import { defineConfig } from 'vite'\nexport default defineConfig({ server: { port: 4321 } })\n"
+    fs.writeFileSync(path.join(tmpDir, 'vite.config.js'), mine)
+
+    const result = ensurePrototypeShell(tmpDir)
+
+    expect(result.viteConfigEditedByUser).toBe(true)
+    expect(read('vite.config.js')).toBe(mine)
+    // The generated bundle is still refreshed — only the STATIC config file
+    // (the import + the plugin call) is frozen; the plugin's own logic keeps
+    // reaching the workspace either way.
+    expect(read('prototype/studioRuntime.generated.js')).toContain('studioRuntimeIdPlugin')
+  })
+})
+
 describe('ensurePrototypeShell — package.json', () => {
   it('adds what the shell needs to run', () => {
     ensurePrototypeShell(tmpDir)
@@ -302,7 +358,11 @@ describe('ensurePrototypeShell — the generated providers', () => {
 
 describe('ensurePrototypeShell — refusals', () => {
   it('does nothing for a directory that does not exist, and does not throw', () => {
-    expect(ensurePrototypeShell(path.join(tmpDir, 'nope'))).toEqual({ created: [], regenerated: [] })
+    expect(ensurePrototypeShell(path.join(tmpDir, 'nope'))).toEqual({
+      created: [],
+      regenerated: [],
+      viteConfigEditedByUser: false,
+    })
   })
 
   it('still scaffolds a project with no pages at all', () => {

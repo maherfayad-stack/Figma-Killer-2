@@ -61,11 +61,19 @@ const INDEX_HTML = `<!doctype html>
 
 const VITE_CONFIG = `import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { studioRuntimeIdPlugin } from './prototype/studioRuntime.generated.js'
 
 // The workspace root IS the app root: pages/, components/ and i18n/ sit
 // beside this file, exactly as Studio reads them.
+//
+// studioRuntimeIdPlugin() stamps every host JSX element with the same
+// data-node-id the Studio parser mints for it, so a live frame's DOM can be
+// matched back to the exact source position an edit should land on. It lives
+// in prototype/studioRuntime.generated.js, not inline here, because that file
+// is rewritten on every project open — this file is written once and then
+// left alone the moment you edit it (see Studio's prototype-shell docs).
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), studioRuntimeIdPlugin()],
   server: { open: true },
 })
 `
@@ -590,6 +598,9 @@ function FramePreview({ frame, dir, lang, theme }) {
 }
 `
 
+/** Where `VITE_CONFIG` lands — exported so `index.ts` can name it specifically when reporting `viteConfigEditedByUser`, without a second string literal to keep in sync. */
+export const VITE_CONFIG_REL_PATH = 'vite.config.js'
+
 /**
  * Every file the shell writes once. Ordered so a reader meets the entry point
  * before the parts it pulls in.
@@ -597,7 +608,7 @@ function FramePreview({ frame, dir, lang, theme }) {
 export function staticShellFiles(): ShellFile[] {
   return [
     { relPath: 'index.html', contents: INDEX_HTML },
-    { relPath: 'vite.config.js', contents: VITE_CONFIG },
+    { relPath: VITE_CONFIG_REL_PATH, contents: VITE_CONFIG },
     { relPath: `${PROTOTYPE_SHELL_DIR}/main.jsx`, contents: MAIN_JSX },
     { relPath: `${PROTOTYPE_SHELL_DIR}/App.jsx`, contents: APP_JSX },
     screenFrameFile(),

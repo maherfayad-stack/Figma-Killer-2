@@ -20,14 +20,18 @@ export { PageNodeSchema, parsePageNode } from './pageNode'
 export {
   INLINE_ID_SEPARATOR,
   LOOP_ID_SEPARATOR,
+  buildSourceNodeId,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  toRuntimeStampId,
 } from './sourceNodeId'
 export type { SourceNodeLocation } from './sourceNodeId'
+export { classifyJsxTagKind } from './jsxTagKind'
+export type { JsxTagKind } from './jsxTagKind'
 export {
   isPropWritableToSource,
   isPropPatchWritableToSource,

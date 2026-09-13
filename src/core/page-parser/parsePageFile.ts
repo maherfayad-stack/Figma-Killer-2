@@ -35,6 +35,7 @@ import {
   type ReturnedJsx,
 } from './branchSelection'
 import { studioSlotValue } from '@core/utils/studioSlotSentinel'
+import { buildSourceNodeId, classifyJsxTagKind } from '@core/page-tree'
 import {
   extractInlineStyles,
   extractProps,
@@ -364,7 +365,7 @@ function processElement(
   const loc: NodeLoc = { file: ctx.relFile, line, col: column }
   // `loc` stays the real source location even for an expanded loop iteration —
   // that IS where this element is written. Only the id is made unique.
-  const id = `${ctx.relFile}:${line}:${column}${ctx.idSuffix ?? ''}`
+  const id = buildSourceNodeId(ctx.relFile, line, column, ctx.idSuffix)
 
   const attributes = Node.isJsxElement(element)
     ? element.getOpeningElement().getAttributes()
@@ -375,7 +376,7 @@ function processElement(
   // wrapper element is introduced; see `cssInJsAttach.ts`.
   const styled = ctx.cssInJs ? resolveStyledAttachment(tagName, attributes, ctx.cssInJs) : undefined
   const name = styled?.name ?? tagName
-  const kind: ParsedNode['kind'] = styled?.kind ?? (/^[A-Z]/.test(name) ? 'component' : 'element')
+  const kind: ParsedNode['kind'] = styled?.kind ?? classifyJsxTagKind(name)
 
   const hasSpread = attributes.some((a) => Node.isJsxSpreadAttribute(a))
   const locked = inheritedLocked || hasSpread
