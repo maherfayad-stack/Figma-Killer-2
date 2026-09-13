@@ -13,6 +13,8 @@ export {
   FlowRowReverseIcon,
   FlowColumnIcon,
   FlowColumnReverseIcon,
+  WrapIcon,
+  WrapReverseIcon,
   DisplayBlockIcon,
   DisplayFlexIcon,
   DisplayGridIcon,

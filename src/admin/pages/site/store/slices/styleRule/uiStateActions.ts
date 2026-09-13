@@ -93,11 +93,15 @@ export function createUiStateActions({ set, get }: SiteSliceHelpers): UiStateAct
       })
     },
 
+    // Inline mirror of setPreviewClassStyles/clearPreviewClassStyles above —
+    // same raw-`set`-no-history shape, keyed by node id(s) instead of a
+    // classId (Rule 7, panel-22).
     setPreviewNodeStyles(preview) {
       const current = get().previewNodeStyles
       if (
         current &&
-        current.nodeId === preview.nodeId &&
+        current.nodeIds.length === preview.nodeIds.length &&
+        current.nodeIds.every((id, i) => id === preview.nodeIds[i]) &&
         shallowEqualStyles(current.styles, preview.styles)
       ) {
         return
@@ -110,7 +114,7 @@ export function createUiStateActions({ set, get }: SiteSliceHelpers): UiStateAct
     clearPreviewNodeStyles(nodeId) {
       const current = get().previewNodeStyles
       if (!current) return
-      if (nodeId !== undefined && current.nodeId !== nodeId) return
+      if (nodeId !== undefined && !current.nodeIds.includes(nodeId)) return
       set((s) => {
         s.previewNodeStyles = null
       })

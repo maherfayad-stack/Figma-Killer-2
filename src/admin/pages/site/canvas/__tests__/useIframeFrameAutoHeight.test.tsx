@@ -17,7 +17,7 @@ import { cleanup, renderHook } from '@testing-library/react'
 import type { RefObject } from 'react'
 import { useIframeFrameAutoHeight } from '../useIframeFrameAutoHeight'
 import { FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS } from '../frameFitMutationScheduler'
-import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from '../canvasScrollUnroll'
+import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from '@core/studio-runtime'
 
 afterEach(() => {
   cleanup()

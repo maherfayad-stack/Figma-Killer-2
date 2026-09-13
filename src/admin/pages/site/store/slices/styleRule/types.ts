@@ -64,16 +64,16 @@ interface ClassStylesPreview {
 }
 
 /**
- * Transient style patch previewed directly on a NODE's own `style=""` layer
- * — the Track P / P2 rule-7 mirror of `ClassStylesPreview` for the
- * Element (inline) write target, which had no preview channel at all before
- * this (`InlineStyleComposer`/`MultiInlineStyleComposer` wired `onPreview`
- * to a no-op). The canvas's `NodeStylePreviewInjector` reads this and emits
- * a higher-specificity `[data-node-id]` rule so a scrub/drag is visible
- * without committing to history, exactly like the class preview overlay.
+ * Transient style preview applied on top of one or more nodes' inline styles
+ * while a user hovers a suggestion in a property control on the Element
+ * (inline) target — the inline mirror of {@link ClassStylesPreview}. Inline
+ * styles have no breakpoint/condition axis (a real `style=""` attribute can't
+ * be media-queried — see `InlineStyleComposer`'s doc), so there is no
+ * `breakpointId` to carry. `nodeIds` covers both the single-node
+ * `InlineStyleComposer` and the N-node `MultiInlineStyleComposer`.
  */
 export interface NodeStylesPreview {
-  nodeId: string
+  nodeIds: string[]
   styles: Partial<CSSPropertyBag>
 }
 
@@ -132,7 +132,13 @@ export interface StyleRuleSlice {
   setPreviewClassStyles(preview: ClassStylesPreview): void
   clearPreviewClassStyles(classId?: string): void
 
-  /** Transient style patch previewed directly on a node's inline layer — see `NodeStylesPreview`'s doc. */
+  /**
+   * Transient style patch previewed on the canvas while hovering a
+   * suggestion in the Element (inline) target — the inline mirror of
+   * `previewClassStyles`. Consumed at the canvas render boundary
+   * (`NodeRenderer`), merged over the node's stored `inlineStyles` for the
+   * previewed node id(s) only. Pushes no history.
+   */
   previewNodeStyles: NodeStylesPreview | null
   setPreviewNodeStyles(preview: NodeStylesPreview): void
   clearPreviewNodeStyles(nodeId?: string): void
