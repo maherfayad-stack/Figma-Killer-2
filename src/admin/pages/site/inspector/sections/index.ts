@@ -9,15 +9,19 @@
  * section re-skin), so growing this array is P3's entire job, never touching
  * the shell's mount logic again.
  *
- * Deliberately ONE entry for now: fanning `StyleSectionsEditor`'s 11 internal
+ * P3 (`STATE.md` `panel-25`) is fanning `StyleSectionsEditor`'s 11 internal
  * CSS categories (Spacing/Layout/Position/Size/Typography/Appearance/Fill/
  * Interaction/Effects/Animations/Border) out into independently-manifested
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
- * node) is P3's job, not this one's.
+ * node), one section per PR, Penpot-ordered. `layer` is the first migrated
+ * (item 1 of P3's 11); `styles` is what remains of the old registry until
+ * the next section peels off — its `order` is bumped down each time so
+ * `order` always reflects the CURRENT Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
 import { StyleSectionsComposer } from './StyleSectionsComposer'
+import { LayerSection } from './LayerSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -27,5 +31,9 @@ export interface InspectorSectionDefinition {
 }
 
 export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
-  { id: 'styles', order: 0, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Layer (P3 item 1, `STATE.md` `panel-25`) — Penpot's first, unlabeled
+  // content row: opacity/blend/hide/lock. Order 0 — it renders above the
+  // rest of the (not yet migrated) curated bag.
+  { id: 'layer', order: 0, appliesTo: (m) => m.selectedNode != null, Component: LayerSection },
+  { id: 'styles', order: 1, appliesTo: () => true, Component: StyleSectionsComposer },
 ]

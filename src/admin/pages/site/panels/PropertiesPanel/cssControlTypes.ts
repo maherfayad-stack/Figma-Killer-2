@@ -11,7 +11,10 @@
 import type { CSSPropertyBag } from '@core/page-tree'
 // The curated-property set below is derived from the section registry,
 // which now lives in its own module — see that file's header for why.
-import { CLASS_STYLE_SECTIONS } from './classStyleSections'
+// `MIGRATED_SECTION_PROPERTIES` — properties claimed by a P3 manifest
+// section that no longer has an entry in `CLASS_STYLE_SECTIONS` at all
+// (`STATE.md` `panel-25`) — see that constant's own doc.
+import { CLASS_STYLE_SECTIONS, MIGRATED_SECTION_PROPERTIES } from './classStyleSections'
 import { hasStyleValue } from './styleValueUtils'
 
 // ---------------------------------------------------------------------------
@@ -441,9 +444,10 @@ export function cssPropertyLabel(prop: string): string {
  * Advanced shorthands and per-side longhands the visual controls own, so they
  * never double-appear in Custom.
  */
-const CLAIMED_PROPERTIES: ReadonlySet<string> = new Set(
-  CLASS_STYLE_SECTIONS.flatMap((section) => section.properties.map((p) => String(p))),
-)
+const CLAIMED_PROPERTIES: ReadonlySet<string> = new Set([
+  ...CLASS_STYLE_SECTIONS.flatMap((section) => section.properties.map((p) => String(p))),
+  ...MIGRATED_SECTION_PROPERTIES.map(String),
+])
 
 /**
  * Whether a property is claimed by a curated section (and therefore must NOT
@@ -478,5 +482,8 @@ export function getCustomProperties(storedStyles: Record<string, unknown>): stri
 // ---------------------------------------------------------------------------
 
 export const ALL_CURATED_CSS_PROPERTIES: ReadonlyArray<string> = Object.freeze([
-  ...new Set(CLASS_STYLE_SECTIONS.flatMap((section) => section.properties.map((p) => String(p)))),
+  ...new Set([
+    ...CLASS_STYLE_SECTIONS.flatMap((section) => section.properties.map((p) => String(p))),
+    ...MIGRATED_SECTION_PROPERTIES.map(String),
+  ]),
 ])
