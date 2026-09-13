@@ -18,7 +18,7 @@
  * component should paper over with an invented affordance.
  */
 import { ExternalLinkSolidIcon } from 'pixel-art-icons/icons/external-link-solid'
-import type { EditConstraint } from '@core/page-tree'
+import type { EditConstraint, EditConstraintAction } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
 import { resolveConstraintAction } from '@site/store/constraintActions'
@@ -31,15 +31,26 @@ interface ConstraintActionButtonsProps {
    * actions, which act on one call site — see `resolveConstraintAction`.
    */
   nodeId?: string
+  /**
+   * Fired when a `detach`/`extract` button's async codemod settles — see
+   * `ConstraintActionContext.onSettled`. `RefusalDialog` (R2, `store-10`) is
+   * the only caller that supplies this today; every existing caller omits it
+   * and renders exactly as before.
+   */
+  onActionSettled?: (action: EditConstraintAction, ok: boolean) => void
 }
 
-export function ConstraintActionButtons({ constraint, nodeId }: ConstraintActionButtonsProps) {
+export function ConstraintActionButtons({ constraint, nodeId, onActionSettled }: ConstraintActionButtonsProps) {
   if (constraint.actions.length === 0) return null
 
   return (
     <>
       {constraint.actions.map((action) => {
-        const run = resolveConstraintAction(action, { nodeId, openSource: jumpToSource })
+        const run = resolveConstraintAction(action, {
+          nodeId,
+          openSource: jumpToSource,
+          ...(onActionSettled ? { onSettled: (ok: boolean) => onActionSettled(action, ok) } : {}),
+        })
         return run ? (
           <Button
             key={action.kind + action.label}

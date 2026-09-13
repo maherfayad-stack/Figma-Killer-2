@@ -143,6 +143,36 @@ export function isSourceDerivedNodeId(nodeId: string): boolean {
 }
 
 /**
+ * The call site's own `rel:line:col` — the HEAD of a composite id, symmetric
+ * to `decodeSourceNodeId`'s tail. For a plain (non-composite) id, that is the
+ * whole id, so this returns it unchanged.
+ *
+ * Why the call site survives a detach/extract when everything else about the
+ * node doesn't: R2's retry mechanism (`presentStructuralRefusal`) needs to
+ * re-find the node a refused gesture was aimed at, AFTER `detachInstance`/
+ * `extractInstanceCopy` triggers a full board reload that re-mints every id
+ * derived from the shared component's OWN definition file. The call site's
+ * position — where the `<Icon/>` JSX sat in the PAGE — is untouched by either
+ * codemod: detaching inlines the definition's markup at that same position,
+ * extracting only renames the tag and swaps the import. Neither shifts the
+ * opening element's `line:col` in the consuming file (barring a reformat —
+ * see `store-10`'s risk note on that).
+ */
+export function callSitePosition(nodeId: string): string {
+  return nodeId.split(INLINE_ID_SEPARATOR)[0]!
+}
+
+/**
+ * True when `nodeId` is the same call site as `position` — either literally
+ * (a plain, non-inlined node) or as the head of a composite id (inlined from
+ * that call site). Used to find whatever node NOW occupies a call site whose
+ * old id was invalidated by a detach/extract reload.
+ */
+export function matchesCallSitePosition(nodeId: string, position: string): boolean {
+  return nodeId === position || nodeId.startsWith(position + INLINE_ID_SEPARATOR)
+}
+
+/**
  * True for the synthetic root `parsedPageToSitePage` mints for every imported
  * page (`<pageId>:body`). It is not a source location — nothing was written at
  * it — so a structural edit whose only target is this node has nowhere to go,

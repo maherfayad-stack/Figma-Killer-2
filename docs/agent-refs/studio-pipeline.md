@@ -260,9 +260,9 @@ more named ways forward. Every surface renders that one object:
 
 | Surface | What it shows |
 |---|---|
-| Refusal toast (`toastStructuralRefusal`) | Persistent (`durationMs: null`), deduped by gesture + reason + sentence, with the first runnable action — or the jump to `origin` — as its button |
+| Refusal toast/dialog (`presentStructuralRefusal`, née `toastStructuralRefusal`) | `constraint.actions` empty → the old persistent toast (`durationMs: null`), deduped by gesture + reason + sentence, with a jump to `origin` as its button. Non-empty → a modal `RefusalDialog` instead (`store-10`, R2), with real buttons for every runnable action; `detach`/`extract` additionally re-issue the original gesture once their reload lands (see `editor-store.md`) |
 | Layers context menu | Disabled item + tooltip, plus a `ConstraintNotice` footer carrying `origin` and `actions` |
-| Canvas drag | The explanation as a chip beside the refused drop rect, while the pointer is still down (`explainGestureConstraint` → `canvasDnd.ts`'s `invalid.constraint`) |
+| Canvas drag | The explanation as a chip beside the refused drop rect, while the pointer is still down (`explainGestureConstraint` → `canvasDnd.ts`'s `invalid.constraint`) — untouched by R2, deliberately: a modal mid-drag would be worse than the inline chip |
 
 `ConstraintNotice` (`src/admin/pages/site/ui/ConstraintNotice/`) is the shared
 renderer; `resolveConstraintAction` (`@site/store/constraintActions` — beside

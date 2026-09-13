@@ -44,7 +44,7 @@ import { commitStudioDelete, commitStudioMove, commitStudioReparent } from '@sit
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
-import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, toastStructuralRefusal } from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
@@ -188,7 +188,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     insertImportedNodes: (parentId, fragment, opts) => {
       if (fragment.rootIds.length === 0) return []
-      if (refuseInsertInto(parentId)) return []
+      if (refuseInsertInto(parentId, (newParentId) => { actions.insertImportedNodes(newParentId, fragment, opts) })) {
+        return []
+      }
       const insertedRootIds: string[] = []
       mutateActiveTreeAndSite((tree, site) => {
         const parent = tree.nodes[parentId]
@@ -254,7 +256,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null
-      if (refuseInsertInto(parentId)) return null
+      if (refuseInsertInto(parentId, (newParentId) => { actions.insertComponentRef(newParentId, componentId, index) })) {
+        return null
+      }
 
       const { activeDocument, site } = get()
 
@@ -305,7 +309,15 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // take never removes the element from the canvas either.
       const plan = planSourceDelete([readTree()?.nodes[nodeId]])
       if (!plan.ok) {
-        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, get)
+        presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
+          nodeId: plan.nodeId,
+          // Only `detach`/`extract` ever fire this (see `presentStructuralRefusal`'s
+          // doc) — a re-issued delete just calls this same action again, against
+          // whatever node replaced the shared-component instance.
+          retry: (newNodeId) => actions.deleteNode(newNodeId),
+          getState: get,
+          set,
+        })
         return
       }
       const deleted = mutateActiveTree((tree) => {
@@ -515,7 +527,15 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       const tree = readTree()
       const plan = tree ? planSourceMove(tree, nodeIds, newParentId, newIndex) : null
       if (plan && !plan.ok) {
-        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, get)
+        presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, {
+          nodeId: plan.nodeId,
+          // The refused node in a move plan is always `nodeIds[0]`
+          // (`previewStructuralMove` resolves the commit off it) — re-issue
+          // the same move with that one id swapped for its replacement.
+          retry: (newNodeId) => actions.moveNodes([newNodeId, ...nodeIds.slice(1)], newParentId, newIndex),
+          getState: get,
+          set,
+        })
         return
       }
       // `store-08` — where the node is NOW, captured before the mutation, is

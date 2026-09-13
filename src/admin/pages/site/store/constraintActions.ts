@@ -55,6 +55,20 @@ export interface ConstraintActionContext {
    * — the same honesty rule as every other unwireable kind.
    */
   openSource?: (origin: SourceOrigin) => void
+  /**
+   * Fired when `detach`/`extract`'s codemod settles — `true` once it actually
+   * landed, `false` on a refusal or a thrown error. Every other action kind
+   * ignores this (they either open a file synchronously, with nothing to
+   * settle, or have no handler at all).
+   *
+   * `RefusalDialog` (R2, `store-10`) is the one caller that needs this: it has
+   * to know WHEN the async codemod finishes to start (and later stop) waiting
+   * for the board reload that follows a successful detach/extract, so it can
+   * re-issue the gesture the codemod's own refusal blocked. Every existing
+   * caller (`ConstraintNotice`, `SourceConstraintNotice`, `CodeValueControl`)
+   * omits this field and is completely unaffected.
+   */
+  onSettled?: (ok: boolean) => void
 }
 
 /** `Header.tsx:42` — the origin, short enough to sit inside a button label. */
@@ -79,11 +93,13 @@ export function resolveConstraintAction(
   }
   if (action.kind === 'detach' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
-    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId))
+    const onSettled = context.onSettled
+    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId), onSettled)
   }
   if (action.kind === 'extract' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
-    return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId))
+    const onSettled = context.onSettled
+    return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId), onSettled)
   }
   return null
 }
@@ -134,6 +150,7 @@ export function constraintToastBody(
 async function runInstanceCodemod(
   gesture: 'Detach' | 'Duplicate',
   run: () => Promise<{ ok: boolean; message?: string }>,
+  onSettled?: (ok: boolean) => void,
 ): Promise<void> {
   try {
     const result = await run()
@@ -146,6 +163,7 @@ async function runInstanceCodemod(
         durationMs: null,
       })
     }
+    onSettled?.(result.ok)
   } catch (err) {
     console.error(`[ConstraintNotice] ${gesture} failed:`, err)
     pushToast({
@@ -153,5 +171,6 @@ async function runInstanceCodemod(
       title: `${gesture} failed`,
       body: getErrorMessage(err, `Unknown ${gesture.toLowerCase()} error`),
     })
+    onSettled?.(false)
   }
 }

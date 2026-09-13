@@ -601,6 +601,15 @@ export type SiteSliceRecipe = (state: Draft<EditorStore>) => void | EditorStore
  */
 export type SiteMutationResult = void | boolean
 
+/**
+ * The raw store setter, exactly as `SiteSliceHelpers.set` types it — named
+ * separately so a module that only needs to WRITE state (e.g.
+ * `presentStructuralRefusal`, which opens the `structuralRefusalDialog` UI
+ * field) doesn't have to import the whole helpers contract just to spell the
+ * one function it takes.
+ */
+export type EditorStoreSetter = (recipe: SiteSliceRecipe) => void
+
 export interface SiteSliceHelpers {
   /** Raw set/get from the slice creator. Use only when no helper covers the case. */
   set: (recipe: SiteSliceRecipe) => void

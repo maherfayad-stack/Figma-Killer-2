@@ -1,3 +1,4 @@
+import type { EditConstraint } from '@core/page-tree'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { clearCanvasSelectionDraft } from './selectionSlice'
 import {
@@ -91,6 +92,34 @@ export type LayoutNameDialogRequest =
  * opening a thread or arming the comment tool means Comments.
  */
 export type RightSidebarTab = 'properties' | 'comments'
+
+/**
+ * A refused structural gesture (move/delete/insert/duplicate/wrap) that has
+ * at least one runnable remedy — `RefusalDialog` (R2, `store-10`) renders this
+ * as a modal instead of the plain toast `presentStructuralRefusal` still uses
+ * for a terminal refusal (`constraint.actions.length === 0`).
+ *
+ * Lives in `uiSlice`, not a component: the gesture that produced this can come
+ * from anywhere in the store's own action layer (Delete key, a layers-tree
+ * drag, a context menu, spotlight) with no JSX render tree to hand the
+ * constraint to — the same reason `pushToast` is a global bus rather than
+ * component state.
+ */
+export interface StructuralRefusalDialogState {
+  /** One of `STRUCTURAL_REFUSAL_TITLE`'s values — which gesture this refusal answers. */
+  title: string
+  constraint: EditConstraint
+  /** The node the refusal is about, when the plan had one in hand. */
+  nodeId?: string
+  /**
+   * Re-run the gesture this refusal blocked, against the node that replaces
+   * `nodeId` once a detach/extract's board reload lands. Present only for the
+   * two remedies that invalidate `nodeId` itself (`detach` / `extract`) —
+   * every other runnable remedy (`edit-component`, `jump-to-source`,
+   * `edit-array`) just opens a file and needs no re-issue.
+   */
+  retry?: (newNodeId: string) => void
+}
 
 interface UiSlice {
   // Panel visibility / layout
@@ -294,6 +323,17 @@ interface UiSlice {
   /** Close the Import HTML modal and clear its transient state. */
   closeImportHtmlModal: () => void
 
+  /**
+   * The refused structural gesture `RefusalDialog` is currently showing, or
+   * `null` when no such dialog is open. `presentStructuralRefusal` sets this
+   * instead of toasting whenever the refused `EditConstraint` has a runnable
+   * action; every terminal refusal (`actions: []`) still only ever toasts and
+   * never touches this field.
+   */
+  structuralRefusalDialog: StructuralRefusalDialogState | null
+  /** Dismiss the open `RefusalDialog` without running its `retry`, if any. */
+  dismissStructuralRefusalDialog: () => void
+
 }
 
 const PANEL_FOCUS_ORDER: FocusedPanel[] = ['canvas', 'domTree', 'properties']
@@ -359,6 +399,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   importHtmlModalOpen: false,
   importHtmlModalParentId: null,
   importHtmlModalPrefill: '',
+  structuralRefusalDialog: null,
 
   setPropertiesPanel: (partial) => {
     // Guard: skip the set() call entirely when every supplied field already
@@ -631,6 +672,8 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   closeImportHtmlModal: () =>
     set({ importHtmlModalOpen: false, importHtmlModalParentId: null, importHtmlModalPrefill: '' }),
+
+  dismissStructuralRefusalDialog: () => set({ structuralRefusalDialog: null }),
 
   openPageInCanvas: (pageId) =>
     // Atomic: clear VC mode + switch to the target page in one store write.

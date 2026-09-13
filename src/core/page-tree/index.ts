@@ -21,12 +21,14 @@ export {
   INLINE_ID_SEPARATOR,
   LOOP_ID_SEPARATOR,
   buildSourceNodeId,
+  callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  matchesCallSitePosition,
   toRuntimeStampId,
 } from './sourceNodeId'
 export type { SourceNodeLocation } from './sourceNodeId'
