@@ -21,6 +21,8 @@ type UiStateActions = Pick<
   | 'clearPreviewNodeClass'
   | 'setPreviewClassStyles'
   | 'clearPreviewClassStyles'
+  | 'setPreviewNodeStyles'
+  | 'clearPreviewNodeStyles'
 >
 
 export function createUiStateActions({ set, get }: SiteSliceHelpers): UiStateActions {
@@ -88,6 +90,33 @@ export function createUiStateActions({ set, get }: SiteSliceHelpers): UiStateAct
       if (classId !== undefined && current.classId !== classId) return
       set((s) => {
         s.previewClassStyles = null
+      })
+    },
+
+    // Inline mirror of setPreviewClassStyles/clearPreviewClassStyles above —
+    // same raw-`set`-no-history shape, keyed by node id(s) instead of a
+    // classId (Rule 7, panel-22).
+    setPreviewNodeStyles(preview) {
+      const current = get().previewNodeStyles
+      if (
+        current &&
+        current.nodeIds.length === preview.nodeIds.length &&
+        current.nodeIds.every((id, i) => id === preview.nodeIds[i]) &&
+        shallowEqualStyles(current.styles, preview.styles)
+      ) {
+        return
+      }
+      set((s) => {
+        s.previewNodeStyles = preview
+      })
+    },
+
+    clearPreviewNodeStyles(nodeId) {
+      const current = get().previewNodeStyles
+      if (!current) return
+      if (nodeId !== undefined && !current.nodeIds.includes(nodeId)) return
+      set((s) => {
+        s.previewNodeStyles = null
       })
     },
   }

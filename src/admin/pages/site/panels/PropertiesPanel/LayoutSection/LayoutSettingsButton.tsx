@@ -30,9 +30,11 @@
  *
  * Built on `StackedPropertyGrid` (the same Figma-paired-cells renderer the
  * OLD fallback grid used) rather than bespoke controls — these properties
- * already have working `ClassPropertyRow` treatments (enum dropdowns for the
- * `select`-type ones, token-aware text for the rest); a settings popover
- * doesn't need a second implementation of them, only a new place to live.
+ * already have working `ClassPropertyRow` treatments (an icon toggle group
+ * for `flexWrap` — `cssPropertyIcons.ts`'s `ICON_ENUM_OPTIONS`, panel-22 Rule
+ * 4 — plain dropdowns for the other `select`-type ones, token-aware text for
+ * the rest); a settings popover doesn't need a second implementation of
+ * them, only a new place to live.
  */
 import { useRef, useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'

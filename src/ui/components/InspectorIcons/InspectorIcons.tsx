@@ -163,6 +163,23 @@ export function FlowColumnReverseIcon(props: IconProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Flex wrap — the mark is which line an overflow item lands on. `wrap` and
+// `wrap-reverse` are the same shape mirrored top-to-bottom, matching the
+// Flow-row/Flow-row-reverse pairing above: three items fit the first line,
+// a fourth overflows to a second line below (`wrap`) or above (`wrap-
+// reverse`, since the reverse direction only flips which side the NEW line
+// appears on).
+// ---------------------------------------------------------------------------
+
+export function WrapIcon(props: IconProps) {
+  return <Glyph {...props} d="M4 4h4v6H4V4Zm6 0h4v6h-4V4Zm6 0h4v6h-4V4ZM4 14h4v6H4v-6Z" />
+}
+
+export function WrapReverseIcon(props: IconProps) {
+  return <Glyph {...props} d="M4 4h4v6H4V4ZM4 14h4v6H4v-6Zm6 0h4v6h-4v-6Zm6 0h4v6h-4v-6Z" />
+}
+
+// ---------------------------------------------------------------------------
 // Display — the three that earn a mark. `inline`, `inline-block` and the long
 // tail keep words; a picture for them would be a puzzle, not a label.
 // ---------------------------------------------------------------------------

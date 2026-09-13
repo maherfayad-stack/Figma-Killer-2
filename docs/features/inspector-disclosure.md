@@ -22,6 +22,22 @@ field model into it, which added a section without renumbering one.)
 > [`STUDIO-FIGMA-PARITY-PLAN.md`](../../STUDIO-FIGMA-PARITY-PLAN.md) **§0a** —
 > the single status ledger. The narrative summary of these laws, in design
 > language, is [`docs/design.md`](../design.md) → "The inspector".
+>
+> **Track P superset, in progress.** `STUDIO-LIVE-CANVAS-PLAN.md` Track P
+> (Penpot-exact inspector) is rebuilding this panel on top of everything
+> below, structure first: P1 wraps the panel in a new Design / Prototype /
+> Inspect shell (`src/admin/pages/site/inspector/`), collapses the old
+> independent Element/Class blocks into one `StyleSectionsEditor` call
+> driven by `resolveWriteTarget.ts` ("the write target is a rule, not a
+> mode"), and deletes the sticky search bar + `StyleCategoryRail` from the
+> single-node surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s
+> separate global/ambient-selector surface keeps both, since a bare CSS
+> selector has no element-vs-class ambiguity to resolve. Every law and
+> primitive below is unchanged in shape; P3 (not yet started) re-skins the
+> sections themselves to the measured Penpot baseline
+> (`docs/audits/penpot-inspector-baseline/`). P6 retires this file into
+> `docs/features/inspector.md` once the whole track ships — until then this
+> is still the authoritative reference for the vocabulary the source cites.
 
 ---
 

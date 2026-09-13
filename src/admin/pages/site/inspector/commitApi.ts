@@ -1,0 +1,233 @@
+/**
+ * commitApi — the "one commit API" `STUDIO-LIVE-CANVAS-PLAN.md` §P4 names,
+ * collapsing every style/prop write in the single-selection path onto
+ * `commitStyle`/`commitStyleMany`/`commitProp`/`clearStylePreview`.
+ *
+ * This is plumbing, not a new write primitive: every branch below dispatches
+ * to the SAME store actions `WriteTargetStyleComposer.tsx` already called
+ * (`setNodeInlineStyles`, `updateClassStyles`, `setClassContextStyles`,
+ * `removeClassStyleProperty`/`clearClassStyleProperties`,
+ * `setPreviewNodeStyles`/`clearPreviewNodeStyles`,
+ * `setPreviewClassStyles`/`clearPreviewClassStyles`, `updateNodeProps`,
+ * `setBreakpointOverride`) — those remain the one-honest-write-target
+ * primitives. What this file replaces is every OTHER place that called
+ * `writeTargetFor`/`resolveWriteTarget` itself and then picked the store
+ * action inline — today, after the Step 0 merge, that is
+ * `WriteTargetStyleComposer.tsx` alone (`InlineStyleComposer.tsx` is
+ * confirmed dead code post-merge, see `STATE.md` `panel-23` Phase B item 4).
+ *
+ * ## `commitStyle` vs `commitStyleMany`
+ *
+ * `commitStyle` is `commitStyleMany` with a one-key patch — there is no
+ * separate single-property code path, so the two can never drift. Passing
+ * `value: null` reproduces `WriteTargetStyleComposer.tsx`'s old `onRemove`
+ * exactly (a single-context null-set via `updateClassStyles`/
+ * `setClassContextStyles`/inline — NOT a cross-context purge).
+ *
+ * ## `mode: 'set' | 'clear'`
+ *
+ * `StyleSectionsEditor.tsx`'s own doc comment on `onChangeMany` states the
+ * exact distinction this preserves: `onChangeMany` (`mode: 'set'`, the
+ * default) commits to the SINGLE active context (base, or the active
+ * breakpoint/condition override). `onClearProperties` (`mode: 'clear'`) is a
+ * CROSS-CONTEXT purge — every property removed from base AND every
+ * breakpoint/condition override in one call, via `clearClassStyleProperties`
+ * for a class target (inline has no context axis, so `clear` and `set null`
+ * are the same operation there). `mode: 'clear'` resolves its target via
+ * `resolveExistingWriteTarget` by default (there is nothing to "clear" that
+ * doesn't already have an honest source) unless the caller explicitly
+ * overrides `existing`.
+ *
+ * ## Locked (code-valued) properties — refuse the WHOLE key, not half
+ *
+ * A `style:<prop>` entry in `selectedNode.codeProps` is resolved from an
+ * expression in code. `WriteTargetStyleComposer.tsx`'s handlers each
+ * early-returned (single-key) or filtered the patch (multi-key) before ever
+ * calling `writeTargetFor` for that property — a SEPARATE, stronger gate
+ * than `SelectionModel.writeTargetFor`'s own `inlineWritableFor` (which only
+ * blocks the INLINE branch of the P1 rule). This file preserves that same
+ * two-layer behaviour verbatim: a locked key is dropped from the patch here,
+ * before any target is resolved for it, so it is never routed to a class
+ * target either. `setNodeInlineStyles`/`updateNodeProps`'s own all-or-nothing
+ * refusal (any code-valued key in the SAME store-level call aborts the whole
+ * patch) is a different, lower-level guard — this file never passes it a
+ * mixed patch, so that guard is never the thing that fires here.
+ */
+import { useEditorStore } from '@site/store/store'
+import { registry } from '@core/module-engine'
+import type { CSSPropertyBag } from '@core/page-tree'
+import { styleValueKey } from '@core/page-tree'
+import { getActiveStyleTab } from '../panels/PropertiesPanel/classStyleSections'
+import type { SelectionModel } from './selectionModel'
+import type { WriteTarget } from './resolveWriteTarget'
+
+const STYLE_KEY_PREFIX = styleValueKey('')
+const EMPTY_CODE_PROPS: readonly string[] = []
+
+// ---------------------------------------------------------------------------
+// Public shape
+// ---------------------------------------------------------------------------
+
+export interface CommitStyleOptions {
+  preview?: boolean
+  /** True for a remove/clear — routes through `resolveExistingWriteTarget` instead of `resolveWriteTarget`. */
+  existing?: boolean
+  /** Explicit override from a field's own popover menu — the per-field override P1 flagged as out of scope for `WriteTargetStyleComposer`; the hook exists even though no field UI calls it with an explicit target yet. */
+  target?: WriteTarget
+  /**
+   * `'set'` (default) commits to the single active context. `'clear'` is a
+   * cross-context purge (`clearClassStyleProperties`/inline-null-per-key) —
+   * see this module's own doc. Only meaningful on `commitStyleMany`;
+   * `commitStyle` always behaves as `'set'` (a single-context null-set for
+   * `value: null`, matching the old `onRemove`, not a purge).
+   */
+  mode?: 'set' | 'clear'
+}
+
+export interface InspectorCommitApi {
+  commitStyle(prop: keyof CSSPropertyBag, value: string | number | null, opts?: CommitStyleOptions): void
+  /** Batches N properties into ONE history entry — replaces `StyleSectionsEditor`'s `onChangeMany`/`onClearProperties` call sites. */
+  commitStyleMany(
+    patch: Partial<Record<keyof CSSPropertyBag, string | number | null>>,
+    opts?: Omit<CommitStyleOptions, 'target'>,
+  ): void
+  clearStylePreview(): void
+  /**
+   * Routes to `updateNodeProps`, or `setBreakpointOverride` when the active
+   * breakpoint is non-default AND the module schema marks the prop
+   * `breakpointOverridable` — the exact rule `usePropertiesPanelData.ts`'s
+   * `handleChange` already implemented; moved here verbatim, not reinvented.
+   */
+  commitProp(key: string, value: unknown): void
+}
+
+// ---------------------------------------------------------------------------
+// useInspectorCommit
+// ---------------------------------------------------------------------------
+
+export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
+  const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
+  const activeConditionId = useEditorStore((s) => {
+    const id = s.activeConditionId
+    if (id === null) return null
+    const conditions = s.site?.conditions
+    return conditions && conditions.some((c) => c.id === id) ? id : null
+  })
+  const setNodeInlineStyles = useEditorStore((s) => s.setNodeInlineStyles)
+  const updateClassStyles = useEditorStore((s) => s.updateClassStyles)
+  const setClassContextStyles = useEditorStore((s) => s.setClassContextStyles)
+  const clearClassStyleProperties = useEditorStore((s) => s.clearClassStyleProperties)
+  const setPreviewClassStyles = useEditorStore((s) => s.setPreviewClassStyles)
+  const clearPreviewClassStyles = useEditorStore((s) => s.clearPreviewClassStyles)
+  const setPreviewNodeStyles = useEditorStore((s) => s.setPreviewNodeStyles)
+  const clearPreviewNodeStyles = useEditorStore((s) => s.clearPreviewNodeStyles)
+  const updateNodeProps = useEditorStore((s) => s.updateNodeProps)
+  const setBreakpointOverride = useEditorStore((s) => s.setBreakpointOverride)
+
+  const { selectedNodeId, selectedNode, activeContextId, writeTargetFor } = model
+
+  const onCondition = activeConditionId !== null
+  const activeTab = getActiveStyleTab(activeBreakpointId)
+
+  const lockedPropertySet = new Set(
+    (selectedNode?.codeProps ?? EMPTY_CODE_PROPS)
+      .filter((name) => name.startsWith(STYLE_KEY_PREFIX))
+      .map((name) => name.slice(STYLE_KEY_PREFIX.length)),
+  )
+
+  const writeToTarget = (target: WriteTarget, patch: Record<string, string | number | null>) => {
+    if (!selectedNodeId) return
+    if (target.kind === 'inline') {
+      setNodeInlineStyles(selectedNodeId, patch)
+    } else if (target.kind === 'class') {
+      if (activeContextId) {
+        setClassContextStyles(target.classId, activeContextId, patch as Partial<CSSPropertyBag>)
+      } else {
+        updateClassStyles(target.classId, patch as Partial<CSSPropertyBag>)
+      }
+    }
+    // 'none' — no honest target; the row should already be disabled by the
+    // caller when this is reachable, so this is a silent no-op rather than a
+    // half-applied write.
+  }
+
+  const previewToTarget = (target: WriteTarget, patch: Partial<CSSPropertyBag>) => {
+    if (target.kind === 'class') {
+      // The class preview channel has no conditional-layer target — same
+      // guard `WriteTargetStyleComposer.tsx`'s `handlePreview` used.
+      if (onCondition) return
+      setPreviewClassStyles({
+        classId: target.classId,
+        breakpointId: activeTab !== 'base' ? activeTab : null,
+        styles: patch,
+      })
+    } else if (target.kind === 'inline') {
+      if (!selectedNodeId) return
+      setPreviewNodeStyles({ nodeIds: [selectedNodeId], styles: patch })
+    }
+  }
+
+  const clearToTarget = (target: WriteTarget, keys: string[]) => {
+    if (!selectedNodeId) return
+    if (target.kind === 'class') {
+      clearClassStyleProperties(target.classId, keys as ReadonlyArray<keyof CSSPropertyBag>)
+    } else if (target.kind === 'inline') {
+      setNodeInlineStyles(selectedNodeId, Object.fromEntries(keys.map((k) => [k, null])))
+    }
+  }
+
+  const commitStyleMany: InspectorCommitApi['commitStyleMany'] = (patch, opts) => {
+    const keys = Object.keys(patch).filter((k) => !lockedPropertySet.has(k))
+    if (keys.length === 0) return
+    const mode = opts?.mode ?? 'set'
+    const existing = opts?.existing ?? mode === 'clear'
+    const target = writeTargetFor(keys[0], { existing })
+    const filteredPatch: Record<string, string | number | null> = {}
+    for (const key of keys) filteredPatch[key] = (patch as Record<string, string | number | null>)[key]
+
+    if (opts?.preview) {
+      previewToTarget(target, filteredPatch as Partial<CSSPropertyBag>)
+      return
+    }
+    if (mode === 'clear') {
+      clearToTarget(target, keys)
+      return
+    }
+    writeToTarget(target, filteredPatch)
+  }
+
+  const commitStyle: InspectorCommitApi['commitStyle'] = (prop, value, opts) => {
+    const key = String(prop)
+    if (lockedPropertySet.has(key)) return
+    const target = opts?.target ?? writeTargetFor(key, { existing: opts?.existing })
+    if (opts?.preview) {
+      previewToTarget(target, { [key]: value } as Partial<CSSPropertyBag>)
+      return
+    }
+    writeToTarget(target, { [key]: value })
+  }
+
+  const clearStylePreview = () => {
+    clearPreviewClassStyles()
+    if (selectedNodeId) clearPreviewNodeStyles(selectedNodeId)
+  }
+
+  const moduleId = selectedNode?.moduleId
+  const commitProp: InspectorCommitApi['commitProp'] = (key, value) => {
+    if (!selectedNodeId) return
+    const def = moduleId ? registry.get(moduleId) : null
+    const isOverridable = def?.schema[key]?.breakpointOverridable === true
+    if (activeBreakpointId && activeBreakpointId !== 'desktop' && isOverridable) {
+      setBreakpointOverride(selectedNodeId, activeBreakpointId, { [key]: value })
+    } else {
+      updateNodeProps(selectedNodeId, { [key]: value })
+    }
+  }
+
+  return {
+    commitStyle,
+    commitStyleMany,
+    clearStylePreview,
+    commitProp,
+  }
+}

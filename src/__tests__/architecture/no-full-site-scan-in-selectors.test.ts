@@ -64,6 +64,28 @@
  * `site.pages`. If the lookup a selector needs isn't one of the five, add a
  * new index there following the same rebuild-at-load /
  * incrementally-maintained-by-mutations pattern, rather than scanning inline.
+ *
+ * ### Second detector — whole-`site` selectors under `inspector/` (P4 / panel-23)
+ *
+ * `usePropertiesPanelData.ts:106`'s `const site = useEditorStore((s) =>
+ * s.site)` was the confirmed root cause of rule 8 (selection→painted-panel
+ * ≤16ms): Mutative replaces the `site` ROOT object on every mutation
+ * anywhere in the document, so subscribing to the whole object re-renders on
+ * every keystroke regardless of what changed. `WHOLE_SITE_SELECTOR_RE` below
+ * catches a `useEditorStore(` selector whose body returns bare `s.site` /
+ * `state.site` (optionally through `?.`/`!.`) and nothing narrower — e.g.
+ * `useEditorStore((s) => s.site)`, NOT `useEditorStore((s) => s.site?.styleRules)`,
+ * which keeps its reference stable across any mutation that doesn't touch
+ * `styleRules` specifically (Mutative's structural sharing).
+ *
+ * Scoped to `admin/pages/site/inspector/` ONLY, per
+ * `STATE.md` (`panel-23`)'s own text — a repo-wide ban would need to
+ * allowlist every legitimate whole-`site` read elsewhere (`saveSite`,
+ * `loadSite`, plugin RPC, autosave serialization), which would gut the gate
+ * the same way a repo-wide `FOR_OF_PAGES_RE` ban would. This means the gate
+ * does NOT catch a regression in `usePropertiesPanelData.ts` itself (that
+ * file lives outside `inspector/`) — verified instead by direct grep in
+ * `panel-23`'s own verification step.
  */
 
 import { describe, it, expect } from 'bun:test'
@@ -154,6 +176,32 @@ function findFullSiteScanLines(content: string): number[] {
     // tombstone would teach the next author to delete the explanation.
     if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue
     if (FOR_OF_PAGES_RE.test(line)) hits.push(i + 1)
+  }
+  return hits
+}
+
+// ---------------------------------------------------------------------------
+// Second detector — whole-`site` selector (P4 / panel-23), scoped to
+// `admin/pages/site/inspector/` — see this file's own doc comment above.
+// ---------------------------------------------------------------------------
+
+const INSPECTOR_SCAN_ROOT = join(SRC_ROOT, 'admin/pages/site/inspector')
+
+// `useEditorStore((s) => s.site)` / `useEditorStore((state) => state.site)`,
+// optionally through `?.`/`!.` on the way to `.site` — and NOTHING narrower
+// after it (the selector body ends there). A selector returning
+// `s.site?.styleRules` does not match: after `site` comes `?.styleRules`,
+// not the closing paren this pattern requires immediately after `site`.
+const WHOLE_SITE_SELECTOR_RE =
+  /useEditorStore\(\s*\(?\s*\w+\s*\)?\s*=>\s*\w+(?:\?|!)?\.site\s*\)/
+
+function findWholeSiteSelectorLines(content: string): number[] {
+  const hits: number[] = []
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue
+    if (WHOLE_SITE_SELECTOR_RE.test(line)) hits.push(i + 1)
   }
   return hits
 }
@@ -286,6 +334,49 @@ describe('Architecture gate — no full-site pages scan reachable from a useEdit
     }
 
     expect(violations).toHaveLength(0)
+  })
+
+  it('no useEditorStore( selector under admin/pages/site/inspector/ returns bare s.site', () => {
+    const violations: string[] = []
+
+    for (const file of collectSourceFiles(INSPECTOR_SCAN_ROOT)) {
+      const content = readOrNull(file)
+      if (content === null) continue
+      const rel = toPosix(relative(SRC_ROOT, file))
+      for (const lineNum of findWholeSiteSelectorLines(content)) {
+        violations.push(`${rel}:${lineNum}`)
+      }
+    }
+
+    if (violations.length > 0) {
+      throw new Error(
+        '[no-full-site-scan-in-selectors] A useEditorStore( selector under ' +
+        'admin/pages/site/inspector/ returns the whole `site` object ' +
+        '(`s.site`/`state.site`) instead of a narrower field.\n' +
+        'Mutative replaces `site` wholesale on every mutation anywhere in the ' +
+        'document, so a selector returning it re-renders on every keystroke ' +
+        'regardless of what changed — the confirmed root cause of rule 8 ' +
+        '(selection→painted-panel ≤16ms, panel-23). Subscribe to the ' +
+        'narrower branch instead (e.g. `s.site?.styleRules`, ' +
+        '`s.site?.pages.find(...)`) — Mutative\'s structural sharing keeps ' +
+        'that reference stable across mutations that do not touch it.\n\n' +
+        'Violations:\n' + violations.map((v) => `  ${v}`).join('\n'),
+      )
+    }
+
+    expect(violations).toHaveLength(0)
+  })
+
+  it('WHOLE_SITE_SELECTOR_RE flags a bare `s.site` selector but not a narrower one', () => {
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((s) => s.site)')).toEqual([1])
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((state) => state.site)')).toEqual([1])
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((s) => s?.site)')).toEqual([1])
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((s) => s!.site)')).toEqual([1])
+    // Narrower — must NOT match.
+    expect(findWholeSiteSelectorLines('  useEditorStore((s) => s.site?.styleRules)')).toEqual([])
+    expect(findWholeSiteSelectorLines('  useEditorStore((s) => s.site?.pages.find((p) => p.id === id))')).toEqual([])
+    // A quoted tombstone in a doc comment is not a violation.
+    expect(findWholeSiteSelectorLines(' * was `useEditorStore((s) => s.site)` before')).toEqual([])
   })
 
   it('follows the exact import edge the defect hid behind, and detects the walk it hid', () => {

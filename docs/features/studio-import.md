@@ -603,7 +603,7 @@ A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` �
 | Properties panel, top | `SourceConstraintNotice` — one of three variants: the structural reason, the `.map`-row reason, or (the majority case) "the structure is fine, these specific values are not". Plus `resolution.note` when the evaluator had to choose, and which individual props stay read-only |
 | Prop rows | `CodeValueControl` for a code-valued prop only (`propLockReason`); its literal siblings get their ordinary control |
 | In-place canvas inspector | Same `propLockReason`. It previously rendered a live-looking input for every prop, including ones the store was about to refuse |
-| Inline styles | `InlineStyleComposer` is offered unless the node is a `.map` row. Per-property refusals happen in the store. **Classes are unaffected** either way — assigning one writes `node.classIds`, which none of this gates |
+| Inline styles | The merged style composer (`StyleSectionsComposer`, `src/admin/pages/site/inspector/sections/`) is offered unless the node is a `.map` row. Per-property refusals happen in the store. **Classes are unaffected** either way — assigning one writes `node.classIds`, which none of this gates |
 | HTML attributes tab | `readOnly` only when `htmlAttributes` itself is code-valued |
 | Canvas double-click | An `info` toast when the **text prop** is code-valued. Announced where the store's other early-returns stay silent, because it is the only one a user can mistake for a bug: they double-clicked real copy sitting right there and nothing happened |
 

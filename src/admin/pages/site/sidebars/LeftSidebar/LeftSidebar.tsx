@@ -21,20 +21,10 @@ const AgentPanel = lazy(() =>
   import('@site/panels/AgentPanel').then((module) => ({ default: module.AgentPanel })),
 )
 
-// InspectPanel (read-only "what actually rendered" inspector) is only
-// needed once a user opens the Inspect tab — same rationale as AgentPanel
-// above. lazy() keeps its computed-style walker (`inspectModel.ts`,
-// `useInspectComputedStyle.ts`) out of the eager editor-body chunk; the
-// panel still stays mounted-but-hidden like its siblings below once loaded,
-// so switching tabs doesn't lose its state.
-const InspectPanel = lazy(() =>
-  import('@site/panels/InspectPanel').then((module) => ({ default: module.InspectPanel })),
-)
-
-// Content (bilingual dictionary editor) — lazy for the same reason as the two
-// above: its catalogue fetch and table are only needed once someone opens the
-// tab, and it stays mounted-but-hidden afterwards so an in-progress edit
-// survives a tab switch.
+// Content (bilingual dictionary editor) — lazy for the same reason as
+// AgentPanel above: its catalogue fetch and table are only needed once
+// someone opens the tab, and it stays mounted-but-hidden afterwards so an
+// in-progress edit survives a tab switch.
 const ContentPanel = lazy(() =>
   import('@site/panels/ContentPanel').then((module) => ({ default: module.ContentPanel })),
 )
@@ -51,7 +41,6 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
-  if (state.inspectPanelOpen) return 'inspect'
   if (state.contentPanelOpen) return 'content'
   if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
@@ -83,7 +72,6 @@ interface LeftSidebarProps {
  */
 const READ_ONLY_RAIL_IDS: ReadonlySet<LeftSidebarPanelId> = new Set([
   'explorer',
-  'inspect',
 ])
 
 export function LeftSidebar({
@@ -146,14 +134,6 @@ export function LeftSidebar({
               (e.g. TreeNode disables drag + context menu via `editable`). */}
           <div className={styles.panelMount} hidden={effectiveActivePanel !== 'explorer'}>
             <ExplorerPanel editable={editable} />
-          </div>
-          {/* Read-only "what actually rendered" inspector (Phase 6C) — same
-              tier as Explorer: useful in both CMS and studio, no structural
-              edit capability required. */}
-          <div className={styles.panelMount} hidden={effectiveActivePanel !== 'inspect'}>
-            <Suspense fallback={null}>
-              <InspectPanel />
-            </Suspense>
           </div>
           {/* Content — the project's own locale dictionary as an editable
               en/ar table. Read-only-safe tier: it reads the project's
