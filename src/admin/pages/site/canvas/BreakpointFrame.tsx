@@ -27,6 +27,8 @@ import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
 import { useResolvedFrameAxes } from './previewAxesFrameEffect'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
+import type { LiveFrameSource } from './resolveLiveFrameSrc'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { Button } from '@ui/components/Button'
 import { CursorTooltip, type CursorTooltipPoint } from '@ui/components/Tooltip'
 import { ArrowsScaleIcon } from 'pixel-art-icons/icons/arrows-scale'
@@ -73,6 +75,26 @@ interface BreakpointFrameProps {
    * (`CanvasTransformLayer`) has real, distinct breakpoints and keeps it.
    */
   showBreakpointChrome?: boolean
+  /**
+   * L8 Phase A (`perf-06`, STATE.md) — forwarded straight through to
+   * `IframeFrameSurface`. `BreakpointFrame` stays dumb about WHY a frame is
+   * portal vs. bridge; that decision lives in `LiveBoardFrame`/`BoardFrameView`.
+   * Omitted (or `'portal'`) reproduces today's behavior byte-for-byte — every
+   * existing caller omits both this and `liveFrame`.
+   */
+  documentMode?: 'portal' | 'bridge'
+  /** Bridge-mode-only inputs. See `IframeFrameSurface`'s own doc. */
+  liveFrame?: LiveFrameSource
+  /**
+   * L8 Phase A — notified with this frame's `FrameDocumentAdapter` whenever
+   * it changes (mirrors `IframeFrameSurfaceHandle.adapter`, which already
+   * updates on the same `useImperativeHandle` recompute this component's own
+   * `handleIframeRef` already reacts to for `iframeEl`/`overlayRoot`).
+   * `LiveBoardFrame` uses this to subscribe to `adapter.on('ready', ...)` and
+   * flip its not-ready/ready render fork. `undefined` for every other
+   * caller, who has no such need — a no-op call costs nothing.
+   */
+  onAdapterChange?: (adapter: FrameDocumentAdapter | null) => void
 }
 
 // React Compiler exception #2: `memo()` re-render bailout on a hot,
@@ -95,6 +117,9 @@ export const BreakpointFrame = memo(function BreakpointFrame({
   frameId,
   axesOverride,
   showBreakpointChrome = true,
+  documentMode,
+  liveFrame,
+  onAdapterChange,
 }: BreakpointFrameProps) {
   // --bp-width drives both label width and viewport width via CSS (dynamic value)
   const bpStyle = { '--bp-width': `${breakpoint.width}px` } as CSSProperties
@@ -169,6 +194,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
     iframeHandleRef.current = handle
     setIframeEl(handle?.iframeElement ?? null)
     setOverlayRoot(handle?.contentOverlayRoot ?? null)
+    onAdapterChange?.(handle?.adapter ?? null)
   }
 
   const handleEmptyFrameClick = () => {
@@ -288,6 +314,8 @@ export const BreakpointFrame = memo(function BreakpointFrame({
           onReadonlyOpen={handleReadonlyOpen}
           runtimeScripts={runtimeScripts}
           axesOverride={axesOverride}
+          documentMode={documentMode}
+          liveFrame={liveFrame}
         >
           <CanvasTemplateContext.Provider value={templateContext}>
             <CanvasBreakpointContext.Provider value={breakpoint.id}>
