@@ -27,6 +27,11 @@
  * Containment is `resolveProjectDir`'s, once for every project-scoped route:
  * a `dir` outside `studio-workspace/` throws there and the router answers 404,
  * so this handler never sees one.
+ *
+ * This module only reads/writes the field — it is not where a Tier-2
+ * (`run-project`) route refuses. That check is `./trustGate.ts`'s
+ * `requireTrustTier`, shared by `deploy.ts` and `devServer.ts` (Track L,
+ * `live-01`); it answers a 409, not the 200 this endpoint always returns.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'

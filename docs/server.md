@@ -638,6 +638,7 @@ See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for boun
   - `server/router.ts` — request dispatch
   - `server/handlers/studio/` — Studio's own server half (parse, writeback, git, trust tiers, capture)
   - `server/handlers/studio/trustTier.ts` — reads/writes `.studio/meta.json`'s `trust` field (`static` | `render-packages` | `run-project`)
+  - `server/handlers/studio/devServer.ts` — Tier-2-gated dev-server process manager (`/admin/api/studio/dev-server/{status,start,stop}`), one reused idle-timed subprocess per project, shared by the MCP `studio_render_reference` tool and the client prewarm hook (Track L, `live-01`)
   - `server/ai/mcp/capture/captureRoute.ts` — headless agent capture (`/admin/agent-capture`, `/admin/api/agent-capture/*`)
   - `server/ai/mcp/` — the `/_studio/mcp` MCP server endpoint for external AI clients
   - `server/http.ts` — JSON / error HTTP helpers

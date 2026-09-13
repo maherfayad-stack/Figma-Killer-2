@@ -175,6 +175,19 @@
  *       the subprocess — the CLI's own login on this machine is the credential.
  *       No `--prod` argv exists, and no request field reaches an argv.
  *
+ *   GET  /admin/api/studio/dev-server/status?dir=<abs>  → `studio/devServer.ts`
+ *   POST /admin/api/studio/dev-server/start   body: { dir? }
+ *   POST /admin/api/studio/dev-server/stop    body: { dir? }
+ *       Track L (`live-01`) — one reused, idle-timed dev-server process per
+ *       project, extracted out of the MCP tool `studio_render_reference`,
+ *       which used to spawn it privately. `status`/`start` are Tier 2
+ *       (`run-project`) only and non-blocking — poll `status` for the
+ *       `'booting'` → `'ready'`/`'failed'` transition, the same job-shaped
+ *       posture `install`/`deploy` above use; `stop` is never gated, so a
+ *       project demoted mid-session can still be killed. The wire status
+ *       never carries the dev server's own URL — only `phase`/`pid`/
+ *       `startedAt`/a capped log.
+ *
  *   GET/POST /admin/api/studio/style-compile-consent → `studio/styleCompileConsent.ts`
  *       WS-2.1's missing front door: whether THIS project needs its own
  *       Sass/PostCSS/Tailwind compiler run (and is still at Tier 0, so it
@@ -297,6 +310,7 @@ import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
 import { tryServeStudioDeploy } from './studio/deploy'
+import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
 import { syncStoryBoardFrames } from './studio/boardFrames'
 import type { DbClient } from '../db/client'
@@ -342,6 +356,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioPrototype,
   tryServeStudioGit,
   tryServeStudioDeploy,
+  tryServeStudioDevServer,
   tryServeStudioStories,
 ] as const
 

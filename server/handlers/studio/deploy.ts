@@ -69,6 +69,7 @@ import {
   type ProviderProbe,
 } from './deployJobs'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
+import { requireTrustTier } from './trustGate'
 
 const ROUTE_PREFIX = '/admin/api/studio/deploy'
 
@@ -166,10 +167,8 @@ async function serveStart(req: Request): Promise<Response> {
   if (!guard.ok) return NOT_FOUND()
 
   const appRoot = resolveAppRoot(guard.dir)
-  const trust = readStudioMeta(appRoot).trust ?? DEFAULT_TRUST_TIER
-  if (trust !== REQUIRED_TRUST_TIER) {
-    return jsonResponse({ error: TRUST_REFUSAL_MESSAGE, code: 'trust-tier-required' }, { status: 409 })
-  }
+  const gate = requireTrustTier(appRoot, REQUIRED_TRUST_TIER, TRUST_REFUSAL_MESSAGE)
+  if (!gate.ok) return gate.response
 
   const jobId = await startDeployJob(guard.dir, body.provider)
   return jsonResponse({ jobId })
