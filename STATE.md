@@ -189,9 +189,9 @@ are the remaining WS-2 items, not yet dispatched. See
 **Track L orchestration is UNPAUSED (2026-09-13) — `feat/alm-figma-killer-studio-shell` is the active integration point, by explicit user instruction.** The pause below (originally 2026-09-10) asked for L1-L4 to be "confirmed merged to `main`" before dispatching L6+. That literal condition never happened — instead the user directed all nine Track L/P/R branches (L1-L5, R1, R3, P0-P2, P4) to be merged into `feat/alm-figma-killer-studio-shell` (see `meta-09`), then explicitly said to continue the plan. **`feat/alm-figma-killer-studio-shell` is therefore the real integration branch every subsequent Track L/P/R work order should target and verify against — not bare `origin/main`.** Any work order below that says "wait for `main`" or "PRs #91-94 must merge to `main` first" is reading the ORIGINAL, now-superseded condition; treat `feat/alm-figma-killer-studio-shell`'s current state (verified in `meta-09`) as the real base instead. PRs #90-99 themselves are untouched and their fate (close/keep open) is a separate, not-yet-made human call.
 
 ### perf-06 — L8: warm, posters, pool
-- **Agent:** canvas-engineer (Phase A, unassigned) + perf-hunter (Phase B)
-- **Stage:** design
-- **Updated:** 2026-09-13
+- **Agent:** canvas-engineer (Phase A — done) + perf-hunter (Phase B — not started)
+- **Stage:** Phase A done (gates green; draft PR #104 open against `feat/alm-figma-killer-studio-shell`) — **a real, new blocking gap for the FULL end-to-end swap was found via live browser dogfood and is documented in Phase A's own report below; read it before starting Phase B or claiming this feature works.**
+- **Updated:** 2026-09-13 (Phase A implementation)
 - **Goal:** `STUDIO-LIVE-CANVAS-PLAN.md` §L8. A Tier 2 board frame that isn't ready yet shows something better than a blank box (its own last poster, or its Tier 0 static render) and swaps to the real live iframe the instant it boots; only viewport-visible live frames plus a small LRU stay real, expensive cross-origin iframes — the rest degrade back to posters. Four budgets land in `bun run bench`. **Done when:** the bench reports the two now-buildable budgets (below) with real numbers, the other two are explicitly recorded as blocked with their real blocker named, and a human can open a Tier-2 board, pan 20 frames off-screen and back, and see posters swap to live content without the tab's memory climbing unbounded.
 
 **⚠️ Read this whole entry before starting. L8 is NOT "add a pool on top of an existing live-frame mechanism" — there is no live-frame mechanism to pool yet.** Confirmed by reading the code, not assuming from the plan prose:
@@ -272,6 +272,253 @@ create  src/admin/pages/site/canvas/BoardFramesLayer/LiveBoardFrame.tsx
 ```
 
 **Known, accepted gap — no poster mechanism exists for live content itself.** `useFramePosterCapture.ts`'s own doc already states this: a bridge-registered iframe resolves `resolvePortalDocument(iframe)` to `null` (cross-origin, `html-to-image` cannot read into it) and capture is skipped — this was `live-05`'s own deliberate deferral, not new to this entry. Consequence for the "swap" story: **once a live frame reaches `ready`, no further poster is ever captured for it.** If it's later evicted from the LRU (Phase B), the best available fallback is whatever poster was last captured from its Tier-0-fallback subtree *before* it went live — which gets more stale the longer the frame has been running. Recommend: keep calling `useFramePosterCapture` against the Tier-0-fallback subtree while it's the visible one (it's a real same-origin portal at that moment, so capture works normally) so there's always SOMETHING better than a blank box, and accept the staleness — do not spend this work order's budget inventing a cross-origin screenshot pipeline (would need either a screenshot library bundled into `runtime.ts` and posted back as a blob, or a server-side CDP capture; both are genuinely new, much bigger features). Document this as a known limitation, not a silent one.
+
+#### Phase A — done (canvas-engineer, 2026-09-13)
+
+Worked in `.tmp/wt-perf-06` on branch `feat/live-frame-activation`, cut from
+`origin/feat/alm-figma-killer-studio-shell` at `aadabf5`, fast-forward-merged
+`origin/feat/live-per-screen-routes` (L6, `2d36239`) before starting per the
+work order's own instruction, then later merged the shell branch's tip again
+(`0e573c0`) once L6 landed there for real as PR #103 — no conflicts either
+time (STATE.md-only on the second merge). Pushed, opened **PR #104** as a
+draft against `feat/alm-figma-killer-studio-shell`. Built exactly the file
+list above, plus one deviation and one necessary addition found along the
+way — both below.
+
+**Files touched — Phase A's own list, as specified:**
+- `src/admin/pages/site/studio/useLiveOrigin.ts` (new) — external store
+  (`getLiveOrigin`/`subscribeLiveOrigin`/`setLiveOrigin`), fetched once and
+  shared by every mounted `LiveBoardFrame`.
+- `src/admin/pages/site/studio/useDevServerReadiness.ts` (new) — one
+  reference-counted poll loop per `dir`, `{ phase, log }`, matching
+  `useDevServerPrewarm.ts`'s `useSyncExternalStore` shape.
+- `src/admin/pages/site/canvas/BreakpointFrame.tsx` (modify) — added
+  `documentMode?`, `liveFrame?`, and a new `onAdapterChange?` callback
+  (forwarded from `IframeFrameSurface`'s own `handle.adapter`, which already
+  updates on the same `useImperativeHandle` recompute the file's own
+  `handleIframeRef` already reacted to for `iframeEl`/`overlayRoot`). Every
+  existing caller omits all three — byte-for-byte unaffected.
+- `src/admin/pages/site/canvas/BoardFramesLayer/BoardFrameView.tsx` (modify)
+  — new optional `isLiveMounted?: boolean` prop, **defaulting to
+  `isOnScreen`** (Phase A doesn't touch `BoardFramesLayer.tsx`, so there is no
+  real hot-set yet — Phase B replaces this default with `computeHotFrameIds`'s
+  real output). Render fork: `!isLiveMounted` → unchanged poster path;
+  `isLiveMounted && trust !== 'run-project'` → the literal, unmodified
+  `BreakpointFrame` call the branch has always made; `isLiveMounted &&
+  trust === 'run-project'` → the new `LiveBoardFrame`. Reads `trust` via
+  `studioProjectTrust.ts`'s external store (a new import — `BoardFrameView`
+  never read trust before).
+- `src/admin/pages/site/canvas/BoardFramesLayer/LiveBoardFrame.tsx` (new) —
+  mounts the Tier-0 fallback (poster, else portal `BreakpointFrame`) and the
+  bridge `BreakpointFrame` (`documentMode="bridge"`) at the same time; the
+  bridge's visibility toggles via the native `hidden` attribute (not CSS
+  `visibility`, and not a wrapper div inside any iframe's own DOM — this
+  wrapper lives entirely in the PARENT document, same posture as
+  `BoardFrameView`'s own `.frameBody` div) so the fallback subtree still
+  drives normal document-flow auto-height when visible; the fallback
+  unmounts entirely once ready, the bridge stays mounted the whole time so
+  its `postMessage` channel never has to reconnect.
+- `src/admin/pages/site/canvas/BoardFramesLayer/useAdapterReady.ts` (new,
+  not in the original file list) — the `adapter.on('ready', …)` state
+  machine, pulled out of `LiveBoardFrame.tsx` into its own file because
+  `react-refresh/only-export-components` (lint) refuses a file that exports
+  both a component and a hook. Tracks the LAST adapter that fired ready
+  (`readyAdapter === adapter`) rather than an unconditional `setState(false)`
+  at the top of the effect body, which also fixed a second lint error
+  (`react-hooks/set-state-in-effect`) for free.
+
+**Deviation from the work order's own recon (documented in
+`useLiveOrigin.ts`'s own doc comment too).** The design's recon said "no
+client code ever learns the live origin's actual URL" and recommended adding
+`liveOrigin` to `/admin/api/studio/load`. Re-checking the tree at
+implementation time found `GET /admin/api/studio/live-origin`
+(`server/handlers/studio/liveOriginInfo.ts`) already exists, already returns
+`{ liveOrigin: string | null }`, and had zero callers anywhere in the client
+— built (Track L, L2) but never wired up. `useLiveOrigin.ts` calls it
+instead; zero new server code for that half.
+
+**A real bug found ONLY by dogfooding in a real browser, not by any unit
+test — fixed in this same PR.** `resolveLiveFrameSrc` builds
+`<liveOrigin>/__screen/<key>`, but `server/liveOrigin.ts`'s proxy actually
+routes on `<liveOrigin>/p/<projectKey>/__screen/<key>` — the bare
+server-topology origin `useLiveOrigin` resolves is NOT, by itself, a valid
+base for a `LiveFrameSource`. `projectKey` is
+`registeredMcpServerProjectKey(dir)`'s sanitized routing key (spaces and
+other non-`[A-Za-z0-9._-]` characters become `_` — genuinely NOT a plain
+`basename(dir)`, so the client cannot safely re-derive it without risking
+drift from the real routing key `server/liveOrigin.ts` uses). Fixed by
+adding `projectKey: string | null` (`Type.Optional` — 31 pre-existing
+`fsCodemodAdapter.test.ts` fixtures predate this field and don't need it) to
+the SAME `/admin/api/studio/load` response `trust` already rides on, a
+sibling external store in `studioProjectTrust.ts`
+(`getStudioProjectKey`/`subscribeStudioProjectKey`/`setStudioProjectKey`,
+written by the same `loadSite` call that already writes `trustTier`), and
+`LiveBoardFrame` now joins `` `${bareLiveOrigin}/p/${projectKey}` `` before
+constructing `LiveFrameSource`. Touches `server/handlers/studio.ts`,
+`server/handlers/studio/studioLoadResponse.ts`,
+`src/admin/pages/site/studio/studioLoadStreamSchema.ts`,
+`src/admin/pages/site/studio/fsCodemodAdapter.ts` — none in the original file
+list, all necessary for the feature to do anything at Tier 2 beyond render a
+dead iframe.
+
+**Decisions:**
+- `isLiveMounted` defaults to `isOnScreen` rather than being required —
+  keeps `BoardFramesLayer.tsx` (Phase B's file, not Phase A's) untouched
+  while still proving Tier 0/1 is byte-for-byte identical today.
+- The bridge/fallback stacking uses the native `hidden` attribute, not a
+  CSS-visibility wrapper with `position: absolute` — the latter would break
+  `data-frame-auto-height`'s content-hugging for a Tier-2 frame (an
+  absolutely-positioned child contributes nothing to an `auto`-height
+  parent). `hidden` keeps the fallback in normal flow while visible and
+  fully removes the bridge from layout while hidden, with zero new CSS.
+- `useDevServerReadiness`'s `subscribe`/`getSnapshot` are cached in a plain
+  module-level `Map<dir, SubscriptionPair>` (mirrors `BoardFrameView.tsx`'s
+  own `activatePageHandler`/`buildStudioBreakpoint` idiom), NOT a `useMemo`
+  — a hand-written `useMemo` returning a closure trips
+  `react-hooks/preserve-manual-memoization` (a REAL `bun run lint` error,
+  confirmed), and `"use no memo"` did not silence it either. `LiveBoardFrame`'s
+  own `liveFrame` object DOES use `useMemo` (returns a plain object, not a
+  closure — the compiler can verify that one fine) with a comment citing
+  React Compiler exception #1: it feeds `IframeFrameSurface`'s bridge-effect
+  dependency array, and an unstable reference there tears down/reconstructs
+  the `BridgeFrameAdapter` on every render — a real infinite-loop risk
+  (`setAdapter` itself triggers the next render), not just a lint nicety.
+
+**Landmines — read before touching this area again:**
+- **The live-origin listener's CSP blocks ALL framing unless `PUBLIC_ORIGIN`
+  is set.** `server/liveOrigin.ts`'s `liveOriginSecurityHeaders` sends
+  `Content-Security-Policy: frame-ancestors 'none'` whenever
+  `resolvePublicOrigins(env)` is empty (true for `bun run dev` with no
+  `PUBLIC_ORIGIN` env var — the common local-dev default) — a bridge iframe
+  then fails to load with a browser-level CSP violation, console-only, no
+  network error, easy to mistake for a Track-L bug. This is a correct,
+  pre-existing, deliberate security gate (a live Tier-2 dev server must not
+  be embeddable by an unconfigured/untrusted origin), not something to
+  relax. **Any future dogfood of a Tier-2 board needs `PUBLIC_ORIGIN` set to
+  the admin's own origin** (e.g. `PUBLIC_ORIGIN=http://localhost:5273` to
+  match a custom `VITE_PORT`) — confirmed by reproducing the CSP error, then
+  fixing it, in this session's own dogfood.
+- **A custom `VITE_PORT` also needs `VITE_ALLOWED_ORIGIN` set**, or every
+  state-changing admin request 403s with `Forbidden: invalid origin` —
+  `server/auth/security.ts`'s `DEV_ORIGIN_ALLOWLIST` only hardcodes
+  `:5173`/`:5174`; `VITE_ALLOWED_ORIGIN` is the env-var escape hatch it
+  already reads.
+- **THE REAL BLOCKER for the full end-to-end swap, found ONLY by dogfooding
+  all the way through: nothing in the generated shell ever wires the
+  in-frame runtime bridge into a real workspace.** `src/core/studio-runtime/
+  runtime.ts`'s `createStudioRuntimeBridge` (L4, claimed done in STATE.md)
+  has **zero production call sites** — confirmed by grep, not assumption.
+  `vitePlugin.ts` injects `virtual:studio-runtime` (a plain
+  `STUDIO_RUNTIME_CONFIG` data object: `projectKey`/`parentOrigin`/
+  `nodeIdAttr`) into the workspace's Vite config, but the generated
+  `prototype/main.jsx` (`MAIN_JSX` in `shellFiles.ts`) never imports that
+  virtual module or calls `createStudioRuntimeBridge` with it — it just
+  renders `<App />`. There is also no bundled, shippable artifact of
+  `runtime.ts` itself anywhere (unlike `vitePlugin.ts`, which
+  `scripts/sync-studio-runtime.ts` bundles into
+  `src/core/studio-runtime/generated/vitePluginBundle.ts` for exactly this
+  "the workspace has its own, unrelated `node_modules`" reason —
+  `runtime.ts` has no such generated sibling). **Consequence, confirmed live
+  in a real browser**: a bridge iframe loads the correct, real, fully-
+  rendered screen (verified — real RTL Arabic content, real design-system
+  components, zero console errors) but its `adapter` never receives `ready`,
+  because nothing inside that page ever calls `postOutbound({type:'ready'})`
+  — the runtime that would do so was never told to boot. Every `LiveBoardFrame`
+  therefore shows its Tier-0 fallback FOREVER against a real, correctly-
+  proxied, correctly-rendering Tier-2 project — not a Phase A bug, a
+  separate, deeper, previously-undocumented gap in L4's own shipped scope.
+  **This needs its own work order** (something like "L4.5: ship + wire the
+  in-frame runtime bridge into the generated shell") before the ready-swap
+  this PR builds can ever actually fire outside a unit test. Flagging
+  explicitly so nobody re-diagnoses Phase A's own code looking for this bug —
+  it isn't there.
+- **`bun test` shares one process across files** — `mock.module` calls DO
+  leak across test files in this bun version (`bun 1.3.13`) when they mock
+  the same module specifier. Avoided deliberately in this PR's own tests:
+  `liveBoardFrame.test.tsx` mocks `useLiveOrigin`/`useDevServerReadiness`
+  (harmless to leak, other files don't import those with different
+  expectations), but the "ready swap" test is in its OWN file
+  (`useAdapterReady.test.tsx`) using a hand-built stub adapter rather than
+  mocking `BreakpointFrame` — an earlier attempt that mocked
+  `@site/canvas/BreakpointFrame` broke a SIBLING test file in the same run
+  (`Cannot update a component while rendering a different component`, from
+  the stub calling `onAdapterChange` synchronously during render — also a
+  real bug in that draft, not just the leak). `useLiveOrigin.ts`/
+  `useDevServerReadiness.ts` both export `__resetXForTests()` (the
+  established repo pattern, see `classUsage.ts`) because their module-level
+  singletons (`fetchInFlight`, the per-`dir` poll-entry map) otherwise leak
+  real state across test FILES, not just test cases within one file.
+- **Accidental workspace pollution from dogfooding, cleaned up, but a
+  landmine for the next agent**: opening a Tier-0/1 project in the browser
+  during a dogfood session (even briefly, before setting `localStorage`'s
+  `studio:studio:dir` to the intended target) triggers `ensurePrototypeShell`'s
+  self-healing rewrite of that project's `prototype/App.jsx`/`vite.config.js`/
+  `.studio/shell.json` — this happened to the CHECKED-IN `studio-workspace/test4
+  copy/` in this worktree mid-session and was reverted (`git checkout --`)
+  before committing. **Always set the target project's `dir` via
+  `localStorage` BEFORE the first navigation** (Playwright's
+  `page.addInitScript`, not a post-load `evaluate`), and `git status
+  studio-workspace/` before committing anything after a browser dogfood.
+- **`server/handlers/studio/__tests__/prototypeShell.test.ts` (pre-existing,
+  not this PR's) writes `prototype/studioRuntime.generated.js` into the REAL
+  `studio-workspace/test4 copy/` as test litter** — observed as an untracked
+  file after running `bun test server/handlers`, unrelated to any browser
+  dogfood. Removed it before committing; flagging since it will reappear for
+  anyone who runs that suite against this same worktree.
+
+**Verification:**
+- `bunx tsc -b` clean.
+- `bun run build` clean — `AdminCanvasEditorBody` 824.58 kB (vs. baseline
+  824.92 kB — smaller; `devServerRequests` split into its own chunk now that
+  `useDevServerReadiness` imports it).
+- `bun run lint` — only the 6 pre-existing `'os' is defined but never used`
+  errors (`server/handlers/__tests__/{components,previewAxes,reloadScope,
+  styleCompileConsent,trustTier}.test.ts`, `server/handlers/studio/
+  referenceUpload.test.ts`), none touched by this change.
+- `bun test src/__tests__/canvas src/admin/pages/site src/__tests__/studio`
+  → 15 fail both before (via `git stash`) and after this diff — identical
+  failure list (iframe-batch-contention timeouts in unrelated files,
+  individually green — the standing "batch-run isolation flake"), zero new
+  failures.
+- `bun test server/handlers/studio server/handlers/__tests__` → 6 fail both
+  before and after (unrelated `designImport`/github-fetch tests needing real
+  network).
+- `bun test server/ai/mcp` → 27 fail both before and after (unrelated
+  `studio_git_commit`/`pushStudioLiveReload` tests).
+- New tests, all green: `src/__tests__/canvas/{boardFrameViewTierFork,
+  liveBoardFrame,useAdapterReady,useDevServerReadiness,useLiveOrigin}.test.tsx`
+  (23 cases). `boardFrameViewTierFork.test.tsx` is the byte-for-byte proof
+  the work order demanded — real `BoardFrameView` render, `trust: 'static'`
+  → exact today's portal iframe (`srcdoc`, no `src`, no bridge marker) vs.
+  `trust: 'run-project'` → the bridge marker present.
+- **Real browser dogfood, attempted and driven as far as this sandbox
+  allows**: promoted a scratch copy of `studio-workspace/test4 copy`
+  (`__dogfood-perf06`, ephemeral, cleaned up, never committed) to
+  `trust: 'run-project'`, seeded a real admin account + site row (no
+  registration UI needed re-discovery — see the PR for the exact
+  `createUser`/`createSite` calls used), ran this worktree's own `bun run
+  dev` on scratch ports with `PUBLIC_ORIGIN`/`VITE_ALLOWED_ORIGIN` set, and
+  drove a real Playwright Chromium browser through a real login → real
+  board load → real `LiveBoardFrame` mount → real bridge iframe →
+  real live-origin proxy → real spawned Vite dev server, confirmed via
+  network capture and DOM inspection: 5 `LiveBoardFrame`s mounted, each
+  bridge iframe's `src` correctly resolved
+  (`http://localhost:3312/p/__dogfood-perf06/__screen/<key>?dir=&theme=&lang=`),
+  each returning 200 with the real, correctly-rendered authored screen when
+  loaded directly. **Stopped at the exact boundary documented in Landmines
+  above** — the `ready` swap itself is unit-tested only (`useAdapterReady.test.tsx`,
+  a stub adapter), not observed live, because nothing in the current
+  generated shell would ever make it fire. All scratch processes/files/DB
+  cleaned up; `git status` confirms neither this worktree nor `studio-workspace/`
+  in the primary checkout carry any trace.
+
+**Human action needed:** none blocking this PR's own merge — Phase A's scope
+(the canvas-side wiring) is complete, tested, and behaves exactly as
+designed given real inputs. But **do not consider L8 (or Track L's own
+"drag a node on a live board" exit criterion) actually demoable** until the
+in-frame-runtime-wiring gap above gets its own work order and lands — this
+PR proves the wiring is CORRECT, not that a user can see a live frame swap
+today.
 
 #### Phase B (perf-hunter's actual "L8" — the pool + budgets, buildable once Phase A exists)
 
