@@ -212,14 +212,48 @@ interface FrameDocumentAdapter {
 
 No other canvas work runs in parallel with L5.
 
-### L6 — Per-screen routes in the shell (S) · `server-engineer`
+### L6 — Per-screen routes in the shell (S) · `server-engineer` — done (`live-06`, STATE.md)
 
 `prototype/App.jsx` (generated, hash-tracked) serves
 `/__screen/<key>?dir=&theme=&lang=` for every entry in
-`registry.generated.jsx`, rendering that screen inside `ScreenFrame` with the
-project's providers (`providers.generated.jsx`). This is what makes *every*
-page addressable in the real runtime — the problem `referenceRender.ts`
-documents as "route, not pageId" — and it costs nothing at download time.
+`registry.generated.jsx`. **Shipped shape differs from the line above on
+purpose:** the routed screen renders `screen.Component` directly at the top
+level of the document, NOT nested inside `ScreenFrame` — `ScreenFrame` is a
+second, separate `<iframe>`, and nesting one here would put the screen's real
+DOM (and its `data-node-id` stamps) inside a document `virtual:studio-runtime`
+(injected once, at the top of this same page) can never see or measure,
+silently breaking selection/overlay for every live frame. The outer element
+already sizing this document — Studio's own canvas bridge iframe in Studio's
+case, or the bare browser window when hit directly — already IS the device
+viewport, so there is no second CSS-isolation problem left for a nested
+iframe to solve. Only `ScreenFrame`'s `RESET` CSS (scrollbar-hiding, margin
+reset) is reused, imported directly.
+
+Reaching this route through Studio's own live-origin proxy
+(`<LIVE_ORIGIN>/p/<projectKey>/__screen/<key>`) needed a second, unrelated fix
+discovered while verifying the route was reachable at all: the proxy
+(`server/liveOrigin.ts`, L2) was stripping the `/p/<projectKey>` prefix before
+forwarding, while the spawned dev server's own `vite.config.js` set no `base`
+— so the FIRST HTML response proxied correctly, but every asset URL it
+referenced (`/prototype/main.jsx`, `/@vite/client`, HMR) resolved against the
+live origin's ROOT and 404'd. Fixed by giving the dev server a matching
+`base: '/p/<projectKey>/'` (`server/handlers/studio/devServer.ts`'s
+`STUDIO_LIVE_BASE_PATH` env var) and forwarding the FULL, un-stripped
+pathname through the proxy instead of stripping it — this broke every page
+proxied through the live origin, not just this route, since nothing had
+exercised a live frame through the proxy before this work order.
+
+Dogfooding this fix against a real spawned Vite dev server and a real browser
+(not just unit tests) surfaced a second, more serious bug: closing the
+proxy's OUTBOUND WebSocket to the dev server on ordinary browser
+disconnect/navigation crashed the ENTIRE dev server process (an unhandled
+`ECONNRESET` in Vite's own `ws`-based HMR server, from Bun's WebSocket
+*client* `.close()` not performing a graceful closing handshake against it —
+confirmed independent of close code/timing, and confirmed NOT to happen when
+a real browser talks to Vite directly with no proxy in the loop). Fixed by no
+longer explicitly closing that connection on browser disconnect — see
+`server/liveOrigin.ts`'s `close(ws)` handler for the full account and the
+accepted resource-lingering tradeoff.
 
 ### L7 — Save → HMR loop (S/M) · `store-engineer`
 

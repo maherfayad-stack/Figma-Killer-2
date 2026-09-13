@@ -158,10 +158,15 @@ interface IframeFrameSurfaceProps {
    * `'bridge'` (Tier 2, cross-origin `postMessage` to a real dev-server
    * page) requires `liveFrame` and constructs a `BridgeFrameAdapter`
    * instead of a `PortalFrameAdapter` — the fork itself is real, committed,
-   * tested code, but `liveFrame.liveOrigin`/`screenKey` cannot resolve to a
-   * genuinely working URL until L6's `/__screen/<key>` route exists (see
-   * `resolveLiveFrameSrc.ts`). No injector subtree is portaled into a
-   * bridge-mode frame — see the render fork below.
+   * tested code, and `liveFrame.liveOrigin`/`screenKey`/`axes` now resolve
+   * to a genuinely working URL (`resolveLiveFrameSrc.ts`) now that L6's
+   * `/__screen/<key>` route exists in the generated shell and Studio's own
+   * live-origin proxy forwards to it correctly (`STATE.md`'s `live-06`).
+   * What is still missing is the CALLER: nothing in production yet
+   * constructs a `LiveFrameSource` and flips a real board frame's
+   * `documentMode` to `'bridge'` — that decision (which frames, when, gated
+   * on what) is separate, not-yet-scoped work. No injector subtree is
+   * portaled into a bridge-mode frame — see the render fork below.
    */
   documentMode?: 'portal' | 'bridge'
   /** Bridge-mode-only inputs. Required (and only read) when `documentMode === 'bridge'`. */
