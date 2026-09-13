@@ -1,19 +1,28 @@
 /**
  * `StyleSurface`'s pre-flight write lock, end to end at the panel level.
  *
- * Three facts:
+ * Track P / `panel-21` replaced the old exclusive Element/Class block pair
+ * (and its dedicated `ClassCssLockedNotice` banner) with ONE merged
+ * composer plus `WriteTargetRow`'s informational chip strip — see
+ * `resolveWriteTarget.ts`. A locked class no longer disables a whole block:
+ * it is struck through in the chip row, excluded from `resolveWriteTarget`'s
+ * candidates, and a NEW value for a property that class would have owned
+ * now lands on the element's inline layer instead — never silently
+ * discarded, never claimed by a control that can't save it.
+ *
+ * Three facts this file still checks:
  *
  *  1. A class Studio maps to a build artefact (or cannot map at all) is
- *     announced BEFORE the first keystroke, not by a toast 2 s after autosave.
- *  2. The banner offers the remedy its own wording recommends — switching to
- *     the element's inline-style layer, which DOES write back — instead of
- *     recommending it and leaving the user to find the chip.
- *  3. Outside Studio, where every class is "unmapped" simply because there is
- *     no file on disk to map to, nothing is locked. Getting this wrong would
- *     disable the whole properties panel in the DB-backed editor.
+ *     announced BEFORE the first keystroke (struck through, with a reason),
+ *     not by a toast 2 s after autosave.
+ *  2. That class is excluded from the merged composer's writable targets —
+ *     confirmed indirectly via the chip's `data-locked` attribute.
+ *  3. Outside Studio, where every class is "unmapped" simply because there
+ *     is no file on disk to map to, nothing is locked. Getting this wrong
+ *     would disable the whole properties panel in the DB-backed editor.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { render, screen, cleanup, act } from '@testing-library/react'
+import { describe, it, expect, afterEach, beforeEach } from 'bun:test'
+import { render, screen, cleanup } from '@testing-library/react'
 import type { StyleRule } from '@core/page-tree'
 import { StyleSurface } from '@site/panels/PropertiesPanel/StyleSurface'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
@@ -78,15 +87,7 @@ function loadCmsPage() {
 }
 
 function renderSurface(cls: StyleRule, nodeId: string) {
-  return render(
-    <StyleSurface
-      activeClass={cls}
-      activeClassId={cls.id}
-      assignedClassRules={[cls]}
-      activeBreakpointId="desktop"
-      nodeId={nodeId}
-    />,
-  )
+  return render(<StyleSurface assignedClassRules={[cls]} activeBreakpointId="desktop" nodeId={nodeId} />)
 }
 
 beforeEach(() => {
@@ -95,37 +96,27 @@ beforeEach(() => {
 })
 
 describe('StyleSurface — pre-flight class write lock', () => {
-  it('announces a compiled class before the user types, and marks the block locked', () => {
+  it('announces a compiled class before the user types, struck through in the write-target chip row', () => {
     loadStudioPage()
     const cls = makeClass('sc-abc1234567')
     setStudioStyleRuleSources({ [cls.id]: { file: 'dist/style.css', selector: '.card' } }, {})
 
     renderSurface(cls, STUDIO_NODE_ID)
 
-    const notice = screen.getByTestId('class-css-locked-notice')
-    expect(notice.textContent).toContain('.card')
-    expect(notice.textContent).toContain('build/output directory')
-    expect(screen.getByTestId('style-target-block-class').getAttribute('data-write-locked')).toBe('true')
-  })
+    const chip = screen.getByTestId(`write-target-chip-${cls.id}`)
+    expect(chip.getAttribute('data-locked')).toBe('true')
+    expect(chip.textContent).toContain('.card')
 
-  it('offers the element as the remedy, and taking it opens the inline block', () => {
-    loadStudioPage()
-    const cls = makeClass('sc-abc1234567')
-    setStudioStyleRuleSources({ [cls.id]: { file: 'dist/style.css', selector: '.card' } }, {})
-
-    renderSurface(cls, STUDIO_NODE_ID)
-
-    expect(useEditorStore.getState().inlineStyleEditing).toBe(false)
-    act(() => {
-      screen.getByRole('button', { name: 'Style the element instead' }).click()
-    })
-    expect(useEditorStore.getState().inlineStyleEditing).toBe(true)
+    // Excluded from the merged composer's candidates — the element's inline
+    // layer becomes the default target instead of silently failing.
+    const inlineChip = screen.getByTestId('write-target-chip-inline')
+    expect(inlineChip.getAttribute('data-default')).toBe('true')
   })
 
   it('locks an imported class Studio could not map to any file', () => {
     loadStudioPage()
     renderSurface(makeClass('sc-tailwind001'), STUDIO_NODE_ID)
-    expect(screen.getByTestId('class-css-locked-notice')).toBeTruthy()
+    expect(screen.getByTestId('write-target-chip-sc-tailwind001').getAttribute('data-locked')).toBe('true')
   })
 
   it('does not lock a class whose source is a hand-authored .css file', () => {
@@ -135,13 +126,12 @@ describe('StyleSurface — pre-flight class write lock', () => {
 
     renderSurface(cls, STUDIO_NODE_ID)
 
-    expect(screen.queryByTestId('class-css-locked-notice')).toBeNull()
-    expect(screen.getByTestId('style-target-block-class').getAttribute('data-write-locked')).toBe('false')
+    expect(screen.getByTestId(`write-target-chip-${cls.id}`).getAttribute('data-locked')).toBe('false')
   })
 
   it('locks nothing outside a Studio session, where "unmapped" costs the user nothing', () => {
     const nodeId = loadCmsPage()
     renderSurface(makeClass('sc-tailwind001'), nodeId)
-    expect(screen.queryByTestId('class-css-locked-notice')).toBeNull()
+    expect(screen.getByTestId('write-target-chip-sc-tailwind001').getAttribute('data-locked')).toBe('false')
   })
 })

@@ -65,6 +65,7 @@ import {
 import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
 import { ClassStyleInjector } from './ClassStyleInjector'
+import { NodeStylePreviewInjector } from './NodeStylePreviewInjector'
 import { UserStylesheetInjector } from './UserStylesheetInjector'
 import { ProjectCssInjector } from './ProjectCssInjector'
 import { AuthoredCssInjector } from './AuthoredCssInjector'
@@ -445,6 +446,9 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               {/* Author CSS — @layer user-authored (board-27's raw AuthoredCssInjector always precedes mc-classes; see its own doc) */}
               <AuthoredCssInjector targetDocument={iframeDoc} viewport={viewport} />
               <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
+              {/* Element (inline) target's preview channel — panel-21 / P2 rule 7,
+                  the mirror of ClassStyleInjector's own preview overlay above. */}
+              <NodeStylePreviewInjector targetDocument={iframeDoc} viewport={viewport} />
               <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
               {children}
               {/* Runtime scripts (opt-in) run against the node tree mounted

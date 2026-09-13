@@ -13,12 +13,15 @@
  *   below. `PropertiesPanelBody` still shows its own "select an element"
  *   empty state underneath in that case.
  *
- * Unified icon-rail design (Task #unified-panel):
- *   - StyleCategoryRail is the primary navigation for the panel's lower half.
- *   - First rail icon: Module settings (always enabled).
- *   - Remaining icons: CSS style categories (disabled when no active class).
- *   - ClassPicker always-visible above the rail+content area.
- *   - Default active section on node selection: MODULE_CATEGORY_ID.
+ * Track P / `panel-21` — `InspectorShell` (`@site/inspector/InspectorShell`)
+ * now owns the content region below the header: a Design / Prototype /
+ * Inspect tab strip. Design renders exactly what `PropertiesPanelBody`
+ * always rendered; `StyleSurface.tsx` (inside it) deleted the old icon rail
+ * (`StyleCategoryRail`) and sticky search bar for the single-node surface —
+ * see that file's own doc. `SelectorInspector.tsx`'s separate global/ambient
+ * selector surface still uses `StyleCategoryRail`, unchanged; a single
+ * ambient CSS rule has no element-vs-class write-target ambiguity for P1's
+ * "the write target is a rule, not a mode" mechanic to resolve.
  *
  * Guideline #357 (Compact UI Density):
  * - Property rows: 26px height, label font 11px, value font 12px
@@ -43,6 +46,7 @@ import { renderModuleTabContent } from './renderModuleTabContent'
 import { PropertiesPanelBody } from './PropertiesPanelBody'
 import { FrameSizePanel } from './FrameSizePanel'
 import { FrameBulkInspector } from './FrameBulkInspector'
+import { InspectorShell } from '@site/inspector/InspectorShell'
 import { NodeHeader } from './NodeHeader'
 import { SelectorHeader } from './SelectorHeader'
 import { MultiSelectionHeader } from './MultiSelectionInspector'
@@ -234,29 +238,31 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
         {isFrameMultiSelect ? (
           <FrameBulkInspector />
         ) : (
-          <>
-            <FrameSizePanel />
-            <PropertiesPanelBody
-              selectedSelectorClass={data.selectedSelectorClass}
-              selectedSelectorClassId={data.selectedSelectorClassId}
-              selectedSelectorClassIds={data.selectedSelectorClassIds}
-              isSelectorMultiSelect={data.isSelectorMultiSelect}
-              activeBreakpointId={data.activeBreakpointId}
-              isMultiSelect={data.isMultiSelect}
-              selectedNodeIds={data.selectedNodeIds}
-              selectedNode={data.selectedNode}
-              selectedNodeId={data.selectedNodeId}
-              definition={data.definition}
-              activeDocument={data.activeDocument}
-              activeVc={data.activeVc}
-              activeClass={data.activeClass}
-              activeClassId={data.activeClassId}
-              assignedClassRules={data.assignedClassRules}
-              moduleTabContent={moduleTabContent}
-              classPickerRef={classPickerRef}
-              onFocusClassPicker={handleFocusClassPicker}
-            />
-          </>
+          <InspectorShell
+            designContent={
+              <>
+                <FrameSizePanel />
+                <PropertiesPanelBody
+                  selectedSelectorClass={data.selectedSelectorClass}
+                  selectedSelectorClassId={data.selectedSelectorClassId}
+                  selectedSelectorClassIds={data.selectedSelectorClassIds}
+                  isSelectorMultiSelect={data.isSelectorMultiSelect}
+                  activeBreakpointId={data.activeBreakpointId}
+                  isMultiSelect={data.isMultiSelect}
+                  selectedNodeIds={data.selectedNodeIds}
+                  selectedNode={data.selectedNode}
+                  selectedNodeId={data.selectedNodeId}
+                  definition={data.definition}
+                  activeDocument={data.activeDocument}
+                  activeVc={data.activeVc}
+                  assignedClassRules={data.assignedClassRules}
+                  moduleTabContent={moduleTabContent}
+                  classPickerRef={classPickerRef}
+                  onFocusClassPicker={handleFocusClassPicker}
+                />
+              </>
+            }
+          />
         )}
       </div>
       </ProjectVariablesProvider>

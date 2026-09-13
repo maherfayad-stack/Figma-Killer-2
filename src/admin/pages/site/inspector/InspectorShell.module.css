@@ -1,0 +1,22 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.tabBar {
+  padding: var(--inspector-space-s) var(--inspector-pad-x);
+  border-bottom: 1px solid var(--inspector-divider);
+}
+
+.tabContent {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.tabContent[hidden] {
+  display: none;
+}

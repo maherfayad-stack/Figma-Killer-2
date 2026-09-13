@@ -1,11 +1,16 @@
 /**
- * PrototypePanel — the inspector, while the board is in prototype mode.
+ * PrototypePanel — the Prototype tab's content inside the new inspector
+ * shell (`src/admin/pages/site/inspector/InspectorShell.tsx`, Track P / P1).
  *
- * `STUDIO-PROTOTYPE-PLAN.md` §5: the right panel's BODY swaps in prototype
- * mode, the way Figma's Design/Prototype tabs do. It is not a third tab beside
- * Properties and Comments — those two are panels you choose between, and this
- * is the same panel showing a different layer of the same selection.
+ * `STUDIO-PROTOTYPE-PLAN.md` §5 originally had the right panel's whole BODY
+ * swap in prototype mode. `panel-21` moves that swap into an ordinary tab:
+ * the Prototype tab is now reachable for ANY selection, not gated to
+ * board-level prototype mode — entering prototype mode from the canvas
+ * toolbar still jumps the shell onto this tab for continuity, but leaving
+ * it is "click Design", not "close a different panel". This component owns
+ * its sections only; the shell owns the tab bar and the header above it.
  *
+
  * TWO ENTRY POINTS, ONE FORM
  * ──────────────────────────
  * A link can be reached two ways, and the panel has to answer both:
@@ -53,7 +58,6 @@ import {
   type PrototypeTransition,
 } from '@core/studio-prototype'
 import { findLink, linkSource } from '@site/store/slices/prototypeSelectors'
-import { PanelHeader } from '@admin/shared/PanelHeader'
 import { Select } from '@ui/components/Select'
 import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
@@ -90,7 +94,6 @@ type Page = NonNullable<ReturnType<typeof selectActivePage>>
 type PageOption = { value: string; label: string }
 
 export function PrototypePanel() {
-  const setBoardMode = useEditorStore((s) => s.setBoardMode)
   const page = useEditorStore(selectActivePage)
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const links = useEditorStore((s) => s.prototype.links)
@@ -106,8 +109,6 @@ export function PrototypePanel() {
 
   return (
     <section className={styles.panel} data-testid="prototype-panel">
-      <PanelHeader title="Prototype" panelId="prototype" onClose={() => setBoardMode('design')} />
-
       {selectedLink ? (
         <LinkInspector
           link={selectedLink}

@@ -58,8 +58,6 @@ interface PropertiesPanelBodyProps {
   definition: AnyModuleDefinition | null | undefined
   activeDocument: ActiveDocument | null
   activeVc: VisualComponent | null
-  activeClass: StyleRule | null
-  activeClassId: string | null
   /** Track F1 — every class assigned to the node, for per-property provenance. */
   assignedClassRules: StyleRule[]
   moduleTabContent: React.ReactNode
@@ -83,8 +81,6 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     definition,
     activeDocument,
     activeVc,
-    activeClass,
-    activeClassId,
     assignedClassRules,
     moduleTabContent,
     classPickerRef,
@@ -235,8 +231,6 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
       {activeNodeView === 'styles' ? (
         <StyleSurface
           definition={definition}
-          activeClass={activeClass}
-          activeClassId={activeClassId}
           assignedClassRules={assignedClassRules}
           activeBreakpointId={activeBreakpointId}
           nodeId={selectedNodeId}

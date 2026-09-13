@@ -3,9 +3,12 @@
  * node: computed colors (as copyable swatches, with design-token names when
  * an exact match exists), typography, box model, and the raw effective CSS.
  *
- * Docked left-sidebar panel (Phase 6C), mounted the same way as
- * Selectors/Framework/Dependencies — see `LeftSidebar.tsx`. Read-only, so it
- * stays visible for non-editing callers too (unlike those three).
+ * Track P / `panel-21` moved this out of the left sidebar into the Inspect
+ * tab of the new inspector shell
+ * (`src/admin/pages/site/inspector/InspectorShell.tsx`) — read-only content
+ * belongs beside the surface it describes, not on the other side of the
+ * canvas. `headerless` on the shared `Panel` shell below because the
+ * inspector shell's own header + tab bar already own that chrome.
  *
  * All computed-style reading + the pure model transform live in
  * `useInspectComputedStyle` / `inspectModel.ts`; this file is chrome + copy
@@ -45,7 +48,6 @@ async function copyToClipboard(value: string, label: string): Promise<boolean> {
 }
 
 export function InspectPanel() {
-  const setInspectPanelOpen = useEditorStore((s) => s.setInspectPanelOpen)
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const selectedNode = useEditorStore(selectSelectedNode)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
@@ -71,7 +73,8 @@ export function InspectPanel() {
       panelId="inspect"
       title="Inspect"
       testId="inspect-panel"
-      onClose={() => setInspectPanelOpen(false)}
+      onClose={noop}
+      headerless
     >
       {!selectedNodeId ? (
         <p className={styles.emptyState}>Select an element to inspect.</p>
@@ -266,3 +269,5 @@ function CssSection({
     </section>
   )
 }
+
+function noop() {}

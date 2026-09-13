@@ -45,6 +45,7 @@ import { createAssignmentActions } from './styleRule/assignmentActions'
 // (e.g. the canvas reads `ClassPreviewAssignment`).
 export type {
   ClassPreviewAssignment,
+  NodeStylesPreview,
 } from './styleRule/types'
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -65,6 +66,7 @@ export const createStyleRuleSlice: EditorStoreSliceCreator<StyleRuleSlice> = (se
     inlineStyleEditing: false,
     previewClassAssignment: null,
     previewClassStyles: null,
+    previewNodeStyles: null,
 
     // ─── Action surface ────────────────────────────────────────────────────
     ...createUiStateActions(helpers),
