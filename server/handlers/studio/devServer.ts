@@ -346,6 +346,24 @@ export function getDevServerStatus(dir: string): DevServerStatus {
 }
 
 /**
+ * `dir`'s dev server's own origin (e.g. `http://127.0.0.1:5173`), or `null`
+ * if it is not currently `'ready'`.
+ *
+ * **Server-internal only — never send this over HTTP to a browser.** This
+ * is the one caller that legitimately needs the address: `server/liveOrigin.ts`
+ * (L2) is the SAME server PROCESS proxying a request in-process, not a
+ * browser round-trip, so handing it the raw origin here does not violate
+ * `DevServerStatus`'s own wire contract (`phase`/`pid`/`startedAt`/`log`
+ * only) — that contract is about what `tryServeStudioDevServer`'s HTTP
+ * routes put in a JSON response body, which this function never touches.
+ */
+export function getDevServerUpstreamUrl(dir: string): string | null {
+  const appRoot = resolveAppRoot(dir)
+  const entry = servers.get(appRoot)
+  return entry && entry.phase === 'ready' ? entry.baseUrl : null
+}
+
+/**
  * Starts (or reuses) `dir`'s dev server WITHOUT waiting for it to boot —
  * returns the status immediately (`'booting'` on a fresh spawn, `'ready'` on
  * reuse). A synchronous failure (no dev/start script) reports `'failed'`

@@ -291,6 +291,7 @@ import { tryServeStudioReferenceUpload } from './studio/referenceUpload'
 import { tryServeStudioComponentBundle } from './studio/componentBundle'
 import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
+import { tryServeStudioLiveOriginInfo } from './studio/liveOriginInfo'
 import { tryServeStudioStyleCompileConsent } from './studio/styleCompileConsent'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
@@ -342,6 +343,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,
+  tryServeStudioLiveOriginInfo,
   tryServeStudioStyleCompileConsent,
   tryServeStudioTokens,
   tryServeStudioExtractComponent,
