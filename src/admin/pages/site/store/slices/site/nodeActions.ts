@@ -41,6 +41,7 @@ import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
 import { commitStudioDelete, commitStudioMove, commitStudioReparent } from '@site/studio/studioStructuralCommits'
+import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
@@ -313,7 +314,14 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         deleteNode(tree, nodeId)
         return true
       })
-      if (deleted && plan.commit) void commitStudioDelete(plan.commit)
+      if (deleted && plan.commit) {
+        void commitStudioDelete(plan.commit)
+        // `live-07` — same-tick paint for a live (bridge) frame; portal
+        // frames already got theirs from the tree mutation above.
+        // `planSourceDelete([single node])` only ever pushes one id for a
+        // single-node call — see that function's own loop.
+        broadcastOptimisticDelete(plan.commit[0]!)
+      }
       // Drop the deleted node (and any descendants swept with it) from the
       // canvas selection so no phantom selection ring survives. Pruning by
       // tree-membership also clears `selectedNodeIds`, not just the anchor.
@@ -525,10 +533,15 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // undo has to be able to re-issue.
       const primaryId = nodeIds[0]!
       const origin = tree ? captureMoveOrigin(tree, primaryId) : null
-      mutateActiveTree((draft) => {
+      const moved = mutateActiveTree((draft) => {
         moveNodes(draft, nodeIds, newParentId, newIndex)
         return true
       })
+      // `live-07` — same-tick paint for a live (bridge) frame; portal frames
+      // already got theirs from the tree mutation above. One call covers
+      // both the reparent and same-parent-move branches below (identical DOM
+      // effect) — do not duplicate this into either of them.
+      if (moved) broadcastOptimisticMove(primaryId, newParentId, newIndex)
       const commit = plan?.commit
       // Tagged only when a SOURCE write is actually issued: a CMS or Visual
       // Component tree has no file to disagree with, so patch-replay undo

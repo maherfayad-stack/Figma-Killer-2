@@ -324,3 +324,14 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.eventHandlers.clear()
   }
 }
+
+/**
+ * Type guard narrowing a `FrameDocumentAdapter` to `BridgeFrameAdapter`, so a
+ * caller can reach {@link BridgeFrameAdapter.setNodeIds} — NOT part of
+ * `FrameDocumentAdapter` itself, since a portal adapter has no canonical
+ * <-> stamp index to rebuild. Symmetric with `PortalFrameAdapter.ts`'s
+ * `isPortalFrameAdapter`.
+ */
+export function isBridgeFrameAdapter(adapter: FrameDocumentAdapter | null): adapter is BridgeFrameAdapter {
+  return adapter instanceof BridgeFrameAdapter
+}

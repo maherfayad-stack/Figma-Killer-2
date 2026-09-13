@@ -89,7 +89,7 @@ import { CanvasFrameContexts } from './CanvasFrameContexts'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
 import type { PreviewAxes } from '@core/studio-board'
 import { PortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
-import { BridgeFrameAdapter, type BridgeFrameChannel } from './frameAdapter/BridgeFrameAdapter'
+import { BridgeFrameAdapter, isBridgeFrameAdapter, type BridgeFrameChannel } from './frameAdapter/BridgeFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { registerFrameAdapter, unregisterFrameAdapter } from './frameAdapter/canvasFrameAdapterRegistry'
 import { resolveLiveFrameSrc, type LiveFrameSource } from './resolveLiveFrameSrc'
@@ -226,6 +226,18 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
       const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
 
+    // `live-07` (STATE.md) — keeps the freshest `liveFrame` reachable from
+    // inside the construct effect below WITHOUT it being a dependency of
+    // that effect. `liveFrame` is a new object on every render where
+    // `nodeIdsInTreeOrder` changed (every structural resync re-parses and
+    // re-mints the active page's node id list), and the construct effect
+    // below must NOT re-run for that — only for a genuinely different
+    // frame/document. Assigning during render (not inside an effect) is the
+    // standard "always-current ref" pattern: it costs nothing and never
+    // triggers a re-render on its own.
+    const liveFrameRef = useRef(liveFrame)
+    liveFrameRef.current = liveFrame
+
     // `live-05` (STATE.md) — every canvas frame publishes a `FrameDocumentAdapter`,
     // constructed/disposed with its own lifecycle. `documentMode==='bridge'`
     // constructs a `BridgeFrameAdapter` wrapping a real cross-origin
@@ -237,15 +249,25 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // check from the other side (STATE.md's `sec-06`) — inbound messages are
     // additionally verified to come from THIS iframe's own window, not just
     // the right origin.
+    //
+    // `live-07` — deliberately keyed on `liveOrigin`/`screenKey`, NOT the
+    // whole `liveFrame` object: those two are the only things that actually
+    // mean "this is a different frame/document" (`resolveLiveFrameSrc`
+    // depends on nothing else). A re-parse that only changes
+    // `nodeIdsInTreeOrder` must NOT dispose/reconstruct the adapter — that
+    // drops every pending `measure()` promise, event subscription, and the
+    // adapter's own identity for no reason. See the id-only effect below,
+    // which is what actually reconciles the id list in place.
     useEffect(() => {
       if (documentMode === 'bridge') {
         const iframe = iframeRef.current
         const frameWindow = iframe?.contentWindow
-        if (!iframe || !frameWindow || !liveFrame) {
+        const frame = liveFrameRef.current
+        if (!iframe || !frameWindow || !frame) {
           setAdapter(null)
           return
         }
-        const frameOrigin = new URL(resolveLiveFrameSrc(liveFrame)).origin
+        const frameOrigin = new URL(resolveLiveFrameSrc(frame)).origin
         const channel: BridgeFrameChannel = {
           postMessage: (message, targetOrigin) => frameWindow.postMessage(message, targetOrigin),
           addEventListener: (type, handler) => window.addEventListener(type, handler),
@@ -255,7 +277,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           channel,
           frameOrigin,
           expectedSource: frameWindow,
-          nodeIdsInTreeOrder: liveFrame.nodeIdsInTreeOrder,
+          nodeIdsInTreeOrder: frame.nodeIdsInTreeOrder,
         })
         setAdapter(next)
         // `live-05` (STATE.md, architect's Batch 4 resolution) — every
@@ -281,7 +303,18 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         unregisterFrameAdapter(iframe)
         next.dispose()
       }
-    }, [documentMode, iframeDoc, liveFrame])
+    }, [documentMode, iframeDoc, liveFrame?.liveOrigin, liveFrame?.screenKey])
+
+    // `live-07` — the other half of the split above: reconciles the
+    // canonical<->stamp index IN PLACE via `setNodeIds` (already shipped by
+    // L5, never previously called) whenever only the active page's node id
+    // set changes, instead of tearing the whole adapter down. No-ops for a
+    // portal adapter (no such index exists) and while no bridge adapter is
+    // mounted yet.
+    useEffect(() => {
+      if (!isBridgeFrameAdapter(adapter) || !liveFrame?.nodeIdsInTreeOrder) return
+      adapter.setNodeIds(liveFrame.nodeIdsInTreeOrder)
+    }, [adapter, liveFrame?.nodeIdsInTreeOrder])
 
     useIframeCursorBridge(iframeRef, adapter, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(adapter, { breakpointId, enabled: !isLive })

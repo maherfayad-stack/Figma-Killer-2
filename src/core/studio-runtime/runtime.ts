@@ -65,6 +65,7 @@ import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight,
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
 const NODE_ID_ATTR = 'data-node-id'
+const OPTIMISTIC_ATTR = 'data-studio-optimistic'
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
 const RUNTIME_ANIMATION_STYLE_ID = 'studio-runtime-animation-freeze'
 const OVERLAY_STYLE_ID_PREFIX = 'studio-runtime-overlay-'
@@ -384,9 +385,14 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     if (!parent) return
     const el = doc.createElement(tagName)
     el.setAttribute(NODE_ID_ATTR, nodeId)
-    el.setAttribute('data-studio-optimistic', '')
+    el.setAttribute(OPTIMISTIC_ATTR, '')
     if (text !== undefined) el.textContent = text
     parent.insertBefore(el, parent.children[index] ?? null)
+  }
+
+  /** `live-07` — clears every optimistic-insert ghost once Vite has landed the real element (`vite:afterUpdate` fires "once the new DOM exists"). Without this a successful insert leaves a permanent duplicate. A refusal that writes no file never fires this — same limitation portal mode already has. */
+  function sweepOptimisticGhosts(): void {
+    doc.querySelectorAll(`[${OPTIMISTIC_ATTR}]`).forEach((el) => el.remove())
   }
 
   function handleOptimisticDelete(nodeId: string, occurrenceIndex: number): void {
@@ -647,7 +653,10 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       doc,
       options.hot,
       () => postOutbound({ type: 'hmr:before' }),
-      () => postOutbound({ type: 'hmr:after' }),
+      () => {
+        sweepOptimisticGhosts()
+        postOutbound({ type: 'hmr:after' })
+      },
     )
   }
 
