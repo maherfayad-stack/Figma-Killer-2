@@ -50,12 +50,23 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { registeredMcpServerProjectKey } from '../../ai/drivers/registeredMcpServers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import { detectPackageManager, type PackageManager } from './installDeps'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { requireTrustTier } from './trustGate'
+
+/**
+ * Env var name the spawned dev-server subprocess reads its live-origin base
+ * path from — exact string, shared by the spawn call below and the
+ * generated `vite.config.js` template's `process.env` read
+ * (`prototypeShell/shellFiles.ts`'s `VITE_CONFIG`, which imports this
+ * constant rather than repeating the string literal, so the two can never
+ * drift apart).
+ */
+export const STUDIO_LIVE_BASE_PATH_ENV = 'STUDIO_LIVE_BASE_PATH'
 
 const ROUTE_PREFIX = '/admin/api/studio/dev-server'
 
@@ -242,17 +253,28 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
   entry.phase = 'ready'
 }
 
-function spawnEntry(appRoot: string, overrides: DevServerOverrides): { ok: true; entry: DevServerEntry } | { ok: false; error: string } {
+/**
+ * `dir` is the ORIGINAL project directory — the one `ensureDevServer`/
+ * `startDevServer` received, BEFORE `resolveAppRoot(dir)` narrows it to a
+ * possibly-nested app root. `registeredMcpServerProjectKey` must be computed
+ * from `dir`, not `appRoot`: it is the SAME key `server/liveOrigin.ts` uses
+ * for the `/p/<projectKey>` URL segment, keyed off the project directory
+ * itself. Deriving it from a monorepo's narrowed `apps/web/` app root instead
+ * would silently compute a different, wrong key for exactly the one case
+ * (a nested app root) this distinction exists to handle.
+ */
+function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides): { ok: true; entry: DevServerEntry } | { ok: false; error: string } {
   const devScript = devScriptFor(appRoot)
   if (!devScript) {
     return { ok: false, error: `No "dev" or "start" script found in package.json at ${appRoot}.` }
   }
 
   const packageManager = detectPackageManager(appRoot)
+  const projectKey = registeredMcpServerProjectKey(dir)
   const spawn = overrides.spawn ?? defaultSpawn
   const proc = spawn([packageManager, 'run', devScript], {
     cwd: appRoot,
-    env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS),
+    env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, { [STUDIO_LIVE_BASE_PATH_ENV]: `/p/${projectKey}/` }),
     stdout: 'pipe',
     stderr: 'pipe',
     stdin: 'ignore',
@@ -284,11 +306,11 @@ function spawnEntry(appRoot: string, overrides: DevServerOverrides): { ok: true;
 }
 
 /** Reuses a live (`'booting'`/`'ready'`) entry; clears and respawns a `'failed'` one; spawns fresh otherwise. */
-function ensureEntry(appRoot: string, overrides: DevServerOverrides): { ok: true; entry: DevServerEntry } | { ok: false; error: string } {
+function ensureEntry(appRoot: string, dir: string, overrides: DevServerOverrides): { ok: true; entry: DevServerEntry } | { ok: false; error: string } {
   const existing = servers.get(appRoot)
   if (existing && existing.phase !== 'failed') return { ok: true, entry: existing }
   if (existing) servers.delete(appRoot)
-  return spawnEntry(appRoot, overrides)
+  return spawnEntry(appRoot, dir, overrides)
 }
 
 export type EnsureDevServerResult =
@@ -303,7 +325,7 @@ export type EnsureDevServerResult =
  */
 export async function ensureDevServer(dir: string, overrides: DevServerOverrides = {}): Promise<EnsureDevServerResult> {
   const appRoot = resolveAppRoot(dir)
-  const created = ensureEntry(appRoot, overrides)
+  const created = ensureEntry(appRoot, dir, overrides)
   if (!created.ok) return { ok: false, error: created.error, log: '' }
 
   await created.entry.settled
@@ -372,7 +394,7 @@ export function getDevServerUpstreamUrl(dir: string): string | null {
  */
 export function startDevServer(dir: string, overrides: DevServerOverrides = {}): DevServerStatus {
   const appRoot = resolveAppRoot(dir)
-  const created = ensureEntry(appRoot, overrides)
+  const created = ensureEntry(appRoot, dir, overrides)
   if (!created.ok) return { phase: 'failed', pid: null, startedAt: null, log: created.error }
   return statusOf(created.entry)
 }
