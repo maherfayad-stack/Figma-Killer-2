@@ -21,7 +21,7 @@
  * from being editable without touching the panel shell.
  */
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { evaluateCondition, hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
+import { evaluateCondition, explainPropConstraint, hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
 import type {
   AnyModuleDefinition,
   PropertyControl,
@@ -30,7 +30,6 @@ import type { Page, PageNode } from '@core/page-tree'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { LoopPropertiesView } from './LoopPropertiesView'
 import { InstanceCallSiteView } from './InstanceCallSiteView'
-import { propLockReason } from './propLockReason'
 import { ParamPromotableRow } from './ParamPromotableRow'
 import { FormSettingsPanel } from './FormSettingsPanel'
 import { isFormSettingsModule } from './formSettingsAnalysis'
@@ -173,7 +172,7 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
             // Only `collection-index` reads this: `TabBar.value` names one entry
             // of the sibling `items`, so its options are the node's own data.
             siblingProps={resolvedPropsForBreakpoint}
-            sourceLockReason={propLockReason(selectedNode, key)}
+            constraint={explainPropConstraint(selectedNode, key, resolvedPropsForBreakpoint[key]) ?? undefined}
             // E2.5 — only `SlotControl` reads this: a package/design-system
             // component's own `node`-kind prop is filled directly on ITS OWN
             // element (unlike `studio.instance`, there's no separate call

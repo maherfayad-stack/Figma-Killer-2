@@ -25,12 +25,27 @@
  *
  * R8: `textOrigin`'s `file:line` is now a real jump-to-source button, not
  * plain text (`jumpToSource.ts`).
+ *
+ * R3 (`STUDIO-LIVE-CANVAS-PLAN.md` Track R): the structural half used to stop
+ * at the sentence — "this element can't be moved or deleted", full stop, no
+ * way forward. `constraint` (computed by the caller via `refusePlacement` +
+ * `describeStructuralRefusal`, the SAME two calls `explainPropConstraint`'s
+ * own `list-row` branch makes internally, so the two can never disagree about
+ * which reason a given node has) carries real `actions` — "Detach this
+ * instance", "Open the component definition" — rendered below the bespoke
+ * prose via `ConstraintActionButtons`, the identical renderer
+ * `LayerNodeContextMenu`'s refusal footer already uses. The prose itself
+ * stays hand-written rather than switching to `ConstraintNotice`'s generic
+ * wrapper: it carries a nuance (structurally locked but "its own values are
+ * editable") that `EditConstraint.explanation` alone doesn't.
  */
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
 import { ExternalLinkSolidIcon } from 'pixel-art-icons/icons/external-link-solid'
+import type { EditConstraint } from '@core/page-tree'
 import { cn } from '@ui/cn'
 import { Button } from '@ui/components/Button'
+import { ConstraintActionButtons } from '@site/ui/ConstraintNotice'
 import { jumpToSource } from './jumpToSource'
 import styles from './SharedComponentNotice.module.css'
 
@@ -53,6 +68,15 @@ interface SourceConstraintNoticeProps {
    * prop write here could land on this row alone.
    */
   hasWritableLocation: boolean
+  /**
+   * The structural refusal, dressed as an `EditConstraint` by the caller —
+   * `null`/`undefined` when `lockReason` is absent (there is nothing to
+   * dress). Supplies the real remedy buttons below the bespoke prose; see
+   * this file's own doc comment for why the prose stays hand-written.
+   */
+  constraint?: EditConstraint | null
+  /** The locked node's id — `detach`/`extract` act on this one call site. */
+  nodeId?: string
 }
 
 export function SourceConstraintNotice({
@@ -60,6 +84,8 @@ export function SourceConstraintNotice({
   textOrigin,
   sharedWith,
   hasWritableLocation,
+  constraint,
+  nodeId,
 }: SourceConstraintNoticeProps) {
   const structural = lockReason !== undefined
 
@@ -81,43 +107,50 @@ export function SourceConstraintNotice({
       ) : (
         <CodeIcon size={14} className={styles.icon} />
       )}
-      <p className={styles.text}>
-        {structural ? (
-          <>
-            <strong>{lockReason}</strong>.{' '}
-            {hasWritableLocation ? (
-              <>
-                This element can&apos;t be moved or deleted from here, but its own values are
-                editable and write straight to the source.
-              </>
-            ) : (
-              <>
-                One piece of source renders every row of this list, so a change here would apply to
-                all of them — the values stay read-only.
-              </>
-            )}
-          </>
+      <div className={styles.body}>
+        <p className={styles.text}>
+          {structural ? (
+            <>
+              <strong>{lockReason}</strong>.{' '}
+              {hasWritableLocation ? (
+                <>
+                  This element can&apos;t be moved or deleted from here, but its own values are
+                  editable and write straight to the source.
+                </>
+              ) : (
+                <>
+                  One piece of source renders every row of this list, so a change here would apply to
+                  all of them — the values stay read-only.
+                </>
+              )}
+            </>
+          ) : null}
+          {textOrigin ? (
+            <>
+              {' '}Its text comes from{' '}
+              <Button
+                variant="ghost"
+                size="xs"
+                className={styles.jumpToSourceButton}
+                onClick={() => jumpToSource(textOrigin)}
+              >
+                {textOrigin.rel} (line {textOrigin.line})
+                <ExternalLinkSolidIcon size={11} />
+              </Button>
+              ; editing it writes there
+              {sharedWith !== undefined && sharedWith > 1 ? (
+                <> and changes all <strong>{sharedWith}</strong> places that use it</>
+              ) : null}
+              .
+            </>
+          ) : null}
+        </p>
+        {structural && constraint && constraint.actions.length > 0 ? (
+          <div className={styles.actions}>
+            <ConstraintActionButtons constraint={constraint} nodeId={nodeId} />
+          </div>
         ) : null}
-        {textOrigin ? (
-          <>
-            {' '}Its text comes from{' '}
-            <Button
-              variant="ghost"
-              size="xs"
-              className={styles.jumpToSourceButton}
-              onClick={() => jumpToSource(textOrigin)}
-            >
-              {textOrigin.rel} (line {textOrigin.line})
-              <ExternalLinkSolidIcon size={11} />
-            </Button>
-            ; editing it writes there
-            {sharedWith !== undefined && sharedWith > 1 ? (
-              <> and changes all <strong>{sharedWith}</strong> places that use it</>
-            ) : null}
-            .
-          </>
-        ) : null}
-      </p>
+      </div>
     </div>
   )
 }

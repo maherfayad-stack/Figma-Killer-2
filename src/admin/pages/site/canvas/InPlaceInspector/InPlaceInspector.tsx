@@ -20,8 +20,8 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
+import { explainPropConstraint } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { propLockReason } from '@site/panels/PropertiesPanel/propLockReason'
 import { findNodeById } from './findNodeById'
 import { visibleInspectorControls } from './visibleInspectorControls'
 import styles from './InPlaceInspector.module.css'
@@ -60,8 +60,13 @@ export function InPlaceInspector({ nodeId }: InPlaceInspectorProps) {
             // this panel rendered an ordinary, focusable, live-looking input for
             // a prop `updateNodeProps` was going to silently refuse — which is
             // the whole reported bug: type into `title`, watch nothing happen,
-            // with nothing on screen saying why.
-            sourceLockReason={propLockReason(node, key)}
+            // with nothing on screen saying why. R3 moved this off the
+            // string-returning `propLockReason` to match `PropertyControlRenderer`'s
+            // renamed `constraint` prop — a forced, mechanical follow of that
+            // shared interface, not a redesign of this panel; the payoff is this
+            // surface's lock glyph now gets the same real remedy buttons (e.g.
+            // `edit-array` for a `.map` row) the docked panel's does.
+            constraint={explainPropConstraint(node, key, props[key]) ?? undefined}
           />
         ))}
       </div>

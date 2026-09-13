@@ -324,7 +324,16 @@ export function explainStyleConstraint(node: ConstraintPropSource, property: str
         ? `Reads \`${resolved.source}\` — ${resolved.note}.`
         : `Reads \`${resolved.source}\` from code.`
       : 'Set in code.',
-    actions: [],
+    // Unlike the mirror-image prop-scope branch above (`explainPropConstraint`'s
+    // `resolved-expression`, which can NEVER reach this point with a populated
+    // `origin` — `isPropWritableToSource` returns early whenever one exists),
+    // `isStyleWritableToSource` hardcodes `false` for every `style:`-prefixed
+    // `codeProps` entry WITHOUT consulting `origin` at all (see that
+    // predicate's own doc comment for why: one element's `color: ACCENT_COLOR`
+    // must not silently repaint every other element reading the same const).
+    // So a style property genuinely CAN reach here with a real `origin` — this
+    // is the one honest way forward for that case, previously discarded.
+    actions: resolved?.origin ? [{ label: 'Open it in code', kind: 'jump-to-source', target: resolved.origin }] : [],
   }
 }
 

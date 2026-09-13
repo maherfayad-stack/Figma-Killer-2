@@ -141,6 +141,42 @@ describe('explainStyleConstraint', () => {
     expect(constraint.explanation).toContain('pct')
   })
 
+  // R3 (`STUDIO-LIVE-CANVAS-PLAN.md` Track R) — the true gap `explainPropConstraint`'s
+  // mirror-image branch does NOT have: `isStyleWritableToSource` never consults
+  // `origin` for a `style:`-prefixed `codeProps` entry (unlike `isPropWritableToSource`,
+  // which returns early — no refusal at all — whenever `origin` is present), so a
+  // style resolution CAN reach this branch with a real `origin`. That origin used
+  // to be discarded; it must now surface as a `jump-to-source` action.
+  it('row 5 — a resolved style expression WITH an origin gets a jump-to-source action', () => {
+    const node = {
+      id: 'src/screens/Home.jsx:12:4',
+      codeProps: ['style:color'],
+      resolvedProps: {
+        'style:color': { source: 'ACCENT_COLOR', origin: { rel: 'src/theme.ts', line: 4, col: 1 } },
+      },
+    }
+    const constraint = explainStyleConstraint(node, 'color')
+    assertWellFormed(constraint)
+    expect(constraint.reason).toBe('resolved-style-expression')
+    expect(constraint.actions).toEqual([
+      { label: 'Open it in code', kind: 'jump-to-source', target: { rel: 'src/theme.ts', line: 4, col: 1 } },
+    ])
+  })
+
+  // Regression guard for the false lead this track ruled out: a style resolution
+  // with NO origin (the ordinary case — most resolved expressions have none) must
+  // still get an honest, empty `actions` array, not an invented handler.
+  it('row 5 — a resolved style expression with no origin still gets an empty actions array', () => {
+    const node = {
+      id: 'src/screens/Home.jsx:12:4',
+      codeProps: ['style:width'],
+      resolvedProps: { 'style:width': { source: '`${pct}%`' } },
+    }
+    const constraint = explainStyleConstraint(node, 'width')
+    assertWellFormed(constraint)
+    expect(constraint.actions).toEqual([])
+  })
+
   it('a writable style property returns null', () => {
     expect(explainStyleConstraint({}, 'color')).toBeNull()
   })

@@ -411,13 +411,21 @@
     text-overflow: ellipsis;
 }
 
+/* R3 — the explanation paragraph inside the lock glyph's `InspectorPopover`
+   (`CodeValueControl.tsx`). Was `codeValueHint` for an inline hint string this
+   component no longer renders; kept the name, repurposed the usage. */
 .codeValueHint {
+    margin: 0;
+    font-size: var(--text-2xs);
+    line-height: 1.4;
     color: var(--text-subtle);
 }
 
 /* Track F2 — the per-field lock glyph (R1/R2's "per-field design"): the WHY
-   used to be a permanent inline string; now it's a small badge whose tooltip
-   carries the same fact, so the value itself keeps the row's width. */
+   used to be a permanent inline string; R3 turned it into a real
+   click-to-open popover (`InspectorPopover`) instead of a hover-only tooltip,
+   so a `list-row` refusal's `edit-array` remedy has somewhere to live as a
+   real button, not just prose. */
 .codeValueGlyph {
     flex-shrink: 0;
     color: var(--text-subtle);

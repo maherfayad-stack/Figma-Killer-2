@@ -35,8 +35,10 @@ import type { EditConstraint } from '@core/page-tree'
 import { cn } from '@ui/cn'
 import { Button } from '@ui/components/Button'
 import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
-import { constraintOriginLabel, resolveConstraintAction } from '@site/store/constraintActions'
+import { constraintOriginLabel } from '@site/store/constraintActions'
+import { ConstraintActionButtons } from './ConstraintActionButtons'
 import styles from './ConstraintNotice.module.css'
+import actionStyles from './ConstraintActionButtons.module.css'
 
 interface ConstraintNoticeProps {
   constraint: EditConstraint
@@ -76,7 +78,7 @@ export function ConstraintNotice({ constraint, nodeId, compact, className }: Con
               <Button
                 variant="ghost"
                 size="micro"
-                className={styles.action}
+                className={actionStyles.action}
                 data-testid="constraint-origin"
                 onClick={() => jumpToSource(origin)}
               >
@@ -84,30 +86,7 @@ export function ConstraintNotice({ constraint, nodeId, compact, className }: Con
                 <ExternalLinkSolidIcon size={10} aria-hidden="true" />
               </Button>
             )}
-            {constraint.actions.map((action) => {
-              const run = resolveConstraintAction(action, { nodeId, openSource: jumpToSource })
-              return run ? (
-                <Button
-                  key={action.kind + action.label}
-                  variant="ghost"
-                  size="micro"
-                  className={styles.action}
-                  data-testid={`constraint-action-${action.kind}`}
-                  onClick={run}
-                >
-                  <span>{action.label}</span>
-                  {action.target && <ExternalLinkSolidIcon size={10} aria-hidden="true" />}
-                </Button>
-              ) : (
-                <span
-                  key={action.kind + action.label}
-                  className={styles.hint}
-                  data-testid={`constraint-hint-${action.kind}`}
-                >
-                  {action.label}
-                </span>
-              )
-            })}
+            <ConstraintActionButtons constraint={constraint} nodeId={nodeId} />
           </div>
         )}
       </div>

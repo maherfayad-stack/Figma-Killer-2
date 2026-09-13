@@ -30,6 +30,16 @@
   align-self: baseline;
 }
 
+/* R3 — wraps the prose and (when present) the remedy-buttons row so both
+   stack vertically inside the notice's own flex row, rather than the actions
+   row sitting beside the icon as a third flex item. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-3xs);
+  min-width: 0;
+}
+
 .text {
   margin: 0;
   font-size: var(--text-2xs);
@@ -57,4 +67,17 @@
 .jumpToSourceButton:hover {
   background: transparent;
   color: inherit;
+}
+
+/* R3 — the structural notice's remedy buttons (`ConstraintActionButtons`),
+   below the bespoke prose rather than inline with it: unlike the single
+   `jumpToSourceButton` mention above, a `shared-component` refusal can offer
+   several ways forward at once ("Open the component definition", "Detach
+   this instance", "Duplicate as a new file"), which reads better as its own
+   row than woven into the sentence. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--inspector-space-2xs);
 }
