@@ -3,109 +3,33 @@
  * canvas frame settle, so a frame reads as a still, whole screen instead of a
  * live preview mid-animation.
  *
- * Why
- * ───
- * The design canvas is a static working surface, and an imported app is
- * full of motion that never settles: the eSIM corpus alone has a radar ping and an
- * orbiting dot on `infinite`, `@alm-design/design-system` ships an `infinite`
- * shimmer on every skeleton variant (button, tag, chip, ad-banner, …), and a
- * transition mid-flight during a layout change reads as canvas jitter. Those
- * run forever behind the selection ring, on every frame of a board at once.
- *
- * Four independent motion sources, four rules:
- *
- *   - CSS animations → `animation-iteration-count: 1; animation-fill-mode:
- *     forwards` (freeze point `'end'`) or `animation-play-state: paused`
- *     (freeze point `'start'`) — see "Freeze point" below.
- *   - CSS transitions → `transition: none` — a transition is a response to
- *     interaction (hover, focus, a class toggle), never ambient motion, and
- *     one caught mid-flight by a layout change is pure jitter.
- *   - Smooth scrolling → `scroll-behavior: auto` — `scrollIntoView({behavior:
- *     'smooth'})` or an anchor jump has nothing to animate toward on a canvas
- *     that never actually scrolls.
- *   - `<video>` / `<audio>` → paused and stripped of `autoplay`, both for
- *     elements present at mount and for ones inserted afterwards (a lazy
- *     carousel slide, a video whose `src` swaps on route change).
- *
- * Duration and delay are deliberately left alone for CSS animations, so each
- * one still plays through once at its authored speed before settling.
- *
- * Freeze point
- * ────────────
- * `'end'` (default) holds the LAST keyframe — correct for entrance motion (a
- * fade-in, a slide-in card), which is the common case. `'start'` pauses the
- * animation instead of letting it run — correct for motion whose end state is
- * not what should be shown at rest (a fade-out ping, a toast sliding away).
- * `'end'`'s known consequence: an animation whose final keyframe is invisible
- * ends invisible. `esim-radar-ping` fades `0.75 → 0` opacity, so its rings
- * hold at `opacity: 0` and the radar shows only its core and orbit dot — that
- * is what "stop at the last frame" means for a fade-out; `freezePoint:
- * 'start'` is the fix for exactly this case, per project.
- *
- * A NUMBER between 0 and 1 (W5-5) is the third form: hold every animation at
- * that fraction of its own timeline. `'start'` and `'end'` are the endpoints
- * of the same axis, so this generalises them rather than sitting beside them —
- * `0` shows what `'start'` shows and `1` shows what `'end'` shows.
- *
- * The mechanism is a negative delay on a paused animation, which is how CSS
- * expresses "already this far in". A negative delay is measured against the
- * DURATION, which differs per animation and which no `*` selector can read —
- * so this rule also forces `animation-duration: 1s` on everything. That is not
- * a visual change (a paused animation does not advance) and it is what makes
- * one delay mean the same fraction for a 200 ms fade and a 4 s orbit alike.
- * The cost is honest and small: an animation whose `animation-timing-function`
- * is a `steps()` function lands on a step boundary rather than between two,
- * which is what stepped motion means at any moment anyway.
+ * The freeze stylesheet, the media pause/watch pass, and the
+ * `prefers-reduced-motion` `matchMedia` patch all live in
+ * `@core/studio-runtime` (`animationFreezeRules.ts`) — ONE implementation,
+ * shared verbatim with the in-frame live runtime (`runtime.ts`), which runs
+ * the identical freeze behaviour for a Tier 2 frame in its own `'design'`
+ * interaction mode. See that module's docblock for the full rationale
+ * (freeze points, why `!important`, what cannot be frozen).
  *
  * ## Scrubbing and playing back (`animationScrubStore.ts`)
  *
- * The two phases of a play-once — `'reset'` (take `animation` away so the next
- * phase starts from the first keyframe) and `'playing'` (let each run once and
- * settle) — arrive from `animationScrubStore.ts` rather than from a prop, so
- * every frame on the board replays in step. See that module for why the phase
- * machine lives there. When the store is idle and no scrub is set, the
- * `freezePoint` prop decides, exactly as before.
+ * The two phases of a play-once — `'reset'` (take `animation` away so the
+ * next phase starts from the first keyframe) and `'playing'` (let each run
+ * once and settle) — arrive from `animationScrubStore.ts` rather than from a
+ * prop, so every frame on the board replays in step. When the store is idle
+ * and no scrub is set, the `freezePoint` prop decides, exactly as before.
  *
- * `prefers-reduced-motion`
- * ────────────────────────
- * A well-behaved app gates its own motion behind `@media
- * (prefers-reduced-motion: reduce)` or a `matchMedia` check (React hooks like
- * `useReducedMotion`, CSS-in-JS helpers). This injector patches
- * `window.matchMedia` inside the iframe so a `(prefers-reduced-motion:
- * reduce)` query always reports `matches: true` — every JS-driven check sees
- * "reduce motion" requested. **This does NOT retarget the browser's native
- * CSS `@media (prefers-reduced-motion: reduce)` evaluation** — that reflects
- * a real OS-level signal that no page-injected script can override without
- * devtools-protocol control (`Emulation.setEmulatedMedia`), which is not
- * available from inside a same-origin iframe. An app whose reduced-motion
- * handling lives entirely in a stylesheet `@media` block, with no JS check,
- * is not affected by this rule — its animations are still caught by the
- * iteration-count/transition/scroll-behavior rules above, just not through
- * this specific mechanism.
+ * ## Two effects, on purpose
  *
- * What this cannot freeze
- * ────────────────────────
- * Animated GIF/WebP/APNG frame-advance is decoded by the image codec, not the
- * CSS engine — no stylesheet rule can pause it. Left alone; there is no
- * partial fix worth faking here. JS-driven animation (framer-motion, GSAP,
- * rAF loops) only runs when the "Run scripts" toggle is on, and this injector
- * makes no attempt to intercept `requestAnimationFrame` or a running rAF loop.
- * `<canvas>`/WebGL animation loops are equally out of reach — same reason.
- *
- * Why `!important`
- * ────────────────
- * This has to beat arbitrary author AND vendor CSS. `!important` declarations
- * always beat non-`!important` ones regardless of cascade layer, so being
- * unlayered isn't even the load-bearing part any more — both `ProjectCssInjector`
- * (`@layer vendor`, WS-2.3) and `ClassStyleInjector`/`UserStylesheetInjector`
- * (`@layer user-authored`) are real named layers now (see `canvasCssLayers.ts`).
- * What `!important` buys is escaping SPECIFICITY: this rule's `*` selector
- * (0,0,0) would otherwise lose to a vendor selector like the design system's
- * `.btn--skeleton` (0,1,0) and to any author class. Overriding a shorthand
- * (`animation: … infinite`) from an unknown third-party stylesheet is exactly
- * the case `!important` exists for. The repo-wide ban on `!important` is scoped
- * to component CSS modules; this is an injected iframe stylesheet with no
- * cascade position of its own to rely on.
+ * Mounting the media pause/watch pass + the `matchMedia` patch
+ * (`startMediaFreeze`) is a MOUNT-ONCE concern — re-running it on every
+ * freeze-point/phase change would tear down and reinstall the `matchMedia`
+ * patch and the media `MutationObserver` on every scrub tick, for no
+ * behavioural gain. Only the stylesheet text needs to react to
+ * `effectiveFreezePoint`/`phase`, so it is rendered by a SEPARATE effect
+ * (`applyAnimationFreezeStylesheet`) keyed on exactly those two values — each
+ * effect's dependency array is therefore complete on its own terms, with no
+ * manual memoization or lint suppression needed to keep them apart.
  *
  * Scope
  * ─────
@@ -115,78 +39,15 @@
  */
 
 import { useEffect } from 'react'
-import { useCanvasAnimationScrub, type AnimationPlayPhase } from './animationScrubStore'
+import { useCanvasAnimationScrub } from './animationScrubStore'
+import {
+  applyAnimationFreezeStylesheet,
+  removeAnimationFreezeStylesheet,
+  startMediaFreeze,
+  type CanvasAnimationFreezePoint,
+} from '@core/studio-runtime'
 
 const STYLE_TAG_ID = 'studio-canvas-animation'
-
-/**
- * See "Freeze point" in the module docblock. A number is a fraction of each
- * animation's own timeline, clamped to 0…1 — `0` is `'start'` and `1` is
- * `'end'`.
- */
-export type CanvasAnimationFreezePoint = 'end' | 'start' | number
-
-/** The `animation-*` block for a given freeze point — see "Freeze point". */
-function animationFreezeDeclarations(freezePoint: CanvasAnimationFreezePoint): string {
-  if (typeof freezePoint === 'number') {
-    // Normalising the duration is what makes ONE delay mean the same fraction
-    // for every animation on the page; the animation is paused, so forcing it
-    // changes nothing anyone can see. See "Freeze point" for the full argument.
-    const progress = Math.min(1, Math.max(0, freezePoint))
-    return `animation-duration: 1s !important;
-  animation-delay: -${progress}s !important;
-  animation-iteration-count: 1 !important;
-  animation-fill-mode: both !important;
-  animation-play-state: paused !important;`
-  }
-  if (freezePoint === 'start') {
-    // Pausing wherever the animation currently is, mounted before the
-    // animation has had any real time to run, holds it at (or very near)
-    // its 0%/from keyframe — correct when the END state is the one that
-    // should stay hidden.
-    return `animation-play-state: paused !important;`
-  }
-  return `animation-iteration-count: 1 !important;
-  animation-fill-mode: forwards !important;`
-}
-
-/**
- * Module-scope: stable across renders, never captured into a closure.
- * `*::before` / `*::after` are listed explicitly because `*` does not match
- * pseudo-elements, and generated content is a common home for spinners and
- * shimmer overlays (the eSIM radar's orbiting dot is an `::before`).
- *
- * `transition: none` is dropped for the two play-once phases: a play-once is
- * the one moment a design frame is deliberately being watched move, and a
- * transition suppressed through it would make the preview lie about what a
- * visitor sees. Everything else about the injector (media freezing, the
- * `matchMedia` patch, smooth-scroll suppression) is unchanged by playback.
- */
-function buildAnimationRules(freezePoint: CanvasAnimationFreezePoint, phase: AnimationPlayPhase): string {
-  const animationRules =
-    phase === 'reset'
-      ? // One frame with no animation at all. This is what makes the next
-        // phase start from the first keyframe rather than continuing from
-        // wherever the previous rules had each animation parked.
-        `animation: none !important;`
-      : phase === 'playing'
-        ? `animation-play-state: running !important;
-  animation-delay: 0s !important;
-  animation-iteration-count: 1 !important;
-  animation-fill-mode: forwards !important;`
-        : animationFreezeDeclarations(freezePoint)
-
-  const transitionRule = phase === 'idle' ? '\n  transition: none !important;' : ''
-
-  return `
-*,
-*::before,
-*::after {
-  ${animationRules}${transitionRule}
-  scroll-behavior: auto !important;
-}
-`.trim()
-}
 
 interface CanvasAnimationInjectorProps {
   /** The iframe document to inject the stylesheet into. */
@@ -194,8 +55,8 @@ interface CanvasAnimationInjectorProps {
   /**
    * Which keyframe a looping/entrance animation settles on — `'end'`,
    * `'start'`, or a 0…1 fraction of its own timeline. Defaults to `'end'`.
-   * See "Freeze point" above. Overridden while the inspector's scrub is
-   * active (`animationScrubStore.ts`).
+   * See `@core/studio-runtime`'s "Freeze point" doc. Overridden while the
+   * inspector's scrub is active (`animationScrubStore.ts`).
    */
   freezePoint?: CanvasAnimationFreezePoint
 }
@@ -209,136 +70,25 @@ export function CanvasAnimationInjector({
   const { progress, phase } = useCanvasAnimationScrub()
   const effectiveFreezePoint = progress === null ? freezePoint : progress
 
-  // Stylesheet: animation freeze, transitions, smooth scroll.
+  // Reactive half: re-renders the stylesheet text on every freeze-point/phase
+  // change. Cheap (a `textContent` write), and deliberately has NO cleanup of
+  // its own — removing and recreating the element on every scrub tick would
+  // be pure churn. Removal happens once, on unmount, in the next effect.
   useEffect(() => {
-    let styleEl = targetDocument.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
-    if (!styleEl) {
-      styleEl = targetDocument.createElement('style')
-      styleEl.id = STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'CanvasAnimationInjector')
-      // Appended LAST rather than prepended: `!important` already settles the
-      // cascade, and being last means this is also the winner against any
-      // equally-`!important` author rule of the same specificity.
-      targetDocument.head.appendChild(styleEl)
-    }
-    styleEl.textContent = buildAnimationRules(effectiveFreezePoint, phase)
+    applyAnimationFreezeStylesheet(targetDocument, STYLE_TAG_ID, effectiveFreezePoint, phase, 'CanvasAnimationInjector')
   }, [targetDocument, effectiveFreezePoint, phase])
 
-  // Remove on unmount / document swap. Captures the current doc so cleanup
-  // always targets the document this effect installed into.
   useEffect(() => {
-    const targetDoc = targetDocument
-    return () => {
-      targetDoc.getElementById(STYLE_TAG_ID)?.remove()
-    }
+    return () => removeAnimationFreezeStylesheet(targetDocument, STYLE_TAG_ID)
   }, [targetDocument])
 
-  // <video> / <audio>: pause + strip autoplay, at mount and on later insert.
+  // Mount-once half: media pause/watch + the matchMedia patch. Independent
+  // of freeze point/phase, so this effect's own deps array is exactly
+  // [targetDocument] with nothing to suppress.
   useEffect(() => {
-    if (!targetDocument.body) return
-    freezeAllMedia(targetDocument)
-
-    const MutationObserverCtor = targetDocument.defaultView?.MutationObserver ?? MutationObserver
-    let observer: MutationObserver | null = null
-    try {
-      observer = new MutationObserverCtor((mutations) => {
-        for (const mutation of mutations) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType !== 1) continue
-            freezeMediaElement(node as Element)
-            for (const child of (node as Element).querySelectorAll(MEDIA_SELECTOR)) {
-              freezeMediaElement(child)
-            }
-          }
-        }
-      })
-      observer.observe(targetDocument.body, { childList: true, subtree: true })
-    } catch (_err) {
-      // Some browser realms reject observing a cross-realm node from this
-      // context (mirrors iframeFrameObservers.ts). The freezeAllMedia() pass
-      // above still covers everything present at mount.
-      observer?.disconnect()
-      observer = null
-    }
-    return () => {
-      observer?.disconnect()
-    }
-  }, [targetDocument])
-
-  // prefers-reduced-motion: patch matchMedia so JS-driven checks see "reduce".
-  // See "prefers-reduced-motion" in the module docblock for what this does
-  // and does not cover. The patch/restore itself lives in a plain function
-  // (not inlined here) because assigning `view.matchMedia` directly inside
-  // the component body reads to the React Compiler as mutating something
-  // reachable from the `targetDocument` prop.
-  useEffect(() => {
-    return patchReducedMotionMatchMedia(targetDocument.defaultView)
+    const controller = startMediaFreeze(targetDocument)
+    return () => controller.dispose()
   }, [targetDocument])
 
   return null
-}
-
-const MEDIA_SELECTOR = 'video, audio'
-
-function freezeMediaElement(el: Element): void {
-  if (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO') return
-  el.removeAttribute('autoplay')
-  const media = el as HTMLMediaElement
-  try {
-    media.pause()
-  } catch (_err) {
-    // Some elements throw if playback never actually started; best-effort
-    // freezing is still better than letting the error abort the pass.
-  }
-}
-
-function freezeAllMedia(doc: Document): void {
-  for (const el of doc.querySelectorAll(MEDIA_SELECTOR)) {
-    freezeMediaElement(el)
-  }
-}
-
-const REDUCED_MOTION_QUERY = /prefers-reduced-motion/
-
-/**
- * Installs the `matchMedia` patch on `view` and returns the restore
- * function. A plain function rather than inlined in the effect: React
- * Compiler's mutation analysis reads a direct `view.matchMedia = …`
- * assignment inside the component body as mutating something reachable from
- * the `targetDocument` prop, even though this write targets the iframe's own
- * window, not React-owned state.
- */
-function patchReducedMotionMatchMedia(view: Document['defaultView']): (() => void) | undefined {
-  if (!view || typeof view.matchMedia !== 'function') return undefined
-  // Kept unbound so cleanup can restore the EXACT original reference rather
-  // than a wrapper around it — other code may have captured the original
-  // function reference before this patch installed.
-  const nativeMatchMedia = view.matchMedia
-  view.matchMedia = ((query: string) => {
-    if (!REDUCED_MOTION_QUERY.test(query)) return nativeMatchMedia.call(view, query)
-    return createReducedMotionMediaQueryList(query)
-  }) as typeof view.matchMedia
-  return () => {
-    view.matchMedia = nativeMatchMedia
-  }
-}
-
-/**
- * A static `MediaQueryList` stand-in. The canvas never toggles this mid
- * session, so no change event ever needs to fire — `addEventListener` /
- * `addListener` are accepted (a defensively-coded library that subscribes
- * won't throw) but never invoked.
- */
-function createReducedMotionMediaQueryList(query: string): MediaQueryList {
-  const reduce = !/no-preference/.test(query)
-  return {
-    matches: reduce,
-    media: query,
-    onchange: null,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    addListener: () => {},
-    removeListener: () => {},
-    dispatchEvent: () => false,
-  } as MediaQueryList
 }

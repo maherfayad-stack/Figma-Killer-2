@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { CanvasScrollUnrollInjector } from '@site/canvas/CanvasScrollUnrollInjector'
-import { SCROLL_UNROLL_ATTR, SCROLL_UNROLL_MIN_HEIGHT_VAR } from '@site/canvas/canvasScrollUnroll'
+import { SCROLL_UNROLL_ATTR, SCROLL_UNROLL_MIN_HEIGHT_VAR } from '@core/studio-runtime'
 
 const STYLE_TAG_ID = 'studio-canvas-scroll-unroll'
 

@@ -25,7 +25,7 @@
  * out while it runs. Only ever growing, with a hard ceiling, terminates.
  */
 
-import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from './canvasScrollUnroll'
+import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from '@core/studio-runtime'
 
 /** Ceiling on the fitted height. A pathological page (a `88vh` hero feeding its own container) stops here instead of growing without bound. */
 export const MAX_FRAME_FIT_HEIGHT = 20000
@@ -120,7 +120,7 @@ export function resolveFrameFitHeight({
  * was permanently blind to exactly the regions it exists to find. The fix
  * stays a narrow `auto`/`scroll` gate (never broadened — see above) but reads
  * the PRE-unroll value the injector recorded
- * (`SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR`, `canvasScrollUnroll.ts`) instead
+ * (`SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR`, `@core/studio-runtime`) instead
  * of the computed value it has since overwritten. In live mode, or before
  * the injector's first settle, no recording exists yet — computed style is
  * the correct fallback there (nothing has overwritten it). See `STATE.md`

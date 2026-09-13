@@ -1,5 +1,5 @@
 /**
- * Pure classification + stylesheet-text tests for `canvasScrollUnroll.ts`.
+ * Pure classification + stylesheet-text tests for `scrollUnrollRules.ts`.
  * Split from the DOM-wiring tests (`canvasScrollUnrollInjector.test.tsx`) the
  * same way `resolveFrameFitHeight.test.ts` sits next to
  * `useIframeFrameAutoHeight`'s wiring — geometry decisions are unit-testable
@@ -16,7 +16,9 @@ import {
   MAX_UNROLL_PASSES,
   SCROLL_UNROLL_ATTR,
   SCROLL_UNROLL_MIN_HEIGHT_VAR,
-} from '@site/canvas/canvasScrollUnroll'
+  runUnrollPasses,
+  startScrollUnroll,
+} from '@core/studio-runtime'
 
 describe('classifyUnrollElement', () => {
   it('tags a position:fixed element "fixed", regardless of deficit', () => {
@@ -230,5 +232,46 @@ describe('MAX_UNROLL_PASSES', () => {
   it('is a small, positive, finite bound', () => {
     expect(MAX_UNROLL_PASSES).toBeGreaterThan(0)
     expect(MAX_UNROLL_PASSES).toBeLessThanOrEqual(10)
+  })
+})
+
+describe('startScrollUnroll — DOM lifecycle (shared by the portal injector and the live runtime)', () => {
+  const STYLE_ID = 'test-scroll-unroll'
+
+  it('mounts a stylesheet with a caller-supplied id and data-source', () => {
+    const controller = startScrollUnroll(document, STYLE_ID, 'test-caller')
+    const el = document.getElementById(STYLE_ID)
+    expect(el).not.toBeNull()
+    expect(el?.getAttribute('data-source')).toBe('test-caller')
+    controller.dispose()
+    expect(document.getElementById(STYLE_ID)).toBeNull()
+  })
+
+  it('tags a position:fixed element via runUnrollPasses', () => {
+    const nav = document.createElement('div')
+    nav.style.position = 'fixed'
+    document.body.appendChild(nav)
+    try {
+      runUnrollPasses(document, STYLE_ID)
+      expect(nav.getAttribute(SCROLL_UNROLL_ATTR)).toBe('fixed')
+    } finally {
+      nav.remove()
+      nav.removeAttribute(SCROLL_UNROLL_ATTR)
+    }
+  })
+
+  it('dispose() clears every tag it wrote', () => {
+    const nav = document.createElement('div')
+    nav.style.position = 'fixed'
+    document.body.appendChild(nav)
+    try {
+      const controller = startScrollUnroll(document, STYLE_ID)
+      runUnrollPasses(document, STYLE_ID)
+      expect(nav.getAttribute(SCROLL_UNROLL_ATTR)).toBe('fixed')
+      controller.dispose()
+      expect(nav.hasAttribute(SCROLL_UNROLL_ATTR)).toBe(false)
+    } finally {
+      nav.remove()
+    }
   })
 })
