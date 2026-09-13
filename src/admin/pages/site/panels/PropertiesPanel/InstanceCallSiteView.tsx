@@ -11,7 +11,10 @@
  * still gets a row (writable, via `setJsxProp` adding a brand-new
  * attribute); a prop the parser resolved from an expression is
  * `codeProps`-locked and renders read-only, exactly like every other
- * Studio prop control (`propLockReason` — imported, not re-derived).
+ * Studio prop control (`explainPropConstraint` — imported, not re-derived;
+ * R3 moved this off the string-returning `propLockReason` so the read-only
+ * row gets the same real remedy buttons `CodeValueControl` renders
+ * elsewhere).
  *
  * **This is the "one Component section" E2.5 asks for.** Before this pass,
  * a `pkg.*`/`alm.*` design-system component already got a full declared-type
@@ -42,9 +45,8 @@
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
-import type { PageNode } from '@core/page-tree'
+import { explainPropConstraint, type PageNode } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { propLockReason } from './propLockReason'
 import { buildComponentCallSiteRows } from './componentCallSiteRows'
 import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/componentCatalog'
 import { detachInstance, extractInstanceCopy, swapInstance } from '@site/studio/studioSaveRequests'
@@ -299,7 +301,9 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
             // reachable, same as `pkg-02`'s unconditional `node`-kind
             // handling for package components.
             const isSlot = control.type === 'slot'
-            const lockReason = isSlot ? undefined : propLockReason(node, `callSiteProps:${key}`)
+            const constraint = isSlot
+              ? undefined
+              : (explainPropConstraint(node, `callSiteProps:${key}`, value) ?? undefined)
             return (
               <div key={key} role="listitem" data-testid={`instance-call-site-prop-${key}`}>
                 <PropertyControlRenderer
@@ -307,7 +311,7 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
                   control={control}
                   value={value}
                   onChange={(propKey, next) => updateCallSiteProp(nodeId, propKey, next)}
-                  sourceLockReason={lockReason}
+                  constraint={constraint}
                   ownerNodeId={nodeId}
                 />
               </div>

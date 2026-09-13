@@ -22,6 +22,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { EditorPermissionsContext } from '@site/editorPermissionsContext'
 import type { PropertyControl } from '@core/module-engine'
+import type { EditConstraint } from '@core/page-tree'
 import type { CmsMediaAsset } from '@core/persistence/cmsMedia'
 import { useEditorStore } from '@site/store/store'
 
@@ -33,11 +34,16 @@ afterEach(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** A minimal, well-formed `EditConstraint` for a test that only cares about the explanation. */
+function fakeConstraint(explanation: string): EditConstraint {
+  return { reason: 'resolved-expression', scope: 'prop', explanation, actions: [] }
+}
+
 function renderControl(
   control: PropertyControl,
   propKey = 'myProp',
   value: unknown = '',
-  sourceLockReason?: string,
+  constraint?: EditConstraint,
 ): string {
   return renderToStaticMarkup(
     <PropertyControlRenderer
@@ -45,7 +51,7 @@ function renderControl(
       control={control}
       value={value}
       onChange={() => {}}
-      {...(sourceLockReason !== undefined ? { sourceLockReason } : {})}
+      {...(constraint !== undefined ? { constraint } : {})}
     />
   )
 }
@@ -842,7 +848,7 @@ describe('PropertyControlRenderer — a source-locked node', () => {
       { type: 'textarea', label: 'Text' },
       'text',
       'Enjoy 12% discount on hotels',
-      'value from c.hotelsTitle',
+      fakeConstraint('value from c.hotelsTitle'),
     )
 
     // The exact trap this closes: the panel rendered the real copy in a normal
@@ -851,6 +857,8 @@ describe('PropertyControlRenderer — a source-locked node', () => {
     expect(html).not.toContain('<textarea')
     expect(html).not.toContain('<input')
     expect(html).toContain('Enjoy 12% discount on hotels')
+    // The explanation is a static `aria-label` on the lock glyph — discoverable
+    // without opening the `InspectorPopover` (R3), so it still shows up here.
     expect(html).toContain('value from c.hotelsTitle')
     expect(html).toContain('data-disabled="true"')
   })
@@ -862,7 +870,7 @@ describe('PropertyControlRenderer — a source-locked node', () => {
       { type: 'toggle', label: 'Hidden' },
       { type: 'color', label: 'Fill' },
     ] as PropertyControl[]) {
-      const html = renderControl(control, 'k', 'v', 'item 2 of DEALS')
+      const html = renderControl(control, 'k', 'v', fakeConstraint('item 2 of DEALS'))
       expect(html).not.toContain('<input')
       expect(html).not.toContain('<select')
       expect(html).toContain('item 2 of DEALS')
@@ -870,10 +878,33 @@ describe('PropertyControlRenderer — a source-locked node', () => {
   })
 
   it('shows an em dash for a locked prop that has no value', () => {
-    const html = renderControl({ type: 'text', label: 'Alt' }, 'alt', '', 'spread props')
+    const html = renderControl({ type: 'text', label: 'Alt' }, 'alt', '', fakeConstraint('spread props'))
 
     expect(html).toContain('—')
     expect(html).toContain('spread props')
+  })
+
+  it('renders a remedy button for a constraint that carries a real action', () => {
+    const constraint: EditConstraint = {
+      reason: 'list-row',
+      scope: 'prop',
+      explanation: 'row of a list that the code generates',
+      actions: [
+        { label: 'Open the array in code', kind: 'edit-array', target: { rel: 'src/Home.tsx', line: 12, col: 3 } },
+      ],
+    }
+    render(
+      <PropertyControlRenderer
+        propKey="title"
+        control={{ type: 'text', label: 'Title' }}
+        value="Deal 2"
+        onChange={() => {}}
+        constraint={constraint}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /why this value is read-only/i }))
+    expect(screen.getByRole('button', { name: /open the array in code/i })).toBeDefined()
   })
 
   it('leaves an unlocked node fully editable', () => {

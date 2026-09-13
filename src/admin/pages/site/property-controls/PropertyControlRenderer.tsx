@@ -15,6 +15,7 @@
  *     so individual controls don't need to repeat the resolution logic.
  */
 import { useState } from 'react'
+import type { EditConstraint } from '@core/page-tree'
 import type {
   PropertyControl,
   PropertyControlLayout,
@@ -47,12 +48,18 @@ interface RenderControlOptions {
   isOverride?: boolean
   disabled?: boolean
   /**
-   * Set when the selected node is SOURCE-LOCKED — `PageNode.lockReason`. Every
-   * prop on such a node is unwritable (`updateNodeProps` returns early, and
-   * silently, because agents and plugins call it too), so no control here may
-   * present itself as an input. Carries the reason so the row can say it.
+   * The engine's own explanation for why this prop can't be written — a
+   * code-valued prop (`resolved-expression`), a `.map` row with no isolated
+   * source location (`list-row`, real `edit-array` remedy attached), or a
+   * source-locked node where every prop is unwritable regardless
+   * (`updateNodeProps` returns early, and silently, because agents and
+   * plugins call it too). `explainPropConstraint` (`@core/page-tree`) is the
+   * one place this is computed — see that function's own doc for why a
+   * caller must not re-derive it (R3, `STUDIO-LIVE-CANVAS-PLAN.md` Track R).
+   * `undefined` when the prop is writable OR carries no `EditConstraint` at
+   * all (a writable-but-structured value — see `isStructuredValue` below).
    */
-  sourceLockReason?: string
+  constraint?: EditConstraint
   /** E2.5 — forwarded to `SlotControl` only; see `ControlProps.ownerNodeId`. */
   ownerNodeId?: string
   /**
@@ -136,7 +143,7 @@ export function PropertyControlRenderer({
   onChange,
   isOverride = false,
   disabled = false,
-  sourceLockReason,
+  constraint,
   ownerNodeId,
   siblingProps,
 }: RenderControlOptions) {
@@ -180,7 +187,7 @@ export function PropertyControlRenderer({
 
   // Nothing writable behind this control: either the value has no scalar form,
   // or the node itself refuses writes. Same read-only row for both.
-  if (!isSlot && (sourceLockReason !== undefined || isStructuredValue(control, value))) {
+  if (!isSlot && (constraint !== undefined || isStructuredValue(control, value))) {
     return (
       <div
         data-testid={`property-control-${propKey}`}
@@ -188,7 +195,7 @@ export function PropertyControlRenderer({
         data-category={category}
         data-layout={layout}
       >
-        <CodeValueControl {...shared} value={value} {...(sourceLockReason ? { hint: sourceLockReason } : {})} />
+        <CodeValueControl {...shared} value={value} constraint={constraint} />
       </div>
     )
   }
