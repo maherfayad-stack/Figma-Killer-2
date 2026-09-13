@@ -35,8 +35,10 @@
  * - **`styleTarget`** — the section-header "apply a generated utility class"
  *   menus need one node id and write `node.classIds`; that is a class-token
  *   assignment across N nodes, i.e. phase 3, not a style declaration.
- * - **hover preview** — the canvas preview channel is class-keyed, exactly as
- *   `InlineStyleComposer` records for the single-node inline case.
+ * Hover-preview writes `previewNodeStyles` (Rule 7, panel-22) across every
+ * WRITABLE node in the selection — the same set `writePatch` commits to — so
+ * a hovered suggestion previews on exactly the elements the edit would land
+ * on, never on a node whose module can't take an inline style at all.
  */
 
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
@@ -78,6 +80,8 @@ export function MultiInlineStyleComposer({
   styleQuery,
 }: MultiInlineStyleComposerProps) {
   const setNodesInlineStyles = useEditorStore((s) => s.setNodesInlineStyles)
+  const setPreviewNodeStyles = useEditorStore((s) => s.setPreviewNodeStyles)
+  const clearPreviewNodeStyles = useEditorStore((s) => s.clearPreviewNodeStyles)
   const activeTree = useEditorStore(selectActiveCanvasPage)
   const site = useEditorStore((s) => s.site)
   const nodeIdToPageIds = useEditorStore((s) => s._nodeIdToPageIds)
@@ -173,6 +177,19 @@ export function MultiInlineStyleComposer({
     writePatch(patch)
   }
 
+  // Preview a transient style patch on the canvas while a property control's
+  // hover-suggestion menu is open, across every writable node in the
+  // selection — the inline mirror of `StyleRuleComposer.handlePreview`.
+  // Lives entirely in store UI state: no `node.inlineStyles` mutation, no
+  // history entry.
+  const handlePreview = (patch: Partial<CSSPropertyBag>) => {
+    if (writableNodeIds.length === 0) return
+    setPreviewNodeStyles({ nodeIds: writableNodeIds, styles: patch })
+  }
+  const handleClearPreview = () => {
+    clearPreviewNodeStyles()
+  }
+
   return (
     <TokenCatalogProvider>
       {unwritableNodes.length > 0 && (
@@ -220,9 +237,8 @@ export function MultiInlineStyleComposer({
           onClearProperty={handleRemove}
           onClearProperties={handleClearProperties}
           onChangeMany={handleChangeMany}
-          // Hover-preview is class-keyed in the store; skip it for inline editing.
-          onPreview={noop}
-          onClearPreview={noop}
+          onPreview={handlePreview}
+          onClearPreview={handleClearPreview}
           textFirst={isTextSelection(nodes)}
         />
       </StyleWriteLockContext.Provider>
@@ -246,5 +262,3 @@ function describeBlockedSpread(
   const blocked = reach.blockedByProperty.get(properties[0]) ?? 0
   return `${blocked} of these ${reach.total} ${layers}`
 }
-
-function noop() {}

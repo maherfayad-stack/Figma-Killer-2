@@ -168,7 +168,7 @@ export function WriteTargetStyleComposer({
         styles: patch,
       })
     } else if (target.kind === 'inline') {
-      setPreviewNodeStyles({ nodeId, styles: patch })
+      setPreviewNodeStyles({ nodeIds: [nodeId], styles: patch })
     }
   }
 
