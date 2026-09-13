@@ -147,6 +147,13 @@ untouched config picks it up on next open; an edited one is documented).
   fixture corpus with ts-morph and with the plugin and asserts identical id
   sets (`src/__tests__/studio-runtime/idParity.test.ts`).
 - Injects `virtual:studio-runtime` into the entry so L4 boots with the app.
+  **`studioRuntimeIdPlugin()` returns two plugin objects, not one** (`live-08`,
+  STATE.md): `apply: 'serve'` is a plugin-level, not per-hook, field in Vite,
+  and the generated `main.jsx` (piece E below) imports `virtual:studio-runtime`
+  **unconditionally**, including at `vite build` time (Download the code,
+  preview deploys) — so the config-resolving half (`resolveId`/`load`) runs
+  unrestricted, while the id-stamping half (`transform`) stays
+  `apply: 'serve'`-only, exactly as before the split.
 - **Two id shapes need a resolver, not a hack.** Inlined components: the parser
   mints composite `callSite~component` ids, the DOM carries the component's own
   `components/X.tsx:l:c`. `.map` rows: the DOM repeats one id, the parser mints
@@ -180,6 +187,31 @@ element and `open` dialogs; restore on `vite:afterUpdate`. Style-only edits
 never remount (CSS module HMR is a stylesheet swap); component edits keep hook
 state through Fast Refresh. What still resets: state a component derives from a
 fetch or a timer. Documented, not hidden.
+
+**Boot wiring closed (`live-08`, STATE.md).** `runtime.ts` existed, tested and
+security-reviewed since `live-04`/`sec-06`, but nothing in the generated shell
+ever called `createStudioRuntimeBridge` — a real bridge iframe loaded a real
+Tier-2 screen but never reached `ready`. Closed by: (1) `runtime.ts` bundled
+into a workspace-shippable artifact
+(`src/core/studio-runtime/generated/runtimeBridgeBundle.ts`, same treatment
+`vitePlugin.ts` already had, both produced by
+`scripts/sync-studio-runtime.ts`) and shipped as the always-rewritten
+`prototype/studioRuntimeBridge.generated.js`
+(`runtimeBridgeShellFile.ts`); (2) the generated `main.jsx` importing it and
+constructing the bridge gated on **both**
+`STUDIO_RUNTIME_CONFIG.parentOrigin` (from `virtual:studio-runtime`, L3) and
+`window.parent !== window` — neither signal alone is enough: a supervised
+dev server opened directly in a bare tab must not boot a bridge with nothing
+to talk to, and a config value alone says nothing about whether this document
+is actually embedded; (3) `server/handlers/studio/devServer.ts`'s
+`spawnEntry` actually injecting `STUDIO_PROJECT_KEY_ENV`/
+`STUDIO_PARENT_ORIGIN_ENV` into the spawned subprocess — before this fix
+`virtual:studio-runtime` always resolved `parentOrigin: null`, independent of
+everything else. `projectKey` is derived from `registeredMcpServerProjectKey(dir)`
+(the ORIGINAL project dir, not a monorepo's narrowed `appRoot`) — the same key
+`/p/<projectKey>/` routing already uses — and `parentOrigin` from
+`resolvePublicOrigins(process.env)[0]`, the same source
+`liveOriginSecurityHeaders`'s CSP already derives `PUBLIC_ORIGIN` from.
 
 ### L5 — `FrameDocumentAdapter` (L, run alone) · `canvas-engineer`
 

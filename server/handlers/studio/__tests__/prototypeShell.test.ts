@@ -233,6 +233,52 @@ describe('ensurePrototypeShell — the studio-runtime id-stamping plugin', () =>
   })
 })
 
+/**
+ * L4/live-08 — the in-frame runtime bridge. `main.jsx` is a STATIC file
+ * (frozen the moment a user edits it); the bridge's actual logic lives in the
+ * ALWAYS-rewritten `studioRuntimeBridge.generated.js`, same shape as L3's
+ * `studioRuntime.generated.js` above, so a fix reaches an already-scaffolded
+ * project regardless of `main.jsx`'s freeze state.
+ */
+describe('ensurePrototypeShell — the studio-runtime bridge boot wiring', () => {
+  it('writes a main.jsx that imports virtual:studio-runtime and the bridge, gated on parentOrigin + window.parent', () => {
+    ensurePrototypeShell(tmpDir)
+
+    const mainJsx = read('prototype/main.jsx')
+    expect(mainJsx).toContain("import { STUDIO_RUNTIME_CONFIG } from 'virtual:studio-runtime'")
+    expect(mainJsx).toContain("import { createStudioRuntimeBridge } from './studioRuntimeBridge.generated.js'")
+    expect(mainJsx).toContain('STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window')
+    expect(mainJsx).toContain('createStudioRuntimeBridge(')
+  })
+
+  it('writes the always-rewritten bundled bridge alongside it', () => {
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
+  })
+
+  it('re-running brings the generated bridge file back even after it is wiped, because it is Studio\'s', () => {
+    ensurePrototypeShell(tmpDir)
+    fs.writeFileSync(path.join(tmpDir, 'prototype', 'studioRuntimeBridge.generated.js'), 'wiped\n')
+
+    const result = ensurePrototypeShell(tmpDir)
+
+    expect(result.regenerated).toContain('prototype/studioRuntimeBridge.generated.js')
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
+  })
+
+  it('leaves a hand-edited main.jsx alone and reports it, while still refreshing the always-rewritten bridge bundle', () => {
+    ensurePrototypeShell(tmpDir)
+    const mine = "import { createRoot } from 'react-dom/client'\ncreateRoot(document.getElementById('root')).render(null)\n"
+    fs.writeFileSync(path.join(tmpDir, 'prototype', 'main.jsx'), mine)
+
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/main.jsx')).toBe(mine)
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
+  })
+})
+
 describe('ensurePrototypeShell — package.json', () => {
   it('adds what the shell needs to run', () => {
     ensurePrototypeShell(tmpDir)

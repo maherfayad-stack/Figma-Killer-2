@@ -50,7 +50,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
 import { registeredMcpServerProjectKey } from '../../ai/drivers/registeredMcpServers'
+import { resolvePublicOrigins } from '../../config'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
@@ -262,6 +264,21 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
  * itself. Deriving it from a monorepo's narrowed `apps/web/` app root instead
  * would silently compute a different, wrong key for exactly the one case
  * (a nested app root) this distinction exists to handle.
+ *
+ * Also injects `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV`
+ * (`@core/studio-runtime`) — the two env vars `virtual:studio-runtime`
+ * (`vitePlugin.ts`'s `runtimeConfigPlugin`) reads at `load()` time to build
+ * `STUDIO_RUNTIME_CONFIG`, which `main.jsx` gates
+ * `createStudioRuntimeBridge(...)` on. `projectKey` reuses the SAME
+ * `registeredMcpServerProjectKey(dir)` call this function already makes for
+ * `STUDIO_LIVE_BASE_PATH_ENV`, so the two can never disagree.
+ * `resolvePublicOrigins(process.env)[0]` mirrors exactly what
+ * `readServerConfig`/`liveOriginSecurityHeaders` already derive
+ * `PUBLIC_ORIGIN` from — when it is unset, `parentOrigin` is `undefined`, the
+ * env var is simply never set, and `readStudioRuntimeConfigFromEnv` degrades
+ * to `parentOrigin: null` exactly as designed (the same condition under which
+ * `liveOriginSecurityHeaders` sends `frame-ancestors 'none'` — the bridge and
+ * the CSP that would let it load already fail together).
  */
 function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides): { ok: true; entry: DevServerEntry } | { ok: false; error: string } {
   const devScript = devScriptFor(appRoot)
@@ -271,10 +288,16 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
 
   const packageManager = detectPackageManager(appRoot)
   const projectKey = registeredMcpServerProjectKey(dir)
+  const parentOrigin = resolvePublicOrigins(process.env)[0]
+  const extraEnv: Record<string, string> = {
+    [STUDIO_LIVE_BASE_PATH_ENV]: `/p/${projectKey}/`,
+    [STUDIO_PROJECT_KEY_ENV]: projectKey,
+  }
+  if (parentOrigin) extraEnv[STUDIO_PARENT_ORIGIN_ENV] = parentOrigin
   const spawn = overrides.spawn ?? defaultSpawn
   const proc = spawn([packageManager, 'run', devScript], {
     cwd: appRoot,
-    env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, { [STUDIO_LIVE_BASE_PATH_ENV]: `/p/${projectKey}/` }),
+    env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, extraEnv),
     stdout: 'pipe',
     stderr: 'pipe',
     stdin: 'ignore',

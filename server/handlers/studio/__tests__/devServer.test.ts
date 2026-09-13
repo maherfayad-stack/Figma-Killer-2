@@ -21,6 +21,7 @@ import { describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
 import { registeredMcpServerProjectKey } from '../../../ai/drivers/registeredMcpServers'
 import {
   ensureDevServer,
@@ -196,6 +197,59 @@ describe('ensureDevServer', () => {
     const expectedProjectKey = registeredMcpServerProjectKey(tmpDir)
     expect(capturedEnv?.[STUDIO_LIVE_BASE_PATH_ENV]).toBe(`/p/${expectedProjectKey}/`)
     fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('injects STUDIO_PROJECT_KEY_ENV, the same projectKey the base-path env var uses (live-08, virtual:studio-runtime)', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-projectkey-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    let capturedEnv: Record<string, string> | undefined
+    const overrides: DevServerOverrides = {
+      spawn: (_argv, options) => {
+        capturedEnv = options.env
+        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).proc
+      },
+    }
+
+    await ensureDevServer(tmpDir, overrides)
+
+    const expectedProjectKey = registeredMcpServerProjectKey(tmpDir)
+    expect(capturedEnv?.[STUDIO_PROJECT_KEY_ENV]).toBe(expectedProjectKey)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('injects STUDIO_PARENT_ORIGIN_ENV from PUBLIC_ORIGIN when set, and omits it entirely when unset (live-08, virtual:studio-runtime)', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-parentorigin-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    const originalPublicOrigin = process.env.PUBLIC_ORIGIN
+
+    try {
+      process.env.PUBLIC_ORIGIN = 'https://studio.example.com'
+      let capturedEnvWithOrigin: Record<string, string> | undefined
+      await ensureDevServer(tmpDir, {
+        spawn: (_argv, options) => {
+          capturedEnvWithOrigin = options.env
+          return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).proc
+        },
+      })
+      expect(capturedEnvWithOrigin?.[STUDIO_PARENT_ORIGIN_ENV]).toBe('https://studio.example.com')
+      stopDevServer(tmpDir)
+
+      delete process.env.PUBLIC_ORIGIN
+      let capturedEnvWithoutOrigin: Record<string, string> | undefined
+      await ensureDevServer(tmpDir, {
+        spawn: (_argv, options) => {
+          capturedEnvWithoutOrigin = options.env
+          return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5174/\n'] }).proc
+        },
+      })
+      expect(capturedEnvWithoutOrigin).toBeDefined()
+      expect(Object.prototype.hasOwnProperty.call(capturedEnvWithoutOrigin ?? {}, STUDIO_PARENT_ORIGIN_ENV)).toBe(false)
+    } finally {
+      if (originalPublicOrigin === undefined) delete process.env.PUBLIC_ORIGIN
+      else process.env.PUBLIC_ORIGIN = originalPublicOrigin
+      stopDevServer(tmpDir)
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 
   it('computes STUDIO_LIVE_BASE_PATH\'s projectKey from the ORIGINAL project dir, not the narrowed (monorepo) app root — getting this backwards would silently mismatch server/liveOrigin.ts\'s own /p/<projectKey> routing key for every nested project', async () => {
