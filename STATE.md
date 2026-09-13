@@ -188,6 +188,349 @@ are the remaining WS-2 items, not yet dispatched. See
 
 **Track L orchestration is UNPAUSED (2026-09-13) — `feat/alm-figma-killer-studio-shell` is the active integration point, by explicit user instruction.** The pause below (originally 2026-09-10) asked for L1-L4 to be "confirmed merged to `main`" before dispatching L6+. That literal condition never happened — instead the user directed all nine Track L/P/R branches (L1-L5, R1, R3, P0-P2, P4) to be merged into `feat/alm-figma-killer-studio-shell` (see `meta-09`), then explicitly said to continue the plan. **`feat/alm-figma-killer-studio-shell` is therefore the real integration branch every subsequent Track L/P/R work order should target and verify against — not bare `origin/main`.** Any work order below that says "wait for `main`" or "PRs #91-94 must merge to `main` first" is reading the ORIGINAL, now-superseded condition; treat `feat/alm-figma-killer-studio-shell`'s current state (verified in `meta-09`) as the real base instead. PRs #90-99 themselves are untouched and their fate (close/keep open) is a separate, not-yet-made human call.
 
+### live-08 — wire createStudioRuntimeBridge into the generated shell's real bootstrap
+- **Agent:** server-engineer (see "Decisions" for why not `parser-surgeon`, and the one file inside it that IS `parser-surgeon`'s file if a hand-off happens)
+- **Stage:** design
+- **Updated:** 2026-09-13
+- **Goal:** the generated `prototype/main.jsx` every scaffolded workspace ships actually boots `createStudioRuntimeBridge` when (and only when) Studio's own `devServer.ts` spawned that dev server process — closing the exact gap `perf-06`'s Phase A dogfood found: a real bridge iframe loads a real, correctly-rendered Tier-2 screen but never reaches `ready` because nothing in the generated shell ever calls the L4 bridge that has existed, tested and security-reviewed since `live-04`/`sec-06`.
+- **Done so far — the full work order (read in full before touching code):**
+
+  **Root-cause chain, confirmed by reading the code as it exists NOW on
+  `feat/alm-figma-killer-studio-shell` (perf-06's Phase A code itself lives on
+  an UNMERGED branch/worktree — `.tmp/wt-perf-06`, PR #104 — so none of the
+  client-side files it added exist in this tree yet; nothing below depends on
+  PR #104 landing first, this is a server+studio-runtime-only fix, but the
+  end-to-end SWAP this unblocks cannot be dogfooded in a browser until #104
+  merges too — see "Human action needed"):**
+
+  1. `server/handlers/studio/devServer.ts`'s `spawnEntry` calls `minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS)` with **no overrides** — the spawned dev-server subprocess never receives `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV` (`src/core/studio-runtime/runtimeConfig.ts`'s two env var names). So even where `vitePlugin.ts`'s `virtual:studio-runtime` module IS loaded, `readStudioRuntimeConfigFromEnv` always resolves `projectKey: 'unknown', parentOrigin: null` today, in every real spawn — confirmed by reading `spawnEntry` end to end, no test currently exercises this env shape either (`devServer.test.ts` never asserts on `options.env`'s contents beyond what the base allowlist already covers).
+  2. Even fixing (1) alone would do nothing: `MAIN_JSX` (`server/handlers/studio/prototypeShell/shellFiles.ts`) never imports `virtual:studio-runtime` or `createStudioRuntimeBridge` — it renders `<App/>` and stops. This is the literal gap `perf-06` named.
+  3. Fixing (2) naively (a plain top-level `import { STUDIO_RUNTIME_CONFIG } from 'virtual:studio-runtime'` in `main.jsx`) would introduce a NEW regression: `studioRuntimeIdPlugin()` (`src/core/studio-runtime/vitePlugin.ts`) currently sets `apply: 'serve'` at the WHOLE-PLUGIN level (confirmed against the installed Vite's own type defs — `node_modules/vite/dist/node/index.d.ts` — `apply` is a `Plugin`-level field only; there is **no per-hook `apply`** in this Vite, so the fix below cannot rely on one). `apply: 'serve'` at plugin level disables `resolveId`/`load` too, not just `transform` — so `virtual:studio-runtime` fails to resolve during `vite build`, meaning "Download the code" → `npm run build` and every preview deploy (`deployRunner.ts`) would start FAILING the moment `main.jsx` imports it. This is a real, previously-nonexistent-because-untriggered failure mode that this work order must not ship.
+  4. `runtime.ts` (`createStudioRuntimeBridge` itself) has **no bundled workspace artifact** at all, unlike `vitePlugin.ts` (which `scripts/sync-studio-runtime.ts` already bundles into `src/core/studio-runtime/generated/vitePluginBundle.ts` because the workspace has no `@babel/core`). `runtime.ts` (+ `messages.ts`, `hoverSuppressionRules.ts`, `scrollUnrollRules.ts`, `animationFreezeRules.ts`, `selectionChromeCss.ts`, `hmrState.ts`, `nodeIdIndexing.ts`, `frameFitRules.ts`, `overlayStyleAttr.ts` — confirmed by grepping every import in that chain) depends on exactly one external package, `@sinclair/typebox` (in `messages.ts` + `runtime.ts` itself) — nothing else, no Node builtins, no admin imports. It is NOT installed in a user's workspace `node_modules`, so a plain `import { createStudioRuntimeBridge } from '@core/studio-runtime'`-style import from `main.jsx` cannot resolve there either. Needs the same "bundle it, ship it as a generated file" treatment `vitePlugin.ts` already got.
+
+  **The fix, four coordinated pieces:**
+
+  **(A) `server/handlers/studio/devServer.ts` — actually inject the env vars.**
+  Thread `dir` (the caller's original project directory — NOT `appRoot`, see
+  Decisions for why this distinction is load-bearing) through to `spawnEntry`,
+  and compute the two env values there, at spawn time, from the SAME sources
+  the rest of the live-canvas stack already uses:
+  ```ts
+  import { registeredMcpServerProjectKey } from '../../ai/drivers/registeredMcpServers'
+  import { resolvePublicOrigins } from '../../config'
+  import { STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
+  ```
+  Signature changes: `function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)`, `function ensureEntry(appRoot: string, dir: string, overrides: DevServerOverrides)` — both current call sites (`ensureDevServer`, `startDevServer`) already have `dir` in scope (they compute `appRoot = resolveAppRoot(dir)` from it), just pass it through instead of discarding it. Inside `spawnEntry`, before building `proc`:
+  ```ts
+  const parentOrigin = resolvePublicOrigins(process.env)[0]
+  const extraEnv: Record<string, string> = { [STUDIO_PROJECT_KEY_ENV]: registeredMcpServerProjectKey(dir) }
+  if (parentOrigin) extraEnv[STUDIO_PARENT_ORIGIN_ENV] = parentOrigin
+  const proc = spawn([packageManager, 'run', devScript], {
+    cwd: appRoot,
+    env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, extraEnv),
+    stdout: 'pipe', stderr: 'pipe', stdin: 'ignore',
+  })
+  ```
+  `registeredMcpServerProjectKey(dir)` is the EXACT function `server/liveOrigin.ts`'s own doc comment already names as the canonical `dir -> projectKey` mapping (the proxy goes the other direction, `projectKey -> dir`, via `resolveProjectDirForKey`) — using it here, from the same `dir`, is what guarantees the value baked into the dev-server subprocess's env agrees with whatever `projectKey` the client-side `LiveFrameSource` URL (`<liveOrigin>/p/<projectKey>/__screen/<key>`) was built with (perf-06 Phase A's own fix, once #104 merges). `parentOrigin` reuses `resolvePublicOrigins`, the SAME function `server/config.ts`'s `readServerConfig` and `liveOriginSecurityHeaders`'s CSP `frame-ancestors` already derive from `PUBLIC_ORIGIN` — when it is unset (`[]`), `parentOrigin` is `undefined`, the env var is simply never set, and `readStudioRuntimeConfigFromEnv` degrades to `parentOrigin: null` exactly as designed. This is not a new failure mode: `PUBLIC_ORIGIN` unset ALSO means `liveOriginSecurityHeaders` sends `frame-ancestors 'none'` (perf-06's own landmine note) — the bridge and the CSP that would let it load already fail together.
+
+  **(B) `src/core/studio-runtime/vitePlugin.ts` — split into two plugin objects so the virtual module survives `vite build`.**
+  Change `studioRuntimeIdPlugin`'s return type from `Plugin` to `Plugin[]` (Vite/Rollup flattens one level of nested arrays in a `plugins: [...]` config — confirmed against `UserConfig.plugins`'s `PluginOption[]` type, and `VITE_CONFIG`'s emitted template text (`plugins: [react(), studioRuntimeIdPlugin()]`) needs **zero edits** for this, since the call site doesn't care whether it gets one plugin or an array back):
+  ```ts
+  export function studioRuntimeIdPlugin(options?: { nodeIdAttr?: string }): Plugin[] {
+    const nodeIdAttr = options?.nodeIdAttr ?? 'data-node-id'
+    let root = process.cwd()
+
+    const runtimeConfigPlugin: Plugin = {
+      name: 'studio-runtime-config',
+      // Deliberately NO `apply` restriction — main.jsx imports
+      // `virtual:studio-runtime` unconditionally, so this half must resolve
+      // during `vite build` too (Download the code / preview deploys), not
+      // only `vite dev`. Always safe: outside a dev server `devServer.ts`
+      // itself spawned, STUDIO_PARENT_ORIGIN_ENV/STUDIO_PROJECT_KEY_ENV are
+      // simply unset, so a build always resolves to
+      // `{ parentOrigin: null, projectKey: 'unknown' }` — inert data.
+      resolveId(id) {
+        if (id === VIRTUAL_MODULE_ID) return RESOLVED_VIRTUAL_MODULE_ID
+        return undefined
+      },
+      load(id) {
+        if (id !== RESOLVED_VIRTUAL_MODULE_ID) return undefined
+        const config = readStudioRuntimeConfigFromEnv(process.env, nodeIdAttr)
+        return `export const STUDIO_RUNTIME_CONFIG = ${JSON.stringify(config)}\n`
+      },
+    }
+
+    const idStampPlugin: Plugin = {
+      name: 'studio-runtime-id-plugin',
+      enforce: 'pre',
+      apply: 'serve', // unchanged reasoning — see file header on why a build must never carry data-node-id
+      configResolved(config) { root = config.root },
+      transform(code, id) {
+        const filePath = stripQuery(id)
+        if (!STAMPABLE_EXTENSIONS.some((ext) => filePath.endsWith(ext))) return undefined
+        const relFile = relative(root, filePath).split(sep).join('/')
+        if (relFile.startsWith('..') || isExcludedPath(relFile)) return undefined
+        const result = stampHostElementIds(code, relFile)
+        if (!result.changed) return undefined
+        return { code: result.code, map: null }
+      },
+    }
+
+    return [runtimeConfigPlugin, idStampPlugin]
+  }
+  ```
+  Everything else in the file (constants, `isExcludedPath`, `stripQuery`, the exports at the bottom) is unchanged. Update the module's own header comment to describe the two-plugin split and WHY (the build-time resolution requirement), replacing the paragraph that currently describes one `apply: 'serve'` plugin.
+
+  **(C) Bundle `runtime.ts` into a workspace-shippable artifact — the same treatment `vitePlugin.ts` already got.**
+  Extend `scripts/sync-studio-runtime.ts` (do not create a second script — one
+  script, two artifacts, one freshness gate, same precedent as this file
+  already being the one place both `idStamp.ts`+`vitePlugin.ts`+`runtimeConfig.ts`
+  bundle from):
+  - Add a second bundling function alongside `bundlePlugin()`:
+    ```ts
+    const BRIDGE_ENTRY = join(ROOT, 'src/core/studio-runtime/runtime.ts')
+    const BRIDGE_OUT_FILE = 'runtimeBridgeBundle.ts'
+    const BRIDGE_CONST_NAME = 'STUDIO_RUNTIME_BRIDGE_SOURCE'
+
+    async function bundleRuntimeBridge(): Promise<string> {
+      const result = await Bun.build({
+        entrypoints: [BRIDGE_ENTRY],
+        format: 'esm',
+        target: 'browser', // this runs IN THE LIVE FRAME, not the Vite/Node process — unlike vitePlugin.ts's target: 'node'
+        minify: false,
+        env: 'disable',
+        define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+      })
+      if (!result.success) throw new Error(`[sync-studio-runtime] bundling runtime.ts failed:\n${result.logs.map((l) => String(l)).join('\n')}`)
+      if (result.outputs.length !== 1) throw new Error(`[sync-studio-runtime] expected exactly one output, got ${result.outputs.length}`)
+      return await result.outputs[0].text()
+    }
+    ```
+  - `buildStudioRuntimeArtifact()` changes shape to return BOTH artifacts (an
+    array of `{ outFile, content }`, one per bundle) instead of one — update
+    its callers (`main()`'s write/`--check` loop, and the freshness test) to
+    iterate. No back-compat shim for the old single-artifact return shape.
+  - `renderArtifactFile` becomes a shared helper parameterized by const name +
+    source header comment (`vitePlugin.ts` vs `runtime.ts`), reused for both.
+
+  **(D) New shell file: `prototype/studioRuntimeBridge.generated.js`.**
+  New file `server/handlers/studio/prototypeShell/runtimeBridgeShellFile.ts`,
+  sibling of and structurally identical to `studioRuntimeShellFile.ts` (same
+  "ALWAYS-rewritten, not hash-protected" reasoning — a fix to `runtime.ts` has
+  to reach an already-scaffolded workspace independent of whether
+  `vite.config.js`/`main.jsx` are still untouched):
+  ```ts
+  import { STUDIO_RUNTIME_BRIDGE_SOURCE } from '@core/studio-runtime/generated/runtimeBridgeBundle'
+  import { PROTOTYPE_SHELL_DIR, type ShellFile } from './shellPaths'
+
+  const BANNER = `/* Generated by Studio from src/core/studio-runtime/runtime.ts — do not
+   * edit. Rewritten every time the project is opened. The in-frame half of
+   * the live-canvas bridge: postMessage dispatch, overlay/selection DOM,
+   * optimistic edits. Inert until main.jsx actually constructs it. */
+  `
+
+  export function runtimeBridgeShellFile(): ShellFile {
+    return {
+      relPath: `${PROTOTYPE_SHELL_DIR}/studioRuntimeBridge.generated.js`,
+      contents: `${BANNER}${STUDIO_RUNTIME_BRIDGE_SOURCE}`,
+    }
+  }
+  ```
+  Wire it into `server/handlers/studio/prototypeShell/registryFile.ts`'s
+  `generatedShellFiles()` array (currently `[registry.generated.jsx,
+  providers.generated.jsx, studioRuntimeShellFile()]` — add
+  `runtimeBridgeShellFile()` as a fourth entry, update that function's own doc
+  comment to name three generated files instead of two).
+
+  **(E) `MAIN_JSX` in `server/handlers/studio/prototypeShell/shellFiles.ts` — the actual boot wiring.**
+  `main.jsx` is a STATIC (hash-protected, "written once") file, so this
+  template change self-heals into every ALREADY-scaffolded, untouched
+  workspace (including `studio-workspace/test4 copy`, the Track L exit-
+  criterion project) the next time `ensurePrototypeShell` runs — confirmed by
+  reading `index.ts`'s hash-comparison logic: a file Studio wrote whose recorded
+  hash still matches gets overwritten with the new template; a hand-edited one
+  does not (accepted, pre-existing limitation, same as any other static file).
+  New contents (no backticks/no `${` in the emitted code — this constant is
+  itself a template literal, per the file's own "No backticks below" rule):
+  ```
+  import { StrictMode } from 'react'
+  import { createRoot } from 'react-dom/client'
+  import App from './App'
+  import './shell.css'
+  import { STUDIO_RUNTIME_CONFIG } from 'virtual:studio-runtime'
+  import { createStudioRuntimeBridge } from './studioRuntimeBridge.generated.js'
+
+  createRoot(document.getElementById('root')).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+
+  // Boots the live-canvas runtime bridge only when THIS dev server was
+  // spawned under Studio's own supervision (server/handlers/studio/devServer.ts
+  // sets STUDIO_PARENT_ORIGIN_ENV on the process only then — never for a
+  // plain 'npm run dev', including every copy Studio hands out via
+  // 'Download the code') AND this document is actually embedded in a frame.
+  // Neither check alone is enough: a supervised dev server opened directly in
+  // a normal browser tab must not boot a bridge with nothing to talk to.
+  if (STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window) {
+    createStudioRuntimeBridge({
+      parentOrigin: STUDIO_RUNTIME_CONFIG.parentOrigin,
+      hot: import.meta.hot,
+    })
+  }
+  ```
+  This closes item 4 of the task directly: the gate is BOTH signals
+  (`parentOrigin !== null` from env, `window.parent !== window` from the DOM),
+  not either alone — see Decisions for why one signal alone is not enough.
+
+  **Answering the task's open questions directly, so nobody re-derives them:**
+  - **Does `createStudioRuntimeBridge` need a stamp index / `buildStampIndex`?**
+    No. `buildStampIndex`/`resolveLiveNode` (`liveNodeResolve.ts`) run on the
+    PARENT (admin canvas) side only, mapping a DOM element back to a tree node
+    id from OUTSIDE the frame. Inside the frame, `runtime.ts` resolves
+    `data-node-id` directly via `findNthNodeById`/`occurrenceIndexOf`
+    (`nodeIdIndexing.ts`) — no index construction needed in-frame at all.
+    `StudioRuntimeBridgeOptions` needs exactly `parentOrigin` (required) plus
+    optional `parentWindow`/`document`/`hot` test/HMR seams — nothing else.
+  - **Does the config come from env vars or the `/__screen/<key>?dir=&theme=&lang=` query string?**
+    Env vars, entirely. `STUDIO_RUNTIME_CONFIG` is resolved inside the Vite
+    dev-server SUBPROCESS's own `process.env` at `virtual:studio-runtime`
+    `load()` time — it has nothing to do with the request URL a particular
+    browser tab hit. **L6's `/__screen/<key>` route needs NO changes for this
+    work order** — everything `createStudioRuntimeBridge` needs is already
+    derivable from the always-injected virtual module, independent of query
+    params.
+  - **Unconditional or gated construction?** Gated — see piece (E) above.
+
+- **Next step:** implement piece (A) first (`devServer.ts`), verify with an
+  extended `devServer.test.ts` assertion on the fake `spawn`'s `options.env`;
+  then (B)+(C)+(D)+(E) together since they're one coherent chain (a `main.jsx`
+  that imports things (B)/(C)/(D) don't yet produce is untestable in
+  isolation); then the freshness/architecture gates; then the real dogfood
+  below.
+
+- **Scope:** `server/handlers/studio/devServer.ts`,
+  `server/handlers/studio/prototypeShell/{shellFiles.ts,registryFile.ts}`,
+  new `server/handlers/studio/prototypeShell/runtimeBridgeShellFile.ts`,
+  `src/core/studio-runtime/vitePlugin.ts`, `scripts/sync-studio-runtime.ts`,
+  new `src/core/studio-runtime/__tests__/vitePlugin.test.ts`, regenerated
+  `src/core/studio-runtime/generated/{vitePluginBundle.ts,runtimeBridgeBundle.ts}`,
+  `src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts`,
+  `server/handlers/studio/__tests__/{devServer,prototypeShell}.test.ts`,
+  `docs/features/prototype-export.md`, `STUDIO-LIVE-CANVAS-PLAN.md` (§L3/§L4).
+
+- **Decisions:**
+  - **Owner is `server-engineer`, not `parser-surgeon`, despite `vitePlugin.ts`
+    nominally being L3/`parser-surgeon`'s file.** Majority of the diff (devServer
+    env injection, both prototypeShell files, the sync script) is server/shell-
+    generator territory `server-engineer` already owns; the `vitePlugin.ts`
+    change is a mechanical 3-hook split with no ts-morph/AST content, fully
+    specified above (piece B) including the exact code. If a `server-engineer`
+    session genuinely cannot confirm Vite's plugin-array-flattening behavior
+    with confidence, hand off ONLY piece (B) to `parser-surgeon` (L3's owner)
+    rather than guessing — do not ship (B) unverified, since a wrong `apply`
+    scoping breaks "Download the code" silently (it only surfaces the next
+    time someone actually runs `npm run build` on a downloaded project).
+  - **`dir`, not `appRoot`, is the input to `registeredMcpServerProjectKey`.**
+    A monorepo project's `appRoot` (`resolveAppRoot(dir)`) can differ from its
+    top-level `dir` (e.g. `apps/web/` inside the project). The `/p/<projectKey>/`
+    live-origin proxy and the client's `LiveFrameSource` URL both key off the
+    TOP-LEVEL project `dir` (confirmed: `server/liveOrigin.ts`'s
+    `resolveProjectDirForKey` reverses `projectKey -> dir` via
+    `join(projectsRootDir(), projectKey)`, which is the top-level projects
+    root, never an app-root-relative path). Keying the env-injected value off
+    `appRoot` instead would silently break every monorepo project even though
+    it would look correct for `test4 copy` (where `dir === appRoot`) — thread
+    `dir` through explicitly rather than deriving it back out of `appRoot`.
+  - **Two plugin objects, not a hook-level `apply`.** Vite's `apply` field for
+    conditional plugin application is PLUGIN-level only in the installed Vite
+    (checked `node_modules/vite/dist/node/index.d.ts`'s `ObjectHook`/`Plugin`
+    types directly, not assumed from memory) — there is no per-hook `apply` to
+    reach for here. Returning `Plugin[]` from `studioRuntimeIdPlugin()` and
+    relying on Vite's own array-flattening in the `plugins` config is the
+    correct fix, not a workaround.
+  - **The gate is `parentOrigin !== null` AND `window.parent !== window`, not
+    either alone.** `parentOrigin` alone would still construct (a harmless,
+    inert) bridge on a dev server that Studio spawned but the user then opened
+    directly in a bare tab (the raw Vite port is reachable outside the `/p/`
+    proxy too) — wasted listeners/DOM nodes, no functional bug, but avoidable.
+    `window.parent !== window` alone would activate for ANY embedding,
+    including a malicious third-party `<iframe>` — safe by construction either
+    way (`runtime.ts`'s own origin check drops unauthenticated inbound
+    messages, and `postMessage(msg, parentOrigin)` is never delivered to a
+    window whose real origin doesn't match the specified `parentOrigin`), but
+    combining both signals means the bridge is inert to begin with rather than
+    "safe once it receives its first message."
+  - **`runtimeBridgeShellFile.ts`'s generated file is always-rewritten, not
+    hash-protected**, matching `studioRuntimeShellFile.ts` exactly — it carries
+    zero per-workspace parameterization (unlike `registry.generated.jsx`), so
+    there's no reason a user would ever legitimately hand-edit it, and every
+    reason a future fix to `runtime.ts` needs to reach it unconditionally.
+
+- **Landmines:**
+  - Don't try to fix (B) by keeping `apply: 'serve'` at the plugin level and
+    special-casing `command === 'build'` inside `resolveId`/`load` via
+    `configResolved`'s `config.command` — that reintroduces exactly the
+    problem (the whole plugin object is skipped by Vite's OWN dispatch before
+    any hook body ever runs; a body-level check never executes).
+  - `server/handlers/studio/__tests__/prototypeShell.test.ts` (pre-existing)
+    writes real generated files into the CHECKED-IN `studio-workspace/test4
+    copy/` as test litter when run directly against that fixture — `perf-06`
+    already hit this for `studioRuntime.generated.js`; the new
+    `studioRuntimeBridge.generated.js` will do the same. `git status
+    studio-workspace/` after running this suite, before committing anything.
+  - `VITE_CONFIG`'s own template text needs **no edit** — resist the urge to
+    "clean up" the call site to `plugins: [react(), ...studioRuntimeIdPlugin()]`
+    or similar; the plain `studioRuntimeIdPlugin()` call already works once it
+    returns an array, and touching `VITE_CONFIG_REL_PATH`'s content at all
+    means yet another self-heal cycle to reason about for zero benefit.
+  - `import.meta.hot` in `main.jsx` is fine unguarded (Vite statically handles
+    it, replacing it with `undefined` in a production build) — do not wrap it
+    in a `typeof import.meta.hot !== 'undefined'` check, that's meaningless
+    boilerplate here and inconsistent with how Vite's own docs and every other
+    Vite-authored file in this repo reference it.
+
+- **Verification (not run yet — this is a design handoff):**
+  - `bun run studio-runtime:sync` regenerates both artifacts; `bun test
+    src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts` green.
+  - New `src/core/studio-runtime/__tests__/vitePlugin.test.ts`: asserts
+    `studioRuntimeIdPlugin()` returns an array of 2; the config-plugin's
+    `resolveId`/`load` behave identically to today (same `load()` output shape
+    for a given `process.env`); the config-plugin object carries no `apply`
+    field; the id-stamp plugin's `transform` behavior is byte-identical to
+    today AND its `apply === 'serve'`.
+  - Extend `server/handlers/studio/__tests__/devServer.test.ts`: a fake-spawn
+    case asserting `options.env[STUDIO_PROJECT_KEY_ENV]` equals
+    `registeredMcpServerProjectKey(dir)` for the test's own fixture dir, and
+    `options.env[STUDIO_PARENT_ORIGIN_ENV]` is present/absent correctly under
+    a set/unset `PUBLIC_ORIGIN`.
+  - Extend `server/handlers/studio/__tests__/prototypeShell.test.ts`: assert
+    `ensurePrototypeShell` writes `prototype/studioRuntimeBridge.generated.js`,
+    and that `main.jsx`'s contents contain both new imports and the gate.
+  - `bun run build` + `bun test` + `bun run lint` on the whole touched set.
+  - **Real dogfood, mirroring `perf-06`'s own method exactly** (promote a
+    SCRATCH copy of `studio-workspace/test4 copy`, never the checked-in one,
+    to `trust: 'run-project'`; set `PUBLIC_ORIGIN`/`VITE_ALLOWED_ORIGIN` per
+    perf-06's landmine notes; real `bun run dev`; real Playwright Chromium):
+    confirm the bridge iframe's `ready` actually fires this time (was the
+    exact point Phase A's dogfood stopped short of) — i.e. `LiveBoardFrame`
+    (once PR #104 is merged; without it, confirm `postMessage({type:'ready'})`
+    fires by listening for it directly in the iframe from a driver script,
+    since there is no production consumer yet on `feat/alm-figma-killer-studio-shell`
+    without #104). Separately, in the SAME scratch copy: run `npm run build`
+    (or `vite build` directly) and confirm it completes without a "could not
+    resolve virtual:studio-runtime" error — this is the regression piece (B)
+    exists to prevent, and nothing above proves it in a unit test alone.
+    Clean up every scratch process/file/DB after, `git status studio-workspace/`
+    before committing, per the standing note on this exact failure mode.
+
+- **Human action needed:** dogfood the two items above once implemented —
+  neither is provable from `bun test` alone (a real cross-origin
+  `postMessage` handshake and a real `vite build` resolution both need a real
+  browser/real Vite, same limitation `live-04`'s own handoff already
+  documented for the postMessage half).
+
 ### perf-06 — L8: warm, posters, pool
 - **Agent:** canvas-engineer (Phase A — done) + perf-hunter (Phase B — not started)
 - **Stage:** Phase A done (gates green; draft PR #104 open against `feat/alm-figma-killer-studio-shell`) — **a real, new blocking gap for the FULL end-to-end swap was found via live browser dogfood and is documented in Phase A's own report below; read it before starting Phase B or claiming this feature works.**
@@ -965,7 +1308,7 @@ sweep, THEN the `IframeFrameSurface.tsx` effect split last.
 
 ### panel-25 — P3: sections in Penpot order
 - **Agent:** panel-designer
-- **Stage:** in progress — Step 0 + Section 1 (Layer) DONE (PR #101, draft); Sections 2-11 not started
+- **Stage:** in progress — Step 0 + Section 1 (Layer) DONE (PR #101, draft); Section 2 (Align) DONE (PR #105, draft); Sections 3-11 not started
 - **Updated:** 2026-09-13
 - **Goal:** `STUDIO-LIVE-CANVAS-PLAN.md` §P3 — replace the 11 old Figma-modeled CSS-property sections + 4 node-level panels currently rendered inside `StyleSectionsEditor.tsx`/`StyleSurface.tsx` with 11 new sections in Penpot's own order (Layer, Align, Measures, Layout, Fill, Stroke, Shadow, Blur, Text, Export, Studio extras), each mounted as its own entry in the `INSPECTOR_SECTIONS` manifest P4 already built (`panel-23`), each matching the geometry P0 actually measured (`docs/audits/penpot-inspector-baseline/`), each PR deleting the old component(s) it replaces. **Done when:** all 11 manifest entries exist and render in Penpot order with `appliesTo` predicates; every old `panels/PropertiesPanel/*Section.tsx` file this entry names as superseded is deleted (not left beside its replacement); `--inspector-row-h`/`--inspector-field-radius`/`--inspector-pad-x` read `32px`/`8px`/`12px`; no section a user can populate has a manual collapse toggle once populated (rule 2 — see the "Rule-2 gap" finding below); `bun run build && bun test && bun run lint` pass after EVERY section's own PR, not just at the end.
 
@@ -1195,7 +1538,31 @@ Implement in this order (matches the plan's own Penpot frequency-of-use order, a
 
 **Human action needed:** dogfood the Layer row. Open any project in `/admin/site`, select a leaf element (e.g. a `base.div` or `base.text` node), and confirm: (1) the FIRST row under the Design tab strip is unlabeled and shows eye / lock / opacity / blend-mode / small secondary-eye icons, no header text above it; (2) the primary eye removes the element from the canvas (layer-tree hide), while the small secondary eye at the row's end sets CSS `visibility: hidden` (element stays in the layout, just invisible) — hover both to confirm the tooltips say which is which; (3) the lock icon toggles a padlock glyph (hand-drawn `UnlockedIcon` — sanity-check it reads as "open" at a glance); (4) dragging the opacity field's `%`-glyph label scrubs live on canvas; (5) the blend-mode droplet opens Figma's grouped menu and picking a mode changes canvas compositing; (6) select a node with a component-driven `opacity` prop (or fake one via `codeProps`) and confirm the opacity field alone goes visibly disabled with a lock tooltip, NOT the whole row; (7) confirm the corner-radius block (still `AppearanceSection`, now titled "Appearance") no longer shows an opacity field or the eye/droplet icons in its own header.
 
+#### Done so far — Section 2 (Align), 2026-09-13
 
+**PR #105 (draft), branch `feat/inspector-section-align`, cut from `origin/feat/alm-figma-killer-studio-shell`.** Worktree `.tmp/wt-panel-25-align` (now removable). Scope: Section 2 (Align) ONLY.
+
+**Built independently of Layer (PR #101), by design, not by accident.** Checked first whether Align's own design needs Layer's actual diff: Align pulls from `SingleNodeAlignRow.tsx`/`resolveAlignWrite.ts`, which touch neither `AppearanceSection.tsx` nor `opacity`/`mixBlendMode` — zero file overlap with Layer's PR. Only the shared PATTERN (manifest entry shape, `useSelectionModel()`/`useInspectorCommit()`, `MIGRATED_SECTION_PROPERTIES`-style reasoning) was needed, and that was fully readable from this entry's own template + Layer's committed diff on `origin/feat/inspector-section-layer` without merging it. **Did not merge Layer into this worktree** — confirmed `bun run build`/`bun test` green on top of plain `origin/feat/alm-figma-killer-studio-shell` alone. The one real cost of building the two in parallel: `sections/index.ts`'s `order` numbering. This PR adds `{ id: 'align', order: 0 }` and bumps `styles` to `order: 1` — the exact same convention Layer's PR used for its own `{ id: 'layer', order: 0 }` — so when both PRs land, whoever merges second will hit a real (expected, trivial) conflict on that one array and must renumber to `layer: 0, align: 1, styles: 2`. Flagging explicitly so it isn't mistaken for a bug.
+
+**A real, P0-evidenced design correction over the old `SingleNodeAlignRow`, not just a location move:** the old component always rendered all 6 align buttons, fully disabled with a reason tooltip, whenever the selection had no flex/grid parent. Re-checked against the P0 screenshots per this entry's own instruction to verify geometry against the actual fixture, not just the summary table (there is no `02-measurements.md` row for Align at all — none of the 4 fixtures needed it) — `docs/audits/penpot-inspector-baseline/screenshots/f1-rectangle/dark/design.png` (bare rectangle, no layout parent) shows NO align row at all, only the boolean-ops icon row; `f3-flexboard/dark/design-child.png` (a rectangle that IS a flex child) shows the align row as the panel's very first content row. Penpot's align row does not exist in the DOM when nothing on it could ever write anything — it isn't a permanently-resident, sometimes-disabled control. `AlignSection.tsx` now matches this: it computes `resolveAlignWrite` for all 6 edges and returns `null` when every one comes back `unavailable` (no parent / no live frame / non-flex-grid parent), rather than rendering a fully-disabled row. A PARTIAL disable (e.g. a flex main-axis edge refused because of siblings while the cross axis stays honest) still renders normally — only the "nothing here would ever work" case hides the whole row. This directly matches rule 2 ("nothing rendered that lies") better than the pre-existing component did; noting it as a deliberate, evidenced divergence from a literal 1:1 port, per this work order's own instruction to re-verify each section's geometry independently rather than trust the summary table alone.
+
+**Files:**
+- New: `src/admin/pages/site/inspector/sections/AlignSection.tsx` + `.module.css`, `src/admin/pages/site/inspector/sections/__tests__/alignSection.test.tsx` (14 tests — 6 ported verbatim `resolveAlignWrite` pure-logic tests, 6 ported/adapted `SingleNodeAlignRow` integration tests, 2 new: the "hides entirely" behavior above, and a new code-lock test — see below).
+- Moved (git mv, content otherwise unchanged): `panels/PropertiesPanel/resolveAlignWrite.ts` → `inspector/sections/resolveAlignWrite.ts` — pure value logic, no longer belongs beside `PositionSection.tsx` once its only renderer (the align row) moved out. Doc-comment references to its old location/name updated in `AlignBar.tsx`, `useSizingParentLayout.ts`, `useInspectComputedStyle.ts`, `ConstraintsDiagram.tsx`, `constraintMapping.ts` (comments only, no behavior change).
+- Deleted: `panels/PropertiesPanel/SingleNodeAlignRow.tsx` (promoted into `AlignSection.tsx`, not left beside it).
+- Modified: `panels/PropertiesPanel/PositionSection.tsx` (removed the `<SingleNodeAlignRow>` mount + import, updated its own doc header to point at the new section — PositionSection now starts at what used to be "Row 2"), `PositionSection.module.css` (removed the now-dead `.alignRow` class), `panels/PropertiesPanel/__tests__/positionSection.test.tsx` (removed the two ported describe blocks — constraint/z-index/rotation coverage untouched, renumbered), `inspector/sections/index.ts` (registered `align`).
+
+**Claims `alignSelf`, `justifySelf` (on the selected node) and, for a flex parent's sole child, the PARENT's `justifyContent` (as the parent's own inline style — never a class, unchanged rationale from the old component: unbounded blast radius vs. a single real per-node location).** The parent write goes through `setNodeInlineStyles` directly (not `commit.commitStyle`), because it targets a DIFFERENT node than the one `useSelectionModel()`/`useInspectorCommit()` are scoped to — same posture Layer's PR already established for `toggleNodeHidden`/`toggleNodeLocked` (direct store reads for things outside the single-selected-node style-commit contract, not a regression of P4's "one commit API").
+
+**Checked for the "two components racing" hazard Layer's own note warns about, found none needed here:** `alignSelf`/`justifySelf`/`justifyContent` are still claimed by `classStyleSections.ts`'s `layout` category and still have a live, pre-existing SECOND UI — `LayoutSection/LayoutSettingsButton.tsx`'s "always shown" advanced-settings popover exposes the exact same two item-level properties for fine control. That dual-path (quick align-bar shortcut vs. advanced settings drawer) already existed before this PR — it's intentional, pre-existing redundancy, not something this migration introduces. Unlike Layer's opacity/blend (which had exactly ONE prior UI and needed the new `MIGRATED_SECTION_PROPERTIES` export to avoid a double render), `classStyleSections.ts` is untouched by this PR — `LayoutSettingsButton`/`LayoutSection` still need their existing claim entry, and `AlignSection` doesn't duplicate their rendering. **Read this before assuming every extracted section needs a `MIGRATED_SECTION_PROPERTIES` entry — only sections whose properties had exactly one live UI before extraction do.**
+
+**Code-locked properties:** new coverage `SingleNodeAlignRow` never had (it had no `codeProps` check at all). `AlignSection` filters `selectedNode.codeProps` for `style:alignSelf`/`style:justifySelf` the same way Layer filters for `style:opacity`/`style:mixBlendMode`, and folds a locked property into `AlignBar`'s existing `alignDisabledReasons` mechanism (already designed for per-edge reasons) rather than inventing a second disabled-state channel. `commit.commitStyle`'s own `lockedPropertySet` gate already no-ops a locked write at the store boundary; this makes the UI honest about it too, not just safe.
+
+**Multi-select:** no special-casing needed or added. `PropertiesPanelBody.tsx` early-returns `<MultiSelectionInspector>` before `StyleSurface`/`INSPECTOR_SECTIONS` ever mount when `isMultiSelect` is true (confirmed by reading the file) — `AlignSection`, like every other `INSPECTOR_SECTIONS` entry, is structurally unreachable during multi-select. `model.isMultiSelect` is therefore always `false` wherever this component runs; the manifest predicate mirrors Layer's own (`(m) => m.selectedNode != null`) with no multi-select branch.
+
+**Gates run:** `bun test src/admin/pages/site/inspector/sections/__tests__/alignSection.test.tsx` (12/12), `bun test src/admin/pages/site/panels/PropertiesPanel/__tests__/positionSection.test.tsx` (14/14), `bun test src/admin/pages/site/panels/PropertiesPanel src/admin/pages/site/inspector` (591/591), `bun test src/admin/pages/site` (921/921), `bun run build` (clean), `bun run lint` (clean on every touched file — 6 pre-existing `server/handlers/__tests__/*` unused-`os`-import errors, untouched by this PR). `bun test src/__tests__/architecture` — same 4 pre-existing failure buckets Layer's own PR already triaged (`icon-catalog-integrity.test.ts` missing dist artifacts, `bundle-size-budgets.test.ts` `AdminCanvasEditorBody` already red on the clean base — now 825.34 kB vs. Layer's reported 824.92 kB, i.e. this PR's own ~0.4 kB share of that pre-existing overage, `no-core-barrel-deep-imports.test.ts`/`studioRuntimeShellFile.ts`, `studio-runtime-bundle-fresh.test.ts` — none touch a file this PR changed.
+
+**Human action needed:** dogfood the Align row against a real flex layout. In `/admin/site`, find or build a flex container with at least one child (or use one of the `alm.*` design-system components that ship flex boards), and confirm: (1) selecting a PLAIN element with NO flex/grid parent (e.g. the page root, or a block-level div under another block-level div) shows NO align row at all — nothing where it would sit, not a grayed-out one; (2) selecting a child of a flex row shows a 6-button align row (left/center/right/top/middle/bottom) as the very first thing in the panel; (3) if that child is its parent's ONLY child, clicking a main-axis edge (e.g. "left" in a row-direction flex) visibly repositions the WHOLE ROW (parent's `justify-content` changed) — select the parent afterward and confirm its own Layout section's alignment picker reflects the same new value; (4) clicking a cross-axis edge (e.g. "top") moves only the selected child, not its siblings; (5) add a second child to that same flex parent and confirm the main-axis buttons (left/center/right in a row) go visibly disabled with a tooltip explaining why, while the cross-axis buttons (top/middle/bottom) stay live.
 
 ### panel-23 — P4: SelectionModel, section manifest, one commit API
 - **Agent:** store-engineer (Phase A DONE) + panel-designer (Phase B DONE — see its own subsection below; PR #99 open, draft)
