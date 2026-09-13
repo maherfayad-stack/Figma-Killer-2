@@ -484,14 +484,35 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
         // The tradeoff: the outbound socket to the dev server is abandoned
         // rather than explicitly torn down on every ordinary page
         // navigation, which is common with a live canvas frame — a real,
-        // accepted resource-lingering cost, bounded by (a) Vite's own HMR
-        // client heartbeat eventually reaping a peer that stops responding,
-        // and (b) `scheduleDevServerIdleTeardown` killing the WHOLE dev
-        // server subprocess (and therefore every socket it holds) after
-        // project inactivity regardless. That bound is far preferable to a
-        // guaranteed crash of the shared dev server on every navigation,
-        // which would take down every OTHER open frame/tab for the same
-        // project too.
+        // accepted resource-lingering cost. That cost is only PARTIALLY
+        // bounded today: (a) Vite's own HMR client heartbeat may eventually
+        // reap a peer that stops responding (not verified against this
+        // repo's pinned Vite version — an assumption, not a confirmed
+        // mechanism), but (b) `scheduleDevServerIdleTeardown` — the thing
+        // that would otherwise kill the whole dev server subprocess (and
+        // therefore every socket it holds) after inactivity — is NOT wired
+        // to this listener's own dev-server lifecycle at all: its only
+        // production caller today is `referenceRender.ts`'s one-shot
+        // `ensureDevServer` path, never `startDevServer`/`serveStart`
+        // (`devServer.ts`) — the HTTP route this listener's own dev servers
+        // are actually started through. A project's dev server started for
+        // live-canvas use today runs, and therefore accumulates abandoned
+        // upstream sockets, until an explicit `POST .../dev-server/stop` —
+        // not "regardless of inactivity" as an earlier version of this
+        // comment claimed. Verified by reading `devServer.ts`: `idleTimer`
+        // starts `null` on every `spawnEntry` and is only ever set by
+        // `scheduleDevServerIdleTeardown`, which nothing in the live-canvas
+        // start path calls (`sec-09`, STATE.md). Still preferable to a
+        // guaranteed crash of the shared dev server on every navigation
+        // (which would take down every OTHER open frame/tab for the same
+        // project too), but whoever wires a real caller for
+        // `documentMode='bridge'` (see `live-07`'s own "no production call
+        // site yet" note) should also either (i) schedule idle teardown for
+        // board-started dev servers the same way `referenceRender.ts`
+        // already does, or (ii) add an explicit cap on concurrent open
+        // upstream sockets per project (the same bounded-cap shape
+        // `MAX_PENDING_MESSAGES`/`MAX_PENDING_BYTES` already use above) —
+        // before this listener carries real traffic, not after.
         //
         // NOT applied to the two OTHER `upstream.close()` call sites above
         // (the boot-timeout watchdog and the pending-queue overflow guard) —
