@@ -390,3 +390,23 @@ export function FlipVerticalIcon(props: IconProps) {
     />
   )
 }
+
+// ---------------------------------------------------------------------------
+// Unlocked — the Layer section's lock toggle (`STATE.md` `panel-25`).
+// `pixel-art-icons` vendors `lock-solid` (the closed padlock) but has no
+// unlocked/open counterpart — `toggleNodeLocked` had ZERO existing UI call
+// sites before this section, so there was never a prior "open" glyph to
+// reuse. Same body footprint as `lock-solid` (so the pair reads as one
+// control swapping state, not two unrelated icons); the shackle is drawn
+// open instead of closed — anchored on the right, its hook swung up and to
+// the left, not reaching back down into the case.
+// ---------------------------------------------------------------------------
+
+export function UnlockedIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M3 10h18v10h-2v2H5v-2H3V10ZM15 4h2v4h-2V4ZM7 2h6v2H9v2H7V2Z"
+    />
+  )
+}

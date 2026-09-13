@@ -54,15 +54,17 @@ function noop() {}
  * frozen at. Read as a table: this IS the panel's vertical grid.
  */
 const FROZEN_INSPECTOR_TOKENS: ReadonlyArray<readonly [string, string]> = [
-  ['--inspector-row-h', '24px'],
+  // Corrected to Penpot's measured values (`STATE.md` `panel-25`, Step 0 —
+  // `docs/audits/penpot-inspector-baseline/04-token-gaps.md`).
+  ['--inspector-row-h', '32px'],
   ['--inspector-header-h', '32px'],
-  ['--inspector-pad-x', '8px'],
+  ['--inspector-pad-x', '12px'],
   ['--inspector-field-gap', '6px'],
   ['--inspector-group-gap', '8px'],
   ['--inspector-caption-gap', '3px'],
   ['--inspector-label-w', '68px'],
   ['--inspector-rail-w', '32px'],
-  ['--inspector-field-radius', '5px'],
+  ['--inspector-field-radius', '8px'],
   ['--inspector-space-4xs', '2px'],
   ['--inspector-space-3xs', '3px'],
   ['--inspector-space-2xs', '4px'],
