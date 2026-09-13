@@ -1,0 +1,18 @@
+/*
+ * AlignSection — Penpot's Align row (`STATE.md` `panel-25` item 2). Screen
+ * evidence (`docs/audits/penpot-inspector-baseline/screenshots/f3-flexboard/
+ * dark/design-child.png`) puts this as the FIRST content row for a flex/grid
+ * child, directly below the tab strip, unlabeled — no section header, same
+ * as Layer. One `--inspector-row-h` row; `AlignBar` owns its own internal
+ * button spacing (`--space-3xs`, a general UI-primitive token, not an
+ * inspector one) — this wrapper only supplies the row's height/padding, the
+ * new tight/group rhythm this design's Step 0 introduced (`STATE.md`
+ * `panel-25`), never the old 9-step `--inspector-space-*` scale.
+ */
+
+.alignRow {
+    display: flex;
+    align-items: center;
+    height: var(--inspector-row-h);
+    padding: 0 var(--inspector-pad-x);
+}

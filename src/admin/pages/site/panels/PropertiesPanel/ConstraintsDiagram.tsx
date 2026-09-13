@@ -16,7 +16,7 @@
  *      (the viewport), `absolute` is fine only when the PARENT really is the
  *      containing block, and an unverifiable parent stays disabled rather
  *      than assumed — the same "no frame, no claim" posture
- *      `resolveAlignWrite` takes for the align row.
+ *      `resolveAlignWrite` (now in `inspector/sections`) takes for the align row.
  *   2. Centre by silently rewriting a `transform`/`translate` that already
  *      carries somebody's value. That refusal is named in the tooltip.
  *   3. Invent percentages for Scale. Percent insets are a measurement; with

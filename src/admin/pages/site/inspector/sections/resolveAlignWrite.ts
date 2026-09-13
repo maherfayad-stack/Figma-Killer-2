@@ -1,11 +1,16 @@
 /**
  * resolveAlignWrite — the honest single-CSS-write check behind every
- * `PositionSection` align button (G10, docs/features/inspector-disclosure.md).
+ * `AlignSection` align button (originally G10,
+ * docs/features/inspector-disclosure.md; the section itself is now
+ * Penpot's Align, `STATE.md` `panel-25` item 2 of the P3 mapping table).
  *
- * Pulled out of `PositionSection.tsx` into its own module (not just a
- * section of that file) because `react-refresh/only-export-components`
- * requires a component file to export components only — this is pure logic
- * with no JSX, so it belongs in a plain module regardless.
+ * Moved here from `panels/PropertiesPanel/PositionSection.tsx` unchanged —
+ * this is pure value logic with no rendering opinion, reused verbatim by
+ * the new section per the mapping table's own instruction ("Reuse every
+ * pure value-logic file named in the mapping table verbatim... only the
+ * RENDERING components around them do [change]"). Still its own module (not
+ * a section of `AlignSection.tsx`) because `react-refresh/only-export-
+ * components` requires a component file to export components only.
  */
 import type { AlignEdge } from '@ui/components/AlignBar'
 

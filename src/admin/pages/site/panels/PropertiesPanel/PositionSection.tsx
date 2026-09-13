@@ -3,17 +3,13 @@
  *
  * G10 (docs/features/inspector-disclosure.md) — Figma's F1/F2/F29 shape,
  * tightened to three rows (WS-6 §6 — this section was running at roughly
- * double its row budget):
+ * double its row budget). **The align row that used to open this section
+ * (F1/F2's 7-button align/distribute/tidy row) moved out to its own
+ * manifest section** — Penpot's Align, `AlignSection.tsx`
+ * (`@site/inspector/sections`), `STATE.md` `panel-25` item 2 of the P3
+ * mapping table. `SingleNodeAlignRow`/`resolveAlignWrite` no longer live
+ * here; this file now starts directly at what used to be Row 2:
  *
- *   Row 1 — AlignBar        the 7-button align/distribute/tidy row (F1, F2),
- *                           mounted here for the single selected node. Align
- *                           writes either the node's own `alignSelf`/
- *                           `justifySelf` or, when this is the parent's only
- *                           child, the PARENT's `justifyContent` as an inline
- *                           style (never a shared class — no blast radius).
- *                           Every edge with no single honest CSS write
- *                           renders disabled with the reason as its tooltip
- *                           — see `resolveAlignWrite`.
  *   Row 2 — PositionSwitcher  connected `[Relative | Absolute | ▼]` segmented
  *                           control with a dropdown trail. `fixed | sticky |
  *                           static` (and any custom value) render as a
@@ -67,9 +63,9 @@
  * live in this component's own `PositionSection.module.css` rather than
  * growing LayoutSection's.
  *
- * `SingleNodeAlignRow`, `PositionConstraints` (+ `ConstraintAxisField`),
- * `RotationRow`, and `ZIndexSettingsRow` live in their own sibling files —
- * split out purely to keep this module under the repo's line-count ceiling
+ * `PositionConstraints` (+ `ConstraintAxisField`), `RotationRow`, and
+ * `ZIndexSettingsRow` live in their own sibling files — split out purely to
+ * keep this module under the repo's line-count ceiling
  * (`module-size-budgets.test.ts`); still this file's exclusive territory.
  */
 
@@ -87,7 +83,6 @@ import { useSpacingTokens, type Token } from '@site/property-controls/tokenUtils
 import { plainString, readString } from './styleValueUtils'
 import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import { isMixed, MIXED } from '@ui/components/MixedValue'
-import { SingleNodeAlignRow } from './SingleNodeAlignRow'
 import { PositionConstraints } from './PositionConstraints'
 import { RotationRow } from './RotationRow'
 import { ZIndexSettingsRow } from './ZIndexSettingsRow'
@@ -165,7 +160,6 @@ export function PositionSection({
 
   return (
     <>
-      <SingleNodeAlignRow onChange={onChange} />
       <DropdownSwitcher
         property="position"
         value={positionMixed ? MIXED : position}

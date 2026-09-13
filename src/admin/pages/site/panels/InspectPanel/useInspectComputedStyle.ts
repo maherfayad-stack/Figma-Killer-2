@@ -11,7 +11,7 @@
  * order's own discipline requires: `useFrameComputedStyleValues` alone feeds
  * `StyleSurface.tsx`, `stylePropertyProvenance.ts`, `multiSelectStyleBags.ts`,
  * `useSizingParentLayout.ts`, `constraintMapping.ts`, `cssControlTypes.ts`,
- * `styleFieldDisplay.ts`, `SingleNodeAlignRow.tsx`, `ConstraintsDiagram.tsx`
+ * `styleFieldDisplay.ts`, `AlignSection.tsx`, `ConstraintsDiagram.tsx`
  * — the Properties Panel's entire style-editing surface, not a narrow
  * consumer pair. Changing this hook's return shape is a breaking change to
  * one of the most central, heavily-tested rendering paths in the product,

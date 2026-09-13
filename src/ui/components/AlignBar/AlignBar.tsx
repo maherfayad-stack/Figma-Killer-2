@@ -54,7 +54,7 @@ export interface AlignBarProps {
    * entry here it overrides the `count`/`minAlign` gate for THAT button
    * only — disabled, with the reason as its tooltip. Use this for a
    * single-node caller where each edge's CSS write is independently honest
-   * or not (see `PositionSection`'s `resolveAlignWrite`); omit entirely to
+   * or not (see `AlignSection`'s `resolveAlignWrite`); omit entirely to
    * keep the plain count-based gate every multi-selection caller uses.
    */
   alignDisabledReasons?: Partial<Record<AlignEdge, string>>
