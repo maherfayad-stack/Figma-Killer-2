@@ -145,5 +145,11 @@ docs/superpowers/
 studio-workspace/*/.claude/
 studio-workspace/*/CLAUDE.md
 
+# `scripts/bench/studioBoard.bench.ts`'s own synthetic fixture — generated
+# fresh and removed at the end of every run. Must live under
+# `studio-workspace/` (not `.tmp/`) so `resolveProjectDir`'s containment
+# check accepts it; ignored here the same way `.tmp/` output is.
+studio-workspace/__bench-synth/
+
 # Playwright/E2E run output — generated, not source
 test-results/
