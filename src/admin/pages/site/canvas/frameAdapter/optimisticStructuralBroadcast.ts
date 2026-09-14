@@ -14,8 +14,13 @@
  *
  * In PORTAL mode the same-tick paint is not a DOM trick at all — it's the
  * store mutating its own `NodeTree` and React re-rendering the portal.
- * Portal adapters are therefore skipped here on purpose (`isPortalFrameAdapter`)
- * — they already got their paint for free from the tree mutation, and
+ * Portal adapters are therefore skipped here on purpose (kept IN via
+ * `isBridgeFrameAdapter`, not filtered OUT via `isPortalFrameAdapter` —
+ * importing `PortalFrameAdapter.ts` from here would close a real import
+ * cycle back through `previewAxesFrameEffect.ts` -> `store.ts` ->
+ * `siteSlice.ts` -> `nodeActions.ts`, which is what calls into this file;
+ * `BridgeFrameAdapter.ts` carries no such store dependency) — portal
+ * adapters already got their paint for free from the tree mutation, and
  * calling `.optimistic.*` on one too would be a second, redundant DOM write
  * racing the first.
  *
@@ -28,11 +33,11 @@
  * mechanism — do not build a `pageId -> frames` registry for this.
  */
 import { listFrameAdapters } from './canvasFrameAdapterRegistry'
-import { isPortalFrameAdapter } from './PortalFrameAdapter'
+import { isBridgeFrameAdapter } from './BridgeFrameAdapter'
 import type { FrameDocumentAdapter } from './FrameDocumentAdapter'
 
 function bridgeAdapters(): FrameDocumentAdapter[] {
-  return [...listFrameAdapters().values()].filter((adapter) => !isPortalFrameAdapter(adapter))
+  return [...listFrameAdapters().values()].filter((adapter) => isBridgeFrameAdapter(adapter))
 }
 
 /**

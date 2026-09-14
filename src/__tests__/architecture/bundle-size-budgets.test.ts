@@ -171,11 +171,19 @@ const BUDGETS: ChunkBudget[] = [
   },
   {
     prefix: 'AdminCanvasEditorBody-',
-    maxBytes: 780_000,
+    // Raised 780,000 -> 850,000 for the 2026-09-14 consolidation of P3's
+    // Layer/Align/Measures/Layout inspector sections (each a new manifest
+    // entry replacing an old one, net new during the migration since both
+    // versions of `styleSectionOrder.ts` overlap briefly), Track L's
+    // live-frame pool + LiveBoardFrame + bridge bootstrap wiring, and R2's
+    // RefusalDialog — all genuinely new post-paint editor-body code, not a
+    // lazy-boundary leak. Measured 834,254 B; headroom left for the
+    // remaining 7 P3 sections still to land the same way.
+    maxBytes: 850_000,
     rationale:
       'post-paint Site editor body (canvas + panels + modules + publisher). ' +
-      'Current ~724 KB raw / ~228 KB gzipped after moving Import HTML behind ' +
-      'its own open-state lazy boundary. This is still the main Site runtime ' +
+      'Current ~815 KB raw / ~271 KB gzipped after the 2026-09-14 P3/Track-L/R2 ' +
+      'consolidation (see maxBytes comment). This is still the main Site runtime ' +
       'cost, but it must remain behind the shell lazy boundary.',
   },
   {

@@ -151,6 +151,20 @@ const GRANDFATHERED: Record<string, number> = {
   'src/core/markdown/markdownDocument.ts': 748,
   // DashboardPage graduated (732 → 174) when it was rewritten from the CMS
   // widget-grid into the studio Overview project launcher.
+  // `server/handlers/studio/prototypeShell/shellFiles.ts` (738): Track L's
+  // per-screen routing (L6) + the runtime-bridge bootstrap wiring (live-08)
+  // both added generated-shell templates here. Candidate split, not done in
+  // this consolidation pass: the per-screen `App.jsx` template vs. the
+  // bootstrap/`main.jsx` template are two independent generators that
+  // happen to share this file only by history.
+  'server/handlers/studio/prototypeShell/shellFiles.ts': 738,
+  // `src/admin/pages/site/store/slices/uiSlice.ts` (723): R2's
+  // `structuralRefusalDialog` state + `dismissStructuralRefusalDialog`
+  // pushed this over CEILING. Candidate split: the refusal-dialog slice of
+  // ui state has no relationship to the rest of `uiSlice.ts` and could move
+  // to its own slice file following the pattern other dialog/modal state
+  // already uses elsewhere in this store.
+  'src/admin/pages/site/store/slices/uiSlice.ts': 723,
 }
 
 // ---------------------------------------------------------------------------

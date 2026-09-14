@@ -119,6 +119,15 @@ const FULL_SITE_SCAN_ALLOWLIST = new Set<string>([
   // the deleted VC from every page tree. Inside a `mutateSiteWithExplorerReconcile`
   // recipe — a user-initiated delete, once, not a selector.
   'admin/pages/site/store/slices/visualComponentsSlice.ts',
+  // `findReplacementNodeId` (R2's `RefusalDialog`): re-locates a node by its
+  // ORIGINAL call-site position after a detach/extract codemod changes its
+  // id shape — an id-keyed index can't help here since the whole point is
+  // the old id is gone. Reached one hop from `RefusalDialog`, but only runs
+  // inside a bare `useEditorStore.subscribe` opened for the bounded window
+  // between "user clicked detach/extract" and "the board reload lands or a
+  // timeout fires" (`waitForReloadThenRetry`, unsubscribed either way) — not
+  // a standing render selector that re-runs on every unrelated keystroke.
+  'admin/pages/site/ui/RefusalDialog/findReplacementNode.ts',
 ])
 
 // Windows' `path.relative` emits backslashes; normalize before comparing or
