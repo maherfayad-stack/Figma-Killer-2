@@ -21,7 +21,6 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { hasStyleValue } from './styleValueUtils'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
-import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
 import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
@@ -47,13 +46,15 @@ export interface ClassStyleSectionDefinition {
    * line with a "+", not its full property grid. `StyleSectionGroup` in
    * `StyleSectionsEditor.tsx` is what reads this flag.
    *
-   * `layout`/`spacing`/`position`/`size`/`appearance` used to be in this
-   * same "always resident" group; all five migrated out to their own
-   * `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/`AlignSection`/
-   * `MeasuresSection`/`LayoutSection.tsx` — `STATE.md` `panel-25`, P3 items
-   * 1-4), none of which has a `collapsedWhenEmpty` concept of its own at
-   * all — see `LayoutSection.tsx`'s own doc for why it stays always-open
-   * rather than adopting Penpot's literal collapsed-empty "+" convention.
+   * `layout`/`spacing`/`position`/`size`/`appearance`/`fill` used to be in
+   * this registry; all six migrated out to their own `INSPECTOR_SECTIONS`
+   * manifest entries (`LayerSection`/`AlignSection`/`MeasuresSection`/
+   * `LayoutSection.tsx`/`FillSection.tsx` — `STATE.md` `panel-25`, P3 items
+   * 1-5). `FillSection.tsx` keeps its own Law-1 empty-header/`forceOpen`
+   * disclosure locally (its own `setAnywhere` check + `Section`'s `empty`
+   * prop), same as `LayerSection`/`AlignSection`/`MeasuresSection` — none of
+   * the five has a `collapsedWhenEmpty` concept of its own here anymore; see
+   * `LayoutSection.tsx`'s own doc for why IT stays always-open instead.
    */
   collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
@@ -61,10 +62,10 @@ export interface ClassStyleSectionDefinition {
 
 // ---------------------------------------------------------------------------
 // Section order — this registry is what remains of the pre-P3 (`STATE.md`
-// `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout
+// `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout/Fill
 // migrate out to their own `INSPECTOR_SECTIONS` manifest entries
-// (`sections/index.ts`). The Fill → Stroke → Effects → Typography →
-// Animations → Interaction order below is what's left of
+// (`sections/index.ts`). The Border → Effects → Typography → Animations →
+// Interaction order below is what's left of
 // docs/features/inspector-disclosure.md §4 G5's original Position → Size →
 // Auto layout → Spacing → Appearance → Fill → Stroke → Effects →
 // Typography → Animations → Interaction sequence.
@@ -160,39 +161,27 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   'marginRight',
   'marginBottom',
   'marginLeft',
+  // Fill (P3 item 5) — src/admin/pages/site/inspector/sections/FillSection.tsx.
+  // Text colour / solid fill / background-image layers (+ its six per-layer
+  // satellites, none of which ever drew a top-level row even in the old
+  // registry) / content fit, unioned here in one step, same pattern
+  // Measures/Layout established.
+  'color',
+  'backgroundColor',
+  'background',
+  'backgroundImage',
+  'backgroundSize',
+  'backgroundPosition',
+  'backgroundRepeat',
+  'backgroundAttachment',
+  'backgroundOrigin',
+  'backgroundClip',
+  'backgroundBlendMode',
+  'objectFit',
+  'objectPosition',
 ]
 
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    id: 'fill',
-    title: 'Fill',
-    icon: PaintBucketSolidIcon,
-    collapsedWhenEmpty: true,
-    properties: [
-      // G9's completion: a text node's `color` IS its fill, and Figma shows
-      // it in Fill, not in the type block. It sits first because it is the
-      // topmost paint — text renders over the box's own background.
-      'color',
-      'backgroundColor',
-      'background',
-      'backgroundImage',
-      // The per-layer satellites of `background-image` (G6.5). They never draw
-      // a top-level row — each one is edited inside its own layer's popover —
-      // but they are claimed here because this array drives the section's
-      // "N set" dot and the style search, and a property claimed by no section
-      // is unreachable by both.
-      'backgroundSize',
-      'backgroundPosition',
-      'backgroundRepeat',
-      'backgroundAttachment',
-      'backgroundOrigin',
-      'backgroundClip',
-      'backgroundBlendMode',
-      // The element's own replaced content, not a background layer.
-      'objectFit',
-      'objectPosition',
-    ],
-  },
   {
     id: 'border',
     title: 'Border',

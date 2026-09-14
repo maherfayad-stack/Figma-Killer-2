@@ -9,9 +9,16 @@
  *
  * The project asset list is mocked, so this test never touches the network or
  * a real workspace; `projectAssets.test.ts` covers the real directory walk.
+ *
+ * Mounts the real `<FillSection />` against the store, same as
+ * `fillSection.test.tsx` — kept as its OWN file (not folded into that suite)
+ * so its `mock.module` of `studio/projectAssets` stays scoped to exactly the
+ * tests that need it.
  */
-import { afterEach, describe, expect, it, mock } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { useEditorStore } from '@site/store/store'
+import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 
 const ASSETS = ['public/hero.png', 'src/assets/EN-2.png']
 
@@ -23,58 +30,92 @@ mock.module('../../../studio/projectAssets', () => ({
   imageFillPreviewSrc: (cssUrl: string) => `/admin/api/studio/asset?url=${cssUrl}`,
 }))
 
-const { FillSectionActions } = await import('../FillSection')
+const { FillSection } = await import('../FillSection')
+const { makeSite, makePage, makeNode } = await import('../../../../../../__tests__/fixtures')
+await import('@modules/base/index')
+
+const NODE_ID = 'node-1'
+const ROOT_ID = 'root'
 
 afterEach(cleanup)
 
-/** The last value `onChange` was given for `backgroundImage`. */
-function backgroundImageFrom(calls: Array<[string, unknown]>): unknown {
-  return calls.filter(([property]) => property === 'backgroundImage').at(-1)?.[1]
+beforeEach(() => {
+  localStorage.clear()
+  setStudioStyleRuleSources({}, {})
+  useEditorStore.setState({
+    site: null,
+    activePageId: null,
+    selectedNodeId: null,
+    selectedNodeIds: [],
+    activeBreakpointId: 'desktop',
+    activeConditionId: null,
+    activeDocument: null,
+  } as Parameters<typeof useEditorStore.setState>[0])
+})
+
+function selectNode(overrides: Parameters<typeof makeNode>[0] = {}) {
+  const page = makePage({
+    id: 'page-1',
+    rootNodeId: ROOT_ID,
+    nodes: {
+      [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.body', children: [NODE_ID] }),
+      [NODE_ID]: makeNode({ id: NODE_ID, moduleId: 'base.div', ...overrides }),
+    },
+  })
+  useEditorStore.setState({
+    site: makeSite({ pages: [page] }),
+    activePageId: 'page-1',
+    selectedNodeId: NODE_ID,
+  } as Parameters<typeof useEditorStore.setState>[0])
+}
+
+function currentNode() {
+  return useEditorStore.getState().site?.pages[0]?.nodes[NODE_ID]
 }
 
 describe('Fill — add an image fill', () => {
   it('opens a source picker instead of writing a speculative empty layer', () => {
-    const onChange = mock((_p: string, _v: unknown) => {})
-    render(<FillSectionActions storedStyles={{}} onChange={onChange} />)
+    selectNode()
+    render(<FillSection />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Add image fill' }))
 
     expect(screen.getByRole('group', { name: 'Image source' })).toBeTruthy()
-    expect(onChange).not.toHaveBeenCalled()
+    expect(currentNode()?.inlineStyles?.backgroundImage).toBeUndefined()
   })
 
-  it('writes the URL the project\'s build resolves, not the admin preview URL', () => {
-    const onChange = mock((_p: string, _v: unknown) => {})
-    render(<FillSectionActions storedStyles={{}} onChange={onChange} />)
+  it("writes the URL the project's build resolves, not the admin preview URL", () => {
+    selectNode()
+    render(<FillSection />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Add image fill' }))
     fireEvent.click(screen.getByRole('button', { name: /hero\.png/ }))
 
-    const written = backgroundImageFrom(onChange.mock.calls as Array<[string, unknown]>)
+    const written = currentNode()?.inlineStyles?.backgroundImage
     expect(written).toBe("url('/hero.png')")
     expect(String(written)).not.toContain('/admin/api/studio/asset')
   })
 
   it('inserts the image ABOVE an existing gradient — first layer paints topmost', () => {
     const gradient = 'linear-gradient(180deg, #000000 0%, #ffffff 100%)'
-    const onChange = mock((_p: string, _v: unknown) => {})
-    render(<FillSectionActions storedStyles={{ backgroundImage: gradient }} onChange={onChange} />)
+    selectNode({ inlineStyles: { backgroundImage: gradient } })
+    render(<FillSection />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Add image fill' }))
     fireEvent.click(screen.getByRole('button', { name: /hero\.png/ }))
 
-    expect(backgroundImageFrom(onChange.mock.calls as Array<[string, unknown]>)).toBe(
-      `url('/hero.png'), ${gradient}`,
-    )
+    expect(currentNode()?.inlineStyles?.backgroundImage).toBe(`url('/hero.png'), ${gradient}`)
   })
 
   it('refuses to add a layer when the layer list itself was refused', () => {
-    render(<FillSectionActions storedStyles={{ backgroundImage: 'var(--layers)' }} onChange={() => {}} />)
+    selectNode({ inlineStyles: { backgroundImage: 'var(--layers)' } })
+    render(<FillSection />)
     expect(screen.getByRole('button', { name: 'Add image fill' }).getAttribute('aria-disabled')).toBe('true')
   })
 
   it('warns on an asset outside the public root instead of silently writing a dev-only URL', () => {
-    render(<FillSectionActions storedStyles={{}} onChange={() => {}} />)
+    selectNode()
+    render(<FillSection />)
     fireEvent.click(screen.getByRole('button', { name: 'Add image fill' }))
 
     const bundled = screen.getByRole('button', { name: /EN-2\.png/ })

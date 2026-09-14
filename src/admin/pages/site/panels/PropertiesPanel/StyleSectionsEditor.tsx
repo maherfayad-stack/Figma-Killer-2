@@ -21,7 +21,6 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { StrokeSection } from './StrokeSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { TypographySection } from './TypographySection'
-import { FillSection, FillSectionActions } from './FillSection'
 import { EffectsSection, EffectsSectionActions } from './EffectsSection'
 import { AnimationsSection, AnimationsSectionActions } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
@@ -38,7 +37,6 @@ import styles from './StyleRuleComposer.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
 
 const TYPOGRAPHY_SECTION_ID = 'typography'
-const FILL_SECTION_ID = 'fill'
 const INTERACTION_SECTION_ID = 'interaction'
 const EFFECTS_SECTION_ID = 'effects'
 const ANIMATIONS_SECTION_ID = 'animations'
@@ -347,12 +345,6 @@ function StyleSectionGroup({
     />
   )
 
-  //  Fill's "+" writes a real fill rather than merely revealing the body:
-  //  `PropertyList` renders nothing when empty (Law 1), so a bare reveal would
-  //  open an empty section. Once a fill exists, `setCountEverywhere > 0` opens
-  //  the section on its own — no `onReveal` needed.
-  const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={addAndReveal} />
-
   //  Animations' "+" is a typed menu too (Animation / Transition), and like
   //  Effects' it has to be reachable at the one-line Law-1 rest state, since
   //  that is the only way to add the first animation. Creating one also
@@ -367,11 +359,6 @@ function StyleSectionGroup({
     section.id === EFFECTS_SECTION_ID ? (
       <>
         {effectsActions}
-        {stylesMenu}
-      </>
-    ) : section.id === FILL_SECTION_ID ? (
-      <>
-        {fillActions}
         {stylesMenu}
       </>
     ) : section.id === ANIMATIONS_SECTION_ID ? (
@@ -390,9 +377,10 @@ function StyleSectionGroup({
   //
   // `empty` also takes the DISCLOSURE away, not just the body. The section
   // used to keep its chevron and its toggle here, so pointing at an empty
-  // Fill offered to open it and clicking spent a click growing the header by
-  // an empty 10px box. There is nothing behind the chevron until something
-  // is applied; the header earns its disclosure at that point and not before.
+  // collapsible section offered to open it and clicking spent a click
+  // growing the header by an empty 10px box. There is nothing behind the
+  // chevron until something is applied; the header earns its disclosure at
+  // that point and not before.
   const showsAsEmptyHeader =
     isCollapsible && setCountEverywhere === 0 && !hasActiveQuery && !revealed
 
@@ -408,8 +396,6 @@ function StyleSectionGroup({
             {stylesMenu}
             {section.id === EFFECTS_SECTION_ID ? (
               effectsActions
-            ) : section.id === FILL_SECTION_ID ? (
-              fillActions
             ) : section.id === ANIMATIONS_SECTION_ID ? (
               animationsActions
             ) : (
@@ -454,19 +440,6 @@ function StyleSectionGroup({
       <div className={sectionStyles.sectionBody}>
         {section.id === TYPOGRAPHY_SECTION_ID ? (
           <TypographySection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            visibleProperties={section.properties}
-            activeTab={activeTab}
-            onChange={onChange}
-            onRemove={onRemove}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-            provenanceByProperty={provenanceByProperty}
-          />
-        ) : section.id === FILL_SECTION_ID ? (
-          <FillSection
             key={activeTab}
             storedStyles={storedStyles}
             currentStyles={currentStyles}

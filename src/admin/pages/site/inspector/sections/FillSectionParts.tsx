@@ -7,7 +7,10 @@
  * exist; this file draws what opens when one is activated. The pure value
  * models both share are `fillModel.ts` (colour channels, gradient transforms)
  * and `backgroundLayers.ts` (the `background-image` layer stack and its
- * per-layer satellites).
+ * per-layer satellites) — both stay in `panels/PropertiesPanel/`, unchanged,
+ * per `STATE.md` `panel-25`'s own instruction to reuse them verbatim; only
+ * this file (the rendering) moved when Fill migrated to its own
+ * `INSPECTOR_SECTIONS` manifest entry (P3 item 5).
  *
  * Components only — `react-refresh/only-export-components` is on for `src/`,
  * which is also why the transforms these editors call live in `fillModel.ts`
@@ -25,9 +28,9 @@ import { SelectControl } from '@site/property-controls/SelectControl'
 import { TextControl } from '@site/property-controls/TextControl'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { MinusIcon } from 'pixel-art-icons/icons/minus'
-import { ClassPropertyRow } from './ClassPropertyRow'
-import { hasStyleValue } from './styleValueUtils'
-import { getEnumOptions } from './cssControlTypes'
+import { ClassPropertyRow } from '../../panels/PropertiesPanel/ClassPropertyRow'
+import { hasStyleValue } from '../../panels/PropertiesPanel/styleValueUtils'
+import { getEnumOptions } from '../../panels/PropertiesPanel/cssControlTypes'
 import {
   BACKGROUND_SATELLITE_LABELS,
   BACKGROUND_SATELLITE_PROPS,
@@ -37,7 +40,7 @@ import {
   setBackgroundLayerImage,
   type BackgroundModel,
   type BackgroundSatelliteProp,
-} from './backgroundLayers'
+} from '../../panels/PropertiesPanel/backgroundLayers'
 import {
   CONTENT_FIT_PROPS,
   DEFAULT_GRADIENT_FILL,
@@ -48,26 +51,17 @@ import {
   withKind,
   withRemovedStop,
   withStop,
-} from './fillModel'
+} from '../../panels/PropertiesPanel/fillModel'
 import {
   parseGradient,
   serializeGradient,
   isUrlImageValue,
   extractUrlPayload,
-  wrapUrlPayload,
   type ParsedGradient,
-} from './gradientValue'
-import { ImageSourcePicker } from './ImageSourcePicker'
-import {
-  IMAGE_FILL_FIT_LABELS,
-  IMAGE_FILL_FIT_SATELLITES,
-  IMAGE_FILL_POSITION_CELLS,
-  fitFromSatellites,
-  imageFillFileName,
-  positionCellFor,
-  type ImageFillFit,
-} from './imageFillValue'
+} from '../../panels/PropertiesPanel/gradientValue'
 import { imageFillPreviewSrc, useProjectImageAssets } from '@site/studio/projectAssets'
+import { formatColor, parseCssColor } from '@ui/components/ColorPickerPopover'
+import { ImageFillEditor } from './ImageFillEditorParts'
 import styles from './FillSection.module.css'
 
 // ---------------------------------------------------------------------------
@@ -81,6 +75,66 @@ export function ColorSwatch({ color }: { color: string }) {
       style={{ '--fill-swatch-color': color } as CSSProperties}
       aria-hidden="true"
     />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ColorOpacityField — the "% opacity" cell of the Fill row chrome
+// (`02-measurements.md`'s "Color field chrome": swatch → hex → % opacity →
+// remove, one 28px row). CSS has no separate "fill opacity" property the way
+// Penpot's own object model does — the alpha channel already living INSIDE
+// the colour value (`#rrggbbaa`, `rgba(...)`, `hsla(...)`) IS that number, so
+// this field reads/writes it via `parseCssColor`/`formatColor`
+// (`@ui/components/ColorPickerPopover`) rather than inventing a second,
+// parallel opacity property. A value this module cannot parse — a
+// `var(--token)` reference, `currentColor`, a colour function the parser
+// doesn't cover — has no channel to read, so the field disables rather than
+// guessing one (the same "never a guessed rewrite" rule this whole section
+// already follows for the layer stack and the gradient parser).
+// ---------------------------------------------------------------------------
+
+export function ColorOpacityField({
+  value,
+  ariaLabel,
+  onChange,
+}: {
+  value: string
+  ariaLabel: string
+  onChange: (next: string) => void
+}) {
+  const parsed = value.trim() === '' ? null : parseCssColor(value)
+  const percent = parsed ? Math.round(parsed.rgba.a * 100) : undefined
+
+  function commit(text: string) {
+    if (!parsed) return
+    const next = parsePercentText(text)
+    if (next === undefined) return
+    const alpha = Math.max(0, Math.min(100, next)) / 100
+    onChange(formatColor({ ...parsed.rgba, a: alpha }, parsed.model))
+  }
+
+  return (
+    // Stops the click from bubbling to `PropertyList`'s row `onActivate` —
+    // this field commits without opening the row's popover, exactly like the
+    // remove button beside it.
+    <span
+      className={styles.opacityFieldGuard}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <ScrubInput
+        fieldSize="sm"
+        label={<span aria-hidden="true">%</span>}
+        aria-label={ariaLabel}
+        value={percent !== undefined ? String(percent) : undefined}
+        unit="%"
+        min={0}
+        max={100}
+        disabled={parsed === null}
+        onChange={commit}
+        className={styles.opacityField}
+      />
+    </span>
   )
 }
 
@@ -530,149 +584,3 @@ export function BackgroundImageRawBody({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Image fill — source, fit, position
-// ---------------------------------------------------------------------------
-
-/**
- * The `mode === 'image'` half of a layer popover: what the image IS, then the
- * two things Figma lets you say about it — how it fills the box (Fit) and
- * where it sits (the 9-grid).
- *
- * Both controls are pure sugar over the SAME per-layer satellites the rows
- * underneath still show: Fit writes `background-size` + `background-repeat`,
- * the grid writes `background-position`. Nothing is stored that CSS does not
- * already store, so a value typed into the raw rows below round-trips back
- * into these controls, and a value they cannot express (`12px 40%`,
- * `background-size: 60% auto`) reads as "Custom" / no grid selection instead
- * of being rounded to the nearest thing this UI can draw.
- *
- * When a satellite was REFUSED per-layer (`backgroundLayers.ts`'s reasons —
- * a top-level `var()`, extra values, …) the matching control is not drawn at
- * all. `LayerSatelliteRow` already renders that property's whole-declaration
- * raw field with its reason; offering a friendly control on top of it would
- * write the exact per-layer value the parse refused to invent.
- */
-function ImageFillEditor({
-  model,
-  index,
-  value,
-  onModelChange,
-  onImageChange,
-}: {
-  model: BackgroundModel
-  index: number
-  value: string
-  onModelChange: (next: BackgroundModel) => void
-  onImageChange: (next: string) => void
-}) {
-  const assets = useProjectImageAssets()
-  const payload = extractUrlPayload(value)
-  const previewSrc = imageFillPreviewSrc(payload, assets)
-
-  const sizeView = backgroundLayerSatellite(model, 'backgroundSize', index)
-  const repeatView = backgroundLayerSatellite(model, 'backgroundRepeat', index)
-  const positionView = backgroundLayerSatellite(model, 'backgroundPosition', index)
-
-  const fitEditable = sizeView.kind !== 'raw' && repeatView.kind !== 'raw'
-  const fit = fitFromSatellites(
-    sizeView.kind === 'value' ? sizeView.value : '',
-    repeatView.kind === 'value' ? repeatView.value : '',
-  )
-
-  function applyFit(next: Exclude<ImageFillFit, 'custom'>) {
-    const pair = IMAGE_FILL_FIT_SATELLITES[next]
-    let updated = setBackgroundLayerSatellite(model, 'backgroundSize', index, pair.backgroundSize)
-    updated = setBackgroundLayerSatellite(updated, 'backgroundRepeat', index, pair.backgroundRepeat)
-    onModelChange(updated)
-  }
-
-  return (
-    <div className={styles.imageEditor}>
-      <div className={styles.imagePreviewRow}>
-        {previewSrc ? (
-          <img className={styles.imagePreview} src={previewSrc} alt="" />
-        ) : (
-          <span className={styles.imagePreview} aria-hidden="true" />
-        )}
-        <span className={styles.imageName} title={payload}>
-          {payload === '' ? 'No image chosen' : imageFillFileName(payload)}
-        </span>
-      </div>
-
-      <ImageSourcePicker
-        value={payload}
-        onPick={(next) => onImageChange(next === '' ? "url('')" : wrapUrlPayload(next))}
-      />
-
-      {fitEditable && (
-        <>
-          {/* A custom size/repeat pair selects NO segment — SegmentedControl's own
-              unset state — rather than being snapped to the nearest preset. */}
-          <SegmentedControl<Exclude<ImageFillFit, 'custom'>>
-            value={fit === 'custom' ? undefined : fit}
-            options={(['cover', 'contain', 'fill', 'tile'] as const).map((option) => ({
-              value: option,
-              label: IMAGE_FILL_FIT_LABELS[option],
-            }))}
-            onChange={applyFit}
-            fullWidth
-            size="sm"
-            aria-label="Image fit"
-          />
-          {fit === 'custom' && (
-            <p className={styles.refusalText}>
-              Custom size and repeat — set below. Picking a fit above replaces both.
-            </p>
-          )}
-        </>
-      )}
-
-      {positionView.kind !== 'raw' && (
-        <ImageFillPositionGrid
-          value={positionView.kind === 'value' ? positionView.value : ''}
-          onChange={(next) =>
-            onModelChange(setBackgroundLayerSatellite(model, 'backgroundPosition', index, next))
-          }
-        />
-      )}
-    </div>
-  )
-}
-
-/**
- * `background-position`'s nine keyword pairs as Figma's 3×3 puck. Selection
- * is EXACT — `positionCellFor` returns nothing for a value the grid cannot
- * express, and no cell lights up, so the grid never implies it is showing a
- * position it would actually write.
- */
-function ImageFillPositionGrid({
-  value,
-  onChange,
-}: {
-  value: string
-  onChange: (next: string) => void
-}) {
-  const selected = positionCellFor(value)
-  return (
-    <div className={styles.positionGroup}>
-      <p className={styles.sizingHeading}>Position</p>
-      <div className={styles.positionGrid} role="group" aria-label="Background position">
-        {IMAGE_FILL_POSITION_CELLS.map((cell) => (
-          <Button
-            key={cell.value}
-            variant="ghost"
-            size="micro"
-            iconOnly
-            pressed={selected === cell.value}
-            aria-label={cell.label}
-            tooltip={cell.label}
-            onClick={() => onChange(cell.value)}
-          >
-            <span className={styles.positionDot} aria-hidden="true" />
-          </Button>
-        ))}
-      </div>
-    </div>
-  )
-}
