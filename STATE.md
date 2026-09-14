@@ -1138,6 +1138,218 @@ export function useDevServerReadiness(dir: string | null): { phase: DevServerSta
 
 **DELEGATE TO:** canvas-engineer (Phase A) — flag the pause-note discrepancy to the user before starting; perf-hunter (Phase B, and Phase A's `useDevServerReadiness`/bench-fixture halves are also reasonable perf-hunter scope if a human prefers one owner).
 
+#### Phase B — done (buildable-now scope) (perf-hunter, 2026-09-14)
+
+Worked in `.tmp/wt-perf-06-phaseb` on branch `feat/live-frame-pool`. **Setup
+correction, flagging for future dispatch instructions:** the work order that
+launched this session claimed Phase A (PR #104) and `live-08` (PR #106) were
+"already merged" into `feat/alm-figma-killer-studio-shell` — checked before
+writing any code and found both **still open**, not merged (`gh pr view`
+confirmed `mergedAt: null` on both). Cut `feat/live-frame-pool` from
+`origin/feat/alm-figma-killer-studio-shell` (`7f06806`) as instructed, then
+merged `origin/feat/live-runtime-bootstrap` (the `live-08` branch, which
+already contained `feat/live-frame-activation`/Phase A merged into it —
+confirmed via `git merge-base`) on top — zero conflicts, its own merge-base
+with the shell branch was already an ancestor of the shell tip. This is the
+same "merge the not-yet-landed prerequisite branch in yourself" move Phase A
+took for L6; **anyone building L8 Phase C or further should check `gh pr
+list` before trusting a work order's own "already merged" claim.**
+
+**Built exactly the buildable-now scope (STEPS 5-7, 9 from the design table
+above) — the two bench rows genuinely blocked on Phase A's human dogfood
+gate were added as explicit BLOCKED rows, not silently skipped or faked:**
+
+- `src/admin/pages/site/canvas/BoardFramesLayer/liveFramePool.ts` (new) —
+  `LIVE_FRAME_POOL_SIZE = 8`, `computeHotFrameIds(visibleIds, previousHot,
+  poolSize)`. Pure, no React, same posture as `frameVirtualization.ts`.
+- `BoardFramesLayer.tsx` (modify) — computes `visibleFrameIds` from the
+  existing `isFrameOnScreen` check, calls `computeHotFrameIds` every render,
+  and threads `isLiveMounted={trust === 'run-project' ? hotFrameIdSet.has(frame.id)
+  : undefined}` into each `BoardFrameView`. **Landmine for whoever touches
+  this again:** the obvious `useRef<string[]>` for "last render's hot-set"
+  trips `react-hooks/refs` (`Cannot access refs during render` — a REAL
+  lint error, part of this repo's React Compiler lint set, not a style
+  nit) — reading `ref.current` during render is banned even for this
+  "remember the previous value" pattern. Used `useState` + react.dev's own
+  documented "adjust state during rendering" escape hatch instead (a
+  conditional `setState` call before the JSX return, guarded by a
+  content-equality check so it terminates in one extra internal re-render,
+  not a loop — verified this does NOT double-count in
+  `boardFramesLayerRenderScope.test.tsx`'s exact `renderCount` assertions,
+  which still pass unmodified).
+- `BoardFrameView.tsx` (modify) — only the `isLiveMounted` prop's own doc
+  comment updated (the prop itself, and its `isLiveMounted ?? isOnScreen`
+  fallback, already existed from Phase A's own defensive design — Phase A
+  anticipated this exactly). **The trust gate lives in `BoardFramesLayer`,
+  not here** — `isLiveMounted` is computed unconditionally every render
+  (cheap, trust-independent) but only ever passed as a real boolean when
+  `trust === 'run-project'`; Tier 0/1 boards always get `undefined` and take
+  the exact byte-identical fallback path they always have. Verified two
+  ways: (1) `boardFrameViewTierFork.test.tsx`, unmodified, still passes
+  (never sets `isLiveMounted` at all — the default path); (2) a manual
+  trace of every `BoardFramesLayer.tsx` render confirming Tier 0/1 always
+  hits the `: undefined` branch of the ternary.
+- `useFramePosterCapture.ts` (modify) — added `findVisibleIframe` (picks the
+  first `<iframe>` NOT sitting behind a `hidden` ancestor) instead of the
+  old bare `querySelector('iframe')`, which happened to work for a live
+  frame's not-ready state only because of incidental JSX ordering
+  (`LiveBoardFrame` renders the fallback before the `hidden` bridge div).
+  Explicit now, not accidental. **Known, NOT closed, race documented in the
+  file's own doc comment:** if a Tier-2 frame's bridge reaches `ready`
+  before the hook's 700ms settle timer fires, the fallback has already
+  unmounted and the timer finds only the (now cross-origin) bridge iframe —
+  no poster ever gets captured for that `(page, width)` pair. Closing this
+  needs a synchronous capture hooked directly to the bridge adapter's own
+  `ready` event, in `LiveBoardFrame.tsx` — **out of scope for this file per
+  the design's own FILES list** (`LiveBoardFrame.tsx` was deliberately not
+  listed), left for whoever next touches the poster/pool pairing.
+- `src/__tests__/canvas/frameAdapter/bridgeApplyOverlayGlueLatency.test.ts`
+  (new) — the `applyOverlay` visible ≤16ms budget's glue-latency half,
+  against `BridgeFrameAdapter.test.ts`'s own stub channel shape (not
+  imported — kept local so this perf gate can't silently break if that
+  file's fixture shape changes). Real numbers, not a stub-only tautology:
+  500 iterations, `worst=34.96µs mean=482ns` against the 16ms budget — three
+  orders of magnitude of headroom, because `BridgeFrameAdapter.post()` is
+  fully synchronous today (confirmed by reading it, not assumed). This is a
+  REGRESSION gate, not a "prove it's fast" exercise — the number is
+  EXPECTED to sit far under budget; the value is catching a future `await`/
+  big-serialization/synchronous-DOM-read creeping into that call path.
+- `scripts/bench/studioBoard.bench.ts` (modify) — mirrored the same
+  glue-latency measurement as a THIRD, unconditional row
+  (`computeApplyOverlayGlueLatencyRow`, plain module code — a fake
+  `BridgeFrameChannel`, no DOM) computed BEFORE the `dist/`/Chromium checks,
+  so it shows a real number even on a `skippedResult` run; added the
+  `Warm reopen → first live paint` and `Memory per live frame` rows as
+  static, always-present `L8_BLOCKED_ROWS` with a `BLOCKED` note naming the
+  exact gate and pointing at the fixture/doc below — excluded from
+  `allPassed` (informational, same posture as the existing "First
+  interactive frame" row). Kept the four existing WS-5.6 rows' OWN logic
+  and budgets completely untouched.
+- `scripts/bench/lib/liveFrameFixture.ts` (new) — `createLiveFrameFixture()`
+  copies `studio-workspace/test4 copy` into an ephemeral
+  `studio-workspace/__bench-live-synth/` (added to `.gitignore`, same
+  containment reasoning `panel-23`'s own `__bench-synth` needed) and flips
+  the COPY's `.studio/meta.json` `trust` to `'run-project'` via the real
+  `mergeStudioMeta` (not hand-rolled JSON editing). Hand-verified by running
+  it directly: source project's `meta.json` md5 identical before/after,
+  copy's own `trust` reads `'run-project'`, `cleanup()` leaves zero trace in
+  `git status`. Not yet CALLED by any bench — the two rows that would use it
+  stay explicitly blocked (below).
+- `docs/audits/2026-09-13-live-frame-memory-baseline.md` (new) —
+  placeholder, not a measurement. States plainly that every number is
+  unmeasured, names the exact blocker (Phase A's human dogfood gate, per
+  STATE.md's own STEPS item 4 — explicitly a human action, not satisfiable
+  by an agent's own automated Playwright run), and gives the next session a
+  numbered checklist (which fixture, which CDP metric, why a
+  page-level-heap delta is an approximation not a true per-iframe number,
+  and why this shared sandbox's own 2x run-to-run variance — `panel-23`'s
+  own finding — means the eventual number needs a re-run on a quiet machine
+  before it's CI-gate-worthy).
+- `STUDIO-LIVE-CANVAS-PLAN.md` §L8 (modify) — recorded the unassigned Phase
+  A prerequisite this plan section didn't originally name, and replaced the
+  flat budget table with a per-row buildability/status column matching this
+  entry.
+
+**A genuinely unplanned discovery from running `bun run bench:studio-board`
+for real** (Chromium happened to be available in this sandbox — confirmed
+before starting, per the design's own risk note): the file's own header
+comment claims "THIS BENCH HAS NEVER RUN" and that its four WS-5.6 budgets
+are uncalibrated plan targets. Running it end-to-end for the FIRST time (as
+a side effect of validating my own new row) surfaced that **two of the four
+pre-existing, untouched WS-5.6 rows genuinely fail on this sandbox**:
+`Selection → ring paint` (393.36ms vs. a 32ms budget) and `Store change →
+panel re-render` (172.42ms vs. a 16ms budget); `Pan` and `Mounted iframes at
+rest` passed. This is NOT a regression from Phase B — confirmed by reading
+the diff (`git diff` touches neither those code paths nor those budget
+constants) — and matches the file's own explicit warning ("very likely to
+fail on its first real run, and that failure will be TRUE... do not
+pre-emptively loosen"). **Flagging, not fixing** — WS-5.6 calibration is a
+different work order than L8 Phase B, and CLAUDE.md's own "pre-existing
+failures" rule applies. Whoever owns WS-5.6 next has a real, fresh number to
+start from instead of an untested guess.
+
+**Before/after numbers:**
+
+| Measurement | Before (base merge, no pool) | After (Phase B) |
+|---|---|---|
+| `applyOverlay` glue latency (bun test, 500 iters) | not measured — no mechanism | worst=34.96µs, mean=482ns (budget 16ms) — **PASS** |
+| `bun run bench:studio-board` completion | never completed a run (file's own header) | completed; 2/4 pre-existing rows fail (unrelated, see above), new row passes |
+| Tier 0/1 `BoardFrameView` render path | `isLiveMounted` prop never passed | `isLiveMounted={undefined}` passed explicitly — same fallback, now an auditable, tested invariant instead of an implicit one |
+| Live-frame pool | did not exist | `computeHotFrameIds`, 11/11 unit tests, wired end-to-end |
+
+**Gate results:**
+- `src/__tests__/canvas/liveFramePool.test.ts` — 11 pass, 0 fail (new).
+- `bun test src/__tests__/canvas` — 790 pass / 15 fail / 8 errors — **identical**
+  to the pre-existing baseline on this branch's base, confirmed via
+  `git stash` before/after diff (the standing batch-run isolation flake:
+  5000ms iframe-batch-contention timeouts in unrelated files, individually
+  green). Zero new failures.
+- `bun test src/admin/pages/site` (full sweep, per `panel-23`'s own
+  precedent) — 924 pass / 0 fail.
+- `bun test src/__tests__/architecture` — 547 pass / 4 fail, all 4 confirmed
+  pre-existing on this branch's base via `git stash` (a bundle-size budget
+  already over cap and a barrel-deep-import violation, both introduced by
+  the Phase A/`live-08` merge this branch is built on, neither touched by
+  Phase B). Not this work order's to fix.
+- `bunx tsc -b` clean. `bun run build` clean —
+  `AdminCanvasEditorBody-*.js` 824.58 kB, unchanged from the merged base.
+- `bun run lint` — only the 6 pre-existing `'os' is defined but never used`
+  errors this repo's STATE.md already names repeatedly, none in any file
+  this PR touches.
+- `bun run bench:studio-board` — ran to real completion; see "unplanned
+  discovery" above.
+- `bun run bench:editor-store` — completed, exit 0, ~494s wall (this bench's
+  own 10,000-node-tree stage is genuinely slow, not stuck — matches
+  `panel-23`'s own note that a "stuck" bench terminal isn't necessarily a
+  hang). Unrelated to this change (editor-store slice, not canvas) — run
+  purely as this task's own requested verification step.
+- **Tier 0/1 unaffected, verified two independent ways, not just asserted:**
+  (1) `boardFrameViewTierFork.test.tsx` (Phase A's own gate) passes
+  unmodified; (2) `boardFramesLayerRenderScope.test.tsx`'s exact
+  `renderCount` assertions (1 → 1 → 2 → 3 across specific edits) still hold
+  with the pool computation added, proving the new `useState`/"adjust during
+  render" mechanism doesn't introduce an extra visible re-render even when
+  wired into every render of `BoardFramesLayer`.
+
+**What did NOT help / was NOT attempted (landmines for the next session):**
+- Did not attempt to build a synchronous "capture the fallback right as the
+  bridge fires `ready`" mechanism in `LiveBoardFrame.tsx` to close the
+  poster-capture race noted above — genuinely fixable (register a second
+  `adapter.on('ready', ...)` listener alongside `useAdapterReady`'s own,
+  since the event dispatch is synchronous and React's state-triggered
+  re-render/unmount hasn't happened yet at that point in the call stack),
+  but `LiveBoardFrame.tsx` was deliberately excluded from this phase's own
+  FILES list — flagging the mechanism here so it isn't re-derived from
+  scratch, not implementing it now.
+- Did not attempt to satisfy Phase A's human dogfood gate via my own
+  automated Playwright pass. This was explicitly the launching task's own
+  instruction and CLAUDE.md's "no agent message is user consent" framing —
+  `live-08`'s own PR #106 already went as far as an agent-run proof
+  reasonably can (a real spawned dev server + real cross-origin
+  `postMessage` reaching a real harness page), and STATE.md is explicit
+  that the REMAINING gap (a full board reopen, panning frames on/off
+  screen, watching posters swap to live content) is a human sign-off, not
+  an engineering task.
+- Did not touch WS-5.6's own four pre-existing bench rows' budgets or logic
+  despite discovering two of them fail for real — flagged above, not fixed,
+  per this task's own explicit "keep the four existing WS-5.6 rows
+  untouched" instruction and CLAUDE.md's "pre-existing failures are not
+  yours to fix" rule.
+
+**Human action needed (repeating, since it now blocks TWO work orders'
+remaining scope):** `perf-06`'s own Phase A STEPS item 4 — a human promoting
+a real project (`test4 copy` or a scratch copy) to Tier 2 in their own
+browser session, confirming a board frame boots, shows the Tier-0 fallback,
+then swaps to the live iframe on `ready`, with no flash and no memory climb
+across a pan-away-and-back cycle. Until that happens: (1) this PR's own two
+blocked bench rows stay unmeasured; (2) Track L's own wider exit criterion
+("drag a node on a live board with no flash") stays unproven; (3) general
+confidence that the live-canvas feature works end-to-end for a real user
+rests entirely on unit tests and one agent's dogfood-as-far-as-possible
+report, not a human's own eyes.
+
+**PR:** #109 (draft), `feat/live-frame-pool` → `feat/alm-figma-killer-studio-shell`.
+
 ### live-07 — L7: save → HMR loop
 - **Agent:** store-engineer (implementation + verification; `studio-architect` did the original design pass below — the entry's own note that the `Agent` field was ambiguous is now resolved)
 - **Stage:** done
