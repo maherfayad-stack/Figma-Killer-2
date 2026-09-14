@@ -79,6 +79,35 @@
  * collide on) ensures React cleanly (re)mounts a fresh iframe when a frame
  * re-enters the viewport, and gives each variant its own component identity.
  *
+ * Live-frame pool (L8 Phase B, `perf-06`, STATE.md): a SEPARATE, additive
+ * concern from the virtualization above, gated on `trust === 'run-project'`
+ * — Tier 0/1 boards keep TODAY'S "every on-screen frame mounts, every
+ * offscreen frame is a poster, unconditionally" behavior byte-for-byte,
+ * forever. `isOnScreen` alone answers "does this frame's placeholder vs. its
+ * full `BreakpointFrame` render?" — cheap for Tier 0/1's same-origin portal
+ * iframes, and it stays the ONLY signal `BoardFrameView` gets for those
+ * boards (`isLiveMounted` is passed as `undefined` below when
+ * `trust !== 'run-project'`, so `BoardFrameView`'s own `isLiveMounted ??
+ * isOnScreen` fallback reproduces the pre-pool behavior exactly). A Tier-2
+ * frame's live bridge iframe is a real, expensive, cross-origin dev-server
+ * connection, so on a Tier-2 board a SECOND, decoupled flag governs whether
+ * a specific frame keeps its bridge iframe hot: every on-screen frame is
+ * always hot, plus up to `LIVE_FRAME_POOL_SIZE` more
+ * recently-visible-but-now-offscreen frames (an LRU warm cache — panning
+ * back to a recently-seen screen shows it live immediately instead of
+ * re-booting). `computeHotFrameIds` (pure, see `liveFramePool.ts`) computes
+ * this every render from this render's visible ids plus the PREVIOUS
+ * render's hot-set, stored in `previousHotFrameIds` STATE (not a ref —
+ * `react-hooks/refs`, part of this repo's React Compiler lint set, flags
+ * reading `ref.current` during render; `useState` plus the "adjust state
+ * during rendering" escape hatch — react.dev's own documented pattern for
+ * exactly this "remember what the last render computed" need — is the
+ * compiler-legal shape used below). The hot-set
+ * itself is computed unconditionally every render (cheap, trust-independent
+ * — see the comment at its call site for why bothering to gate the
+ * COMPUTATION itself would just be extra branching for no real savings);
+ * only the PROP threaded to each `BoardFrameView` is trust-gated.
+ *
  * Self-gates on `selectHasActiveBoard`: renders nothing outside studio board
  * mode, so `CanvasTransformLayer` can always mount it without an extra check.
  *
@@ -102,6 +131,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -114,7 +144,9 @@ import { AddFramePicker } from './AddFramePicker'
 import { NewPageButton } from './NewPageButton'
 import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from '@core/studio-board'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
+import { computeHotFrameIds, LIVE_FRAME_POOL_SIZE } from './liveFramePool'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
+import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
 import { useMarqueeSelection } from './useMarqueeSelection'
 import { BoardFrameView } from './BoardFrameView'
 import styles from './BoardFramesLayer.module.css'
@@ -124,6 +156,12 @@ import styles from './BoardFramesLayer.module.css'
 // "did this change" check and can spiral into a "Maximum update depth
 // exceeded" render loop once anything downstream reacts to the selected value).
 const EMPTY_PAGES: (Page | null)[] = []
+
+/** L8 Phase B (`perf-06`) — content equality for the live-frame pool's "did the hot-set actually change" check (see the "Adjust state during rendering" comment at its call site). Order-sensitive: `computeHotFrameIds`'s output order IS the LRU record the next call reads back. */
+function sameFrameIdOrder(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((id, i) => id === b[i])
+}
 
 export function BoardFramesLayer() {
   // C3 (this change) — subscribe to `board.frames` alone, not the whole
@@ -183,10 +221,44 @@ export function BoardFramesLayer() {
   // its "are we on a studio board?" gate — `.layer` renders in board mode only.
   const layerRef = useRef<HTMLDivElement>(null)
   const marqueeRect = useMarqueeSelection(viewportActions?.canvasRootRef, layerRef)
+  // Live-frame pool's OWN trust gate (see the module doc) — `undefined` here
+  // is what makes Tier 0/1 boards byte-for-byte unaffected below.
+  const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
+
+  // Live-frame pool (L8 Phase B) — see the module doc's "Live-frame pool"
+  // note. `framesWithPages`/`visibleFrameIds` are computed here (BEFORE the
+  // `!hasActiveBoard` early return below) purely so this `useEffect` can run
+  // unconditionally on every render, same as every other hook above —
+  // `hasActiveBoard === false` just means both lists are empty and the pool
+  // computation below is a no-op.
+  const framesWithPages = resolveFramesWithPages(frames, relevantPages)
+  const visibleFrameIds = framesWithPages
+    .filter(({ frame }) => {
+      // Same per-frame size fallback as the render `.map()` below (Phase 6E
+      // — a frame without a saved width/height uses the shared default).
+      const width = frame.width ?? FRAME_WIDTH
+      const height = frame.height ?? FRAME_HEIGHT
+      return isFrameOnScreen(
+        { x: frame.x, y: frame.y, width, height: height + FRAME_HEADER_HEIGHT },
+        { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height },
+        FRAME_VIEWPORT_MARGIN,
+      )
+    })
+    .map(({ frame }) => frame.id)
+  const [previousHotFrameIds, setPreviousHotFrameIds] = useState<string[]>([])
+  const hotFrameIds = computeHotFrameIds(visibleFrameIds, previousHotFrameIds, LIVE_FRAME_POOL_SIZE)
+  // "Adjust state during rendering" (react.dev) — only calls `setState` when
+  // the computed hot-set actually differs in content from what's stored, so
+  // this terminates in one extra render rather than looping: the next call
+  // to `computeHotFrameIds` with `previousHotFrameIds === hotFrameIds`'s
+  // content produces the SAME `hotFrameIds` again (deterministic given the
+  // same `visibleFrameIds`), which then compares equal and skips the call.
+  if (!sameFrameIdOrder(hotFrameIds, previousHotFrameIds)) {
+    setPreviousHotFrameIds(hotFrameIds)
+  }
+  const hotFrameIdSet = new Set(hotFrameIds)
 
   if (!hasActiveBoard) return null
-
-  const framesWithPages = resolveFramesWithPages(frames, relevantPages)
 
   // One bounding box around the whole multi-selection (board-space, so it
   // lives inside `.layer` and pans/zooms with the frames it encloses).
@@ -251,6 +323,7 @@ export function BoardFramesLayer() {
               isActive={page.id === activePageId}
               isSelected={selectedFrameIds.includes(page.id)}
               isOnScreen={isOnScreen}
+              isLiveMounted={trust === 'run-project' ? hotFrameIdSet.has(frame.id) : undefined}
             />
           )
         })

@@ -298,17 +298,45 @@ accepted resource-lingering tradeoff.
 
 ### L8 — Warm, posters, pool (S) · `perf-hunter`
 
-- Until `ready`, a live frame shows its poster or the Tier 0 render, then swaps.
-- Live iframes are pooled: viewport frames plus a small LRU (default 8), the
-  rest posters. Reuses `frameSnapshotCache`.
-- Budgets, added to `bun run bench` and gated:
+**Correction (STATE.md `perf-06`, 2026-09-13/14): this was NOT "(S)".** The
+plan as originally written assumed a live-frame render mode already existed
+for `BoardFrameView` to pool — it did not. `IframeFrameSurface.tsx`'s
+`documentMode='bridge'` fork (L5) was real, tested code with **zero
+production call sites**; nothing decided, per board frame, whether to render
+portal vs. bridge, nothing showed a fallback before `ready`, and no client
+code even learned the live origin's own URL. Building the pool on top of
+that gap would have pooled a mechanism that didn't exist. The real work
+split into two phases:
 
-| Metric | Budget |
-|---|---|
-| Warm reopen → first live paint | ≤ 1.5 s |
-| `applyOverlay` visible | ≤ 16 ms |
-| Save → HMR reflected in frame | ≤ 400 ms |
-| Memory per live frame | baseline recorded in `docs/audits/`, regression gate at +20 % |
+- **Phase A (unassigned prerequisite, not named by this plan — canvas-engineer,
+  landed as PR #104 + a `live-08` follow-up, PR #106):** the actual
+  `documentMode='bridge'` wiring — `useLiveOrigin`, `useDevServerReadiness`,
+  `LiveBoardFrame` (mounts the Tier-0 fallback and the bridge iframe
+  concurrently, swaps on the adapter's own `ready` event), and the
+  `BoardFrameView` render fork gated on `trust === 'run-project'`. `live-08`
+  additionally wired the generated project's own bootstrap to call
+  `createStudioRuntimeBridge`, proving via a real spawned Vite dev server +
+  real Playwright Chromium that the `ready` handshake reaches the parent
+  end-to-end.
+- **Phase B (this section's own scope, perf-hunter):** `liveFramePool.ts`
+  (`computeHotFrameIds`, pure, LRU-style — every on-screen frame always hot,
+  plus up to `LIVE_FRAME_POOL_SIZE` more recently-visible-but-now-offscreen
+  frames), wired into `BoardFramesLayer`/`BoardFrameView`, gated so Tier 0/1
+  boards take zero new code paths. Landed once the above existed.
+
+Until `ready`, a live frame shows its poster or the Tier 0 render, then swaps.
+Live iframes are pooled: viewport frames plus a small LRU (default 8), the
+rest posters. Reuses `frameSnapshotCache`.
+
+Budgets, added to `bun run bench` and gated — buildability as of Phase B
+(perf-06), not all four at once:
+
+| Metric | Budget | Status |
+|---|---|---|
+| `applyOverlay` visible | ≤ 16 ms | **Buildable now, done.** The JS-glue half needs only a stubbed `postMessage` channel, zero dependency on a live frame — `src/__tests__/canvas/frameAdapter/bridgeApplyOverlayGlueLatency.test.ts` (a `bun test`, not a browser row) + a mirrored row in `scripts/bench/studioBoard.bench.ts`. The visual-paint half (a real paint landing in a real cross-origin frame) is future work once a live board can actually be dogfooded. |
+| Warm reopen → first live paint | ≤ 1.5 s | **Blocked** on a human dogfooding Tier 2 for real (STATE.md `perf-06` STEPS item 4 — not yet done) + a bootable fixture (`scripts/bench/lib/liveFrameFixture.ts`, built and ready). Explicitly-skipped row in `studioBoard.bench.ts`. |
+| Save → HMR reflected in frame | ≤ 400 ms | **Blocked on L7** (save→HMR loop, above) — do not build this by assuming L7 exists. |
+| Memory per live frame | baseline recorded in `docs/audits/`, regression gate at +20 % | **Blocked** on the same human dogfood gate as the warm-reopen row. Placeholder doc: `docs/audits/2026-09-13-live-frame-memory-baseline.md`, explaining exactly what a future session needs to do to fill it in. |
 
 ### L9 — What Tier 2 makes redundant (S, last)
 

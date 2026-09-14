@@ -167,12 +167,19 @@ interface BoardFrameViewProps {
   isSelected: boolean
   isOnScreen: boolean
   /**
-   * L8 Phase A (`perf-06`, STATE.md) — the hot-set membership flag Phase B's
-   * live-frame pool (`liveFramePool.ts`, not built yet) will eventually
-   * compute and pass, decoupled from `isOnScreen`. Optional and defaults to
-   * `isOnScreen` so `BoardFramesLayer.tsx` (untouched by this phase)
-   * reproduces today's mount/unmount behavior byte-for-byte — Phase B is
-   * what starts passing a real, decoupled value once the pool exists.
+   * L8 Phase B (`perf-06`, STATE.md) — the live-frame pool's hot-set
+   * membership flag, computed by `BoardFramesLayer.tsx` via
+   * `computeHotFrameIds` (`liveFramePool.ts`) and decoupled from
+   * `isOnScreen`: every on-screen frame is always hot, plus up to
+   * `LIVE_FRAME_POOL_SIZE` more recently-visible-but-now-offscreen frames
+   * (an LRU warm cache) stay `isLiveMounted` too, so their bridge iframe
+   * doesn't have to re-boot the moment the user pans back. Only meaningful
+   * for a Tier-2 (`trust === 'run-project'`) frame's `LiveBoardFrame` branch
+   * below — Tier 0/1's portal `BreakpointFrame` is same-origin and cheap, so
+   * it stays gated on `isOnScreen` alone via `liveMounted`'s own fallback.
+   * Optional and defaults to `isOnScreen` so any test or call site that
+   * omits it (a Tier 0/1 board, or a unit test exercising this component in
+   * isolation) reproduces the pre-pool mount/unmount behavior byte-for-byte.
    */
   isLiveMounted?: boolean
 }

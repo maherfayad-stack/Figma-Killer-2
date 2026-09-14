@@ -11,6 +11,43 @@
  *   - Store change → panel re-render
  *   - Mounted iframes at rest (virtualization actually bounds the count)
  *
+ * ## L8 Phase B (`perf-06`, STATE.md) — three MORE budgets, not all buildable yet
+ *
+ * `STUDIO-LIVE-CANVAS-PLAN.md` §L8 adds three further budgets, none of which
+ * this synthetic (`.tsx`-only, no `node_modules`, never boots a real dev
+ * server) fixture can exercise directly:
+ *
+ *   - **`applyOverlay` visible ≤ 16ms** — the JS-glue half of this is
+ *     buildable TODAY with zero dependency on a live frame at all (a stubbed
+ *     `postMessage` channel is enough). The AUTHORITATIVE version is a real
+ *     `bun test`: `src/__tests__/canvas/frameAdapter/
+ *     bridgeApplyOverlayGlueLatency.test.ts` (runs on every `bun test`, no
+ *     browser, no server spawn). `computeApplyOverlayGlueLatencyRow` below
+ *     runs the EXACT same measurement a second time as a row in THIS
+ *     report, unconditionally (before the `dist/`/Chromium checks — plain
+ *     module code, no DOM needed), so `bun run bench:studio-board` shows a
+ *     real number too, not just "skipped", even on a machine with no
+ *     Chromium at all. The visual-paint half (a real paint landing in a real
+ *     cross-origin frame) needs a real live board — folding that into a row
+ *     here is future work, once the row below can run at all.
+ *   - **Warm reopen → first live paint ≤ 1.5s** — BLOCKED. Needs a bootable
+ *     Tier-2 fixture (`scripts/bench/lib/liveFrameFixture.ts`, built and
+ *     ready, but unused here) AND `perf-06`'s own Phase A "human dogfood"
+ *     gate: a person promoting a real project to Tier 2 and confirming a
+ *     frame actually boots and swaps live in a real browser session. That
+ *     has not happened yet (STATE.md `perf-06` — the automated Playwright
+ *     proof in `live-08`/PR #106 stopped at the `ready` handshake itself,
+ *     not a full board reopen). See the explicitly-skipped row below.
+ *   - **Memory per live frame — baseline + regression gate** — BLOCKED on
+ *     the same human dogfood gate, plus `panel-23`'s own "this sandbox's
+ *     absolute timings vary up to 2x run-to-run" caveat (see
+ *     `docs/audits/2026-09-13-live-frame-memory-baseline.md`). See the
+ *     explicitly-skipped row below.
+ *
+ * Both blocked rows are appended unconditionally to `rows` below (not
+ * silently absent) so a reader of a real run's report — or of this file —
+ * can tell "not built yet, here's exactly why" from "built and green".
+ *
  * ⚠ **THE BUDGETS BELOW ARE UNCALIBRATED, AND THIS BENCH HAS NEVER RUN.**
  * An earlier draft of this file claimed they were "calibrated against a real
  * run"; they were not, and could not have been. `launchBrowser` cannot start
@@ -57,6 +94,7 @@ import type { BenchModule, BenchResult, BenchRow, BenchContext } from './lib/typ
 import { fmtMs, fmtNum } from './lib/stats'
 import { log } from './lib/log'
 import { startServer, type ServerHandle } from './lib/server'
+import { BridgeFrameAdapter, type BridgeFrameChannel } from '@site/canvas/frameAdapter/BridgeFrameAdapter'
 import {
   launchBrowser,
   measureFramesDuring,
@@ -347,6 +385,74 @@ async function findVisibleItems(
   return found
 }
 
+// ── L8 Phase B (`perf-06`) — the ONE buildable-now budget row ────────────────
+//
+// Same measurement as `bridgeApplyOverlayGlueLatency.test.ts` (that file is
+// the authoritative gate — this is a second surface for the same number, so
+// a human reading `bun run bench:studio-board`'s report sees it too). Plain
+// module code — a fake `BridgeFrameChannel`, no DOM, no browser — so it runs
+// unconditionally, even when `dist/`/Chromium aren't available.
+const BRIDGE_OVERLAY_GLUE_BUDGET_MS = 16
+
+function computeApplyOverlayGlueLatencyRow(): { row: BenchRow; passed: boolean } {
+  const posted: unknown[] = []
+  const channel: BridgeFrameChannel = {
+    postMessage: (message) => { posted.push(message) },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }
+  const adapter = new BridgeFrameAdapter({ channel, frameOrigin: 'https://live.studio.test', nodeIdsInTreeOrder: ['n1'] })
+
+  const ITERATIONS = 500
+  let worstMs = 0
+  let totalMs = 0
+  for (let i = 0; i < ITERATIONS; i++) {
+    const t0 = performance.now()
+    adapter.applyOverlay('n1', `outline: 2px solid #${i.toString(16).padStart(6, '0')};`)
+    const elapsedMs = performance.now() - t0
+    worstMs = Math.max(worstMs, elapsedMs)
+    totalMs += elapsedMs
+  }
+  adapter.dispose()
+
+  const passed = worstMs <= BRIDGE_OVERLAY_GLUE_BUDGET_MS
+  return {
+    passed,
+    row: {
+      label: 'applyOverlay — glue latency (JS only, L8 Phase B)',
+      inputs: { iterations: ITERATIONS, delivered: posted.length },
+      metrics: { worst: fmtMs(worstMs), mean: fmtMs(totalMs / ITERATIONS), budget: fmtMs(BRIDGE_OVERLAY_GLUE_BUDGET_MS) },
+      notes:
+        (passed ? 'PASS' : 'FAIL — over budget') +
+        ' — measures BridgeFrameAdapter\'s own call path against a stubbed channel, not a real cross-origin paint (see this file\'s header doc).',
+    },
+  }
+}
+
+// ── L8 Phase B (`perf-06`) — explicitly-blocked budget rows ──────────────────
+//
+// Neither row below is COMPUTED — both are static, so they show up in every
+// run's report (not just runs where Chromium/dist happen to be available),
+// which is the point: a reader must be able to tell "not built yet, here's
+// exactly why" from "built and green" without re-deriving it from this
+// file's own doc comment. Excluded from `allPassed` below — an informational
+// "BLOCKED" note is not a pass/fail measurement, same posture as the
+// existing "First interactive frame (cold load)" row.
+const L8_BLOCKED_ROWS: BenchRow[] = [
+  {
+    label: 'Warm reopen → first live paint (L8 Phase B)',
+    metrics: { budget: '≤ 1.5s' },
+    notes:
+      'BLOCKED — needs perf-06\'s Phase A "human dogfood" gate (STATE.md): a person promoting a real project to Tier 2 and confirming a frame boots + swaps live in a real browser session. scripts/bench/lib/liveFrameFixture.ts is built and ready; this row starts computing a real number the moment that gate clears.',
+  },
+  {
+    label: 'Memory per live frame — baseline + regression gate (L8 Phase B)',
+    metrics: { budget: 'TBD — see docs/audits/2026-09-13-live-frame-memory-baseline.md' },
+    notes:
+      'BLOCKED — same human dogfood gate as the row above, plus this sandbox\'s own run-to-run variance (see the linked audit doc) makes an absolute baseline captured here unsafe to gate CI on until re-measured on a quiet machine.',
+  },
+]
+
 // ── Bench module ─────────────────────────────────────────────────────────────
 
 export const studioBoardBench: BenchModule = {
@@ -356,6 +462,14 @@ export const studioBoardBench: BenchModule = {
     'Real Chromium against a synthetic 50-frame/20k-node Studio board. Asserts selection paint, pan frame times, panel re-render latency, and mounted-iframe count against calibrated budgets. Skips gracefully if Chromium/dist are unavailable.',
 
   async run(ctx: BenchContext): Promise<BenchResult> {
+    // L8 Phase B — computed FIRST, unconditionally: no dist/Chromium
+    // dependency, so it runs (and is reported) even when everything below
+    // this line ends up skipped. See this file's header doc + the function's
+    // own doc for why this measurement is a proxy, not a real paint.
+    log.step('applyOverlay glue-latency (JS only, no browser needed)')
+    const { row: glueLatencyRow, passed: glueLatencyPassed } = computeApplyOverlayGlueLatencyRow()
+    log.detail(`${glueLatencyRow.label}: ${JSON.stringify(glueLatencyRow.metrics)} — ${glueLatencyRow.notes}`)
+
     // MUST live under `studio-workspace/` — `resolveProjectDir` (W10,
     // `studioProjects.ts`) 404s any `dir` outside `projectsRootDir()`'s
     // containment check, symlinks resolved on both sides. A project
@@ -375,7 +489,7 @@ export const studioBoardBench: BenchModule = {
     if (!staticDir) {
       log.warn('dist/ not found — run `bun run build` first.')
       rmSync(projectDir, { recursive: true, force: true })
-      return skippedResult(this.name, this.title, 'no dist/ — run `bun run build` first')
+      return skippedResult(this.name, this.title, 'no dist/ — run `bun run build` first', [glueLatencyRow, ...L8_BLOCKED_ROWS])
     }
 
     let server: ServerHandle | null = null
@@ -401,7 +515,7 @@ export const studioBoardBench: BenchModule = {
         session = await launchBrowser({ executablePath: overrideChrome })
       } catch (err) {
         log.warn((err as Error).message)
-        return skippedResult(this.name, this.title, (err as Error).message)
+        return skippedResult(this.name, this.title, (err as Error).message, [glueLatencyRow, ...L8_BLOCKED_ROWS])
       }
       // Surface browser-side failures directly in the bench log — this bench
       // had literally never completed a run before `panel-23` Phase B (see
@@ -578,13 +692,16 @@ export const studioBoardBench: BenchModule = {
           metrics: { elapsed: fmtMs(firstInteractiveFrameMs) },
           notes: 'Informational — WS-5.5\'s <2s budget is for a 40-page real-repo PARSE, not this synthetic no-dependency fixture; not gated here.',
         },
+        glueLatencyRow,
+        ...L8_BLOCKED_ROWS,
       ]
 
       const allPassed =
         ringPaintMs <= BUDGET_RING_PAINT_MS &&
         panFrames.worstFrameMs <= BUDGET_PAN_WORST_FRAME_MS &&
         panelRerenderMs <= BUDGET_PANEL_RERENDER_MS &&
-        mountedIframes <= BUDGET_MOUNTED_IFRAMES
+        mountedIframes <= BUDGET_MOUNTED_IFRAMES &&
+        glueLatencyPassed // L8 Phase B — the one new REAL (non-blocked) budget in this file
 
       // Print every row's REAL numbers to stdout regardless of pass/fail —
       // `BudgetExceededError`'s own message only names WHICH rows failed
@@ -635,7 +752,14 @@ class BudgetExceededError extends Error {
   }
 }
 
-function skippedResult(name: string, title: string, reason: string): BenchResult {
+/**
+ * `extraRows` (L8 Phase B) — rows that don't need the browser/dist this
+ * bench otherwise requires, so they're worth reporting even on a "skipped"
+ * run: `computeApplyOverlayGlueLatencyRow`'s real PASS/FAIL, plus the two
+ * explicitly-blocked L8 rows. Defaults to none for any OTHER caller of this
+ * (generic) helper.
+ */
+function skippedResult(name: string, title: string, reason: string, extraRows: BenchRow[] = []): BenchResult {
   return {
     name,
     title,
@@ -643,7 +767,7 @@ function skippedResult(name: string, title: string, reason: string): BenchResult
     sections: [
       {
         title: 'Skipped',
-        rows: [{ label: 'studio-board', metrics: { detected: '—' }, notes: reason }],
+        rows: [{ label: 'studio-board', metrics: { detected: '—' }, notes: reason }, ...extraRows],
       },
     ],
   }
