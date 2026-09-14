@@ -404,3 +404,63 @@ describe('createStudioRuntimeBridge — dispose', () => {
     expect(document.getElementById('studio-runtime-animation-freeze')).toBeNull()
   })
 })
+
+describe('createStudioRuntimeBridge — optimistic-insert ghost sweep', () => {
+  /** Minimal `ViteHotContext` stub that records handlers by event name so a test can fire them manually. */
+  function makeFakeHot() {
+    const handlers = new Map<string, () => void>()
+    return {
+      hot: {
+        on: (event: 'vite:beforeUpdate' | 'vite:afterUpdate', cb: () => void) => {
+          handlers.set(event, cb)
+        },
+      },
+      fireAfterUpdate: () => handlers.get('vite:afterUpdate')?.(),
+      fireBeforeUpdate: () => handlers.get('vite:beforeUpdate')?.(),
+    }
+  }
+
+  it('removes every [data-studio-optimistic] ghost once vite:afterUpdate fires', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+
+    document.body.innerHTML = `<div data-node-id="parent"></div>`
+    bridge.handleMessage({
+      type: 'optimistic.insert',
+      nodeId: 'ghost',
+      parentNodeId: 'parent',
+      parentOccurrenceIndex: 0,
+      index: 0,
+      tagName: 'div',
+      text: undefined,
+    })
+    expect(document.querySelectorAll('[data-studio-optimistic]')).toHaveLength(1)
+
+    fireAfterUpdate()
+
+    expect(document.querySelectorAll('[data-studio-optimistic]')).toHaveLength(0)
+  })
+
+  it('still posts hmr:after after sweeping', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    const { hot, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+    posted.length = 0 // drop the initial `ready` post
+
+    fireAfterUpdate()
+
+    expect(posted.some((p) => (p.data as { message: { type: string } }).message.type === 'hmr:after')).toBe(true)
+  })
+
+  it('leaves a real (non-ghost) node alone', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+
+    document.body.innerHTML = `<div data-node-id="real"></div>`
+    fireAfterUpdate()
+
+    expect(document.querySelector('[data-node-id="real"]')).not.toBeNull()
+  })
+})

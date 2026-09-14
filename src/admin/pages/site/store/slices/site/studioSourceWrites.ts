@@ -27,6 +27,7 @@
  */
 import { registry } from '@core/module-engine'
 import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
+import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { commitStudioDuplicate, commitStudioInsert, commitStudioWrap } from '@site/studio/studioStructuralCommits'
 import {
   STRUCTURAL_REFUSAL_TITLE,
@@ -130,6 +131,15 @@ export function createStudioSourceWrites(
     const sourceImport = mod?.sourceImport
 
     if (sourceImport) {
+      // `live-07` — same-tick ghost paint for a live (bridge) frame: there is
+      // no real node id yet (the element doesn't exist until the codemod
+      // writes it), so a throwaway placeholder id stands in purely as the
+      // ghost's own `data-node-id`. Safe because `BridgeFrameAdapter.optimistic
+      // .insert` never looks the id up, and `runtime.ts`'s ghost sweep removes
+      // it wholesale on the next Fast Refresh. `'div'` is the least-disruptive
+      // generic placeholder tag — a design-system component's real root tag
+      // is unknowable without executing it.
+      broadcastOptimisticInsert(`optimistic:${crypto.randomUUID()}`, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, 'div')
       void commitStudioInsert({
         ...plan.commit,
         name: sourceImport.name,
@@ -144,6 +154,15 @@ export function createStudioSourceWrites(
     // omitting `importSpecifier`. See `sourceIntrinsic` on `ModuleDefinition`.
     const intrinsic = mod?.sourceIntrinsic?.(props)
     if (intrinsic) {
+      // `live-07` — same as above, but an honest tag match: `intrinsic.tag`
+      // is exactly what the codemod is about to write.
+      broadcastOptimisticInsert(
+        `optimistic:${crypto.randomUUID()}`,
+        plan.commit.parentNodeId,
+        index ?? Number.MAX_SAFE_INTEGER,
+        intrinsic.tag,
+        intrinsic.text,
+      )
       void commitStudioInsert({
         ...plan.commit,
         name: intrinsic.tag,
