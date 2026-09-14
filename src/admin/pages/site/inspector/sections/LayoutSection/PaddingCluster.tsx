@@ -19,7 +19,7 @@
  * `linked` — the cluster's own "are all four sides equal" flag — is derived
  * here from the four stored values, never duplicated by the cluster itself.
  */
-import { hasStyleValue, readString } from '../styleValueUtils'
+import { hasStyleValue, readString } from '../../../panels/PropertiesPanel/styleValueUtils'
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
 import { ExpandableFieldCluster } from '@ui/components/ExpandableFieldCluster'

@@ -1,0 +1,65 @@
+/* LayoutSection — Penpot's LAYOUT section (STATE.md panel-25, P3 item 4).
+ *
+ * `min-width: 0` on the grid AND its items for the same reason
+ * `PropertyControlChrome.module.css`'s old `.layoutSection` rule already
+ * documented: several children (align pad, gap fields, padding/margin
+ * clusters) have intrinsic widths past the panel's content column, and
+ * without this the column grows to fit them.
+ */
+.layoutSection {
+    display: grid;
+    gap: var(--inspector-gap-tight);
+    min-width: 0;
+}
+
+.layoutSection > *,
+.flexBlock > * {
+    min-width: 0;
+}
+
+.flexBlock {
+    display: grid;
+    gap: var(--inspector-gap-tight);
+}
+
+/* Direction control + the wrap toggle, sharing one row. */
+.flexHeaderRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-gap-tight);
+}
+
+.flexHeaderRow > *:first-child {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Align pad + the (now two-field) gap row live on their own rows — the pad
+ * is a fixed-size box (AlignGrid.module.css), so it doesn't need to share
+ * a row with the gap fields the way the single-field `GapInput` once did. */
+.alignGapRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-gap-tight);
+}
+
+/* Row gap / column gap, side by side — mirrors Penpot's own two-field row
+ * (screenshots/f3-flexboard/dark/design.png). */
+.gapRow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--inspector-gap-tight);
+}
+
+/* Margin cluster + the "Box model" settings trigger, one row — same shape
+ * the retired SpacingSection.tsx used. */
+.marginRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-gap-tight);
+}
+
+.marginRow > *:first-child {
+    flex: 1;
+    min-width: 0;
+}

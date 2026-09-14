@@ -17,7 +17,7 @@
  */
 
 import type { ReactNode } from 'react'
-import styles from '../LayoutSection.module.css'
+import styles from '../../../panels/PropertiesPanel/PropertyControlChrome.module.css'
 
 interface LabeledControlProps {
   /** Caption above the control. Omit when the control names itself. */

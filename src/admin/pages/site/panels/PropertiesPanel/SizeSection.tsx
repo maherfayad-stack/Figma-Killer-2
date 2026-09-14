@@ -33,7 +33,7 @@
  * `aspectRatio` and `boxSizing` are both rare — G3
  * (`docs/features/inspector-disclosure.md` §6) moves them into a small `⚙`
  * popover on the Size section itself (the Layout ⚙ is a different
- * component, `LayoutSection/LayoutSettingsButton.tsx`, scoped to
+ * component, `inspector/sections/LayoutSection/LayoutSettingsButton.tsx`, scoped to
  * layout-only properties), reusing `InspectorPopover` — the same
  * presence-mounted, no-`open`-prop shape `LayoutSettingsButton` already
  * established. Both fields stay paired into one uncaptioned row exactly as
@@ -210,7 +210,7 @@ export function SizeSection({
 
   // G3 — `aspectRatio`/`boxSizing` popover (Law 2: rare options live behind a
   // settings affordance, not a permanent row). Mirrors
-  // `LayoutSection/LayoutSettingsButton.tsx`'s trigger shape exactly.
+  // `inspector/sections/LayoutSection/LayoutSettingsButton.tsx`'s trigger shape exactly.
   const [settingsOpen, setSettingsOpen] = useState(false)
   const settingsTriggerRef = useRef<HTMLButtonElement>(null)
   const settingsAnySet = hasStyleValue(storedStyles.aspectRatio) || hasStyleValue(storedStyles.boxSizing)

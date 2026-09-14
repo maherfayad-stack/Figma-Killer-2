@@ -51,18 +51,21 @@
  * node style-commit contract are read directly, not routed through a model
  * built for the SELECTED node's own bag).
  *
- * `alignSelf`/`justifySelf` also have a second, pre-existing live UI:
- * `LayoutSection/LayoutSettingsButton.tsx`'s "always shown" advanced-
- * settings popover exposes the same two properties for fine control
- * (`STATE.md` `panel-25`'s own note on this). That dual-path already
- * existed before this section — the quick align-bar shortcut and the
- * advanced settings drawer are two intentionally separate entry points to
- * the same properties, not a race this migration introduces. Unlike
- * Layer's opacity/blend (which had exactly ONE prior UI and needed
- * `MIGRATED_SECTION_PROPERTIES` to avoid a double render), `classStyleSections.ts`'s
- * `layout` claim for `alignSelf`/`justifySelf`/`justifyContent` is
- * untouched by this PR — `LayoutSettingsButton`/`LayoutSection` still need
- * it, and nothing here duplicates their rendering.
+ * `alignSelf`/`justifySelf` had a second, pre-existing live UI at the time
+ * this section landed: the old `LayoutSection/LayoutSettingsButton.tsx`'s
+ * "always shown" advanced-settings popover exposed the same two properties
+ * for fine control, and `classStyleSections.ts`'s `layout` claim covered
+ * them too — an intentional, pre-existing dual-path this migration did not
+ * introduce (quick align-bar shortcut vs. advanced settings drawer).
+ * **P3 item 4 (`STATE.md` `panel-25`, the new `inspector/sections/
+ * LayoutSection.tsx`) later closed that dual-path**: `LayoutSettingsButton`
+ * dropped its own `alignSelf`/`justifySelf` rows once Layout's own
+ * migration made the "two components racing to write the same property"
+ * hazard real for the first time (Align and the new Layout section would
+ * otherwise both be live `INSPECTOR_SECTIONS` entries), and `alignSelf`/
+ * `justifySelf` moved into `classStyleSections.ts`'s `MIGRATED_SECTION_PROPERTIES`
+ * export, credited to Align. This section's own claim on them is therefore
+ * now exclusive.
  *
  * ## Locked (code-valued) properties
  *

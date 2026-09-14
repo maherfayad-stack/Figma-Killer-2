@@ -2,15 +2,15 @@
  * StyleSectionsEditor — the empty-section law
  * (docs/features/inspector-disclosure.md §1 Law 1 / §4 G1).
  *
- * `collapsedWhenEmpty` sections (background / border / effects / interaction /
- * typography) render as a single header line with a "+" when nothing is set —
- * ANYWHERE, not just on the active breakpoint/condition tab — and must never
- * collapse while an active style search is filtering the panel. The
- * always-present sections still left in THIS registry (layout / spacing) are
- * untouched by this law and keep their controls resident regardless of
- * whether anything is set — `position`/`size`/`appearance` used to be in this
- * same group but migrated out to `MeasuresSection.tsx` (`STATE.md`
- * `panel-25`, P3 item 3), which has no `collapsedWhenEmpty` concept at all.
+ * `collapsedWhenEmpty` sections (fill / border / effects / animations /
+ * typography / interaction — every entry left in THIS registry) render as a
+ * single header line with a "+" when nothing is set — ANYWHERE, not just on
+ * the active breakpoint/condition tab — and must never collapse while an
+ * active style search is filtering the panel. `position`/`size`/`appearance`/
+ * `layout`/`spacing` used to be always-resident members of this same
+ * registry but all migrated out to their own `INSPECTOR_SECTIONS` manifest
+ * entries (`STATE.md` `panel-25`, P3 items 1-4), none of which has a
+ * `collapsedWhenEmpty` concept at all.
  *
  * An empty section is also not a DISCLOSURE — no chevron, no toggle, nothing
  * to open. The header earns its accordion when the first value lands in it.
@@ -66,10 +66,6 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
     expect(screen.getByRole('button', { name: /add border/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add effects/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add interaction/i })).toBeDefined()
-
-    // The always-present Layout section (F1/F3 — Law 5) is untouched by
-    // this law: its LayoutModeRow renders even though nothing is set.
-    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
   })
 
   it('(b) a section with a base value set renders its body', () => {

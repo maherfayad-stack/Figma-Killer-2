@@ -23,7 +23,7 @@ import { MIXED } from '@ui/components/MixedValue'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { LabeledControl } from './LabeledControl'
-import styles from '../LayoutSection.module.css'
+import styles from '../../../panels/PropertiesPanel/PropertyControlChrome.module.css'
 
 /**
  * Common track counts surfaced as primary segments. Picking N writes

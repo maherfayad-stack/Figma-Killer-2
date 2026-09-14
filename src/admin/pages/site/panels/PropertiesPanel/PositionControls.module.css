@@ -2,7 +2,7 @@
  * that survived `PositionSection.tsx`'s retirement into `MeasuresSection`
  * (`STATE.md` `panel-25`, P3 item 3): `RotationRow`, `ZIndexSettingsRow`, and
  * `PositionConstraints` each still import this file under its old name's
- * successor. The TRBL offset grid keeps using LayoutSection.module.css's
+ * successor. The TRBL offset grid keeps using PropertyControlChrome.module.css's
  * existing `positionDirectionsGrid`/`directionCell` classes unchanged (this
  * file does not touch that module). */
 
@@ -41,7 +41,7 @@
 }
 
 /* Clear button overlays the trailing edge of the input on hover/focus,
- * mirroring `directionClearBtn` in LayoutSection.module.css. */
+ * mirroring `directionClearBtn` in PropertyControlChrome.module.css. */
 .constraintClearBtn.constraintClearBtn {
     position: absolute;
     top: 50%;

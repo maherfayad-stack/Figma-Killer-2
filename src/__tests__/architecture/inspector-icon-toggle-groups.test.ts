@@ -9,6 +9,10 @@
  * that reintroduces a `<Select>` for an enum-like property in either file
  * fails here instead of being noticed on the next Penpot-fidelity pass.
  *
+ * `LayoutSection` migrated to `inspector/sections/LayoutSection.tsx` +
+ * `inspector/sections/LayoutSection/` (`STATE.md` `panel-25`, P3 item 4) —
+ * updated to the new location, same scope, same rule.
+ *
  * Scoped to exactly the two files/folders the plan names — this is not a
  * blanket "no Select in the inspector" rule. Plenty of inspector fields
  * (font family, target page, alignment inside a popover with many options)
@@ -20,7 +24,8 @@ import { readFileSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
-const LAYOUT_SECTION_DIR = join(SRC_ROOT, 'admin/pages/site/panels/PropertiesPanel/LayoutSection')
+const LAYOUT_SECTION_DIR = join(SRC_ROOT, 'admin/pages/site/inspector/sections/LayoutSection')
+const LAYOUT_SECTION_FILE = join(SRC_ROOT, 'admin/pages/site/inspector/sections/LayoutSection.tsx')
 const TYPOGRAPHY_SECTION_FILE = join(
   SRC_ROOT,
   'admin/pages/site/panels/PropertiesPanel/TypographySection.tsx',
@@ -40,7 +45,7 @@ function collectTsxFiles(dir: string): string[] {
 }
 
 describe('P2 rule 4 — no <Select> reintroduced in LayoutSection / TypographySection', () => {
-  const files = [...collectTsxFiles(LAYOUT_SECTION_DIR), TYPOGRAPHY_SECTION_FILE]
+  const files = [...collectTsxFiles(LAYOUT_SECTION_DIR), LAYOUT_SECTION_FILE, TYPOGRAPHY_SECTION_FILE]
 
   it.each(files)('%s does not import @ui/components/Select', (file) => {
     const content = readFileSync(file, 'utf8')

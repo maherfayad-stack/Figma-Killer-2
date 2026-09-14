@@ -49,8 +49,8 @@ import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import { useSpacingTokens, type Token } from '@site/property-controls/tokenUtils'
-import { resolveStyleFieldDisplay } from '../styleFieldDisplay'
-import { plainString } from '../styleValueUtils'
+import { resolveStyleFieldDisplay } from '../../../panels/PropertiesPanel/styleFieldDisplay'
+import { plainString } from '../../../panels/PropertiesPanel/styleValueUtils'
 import styles from './SpacingBoxControl.module.css'
 
 // ---------------------------------------------------------------------------
