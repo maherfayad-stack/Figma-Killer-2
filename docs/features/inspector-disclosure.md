@@ -600,11 +600,14 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
 > and a `+`; add an export setting and it becomes a row of *format + scale*
 > with a run button.
 
-`ExportSection.tsx`, mounted last in `StyleSurface`'s column. The typed `+`
-menu is `NODE_EXPORT_MENU` (`nodeExportModel.ts`): **PNG @1× / @2× / @3×** and
-**SVG** add a row; **Copy as PNG**, **Copy CSS** and **Copy JSX** run
-immediately, because a copy has no settings to keep and parking one in the list
-would mean "add the row, then press its button" for a single verb.
+`inspector/sections/ExportSection.tsx` (P3 item 10, `STATE.md` `panel-25`) —
+its own `INSPECTOR_SECTIONS` manifest entry (`order: 9`, right after Text and
+before the `styles` composer), not a bespoke mount at the bottom of
+`StyleSurface.tsx` anymore. The typed `+` menu is `NODE_EXPORT_MENU`
+(`nodeExportModel.ts`, unchanged): **PNG @1× / @2× / @3×** and **SVG** add a
+row; **Copy as PNG**, **Copy CSS** and **Copy JSX** run immediately, because a
+copy has no settings to keep and parking one in the list would mean "add the
+row, then press its button" for a single verb.
 
 **Copy as PNG carries a `⌘⇧C` hint**, resolved from the keybindings registry
 via the entry's `commandId` — it is the discoverable half of the global
@@ -612,16 +615,31 @@ shortcut, not a second implementation of it. Both call `copyPngToClipboard`
 (`nodeExportClient.ts`), which is `fetchNodePngBlob` plus
 `navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])`.
 
-**Why it is not in `classStyleSections.ts`.** Three consumers read that
-registry as *CSS properties on a style target*: `StyleSectionsEditor` renders
-one copy per open target (so a node with both the Element and class blocks
-open would get two Export sections), `StyleCategoryRail` derives a rail button
-**disabled until a class is active** (Export works fine on an unclassed
-element), and the style search filters sections by the properties they claim
-(Export claims none). It is a statement about the *node*, so it mounts once,
-node-level, keyed by node id — the rows are per-selection session state, not
-persisted: Studio's file is the user's repository, and writing an export
-setting into their `.tsx` is not a trade this tool makes.
+**Why it is not in `classStyleSections.ts`, and never was.** Every entry in
+that registry is a set of *CSS properties on a style target*; Export is a
+statement about the *node*, unaffected by which style target happens to be
+open, meaningful on an unclassed element, and matching no property search. So
+it was always mounted once, node-level, rather than through that registry —
+this migration only moves *where* it mounts (its own manifest entry, gated by
+its own `appliesTo`), not that decision. The rows are per-selection session
+state, not persisted: Studio's file is the user's repository, and writing an
+export setting into their `.tsx` is not a trade this tool makes. The row list
+resets on selection change via the section's own internal `key={nodeId}`
+remount (`ExportSection.tsx`'s own doc) rather than the manifest's shared
+mount loop, which keys every entry by a constant section id.
+
+**One disclosed behaviour change from the pre-migration mount:** before this
+migration, Export rendered unconditionally once `nodeId`/`activePageId`/a
+Studio session were present, regardless of `StyleSurface.tsx`'s own
+`canEditStyleHere`/`nothingWritable` gates (a read-only role, or a
+structurally-locked node with no writable class, could still export/copy).
+Migrating Export into the shared `INSPECTOR_SECTIONS` render loop — required
+both by this series' own "don't touch the mount loop" rule and by Penpot
+ordering (Export must render *before* the `styles` composer, not after it) —
+means Export is now hidden in those same two states, same as every other
+migrated section. See `STATE.md` `panel-25`'s Section 10 entry for the full
+reasoning; flagged for a human call on whether a follow-up should restore
+Export's independence from write-permission gating.
 
 **PNG** — `POST /admin/api/studio/node-png`. The page is photographed through
 the existing capture pipeline (`captureFrames`, the same one `studio_screenshot`
@@ -650,7 +668,7 @@ to be vector and is not, which is the read-side version of the write invariant
 in `PROJECT-BRIEF.md`.
 
 **Copy CSS** — `collectNodeCssDeclarations` over the `provenanceByProperty`
-map `StyleSurface` already computes. Only properties something *declares* are
+map `useSelectionModel()` already computes. Only properties something *declares* are
 copied (a full computed bag is the UA's opinion, not the element's design),
 each at its provenance **winner**'s value; a property the panel marks
 `ambiguous` falls back to the frame's real computed value rather than picking

@@ -30,26 +30,20 @@
  *     derived from `SelectionModel.writableClasses`/`inlineWritable`/
  *     `inlineLockReason` instead of computing its own class-lock pass).
  *   - The Module section (no longer an accordion — a fixed block, matching
- *     P2 rule 2's "everything is at rest"), and the Export section at the
- *     bottom of the column.
+ *     P2 rule 2's "everything is at rest"). Export (P3 item 10) is no longer
+ *     mounted here — it moved to its own `INSPECTOR_SECTIONS` manifest entry
+ *     (`inspector/sections/ExportSection.tsx`), gated by its own `appliesTo`
+ *     rather than the bespoke `studioSession`/`activePageId` conditional this
+ *     file used to compute for it.
  *   - The one full-column notice for the genuine "nothing here is writable"
  *     case — role permission, or every reachable target locked.
  */
 
 import type { ReactNode } from 'react'
-import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule } from '@core/page-tree'
-import {
-  canWriteInlineStyleForModule,
-  isGeneratedClassLocked,
-  isStudioPageRootId,
-  styleRuleDisplayName,
-  styleRuleSelector,
-} from '@core/page-tree'
+import { canWriteInlineStyleForModule, isGeneratedClassLocked, styleRuleDisplayName } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
-import { ExportSection } from './ExportSection'
-import { ALL_CURATED_CSS_PROPERTIES } from './cssControlTypes'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
 import { WriteTargetRow, type WriteTargetChipInfo } from '@site/inspector/WriteTargetRow'
@@ -82,7 +76,7 @@ interface StyleSurfaceProps {
 
 export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: StyleSurfaceProps) {
   const model = useSelectionModel()
-  const { selectedNodeId: nodeId, selectedNode, assignedClassRules, writableClasses, inlineWritable, inlineLockReason, provenanceByProperty } = model
+  const { selectedNodeId: nodeId, selectedNode, assignedClassRules, writableClasses, inlineWritable, inlineLockReason } = model
 
   const permissions = useEditorPermissions()
   const canEditStyleHere = permissions.canEditStyle
@@ -98,17 +92,6 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
   const inlineModuleUnwritable =
     selectedNode?.moduleId !== undefined && !canWriteInlineStyleForModule(selectedNode.moduleId)
   const canToggleElement = canEditStyleHere && nodeId != null && !inlineModuleUnwritable
-
-  // Whether the active canvas page is a Studio-parsed page — gates the
-  // Export section the same way `SelectionModel`'s own internal
-  // `studioSession` gates class-write-lock resolution (duplicated on purpose:
-  // both are independently narrow selectors reading only a primitive boolean
-  // out of `s.site`, never `s.site` itself).
-  const studioSession = useEditorStore((s) => {
-    const page = selectActiveCanvasPage(s)
-    return page != null && isStudioPageRootId(page.rootNodeId)
-  })
-  const activePageId = useEditorStore((s) => s.activePageId)
 
   const writeTargetChips: WriteTargetChipInfo[] = writableClasses.map((entry) => ({
     key: entry.classId,
@@ -189,18 +172,6 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
                 <section.Component key={section.id} />
               ))}
           </>
-        )}
-
-        {nodeId != null && selectedNode != null && activePageId != null && studioSession && (
-          <ExportSection
-            key={nodeId}
-            nodeId={nodeId}
-            pageId={activePageId}
-            node={selectedNode}
-            properties={ALL_CURATED_CSS_PROPERTIES}
-            provenanceByProperty={provenanceByProperty}
-            classSelectors={assignedClassRules.map((rule) => styleRuleSelector(rule))}
-          />
         )}
       </div>
     </div>
