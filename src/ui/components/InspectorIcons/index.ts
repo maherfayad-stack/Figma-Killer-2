@@ -32,4 +32,5 @@ export {
   RotateIcon,
   FlipHorizontalIcon,
   FlipVerticalIcon,
+  UnlockedIcon,
 } from './InspectorIcons'

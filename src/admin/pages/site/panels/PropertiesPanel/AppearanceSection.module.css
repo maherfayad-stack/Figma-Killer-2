@@ -1,9 +1,9 @@
 /*
- * AppearanceSection — F10's single resting row: opacity beside corner
- * radius, an expand toggle for the four corners. Both cells split the row
- * evenly; `ExpandableFieldCluster` fills its own cell at 100% width whether
- * collapsed (one field) or expanded (a 2x2 grid), so the row's total height
- * only grows when the user actually asks for the four corners.
+ * AppearanceSection — the corner-radius remainder (`STATE.md` `panel-25`).
+ * Opacity/blend/visibility moved to `LayerSection`; this is temporary
+ * scaffolding until Measures (P3 item 3) claims radius and deletes this
+ * file outright. `ExpandableFieldCluster` fills the row at 100% width
+ * whether collapsed (one field) or expanded (a 2x2 grid).
  */
 
 .row {
@@ -11,11 +11,6 @@
     align-items: flex-start;
     gap: var(--inspector-field-gap);
     width: 100%;
-}
-
-.opacityCell {
-    flex: 1 1 0;
-    min-width: 0;
 }
 
 .radiusCell {

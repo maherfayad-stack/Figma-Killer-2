@@ -25,7 +25,7 @@ import { LayoutSection } from './LayoutSection'
 import { PositionSection } from './PositionSection'
 import { SizeSection } from './SizeSection'
 import { TypographySection } from './TypographySection'
-import { AppearanceSection, AppearanceSectionActions } from './AppearanceSection'
+import { AppearanceSection } from './AppearanceSection'
 import { FillSection, FillSectionActions } from './FillSection'
 import { EffectsSection, EffectsSectionActions } from './EffectsSection'
 import { AnimationsSection, AnimationsSectionActions } from './AnimationsSection'
@@ -349,11 +349,9 @@ function StyleSectionGroup({
     />
   )
 
-  // Appearance's header carries two extra icons ahead of the styles menu —
-  // the eye (F10's `visibility` toggle) and the droplet (F12's blend-mode
-  // menu). Both read/write the same `storedStyles`/`onChange` this group
-  // already has; see `AppearanceSection.tsx`'s doc for why they live in the
-  // header instead of the body.
+  // Appearance's header eye + droplet moved to `LayerSection` (`STATE.md`
+  // `panel-25`) — this section's header now carries only the generic styles
+  // menu, same as any other non-special-cased section.
   //  Effects' header carries the typed "+" menu (F20 — Drop shadow / Inner
   //  shadow / Layer blur / Background blur) rather than the generic reveal
   //  button, because adding an effect here means choosing a KIND, not just
@@ -388,12 +386,7 @@ function StyleSectionGroup({
   )
 
   const sectionActions =
-    section.id === APPEARANCE_SECTION_ID ? (
-      <>
-        <AppearanceSectionActions storedStyles={storedStyles} onChange={onChange} />
-        {stylesMenu}
-      </>
-    ) : section.id === EFFECTS_SECTION_ID ? (
+    section.id === EFFECTS_SECTION_ID ? (
       <>
         {effectsActions}
         {stylesMenu}
@@ -550,12 +543,9 @@ function StyleSectionGroup({
             key={activeTab}
             storedStyles={storedStyles}
             currentStyles={currentStyles}
-            activeTab={activeTab}
             onChange={onChange}
-            onRemove={onRemove}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
-            provenanceByProperty={provenanceByProperty}
           />
         ) : section.id === FILL_SECTION_ID ? (
           <FillSection

@@ -244,9 +244,22 @@
     --inspector-space-l: 10px;
     --inspector-space-xl: 12px;
 
-    --inspector-pad-x: 8px;
+    /* P3 (`STATE.md` `panel-25`) additive rhythm — Penpot's real two-value
+       row rhythm, measured in `docs/audits/penpot-inspector-baseline/`:
+       `4px` within a tightly-paired row, `16px` between row groups. The
+       9-step `--inspector-space-*` scale above stays untouched (46 files
+       still reference it) until the last old, not-yet-migrated section is
+       deleted — every NEW Penpot section built from here on uses ONLY
+       these two, never the old scale. */
+    --inspector-gap-tight: 4px;
+    --inspector-gap-group: 16px;
+
+    /* `--inspector-pad-x`/`--inspector-row-h`/`--inspector-field-radius`
+       corrected to Penpot's measured values (`04-token-gaps.md`) — pure
+       1:1 value fixes, not a restructuring. */
+    --inspector-pad-x: 12px;
     /* Field + icon-button height. Figma's inspector row. */
-    --inspector-row-h: 24px;
+    --inspector-row-h: 32px;
     --inspector-header-h: 32px;
     /* Gutter between two fields on the same row, and between caption groups. */
     --inspector-field-gap: 6px;
@@ -264,10 +277,26 @@
     /* Inspector fields are filled rectangles, not the admin's pill outline —
        the border only appears on hover/focus, so a column of unset fields
        reads as one quiet block instead of a ladder of outlines. */
-    --inspector-field-radius: 5px;
-    --inspector-field-bg: var(--overlay-5);
+    --inspector-field-radius: 8px;
+    /* Redefined off `--overlay-5` (`04-token-gaps.md`) — Penpot's field fill
+       is its own literal surface colour, not a translucent overlay wash. */
+    --inspector-field-bg: #212426;
     --inspector-field-bg-hover: var(--overlay-10);
     --inspector-divider: var(--overlay-10);
+    /* Penpot's two identity accents (`04-token-gaps.md`'s own proposal, not
+       this app's numbered `--accent-*` scale). Two SEPARATELY NAMED tokens,
+       not a dark/light pair of one token — Penpot itself measures a
+       different hue for the accent it draws on a dark field vs. a light
+       one, not a lightness-only swap of the same colour, so both are always
+       available regardless of the admin's own editor theme. A future
+       section that needs "the accent for a dark-surfaced control" reaches
+       for `-dark`; "for a light-surfaced control" reaches for `-light`. */
+    --inspector-accent-dark: #7efff5;
+    --inspector-accent-light: #6911d4;
+    /* Penpot's muted uppercase section-header label colour — distinct from
+       the admin's own `--text-subtle` (measured separately, `04-token-
+       gaps.md`). */
+    --inspector-section-label-color: #8f9da3;
 
     /* Scrollbars */
     --scrollbar-size: 6px;
@@ -682,6 +711,13 @@
     /* Bespoke surface tints */
     --plugins-hero-tint-a: rgba(142, 230, 200, 0.18);
     --plugins-hero-tint-b: rgba(155, 220, 255, 0.2);
+
+    /* Inspector — Penpot geometry pass (`STATE.md` `panel-25`). The identity
+       accents (`--inspector-accent-dark`/`-light`) are NOT theme-conditional
+       — see their own `:root` comment — so only the two genuinely
+       theme-varying tokens are redefined here. */
+    --inspector-field-bg: #f3f4f6;
+    --inspector-section-label-color: #495e74;
 }
 
 /* Reduced motion support — Constraint from UX Guideline #189 */
