@@ -128,15 +128,15 @@ import { buildClassChain } from '../../panels/PropertiesPanel/stylePropertyProve
 import { readString, plainString } from '../../panels/PropertiesPanel/styleValueUtils'
 import { resolveStyleFieldDisplay } from '../../panels/PropertiesPanel/styleFieldDisplay'
 import { DropdownSwitcher } from '../../panels/PropertiesPanel/DropdownSwitcher'
-import { ScrubTokenField } from '../../panels/PropertiesPanel/LayoutSection/ScrubTokenField'
+import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
 import { PositionConstraints } from '../../panels/PropertiesPanel/PositionConstraints'
 import { RotationRow } from '../../panels/PropertiesPanel/RotationRow'
 import { ZIndexSettingsRow } from '../../panels/PropertiesPanel/ZIndexSettingsRow'
 import { SizeSection } from '../../panels/PropertiesPanel/SizeSection'
 import { useSizingParentLayout } from '../../panels/PropertiesPanel/useSizingParentLayout'
-import { resolveLayoutMode } from '../../panels/PropertiesPanel/LayoutSection/layoutMode'
+import { resolveLayoutMode } from './LayoutSection/layoutMode'
 import { RadiusCluster } from './RadiusCluster'
-import layoutStyles from '../../panels/PropertiesPanel/LayoutSection.module.css'
+import layoutStyles from '../../panels/PropertiesPanel/PropertyControlChrome.module.css'
 import styles from './MeasuresSection.module.css'
 
 const STYLE_KEY_PREFIX = styleValueKey('')

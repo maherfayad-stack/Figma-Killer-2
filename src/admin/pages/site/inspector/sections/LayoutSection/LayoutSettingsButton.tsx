@@ -2,23 +2,26 @@
  * LayoutSettingsButton — the layout ⚙ (docs/features/inspector-disclosure.md
  * §4 G3, F5/F8's "Layout settings" popover).
  *
- * RESIDENT, regardless of `display` — mounted once by `LayoutSection.tsx`
- * inside the always-present `ClipContentRow` row, never inside the flex/grid
- * block. This is the corrected shape after a review caught the first version
- * anchoring this trigger next to the gap field, which only exists inside the
- * flex/grid block: that made `alignSelf` / `justifySelf` / `flex` /
- * `gridColumn` / `gridRow` unreachable on the single most common node in any
- * real project — a plain `<div>` whose PARENT is a flex/grid container, but
- * whose OWN `display` is not. Those five are item-level properties governed
- * by the PARENT's display, which a class-style editor cannot observe, so the
- * pre-existing fallback grid rendered them unconditionally for exactly that
- * reason (see `LayoutSection.tsx`'s git history / `FALLBACK_PROPS`) — this
- * component restores that guarantee while keeping the popover disclosure.
+ * RESIDENT, regardless of `display` — mounted once by the new Penpot Layout
+ * section (`inspector/sections/LayoutSection.tsx`, `STATE.md` `panel-25`,
+ * P3 item 4) inside its always-present `ClipContentRow` row, never inside
+ * the flex/grid block. `flex` / `gridColumn` / `gridRow` are item-level
+ * properties governed by the PARENT's display, which a class-style editor
+ * cannot observe, so they must stay reachable regardless of THIS element's
+ * own `display` — the same reasoning that originally motivated this
+ * component's resident placement.
+ *
+ * `alignSelf` / `justifySelf` used to live here too, but P3's Align section
+ * (`inspector/sections/AlignSection.tsx`, item 2) now owns them exclusively
+ * as a dedicated align/distribute row with its own code-lock handling —
+ * keeping a second live control for the same two properties here would be
+ * exactly the "two components racing to write the same property" hazard
+ * `LayerSection.tsx`'s own doc warns about, so they were dropped from this
+ * popover in that migration, not merely duplicated.
  *
  * Property buckets:
- *   - ALWAYS shown, any `display`: `alignSelf`, `justifySelf`, `flex`,
- *     `gridColumn`, `gridRow` — item-level, the parent decides whether they
- *     do anything.
+ *   - ALWAYS shown, any `display`: `flex`, `gridColumn`, `gridRow` —
+ *     item-level, the parent decides whether they do anything.
  *   - Shown only when THIS element is a flex container (`display: flex`):
  *     `flexWrap` — reachable nowhere else once `WrapToggleButton` collapses
  *     the resident control to a plain on/off toggle; this is the only way
@@ -41,17 +44,11 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
-import { StackedPropertyGrid, type StackedGridEntry } from '../StackedPropertyGrid'
-import { hasStyleValue } from '../styleValueUtils'
+import { StackedPropertyGrid, type StackedGridEntry } from '../../../panels/PropertiesPanel/StackedPropertyGrid'
+import { hasStyleValue } from '../../../panels/PropertiesPanel/styleValueUtils'
 
 /** Item-level — depend on the PARENT's display, always reachable regardless of this element's own `display`. */
-const ALWAYS_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
-  'alignSelf',
-  'justifySelf',
-  'flex',
-  'gridColumn',
-  'gridRow',
-]
+const ALWAYS_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = ['flex', 'gridColumn', 'gridRow']
 
 interface LayoutSettingsButtonProps {
   /** This element's own `display` — used only to decide which CONTAINER-level rows to add; the item-level rows above are unconditional. */
@@ -86,11 +83,7 @@ export function LayoutSettingsButton({
   if (isContainer) properties.push('rowGap', 'columnGap')
   if (isFlexContainer) properties.push('flexWrap')
 
-  const spec: StackedGridEntry[] = [
-    ['alignSelf', 'justifySelf'],
-    'flex',
-    ['gridColumn', 'gridRow'],
-  ]
+  const spec: StackedGridEntry[] = ['flex', ['gridColumn', 'gridRow']]
   if (isContainer) spec.push(['rowGap', 'columnGap'])
   if (isFlexContainer) spec.push('flexWrap')
 

@@ -37,7 +37,7 @@ import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
-import { getEnumOptions } from '../cssControlTypes'
+import { getEnumOptions } from '../../../panels/PropertiesPanel/cssControlTypes'
 import type { LayoutMode } from './layoutMode'
 import styles from './LayoutModeRow.module.css'
 

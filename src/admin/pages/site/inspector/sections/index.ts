@@ -14,10 +14,10 @@
  * Interaction/Effects/Animations/Border) out into independently-manifested
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
  * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
- * 2), and `measures` (item 3 — W/H/X/Y/rotation/radius/Hug-Fill/Constraints-
- * vs-Flex-element) are the first three migrated; `styles` is what remains of
- * the old registry until the next section peels off — its `order` is bumped
- * down each time so `order` always reflects the CURRENT Penpot sequence.
+ * 2), `measures` (item 3), and `layout` (item 4) are migrated; `styles` is
+ * what remains of the old registry until the next section peels off — its
+ * `order` is bumped down each time so `order` always reflects the CURRENT
+ * Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -25,6 +25,7 @@ import { AlignSection } from './AlignSection'
 import { StyleSectionsComposer } from './StyleSectionsComposer'
 import { LayerSection } from './LayerSection'
 import { MeasuresSection } from './MeasuresSection'
+import { LayoutSection } from './LayoutSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -43,5 +44,11 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // Measures (P3 item 3) — W/H/X/Y, rotation, radius, Hug/Fill, Constraints
   // vs. FLEX ELEMENT face. See MeasuresSection.tsx's own doc header.
   { id: 'measures', order: 2, appliesTo: (m) => m.selectedNode != null, Component: MeasuresSection },
-  { id: 'styles', order: 3, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Layout (P3 item 4) — the flex/grid CONTAINER's own settings. Rendered
+  // for every selected node (Fill/Stroke-style residency, per the P0
+  // f1-rectangle screenshot's own collapsed-empty "LAYOUT +" row) — see
+  // LayoutSection.tsx's own doc for why this section never fully hides its
+  // body once mounted, unlike Penpot's literal empty convention.
+  { id: 'layout', order: 3, appliesTo: (m) => m.selectedNode != null, Component: LayoutSection },
+  { id: 'styles', order: 4, appliesTo: () => true, Component: StyleSectionsComposer },
 ]

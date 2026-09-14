@@ -29,9 +29,9 @@ import { Button } from '@ui/components/Button'
 import { Checkbox } from '@ui/components/Checkbox'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
-import { StackedPropertyGrid } from '../StackedPropertyGrid'
-import { hasStyleValue, readString } from '../styleValueUtils'
-import styles from '../LayoutSection.module.css'
+import { StackedPropertyGrid } from '../../../panels/PropertiesPanel/StackedPropertyGrid'
+import { hasStyleValue, readString } from '../../../panels/PropertiesPanel/styleValueUtils'
+import styles from '../../../panels/PropertiesPanel/PropertyControlChrome.module.css'
 
 const OVERFLOW_AXES_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = ['overflowX', 'overflowY']
 

@@ -20,8 +20,6 @@
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { hasStyleValue } from './styleValueUtils'
-import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
-import { RulerDimensionSolidIcon } from 'pixel-art-icons/icons/ruler-dimension-solid'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
@@ -49,13 +47,13 @@ export interface ClassStyleSectionDefinition {
    * line with a "+", not its full property grid. `StyleSectionGroup` in
    * `StyleSectionsEditor.tsx` is what reads this flag.
    *
-   * Left unset on `layout` and `spacing` — Figma's always-present blocks
-   * (F1, F3, F10) — which keep their controls resident even at rest.
-   * (`position`/`size`/`appearance` used to be in this same "always
-   * resident" group; both migrated out to `MeasuresSection.tsx` — `STATE.md`
-   * `panel-25`, P3 item 3 — which has no `collapsedWhenEmpty` concept of its
-   * own at all, matching Penpot's own W/H/X/Y/rotation/radius block, which
-   * is never collapsible.)
+   * `layout`/`spacing`/`position`/`size`/`appearance` used to be in this
+   * same "always resident" group; all five migrated out to their own
+   * `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/`AlignSection`/
+   * `MeasuresSection`/`LayoutSection.tsx` — `STATE.md` `panel-25`, P3 items
+   * 1-4), none of which has a `collapsedWhenEmpty` concept of its own at
+   * all — see `LayoutSection.tsx`'s own doc for why it stays always-open
+   * rather than adopting Penpot's literal collapsed-empty "+" convention.
    */
   collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
@@ -63,12 +61,13 @@ export interface ClassStyleSectionDefinition {
 
 // ---------------------------------------------------------------------------
 // Section order — this registry is what remains of the pre-P3 (`STATE.md`
-// `panel-25`) Figma-shaped section list once Layer/Align/Measures migrate
-// out to their own `INSPECTOR_SECTIONS` manifest entries (`sections/index.ts`).
-// The Layout → Spacing → Fill → Stroke → Effects → Typography → Animations →
-// Interaction order below is what's left of docs/features/inspector-disclosure.md
-// §4 G5's original Position → Size → Auto layout → Spacing → Appearance →
-// Fill → Stroke → Effects → Typography → Animations → Interaction sequence.
+// `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout
+// migrate out to their own `INSPECTOR_SECTIONS` manifest entries
+// (`sections/index.ts`). The Fill → Stroke → Effects → Typography →
+// Animations → Interaction order below is what's left of
+// docs/features/inspector-disclosure.md §4 G5's original Position → Size →
+// Auto layout → Spacing → Appearance → Fill → Stroke → Effects →
+// Typography → Animations → Interaction sequence.
 // The last two (Animations/Interaction) are Studio's own additions — Figma
 // has no CSS-cursor/pointer-events concept, and its motion lives in
 // prototyping rather than in the style panel at all — so both stay at the
@@ -124,56 +123,46 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   'borderTopRightRadius',
   'borderBottomRightRadius',
   'borderBottomLeftRadius',
+  // Layout (P3 item 4) — src/admin/pages/site/inspector/sections/LayoutSection.tsx.
+  // Absorbs the old `layout` + `spacing` entries wholesale, unioned here in
+  // one step, same pattern Measures established for `position`/`size`/
+  // `appearance`. `alignSelf`/`justifySelf` are credited to Align (item 2,
+  // `AlignSection.tsx`), which claimed sole ownership of them once Layout's
+  // own `LayoutSettingsButton` dropped its (now-duplicate) copy — see that
+  // file's own doc for why. `gap` stays claimed even though no resident
+  // Layout field writes it directly anymore (superseded by the `rowGap`/
+  // `columnGap` split, `GapRow.tsx`'s own doc) — a value set from raw source
+  // must still read as curated, not leak into Custom Properties.
+  'display',
+  'flexDirection',
+  'flexWrap',
+  'alignItems',
+  'justifyContent',
+  'justifyItems',
+  'alignSelf',
+  'justifySelf',
+  'flex',
+  'gap',
+  'rowGap',
+  'columnGap',
+  'gridTemplateColumns',
+  'gridTemplateRows',
+  'gridColumn',
+  'gridRow',
+  'overflow',
+  'overflowX',
+  'overflowY',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+  'marginTop',
+  'marginRight',
+  'marginBottom',
+  'marginLeft',
 ]
 
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    id: 'layout',
-    title: 'Layout',
-    icon: LayoutSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'display',
-      'flexDirection',
-      'flexWrap',
-      'alignItems',
-      'justifyContent',
-      'justifyItems',
-      'alignSelf',
-      'justifySelf',
-      'flex',
-      'gap',
-      'rowGap',
-      'columnGap',
-      'gridTemplateColumns',
-      'gridTemplateRows',
-      'gridColumn',
-      'gridRow',
-      'overflow',
-      'overflowX',
-      'overflowY',
-      // Padding lives in the Layout cluster now (G4 / Figma F4): it is a
-      // layout property of a container. Margin stays in Spacing, because it
-      // is a relationship with siblings rather than a property of this box.
-      'paddingTop',
-      'paddingRight',
-      'paddingBottom',
-      'paddingLeft',
-    ],
-  },
-  {
-    id: 'spacing',
-    title: 'Spacing',
-    icon: RulerDimensionSolidIcon,
-    defaultOpen: true,
-    collapsedWhenEmpty: true,
-    properties: [
-      'marginTop',
-      'marginRight',
-      'marginBottom',
-      'marginLeft',
-    ],
-  },
   {
     id: 'fill',
     title: 'Fill',

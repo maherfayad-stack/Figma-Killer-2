@@ -13,8 +13,8 @@
  */
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
-import { isMixedStyleValue, plainString, readString } from '../styleValueUtils'
-import { resolveStyleFieldDisplay } from '../styleFieldDisplay'
+import { isMixedStyleValue, plainString, readString } from '../../../panels/PropertiesPanel/styleValueUtils'
+import { resolveStyleFieldDisplay } from '../../../panels/PropertiesPanel/styleFieldDisplay'
 import { ScrubTokenField } from './ScrubTokenField'
 
 interface LinkedAxisFieldProps {

@@ -18,10 +18,8 @@ import { ClassPropertyRow } from './ClassPropertyRow'
 import { Section } from '@ui/components/Section'
 import { Button } from '@ui/components/Button'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
-import { SpacingSection } from './SpacingBoxControl/SpacingSection'
 import { StrokeSection } from './StrokeSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
-import { LayoutSection } from './LayoutSection'
 import { TypographySection } from './TypographySection'
 import { FillSection, FillSectionActions } from './FillSection'
 import { EffectsSection, EffectsSectionActions } from './EffectsSection'
@@ -39,8 +37,6 @@ import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StyleRuleComposer.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
 
-const SPACING_SECTION_ID = 'spacing'
-const LAYOUT_SECTION_ID = 'layout'
 const TYPOGRAPHY_SECTION_ID = 'typography'
 const FILL_SECTION_ID = 'fill'
 const INTERACTION_SECTION_ID = 'interaction'
@@ -456,31 +452,7 @@ function StyleSectionGroup({
       actions={sectionActions}
     >
       <div className={sectionStyles.sectionBody}>
-        {section.id === SPACING_SECTION_ID ? (
-          <SpacingSection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            onChange={onChange}
-            onRemove={onRemove}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-          />
-        ) : section.id === LAYOUT_SECTION_ID ? (
-          <LayoutSection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            activeTab={activeTab}
-            onChange={onChange}
-            onRemove={onRemove}
-            onClearProperty={onClearProperty}
-            onClearProperties={onClearProperties}
-            onChangeMany={onChangeMany}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-          />
-        ) : section.id === TYPOGRAPHY_SECTION_ID ? (
+        {section.id === TYPOGRAPHY_SECTION_ID ? (
           <TypographySection
             key={activeTab}
             storedStyles={storedStyles}

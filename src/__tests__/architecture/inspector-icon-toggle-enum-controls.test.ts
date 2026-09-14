@@ -37,14 +37,21 @@
  * this gate also confirms all seven are still owned by exactly the section
  * whose file this test reasons about, so a future re-registration can't
  * silently move one of them to a section this gate doesn't know to check.
+ * (`LayoutSection` migrated to `inspector/sections/LayoutSection.tsx`,
+ * `STATE.md` `panel-25` P3 item 4 — `flexDirection`/`justifyContent`/
+ * `alignItems`/`flexWrap` now live in `classStyleSections.ts`'s
+ * `MIGRATED_SECTION_PROPERTIES` export rather than a `CLASS_STYLE_SECTIONS`
+ * entry, but the same string-literal check below still holds since that
+ * export lives in the same file.)
  */
 
 import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
-const PANEL_ROOT = join(import.meta.dir, '../../admin/pages/site/panels/PropertiesPanel')
-const LAYOUT_SECTION_FILE = join(PANEL_ROOT, 'LayoutSection/LayoutSection.tsx')
+const SITE_ROOT = join(import.meta.dir, '../../admin/pages/site')
+const PANEL_ROOT = join(SITE_ROOT, 'panels/PropertiesPanel')
+const LAYOUT_SECTION_FILE = join(SITE_ROOT, 'inspector/sections/LayoutSection.tsx')
 const CLASS_PROPERTY_ROW_FILE = join(PANEL_ROOT, 'ClassPropertyRow.tsx')
 const CSS_PROPERTY_ICONS_FILE = join(PANEL_ROOT, 'cssPropertyIcons.ts')
 const CLASS_STYLE_SECTIONS_FILE = join(PANEL_ROOT, 'classStyleSections.ts')
