@@ -15,10 +15,10 @@
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
  * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
  * 2), `measures` (item 3), `layout` (item 4), `fill` (item 5), `stroke`
- * (item 6), `shadow` (item 7), `blur` (item 8), and `text` (item 9) are
- * migrated; `styles` is what remains of the old registry until the next
- * section peels off — its `order` is bumped down each time so `order`
- * always reflects the CURRENT Penpot sequence.
+ * (item 6), `shadow` (item 7), `blur` (item 8), `text` (item 9), and
+ * `export` (item 10) are migrated; `styles` is what remains of the old
+ * registry until the next section peels off — its `order` is bumped down
+ * each time so `order` always reflects the CURRENT Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -33,6 +33,7 @@ import { StrokeSection } from './StrokeSection'
 import { ShadowSection } from './ShadowSection'
 import { BlurSection } from './BlurSection'
 import { TextSection } from './TextSection'
+import { ExportSection } from './ExportSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -87,5 +88,16 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // `isTextNode` (`styleSectionOrder.ts`, reused not duplicated) — since
   // Text only means something on a text-capable node.
   { id: 'text', order: 8, appliesTo: (m) => m.selectedNode != null && isTextNode(m.selectedNode), Component: TextSection },
-  { id: 'styles', order: 9, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Export (P3 item 10) — PNG/SVG of a node, Copy CSS, Copy JSX. Node-level,
+  // not a set of CSS properties, so unlike every other entry here it never
+  // wrote to `classStyleSections.ts` in the first place (see
+  // `ExportSection.tsx`'s own doc for why) — this migration only moves its
+  // MOUNT, from a bespoke conditional at the bottom of `StyleSurface.tsx`
+  // into this manifest, gated the same way every other entry now is
+  // (`appliesTo`, and the shared `canEditStyleHere`/`nothingWritable` gate
+  // `StyleSurface.tsx` still applies around this whole array — a disclosed
+  // behaviour change from the pre-migration mount, which rendered
+  // unconditionally; see `STATE.md` `panel-25`'s Section 10 entry).
+  { id: 'export', order: 9, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
+  { id: 'styles', order: 10, appliesTo: () => true, Component: StyleSectionsComposer },
 ]
