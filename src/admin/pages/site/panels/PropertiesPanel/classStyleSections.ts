@@ -75,6 +75,29 @@ export interface ClassStyleSectionDefinition {
 // at once, deliberately, since they're meant to stay in lockstep.
 // ---------------------------------------------------------------------------
 
+/**
+ * Properties claimed by a P3 (`STATE.md` `panel-25`) manifest section that
+ * has migrated OUT of this legacy registry entirely — not folded into any
+ * `ClassStyleSectionDefinition` here, because `StyleSectionsEditor`'s
+ * generic per-property fallback (its final `section.properties.map(...)`
+ * branch) would then render a SECOND, uncoordinated copy of the same
+ * property next to the new section's own control — exactly the "two
+ * components racing to write opacity" hazard Layer's own design flags.
+ *
+ * `isCuratedProperty`/`ALL_CURATED_CSS_PROPERTIES` (`cssControlTypes.ts`)
+ * still need these keys "claimed" — so they stay out of the generic Custom
+ * Properties editor, and so `useFrameComputedStyleValues` still fetches
+ * their real computed value for the new section's own prefill — so they are
+ * unioned in there, without ever being iterated by
+ * `getVisibleStyleSections`/`getClassStyleSectionSetCounts`.
+ */
+export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
+  // Layer (P3 item 1) — src/admin/pages/site/inspector/sections/LayerSection.tsx
+  'opacity',
+  'mixBlendMode',
+  'visibility',
+]
+
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
   {
     id: 'position',
@@ -160,18 +183,20 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     ],
   },
   {
+    // `opacity`/`mixBlendMode`/`visibility` moved to the new `LayerSection`
+    // manifest entry (`STATE.md` `panel-25`, P3 item 1) — this entry is now
+    // radius-only, a deliberate temporary remainder until Measures (P3 item
+    // 3) claims radius too and this whole entry (and `AppearanceSection.tsx`)
+    // is deleted. See `AppearanceSection.tsx`'s own doc.
     id: 'appearance',
     title: 'Appearance',
     icon: CornerRadiusIcon,
     defaultOpen: true,
     properties: [
-      'opacity',
       'borderTopLeftRadius',
       'borderTopRightRadius',
       'borderBottomRightRadius',
       'borderBottomLeftRadius',
-      'visibility',
-      'mixBlendMode',
     ],
   },
   {
