@@ -23,14 +23,33 @@
  * own scaffold, not a page the user designed, and the parser never produces a
  * tree node at any position inside them.
  *
- * `apply: 'serve'` — this plugin never runs during `vite build`. "Download
- * the code" and any project-level `npm run build` both go through `vite
- * build`, and the shipped output has to stay clean HTML/CSS/TS with no
- * Studio-only markup baked in (`CLAUDE.md`'s publishing rule). `data-node-id`
- * is a live-editing aid, not something that belongs in code a user hands to
- * someone else. This is also why `playerTemplate.ts`'s exported-app link
- * resolution still has to use `indexPath` rather than a node id — the
- * downloaded app genuinely has none, by design, not by omission.
+ * `apply: 'serve'` on the ID-STAMP HALF ONLY — that half never runs during
+ * `vite build`. "Download the code" and any project-level `npm run build`
+ * both go through `vite build`, and the shipped output has to stay clean
+ * HTML/CSS/TS with no Studio-only markup baked in (`CLAUDE.md`'s publishing
+ * rule). `data-node-id` is a live-editing aid, not something that belongs in
+ * code a user hands to someone else. This is also why `playerTemplate.ts`'s
+ * exported-app link resolution still has to use `indexPath` rather than a
+ * node id — the downloaded app genuinely has none, by design, not by
+ * omission.
+ *
+ * ## Two plugin objects, not one
+ *
+ * `studioRuntimeIdPlugin()` returns `Plugin[]` — Vite/Rollup flattens one
+ * level of nested arrays wherever a `plugins: [...]` config lists a
+ * `PluginOption`, so `plugins: [react(), studioRuntimeIdPlugin()]` needs no
+ * edit to keep working. The two objects exist because `apply: 'serve'` is a
+ * PLUGIN-level field in this installed Vite (confirmed against
+ * `node_modules/vite/dist/node/index.d.ts`'s own `Plugin`/`ObjectHook`
+ * types — there is no per-hook `apply`), and it disables `resolveId`/`load`
+ * along with `transform`, not just `transform`. `main.jsx` imports
+ * `virtual:studio-runtime` UNCONDITIONALLY (`createStudioRuntimeBridge`'s
+ * boot gate needs it every time, including a plain `npm run build`, where it
+ * resolves to inert `{ parentOrigin: null, projectKey: 'unknown' }` data) —
+ * so the half that resolves/loads that virtual module (`runtimeConfigPlugin`)
+ * must run at build time too, while the half that stamps `data-node-id`
+ * (`idStampPlugin`) must not. One `apply: 'serve'`-scoped plugin object
+ * cannot do both.
  */
 import { relative, sep } from 'node:path'
 import type { Plugin } from 'vite'
@@ -61,19 +80,44 @@ function isExcludedPath(relPath: string): boolean {
 }
 
 /**
- * The Vite plugin the shell scaffolds into every workspace's `vite.config.js`
+ * The Vite plugins the shell scaffolds into every workspace's `vite.config.js`
  * (as the always-regenerated bundle `prototype/studioRuntime.generated.js` —
  * see `server/handlers/studio/prototypeShell/`).
  *
  * `nodeIdAttr` is exposed as an option (default `data-node-id`, `idStamp.ts`'s
  * own constant) purely so a test can inject a distinct value without touching
  * a module-level constant; every real caller uses the default.
+ *
+ * Returns two plugin objects (see file header for why one cannot do both):
+ * a config-resolver that is unconditional (works at `vite build` time too)
+ * and the id-stamper that stays `apply: 'serve'`-only.
  */
-export function studioRuntimeIdPlugin(options?: { nodeIdAttr?: string }): Plugin {
+export function studioRuntimeIdPlugin(options?: { nodeIdAttr?: string }): Plugin[] {
   const nodeIdAttr = options?.nodeIdAttr ?? 'data-node-id'
   let root = process.cwd()
 
-  return {
+  const runtimeConfigPlugin: Plugin = {
+    name: 'studio-runtime-config',
+    // Deliberately NO `apply` restriction — main.jsx imports
+    // `virtual:studio-runtime` unconditionally, so this half must resolve
+    // during `vite build` too (Download the code / preview deploys), not
+    // only `vite dev`. Always safe: outside a dev server `devServer.ts`
+    // itself spawned, `STUDIO_PARENT_ORIGIN_ENV`/`STUDIO_PROJECT_KEY_ENV`
+    // are simply unset, so a build always resolves to
+    // `{ parentOrigin: null, projectKey: 'unknown' }` — inert data.
+    resolveId(id) {
+      if (id === VIRTUAL_MODULE_ID) return RESOLVED_VIRTUAL_MODULE_ID
+      return undefined
+    },
+
+    load(id) {
+      if (id !== RESOLVED_VIRTUAL_MODULE_ID) return undefined
+      const config = readStudioRuntimeConfigFromEnv(process.env, nodeIdAttr)
+      return `export const STUDIO_RUNTIME_CONFIG = ${JSON.stringify(config)}\n`
+    },
+  }
+
+  const idStampPlugin: Plugin = {
     name: 'studio-runtime-id-plugin',
     // Runs before Vite's own esbuild JSX/TS transform, so it sees the
     // author's original TSX/JSX text — not already-compiled JS with no JSX
@@ -85,17 +129,6 @@ export function studioRuntimeIdPlugin(options?: { nodeIdAttr?: string }): Plugin
 
     configResolved(config) {
       root = config.root
-    },
-
-    resolveId(id) {
-      if (id === VIRTUAL_MODULE_ID) return RESOLVED_VIRTUAL_MODULE_ID
-      return undefined
-    },
-
-    load(id) {
-      if (id !== RESOLVED_VIRTUAL_MODULE_ID) return undefined
-      const config = readStudioRuntimeConfigFromEnv(process.env, nodeIdAttr)
-      return `export const STUDIO_RUNTIME_CONFIG = ${JSON.stringify(config)}\n`
     },
 
     transform(code, id) {
@@ -114,6 +147,8 @@ export function studioRuntimeIdPlugin(options?: { nodeIdAttr?: string }): Plugin
       return { code: result.code, map: null }
     },
   }
+
+  return [runtimeConfigPlugin, idStampPlugin]
 }
 
 export { VIRTUAL_MODULE_ID, STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV }

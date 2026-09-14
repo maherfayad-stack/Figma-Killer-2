@@ -147,6 +147,13 @@ untouched config picks it up on next open; an edited one is documented).
   fixture corpus with ts-morph and with the plugin and asserts identical id
   sets (`src/__tests__/studio-runtime/idParity.test.ts`).
 - Injects `virtual:studio-runtime` into the entry so L4 boots with the app.
+  **`studioRuntimeIdPlugin()` returns two plugin objects, not one** (`live-08`,
+  STATE.md): `apply: 'serve'` is a plugin-level, not per-hook, field in Vite,
+  and the generated `main.jsx` (piece E below) imports `virtual:studio-runtime`
+  **unconditionally**, including at `vite build` time (Download the code,
+  preview deploys) — so the config-resolving half (`resolveId`/`load`) runs
+  unrestricted, while the id-stamping half (`transform`) stays
+  `apply: 'serve'`-only, exactly as before the split.
 - **Two id shapes need a resolver, not a hack.** Inlined components: the parser
   mints composite `callSite~component` ids, the DOM carries the component's own
   `components/X.tsx:l:c`. `.map` rows: the DOM repeats one id, the parser mints
@@ -181,6 +188,31 @@ never remount (CSS module HMR is a stylesheet swap); component edits keep hook
 state through Fast Refresh. What still resets: state a component derives from a
 fetch or a timer. Documented, not hidden.
 
+**Boot wiring closed (`live-08`, STATE.md).** `runtime.ts` existed, tested and
+security-reviewed since `live-04`/`sec-06`, but nothing in the generated shell
+ever called `createStudioRuntimeBridge` — a real bridge iframe loaded a real
+Tier-2 screen but never reached `ready`. Closed by: (1) `runtime.ts` bundled
+into a workspace-shippable artifact
+(`src/core/studio-runtime/generated/runtimeBridgeBundle.ts`, same treatment
+`vitePlugin.ts` already had, both produced by
+`scripts/sync-studio-runtime.ts`) and shipped as the always-rewritten
+`prototype/studioRuntimeBridge.generated.js`
+(`runtimeBridgeShellFile.ts`); (2) the generated `main.jsx` importing it and
+constructing the bridge gated on **both**
+`STUDIO_RUNTIME_CONFIG.parentOrigin` (from `virtual:studio-runtime`, L3) and
+`window.parent !== window` — neither signal alone is enough: a supervised
+dev server opened directly in a bare tab must not boot a bridge with nothing
+to talk to, and a config value alone says nothing about whether this document
+is actually embedded; (3) `server/handlers/studio/devServer.ts`'s
+`spawnEntry` actually injecting `STUDIO_PROJECT_KEY_ENV`/
+`STUDIO_PARENT_ORIGIN_ENV` into the spawned subprocess — before this fix
+`virtual:studio-runtime` always resolved `parentOrigin: null`, independent of
+everything else. `projectKey` is derived from `registeredMcpServerProjectKey(dir)`
+(the ORIGINAL project dir, not a monorepo's narrowed `appRoot`) — the same key
+`/p/<projectKey>/` routing already uses — and `parentOrigin` from
+`resolvePublicOrigins(process.env)[0]`, the same source
+`liveOriginSecurityHeaders`'s CSP already derives `PUBLIC_ORIGIN` from.
+
 ### L5 — `FrameDocumentAdapter` (L, run alone) · `canvas-engineer`
 
 The refactor everything else waits on. 39 files under
@@ -212,14 +244,48 @@ interface FrameDocumentAdapter {
 
 No other canvas work runs in parallel with L5.
 
-### L6 — Per-screen routes in the shell (S) · `server-engineer`
+### L6 — Per-screen routes in the shell (S) · `server-engineer` — done (`live-06`, STATE.md)
 
 `prototype/App.jsx` (generated, hash-tracked) serves
 `/__screen/<key>?dir=&theme=&lang=` for every entry in
-`registry.generated.jsx`, rendering that screen inside `ScreenFrame` with the
-project's providers (`providers.generated.jsx`). This is what makes *every*
-page addressable in the real runtime — the problem `referenceRender.ts`
-documents as "route, not pageId" — and it costs nothing at download time.
+`registry.generated.jsx`. **Shipped shape differs from the line above on
+purpose:** the routed screen renders `screen.Component` directly at the top
+level of the document, NOT nested inside `ScreenFrame` — `ScreenFrame` is a
+second, separate `<iframe>`, and nesting one here would put the screen's real
+DOM (and its `data-node-id` stamps) inside a document `virtual:studio-runtime`
+(injected once, at the top of this same page) can never see or measure,
+silently breaking selection/overlay for every live frame. The outer element
+already sizing this document — Studio's own canvas bridge iframe in Studio's
+case, or the bare browser window when hit directly — already IS the device
+viewport, so there is no second CSS-isolation problem left for a nested
+iframe to solve. Only `ScreenFrame`'s `RESET` CSS (scrollbar-hiding, margin
+reset) is reused, imported directly.
+
+Reaching this route through Studio's own live-origin proxy
+(`<LIVE_ORIGIN>/p/<projectKey>/__screen/<key>`) needed a second, unrelated fix
+discovered while verifying the route was reachable at all: the proxy
+(`server/liveOrigin.ts`, L2) was stripping the `/p/<projectKey>` prefix before
+forwarding, while the spawned dev server's own `vite.config.js` set no `base`
+— so the FIRST HTML response proxied correctly, but every asset URL it
+referenced (`/prototype/main.jsx`, `/@vite/client`, HMR) resolved against the
+live origin's ROOT and 404'd. Fixed by giving the dev server a matching
+`base: '/p/<projectKey>/'` (`server/handlers/studio/devServer.ts`'s
+`STUDIO_LIVE_BASE_PATH` env var) and forwarding the FULL, un-stripped
+pathname through the proxy instead of stripping it — this broke every page
+proxied through the live origin, not just this route, since nothing had
+exercised a live frame through the proxy before this work order.
+
+Dogfooding this fix against a real spawned Vite dev server and a real browser
+(not just unit tests) surfaced a second, more serious bug: closing the
+proxy's OUTBOUND WebSocket to the dev server on ordinary browser
+disconnect/navigation crashed the ENTIRE dev server process (an unhandled
+`ECONNRESET` in Vite's own `ws`-based HMR server, from Bun's WebSocket
+*client* `.close()` not performing a graceful closing handshake against it —
+confirmed independent of close code/timing, and confirmed NOT to happen when
+a real browser talks to Vite directly with no proxy in the loop). Fixed by no
+longer explicitly closing that connection on browser disconnect — see
+`server/liveOrigin.ts`'s `close(ws)` handler for the full account and the
+accepted resource-lingering tradeoff.
 
 ### L7 — Save → HMR loop (S/M) · `store-engineer`
 

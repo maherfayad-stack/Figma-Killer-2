@@ -30,6 +30,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseBoardsFile, type Board, type BoardsFile } from '@core/studio-board'
 import { boardsFilePath } from '../boardFrames'
+import { runtimeBridgeShellFile } from './runtimeBridgeShellFile'
 import { PROTOTYPE_SHELL_DIR, type ShellFile } from './shellPaths'
 import { studioRuntimeShellFile } from './studioRuntimeShellFile'
 
@@ -280,17 +281,19 @@ export function renderProvidersFile(input: ShellRegistryInput): string {
 
 /**
  * Every always-rewritten generated file, ready to write: this module's own
- * two (the workspace-derived registry + providers) plus L3's
- * `studioRuntime.generated.js` (`studioRuntimeShellFile.ts`) — workspace-
- * independent, but always-rewritten for the same reason: a fix has to reach
- * an already-scaffolded project without depending on `vite.config.js` still
- * being untouched.
+ * two (the workspace-derived registry + providers) plus L3/L4's
+ * `studioRuntime.generated.js` (`studioRuntimeShellFile.ts`) and
+ * `studioRuntimeBridge.generated.js` (`runtimeBridgeShellFile.ts`) —
+ * workspace-independent, but always-rewritten for the same reason: a fix has
+ * to reach an already-scaffolded project without depending on
+ * `vite.config.js`/`main.jsx` still being untouched.
  */
 export function generatedShellFiles(input: ShellRegistryInput): ShellFile[] {
   return [
     { relPath: `${PROTOTYPE_SHELL_DIR}/registry.generated.jsx`, contents: renderRegistryFile(input) },
     { relPath: `${PROTOTYPE_SHELL_DIR}/providers.generated.jsx`, contents: renderProvidersFile(input) },
     studioRuntimeShellFile(),
+    runtimeBridgeShellFile(),
   ]
 }
 

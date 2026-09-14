@@ -58,6 +58,35 @@ export function setStudioTrustTier(next: TrustTier): void {
 }
 
 /**
+ * L8 Phase A (`perf-06`, STATE.md) — the `/load` response's `projectKey`
+ * (`null` below Tier 2): the `/p/<projectKey>` path segment
+ * `server/liveOrigin.ts` (L2) routes on, which `LiveBoardFrame` joins onto
+ * `useLiveOrigin`'s bare server-topology origin to build a real
+ * `LiveFrameSource.liveOrigin`. A sibling external store to `trustTier`
+ * above, not a field on it — same "ephemeral per-load client state" reason,
+ * and the two are written by the SAME `loadSite` call but read by different
+ * consumers (`registerProjectModules.ts` vs. `LiveBoardFrame.tsx`).
+ */
+let projectKey: string | null = null
+const projectKeyListeners = new Set<() => void>()
+
+export function getStudioProjectKey(): string | null {
+  return projectKey
+}
+
+export function subscribeStudioProjectKey(listener: () => void): () => void {
+  projectKeyListeners.add(listener)
+  return () => projectKeyListeners.delete(listener)
+}
+
+/** Called by `fsCodemodAdapter.ts`'s `loadSite` with the key the `/load` response carried, right alongside `setStudioTrustTier`. */
+export function setStudioProjectKey(next: string | null): void {
+  if (next === projectKey) return
+  projectKey = next
+  for (const listener of projectKeyListeners) listener()
+}
+
+/**
  * The explicit consent action behind `NodeRenderer`'s "promote this project"
  * placeholder (`PackageComponentPlaceholder.tsx`) — `meta-03` decision 1's
  * promote affordance, now with somewhere to actually land

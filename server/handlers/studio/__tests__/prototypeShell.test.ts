@@ -79,7 +79,14 @@ describe('ensurePrototypeShell — scaffolding', () => {
     expect(result.created).toContain('index.html')
     expect(result.created).toContain('vite.config.js')
     expect(result.created).toContain('prototype/main.jsx')
+    // Plain root-absolute — NOT '%BASE_URL%prototype/main.jsx'. Vite's own
+    // dev/build HTML transform already rewrites every root-absolute
+    // src/href it finds to carry a non-root 'base' automatically; adding
+    // '%BASE_URL%' on top double-prefixes it (confirmed empirically against
+    // a real running dev server before this was caught — Part B, live-06
+    // STATE.md).
     expect(read('index.html')).toContain('/prototype/main.jsx')
+    expect(read('index.html')).not.toContain('%BASE_URL%')
   })
 
   it('is idempotent — a second run creates nothing and rewrites nothing', () => {
@@ -156,7 +163,7 @@ describe('ensurePrototypeShell — scaffolding', () => {
     // `max-width` query has to be measured against the DEVICE, not against the
     // browser window the shell happens to be open in.
     expect(read('prototype/ScreenFrame.jsx')).toContain('<iframe')
-    expect(read('prototype/App.jsx')).toContain("import ScreenFrame from './ScreenFrame'")
+    expect(read('prototype/App.jsx')).toContain("import ScreenFrame, { RESET } from './ScreenFrame'")
   })
 
   it('DOES bring a generated file back, because that one is Studio\'s', () => {
@@ -223,6 +230,52 @@ describe('ensurePrototypeShell — the studio-runtime id-stamping plugin', () =>
     // (the import + the plugin call) is frozen; the plugin's own logic keeps
     // reaching the workspace either way.
     expect(read('prototype/studioRuntime.generated.js')).toContain('studioRuntimeIdPlugin')
+  })
+})
+
+/**
+ * L4/live-08 — the in-frame runtime bridge. `main.jsx` is a STATIC file
+ * (frozen the moment a user edits it); the bridge's actual logic lives in the
+ * ALWAYS-rewritten `studioRuntimeBridge.generated.js`, same shape as L3's
+ * `studioRuntime.generated.js` above, so a fix reaches an already-scaffolded
+ * project regardless of `main.jsx`'s freeze state.
+ */
+describe('ensurePrototypeShell — the studio-runtime bridge boot wiring', () => {
+  it('writes a main.jsx that imports virtual:studio-runtime and the bridge, gated on parentOrigin + window.parent', () => {
+    ensurePrototypeShell(tmpDir)
+
+    const mainJsx = read('prototype/main.jsx')
+    expect(mainJsx).toContain("import { STUDIO_RUNTIME_CONFIG } from 'virtual:studio-runtime'")
+    expect(mainJsx).toContain("import { createStudioRuntimeBridge } from './studioRuntimeBridge.generated.js'")
+    expect(mainJsx).toContain('STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window')
+    expect(mainJsx).toContain('createStudioRuntimeBridge(')
+  })
+
+  it('writes the always-rewritten bundled bridge alongside it', () => {
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
+  })
+
+  it('re-running brings the generated bridge file back even after it is wiped, because it is Studio\'s', () => {
+    ensurePrototypeShell(tmpDir)
+    fs.writeFileSync(path.join(tmpDir, 'prototype', 'studioRuntimeBridge.generated.js'), 'wiped\n')
+
+    const result = ensurePrototypeShell(tmpDir)
+
+    expect(result.regenerated).toContain('prototype/studioRuntimeBridge.generated.js')
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
+  })
+
+  it('leaves a hand-edited main.jsx alone and reports it, while still refreshing the always-rewritten bridge bundle', () => {
+    ensurePrototypeShell(tmpDir)
+    const mine = "import { createRoot } from 'react-dom/client'\ncreateRoot(document.getElementById('root')).render(null)\n"
+    fs.writeFileSync(path.join(tmpDir, 'prototype', 'main.jsx'), mine)
+
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/main.jsx')).toBe(mine)
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
   })
 })
 
@@ -459,5 +512,62 @@ describe('ensurePrototypeShell — prototype links', () => {
     // Not omitted: `Player.jsx` imports LINKS unconditionally, so the export of
     // a project nobody has wired up still has to be a valid module.
     expect(read('prototype/registry.generated.jsx')).toContain('export const LINKS = []')
+  })
+})
+
+/**
+ * L6 (`STUDIO-LIVE-CANVAS-PLAN.md` §2, `live-06` STATE.md) — the
+ * `/__screen/<key>` route inside the generated `App.jsx`, so a live Tier-2
+ * frame (or a bookmarked/shared link) can boot exactly one screen,
+ * full-viewport, with no board chrome.
+ */
+describe('ensurePrototypeShell — the /__screen/<key> route in App.jsx', () => {
+  it('matches the route as a pathname SUFFIX, works both proxied (/p/<projectKey>/__screen/<key>) and bare (/__screen/<key>)', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+
+    expect(app).toContain('/__screen/')
+    // The exact suffix-match regex source: anchored to the end of the
+    // pathname ('$') and tolerant of the URL's own trailing slash ('/?') —
+    // not an exact-match/prefix-match, which the proxied shape would fail.
+    expect(app).toContain('/\\/__screen\\/([^/?#]+)\\/?$/')
+  })
+
+  it('renders the screen directly, not nested inside ScreenFrame — nesting would hide the data-node-id-stamped DOM from the studio-runtime bridge in a second, separate iframe document', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+
+    // Isolate ScreenRouteInner's own body (the routed component) — FramePreview,
+    // the board/flow UI's OWN per-frame preview, legitimately nests
+    // `<screen.Component />` inside `<ScreenFrame>` a few hundred lines further
+    // down in this same generated file, and must not be what this assertion
+    // matches against.
+    const start = app.indexOf('function ScreenRouteInner')
+    expect(start).toBeGreaterThan(-1)
+    const end = app.indexOf('\nfunction Shell(', start)
+    expect(end).toBeGreaterThan(start)
+    const body = app.slice(start, end)
+
+    // The routed component renders `screen.Component` directly — not
+    // `<ScreenFrame>...<screen.Component /></ScreenFrame>` the way
+    // FramePreview does.
+    expect(body).toMatch(/<screen\.Component\s*\/>/)
+    expect(body).not.toContain('<ScreenFrame')
+  })
+
+  it('imports RESET from ./ScreenFrame for visual parity (scrollbar-hiding, margin reset), rather than duplicating the CSS string', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+    const screenFrame = read('prototype/ScreenFrame.jsx')
+
+    expect(app).toContain("import ScreenFrame, { RESET } from './ScreenFrame'")
+    expect(screenFrame).toContain('export const RESET')
+  })
+
+  it('never crashes for a stale/unknown screen key — renders a fallback paragraph instead', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+
+    expect(app).toContain('Unknown screen:')
   })
 })

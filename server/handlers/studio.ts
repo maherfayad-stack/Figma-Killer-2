@@ -313,6 +313,7 @@ import { tryServeStudioGit } from './studio/git'
 import { tryServeStudioDeploy } from './studio/deploy'
 import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
+import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
 import type { DbClient } from '../db/client'
 
@@ -445,6 +446,11 @@ export async function tryServeStudio(
       const meta = readStudioMeta(dir)
       const trust = meta.trust ?? DEFAULT_TRUST_TIER
       const paletteHiddenModuleIds = meta.paletteHiddenModuleIds ?? []
+      // L8 Phase A (`perf-06`, STATE.md) — the `/p/<projectKey>` live-origin
+      // routing key (`server/liveOrigin.ts`), `null` below Tier 2 (no live
+      // origin to scope a URL against). Same "never auto-promoted, read
+      // fresh" posture as `trust` above.
+      const projectKey = trust === 'run-project' ? registeredMcpServerProjectKey(dir) : null
 
       // WS-5.5 — `?stream=1` (the canvas's own loader, `fsCodemodAdapter.ts`)
       // gets the SAME computed result as an NDJSON stream instead of one
@@ -461,7 +467,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, trust, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -477,6 +483,7 @@ export async function tryServeStudio(
         vendorCss,
         authoredCss,
         trust,
+        projectKey,
         paletteHiddenModuleIds,
         missingPageIds,
       })

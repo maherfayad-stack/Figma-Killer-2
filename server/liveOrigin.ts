@@ -45,6 +45,21 @@
  * in that registry if it was allowed to boot. This file trusts a `ready`
  * phase as sufficient authorization to proxy and does not re-read
  * `.studio/meta.json` — a second copy of that gate would drift.
+ *
+ * Forwarded path: the incoming pathname (including the `/p/<projectKey>`
+ * prefix) is forwarded to the upstream dev server UNCHANGED — this listener
+ * does not strip it. That only works because the spawned dev server's own
+ * `vite.config.js` is given a matching `base: '/p/<projectKey>/'`
+ * (`server/handlers/studio/devServer.ts`'s `STUDIO_LIVE_BASE_PATH` env var,
+ * read by `prototypeShell/shellFiles.ts`'s `VITE_CONFIG` template) — Vite
+ * itself then expects and rewrites every asset URL (including
+ * `index.html`'s own root-absolute script src, automatically — no
+ * `%BASE_URL%` needed there, see that template's own doc for why adding one
+ * on top double-prefixes it) and the HMR websocket path to carry that same
+ * prefix. An earlier version of this file stripped the prefix before
+ * forwarding, which broke every page proxied through this listener past
+ * the first HTML response (see `live-06`, STATE.md, for the full failure
+ * mode and fix).
  */
 import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -77,19 +92,31 @@ function liveOriginErrorResponse(status: number, body: LiveOriginError, publicOr
 }
 
 /**
- * Split `/p/<projectKey>/<rest>` into its two parts. Returns `null` for
+ * Extract the `projectKey` from `/p/<projectKey>/<rest>`. Returns `null` for
  * anything that isn't shaped that way (the caller falls through to a normal
- * 404). `rest` keeps its own leading slash so it composes directly onto the
- * upstream origin.
+ * 404).
+ *
+ * Used ONLY to look up the project's dev-server registry entry — the
+ * upstream request itself now forwards the FULL, un-stripped incoming
+ * pathname (see the `resolveUpstreamUrl` call sites below), because the
+ * spawned dev server's own `vite.config.js` is configured with
+ * `base: '/p/<projectKey>/'` (`server/handlers/studio/devServer.ts`'s
+ * `STUDIO_LIVE_BASE_PATH` env var, read by `prototypeShell/shellFiles.ts`'s
+ * `VITE_CONFIG` template) and therefore expects every asset request —
+ * `/prototype/main.jsx`, `/@vite/client`, the HMR websocket — to arrive
+ * PREFIXED with `/p/<projectKey>`, not stripped of it. Stripping the prefix
+ * before forwarding (the previous behavior) broke every page proxied through
+ * this listener past the first HTML response: the browser resolves the
+ * HTML's own absolute-root asset URLs against `<LIVE_ORIGIN>`'s root, which
+ * no longer matches `/p/<projectKey>/*` at all once the prefix is gone.
  */
-function parseLivePath(pathname: string): { projectKey: string; rest: string } | null {
+function parseLivePath(pathname: string): { projectKey: string } | null {
   if (!pathname.startsWith(LIVE_PATH_PREFIX)) return null
   const withoutPrefix = pathname.slice(LIVE_PATH_PREFIX.length)
   const slashIndex = withoutPrefix.indexOf('/')
   const projectKey = slashIndex === -1 ? withoutPrefix : withoutPrefix.slice(0, slashIndex)
-  const rest = slashIndex === -1 ? '/' : withoutPrefix.slice(slashIndex)
   if (!projectKey) return null
-  return { projectKey, rest }
+  return { projectKey }
 }
 
 /**
@@ -111,11 +138,13 @@ function resolveProjectDirForKey(projectKey: string): string | null {
  * relative reference beginning with `//` (or a backslash, which it normalizes
  * to `/`) as "network-path" — it REPLACES the base's authority instead of
  * resolving against it. A request to `/p/<projectKey>//evil.example/steal`
- * parses to `rest = '//evil.example/steal'`, and `new URL(rest, status.url)`
- * silently resolves to `http://evil.example/steal` — this listener would then
- * make a server-side fetch (SSRF) to an attacker-chosen host, or open an
- * attacker-chosen WebSocket, entirely outside the intended project's own dev
- * server. Verified empirically: `new URL('//evil.com/x', 'http://127.0.0.1:5173').host === 'evil.com'`.
+ * has `url.pathname === '/p/<projectKey>//evil.example/steal'` — the whole
+ * incoming pathname, forwarded unstripped (see `parseLivePath`'s doc for
+ * why) — and `new URL(url.pathname, status.url)` would silently resolve to
+ * `http://evil.example/steal` — this listener would then make a server-side
+ * fetch (SSRF) to an attacker-chosen host, or open an attacker-chosen
+ * WebSocket, entirely outside the intended project's own dev server.
+ * Verified empirically: `new URL('//evil.com/x', 'http://127.0.0.1:5173').host === 'evil.com'`.
  *
  * The fix is to never let path input reach the URL constructor's first
  * argument at all. Parse `baseUrl` alone (authority fixed, from the trusted,
@@ -123,7 +152,11 @@ function resolveProjectDirForKey(projectKey: string): string | null {
  * `.pathname`/`.search` via their setters —
  * those setters treat the value as pure path/query text and cannot introduce
  * a new authority, confirmed the same leading-`//`/backslash input above
- * still resolves to `baseUrl`'s own host when assigned this way.
+ * still resolves to `baseUrl`'s own host when assigned this way (the
+ * `/p/<projectKey>` prefix ahead of it means the attacker-controlled `//`
+ * segment isn't even leading here, but the setter is not relying on that —
+ * it is safe against a bare leading `//` too, exercised directly by this
+ * file's own tests).
  */
 export function resolveUpstreamUrl(baseUrl: string, pathname: string, search: string): URL {
   const upstream = new URL(baseUrl)
@@ -290,7 +323,7 @@ export async function handleLiveOriginFetch(
   if (!parsed) {
     return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, publicOrigins)
   }
-  const { projectKey, rest } = parsed
+  const { projectKey } = parsed
   const dir = resolveProjectDirForKey(projectKey)
 
   if (!dir) {
@@ -310,7 +343,7 @@ export async function handleLiveOriginFetch(
         publicOrigins,
       )
     }
-    const upstream = resolveUpstreamUrl(upstreamUrl, rest, url.search)
+    const upstream = resolveUpstreamUrl(upstreamUrl, url.pathname, url.search)
     upstream.protocol = upstream.protocol === 'https:' ? 'wss:' : 'ws:'
     const ok = server.upgrade(req, { data: { upstreamWsUrl: upstream.toString() } })
     return ok ? undefined : new Response('Upgrade failed', { status: 400 })
@@ -325,7 +358,7 @@ export async function handleLiveOriginFetch(
     )
   }
 
-  const upstream = resolveUpstreamUrl(upstreamUrl, rest, url.search)
+  const upstream = resolveUpstreamUrl(upstreamUrl, url.pathname, url.search)
   const upstreamReq = new Request(upstream, {
     method: req.method,
     headers: stripHopByHopAndCookies(req.headers, upstream.host),
@@ -428,7 +461,66 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
       },
       close(ws) {
         clearTimeout(ws.data.connectTimeout)
-        ws.data.upstream?.close()
+        // Deliberately NOT `ws.data.upstream?.close()` here — confirmed
+        // empirically (dogfooding a real Vite dev server + a real browser
+        // through this exact proxy, live-06 STATE.md) that calling `.close()`
+        // on an OPEN outbound Bun `WebSocket` client whose peer is Vite's own
+        // `ws`-based HMR server does not perform a graceful closing
+        // handshake — it RSTs the underlying TCP connection, which surfaces
+        // on Vite's side as an uncaught `ECONNRESET` on a raw `net.Socket`
+        // with no `'error'` listener, CRASHING THE ENTIRE DEV SERVER
+        // PROCESS. Reproduced 100% of the time across three independent runs
+        // (bare `.close()`, `.close(1000, reason)`, and a delayed
+        // `setTimeout`-deferred close all crashed the peer identically);
+        // simply not calling `.close()` at all reproduced zero crashes
+        // across the same navigation sequence. A real browser tab closing
+        // its OWN direct connection to Vite does not trigger this — only
+        // Bun's outbound WebSocket CLIENT does, which is exactly what this
+        // proxy is. This is intentionally NOT worked around by reaching for
+        // a lower-level close primitive: the standard `WebSocket` interface
+        // exposes none, and every closing path this object has goes through
+        // the same buggy internal mechanism.
+        //
+        // The tradeoff: the outbound socket to the dev server is abandoned
+        // rather than explicitly torn down on every ordinary page
+        // navigation, which is common with a live canvas frame — a real,
+        // accepted resource-lingering cost. That cost is only PARTIALLY
+        // bounded today: (a) Vite's own HMR client heartbeat may eventually
+        // reap a peer that stops responding (not verified against this
+        // repo's pinned Vite version — an assumption, not a confirmed
+        // mechanism), but (b) `scheduleDevServerIdleTeardown` — the thing
+        // that would otherwise kill the whole dev server subprocess (and
+        // therefore every socket it holds) after inactivity — is NOT wired
+        // to this listener's own dev-server lifecycle at all: its only
+        // production caller today is `referenceRender.ts`'s one-shot
+        // `ensureDevServer` path, never `startDevServer`/`serveStart`
+        // (`devServer.ts`) — the HTTP route this listener's own dev servers
+        // are actually started through. A project's dev server started for
+        // live-canvas use today runs, and therefore accumulates abandoned
+        // upstream sockets, until an explicit `POST .../dev-server/stop` —
+        // not "regardless of inactivity" as an earlier version of this
+        // comment claimed. Verified by reading `devServer.ts`: `idleTimer`
+        // starts `null` on every `spawnEntry` and is only ever set by
+        // `scheduleDevServerIdleTeardown`, which nothing in the live-canvas
+        // start path calls (`sec-09`, STATE.md). Still preferable to a
+        // guaranteed crash of the shared dev server on every navigation
+        // (which would take down every OTHER open frame/tab for the same
+        // project too), but whoever wires a real caller for
+        // `documentMode='bridge'` (see `live-07`'s own "no production call
+        // site yet" note) should also either (i) schedule idle teardown for
+        // board-started dev servers the same way `referenceRender.ts`
+        // already does, or (ii) add an explicit cap on concurrent open
+        // upstream sockets per project (the same bounded-cap shape
+        // `MAX_PENDING_MESSAGES`/`MAX_PENDING_BYTES` already use above) —
+        // before this listener carries real traffic, not after.
+        //
+        // NOT applied to the two OTHER `upstream.close()` call sites above
+        // (the boot-timeout watchdog and the pending-queue overflow guard) —
+        // both close a connection that has not yet reached `OPEN`, a
+        // narrower, unverified case (a synthetic close-while-`CONNECTING`
+        // test against this same dev server did NOT reproduce a crash). Left
+        // unchanged rather than "fixed" without evidence; flagged as a
+        // follow-up verification target in STATE.md.
       },
     },
 

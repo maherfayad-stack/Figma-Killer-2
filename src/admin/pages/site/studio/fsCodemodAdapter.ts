@@ -56,7 +56,7 @@ import { armSidecarBaselines, loadSidecarSettings, noteFrameworkSynced, saveChan
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
 import { getStudioWorkspaceDir, setStudioLoadedDir, studioWriteDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
-import { setStudioTrustTier } from './studioProjectTrust'
+import { setStudioProjectKey, setStudioTrustTier } from './studioProjectTrust'
 import { StudioSaveResponseSchema, notifyCreatedStylesheets } from './studioSaveRequests'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
@@ -236,6 +236,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       vendorCss: loadedVendorCss,
       authoredCss: loadedAuthoredCss,
       trust,
+      projectKey,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
     } = meta
     setStudioLoadedDir(dir)
@@ -244,6 +245,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     setStudioVendorCss(loadedVendorCss)
     setStudioAuthoredCss(loadedAuthoredCss)
     setStudioTrustTier(trust)
+    setStudioProjectKey(projectKey ?? null)
     // Baseline for the save-time diff — see `loadedValuesBaseline.ts`.
     resetLoadedValues(pages)
     // `style-02` — a fresh document is a fresh set of refusals to report.
