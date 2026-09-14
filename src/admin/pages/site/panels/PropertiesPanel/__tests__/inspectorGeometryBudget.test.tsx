@@ -152,7 +152,6 @@ describe('caption budget — the panel\'s most expensive row form', () => {
         onChange={noop}
         onChangeMany={noopMany}
         onRemove={noop}
-        onClearProperty={noop}
         onClearProperties={noop}
         onPreview={noop}
         onClearPreview={noop}
@@ -177,7 +176,6 @@ describe('caption budget — the panel\'s most expensive row form', () => {
    * side effect.
    */
   const CAPTION_CAPABLE_BUDGET: Readonly<Record<string, number>> = {
-    border: 22,
     effects: 6,
     animations: 10,
     typography: 9,

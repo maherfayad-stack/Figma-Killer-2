@@ -242,7 +242,6 @@ describe('StyleSectionsEditor — MIXED bags', () => {
         onChange={noop}
         onChangeMany={noopMany}
         onRemove={noop}
-        onClearProperty={noop}
         onClearProperties={noop}
         onPreview={noop}
         onClearPreview={noop}
