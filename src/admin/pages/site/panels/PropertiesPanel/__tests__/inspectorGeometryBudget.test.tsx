@@ -54,15 +54,17 @@ function noop() {}
  * frozen at. Read as a table: this IS the panel's vertical grid.
  */
 const FROZEN_INSPECTOR_TOKENS: ReadonlyArray<readonly [string, string]> = [
-  ['--inspector-row-h', '24px'],
+  // Corrected to Penpot's measured values (`STATE.md` `panel-25`, Step 0 —
+  // `docs/audits/penpot-inspector-baseline/04-token-gaps.md`).
+  ['--inspector-row-h', '32px'],
   ['--inspector-header-h', '32px'],
-  ['--inspector-pad-x', '8px'],
+  ['--inspector-pad-x', '12px'],
   ['--inspector-field-gap', '6px'],
   ['--inspector-group-gap', '8px'],
   ['--inspector-caption-gap', '3px'],
   ['--inspector-label-w', '68px'],
   ['--inspector-rail-w', '32px'],
-  ['--inspector-field-radius', '5px'],
+  ['--inspector-field-radius', '8px'],
   ['--inspector-space-4xs', '2px'],
   ['--inspector-space-3xs', '3px'],
   ['--inspector-space-2xs', '4px'],
@@ -157,8 +159,11 @@ describe('caption budget — the panel\'s most expensive row form', () => {
       />,
     )
 
-    // Today: exactly one ("Clip content", in Size). The budget is 2 so a
-    // deliberate addition is possible; anything more is the caption-above-
+    // Today: zero — Position/Size/Appearance/Layout/Spacing (the sections
+    // that used to draw "Clip content" here) all migrated out to their own
+    // `INSPECTOR_SECTIONS` manifest entries (`STATE.md` `panel-25` P3 items
+    // 1-4) and no longer mount through this file at all. The budget is 2 so
+    // a deliberate addition is possible; anything more is the caption-above-
     // field form creeping back in as the panel's default, which is what this
     // whole work order removed.
     expect(document.querySelectorAll('label').length).toBeLessThanOrEqual(2)
@@ -172,11 +177,6 @@ describe('caption budget — the panel\'s most expensive row form', () => {
    * side effect.
    */
   const CAPTION_CAPABLE_BUDGET: Readonly<Record<string, number>> = {
-    position: 7,
-    size: 6,
-    layout: 20,
-    spacing: 4,
-    appearance: 6,
     fill: 11,
     border: 22,
     effects: 6,

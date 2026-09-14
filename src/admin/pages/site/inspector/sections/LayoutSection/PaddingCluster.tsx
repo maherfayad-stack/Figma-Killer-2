@@ -19,7 +19,7 @@
  * `linked` — the cluster's own "are all four sides equal" flag — is derived
  * here from the four stored values, never duplicated by the cluster itself.
  */
-import { hasStyleValue, readString } from '../styleValueUtils'
+import { hasStyleValue, readString } from '../../../panels/PropertiesPanel/styleValueUtils'
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
 import { ExpandableFieldCluster } from '@ui/components/ExpandableFieldCluster'
@@ -54,7 +54,7 @@ export function PaddingCluster({
   const anySet = values.some((v) => hasStyleValue(v))
   // Law 4: linked purely from the data — every side equal, OR nothing set at
   // all (a fresh element with no padding shouldn't default to four resident
-  // fields — see `AppearanceSection`'s identical `radiusLinked` derivation).
+  // fields — see `RadiusCluster`'s identical `radiusLinked` derivation).
   const linked = !anySet || values.every((v) => v === values[0])
 
   return (

@@ -18,7 +18,7 @@ import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { hasStyleValue } from './styleValueUtils'
-import posStyles from './PositionSection.module.css'
+import posStyles from './PositionControls.module.css'
 
 interface ZIndexSettingsRowProps {
   storedStyles: Record<string, unknown>
