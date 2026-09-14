@@ -193,7 +193,7 @@ A mutation's history cost is decided by its CALLER, not by the store: every
 multi-property gesture one property at a time is what turns one click into N
 undo steps. The Properties panel routes those through a single
 `onChangeMany(patch)` — see
-[`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+[`docs/features/inspector.md`](../features/inspector.md)
 §11.2.
 
 ---

@@ -37,7 +37,7 @@ On the F3 flex board (single row, no wrap): the **Row gap** field renders
 `[disabled]` — present, visible, but not editable — because it's
 meaningless in that configuration. Only **Column gap** is live. This
 directly matches Studio's existing Law 5
-(`docs/features/inspector-disclosure.md`) — Penpot didn't invent a new idea
+(`docs/features/inspector.md`) — Penpot didn't invent a new idea
 here, it's independent confirmation of the same rule from a second real
 product.
 
@@ -89,7 +89,7 @@ idiom everywhere. The **Design** tab (an editing surface) shows the literal
 word `Mixed` as a placeholder you can type over to set all selected shapes
 at once — a single field, one write target, matching Studio's own existing
 "Mixed shows as *Mixed*; typing sets all" contract
-(`docs/features/inspector-disclosure.md` §4 G9, cited directly in
+(`docs/features/inspector.md` §4 G9, cited directly in
 `STUDIO-LIVE-CANVAS-PLAN.md` §P2 rule 9 as "kept"). The **Inspect** tab (a
 read-only report) instead lists every distinct value as its own row under a
 repeated label — because there is no write target to unify around, so
@@ -106,7 +106,7 @@ on a bare rectangle) in Penpot **both reveals the fields and immediately
 writes a working default** — a real `1px solid #000000` stroke appears on
 canvas the instant you click, before you've typed anything. Studio's
 existing `AddablePropertyField` contract is the opposite by explicit design
-(Law 3, `docs/features/inspector-disclosure.md`: "a reveal that emitted
+(Law 3, `docs/features/inspector.md`: "a reveal that emitted
 `min-width: 0` would be a bug, not a convenience" — because Studio writes
 real source files, and an uncommitted-looking value appearing in a `.tsx` on
 disk the moment you open a menu would be a real correctness bug, not a UX
