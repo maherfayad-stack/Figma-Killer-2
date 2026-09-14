@@ -1,7 +1,10 @@
-/* PositionSection — G10 (docs/features/inspector-disclosure.md).
- * New, section-specific styles only — the TRBL offset grid keeps using
- * LayoutSection.module.css's existing `positionDirectionsGrid`/`directionCell`
- * classes unchanged (this file does not touch that module). */
+/* PositionControls — shared styles for the position-adjacent row primitives
+ * that survived `PositionSection.tsx`'s retirement into `MeasuresSection`
+ * (`STATE.md` `panel-25`, P3 item 3): `RotationRow`, `ZIndexSettingsRow`, and
+ * `PositionConstraints` each still import this file under its old name's
+ * successor. The TRBL offset grid keeps using LayoutSection.module.css's
+ * existing `positionDirectionsGrid`/`directionCell` classes unchanged (this
+ * file does not touch that module). */
 
 /* F29 — the absolute/fixed constraint block: the two axis rows (each a side
  * picker + value field) on the left, Figma's crosshair diagram on the right.
@@ -66,23 +69,6 @@
 
 .constraintClearBtn.constraintClearBtn:hover {
     color: var(--text);
-}
-
-/* F1's third row — rotation paired with the z-index settings trigger on one
- * row instead of the gear sitting alone on its own. Rotation grows to fill
- * the row (it's the field a designer actually reaches for); the trigger
- * stays its own intrinsic width, mirroring LayoutSection's `alignGapRow`
- * ([field] [⚙]) shape. */
-.rotationSettingsRow {
-    display: flex;
-    align-items: center;
-    gap: var(--inspector-field-gap);
-}
-
-.rotationSettingsRow > .rotationCell,
-.rotationSettingsRow > .rotationFallback {
-    flex: 1 1 auto;
-    min-width: 0;
 }
 
 /* Z-index settings affordance (Law 2) — a single small trigger row instead

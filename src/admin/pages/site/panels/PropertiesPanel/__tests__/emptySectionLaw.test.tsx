@@ -6,9 +6,11 @@
  * typography) render as a single header line with a "+" when nothing is set —
  * ANYWHERE, not just on the active breakpoint/condition tab — and must never
  * collapse while an active style search is filtering the panel. The
- * always-present sections (position / size / layout / spacing) are untouched
- * by this law and keep their controls resident regardless of whether anything
- * is set.
+ * always-present sections still left in THIS registry (layout / spacing) are
+ * untouched by this law and keep their controls resident regardless of
+ * whether anything is set — `position`/`size`/`appearance` used to be in this
+ * same group but migrated out to `MeasuresSection.tsx` (`STATE.md`
+ * `panel-25`, P3 item 3), which has no `collapsedWhenEmpty` concept at all.
  *
  * An empty section is also not a DISCLOSURE — no chevron, no toggle, nothing
  * to open. The header earns its accordion when the first value lands in it.

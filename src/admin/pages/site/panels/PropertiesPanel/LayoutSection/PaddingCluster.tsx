@@ -54,7 +54,7 @@ export function PaddingCluster({
   const anySet = values.some((v) => hasStyleValue(v))
   // Law 4: linked purely from the data — every side equal, OR nothing set at
   // all (a fresh element with no padding shouldn't default to four resident
-  // fields — see `AppearanceSection`'s identical `radiusLinked` derivation).
+  // fields — see `RadiusCluster`'s identical `radiusLinked` derivation).
   const linked = !anySet || values.every((v) => v === values[0])
 
   return (
