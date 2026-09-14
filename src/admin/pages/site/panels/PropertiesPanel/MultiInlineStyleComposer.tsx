@@ -2,11 +2,16 @@
  * MultiInlineStyleComposer — the CSS section editor bound to N selected nodes
  * at once (W8-3 phase 1).
  *
- * The third sibling of `StyleRuleComposer` (edits a StyleRule) and
- * `InlineStyleComposer` (edits ONE node's inline bag): same
- * `StyleSectionsEditor` rendering core, fed by `buildMultiSelectStyleBags`'s
- * collapsed pair of bags, writing through `setNodesInlineStyles` so the whole
- * selection moves in ONE undo step.
+ * P3 is complete (`STATE.md` `panel-25`, item 11 — Studio extras): every
+ * curated CSS category this file used to render through
+ * `StyleSectionsEditor.tsx` migrated to its own node-selection-scoped
+ * `INSPECTOR_SECTIONS` manifest entry, which all read through
+ * `useSelectionModel()` — a SINGLE selected node. A multi-selection has no
+ * one node to hand them, so (mirroring `StyleRuleComposer.tsx`'s own,
+ * identical narrowing) this file's only remaining editing surface is
+ * `CustomPropertiesSection`, fed by `buildMultiSelectStyleBags`'s collapsed
+ * stored bag, writing through `setNodesInlineStyles` so the whole selection
+ * moves in ONE undo step.
  *
  * ## Why inline-only, and why the target chip says so
  *
@@ -25,20 +30,6 @@
  * (`MultiSelectionInspector` renders the chip with its bulk reason). Class-
  * target bulk editing, behind an explicit "this class is used by N other
  * elements — continue?" gate, is phase 3.
- *
- * ## What is deliberately not threaded here
- *
- * - **`provenanceByProperty`** — provenance answers "which of THIS node's
- *   sources wins"; across N nodes there is no single answer, and inventing
- *   one would be the guess this panel refuses to make. Omitted, which
- *   `StyleSectionsEditor` already supports (the prop is optional).
- * - **`styleTarget`** — the section-header "apply a generated utility class"
- *   menus need one node id and write `node.classIds`; that is a class-token
- *   assignment across N nodes, i.e. phase 3, not a style declaration.
- * Hover-preview writes `previewNodeStyles` (Rule 7, panel-22) across every
- * WRITABLE node in the selection — the same set `writePatch` commits to — so
- * a hovered suggestion previews on exactly the elements the edit would land
- * on, never on a node whose module can't take an inline style at all.
  */
 
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
@@ -46,15 +37,15 @@ import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { canWriteInlineStyleForModule, styleValueKey } from '@core/page-tree'
 import { TokenCatalogProvider } from '@site/property-controls/TokenCatalogProvider'
-import { ALL_CURATED_CSS_PROPERTIES, cssPropertyLabel } from './cssControlTypes'
+import { ALL_CURATED_CSS_PROPERTIES, cssPropertyLabel, isCuratedProperty } from './cssControlTypes'
 import { getActiveStyleTab } from './classStyleSections'
-import { StyleSectionsEditor } from './StyleSectionsEditor'
+import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { buildClassChain } from './stylePropertyProvenance'
 import { buildMultiSelectStyleBags, type MultiSelectStyleNode } from './multiSelectStyleBags'
 import { resolveSelectedNodes } from './multiSelectNodes'
-import { isTextSelection } from './styleSectionOrder'
 import { StyleWriteLockContext } from './StyleWriteLockContext'
 import { blockedProperties, buildInlineStyleWriteReach } from './styleWriteReach'
+import { useEditorPreference } from '@site/preferences/editorPreferences'
 import noticeStyles from './SharedComponentNotice.module.css'
 
 const STYLE_KEY_PREFIX = styleValueKey('')
@@ -71,17 +62,13 @@ const EMPTY_STYLES: Record<string, unknown> = {}
 interface MultiInlineStyleComposerProps {
   /** The multi-selection, in selection order. Meaningful for 2+ ids. */
   nodeIds: string[]
-  /** Search query — filters visible properties across all categories. */
-  styleQuery: string
 }
 
 export function MultiInlineStyleComposer({
   nodeIds,
-  styleQuery,
 }: MultiInlineStyleComposerProps) {
   const setNodesInlineStyles = useEditorStore((s) => s.setNodesInlineStyles)
-  const setPreviewNodeStyles = useEditorStore((s) => s.setPreviewNodeStyles)
-  const clearPreviewNodeStyles = useEditorStore((s) => s.clearPreviewNodeStyles)
+  const sectionsExpanded = useEditorPreference('propertiesSectionsExpanded')
   const activeTree = useEditorStore(selectActiveCanvasPage)
   const site = useEditorStore((s) => s.site)
   const nodeIdToPageIds = useEditorStore((s) => s._nodeIdToPageIds)
@@ -112,9 +99,25 @@ export function MultiInlineStyleComposer({
     ),
   }))
 
-  const { storedStyles, currentStyles } = buildMultiSelectStyleBags(
+  // `buildMultiSelectStyleBags` only ever returns keys from the `properties`
+  // list it's handed — unlike `collapsedStyleBag.ts`'s single-node bag, it
+  // does not naively merge every key present. Now that this composer renders
+  // ONLY `CustomPropertiesSection` (P3 item 11, `STATE.md` `panel-25`),
+  // `ALL_CURATED_CSS_PROPERTIES` alone would starve it: every returned key
+  // would be curated, so `getCustomProperties`'s `!isCuratedProperty` filter
+  // would always yield `[]` and no uncurated property could ever be bulk-
+  // edited. Union in every uncurated key actually SET on at least one
+  // selected node's own inline bag — the same "what's present" question
+  // `getCustomProperties` itself answers for a single node.
+  const uncuratedPropertiesPresent = Array.from(
+    new Set(
+      styleNodes.flatMap((node) => Object.keys(node.inlineStyles).filter((key) => !isCuratedProperty(key))),
+    ),
+  )
+
+  const { storedStyles } = buildMultiSelectStyleBags(
     styleNodes,
-    ALL_CURATED_CSS_PROPERTIES,
+    [...ALL_CURATED_CSS_PROPERTIES, ...uncuratedPropertiesPresent],
   )
 
   // W8-3 phase 2 — the `style:<prop>` locks across the selection, COUNTED
@@ -166,29 +169,6 @@ export function MultiInlineStyleComposer({
   const handleRemove = (key: keyof CSSPropertyBag) => {
     writePatch({ [String(key)]: null })
   }
-  const handleClearProperties = (keys: ReadonlyArray<keyof CSSPropertyBag>) => {
-    if (keys.length === 0) return
-    writePatch(Object.fromEntries(keys.map((key) => [String(key), null])))
-  }
-  // One store write for a multi-property gesture, across the whole selection —
-  // see `StyleSectionsEditor`'s `onChangeMany` doc.
-  const handleChangeMany = (patch: Record<string, string | number | null>) => {
-    if (Object.keys(patch).length === 0) return
-    writePatch(patch)
-  }
-
-  // Preview a transient style patch on the canvas while a property control's
-  // hover-suggestion menu is open, across every writable node in the
-  // selection — the inline mirror of `StyleRuleComposer.handlePreview`.
-  // Lives entirely in store UI state: no `node.inlineStyles` mutation, no
-  // history entry.
-  const handlePreview = (patch: Partial<CSSPropertyBag>) => {
-    if (writableNodeIds.length === 0) return
-    setPreviewNodeStyles({ nodeIds: writableNodeIds, styles: patch })
-  }
-  const handleClearPreview = () => {
-    clearPreviewNodeStyles()
-  }
 
   return (
     <TokenCatalogProvider>
@@ -227,18 +207,11 @@ export function MultiInlineStyleComposer({
       {/* W8-3 phase 2 — every row beneath reads this and states how far its
           own edit reaches. `partial` never disables a control. */}
       <StyleWriteLockContext.Provider value={{ kind: 'partial', reach }}>
-        <StyleSectionsEditor
+        <CustomPropertiesSection
           storedStyles={storedStyles}
-          currentStyles={currentStyles}
-          sectionKey="base"
-          styleQuery={styleQuery}
+          defaultOpen={sectionsExpanded}
           onChange={handleChange}
           onRemove={handleRemove}
-          onClearProperties={handleClearProperties}
-          onChangeMany={handleChangeMany}
-          onPreview={handlePreview}
-          onClearPreview={handleClearPreview}
-          textFirst={isTextSelection(nodes)}
         />
       </StyleWriteLockContext.Provider>
     </TokenCatalogProvider>

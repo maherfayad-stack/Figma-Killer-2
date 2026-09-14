@@ -1,9 +1,20 @@
 /**
  * MultiInlineStyleComposer + the pinned style-target chip (W8-3 phase 1).
  *
+ * P3 is complete (`STATE.md` `panel-25`, item 11 — Studio extras): every
+ * CURATED CSS category (including the `cursor`/`pointerEvents` pair tests
+ * 1-3 used to exercise here) migrated to its own node-selection-scoped
+ * `INSPECTOR_SECTIONS` manifest entry, so `MultiInlineStyleComposer` now
+ * renders only `CustomPropertiesSection` (the uncurated long tail) — see
+ * that file's own doc. Tests 1-3 below exercise an uncurated property
+ * (`gridAutoFlow`) instead, the same substitution `mixedValueControls.
+ * test.tsx`'s own doc note makes for the deleted `StyleSectionsEditor`
+ * suite.
+ *
  * Covers:
- *   1. The shared style sections mount for an N-node selection, with a
- *      disagreeing property rendered as "Mixed" rather than one node's value.
+ *   1. `CustomPropertiesSection` mounts for an N-node selection, with a
+ *      disagreeing uncurated property rendered as "Mixed" rather than one
+ *      node's value.
  *   2. The first edit writes that one value to EVERY selected node.
  *   3. A property every node agrees on shows the shared value, not "Mixed".
  *   4. `StyleTargetChip` pins to Element and states the reason, instead of
@@ -45,40 +56,42 @@ function inlineStylesOf(nodeId: string): Record<string, unknown> | undefined {
 }
 
 describe('MultiInlineStyleComposer', () => {
-  it('renders a disagreeing property as Mixed', () => {
+  it('renders a disagreeing uncurated property as Mixed', () => {
     const [a, b] = seedNodes(2)
-    // `pointerEvents` agrees (and opens the collapsedWhenEmpty Interaction
-    // section); `cursor` disagrees.
-    useEditorStore.getState().setNodeInlineStyles(a, { pointerEvents: 'none', cursor: 'pointer' })
-    useEditorStore.getState().setNodeInlineStyles(b, { pointerEvents: 'none', cursor: 'grab' })
+    // `gridAutoFlow` is uncurated — the only kind of property this composer
+    // still renders now that every curated category has its own node-
+    // selection-scoped `INSPECTOR_SECTIONS` entry (`STATE.md` `panel-25`,
+    // item 11). It disagrees between the two nodes.
+    useEditorStore.getState().setNodeInlineStyles(a, { gridAutoFlow: 'row' })
+    useEditorStore.getState().setNodeInlineStyles(b, { gridAutoFlow: 'column' })
 
-    render(<MultiInlineStyleComposer nodeIds={[a, b]} styleQuery="" />)
+    render(<MultiInlineStyleComposer nodeIds={[a, b]} />)
 
-    const field = screen.getByLabelText('Cursor') as HTMLInputElement
+    const field = screen.getByLabelText('grid-auto-flow value') as HTMLInputElement
     expect(field.value).toBe('')
     expect(field.getAttribute('placeholder')).toBe('Mixed')
   })
 
   it('shows the shared value when every node agrees', () => {
     const [a, b] = seedNodes(2)
-    useEditorStore.getState().setNodeInlineStyles(a, { pointerEvents: 'none', cursor: 'pointer' })
-    useEditorStore.getState().setNodeInlineStyles(b, { pointerEvents: 'none', cursor: 'pointer' })
+    useEditorStore.getState().setNodeInlineStyles(a, { gridAutoFlow: 'column' })
+    useEditorStore.getState().setNodeInlineStyles(b, { gridAutoFlow: 'column' })
 
-    render(<MultiInlineStyleComposer nodeIds={[a, b]} styleQuery="" />)
+    render(<MultiInlineStyleComposer nodeIds={[a, b]} />)
 
-    expect((screen.getByLabelText('Cursor') as HTMLInputElement).value).toBe('pointer')
+    expect((screen.getByLabelText('grid-auto-flow value') as HTMLInputElement).value).toBe('column')
   })
 
   it('writes the first edit to every selected node', () => {
     const [a, b] = seedNodes(2)
-    useEditorStore.getState().setNodeInlineStyles(a, { pointerEvents: 'none', cursor: 'pointer' })
-    useEditorStore.getState().setNodeInlineStyles(b, { pointerEvents: 'none', cursor: 'grab' })
+    useEditorStore.getState().setNodeInlineStyles(a, { gridAutoFlow: 'row' })
+    useEditorStore.getState().setNodeInlineStyles(b, { gridAutoFlow: 'column' })
 
-    render(<MultiInlineStyleComposer nodeIds={[a, b]} styleQuery="" />)
-    fireEvent.change(screen.getByLabelText('Cursor'), { target: { value: 'crosshair' } })
+    render(<MultiInlineStyleComposer nodeIds={[a, b]} />)
+    fireEvent.change(screen.getByLabelText('grid-auto-flow value'), { target: { value: 'dense' } })
 
-    expect(inlineStylesOf(a)?.cursor).toBe('crosshair')
-    expect(inlineStylesOf(b)?.cursor).toBe('crosshair')
+    expect(inlineStylesOf(a)?.gridAutoFlow).toBe('dense')
+    expect(inlineStylesOf(b)?.gridAutoFlow).toBe('dense')
   })
 })
 

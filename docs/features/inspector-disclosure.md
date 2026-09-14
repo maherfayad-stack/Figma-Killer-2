@@ -33,10 +33,12 @@ field model into it, which added a section without renumbering one.)
 > single-node surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s
 > separate global/ambient-selector surface keeps both, since a bare CSS
 > selector has no element-vs-class ambiguity to resolve. Every law and
-> primitive below is unchanged in shape; P3 (in progress, `STATE.md`
-> `panel-25` — 9 of 11 sections migrated as of Text, item 9)
-> re-skins the sections themselves to the measured Penpot baseline
-> (`docs/audits/penpot-inspector-baseline/`). P6 retires this file into
+> primitive below is unchanged in shape; P3 is now **complete** (`STATE.md`
+> `panel-25` — 11 of 11 sections migrated, Studio extras/item 11 the last)
+> — every category `StyleSectionsEditor.tsx` used to render (now deleted)
+> re-skinned to the measured Penpot baseline
+> (`docs/audits/penpot-inspector-baseline/`) as its own `INSPECTOR_SECTIONS`
+> manifest entry. P6 retires this file into
 > `docs/features/inspector.md` once the whole track ships — until then this
 > is still the authoritative reference for the vocabulary the source cites.
 
@@ -44,8 +46,9 @@ field model into it, which added a section without renumbering one.)
 
 ## Status
 
-G1–G11 shipped: G9 completed in W8-1, G11 (Export) added in W8-4. Two pieces
-did not, and are tracked as
+G1–G12 shipped: G9 completed in W8-1, G11 (Export) added in W8-4, G12
+(Studio extras) added when P3 completed (`STATE.md` `panel-25`, item 11).
+Two pieces did not, and are tracked as
 open workstreams in
 [`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md):
 
@@ -56,8 +59,15 @@ open workstreams in
 
 One goal was superseded rather than shipped as written: **G8.4** moved
 `transform`/`transition`/`animation` out of Effects, but into a full
-**Animations** section (`AnimationsSection.tsx`, `AnimationEditorPopover.tsx`,
-`AnimationScrubRow.tsx`) rather than into a `⚙` popover.
+**Animations** section rather than into a `⚙` popover. P3 item 11 (Studio
+extras, `STATE.md` `panel-25`) finished the move: `transform`/
+`transformOrigin` landed on their own `TransformSection.tsx` (no Penpot
+section claims them; Figma's own motion lives in prototyping, not the style
+panel), and `animation`/`transition` landed on
+`inspector/sections/AnimationsSection.tsx` — reusing
+`AnimationEditorPopover.tsx`/`AnimationScrubRow.tsx` unchanged, which is
+where the structured per-entry editor and scrub row still live. See **G12**
+below for the full six-section list.
 
 ---
 
@@ -77,15 +87,18 @@ toggle, no body: there is nothing behind the chevron, so offering one is a lie
 that costs a click and grows the header by an empty box. The header earns its
 accordion the moment something is applied.
 
-Implemented as `collapsedWhenEmpty` on `ClassStyleSectionDefinition`
-(`classStyleSections.ts`), applied by `StyleSectionGroup` in
-`StyleSectionsEditor.tsx` through the `Section` primitive's **`empty`** prop,
-gated by `__tests__/emptySectionLaw.test.tsx`. Callers pass the fact
-("nothing is applied"), never the presentation — no section special-cases its
-own header. Emptiness is judged **across every context**, not just the active
-breakpoint — a value living on another tab is still the user's own work and must
-never be hidden behind a `+`. Search must not defeat the law either
-(`StyleRuleComposer.tsx`).
+Was implemented once, centrally, as `collapsedWhenEmpty` on
+`ClassStyleSectionDefinition` (`classStyleSections.ts`), applied by
+`StyleSectionGroup` in `StyleSectionsEditor.tsx`. P3 is complete
+(`STATE.md` `panel-25`) — that registry and renderer are deleted, and every
+section now applies the SAME law locally, in its own file, through the
+`Section` primitive's **`empty`** prop (e.g. `StrokeSection.tsx`'s own
+`setAnywhere` check, `TransformSection.tsx`'s own — see each migrated
+section's own doc for its copy of this reasoning). Callers still pass the
+fact ("nothing is applied"), never the presentation — no section special-
+cases its own header. Emptiness is still judged **across every context**,
+not just the active breakpoint — a value living on another tab is still the
+user's own work and must never be hidden behind a `+`.
 
 ### Law 2 — Rare options live in a popover anchored to the thing they modify (F5, F8, F17, F21, F25–F27)
 
@@ -196,7 +209,7 @@ unset companion property, then any project-token apply action.
 
 ---
 
-## §4. The goals (G1–G11)
+## §4. The goals (G1–G12)
 
 ### G1 — The empty-section law
 
@@ -442,17 +455,16 @@ a shell (**G7.6**).
 
 ### G8 — Effects (F13/F20–F22)
 
-> **Superseded, `STATE.md` `panel-25` P3 items 7-8.** `EffectsSection.tsx`/
+> **Superseded, `STATE.md` `panel-25` P3 items 7-8, 11.** `EffectsSection.tsx`/
 > `EffectEditorPopover.tsx` are deleted — Penpot has no single "Effects"
 > section, so this split into `ShadowSection.tsx` (`boxShadow`/`textShadow`,
 > item 7) and `BlurSection.tsx` (`filter`/`backdropFilter`, item 8), each its
 > own `INSPECTOR_SECTIONS` manifest entry. **G8.4**'s own `transform`/
-> `transformOrigin` ⚙ has no Penpot section either — it relocated to
-> `classStyleSections.ts`'s new `transform` entry (rendered via the legacy
-> `StyleSectionsEditor.tsx` path) until Studio extras (P3 item 11) claims it
-> for real. The vocabulary below (the typed "+" menu, the round-trip refusal
-> rule, F21's field shape) is unchanged — only the file names and section
-> boundary moved.
+> `transformOrigin` ⚙ has no Penpot section either — item 11 (Studio extras)
+> gave it a real one, `TransformSection.tsx`, ending its stopover in
+> `classStyleSections.ts`'s registry. The vocabulary below (the typed "+"
+> menu, the round-trip refusal rule, F21's field shape) is unchanged — only
+> the file names and section boundary moved.
 
 `PropertyList` with a typed `+` menu mapping only to real CSS: Drop shadow → a
 `box-shadow` layer, Inner shadow → `… inset`, Layer blur → `filter: blur()`,
@@ -684,6 +696,80 @@ tree.
 Both routes require a session (`nodeExportRoutes.ts`): a capture runs *on
 behalf of* a user id, and the JSX is the contents of a file in their
 repository.
+
+### G12 — Studio extras (P3 item 11, `STATE.md` `panel-25`)
+
+> **Figma:** no equivalent. Component call-site props, HTML attributes, raw
+> `transform`, motion, `cursor`/`pointer-events`, and the uncurated CSS long
+> tail have no Penpot section to land in — Figma's own component instance
+> override surface, prototyping tab, and "add variable" flow cover different
+> ground. These five concerns had no Penpot home before P3 started (the
+> plan's own item-11 gloss names them "Component props, Attributes, Custom
+> properties") and still don't; this is where Studio's own additions live,
+> at the tail of the Design-tab scroll, after Export.
+
+P3's last item folds the five remaining "no Penpot home" concerns into six
+`INSPECTOR_SECTIONS` manifest entries (order 10–15, a contiguous tail block
+— `export` stays `order: 9`) — the same one-continuously-scrolling column
+every other section renders in, no separate tab:
+
+| order | id | Component | `appliesTo` | Claims |
+|---|---|---|---|---|
+| 10 | `component` | `ComponentSection.tsx` | `studio.instance` nodes only | call-site props |
+| 11 | `attributes` | `AttributesSection.tsx` | any selected node | `htmlAttributes` |
+| 12 | `transform` | `TransformSection.tsx` | any selected node | `transform`, `transformOrigin` |
+| 13 | `animations` | `AnimationsSection.tsx` | any selected node | `animation*`, `transition` |
+| 14 | `interaction` | `InteractionSection.tsx` | any selected node | `cursor`, `pointerEvents`, `userSelect`, `scrollBehavior` |
+| 15 | `customProperties` | `CustomPropertiesSection.tsx` (manifest wrapper) | any selected node | every uncurated key |
+
+**Six entries, not one "Studio extras" component** — Component only applies
+to `studio.instance` nodes (the other five apply to any node), and cramming
+five different `appliesTo` predicates behind one component's internal `if`
+ladder would reintroduce the per-node-kind branching this whole series spent
+eleven sections removing. `component`/`attributes` are near-verbatim moves
+(`InstanceCallSiteView.tsx`/`HtmlAttributesPanel.tsx`, renamed) off their old
+bespoke Module-section / tab-switcher homes; `transform`/`interaction` follow
+Law 1's empty-header/`forceOpen` disclosure exactly like Stroke/Shadow/Blur;
+`animations` is the heaviest port, combining what used to be two exports
+(`AnimationsSection` the body, `AnimationsSectionActions` the header "+"
+menu) into one component with its own local Law-1 disclosure —
+`AnimationEditorPopover.tsx`/`AnimationScrubRow.tsx`/`animationValue.ts`/
+`keyframesModel.ts`/`transitionValue.ts` are all reused unchanged.
+
+`customProperties` stays last, exactly as it always has — every OTHER
+migrated section narrows its own bag to the handful of properties it claims;
+this one instead claims "every uncurated key" (`!isCuratedProperty`), the
+Webflow/Framer-style escape hatch `CustomPropertiesSection.tsx` (kept at its
+original path, widened with an additive `forceOpen` prop) has always been.
+It is genuinely shared by three call sites now — the manifest wrapper here
+(`forceOpen` always on), plus `StyleRuleComposer.tsx` (ambient/global-
+selector) and `MultiInlineStyleComposer.tsx` (multi-select), both of which
+call it directly now that `StyleSectionsEditor.tsx` — the registry-driven
+renderer every curated section (G1–G11) used to share — is deleted.
+
+**`StyleSectionsEditor.tsx` and `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`
+array are retired, not both deleted.** `StyleSectionsEditor.tsx` (the last
+file that ever rendered the legacy curated-section registry) is deleted
+outright. `CLASS_STYLE_SECTIONS` itself is permanently `[]`, not removed —
+`StyleCategoryRail.tsx` (the ambient-selector rail's "one button per CSS
+category" loop, now rendering zero buttons — a disclosed, by-construction
+narrowing, not a bug) and `cssControlTypes.ts` (`ALL_CURATED_CSS_PROPERTIES`)
+still import from that file.
+
+**Multi-select narrows with it — a further step, not a first one.** By the
+time P3 reached item 11, `CLASS_STYLE_SECTIONS` (and therefore what
+`MultiInlineStyleComposer.tsx`/`StyleRuleComposer.tsx` could still render
+across a multi-selection or an ambient selector) was already down to three
+entries — `transform`/`animations`/`interaction` — every OTHER curated
+category having already migrated to its own single-node
+`INSPECTOR_SECTIONS` entry in items 1–9 and become invisible to these two
+composers along the way. Item 11 finishes that migration for the last
+three, so both composers now render only `CustomPropertiesSection` — bulk-
+editing `transform`, an animation, or `cursor` across a multi-selection (or
+from the ambient/global-selector surface) is no longer possible; bulk-
+editing an uncurated property still is. `useSelectionModel()`, which every
+migrated section reads instead, is built for exactly one selected node, so
+there is no manifest-entry home for any of them to fall back to here.
 
 ---
 

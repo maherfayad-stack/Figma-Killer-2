@@ -1,28 +1,36 @@
 /**
- * classStyleSections — the Properties panel's section registry.
+ * classStyleSections — the (now-retired) Properties panel section registry.
  *
- * Split out of `cssControlTypes.ts`, which had grown to hold two unrelated
- * things: how a single CSS property is CONTROLLED (its control type, enum
- * options, token source, default) and how the panel is DIVIDED INTO SECTIONS.
- * They change for different reasons — adding a control type is not adding a
- * section — and together they pushed the file past the 700-line ceiling.
+ * P3 (`STATE.md` `panel-25`) is complete as of item 11 (Studio extras):
+ * every CSS category this file used to divide the panel into
+ * (Spacing/Layout/Position/Size/Typography/Appearance/Fill/Interaction/
+ * Effects/Animations/Border, plus the last three Studio-only additions —
+ * Transform/Animations/Interaction) has migrated to its own
+ * `INSPECTOR_SECTIONS` manifest entry (`src/admin/pages/site/inspector/
+ * sections/index.ts`, ids `layer` through `customProperties`). This file's
+ * central export, `CLASS_STYLE_SECTIONS`, is now permanently `[]` — kept
+ * alive, not deleted, because two out-of-scope surfaces still import from
+ * this module:
  *
- * This file owns the second half: the section shape, the ordered section list,
- * and the two helpers that read it. `cssControlTypes.ts` imports the list back
- * to derive which properties are "curated".
+ * - `StyleCategoryRail.tsx` — the ambient/global-selector rail's "one button
+ *   per CSS category" loop. With `CLASS_STYLE_SECTIONS` empty, it renders no
+ *   CSS-category buttons; this is a disclosed, by-construction behaviour
+ *   change (see `STATE.md` `panel-25`'s Section 11 work order), not a bug —
+ *   `StyleCategoryRail.tsx` itself is not touched by this migration.
+ * - `cssControlTypes.ts` — imports `MIGRATED_SECTION_PROPERTIES` (below) to
+ *   derive `ALL_CURATED_CSS_PROPERTIES`/`isCuratedProperty`, so every
+ *   property that ever had a curated control keeps reading as curated
+ *   instead of leaking into the generic Custom Properties editor.
  *
- * Each section's `properties` array is load-bearing beyond layout: it drives
- * the style search, the "N set" indicator, and (post-G1) whether a
- * `collapsedWhenEmpty` section may collapse at all. A property edited by a
- * section's controls but missing from this array is invisible to all three.
+ * `ClassStyleSectionDefinition`, `getClassStyleSectionSetCounts`, and
+ * `getActiveStyleTab` all stay exported for the same two callers. Do not
+ * delete this file or repopulate `CLASS_STYLE_SECTIONS` — the panel's
+ * section list lives in `inspector/sections/index.ts` now.
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { hasStyleValue } from './styleValueUtils'
-import { ArrowsScaleIcon } from 'pixel-art-icons/icons/arrows-scale'
-import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
-import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
 
 // ---------------------------------------------------------------------------
 // Class style inspector sections
@@ -64,41 +72,14 @@ export interface ClassStyleSectionDefinition {
 }
 
 // ---------------------------------------------------------------------------
-// Section order — this registry is what remains of the pre-P3 (`STATE.md`
-// `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout/
-// Fill/Stroke/Shadow/Blur/Text migrate out to their own `INSPECTOR_SECTIONS`
-// manifest entries (`sections/index.ts`). The Transform → Animations →
-// Interaction order below is what's left of
-// docs/features/inspector-disclosure.md §4 G5's original Position → Size →
-// Auto layout → Spacing → Appearance → Fill → Stroke → Effects →
-// Typography → Animations → Interaction sequence, once Typography (P3 item
-// 9) also migrated out to `TextSection.tsx`.
-//
-// `transform` is a NEW entry, not an original G5 member: it is
-// `transform`/`transformOrigin`, relocated here from the old `effects`
-// entry's own ⚙ settings popover (`EffectsSectionActions`) once Shadow (P3
-// item 7) and Blur (P3 item 8) both migrated `boxShadow`/`textShadow`/
-// `filter`/`backdropFilter` out and `EffectsSection.tsx` was deleted
-// wholesale. Neither `transform` nor `transformOrigin` has a Penpot section
-// to land in (`STATE.md` `panel-25`'s own Decisions block already names them
-// as Studio-extras-bound, item 11, not yet built) — parking them here as an
-// honest, ordinary `collapsedWhenEmpty` entry (rendered by this editor's own
-// generic per-property fallback, `ClassPropertyRow` in `stacked` layout —
-// the SAME control `StackedPropertyGrid` wrapped for the old ⚙ popover, just
-// without the popover shell) keeps the capability reachable through the
-// legacy `StyleSectionsEditor.tsx` path until item 11 claims it for real.
-// Item 11's implementer: this is where to find it, delete this entry, and
-// move `transform`/`transformOrigin` into Studio extras' own manifest
-// section — do not leave both homes existing at once.
-//
-// The last three (Transform/Animations/Interaction) are Studio's own
-// additions — Figma has no CSS-cursor/pointer-events/raw-transform concept
-// in this part of its model, and its motion lives in prototyping rather than
-// in the style panel at all — so all three stay at the end rather than
-// displacing anything Figma-native.
-// Order is read by consumers via array iteration (`StyleCategoryRail`'s rail
-// buttons, `StyleSectionsEditor`'s scroll order) — changing it changes both
-// at once, deliberately, since they're meant to stay in lockstep.
+// Section order — P3 is complete. `Transform`/`Animations`/`Interaction`,
+// this registry's last three entries, migrated to their own
+// `INSPECTOR_SECTIONS` manifest entries (`TransformSection.tsx`/
+// `AnimationsSection.tsx`/`InteractionSection.tsx` under `inspector/
+// sections/`) in P3 item 11 (`STATE.md` `panel-25`), the same way every
+// other CSS category migrated out in items 1-9. `CLASS_STYLE_SECTIONS` is
+// now permanently `[]` — see this file's own top-of-file doc for who still
+// reads it and why it isn't deleted.
 // ---------------------------------------------------------------------------
 
 /**
@@ -270,63 +251,34 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   'hangingPunctuation',
   'fontKerning',
   'fontVariationSettings',
+  // Transform (P3 item 11) — src/admin/pages/site/inspector/sections/TransformSection.tsx.
+  'transform',
+  'transformOrigin',
+  // Animations (P3 item 11) — src/admin/pages/site/inspector/sections/AnimationsSection.tsx.
+  'animation',
+  'animationName',
+  'animationDuration',
+  'animationTimingFunction',
+  'animationDelay',
+  'animationIterationCount',
+  'animationDirection',
+  'animationFillMode',
+  'animationPlayState',
+  'transition',
+  // Interaction (P3 item 11) — src/admin/pages/site/inspector/sections/InteractionSection.tsx.
+  'cursor',
+  'pointerEvents',
+  'userSelect',
+  'scrollBehavior',
 ]
 
-export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    // `transform`/`transformOrigin` — relocated from the old `effects`
-    // entry's own ⚙ settings popover (`EffectsSectionActions`, deleted
-    // alongside `EffectsSection.tsx` once Shadow + Blur both migrated — see
-    // this file's own "Section order" doc above). No Penpot section claims
-    // either property (`STATE.md` `panel-25`'s Decisions block) — Studio
-    // extras (P3 item 11, not yet built) is the eventual home; until then
-    // this ordinary `collapsedWhenEmpty` entry, rendered by
-    // `StyleSectionsEditor`'s generic per-property fallback (`ClassPropertyRow`
-    // in `stacked` layout, the same raw-text escape hatch the old ⚙ popover's
-    // `StackedPropertyGrid` used), keeps the capability reachable rather than
-    // stranding it.
-    id: 'transform',
-    title: 'Transform',
-    icon: ArrowsScaleIcon,
-    collapsedWhenEmpty: true,
-    properties: ['transform', 'transformOrigin'],
-  },
-  {
-    id: 'animations',
-    title: 'Animations',
-    icon: VideoSolidIcon,
-    // Law 1 in full: an element with no motion costs exactly one header line.
-    // This section is the most expensive one to render (it resolves keyframes
-    // against the whole rule registry), so collapsing when empty is not just
-    // the visual convention here — it is also what keeps that work off the
-    // panel for the overwhelming majority of elements.
-    collapsedWhenEmpty: true,
-    properties: [
-      'animation',
-      'animationName',
-      'animationDuration',
-      'animationTimingFunction',
-      'animationDelay',
-      'animationIterationCount',
-      'animationDirection',
-      'animationFillMode',
-      'animationPlayState',
-      'transition',
-    ],
-  },
-  {
-    id: 'interaction',
-    title: 'Interaction',
-    icon: PointerSolidIcon,
-    collapsedWhenEmpty: true,
-    properties: [
-      'cursor',
-      'pointerEvents',
-      'userSelect',
-      'scrollBehavior',
-    ],
-  },
-]
+/**
+ * P3 is complete — every CSS category this registry used to divide the panel
+ * into has migrated to its own `INSPECTOR_SECTIONS` manifest entry. This
+ * array is permanently empty; see this file's own top-of-file doc for why it
+ * still exists.
+ */
+export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = []
 
 // ---------------------------------------------------------------------------
 // Style tab utilities

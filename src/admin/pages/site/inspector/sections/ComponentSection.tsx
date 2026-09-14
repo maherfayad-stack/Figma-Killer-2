@@ -1,9 +1,23 @@
 /**
- * InstanceCallSiteView — PropertiesPanel's unified "Component" section for a
- * selected `studio.instance` node (WS-4.2/4.3, `parser-05`; row set rebuilt
- * by E2.5 on top of Track E1's catalog).
+ * ComponentSection — the Properties panel's unified "Component" section for
+ * a selected `studio.instance` node (WS-4.2/4.3, `parser-05`; row set
+ * rebuilt by E2.5 on top of Track E1's catalog).
  *
- * Header: component glyph + name + source badge + Detach/Swap actions.
+ * Migrated (renamed from `panels/PropertiesPanel/InstanceCallSiteView.tsx`)
+ * onto its own `INSPECTOR_SECTIONS` manifest entry in P3 item 11 (`STATE.md`
+ * `panel-25`, Studio extras — order 10, `appliesTo: studio.instance` nodes
+ * only). It used to be a bespoke branch inside `StyleSurface`'s Module
+ * section (`renderModuleTabContent.tsx`'s `studio.instance` case); it is now
+ * its own section, reading/writing exclusively through
+ * `useSelectionModel()`/`useInspectorCommit(model)`, the same pattern every
+ * other migrated section already established — takes no props, renders
+ * `null` on no selection (and on any node that isn't a `studio.instance`,
+ * though the manifest's own `appliesTo` predicate already keeps this
+ * component from mounting for those).
+ *
+ * Header: component glyph + name + source badge + Detach/Swap actions —
+ * unchanged, but now rendered as the FIRST content row inside the
+ * `Section`'s own body, not as a second title above `Section`'s title.
  * Body: one control per prop the component's own source DECLARES (E1's
  * `GET /admin/api/studio/components`), not per prop the call site happens
  * to pass — `buildComponentCallSiteRows` (own module, unit-tested without
@@ -42,28 +56,32 @@
  * catalog (previously only components already instantiated on the LOADED
  * BOARD) — still local-only (package components aren't in this catalog),
  * disclosed below rather than silently narrowed.
+ *
+ * `updateInstanceCallSiteProp` is called directly from `useEditorStore`,
+ * NOT through `useInspectorCommit`'s `commitProp` — `commitApi.ts` only
+ * routes to `updateNodeProps`/`setBreakpointOverride`; a call-site prop
+ * write already has exactly one honest target and exactly one call site
+ * (here), so widening `commitApi.ts` for it is out of scope for this pass
+ * (`STATE.md` `panel-25`'s Section 11 work order, "commitApi scope").
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { explainPropConstraint, type PageNode } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { buildComponentCallSiteRows } from './componentCallSiteRows'
+import { buildComponentCallSiteRows } from '../../panels/PropertiesPanel/componentCallSiteRows'
 import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/componentCatalog'
 import { detachInstance, extractInstanceCopy, swapInstance } from '@site/studio/studioSaveRequests'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
 import { SearchBar } from '@ui/components/SearchBar'
+import { Section } from '@ui/components/Section'
 import { pushToast } from '@ui/components/Toast'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { ArrowsHorizontalIcon } from 'pixel-art-icons/icons/arrows-horizontal'
 import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
-import styles from './InstanceCallSiteView.module.css'
-
-interface InstanceCallSiteViewProps {
-  nodeId: string
-  node: PageNode
-}
+import { useSelectionModel } from '../selectionModel'
+import styles from './ComponentSection.module.css'
 
 interface InstanceProps {
   componentName?: string
@@ -91,7 +109,19 @@ const EXTRACT_OFFER_REASONS = new Set([
   'no-renderable-jsx',
 ])
 
-export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps) {
+export function ComponentSection() {
+  const model = useSelectionModel()
+  const { selectedNodeId, selectedNode } = model
+  if (!selectedNodeId || !selectedNode) return null
+  return <ComponentSectionBody nodeId={selectedNodeId} node={selectedNode} />
+}
+
+interface ComponentSectionBodyProps {
+  nodeId: string
+  node: PageNode
+}
+
+function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   const instanceProps = node.props as InstanceProps
   const componentName = instanceProps.componentName ?? 'Component'
   const source = instanceProps.source ?? 'local'
@@ -197,7 +227,7 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
     : swapCandidates
 
   return (
-    <>
+    <Section title="Component" icon={BoxStackSolidIcon} forceOpen flush>
       {/* ── Header: glyph + name + source + Detach/Swap ─────────────────── */}
       <div className={styles.header}>
         <span className={styles.headerIcon} aria-hidden="true">
@@ -319,6 +349,6 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
           })}
         </div>
       )}
-    </>
+    </Section>
   )
 }

@@ -10,26 +10,30 @@
  *      show the VC's param surface.
  *   4. No node at all (page canvas with nothing selected) → empty hint.
  *   5. A `base.visual-component-ref` is selected → instance view (params +
- *      override matrix). Other nodes → Styles/Attributes switcher with the
- *      existing ClassPicker + StyleSurface behind the Styles view.
+ *      override matrix). Other nodes → unconditional `StyleSurface`
+ *      (ClassPicker + the `INSPECTOR_SECTIONS` manifest, one continuous
+ *      scroll).
  *
- * This component is the branch router for the inspector surfaces. It owns only
- * the local Styles/Attributes node-view switch; PropertiesPanel still composes
- * the moduleTabContent JSX once (via `renderModuleTabContent`) and passes it
- * in, keeping the schema → control dispatch reusable across surfaces.
+ * This component is the branch router for the inspector surfaces.
+ * PropertiesPanel still composes the moduleTabContent JSX once (via
+ * `renderModuleTabContent`) and passes it in, keeping the schema → control
+ * dispatch reusable across surfaces.
+ *
+ * The Styles/Attributes node-view switch this file used to own was deleted
+ * in P3 item 11 (`STATE.md` `panel-25`, Studio extras) — Attributes is now
+ * its own `INSPECTOR_SECTIONS` manifest entry (`AttributesSection.tsx`),
+ * rendered inline in the same scroll as every other section instead of
+ * behind a tab.
  */
-import { useState } from 'react'
 import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import type { AnyModuleDefinition } from '@core/module-engine'
-import { describeStructuralRefusal, hasWritableSourceLocation, isPropWritableToSource, refusePlacement } from '@core/page-tree'
+import { describeStructuralRefusal, hasWritableSourceLocation, refusePlacement } from '@core/page-tree'
 import type { StyleRule, PageNode } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
-import { Button } from '@ui/components/Button'
 import { ClassPicker, type ClassPickerHandle } from './ClassPicker'
 import { StyleSurface } from './StyleSurface'
-import { HtmlAttributesPanel } from './HtmlAttributesPanel'
 import { ComponentRefView } from './ComponentRefView'
 import { ComponentParamsOverview } from './ComponentParamsOverview'
 import { ConvertToComponentButton } from './ConvertToComponentButton'
@@ -63,8 +67,6 @@ interface PropertiesPanelBodyProps {
   onFocusClassPicker: () => void
 }
 
-type NodeInspectorView = 'styles' | 'attributes'
-
 export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.ReactNode {
   const {
     selectedSelectorClass,
@@ -84,7 +86,6 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     onFocusClassPicker,
   } = props
   const permissions = useEditorPermissions()
-  const [activeNodeView, setActiveNodeView] = useState<NodeInspectorView>('styles')
 
   // How many nodes across the site read their text from the SAME literal. A
   // dictionary key is shared copy by design, so an edit to it lands on every
@@ -201,30 +202,9 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
       {selectedNode.branchAlternatives?.length ? (
         <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
       ) : null}
-      <nav className={styles.nodeViewSwitcher} aria-label="Element options">
-        <Button
-          variant="ghost"
-          size="xs"
-          className={styles.nodeViewButton}
-          active={activeNodeView === 'styles'}
-          onClick={() => setActiveNodeView('styles')}
-        >
-          Styles
-        </Button>
-        <Button
-          variant="ghost"
-          size="xs"
-          className={styles.nodeViewButton}
-          active={activeNodeView === 'attributes'}
-          onClick={() => setActiveNodeView('attributes')}
-        >
-          Attributes
-        </Button>
-      </nav>
-
       {/* ClassPicker — always visible to style-edit-capable callers. Hidden
           for content-only Clients. */}
-      {activeNodeView === 'styles' && (permissions.canEditStyle || showConvertToComponent) && (
+      {(permissions.canEditStyle || showConvertToComponent) && (
         <div className={styles.headerClassPicker}>
           {permissions.canEditStyle ? (
             <ClassPicker
@@ -249,25 +229,16 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           to be threaded here as `sourceLockReason`/`nodeModuleId`/
           `codeProps` props — see `selectionModel.ts`'s own doc). Only the
           module/panel-chrome concerns SelectionModel deliberately doesn't
-          own are still passed down. */}
-      {activeNodeView === 'styles' ? (
-        <StyleSurface
-          definition={definition}
-          moduleContent={moduleTabContent}
-          onFocusClassPicker={onFocusClassPicker}
-        />
-      ) : (
-        <HtmlAttributesPanel
-          nodeId={selectedNode.id}
-          htmlAttributes={selectedNode.props.htmlAttributes}
-          // `htmlAttributes` is an ordinary prop, so it follows the same per-prop
-          // rule as every other one.
-          readOnly={
-            !permissions.canEditStructure ||
-            !isPropWritableToSource(selectedNode, 'htmlAttributes')
-          }
-        />
-      )}
+          own are still passed down. P3 item 11 (`STATE.md` `panel-25`) deleted
+          the Styles/Attributes switcher that used to gate this — Attributes
+          is now `AttributesSection.tsx`, one of `StyleSurface`'s own
+          `INSPECTOR_SECTIONS` entries, rendered unconditionally alongside
+          every other section in the same scroll. */}
+      <StyleSurface
+        definition={definition}
+        moduleContent={moduleTabContent}
+        onFocusClassPicker={onFocusClassPicker}
+      />
     </div>
   )
 }

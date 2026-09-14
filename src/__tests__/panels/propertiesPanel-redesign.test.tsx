@@ -335,13 +335,14 @@ describe("PP-6 — StyleSurface used by PropertiesPanel; Section shared in Style
     expect(src).toMatch(/import.*StyleSurface.*from\s+['"]\.\/StyleSurface['"]/)
   })
 
-  it('StyleSectionsEditor.tsx imports Section from the shared @ui/components/Section primitive', () => {
-    // Section moved from StyleRuleComposer into StyleSectionsEditor when inline-styles
-    // refactoring (commit ee346c41) extracted the style-section rendering into a
-    // shared target-agnostic renderer used by both StyleRuleComposer and InlineStyleComposer.
-    const src = readFileSync(join(PP_DIR, 'StyleSectionsEditor.tsx'), 'utf-8')
-    expect(src).toMatch(/import\s*\{\s*Section\s*\}\s*from\s+['"]@ui\/components\/Section['"]/)
-  })
+  // The `StyleSectionsEditor.tsx` half of this describe block ("imports
+  // Section from the shared primitive") is deleted: that file no longer
+  // exists (`STATE.md` `panel-25`, P3 item 11 — Studio extras is complete,
+  // and `StyleSectionsEditor.tsx` was the last file rendering the legacy
+  // curated-section registry). Every `INSPECTOR_SECTIONS` manifest entry now
+  // imports `Section` from `@ui/components/Section` directly and
+  // independently — there is no longer one shared renderer to assert this
+  // fact about in one place.
 })
 
 // ---------------------------------------------------------------------------
@@ -1459,14 +1460,9 @@ describe('PP-22 — Module settings is the first visible block after the class p
 // ---------------------------------------------------------------------------
 
 describe('PP-24 — StyleSectionsEditor assigned categories use shared Section', () => {
-  it('StyleSectionsEditor.tsx imports Section from the shared @ui/components/Section primitive', () => {
-    // Section ownership moved from StyleRuleComposer → StyleSectionsEditor in the
-    // inline-styles refactor (commit ee346c41). StyleRuleComposer now delegates all
-    // style-section rendering to StyleSectionsEditor, which is the file that
-    // legitimately imports and uses the Section primitive.
-    const src = readFileSync(join(PP_DIR, 'StyleSectionsEditor.tsx'), 'utf-8')
-    expect(src).toMatch(/import\s*\{\s*Section\s*\}\s*from\s+['"]@ui\/components\/Section['"]/)
-  })
+  // The "StyleSectionsEditor.tsx imports Section..." test is deleted — that
+  // file no longer exists (`STATE.md` `panel-25`, P3 item 11 is complete).
+  // See `PP-6`'s own identical note above.
 
   it('StyleRuleComposer.tsx does not contain sectionsArea CSS class reference', () => {
     const src = readFileSync(join(PP_DIR, 'StyleRuleComposer.tsx'), 'utf-8')

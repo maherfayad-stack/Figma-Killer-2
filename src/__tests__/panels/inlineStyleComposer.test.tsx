@@ -101,14 +101,22 @@ function loadNodeInlineEditing(overrides: {
 
 describe('InlineStyleComposer — per-property lock notice', () => {
   it('names the locked property and does not claim it will save', () => {
+    // `gridAutoFlow` is uncurated — as of P3 item 11 (`STATE.md` `panel-25`,
+    // Studio extras) this whole-node banner is `CustomPropertiesSection`
+    // (manifest wrapper)'s own, scoped to the uncurated long tail; a locked
+    // CURATED property (like `width`, claimed by `MeasuresSection.tsx`) is
+    // reported by its own row's `provenanceByProperty`-driven lock state
+    // instead — see `MeasuresSection.tsx`'s own "code-locked properties"
+    // test, and `CustomPropertiesSection.tsx`'s (both the manifest wrapper
+    // and the underlying editor) own doc for why the two are split.
     loadNodeInlineEditing({
-      inlineStyles: { width: '50%', color: 'red' },
-      codeProps: ['style:width'],
+      inlineStyles: { gridAutoFlow: 'column', color: 'red' },
+      codeProps: ['style:gridAutoFlow'],
     })
     render(<PropertiesPanel />)
 
-    const notice = screen.getByTestId('inline-style-locked-properties-notice')
-    expect(notice.textContent).toMatch(/width/i)
+    const notice = screen.getByTestId('custom-properties-locked-properties-notice')
+    expect(notice.textContent).toMatch(/grid auto flow/i)
     expect(notice.textContent).toMatch(/read-only/i)
   })
 

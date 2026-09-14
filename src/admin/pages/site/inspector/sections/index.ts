@@ -9,22 +9,23 @@
  * growing this array is P3's entire job, never touching the shell's mount
  * logic again.
  *
- * P3 (`STATE.md` `panel-25`) is fanning `StyleSectionsEditor`'s 11 internal
+ * P3 (`STATE.md` `panel-25`) is complete: `StyleSectionsEditor`'s 11 internal
  * CSS categories (Spacing/Layout/Position/Size/Typography/Appearance/Fill/
- * Interaction/Effects/Animations/Border) out into independently-manifested
- * sections with real `appliesTo` predicates (e.g. Typography only on a text
- * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
- * 2), `measures` (item 3), `layout` (item 4), `fill` (item 5), `stroke`
- * (item 6), `shadow` (item 7), `blur` (item 8), `text` (item 9), and
- * `export` (item 10) are migrated; `styles` is what remains of the old
- * registry until the next section peels off — its `order` is bumped down
- * each time so `order` always reflects the CURRENT Penpot sequence.
+ * Interaction/Effects/Animations/Border) fanned out into independently-
+ * manifested sections with real `appliesTo` predicates (e.g. Typography only
+ * on a text node), one section (or, for item 11, six sections) per PR,
+ * Penpot-ordered. `layer` (item 1), `align` (item 2), `measures` (item 3),
+ * `layout` (item 4), `fill` (item 5), `stroke` (item 6), `shadow` (item 7),
+ * `blur` (item 8), `text` (item 9), `export` (item 10), and the six Studio-
+ * extras entries (item 11 — `component`/`attributes`/`transform`/
+ * `animations`/`interaction`/`customProperties`) are ALL migrated. The old
+ * `styles` catch-all entry (`StyleSectionsComposer.tsx`) is deleted — there
+ * is nothing left in the legacy registry for it to render.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
 import { isTextNode } from '../../panels/PropertiesPanel/styleSectionOrder'
 import { AlignSection } from './AlignSection'
-import { StyleSectionsComposer } from './StyleSectionsComposer'
 import { LayerSection } from './LayerSection'
 import { MeasuresSection } from './MeasuresSection'
 import { LayoutSection } from './LayoutSection'
@@ -34,6 +35,12 @@ import { ShadowSection } from './ShadowSection'
 import { BlurSection } from './BlurSection'
 import { TextSection } from './TextSection'
 import { ExportSection } from './ExportSection'
+import { ComponentSection } from './ComponentSection'
+import { AttributesSection } from './AttributesSection'
+import { TransformSection } from './TransformSection'
+import { AnimationsSection } from './AnimationsSection'
+import { InteractionSection } from './InteractionSection'
+import { CustomPropertiesSection } from './CustomPropertiesSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -99,5 +106,30 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // behaviour change from the pre-migration mount, which rendered
   // unconditionally; see `STATE.md` `panel-25`'s Section 10 entry).
   { id: 'export', order: 9, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
-  { id: 'styles', order: 10, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Component (P3 item 11, `STATE.md` `panel-25`, Studio extras) — call-site
+  // props for a selected `studio.instance` node. The only one of the six
+  // Studio-extras entries with a node-KIND predicate, not just "a node is
+  // selected" — matches the pre-migration file's own bespoke Module-section
+  // branch, now its own manifest entry (`renderModuleTabContent.tsx`'s
+  // `studio.instance` branch returns `null` instead).
+  { id: 'component', order: 10, appliesTo: (m) => m.selectedNode?.moduleId === 'studio.instance', Component: ComponentSection },
+  // Attributes (P3 item 11) — the `htmlAttributes` prop. Used to live behind
+  // a separate Styles/Attributes tab switcher (`PropertiesPanelBody.tsx`,
+  // deleted); now inline in the same scroll as every other section.
+  { id: 'attributes', order: 11, appliesTo: (m) => m.selectedNode != null, Component: AttributesSection },
+  // Transform (P3 item 11) — `transform`/`transformOrigin`. No Penpot section
+  // to land in; parked in `classStyleSections.ts`'s now-empty registry until
+  // this pass claimed it for real (see that file's own doc).
+  { id: 'transform', order: 12, appliesTo: (m) => m.selectedNode != null, Component: TransformSection },
+  // Animations (P3 item 11) — `animation*`/`transition`. Figma's own motion
+  // lives in prototyping, not the style panel — a Studio-only addition.
+  { id: 'animations', order: 13, appliesTo: (m) => m.selectedNode != null, Component: AnimationsSection },
+  // Interaction (P3 item 11) — `cursor`/`pointerEvents`/`userSelect`/
+  // `scrollBehavior`. Figma has no CSS-cursor concept in its style panel.
+  { id: 'interaction', order: 14, appliesTo: (m) => m.selectedNode != null, Component: InteractionSection },
+  // Custom properties (P3 item 11) — every uncurated key
+  // (`!isCuratedProperty`), the Webflow/Framer-style escape hatch. Stays
+  // LAST, exactly as it always has (`StyleSectionsEditor.tsx` always
+  // rendered it after every curated section).
+  { id: 'customProperties', order: 15, appliesTo: (m) => m.selectedNode != null, Component: CustomPropertiesSection },
 ]

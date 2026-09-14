@@ -1,16 +1,28 @@
 /**
- * StyleRuleComposer — CSS section content renderer for a single style rule.
+ * StyleRuleComposer — CSS section content renderer for a single style rule
+ * (any selector, not just a class) — the ambient/global-selector surface
+ * `SelectorInspector.tsx` mounts, and the class half of `MultiSelectionStyleArea.tsx`'s
+ * multi-select composer.
  *
- * Renders the style property sections for the given style rule (any selector,
- * not just a class) filtered by activeStyleSectionId and styleQuery. The rail,
- * search bar, and section navigation are owned by the parent (StyleSurface).
+ * P3 is complete (`STATE.md` `panel-25`, item 11 — Studio extras): every
+ * curated CSS category this file used to render through
+ * `StyleSectionsEditor.tsx` migrated to its own node-selection-scoped
+ * `INSPECTOR_SECTIONS` manifest entry — but those sections all read through
+ * `useSelectionModel()`, which requires a SELECTED NODE. This surface has
+ * none (a class picked from the Selectors panel, or a shared class across a
+ * multi-selection) — there is no single node's computed style / provenance
+ * to hand them. So this file's only remaining job, now that
+ * `StyleSectionsEditor.tsx` is deleted, is the one thing that never needed a
+ * node: `CustomPropertiesSection`, rendered directly against this rule's own
+ * stored bag. See `CustomPropertiesSection.tsx`'s own doc for the "three
+ * call sites" framing.
  */
 
 import { useEditorStore } from '@site/store/store'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
-import { StyleSectionsEditor } from './StyleSectionsEditor'
+import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { getActiveStyleTab } from './classStyleSections'
-import type { PropertyProvenance } from './stylePropertyProvenance'
+import { useEditorPreference } from '@site/preferences/editorPreferences'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -19,26 +31,7 @@ import type { PropertyProvenance } from './stylePropertyProvenance'
 interface StyleRuleComposerProps {
   classId: string
   cls: StyleRule
-  /** Search query — filters visible properties across all categories. */
-  styleQuery: string
   mode?: 'contextual' | 'global'
-  /**
-   * Track F1 — the frame's real `getComputedStyle` reading, keyed by the
-   * same curated property names `ALL_CURATED_CSS_PROPERTIES` lists. Folded
-   * UNDER this class's own stored values when building `currentStyles` (the
-   * bag every unset row's placeholder + every visual section's gating logic
-   * reads), so "unset" placeholders show what's actually rendering instead
-   * of a hand-written spec-default guess. `null`/`undefined` (no frame
-   * mounted — every existing test, or global-selector mode) degrades to
-   * exactly the pre-F1 behaviour: base class styles only.
-   */
-  computedValues?: Record<string, string> | null
-  /** Track F1 — see `StyleSectionsEditor`'s doc. */
-  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
-  /** Section-header style-apply target — see `StyleSectionsEditor`'s doc. */
-  styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
-  /** Typography-first ordering for a text selection — see `styleSectionOrder`. */
-  textFirst?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -48,12 +41,7 @@ interface StyleRuleComposerProps {
 export function StyleRuleComposer({
   classId,
   cls,
-  styleQuery,
   mode: _mode = 'contextual',
-  computedValues,
-  provenanceByProperty,
-  styleTarget,
-  textFirst,
 }: StyleRuleComposerProps) {
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   // The editing context is owned by the canvas toolbar's context switcher:
@@ -69,9 +57,7 @@ export function StyleRuleComposer({
   })
   const updateClassStyles = useEditorStore((s) => s.updateClassStyles)
   const setClassContextStyles = useEditorStore((s) => s.setClassContextStyles)
-  const clearClassStyleProperties = useEditorStore((s) => s.clearClassStyleProperties)
-  const setPreviewClassStyles = useEditorStore((s) => s.setPreviewClassStyles)
-  const clearPreviewClassStyles = useEditorStore((s) => s.clearPreviewClassStyles)
+  const sectionsExpanded = useEditorPreference('propertiesSectionsExpanded')
 
   const onCondition = activeConditionId !== null
 
@@ -87,14 +73,6 @@ export function StyleRuleComposer({
   const storedStyles: Record<string, unknown> = activeContextId
     ? (cls.contextStyles[activeContextId] ?? {})
     : cls.styles
-  // Track F1 — the frame's computed truth is the base layer; this class's
-  // own stored values (base, then context override) win over it, matching
-  // the CSS cascade. `computedValues` is only ever `null`/`undefined` when
-  // no frame has rendered yet (test environment, or before first mount) —
-  // then this collapses to exactly the pre-F1 bag.
-  const currentStyles: Record<string, unknown> = activeContextId
-    ? { ...(computedValues ?? {}), ...cls.styles, ...storedStyles }
-    : { ...(computedValues ?? {}), ...cls.styles }
 
   const handleChange = (key: keyof CSSPropertyBag, value: string | number | undefined) => {
     const patch = { [key]: value ?? null } as Partial<CSSPropertyBag>
@@ -109,75 +87,12 @@ export function StyleRuleComposer({
     handleChange(key, undefined)
   }
 
-  // Clear a group of properties everywhere (base + every context) in one undo
-  // step — used when clearing `display` must also prune its flex/grid deps.
-  const handleClearProperties = (keys: ReadonlyArray<keyof CSSPropertyBag>) => {
-    clearClassStyleProperties(classId, keys)
-  }
-
-  /**
-   * Write several properties to the active target in ONE undo step. Both
-   * class-rule writers already take a whole patch, so this is `handleChange`
-   * without the one-key narrowing — see `StyleSectionsEditor`'s `onChangeMany`
-   * doc for why a multi-property gesture must not be a loop of single writes.
-   */
-  const handleChangeMany = (patch: Record<string, string | number | null>) => {
-    if (Object.keys(patch).length === 0) return
-    const cssPatch = patch as Partial<CSSPropertyBag>
-    if (activeContextId) {
-      setClassContextStyles(classId, activeContextId, cssPatch)
-    } else {
-      updateClassStyles(classId, cssPatch)
-    }
-  }
-
-  // Preview a transient style patch on the canvas while a property
-  // control's hover-suggestion menu is open. The preview lives entirely
-  // in store UI state — no class document mutation, no history entry.
-  const handlePreview = (patch: Partial<CSSPropertyBag>) => {
-    // The canvas preview channel is keyed by classId + optional breakpointId
-    // — it can't target a conditional layer. Skip preview while a condition
-    // tab is active rather than previewing onto the wrong (base/breakpoint)
-    // target. The actual edit still commits correctly via handleChange.
-    if (onCondition) return
-    setPreviewClassStyles({
-      classId,
-      breakpointId: activeTab !== 'base' ? activeTab : null,
-      styles: patch,
-    })
-  }
-
-  const handleClearPreview = () => {
-    clearPreviewClassStyles(classId)
-  }
-
-  // Re-key the section controls on the active editing context (base /
-  // breakpoint / condition) so they remount and re-read the right stored bag
-  // when the toolbar context switcher changes the target.
-  const sectionKey = activeContextId ?? 'base'
-
-  // Every context bag this rule holds, regardless of which tab is active —
-  // docs/features/inspector-disclosure.md §4 G1's empty-section law must not
-  // collapse a section that has a value set on some OTHER breakpoint or
-  // condition than the one currently open.
-  const crossContextStyles = [cls.styles, ...Object.values(cls.contextStyles)]
-
   return (
-    <StyleSectionsEditor
+    <CustomPropertiesSection
       storedStyles={storedStyles}
-      currentStyles={currentStyles}
-      crossContextStyles={crossContextStyles}
-      sectionKey={sectionKey}
-      styleQuery={styleQuery}
+      defaultOpen={sectionsExpanded}
       onChange={handleChange}
       onRemove={handleRemoveProperty}
-      onClearProperties={handleClearProperties}
-      onChangeMany={handleChangeMany}
-      onPreview={handlePreview}
-      onClearPreview={handleClearPreview}
-      provenanceByProperty={provenanceByProperty}
-      styleTarget={styleTarget}
-      textFirst={textFirst}
     />
   )
 }

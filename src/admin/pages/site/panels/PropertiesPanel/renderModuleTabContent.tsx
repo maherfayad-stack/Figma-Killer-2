@@ -2,7 +2,7 @@
  * renderModuleTabContent — derive the JSX shown inside StyleSurface's Module
  * section.
  *
- * Three branches:
+ * Two branches:
  *   1. `base.loop` — substitute the schema-driven control list with the
  *      dedicated `LoopPropertiesView` (source picker + dynamic filter UI).
  *      The loop's empty `schema` would otherwise leave the section blank.
@@ -10,11 +10,20 @@
  *      flow, which means the ClassPicker + style sections (display, layout,
  *      etc.) keep working — the user can assign classes to the loop wrapper
  *      to lay out iterations as a grid, flex row, columns, etc.
- *   2. Visual-component-mode — wrap each control in `ParamPromotableRow` so
- *      the user can lift the prop to the VC's param surface in one click.
- *   3. Default — render each control via `PropertyControlRenderer` with
- *      optional dynamic-binding wiring when the node sits inside an entry-
- *      template page or a `base.loop` ancestor subtree.
+ *   2. Default (covers both plain modules and visual-component-mode) —
+ *      render each control via `PropertyControlRenderer`, wrapped in
+ *      `ParamPromotableRow` in VC mode, with optional dynamic-binding wiring
+ *      when the node sits inside an entry-template page or a `base.loop`
+ *      ancestor subtree.
+ *
+ * `studio.instance` (WS-4.2) used to get a THIRD dedicated branch here
+ * (`InstanceCallSiteView`) — P3 item 11 (`STATE.md` `panel-25`, Studio
+ * extras) promoted that view to its own `INSPECTOR_SECTIONS` manifest entry
+ * (`ComponentSection.tsx`, `inspector/sections/`), so this function now
+ * returns `null` for that module id — `studio.instance`'s own `schema` is
+ * `{}`, so the schema loop below would render an empty Module-section body
+ * anyway; the explicit early return keeps that fact obvious rather than
+ * relying on the loop falling through to nothing.
  *
  * Lives in its own file because it owns the schema → control dispatch — one
  * of the two highest-churn surfaces of the Properties panel — and benefits
@@ -29,7 +38,6 @@ import type {
 import type { Page, PageNode } from '@core/page-tree'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { LoopPropertiesView } from './LoopPropertiesView'
-import { InstanceCallSiteView } from './InstanceCallSiteView'
 import { ParamPromotableRow } from './ParamPromotableRow'
 import { FormSettingsPanel } from './FormSettingsPanel'
 import { isFormSettingsModule } from './formSettingsAnalysis'
@@ -72,15 +80,14 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
     )
   }
 
-  // instance-ui-01 — `studio.instance` (WS-4.2) has an empty `schema` (its
-  // editable surface is the call-site prop bag, `props.callSiteProps`,
-  // classified per-instance rather than from a fixed control map every
-  // instance would otherwise share — see that module's own doc comment), so
-  // it needs the same dedicated-view treatment `base.loop` gets above,
-  // before the schema-driven branches below (which would render nothing for
-  // it) ever run.
-  if (selectedNode?.moduleId === 'studio.instance' && selectedNodeId) {
-    return <InstanceCallSiteView nodeId={selectedNodeId} node={selectedNode} />
+  // `studio.instance` (WS-4.2) has an empty `schema` — its editable surface
+  // is the call-site prop bag (`props.callSiteProps`), now rendered by its
+  // own manifest entry (`ComponentSection.tsx`, see this file's own doc
+  // header) rather than here. Returning `null` (instead of falling through
+  // to an empty schema loop) keeps `StyleSurface`'s `hasModuleContent` check
+  // from rendering an empty, headerless Module-section block above it.
+  if (selectedNode?.moduleId === 'studio.instance') {
+    return null
   }
 
   // Branches 2 & 3 share the schema iteration; bail when there's nothing
