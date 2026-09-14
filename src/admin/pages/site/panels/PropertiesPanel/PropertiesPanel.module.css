@@ -83,33 +83,6 @@
     overflow: hidden;
 }
 
-.nodeViewSwitcher {
-    display: flex;
-    align-items: center;
-    gap: var(--inspector-space-l);
-    padding: var(--inspector-space-xs) var(--inspector-pad-x) 0;
-}
-
-.nodeViewSwitcher .nodeViewButton {
-    height: auto;
-    padding: 0;
-    border-radius: var(--radius-sm);
-    color: var(--text-disabled);
-    font-size: var(--text-2xs);
-    font-weight: 800;
-    line-height: 1.4;
-}
-
-.nodeViewSwitcher .nodeViewButton:hover {
-    background: transparent;
-    color: var(--text-muted);
-}
-
-.nodeViewSwitcher .nodeViewButton[data-active="true"] {
-    color: var(--text);
-    font-weight: 800;
-}
-
 /*  `position: relative` + `z-index: 1` make this the containing block AND
     stacking context for the `::after` fade, so the gradient renders above
     the scrolling StyleSurface that follows. Bottom padding is intentionally

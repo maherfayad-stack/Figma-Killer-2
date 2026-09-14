@@ -1,45 +1,91 @@
+/**
+ * AttributesSection — Studio's own "Attributes" section (`STATE.md`
+ * `panel-25`, P3 item 11 — Studio extras). Migrated (renamed from
+ * `panels/PropertiesPanel/HtmlAttributesPanel.tsx`) onto its own
+ * `INSPECTOR_SECTIONS` manifest entry, order 11, `appliesTo: any selected
+ * node`. It used to live behind a separate Styles/Attributes tab switcher
+ * (`PropertiesPanelBody.tsx`'s deleted `activeNodeView`) — it now renders
+ * inline, in the same continuous scroll as every other section.
+ *
+ * Reads/writes through `useSelectionModel()`/`useInspectorCommit(model)`,
+ * the same pattern every other migrated section uses: `htmlAttributes` is
+ * an ordinary node prop, so a write is `commit.commitProp('htmlAttributes',
+ * …)` — exactly `commitProp`'s documented job (routes to `updateNodeProps`,
+ * or `setBreakpointOverride` when applicable) — not a direct
+ * `useEditorStore((s) => s.updateNodeProps)` call the way the pre-migration
+ * file made it.
+ *
+ * `readOnly` (`!permissions.canEditStructure ||
+ * !isPropWritableToSource(selectedNode, 'htmlAttributes')`) used to be
+ * computed by `PropertiesPanelBody.tsx` and threaded down as a prop; this
+ * section now computes it itself from the two hooks every migrated section
+ * already reads, the same way every other section owns every fact about its
+ * own body.
+ *
+ * The inner editor (`HtmlAttributesPanelEditor`/`HtmlAttributeRow`) and
+ * `htmlAttributesModel.ts` (kept in place, unchanged) are unchanged from the
+ * pre-migration file — only the outer wiring and the `Section` wrapper are
+ * new; the `.module.css` classes moved with the file (`git mv`) and keep
+ * their old names.
+ */
 import { useEffect, useRef, useState } from 'react'
-import { useEditorStore } from '@site/store/store'
+import { useEditorPermissions } from '@site/editorPermissionsContext'
+import { isPropWritableToSource } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { EmptyState } from '@ui/components/EmptyState'
+import { Section } from '@ui/components/Section'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
+import { CodeIcon } from 'pixel-art-icons/icons/code'
 import {
   htmlAttributeRowsFromValue,
   htmlAttributesKey,
   htmlAttributesValueKey,
   validateHtmlAttributeRows,
   type HtmlAttributeDraftRow,
-} from './htmlAttributesModel'
-import styles from './HtmlAttributesPanel.module.css'
+} from '../../panels/PropertiesPanel/htmlAttributesModel'
+import { useSelectionModel } from '../selectionModel'
+import { useInspectorCommit } from '../commitApi'
+import styles from './AttributesSection.module.css'
 
-interface HtmlAttributesPanelProps {
+export function AttributesSection() {
+  const model = useSelectionModel()
+  const commit = useInspectorCommit(model)
+  const permissions = useEditorPermissions()
+  const { selectedNodeId, selectedNode } = model
+
+  if (!selectedNodeId || !selectedNode) return null
+
+  const readOnly =
+    !permissions.canEditStructure || !isPropWritableToSource(selectedNode, 'htmlAttributes')
+
+  return (
+    <Section title="Attributes" icon={CodeIcon} forceOpen flush>
+      <HtmlAttributesPanelEditor
+        key={selectedNodeId}
+        nodeId={selectedNodeId}
+        htmlAttributes={selectedNode.props.htmlAttributes}
+        readOnly={readOnly}
+        onCommit={(attributes) => commit.commitProp('htmlAttributes', attributes)}
+      />
+    </Section>
+  )
+}
+
+interface HtmlAttributesPanelEditorProps {
   nodeId: string
   htmlAttributes: unknown
   readOnly: boolean
-}
-
-export function HtmlAttributesPanel({
-  nodeId,
-  htmlAttributes,
-  readOnly,
-}: HtmlAttributesPanelProps) {
-  return (
-    <HtmlAttributesPanelEditor
-      nodeId={nodeId}
-      htmlAttributes={htmlAttributes}
-      readOnly={readOnly}
-    />
-  )
+  onCommit: (attributes: Record<string, string>) => void
 }
 
 function HtmlAttributesPanelEditor({
   nodeId,
   htmlAttributes,
   readOnly,
-}: HtmlAttributesPanelProps) {
-  const updateNodeProps = useEditorStore((s) => s.updateNodeProps)
+  onCommit,
+}: HtmlAttributesPanelEditorProps) {
   const externalAttributesKey = htmlAttributesValueKey(htmlAttributes)
   const syncedNodeId = useRef(nodeId)
   const syncedAttributesKey = useRef(externalAttributesKey)
@@ -70,7 +116,7 @@ function HtmlAttributesPanelEditor({
     const nextAttributesKey = htmlAttributesKey(nextValidation.attributes)
     if (nextAttributesKey === syncedAttributesKey.current) return
     syncedAttributesKey.current = nextAttributesKey
-    updateNodeProps(nodeId, { htmlAttributes: nextValidation.attributes })
+    onCommit(nextValidation.attributes)
   }
 
   function updateRow(id: string, patch: Partial<Omit<HtmlAttributeDraftRow, 'id'>>) {

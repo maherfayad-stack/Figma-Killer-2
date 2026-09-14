@@ -1,19 +1,21 @@
-/* HtmlAttributesPanel — node-level editor for persisted props.htmlAttributes. */
+/**
+ * AttributesSection — node-level editor for persisted props.htmlAttributes.
+ *
+ * `.panel`/`.scroll` used to give this its own full-height, independently
+ * scrolling pane when it lived behind a Styles/Attributes tab switcher
+ * (`STATE.md` `panel-25`'s Section 11 work order). Migrated into the
+ * `INSPECTOR_SECTIONS` manifest, it is now ordinary flow content inside
+ * `Section`'s own body — the whole Design tab scrolls together — so both
+ * rules are the plain block layout every other section's body uses.
+ */
 
 .panel {
-    flex: 1;
-    min-height: 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
 }
 
 .scroll {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    padding: var(--inspector-space-l) var(--inspector-space-xl);
+    padding: var(--inspector-space-s) 0;
 }
 
 .header {

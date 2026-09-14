@@ -11,43 +11,32 @@
  * to `""` under `bun test`, so even class-based structural queries are blind.
  *
  * So this is the named substitute the work order allows: a STATIC budget on
- * the two inputs a height is computed FROM.
+ * the geometry a height is computed FROM — every `--inspector-*` token is a
+ * literal px value, no `clamp()`, no `vw`. A panel whose gutters grow with
+ * the viewport has no height to budget in the first place.
  *
- *   1. The geometry is frozen. Every `--inspector-*` token is a literal px
- *      value — no `clamp()`, no `vw`. A panel whose gutters grow with the
- *      viewport has no height to budget in the first place, which is why
- *      this half comes first.
- *   2. The row count is budgeted. A caption above a field is the panel's
- *      most expensive row form (~19px of pure label), so the number of them
- *      a resident panel draws is capped, and the number of properties in
- *      each section that COULD draw one is capped per section.
- *
- * Together those two facts are what a height would have been derived from.
- * When a real layout engine is available in CI, the honest upgrade is to keep
- * part 1 and replace part 2 with the measurement.
+ * ── P3 completion note (`STATE.md` `panel-25`, item 11 — Studio extras) ──
+ * This file used to ALSO budget the row count `StyleSectionsEditor`/
+ * `classStyleSections.ts`'s legacy registry could draw (a "caption budget"
+ * per section, and a whole-panel caption count rendered through
+ * `StyleSectionsEditor` directly). Both are gone: `StyleSectionsEditor.tsx`
+ * is deleted and `CLASS_STYLE_SECTIONS` is permanently `[]` (P3 is complete
+ * — every CSS category now renders through its own `INSPECTOR_SECTIONS`
+ * manifest entry, each with its own geometry, not a shared registry this
+ * file can budget in one place). The token-freeze half below is untouched —
+ * it is about the underlying `--inspector-*` scale, not the deleted
+ * registry — and `getPropertyFieldGlyph`'s own glyph-table coverage stays,
+ * since it is a fact about `cssPropertyIcons.ts` any section's rows still
+ * read from, curated-registry or not.
  */
 
-import { afterEach, describe, expect, it } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { cleanup, render } from '@testing-library/react'
-import { CLASS_STYLE_SECTIONS } from '../classStyleSections'
-import {
-  getIconEnumOptions,
-  getPropertyFieldGlyph,
-  isSelfDescribingProperty,
-} from '../cssPropertyIcons'
-import { StyleSectionsEditor } from '../StyleSectionsEditor'
-
-/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
-function noopMany() {}
+import { getPropertyFieldGlyph } from '../cssPropertyIcons'
 
 const SRC_ROOT = join(import.meta.dir, '../../../../../..')
 const GLOBALS_CSS = readFileSync(join(SRC_ROOT, 'styles/globals.css'), 'utf8')
-
-afterEach(cleanup)
-
-function noop() {}
 
 /**
  * Every inspector token that participates in a height, and the px value it is
@@ -118,95 +107,13 @@ describe('inspector geometry is frozen', () => {
     }
     expect(offenders).toEqual([])
   })
-
-  /**
-   * Header chrome is the one part of the panel's height that IS exactly
-   * computable without a layout engine: every section header is one
-   * `--inspector-header-h` row, and there is one per section. Freezing the
-   * section count freezes that whole term.
-   */
-  it('header chrome costs exactly one --inspector-header-h per section', () => {
-    expect(GLOBALS_CSS).toContain('--inspector-header-h: 32px;')
-    expect(CLASS_STYLE_SECTIONS.length).toBeLessThanOrEqual(11)
-    const headerChromePx = CLASS_STYLE_SECTIONS.length * 32
-    expect(headerChromePx).toBeLessThanOrEqual(352)
-  })
 })
 
-describe('caption budget — the panel\'s most expensive row form', () => {
+describe('glyph table', () => {
   /**
-   * What a resident panel actually draws. A caption row is the only thing in
-   * this tree that renders a `<label>`: `ControlRow` emits one for `inline`,
-   * `stacked` and `caption` layouts and NOTHING for `bare`, which is what a
-   * property earns by having an icon-enum group, an in-field glyph, or a
-   * self-describing value. `<label>` count is therefore an exact, layout-free
-   * count of caption rows — the one honest measurement happy-dom can give.
-   */
-  it('a text node\'s resident panel draws at most two caption rows', () => {
-    render(
-      <StyleSectionsEditor
-        storedStyles={{ fontSize: '16px', color: '#ffffff' }}
-        currentStyles={{ fontSize: '16px', color: '#ffffff' }}
-        sectionKey="base"
-        styleQuery=""
-        onChange={noop}
-        onChangeMany={noopMany}
-        onRemove={noop}
-        onClearProperties={noop}
-        onPreview={noop}
-        onClearPreview={noop}
-      />,
-    )
-
-    // Today: zero — Position/Size/Appearance/Layout/Spacing/Fill/Stroke/
-    // Shadow/Blur/Typography (the sections that used to draw "Clip content"
-    // and this text node's own `fontSize`/`color` here) all migrated out to
-    // their own `INSPECTOR_SECTIONS` manifest entries (`STATE.md` `panel-25`
-    // P3 items 1-9) and no longer mount through this file at all. The budget
-    // is 2 so a deliberate addition is possible; anything more is the
-    // caption-above-field form creeping back in as the panel's default,
-    // which is what this whole work order removed.
-    expect(document.querySelectorAll('label').length).toBeLessThanOrEqual(2)
-  })
-
-  /**
-   * Per-section budgets for the properties that would draw a caption if the
-   * generic row drew them — the ceiling a section may not silently cross when
-   * someone adds a property to `classStyleSections`. Numbers are today's
-   * counts; raising one is a design decision that belongs in a diff, not a
-   * side effect.
-   */
-  const CAPTION_CAPABLE_BUDGET: Readonly<Record<string, number>> = {
-    // `transform`/`transformOrigin` — relocated from the old `effects`
-    // entry's ⚙ popover once Shadow/Blur migrated it out (`STATE.md`
-    // `panel-25`, P3 items 7-8). See `classStyleSections.ts`'s own doc.
-    transform: 2,
-    animations: 10,
-    interaction: 4,
-  }
-
-  it('every section stays inside its caption-capable budget', () => {
-    const over: string[] = []
-    for (const section of CLASS_STYLE_SECTIONS) {
-      const budget = CAPTION_CAPABLE_BUDGET[section.id]
-      expect(budget).toBeDefined()
-      const captionCapable = section.properties.filter(
-        (prop) =>
-          !getIconEnumOptions(prop) &&
-          !getPropertyFieldGlyph(prop) &&
-          !isSelfDescribingProperty(prop),
-      ).length
-      if (captionCapable > (budget ?? 0)) {
-        over.push(`${section.id}: ${captionCapable} > ${budget}`)
-      }
-    }
-    expect(over).toEqual([])
-  })
-
-  /**
-   * The glyph table is what buys the budget above. Regressing an entry back
-   * to a caption is exactly the drift this gate exists to catch, so the
-   * properties that earned a mark are named here.
+   * The glyph table is what lets a property's row shed its caption in favour
+   * of an in-field mark. Regressing an entry back to a bare caption is real
+   * drift, so the properties that earned a mark are named here.
    */
   it('keeps the in-field glyphs that replaced captions', () => {
     for (const prop of [

@@ -1,7 +1,8 @@
 /**
- * InstanceCallSiteView — styles for the `studio.instance` Properties panel
- * surface. Achromatic palette (color as identity/state/canvas affordance
- * only). CSS Modules only. Token-only colors — no hardcoded hex/rgb/hsl.
+ * ComponentSection — styles for the `studio.instance` Properties panel
+ * section (`STATE.md` `panel-25`, P3 item 11). Achromatic palette (color as
+ * identity/state/canvas affordance only). CSS Modules only. Token-only
+ * colors — no hardcoded hex/rgb/hsl.
  */
 
 /* ── Header strip — mirrors ComponentRefView's header ────────────────────── */
@@ -128,9 +129,11 @@
   line-height: 1.6;
 }
 
-/* ── Props list ───────────────────────────────────────────────────────────── */
+/* ── Props list — plain flow now that this section is inline content inside
+   `Section`'s own body, not an independently scrolling full-height pane
+   (`STATE.md` `panel-25`'s Section 11 work order). ───────────────────────── */
 
 .propsList {
-  overflow-y: auto;
-  flex: 1;
+  display: flex;
+  flex-direction: column;
 }

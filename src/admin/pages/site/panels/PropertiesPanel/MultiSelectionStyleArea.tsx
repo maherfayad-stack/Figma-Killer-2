@@ -153,12 +153,12 @@ export function MultiSelectionStyleArea({ selectedNodeIds }: MultiSelectionStyle
         // without it would leave a compiled class fully editable here.
         <TokenCatalogProvider>
           <StyleWriteLockContext.Provider value={blockedStyleWriteLock(classWriteLockReason)}>
-            <StyleRuleComposer classId={target.classId} cls={targetRule} styleQuery="" />
+            <StyleRuleComposer classId={target.classId} cls={targetRule} />
           </StyleWriteLockContext.Provider>
         </TokenCatalogProvider>
       ) : (
         <>
-          <MultiInlineStyleComposer nodeIds={selectedNodeIds} styleQuery="" />
+          <MultiInlineStyleComposer nodeIds={selectedNodeIds} />
           {/* Element target only: a swatch here rewrites INLINE declarations,
               and the class target's colours belong to the class, not to this
               selection. See `selectionColors.ts`. */}

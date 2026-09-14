@@ -20,7 +20,13 @@ import { useScrollSpy } from './useScrollSpy'
 import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
 import styles from './PropertiesPanel.module.css'
 
-const FIRST_STYLE_SECTION_ID = CLASS_STYLE_SECTIONS[0].id
+// `CLASS_STYLE_SECTIONS` is now permanently `[]` (P3 item 11, `STATE.md`
+// `panel-25`) — this used to safely read its first entry's id when the
+// registry still held `transform`/`animations`/`interaction`. Guarded, not
+// removed: `useScrollSpy` still needs SOME `initialId`, even though nothing
+// in this surface's own body sets a matching `data-style-section` anchor
+// anymore (see this file's own "search box becomes fully inert" note below).
+const FIRST_STYLE_SECTION_ID = CLASS_STYLE_SECTIONS[0]?.id ?? ''
 
 interface SelectorInspectorProps {
   cls: StyleRule
@@ -73,7 +79,6 @@ export function SelectorInspector({ cls, activeBreakpointId }: SelectorInspector
             key={cls.id}
             classId={cls.id}
             cls={cls}
-            styleQuery={styleQuery}
             mode="global"
           />
         </div>
