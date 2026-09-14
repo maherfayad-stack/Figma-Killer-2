@@ -25,7 +25,13 @@ import type { LiveFrameSource } from '@site/canvas/resolveLiveFrameSrc'
 afterEach(() => cleanup())
 
 function liveFrame(overrides: Partial<LiveFrameSource> = {}): LiveFrameSource {
-  return { liveOrigin: 'https://live.studio.test', screenKey: 'home', nodeIdsInTreeOrder: ['n1'], ...overrides }
+  return {
+    liveOrigin: 'https://live.studio.test',
+    screenKey: 'home',
+    nodeIdsInTreeOrder: ['n1'],
+    axes: { direction: 'ltr', colorScheme: 'light' },
+    ...overrides,
+  }
 }
 
 describe('IframeFrameSurface — bridge adapter construct/reconcile split', () => {
