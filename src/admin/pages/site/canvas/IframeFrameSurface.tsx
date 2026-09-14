@@ -518,6 +518,13 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           style={isLive ? { ...style, width: '100%', height: '100%' } : { ...style, width: `${width}px` }}
           title={`Canvas frame for ${breakpointId}`}
           data-preview-scheme={frameAxes.colorScheme}
+          // Stamped on the outer element itself (not just the framed
+          // document, which is unreachable cross-origin here) so any caller
+          // holding this HTMLIFrameElement — including
+          // `preferredRenderedCanvasNode` (P5, STATE.md `panel-26`) — can
+          // read which breakpoint it represents without touching
+          // `contentDocument`. See IframeFrameSurface's own doc comment.
+          data-breakpoint-id={breakpointId}
           {...dataAttrSpread}
         />
       )
@@ -538,6 +545,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           title={`Canvas frame for ${breakpointId}`}
           // Paper follows the PREVIEWED scheme — see `--canvas-frame-paper`.
           data-preview-scheme={frameAxes.colorScheme}
+          // Same additive stamp as the bridge branch above — this portal
+          // branch already tags the srcDoc BODY with data-breakpoint-id
+          // (`applyIframeBodyReset`); this is the outer iframe element's own
+          // copy, so a cross-mode caller doesn't need to know which mode it's
+          // looking at to read it.
+          data-breakpoint-id={breakpointId}
           {...dataAttrSpread}
           // Allow the same-origin policy so the parent can read/write the
           // iframe's document. `allow-scripts` so authored script modules

@@ -104,6 +104,8 @@ export interface SelectionModel {
 
   provenanceByProperty: ReadonlyMap<string, PropertyProvenance>
   computedValues: Record<string, string> | null
+  /** True while a Tier 2 bridge-mode measurement for `computedValues` is in flight — always `false` on a Tier 0/1 (portal) board. P5, STATE.md `panel-26`. Additive-only: existing readers that don't destructure this field are unaffected. */
+  computedValuesLoading: boolean
 
   /** The P1 rule, exposed per-property so a section never calls `resolveWriteTarget` itself. */
   writeTargetFor(property: string, opts?: { existing?: boolean }): WriteTarget
@@ -183,7 +185,7 @@ export function useSelectionModel(): SelectionModel {
       : null
 
   const classChain = buildClassChain(assignedClassRules, activeContextId)
-  const computedValues = useFrameComputedStyleValues(
+  const { value: computedValues, isLoading: computedValuesLoading } = useFrameComputedStyleValues(
     selectedNodeId,
     activeBreakpointId ?? 'desktop',
     ALL_CURATED_CSS_PROPERTIES,
@@ -241,6 +243,7 @@ export function useSelectionModel(): SelectionModel {
 
     provenanceByProperty,
     computedValues,
+    computedValuesLoading,
 
     writeTargetFor,
   }

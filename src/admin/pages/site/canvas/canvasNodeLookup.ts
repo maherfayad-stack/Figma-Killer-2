@@ -328,6 +328,34 @@ export async function findRenderedCanvasNodes(
 }
 
 /**
+ * `findRenderedCanvasNodes`'s result narrowed to the frame matching
+ * `preferredBreakpointId` (its OWN `data-breakpoint-id`, stamped directly on
+ * the `<iframe>` element by `IframeFrameSurface` in both `documentMode`
+ * branches — NOT its `contentDocument`'s `<body>`, which is unreachable
+ * cross-origin for a bridge frame), falling back to the first result when
+ * none match. `null` when no registered frame (portal or bridge) renders
+ * `nodeId` at all.
+ *
+ * The cross-mode counterpart to `useInspectComputedStyle.ts`'s portal-only
+ * `pickPreferredElement` — same "prefer the active breakpoint, else the
+ * first match" rule, expressed against `RenderedCanvasNode`s instead of live
+ * elements so it works identically for a same-origin portal frame and a
+ * cross-origin bridge frame (P5, STATE.md `panel-26`).
+ */
+export async function preferredRenderedCanvasNode(
+  nodeId: string,
+  preferredBreakpointId: string,
+  properties?: string[],
+): Promise<RenderedCanvasNode | null> {
+  const results = await findRenderedCanvasNodes(nodeId, properties)
+  if (results.length === 0) return null
+  const preferred = results.find(
+    (entry) => entry.frame.getAttribute('data-breakpoint-id') === preferredBreakpointId,
+  )
+  return preferred ?? results[0]!
+}
+
+/**
  * A canvas frame's document, paired with the iframe hosting it.
  *
  * Portal-only, and NOT yet migrated off a direct `Document` reach-in —

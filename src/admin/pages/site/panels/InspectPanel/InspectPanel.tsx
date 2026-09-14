@@ -53,7 +53,11 @@ export function InspectPanel() {
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   const colorSettings = useEditorStore((s) => s.site?.settings.framework?.colors)
 
-  const snapshot = useInspectComputedStyle(selectedNodeId, selectedNode, activeBreakpointId)
+  const { value: snapshot, isLoading: snapshotLoading } = useInspectComputedStyle(
+    selectedNodeId,
+    selectedNode,
+    activeBreakpointId,
+  )
   const tokens: ColorTokenLike[] = generateFrameworkColorVariableSets(colorSettings).light.map(
     (variable) => ({ name: variable.name, value: variable.value }),
   )
@@ -78,6 +82,8 @@ export function InspectPanel() {
     >
       {!selectedNodeId ? (
         <p className={styles.emptyState}>Select an element to inspect.</p>
+      ) : snapshotLoading && !model ? (
+        <p className={styles.emptyState}>Measuring…</p>
       ) : !model ? (
         <p className={styles.emptyState}>Not currently rendered on the canvas.</p>
       ) : (
