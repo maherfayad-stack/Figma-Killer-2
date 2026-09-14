@@ -159,13 +159,13 @@ describe('caption budget — the panel\'s most expensive row form', () => {
       />,
     )
 
-    // Today: zero — Position/Size/Appearance/Layout/Spacing (the sections
-    // that used to draw "Clip content" here) all migrated out to their own
-    // `INSPECTOR_SECTIONS` manifest entries (`STATE.md` `panel-25` P3 items
-    // 1-4) and no longer mount through this file at all. The budget is 2 so
-    // a deliberate addition is possible; anything more is the caption-above-
-    // field form creeping back in as the panel's default, which is what this
-    // whole work order removed.
+    // Today: zero — Position/Size/Appearance/Layout/Spacing/Fill (the
+    // sections that used to draw "Clip content" here) all migrated out to
+    // their own `INSPECTOR_SECTIONS` manifest entries (`STATE.md` `panel-25`
+    // P3 items 1-5) and no longer mount through this file at all. The budget
+    // is 2 so a deliberate addition is possible; anything more is the
+    // caption-above-field form creeping back in as the panel's default,
+    // which is what this whole work order removed.
     expect(document.querySelectorAll('label').length).toBeLessThanOrEqual(2)
   })
 
@@ -177,7 +177,6 @@ describe('caption budget — the panel\'s most expensive row form', () => {
    * side effect.
    */
   const CAPTION_CAPABLE_BUDGET: Readonly<Record<string, number>> = {
-    fill: 11,
     border: 22,
     effects: 6,
     animations: 10,

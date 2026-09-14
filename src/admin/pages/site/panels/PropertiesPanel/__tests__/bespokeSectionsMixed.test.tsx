@@ -31,6 +31,9 @@
  * longer part of this file's coverage, for the exact same reason — both
  * folded into `inspector/sections/LayoutSection.tsx` (`STATE.md` `panel-25`,
  * P3 item 4), store-backed and structurally unreachable during multi-select.
+ * `Fill` (the old standalone, props-driven `FillSection`) is ALSO no longer
+ * part of this file's coverage, for the exact same reason — it migrated into
+ * `inspector/sections/FillSection.tsx` (`STATE.md` `panel-25`, P3 item 5).
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -39,7 +42,6 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import { SizeSection } from '../SizeSection'
 import { TypographySection } from '../TypographySection'
 import { RadiusCluster } from '../../../inspector/sections/RadiusCluster'
-import { FillSection } from '../FillSection'
 import { StrokeSection } from '../StrokeSection'
 
 /** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
@@ -50,9 +52,6 @@ afterEach(cleanup)
 function noop() {}
 
 const TYPOGRAPHY_PROPERTIES = ['textAlign'] as unknown as ReadonlyArray<keyof CSSPropertyBag>
-const FILL_PROPERTIES = ['color', 'backgroundColor'] as unknown as ReadonlyArray<
-  keyof CSSPropertyBag
->
 
 /**
  * Force an `ExpandableFieldCluster` collapsed. Its open/closed state is
@@ -121,25 +120,6 @@ describe('RadiusCluster (Measures) — corner radius', () => {
     const field = screen.getByTestId('measures-radius-all-field') as HTMLInputElement
     expect(field.value).toBe('')
     expect(field.getAttribute('placeholder')).toBe('Mixed')
-  })
-})
-
-describe('Fill', () => {
-  it('keeps the fill entry and labels it Mixed', () => {
-    render(
-      <FillSection
-        storedStyles={{ backgroundColor: MIXED }}
-        currentStyles={{}}
-        visibleProperties={FILL_PROPERTIES}
-        activeTab="base"
-        onChange={noop}
-        onChangeMany={noopMany}
-        onRemove={noop}
-      />,
-    )
-    // Without the wire-up the entry vanished entirely: `readString` returned
-    // undefined, so `showColorEntry` was false and the section rendered empty.
-    expect(screen.getByText('Mixed')).toBeTruthy()
   })
 })
 

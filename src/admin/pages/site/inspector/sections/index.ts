@@ -14,10 +14,10 @@
  * Interaction/Effects/Animations/Border) out into independently-manifested
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
  * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
- * 2), `measures` (item 3), and `layout` (item 4) are migrated; `styles` is
- * what remains of the old registry until the next section peels off — its
- * `order` is bumped down each time so `order` always reflects the CURRENT
- * Penpot sequence.
+ * 2), `measures` (item 3), `layout` (item 4), and `fill` (item 5) are
+ * migrated; `styles` is what remains of the old registry until the next
+ * section peels off — its `order` is bumped down each time so `order`
+ * always reflects the CURRENT Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -26,6 +26,7 @@ import { StyleSectionsComposer } from './StyleSectionsComposer'
 import { LayerSection } from './LayerSection'
 import { MeasuresSection } from './MeasuresSection'
 import { LayoutSection } from './LayoutSection'
+import { FillSection } from './FillSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -50,5 +51,10 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // LayoutSection.tsx's own doc for why this section never fully hides its
   // body once mounted, unlike Penpot's literal empty convention.
   { id: 'layout', order: 3, appliesTo: (m) => m.selectedNode != null, Component: LayoutSection },
-  { id: 'styles', order: 4, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Fill (P3 item 5) — text colour / solid fill / background-image layers /
+  // content fit, in CSS paint order. Any selected node can carry a fill
+  // (matches the old `FillSection`'s own unconditional mount inside
+  // `StyleSectionsEditor` — no node kind ever excluded it).
+  { id: 'fill', order: 4, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
+  { id: 'styles', order: 5, appliesTo: () => true, Component: StyleSectionsComposer },
 ]

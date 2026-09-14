@@ -2,8 +2,11 @@
  * FillSection — the Fill list body (F13/F14/F15) plus its popovers.
  *
  * `PropertyList` supplies the row chrome; everything here is popover
- * content (the solid/gradient/image editors, the raw-CSS escape hatch) and
- * the two small swatch variants used as each row's `leading` glyph.
+ * content (the solid/gradient/image editors, the raw-CSS escape hatch), the
+ * two small swatch variants used as each row's `leading` glyph, and the
+ * inline `%` opacity field the Text/Solid-fill rows use in their `value`
+ * slot (`02-measurements.md`'s "Color field chrome" — `STATE.md` `panel-25`
+ * P3 item 5).
  */
 
 .fillSection {
@@ -21,6 +24,17 @@
     border: 1px solid var(--border-muted);
     flex-shrink: 0;
     background-color: var(--fill-swatch-color);
+}
+
+/* ── Inline opacity field — the "% opacity" cell of the Color field chrome ── */
+
+.opacityFieldGuard {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+.opacityField {
+    width: 52px;
 }
 
 .swatchImage {
