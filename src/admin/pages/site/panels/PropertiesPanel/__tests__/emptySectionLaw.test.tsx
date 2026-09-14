@@ -2,16 +2,21 @@
  * StyleSectionsEditor — the empty-section law
  * (docs/features/inspector-disclosure.md §1 Law 1 / §4 G1).
  *
- * `collapsedWhenEmpty` sections (effects / animations / typography /
+ * `collapsedWhenEmpty` sections (transform / animations / typography /
  * interaction — every entry left in THIS registry) render as a single header
  * line with a "+" when nothing is set — ANYWHERE, not just on the active
  * breakpoint/condition tab — and must never collapse while an active style
  * search is filtering the panel. `position`/`size`/`appearance`/`layout`/
- * `spacing`/`fill`/`border` used to be members of this same registry but all
- * migrated out to their own `INSPECTOR_SECTIONS` manifest entries
- * (`STATE.md` `panel-25`, P3 items 1-6) — Fill's own Law-1 coverage now
- * lives in `inspector/sections/__tests__/fillSection.test.tsx`, Stroke's in
- * `inspector/sections/__tests__/strokeSection.test.tsx`.
+ * `spacing`/`fill`/`border`/`effects` used to be members of this same
+ * registry but all migrated out to their own `INSPECTOR_SECTIONS` manifest
+ * entries (`STATE.md` `panel-25`, P3 items 1-8) — Fill's own Law-1 coverage
+ * now lives in `inspector/sections/__tests__/fillSection.test.tsx`, Stroke's
+ * in `inspector/sections/__tests__/strokeSection.test.tsx`, Shadow's in
+ * `inspector/sections/__tests__/shadowSection.test.tsx`, Blur's in
+ * `inspector/sections/__tests__/blurSection.test.tsx`. `transform`/
+ * `transformOrigin` are a NEW entry in this registry, relocated here from the
+ * old `effects` entry's own ⚙ popover — see `classStyleSections.ts`'s own
+ * doc for why.
  *
  * An empty section is also not a DISCLOSURE — no chevron, no toggle, nothing
  * to open. The header earns its accordion when the first value lands in it.
@@ -62,7 +67,7 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
     expect(screen.getByRole('button', { name: /add typography/i })).toBeDefined()
 
     // Same one-line treatment for the other collapsible sections.
-    expect(screen.getByRole('button', { name: /add effects/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: /add transform/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add interaction/i })).toBeDefined()
   })
 
@@ -138,13 +143,16 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
 
   it('(g) adding the first value opens the section, even with sections collapsed by default', () => {
     // With the preference off, a section that stops being empty would open at
-    // the user's collapsed default — "+ Drop shadow" would write an effect
-    // and show a closed header. The add gesture reveals as well as writes.
-    // (Fill's own version of this test moved to `inspector/sections/__tests__/
-    // fillSection.test.tsx` once Fill migrated to its own manifest entry,
-    // `STATE.md` `panel-25` P3 item 5 — Effects is the remaining
-    // collapsedWhenEmpty section whose "+" writes a real value immediately,
-    // same mechanism this test exists to pin.)
+    // the user's collapsed default — "+ Transition" would write motion
+    // straight into the panel and show a closed header. The add gesture
+    // reveals as well as writes. (Fill's own version of this test moved to
+    // `inspector/sections/__tests__/fillSection.test.tsx` once Fill migrated
+    // to its own manifest entry, `STATE.md` `panel-25` P3 item 5; Shadow's
+    // moved to `inspector/sections/__tests__/shadowSection.test.tsx`, P3 item
+    // 7. Animations is the remaining `StyleSectionsEditor`-hosted
+    // collapsedWhenEmpty section whose "+" writes a real value immediately —
+    // "Transition" rather than "Animation" so this pure-component test never
+    // has to touch the animation menu item's `createAmbientRule` store call.)
     setEditorPreference('propertiesSectionsExpanded', false)
 
     const written: Array<[string, unknown]> = []
@@ -163,17 +171,17 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /add effects/i }))
-    fireEvent.click(screen.getByText('Drop shadow'))
+    fireEvent.click(screen.getByRole('button', { name: /add animations/i }))
+    fireEvent.click(screen.getByText('Transition'))
     expect(written).toHaveLength(1)
-    expect(written[0]![0]).toBe('boxShadow')
+    expect(written[0]![0]).toBe('transition')
 
     // The store round-trip the real panel does: the written value comes back
     // as `storedStyles`, and the section must now be showing its body rather
     // than sitting closed behind the collapsed-by-default preference.
     rerender(
       <StyleSectionsEditor
-        storedStyles={{ boxShadow: String(written[0]![1]) }}
+        storedStyles={{ transition: String(written[0]![1]) }}
         currentStyles={{}}
         sectionKey="base"
         styleQuery=""
@@ -186,7 +194,7 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
       />,
     )
 
-    const effects = document.querySelector('[data-style-section="effects"]')!
-    expect(effects.querySelector('[aria-expanded="true"]')).not.toBeNull()
+    const animations = document.querySelector('[data-style-section="animations"]')!
+    expect(animations.querySelector('[aria-expanded="true"]')).not.toBeNull()
   })
 })

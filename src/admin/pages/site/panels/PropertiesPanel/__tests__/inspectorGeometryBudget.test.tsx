@@ -176,7 +176,10 @@ describe('caption budget — the panel\'s most expensive row form', () => {
    * side effect.
    */
   const CAPTION_CAPABLE_BUDGET: Readonly<Record<string, number>> = {
-    effects: 6,
+    // `transform`/`transformOrigin` — relocated from the old `effects`
+    // entry's ⚙ popover once Shadow/Blur migrated it out (`STATE.md`
+    // `panel-25`, P3 items 7-8). See `classStyleSections.ts`'s own doc.
+    transform: 2,
     animations: 10,
     typography: 9,
     interaction: 4,

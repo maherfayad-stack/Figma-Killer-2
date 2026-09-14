@@ -21,7 +21,7 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { hasStyleValue } from './styleValueUtils'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
-import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
+import { ArrowsScaleIcon } from 'pixel-art-icons/icons/arrows-scale'
 import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
 import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
 
@@ -45,17 +45,18 @@ export interface ClassStyleSectionDefinition {
    * line with a "+", not its full property grid. `StyleSectionGroup` in
    * `StyleSectionsEditor.tsx` is what reads this flag.
    *
-   * `layout`/`spacing`/`position`/`size`/`appearance`/`fill`/`border` used to
-   * be in this registry; all seven migrated out to their own
-   * `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/`AlignSection`/
+   * `layout`/`spacing`/`position`/`size`/`appearance`/`fill`/`border`/
+   * `effects` used to be in this registry; all eight migrated out to their
+   * own `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/`AlignSection`/
    * `MeasuresSection`/`LayoutSection.tsx`/`FillSection.tsx`/
-   * `StrokeSection.tsx` — `STATE.md` `panel-25`, P3 items 1-6).
-   * `FillSection.tsx`/`StrokeSection.tsx` keep their own Law-1 empty-header/
+   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx` — `STATE.md`
+   * `panel-25`, P3 items 1-8). `FillSection.tsx`/`StrokeSection.tsx`/
+   * `ShadowSection.tsx`/`BlurSection.tsx` keep their own Law-1 empty-header/
    * `forceOpen` disclosure locally (their own `setAnywhere` check +
    * `Section`'s `empty` prop), same as `LayerSection`/`AlignSection`/
-   * `MeasuresSection` — none of the six has a `collapsedWhenEmpty` concept of
-   * its own here anymore; see `LayoutSection.tsx`'s own doc for why IT stays
-   * always-open instead.
+   * `MeasuresSection` — none of the eight has a `collapsedWhenEmpty` concept
+   * of its own here anymore; see `LayoutSection.tsx`'s own doc for why IT
+   * stays always-open instead.
    */
   collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
@@ -64,16 +65,35 @@ export interface ClassStyleSectionDefinition {
 // ---------------------------------------------------------------------------
 // Section order — this registry is what remains of the pre-P3 (`STATE.md`
 // `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout/
-// Fill/Stroke migrate out to their own `INSPECTOR_SECTIONS` manifest entries
-// (`sections/index.ts`). The Effects → Typography → Animations →
-// Interaction order below is what's left of
+// Fill/Stroke/Shadow/Blur migrate out to their own `INSPECTOR_SECTIONS`
+// manifest entries (`sections/index.ts`). The Transform → Typography →
+// Animations → Interaction order below is what's left of
 // docs/features/inspector-disclosure.md §4 G5's original Position → Size →
 // Auto layout → Spacing → Appearance → Fill → Stroke → Effects →
 // Typography → Animations → Interaction sequence.
-// The last two (Animations/Interaction) are Studio's own additions — Figma
-// has no CSS-cursor/pointer-events concept, and its motion lives in
-// prototyping rather than in the style panel at all — so both stay at the
-// end rather than displacing anything Figma-native.
+//
+// `transform` is a NEW entry, not an original G5 member: it is
+// `transform`/`transformOrigin`, relocated here from the old `effects`
+// entry's own ⚙ settings popover (`EffectsSectionActions`) once Shadow (P3
+// item 7) and Blur (P3 item 8) both migrated `boxShadow`/`textShadow`/
+// `filter`/`backdropFilter` out and `EffectsSection.tsx` was deleted
+// wholesale. Neither `transform` nor `transformOrigin` has a Penpot section
+// to land in (`STATE.md` `panel-25`'s own Decisions block already names them
+// as Studio-extras-bound, item 11, not yet built) — parking them here as an
+// honest, ordinary `collapsedWhenEmpty` entry (rendered by this editor's own
+// generic per-property fallback, `ClassPropertyRow` in `stacked` layout —
+// the SAME control `StackedPropertyGrid` wrapped for the old ⚙ popover, just
+// without the popover shell) keeps the capability reachable through the
+// legacy `StyleSectionsEditor.tsx` path until item 11 claims it for real.
+// Item 11's implementer: this is where to find it, delete this entry, and
+// move `transform`/`transformOrigin` into Studio extras' own manifest
+// section — do not leave both homes existing at once.
+//
+// The last three (Transform/Animations/Interaction) are Studio's own
+// additions — Figma has no CSS-cursor/pointer-events/raw-transform concept
+// in this part of its model, and its motion lives in prototyping rather than
+// in the style panel at all — so all three stay at the end rather than
+// displacing anything Figma-native.
 // Order is read by consumers via array iteration (`StyleCategoryRail`'s rail
 // buttons, `StyleSectionsEditor`'s scroll order) — changing it changes both
 // at once, deliberately, since they're meant to stay in lockstep.
@@ -212,30 +232,37 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   'borderColor',
   'borderRadius',
   'appearance',
+  // Shadow (P3 item 7) — src/admin/pages/site/inspector/sections/ShadowSection.tsx.
+  // Text shadow moved onto the same section as box shadow in G9's completion
+  // (a text shadow is a shadow) — unioned here in one step, same pattern
+  // every migrated section established.
+  'boxShadow',
+  'textShadow',
+  // Blur (P3 item 8) — src/admin/pages/site/inspector/sections/BlurSection.tsx.
+  // `filter: blur()` ("Layer blur") + `backdrop-filter: blur()` ("Background
+  // blur") — the other half of the old `effects` entry's claim.
+  'filter',
+  'backdropFilter',
 ]
 
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
   {
-    id: 'effects',
-    title: 'Effects',
-    icon: SparklesSolidIcon,
+    // `transform`/`transformOrigin` — relocated from the old `effects`
+    // entry's own ⚙ settings popover (`EffectsSectionActions`, deleted
+    // alongside `EffectsSection.tsx` once Shadow + Blur both migrated — see
+    // this file's own "Section order" doc above). No Penpot section claims
+    // either property (`STATE.md` `panel-25`'s Decisions block) — Studio
+    // extras (P3 item 11, not yet built) is the eventual home; until then
+    // this ordinary `collapsedWhenEmpty` entry, rendered by
+    // `StyleSectionsEditor`'s generic per-property fallback (`ClassPropertyRow`
+    // in `stacked` layout, the same raw-text escape hatch the old ⚙ popover's
+    // `StackedPropertyGrid` used), keeps the capability reachable rather than
+    // stranding it.
+    id: 'transform',
+    title: 'Transform',
+    icon: ArrowsScaleIcon,
     collapsedWhenEmpty: true,
-    // `opacity` moved to the `appearance` section (docs/features/inspector-disclosure.md §4 G5).
-    // `transition`/`animation` moved to the `animations` section below (W5-5):
-    // they are motion, not effects, and a property may only be claimed by one
-    // section — this array drives the "N set" count and the style search, so a
-    // property listed twice would be counted twice and shown twice.
-    properties: [
-      'boxShadow',
-      // G9's completion: a text shadow is a shadow. It was resident on
-      // Typography's own rows only because Effects did not exist yet when
-      // that section shipped.
-      'textShadow',
-      'filter',
-      'backdropFilter',
-      'transform',
-      'transformOrigin',
-    ],
+    properties: ['transform', 'transformOrigin'],
   },
   {
     id: 'animations',
@@ -276,9 +303,10 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'textDecoration',
       'textTransform',
       'whiteSpace',
-      // `color` moved to `fill` and `textShadow` to `effects` — G9's target
-      // shape, finished once those two sections existed to receive them
-      // (docs/features/inspector-disclosure.md §4 G9). A property is claimed
+      // `color` moved to Fill and `textShadow` to Shadow (`STATE.md`
+      // `panel-25`, P3 item 7 — the old `effects` entry Shadow migrated out
+      // of) — G9's target shape, finished once those two sections existed to
+      // receive them (docs/features/inspector-disclosure.md §4 G9). A property is claimed
       // by exactly ONE section: this array drives the "N set" count and the
       // style search, so leaving either listed here as well would count it
       // twice and show it twice.

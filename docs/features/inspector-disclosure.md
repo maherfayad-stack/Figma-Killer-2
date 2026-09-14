@@ -33,8 +33,9 @@ field model into it, which added a section without renumbering one.)
 > single-node surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s
 > separate global/ambient-selector surface keeps both, since a bare CSS
 > selector has no element-vs-class ambiguity to resolve. Every law and
-> primitive below is unchanged in shape; P3 (not yet started) re-skins the
-> sections themselves to the measured Penpot baseline
+> primitive below is unchanged in shape; P3 (in progress, `STATE.md`
+> `panel-25` — 8 of 11 sections migrated as of Shadow + Blur, items 7-8)
+> re-skins the sections themselves to the measured Penpot baseline
 > (`docs/audits/penpot-inspector-baseline/`). P6 retires this file into
 > `docs/features/inspector.md` once the whole track ships — until then this
 > is still the authoritative reference for the vocabulary the source cites.
@@ -440,6 +441,18 @@ What remained was small enough that `BorderControl` was **deleted**, not left as
 a shell (**G7.6**).
 
 ### G8 — Effects (F13/F20–F22)
+
+> **Superseded, `STATE.md` `panel-25` P3 items 7-8.** `EffectsSection.tsx`/
+> `EffectEditorPopover.tsx` are deleted — Penpot has no single "Effects"
+> section, so this split into `ShadowSection.tsx` (`boxShadow`/`textShadow`,
+> item 7) and `BlurSection.tsx` (`filter`/`backdropFilter`, item 8), each its
+> own `INSPECTOR_SECTIONS` manifest entry. **G8.4**'s own `transform`/
+> `transformOrigin` ⚙ has no Penpot section either — it relocated to
+> `classStyleSections.ts`'s new `transform` entry (rendered via the legacy
+> `StyleSectionsEditor.tsx` path) until Studio extras (P3 item 11) claims it
+> for real. The vocabulary below (the typed "+" menu, the round-trip refusal
+> rule, F21's field shape) is unchanged — only the file names and section
+> boundary moved.
 
 `PropertyList` with a typed `+` menu mapping only to real CSS: Drop shadow → a
 `box-shadow` layer, Inner shadow → `… inset`, Layer blur → `filter: blur()`,

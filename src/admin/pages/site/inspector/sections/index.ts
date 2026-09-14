@@ -14,10 +14,11 @@
  * Interaction/Effects/Animations/Border) out into independently-manifested
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
  * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
- * 2), `measures` (item 3), `layout` (item 4), `fill` (item 5), and `stroke`
- * (item 6) are migrated; `styles` is what remains of the old registry until
- * the next section peels off — its `order` is bumped down each time so
- * `order` always reflects the CURRENT Penpot sequence.
+ * 2), `measures` (item 3), `layout` (item 4), `fill` (item 5), `stroke`
+ * (item 6), `shadow` (item 7), and `blur` (item 8) are migrated; `styles` is
+ * what remains of the old registry until the next section peels off — its
+ * `order` is bumped down each time so `order` always reflects the CURRENT
+ * Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -28,6 +29,8 @@ import { MeasuresSection } from './MeasuresSection'
 import { LayoutSection } from './LayoutSection'
 import { FillSection } from './FillSection'
 import { StrokeSection } from './StrokeSection'
+import { ShadowSection } from './ShadowSection'
+import { BlurSection } from './BlurSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -64,5 +67,17 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // `StyleSectionsEditor` via the `border` entry — no node kind ever
   // excluded it).
   { id: 'stroke', order: 5, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
-  { id: 'styles', order: 6, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Shadow (P3 item 7) — `box-shadow` / `text-shadow` layers, split out of
+  // the old `EffectsSection.tsx`. Any selected node can carry a shadow
+  // (matches the old `effects` entry's own unconditional mount — no node
+  // kind ever excluded it).
+  { id: 'shadow', order: 6, appliesTo: (m) => m.selectedNode != null, Component: ShadowSection },
+  // Blur (P3 item 8) — `filter: blur()` ("Layer blur") / `backdrop-filter:
+  // blur()` ("Background blur"), the other half of the old `EffectsSection.
+  // tsx` split. `EffectsSection.tsx`/`EffectEditorPopover.tsx` are deleted in
+  // this same PR now that both Shadow and Blur have migrated — see
+  // `classStyleSections.ts`'s own doc for where `transform`/`transformOrigin`
+  // (the old Effects settings ⚙, no Penpot home) relocated to.
+  { id: 'blur', order: 7, appliesTo: (m) => m.selectedNode != null, Component: BlurSection },
+  { id: 'styles', order: 8, appliesTo: () => true, Component: StyleSectionsComposer },
 ]
