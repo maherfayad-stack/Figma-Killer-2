@@ -32,7 +32,7 @@ document" true — Studio generates the harness, never the document.
 | File | Policy |
 |---|---|
 | `index.html`, `vite.config.js`, `prototype/App.jsx`, `main.jsx`, `ScreenFrame.jsx`, `Player.*`, `CanvasPanel.*`, `shell.css`, `urlState.js` | updated **while untouched**, frozen the moment you edit one |
-| `prototype/registry.generated.jsx`, `prototype/providers.generated.jsx` | rewritten every time the generator runs, from `.studio/` |
+| `prototype/registry.generated.jsx`, `prototype/providers.generated.jsx`, `prototype/studioRuntime.generated.js`, `prototype/studioRuntimeBridge.generated.js` | rewritten **every time the generator runs** — the last two are workspace-independent (same bundled content for every project) but still always-rewritten, so a fix reaches an already-scaffolded workspace regardless of whether `vite.config.js`/`main.jsx` are still untouched |
 | `package.json` | fields **merged** — an existing value always wins |
 
 `.studio/shell.json` records the SHA-256 of every static file at the moment
@@ -132,9 +132,61 @@ Three consumers enforce that:
 | `NON_PAGES_DIR_SEGMENTS` (`projectProbe.ts`) | Every file in `prototype/` is a JSX-returning default export — exactly what the pages-dir heuristic scores on — so a re-probe could rank the shell above the real `pages/`. |
 | `extractLocalComponentCatalog` (`componentSpecExtract.ts`) | `App` and `CanvasPanel` appear in the component picker — Studio offering the user its own scaffold to place on their canvas. |
 
-## 7. Tests
+## 7. The live-canvas runtime bridge boot (Track L, `live-08`)
+
+Two generated files carry logic that has nothing to do with `.studio/`'s
+content and exist purely to reach an already-scaffolded workspace
+independent of that workspace's own freeze state:
+
+- **`prototype/studioRuntime.generated.js`** (L3) — the workspace-side Vite
+  plugin (`@core/studio-runtime/vitePlugin.ts`, bundled by
+  `scripts/sync-studio-runtime.ts`). `vite.config.js` imports
+  `studioRuntimeIdPlugin()`, which returns **two** plugin objects, not one:
+  - `studio-runtime-config` — resolves/loads the `virtual:studio-runtime`
+    module `main.jsx` imports. Carries **no** `apply` restriction, so it
+    resolves during `vite build` too (Download the code, preview deploys),
+    not only `vite dev`.
+  - `studio-runtime-id-plugin` — stamps every host JSX element with
+    `data-node-id`. `apply: 'serve'`-scoped: a build/download must never
+    carry that attribute.
+
+  The split exists because `apply` is a **plugin-level**, not per-hook, field
+  in Vite — one `apply: 'serve'`-scoped plugin object cannot resolve a module
+  at build time while excluding a `transform` from it.
+
+- **`prototype/studioRuntimeBridge.generated.js`** (L4) — the in-frame
+  runtime bridge (`@core/studio-runtime/runtime.ts`'s
+  `createStudioRuntimeBridge`, bundled the same way). `main.jsx` imports it
+  and boots it gated on **both**:
+  ```jsx
+  if (STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window) {
+    createStudioRuntimeBridge({ parentOrigin: STUDIO_RUNTIME_CONFIG.parentOrigin, hot: import.meta.hot })
+  }
+  ```
+  `STUDIO_RUNTIME_CONFIG` (the `virtual:studio-runtime` module's export) comes
+  from `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV`
+  (`@core/studio-runtime`'s `runtimeConfig.ts`) — env vars
+  `server/handlers/studio/devServer.ts`'s `spawnEntry` injects into the
+  subprocess **only when Studio's own dev-server manager spawned it**, from
+  `registeredMcpServerProjectKey(dir)` (the same key `/p/<projectKey>/`
+  routing uses) and `resolvePublicOrigins(process.env)[0]`. A plain
+  `npm run dev` — including every copy handed out via "Download the code" —
+  never sets them, so `parentOrigin` is `null` and the gate above is a no-op.
+  `window.parent !== window` is the second, independent half of the gate: a
+  supervised dev server opened directly in a bare browser tab (the raw Vite
+  port is reachable outside the `/p/` proxy too) must not boot a bridge with
+  nothing to talk to.
+
+  See `STUDIO-LIVE-CANVAS-PLAN.md` §L3/§L4 for the wider design and
+  `src/core/studio-runtime/runtime.ts`'s own header for the bridge's security
+  posture (origin + source-window checks on every inbound message).
+
+## 8. Tests
 
 | File | Covers |
 |---|---|
-| `server/handlers/studio/__tests__/prototypeShell.test.ts` | the write policy: user edits survive, unedited files update, `package.json` merges, `.studio/` awkward cases |
+| `server/handlers/studio/__tests__/prototypeShell.test.ts` | the write policy: user edits survive, unedited files update, `package.json` merges, `.studio/` awkward cases, `main.jsx`'s bridge-boot imports/gate, `studioRuntimeBridge.generated.js` always coming back |
 | `server/handlers/studio/__tests__/prototypeShellBoards.test.ts` | two-board generator output, board order, empty boards, deleted pages, the tab row in `App.jsx`, and the zip actually containing a board created after the last load |
+| `server/handlers/studio/__tests__/devServer.test.ts` | `spawnEntry` injecting `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV` (present only when `PUBLIC_ORIGIN` is set) alongside the existing `STUDIO_LIVE_BASE_PATH_ENV` |
+| `src/core/studio-runtime/__tests__/vitePlugin.test.ts` | `studioRuntimeIdPlugin()`'s two-plugin split: the config plugin's `apply`-free `resolveId`/`load`, the id-stamp plugin's unchanged `apply: 'serve'` `transform` |
+| `src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts` | both generated bundles (`vitePluginBundle.ts`, `runtimeBridgeBundle.ts`) match a fresh re-bundle of their sources |

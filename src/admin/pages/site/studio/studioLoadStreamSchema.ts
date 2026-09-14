@@ -68,6 +68,20 @@ export const StudioLoadStreamLineSchema = Type.Union([
      */
     authoredCss: Type.String(),
     trust: TrustTierSchema,
+    /**
+     * L8 Phase A (`perf-06`, STATE.md) — the `/p/<projectKey>` path segment
+     * `server/liveOrigin.ts` (L2) routes on, `registeredMcpServerProjectKey(dir)`'s
+     * server-only sanitization of `dir` (NOT a plain basename — spaces and
+     * other non-`[A-Za-z0-9._-]` characters become `_`, so a client can't
+     * safely re-derive it from `dir` alone without risking drift from the
+     * real routing key). `null` below Tier 2 — there is no live origin to
+     * scope a URL against. `Type.Optional` (not just nullable), same
+     * reasoning as `missingPageIds` below: every real route response always
+     * sends it, but the many hand-written fixture lines across this
+     * codebase's existing tests predate this field and have no reason to
+     * know about it.
+     */
+    projectKey: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     paletteHiddenModuleIds: Type.Array(Type.String()),
     pageCount: Type.Number(),
     /**

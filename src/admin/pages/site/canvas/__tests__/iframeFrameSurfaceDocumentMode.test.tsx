@@ -6,9 +6,12 @@
  * behavior byte-for-byte — a `srcDoc` iframe with the children portaled
  * into its body, a `PortalFrameAdapter`; (2) `documentMode='bridge'`
  * renders a bare `<iframe src=...>` with NOTHING portaled into it and
- * constructs a `BridgeFrameAdapter` instead. Does not (and cannot yet)
- * prove the bridge iframe's `src` resolves to a real working page — see
- * `resolveLiveFrameSrc.ts`'s own doc for why.
+ * constructs a `BridgeFrameAdapter` instead. Proves the `src` shape this
+ * component hands off to `resolveLiveFrameSrc` at the unit level only (the
+ * exact URL contract is `resolveLiveFrameSrc.test.ts`'s own concern); this
+ * file has no real dev server to prove the URL resolves against — that is
+ * `live-06`'s own manual dogfood step (STATE.md), not something a component
+ * unit test can exercise.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render, waitFor } from '@testing-library/react'
@@ -70,6 +73,7 @@ describe('IframeFrameSurface — documentMode fork', () => {
           liveOrigin: 'https://live.studio.test',
           screenKey: 'page-1',
           nodeIdsInTreeOrder: ['root', 'root/child-1'],
+          axes: { direction: 'ltr', colorScheme: 'light' },
         }}
       >
         <div data-testid="canvas-child">hello</div>
@@ -79,7 +83,7 @@ describe('IframeFrameSurface — documentMode fork', () => {
     const iframe = container.querySelector('iframe')
     expect(iframe).not.toBeNull()
     expect(iframe?.getAttribute('srcdoc')).toBeNull()
-    expect(iframe?.getAttribute('src')).toBe('https://live.studio.test/__screen/page-1')
+    expect(iframe?.getAttribute('src')).toBe('https://live.studio.test/__screen/page-1?dir=ltr&theme=light')
     // Nothing portaled into a bridge frame — the child never appears
     // anywhere in the parent-rendered tree (there is no portal target for
     // it to land in at all).

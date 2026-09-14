@@ -151,5 +151,11 @@ studio-workspace/*/CLAUDE.md
 # check accepts it; ignored here the same way `.tmp/` output is.
 studio-workspace/__bench-synth/
 
+# `scripts/bench/lib/liveFrameFixture.ts`'s ephemeral Tier-2 copy of
+# `studio-workspace/test4 copy` (L8 Phase B, `perf-06`) — same containment
+# reasoning as `__bench-synth/` above; generated fresh and `rmSync`'d by the
+# fixture's own `cleanup()`.
+studio-workspace/__bench-live-synth/
+
 # Playwright/E2E run output — generated, not source
 test-results/

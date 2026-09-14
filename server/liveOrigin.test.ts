@@ -250,12 +250,12 @@ describe('handleLiveOriginFetch', () => {
     expect(body.phase).toBe('booting')
   })
 
-  it('forwards the remaining path and query string onto the upstream origin', async () => {
+  it('forwards the FULL incoming path (including the /p/<projectKey> prefix) and query string onto the upstream origin — the spawned dev server is configured with a matching Vite `base`, so the prefix must survive, not be stripped', async () => {
     registerProject('acme-app', 'ready')
     const recorded: RecordedUpstreamRequest[] = []
     const req = stubRequest('http://live.local/p/acme-app/assets/main.js?v=2')
     await handleLiveOriginFetch(req, { upgrade: () => false }, [PUBLIC_ORIGIN], fakeUpstreamFetch(recorded))
-    expect(recorded[0].url).toBe(`${UPSTREAM_ORIGIN}/assets/main.js?v=2`)
+    expect(recorded[0].url).toBe(`${UPSTREAM_ORIGIN}/p/acme-app/assets/main.js?v=2`)
   })
 
   it('never fetches an attacker-chosen host embedded in the path as a network-path reference', async () => {
@@ -331,7 +331,7 @@ describe('handleLiveOriginFetch', () => {
       fakeUpstreamFetch([]),
     )
     expect(res).toBeUndefined()
-    expect(capturedUpstreamWsUrl).toBe('ws://127.0.0.1:5173/vite-hmr')
+    expect(capturedUpstreamWsUrl).toBe('ws://127.0.0.1:5173/p/ws-app/vite-hmr')
   })
 
   it('never derives an attacker-chosen WebSocket host from a network-path reference in the URL', async () => {

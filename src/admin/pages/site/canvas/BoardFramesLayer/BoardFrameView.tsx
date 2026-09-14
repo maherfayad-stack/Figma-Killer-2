@@ -55,12 +55,14 @@ import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../bo
 import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
+import { LiveBoardFrame } from './LiveBoardFrame'
 import {
   getColorSchemeCapability,
   getLocalesCapability,
   subscribeColorSchemeCapability,
   subscribeLocalesCapability,
 } from '@site/studio/previewAxesCapability'
+import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
 import styles from './BoardFramesLayer.module.css'
 
 /**
@@ -164,6 +166,22 @@ interface BoardFrameViewProps {
   /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
   isSelected: boolean
   isOnScreen: boolean
+  /**
+   * L8 Phase B (`perf-06`, STATE.md) — the live-frame pool's hot-set
+   * membership flag, computed by `BoardFramesLayer.tsx` via
+   * `computeHotFrameIds` (`liveFramePool.ts`) and decoupled from
+   * `isOnScreen`: every on-screen frame is always hot, plus up to
+   * `LIVE_FRAME_POOL_SIZE` more recently-visible-but-now-offscreen frames
+   * (an LRU warm cache) stay `isLiveMounted` too, so their bridge iframe
+   * doesn't have to re-boot the moment the user pans back. Only meaningful
+   * for a Tier-2 (`trust === 'run-project'`) frame's `LiveBoardFrame` branch
+   * below — Tier 0/1's portal `BreakpointFrame` is same-origin and cheap, so
+   * it stays gated on `isOnScreen` alone via `liveMounted`'s own fallback.
+   * Optional and defaults to `isOnScreen` so any test or call site that
+   * omits it (a Tier 0/1 board, or a unit test exercising this component in
+   * isolation) reproduces the pre-pool mount/unmount behavior byte-for-byte.
+   */
+  isLiveMounted?: boolean
 }
 
 /**
@@ -187,7 +205,13 @@ function BoardFrameViewImpl({
   isActive,
   isSelected,
   isOnScreen,
+  isLiveMounted,
 }: BoardFrameViewProps) {
+  // See `isLiveMounted`'s own doc — Phase A's every caller omits it, so this
+  // reproduces `isOnScreen`-gated mounting exactly until Phase B's pool
+  // starts passing a real, decoupled hot-set flag.
+  const liveMounted = isLiveMounted ?? isOnScreen
+  const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
   const dragRef = useRef<DragState | null>(null)
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
@@ -490,7 +514,7 @@ function BoardFrameViewImpl({
         data-frame-auto-height={!hasManualHeight && isOnScreen ? 'true' : undefined}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
-        {isOnScreen ? (
+        {liveMounted ? (
           <CanvasPageContext.Provider value={page.id}>
             {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
                 every selection/hover it originates with the frame it came
@@ -499,20 +523,38 @@ function BoardFrameViewImpl({
                 node id (trap #2) — would light up from a selection made in
                 THIS frame. See `CanvasFrameContext`'s doc. */}
             <CanvasFrameContext.Provider value={frame.id}>
-              <BreakpointFrame
-                page={page}
-                breakpoint={buildStudioBreakpoint(width)}
-                isActive={isActive}
-                onActivate={activatePage}
-                frameId={frame.id}
-                axesOverride={frame.axes}
-                // The board frame carries its own header (title, rename,
-                // context menu, drag handle) and its own size in the
-                // Properties panel, so `BreakpointFrame`'s breakpoint row
-                // would be a second, board-global chrome strip on top of it.
-                // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
-                showBreakpointChrome={false}
-              />
+              {trust === 'run-project' ? (
+                // L8 Phase A (`perf-06`, STATE.md) — the ONE Tier-2 branch
+                // this whole work order adds. Tier 0/1 boards never reach
+                // this line: `trust` only ever reads `'run-project'` for a
+                // project explicitly promoted to Tier 2.
+                <LiveBoardFrame
+                  page={page}
+                  breakpoint={buildStudioBreakpoint(width)}
+                  isActive={isActive}
+                  onActivate={activatePage}
+                  frameId={frame.id}
+                  axesOverride={frame.axes}
+                  width={width}
+                />
+              ) : (
+                // Byte-for-byte the SAME call this branch has always made —
+                // no new prop, no new behavior, for every Tier 0/1 board.
+                <BreakpointFrame
+                  page={page}
+                  breakpoint={buildStudioBreakpoint(width)}
+                  isActive={isActive}
+                  onActivate={activatePage}
+                  frameId={frame.id}
+                  axesOverride={frame.axes}
+                  // The board frame carries its own header (title, rename,
+                  // context menu, drag handle) and its own size in the
+                  // Properties panel, so `BreakpointFrame`'s breakpoint row
+                  // would be a second, board-global chrome strip on top of it.
+                  // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
+                  showBreakpointChrome={false}
+                />
+              )}
             </CanvasFrameContext.Provider>
           </CanvasPageContext.Provider>
         ) : (
