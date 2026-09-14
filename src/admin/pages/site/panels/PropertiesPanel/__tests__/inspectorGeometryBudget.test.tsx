@@ -158,10 +158,11 @@ describe('caption budget — the panel\'s most expensive row form', () => {
       />,
     )
 
-    // Today: zero — Position/Size/Appearance/Layout/Spacing/Fill (the
-    // sections that used to draw "Clip content" here) all migrated out to
+    // Today: zero — Position/Size/Appearance/Layout/Spacing/Fill/Stroke/
+    // Shadow/Blur/Typography (the sections that used to draw "Clip content"
+    // and this text node's own `fontSize`/`color` here) all migrated out to
     // their own `INSPECTOR_SECTIONS` manifest entries (`STATE.md` `panel-25`
-    // P3 items 1-5) and no longer mount through this file at all. The budget
+    // P3 items 1-9) and no longer mount through this file at all. The budget
     // is 2 so a deliberate addition is possible; anything more is the
     // caption-above-field form creeping back in as the panel's default,
     // which is what this whole work order removed.
@@ -181,7 +182,6 @@ describe('caption budget — the panel\'s most expensive row form', () => {
     // `panel-25`, P3 items 7-8). See `classStyleSections.ts`'s own doc.
     transform: 2,
     animations: 10,
-    typography: 9,
     interaction: 4,
   }
 

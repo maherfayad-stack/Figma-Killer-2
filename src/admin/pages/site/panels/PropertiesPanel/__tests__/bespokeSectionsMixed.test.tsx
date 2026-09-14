@@ -37,14 +37,16 @@
  * `Stroke` (the old standalone, props-driven `StrokeSection`) is ALSO no
  * longer part of this file's coverage, for the exact same reason — it
  * migrated into `inspector/sections/StrokeSection.tsx` (`STATE.md`
- * `panel-25`, P3 item 6).
+ * `panel-25`, P3 item 6). `Typography` (the old standalone, props-driven
+ * `TypographySection`) is ALSO no longer part of this file's coverage, for
+ * the exact same reason — it migrated into `inspector/sections/
+ * TextSection.tsx` (`STATE.md` `panel-25`, P3 item 9), store-backed and
+ * structurally unreachable during multi-select.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MIXED } from '@ui/components/MixedValue'
-import type { CSSPropertyBag } from '@core/page-tree'
 import { SizeSection } from '../SizeSection'
-import { TypographySection } from '../TypographySection'
 import { RadiusCluster } from '../../../inspector/sections/RadiusCluster'
 
 /** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
@@ -53,8 +55,6 @@ function noopMany() {}
 afterEach(cleanup)
 
 function noop() {}
-
-const TYPOGRAPHY_PROPERTIES = ['textAlign'] as unknown as ReadonlyArray<keyof CSSPropertyBag>
 
 /**
  * Force an `ExpandableFieldCluster` collapsed. Its open/closed state is
@@ -83,23 +83,6 @@ describe('Size', () => {
     const field = screen.getByLabelText('Width') as HTMLInputElement
     expect(field.value).toBe('')
     expect(field.getAttribute('placeholder')).toBe('Mixed')
-  })
-})
-
-describe('Typography', () => {
-  it('marks the text-align group indeterminate', () => {
-    render(
-      <TypographySection
-        currentStyles={{}}
-        storedStyles={{ textAlign: MIXED }}
-        visibleProperties={TYPOGRAPHY_PROPERTIES}
-        activeTab="base"
-        onChange={noop}
-        onChangeMany={noopMany}
-        onRemove={noop}
-      />,
-    )
-    expect(screen.getByTestId('typography-text-align').getAttribute('data-mixed')).toBe('true')
   })
 })
 

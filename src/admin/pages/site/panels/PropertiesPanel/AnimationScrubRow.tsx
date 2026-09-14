@@ -15,8 +15,9 @@
  * ## Why a native range input
  *
  * `src/ui/components/` has no slider primitive, and this pass does not add one
- * — the same call `TypographySettings.tsx` made and documented for the
- * variable-font axes. The difference is that a bounded number field was an
+ * — the same call `TextSettingsPopover.tsx` (`inspector/sections/`, formerly
+ * `TypographySettings.tsx`) made and documented for the variable-font axes.
+ * The difference is that a bounded number field was an
  * honest substitute THERE and is not here: scrubbing a timeline is a drag
  * along a track, and a field you type `0.4` into is a different control for a
  * different task. A native `<input type="range">` is the real thing, is a

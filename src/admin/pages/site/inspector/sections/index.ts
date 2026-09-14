@@ -15,13 +15,14 @@
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
  * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
  * 2), `measures` (item 3), `layout` (item 4), `fill` (item 5), `stroke`
- * (item 6), `shadow` (item 7), and `blur` (item 8) are migrated; `styles` is
- * what remains of the old registry until the next section peels off — its
- * `order` is bumped down each time so `order` always reflects the CURRENT
- * Penpot sequence.
+ * (item 6), `shadow` (item 7), `blur` (item 8), and `text` (item 9) are
+ * migrated; `styles` is what remains of the old registry until the next
+ * section peels off — its `order` is bumped down each time so `order`
+ * always reflects the CURRENT Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
+import { isTextNode } from '../../panels/PropertiesPanel/styleSectionOrder'
 import { AlignSection } from './AlignSection'
 import { StyleSectionsComposer } from './StyleSectionsComposer'
 import { LayerSection } from './LayerSection'
@@ -31,6 +32,7 @@ import { FillSection } from './FillSection'
 import { StrokeSection } from './StrokeSection'
 import { ShadowSection } from './ShadowSection'
 import { BlurSection } from './BlurSection'
+import { TextSection } from './TextSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -79,5 +81,11 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // `classStyleSections.ts`'s own doc for where `transform`/`transformOrigin`
   // (the old Effects settings ⚙, no Penpot home) relocated to.
   { id: 'blur', order: 7, appliesTo: (m) => m.selectedNode != null, Component: BlurSection },
-  { id: 'styles', order: 8, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Text (P3 item 9) — family/weight/size/line-height/letter-spacing/align/
+  // vertical-align, split out of the old `typography` entry. The first
+  // section in this series gated on more than "a node is selected" —
+  // `isTextNode` (`styleSectionOrder.ts`, reused not duplicated) — since
+  // Text only means something on a text-capable node.
+  { id: 'text', order: 8, appliesTo: (m) => m.selectedNode != null && isTextNode(m.selectedNode), Component: TextSection },
+  { id: 'styles', order: 9, appliesTo: () => true, Component: StyleSectionsComposer },
 ]

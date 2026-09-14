@@ -1,6 +1,10 @@
 /**
- * TypographySettings — the Typography section's ⚙ popover
- * (docs/features/inspector-disclosure.md G9, F25–F27).
+ * TextSettingsPopover — the Text section's ⚙ popover (`STATE.md` `panel-25`,
+ * P3 item 9). Renamed and relocated from the pre-migration
+ * `panels/PropertiesPanel/TypographySettings.tsx` onto the
+ * `INSPECTOR_SECTIONS` manifest alongside `TextSection.tsx` — its only
+ * caller — content and behavior unchanged (docs/features/inspector-disclosure.md
+ * G9, F25–F27 — the design rules that produced this shape).
  *
  * A tabbed `InspectorPopover` that absorbs every typography control used in
  * under ~10% of edits (Law 2), so the resident section stays F23's four
@@ -9,10 +13,7 @@
  *   - **Basics** (F25) — `fontStyle`, `textDecoration`, `textTransform`,
  *     `whiteSpace`, plus `textOverflow` / `textIndent` / `marginBlock`
  *     (paragraph spacing), none of which had a curated control before this
- *     tab existed. `fontStyle`/`textDecoration`/`textTransform`/`whiteSpace`
- *     moved off the section's old resident rows 4/5/7 — see
- *     `TypographySection`'s own doc for how a style search still reaches
- *     them here.
+ *     tab existed.
  *   - **Details** (F26) — `fontVariantNumeric`, `fontFeatureSettings`,
  *     `hangingPunctuation`, `fontKerning`. Not curated anywhere today (they
  *     fall into `CustomPropertiesSection`'s generic key/value editor) —
@@ -20,15 +21,15 @@
  *   - **Variable** (F27) — one row per axis the resolved font's `fvar` table
  *     actually declares (`useFontVariationAxes`), writing the
  *     `font-variation-settings` shorthand. Omitted by the caller entirely
- *     when the font exposes none — see `TypographySection`.
+ *     when the font exposes none — see `TextSection`.
  *
  * `textOverflow` / `textIndent` / `marginBlock` / `fontVariantNumeric` /
  * `fontFeatureSettings` / `hangingPunctuation` / `fontKerning` /
  * `fontVariationSettings` are declared members of `CSSPropertyBag` and are
- * listed in the typography section's `properties`. They are NOT threaded
- * through a `keyof` cast: `keyof CSSPropertyBag` is how the entire style
- * pipeline is typed, so a property that only reaches disk by defeating that
- * type is also invisible to the section's search and its "N set" count. If a
+ * listed in Text's `MIGRATED_SECTION_PROPERTIES` claim (`classStyleSections.ts`).
+ * They are NOT threaded through a `keyof` cast: `keyof CSSPropertyBag` is how
+ * the entire style pipeline is typed, so a property that only reaches disk by
+ * defeating that type is also invisible to `ALL_CURATED_CSS_PROPERTIES`. If a
  * future control needs a property this bag does not model, add it to the bag.
  */
 import type { RefObject } from 'react'
@@ -37,10 +38,10 @@ import type { FontVariationAxis } from '@core/fonts'
 import { InspectorPopover, type InspectorPopoverTab } from '@ui/components/InspectorPopover'
 import { ControlRow } from '@ui/components/ControlRow'
 import { Input } from '@ui/components/Input'
-import { ClassPropertyRow } from './ClassPropertyRow'
+import { ClassPropertyRow } from '../../panels/PropertiesPanel/ClassPropertyRow'
 import { parseFontVariationSettingsValue, serializeFontVariationSettingsValue } from '@core/fonts'
-import { hasStyleValue } from './styleValueUtils'
-import styles from './TypographySettings.module.css'
+import { hasStyleValue } from '../../panels/PropertiesPanel/styleValueUtils'
+import styles from './TextSettingsPopover.module.css'
 
 const BASICS_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
   'fontStyle',
@@ -59,7 +60,7 @@ const DETAILS_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
   'fontKerning',
 ]
 
-interface TypographySettingsProps {
+interface TextSettingsPopoverProps {
   id: string
   anchorRef: RefObject<HTMLElement | null>
   onClose: () => void
@@ -72,7 +73,7 @@ interface TypographySettingsProps {
   variationAxes: ReadonlyArray<FontVariationAxis>
 }
 
-export function TypographySettings({
+export function TextSettingsPopover({
   id,
   anchorRef,
   onClose,
@@ -82,7 +83,7 @@ export function TypographySettings({
   onPreview,
   onClearPreview,
   variationAxes,
-}: TypographySettingsProps) {
+}: TextSettingsPopoverProps) {
   const previewProperty = onPreview
     ? (property: keyof CSSPropertyBag, value: string | number | undefined) =>
         onPreview({ [property]: value ?? null } as Partial<CSSPropertyBag>)
@@ -138,7 +139,7 @@ export function TypographySettings({
       id={id}
       anchorRef={anchorRef}
       onClose={onClose}
-      title="Typography settings"
+      title="Text settings"
       tabs={tabs}
       defaultTab="basics"
     />

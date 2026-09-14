@@ -4,6 +4,16 @@
  * The user's report: "when I select a text the typography controls are at the
  * top". `CLASS_STYLE_SECTIONS` itself stays a fixed registry — what changes is
  * the order it is RENDERED in, per selection, which is what these cases pin.
+ *
+ * `isTextNode` is also, separately, the `appliesTo` predicate the single-node
+ * `TextSection.tsx` manifest entry reuses (`STATE.md` `panel-25`, P3 item 9)
+ * — Figma/Penpot's own model reaches the SAME outcome this file's original
+ * `orderStyleSections` rule was built for (Typography leads on a text layer),
+ * just by having the section only EXIST on a text layer rather than
+ * promoting it within a fixed list. `orderStyleSections` itself is unchanged
+ * and stays load-bearing for the two surfaces P3 doesn't touch — multi-select
+ * and the ambient global-selector inspector — see the `orderStyleSections`
+ * describe block below for what's still real vs. now inert.
  */
 import { describe, it, expect } from 'bun:test'
 import type { PageNode } from '@core/page-tree'
@@ -76,20 +86,36 @@ describe('orderStyleSections', () => {
     expect(ids(orderStyleSections(CLASS_STYLE_SECTIONS, false))).toEqual(ids(CLASS_STYLE_SECTIONS))
   })
 
-  it('lifts Typography to the front for a text selection', () => {
-    const ordered = orderStyleSections(CLASS_STYLE_SECTIONS, true)
-    expect(ordered[0].id).toBe('typography')
+  it('is a no-op today: Typography migrated out of CLASS_STYLE_SECTIONS to its own INSPECTOR_SECTIONS manifest entry (`STATE.md` `panel-25`, P3 item 9) — this registry (transform/animations/interaction) has no `typography` id left to lift', () => {
+    expect(ids(orderStyleSections(CLASS_STYLE_SECTIONS, true))).toEqual(ids(CLASS_STYLE_SECTIONS))
   })
 
-  it('keeps every other section in its original relative order', () => {
-    const ordered = ids(orderStyleSections(CLASS_STYLE_SECTIONS, true))
-    const expected = ids(CLASS_STYLE_SECTIONS).filter((id) => id !== 'typography')
-    expect(ordered.slice(1)).toEqual(expected)
-    expect(ordered.length).toBe(CLASS_STYLE_SECTIONS.length)
-  })
+  /**
+   * `orderStyleSections`'s own reordering rule is still real, live logic —
+   * `MultiInlineStyleComposer.tsx`'s multi-select path and
+   * `StyleCategoryRail.tsx`/`StyleRuleComposer.tsx`'s ambient-selector path
+   * still call it exactly as before (`STATE.md` `panel-25`'s own note on
+   * why those two surfaces are untouched by this migration). Pinned here
+   * against a synthetic list so this test does not depend on whether the
+   * REAL `CLASS_STYLE_SECTIONS` registry happens to contain a `typography`
+   * entry at any given point in this migration.
+   */
+  describe('against a synthetic list that still has a typography entry', () => {
+    const synthetic = [{ id: 'transform' }, { id: 'typography' }, { id: 'interaction' }]
 
-  it('is a no-op when Typography was filtered out by a style search', () => {
-    const filtered = CLASS_STYLE_SECTIONS.filter((s) => s.id !== 'typography')
-    expect(ids(orderStyleSections(filtered, true))).toEqual(ids(filtered))
+    it('lifts Typography to the front for a text selection', () => {
+      const ordered = orderStyleSections(synthetic, true)
+      expect(ordered[0]!.id).toBe('typography')
+    })
+
+    it('keeps every other section in its original relative order', () => {
+      const ordered = ids(orderStyleSections(synthetic, true))
+      expect(ordered).toEqual(['typography', 'transform', 'interaction'])
+    })
+
+    it('is a no-op when Typography was filtered out by a style search', () => {
+      const filtered = synthetic.filter((s) => s.id !== 'typography')
+      expect(ids(orderStyleSections(filtered, true))).toEqual(ids(filtered))
+    })
   })
 })

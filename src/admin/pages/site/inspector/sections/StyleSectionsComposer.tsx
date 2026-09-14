@@ -23,10 +23,17 @@
  *   - `onChangeMany`      -> `commitStyleMany(patch)` — `mode: 'set'` (default).
  *   - `onPreview`         -> `commitStyleMany(patch, { preview: true })`.
  *   - `onClearPreview`    -> `clearStylePreview()`.
+ *
+ * Used to also pass `textFirst={isTextNode(selectedNode)}` to promote
+ * Typography to the top of this composer's section list on a text layer —
+ * dropped once Typography migrated to its own manifest entry
+ * (`TextSection.tsx`, `STATE.md` `panel-25` P3 item 9): nothing left in the
+ * legacy `transform`/`animations`/`interaction` registry this composer still
+ * renders has the id `orderStyleSections` looks for, so the prop had become
+ * a no-op for this call site specifically.
  */
 import { StyleSectionsEditor } from '../../panels/PropertiesPanel/StyleSectionsEditor'
 import { ALL_CURATED_CSS_PROPERTIES, cssPropertyLabel } from '../../panels/PropertiesPanel/cssControlTypes'
-import { isTextNode } from '../../panels/PropertiesPanel/styleSectionOrder'
 import { buildClassChain } from '../../panels/PropertiesPanel/stylePropertyProvenance'
 import { buildCollapsedCurrentStyles, buildCollapsedStoredStyles, buildContextOnlyClassChain } from '../collapsedStyleBag'
 import { useSelectionModel } from '../selectionModel'
@@ -69,7 +76,6 @@ export function StyleSectionsComposer() {
   ]
 
   const styleTarget = { nodeId: selectedNodeId, assignedClassIds: assignedClassRules.map((rule) => rule.id) }
-  const textFirst = isTextNode(selectedNode)
 
   return (
     <>
@@ -110,7 +116,6 @@ export function StyleSectionsComposer() {
         onClearPreview={commit.clearStylePreview}
         provenanceByProperty={provenanceByProperty}
         styleTarget={styleTarget}
-        textFirst={textFirst}
       />
     </>
   )

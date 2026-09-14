@@ -34,7 +34,7 @@ field model into it, which added a section without renumbering one.)
 > separate global/ambient-selector surface keeps both, since a bare CSS
 > selector has no element-vs-class ambiguity to resolve. Every law and
 > primitive below is unchanged in shape; P3 (in progress, `STATE.md`
-> `panel-25` — 8 of 11 sections migrated as of Shadow + Blur, items 7-8)
+> `panel-25` — 9 of 11 sections migrated as of Text, item 9)
 > re-skins the sections themselves to the measured Penpot baseline
 > (`docs/audits/penpot-inspector-baseline/`). P6 retires this file into
 > `docs/features/inspector.md` once the whole track ships — until then this
@@ -476,6 +476,16 @@ before, because the popover's Details and Variable tabs expose properties
 previously reachable only by typing a property name into the custom-properties
 editor.
 
+*Superseded (`STATE.md` `panel-25`, P3 item 9):* this section now lives at
+`src/admin/pages/site/inspector/sections/TextSection.tsx` (its ⚙ popover at
+`TextSettingsPopover.tsx`, both under `sections/`), its own
+`INSPECTOR_SECTIONS` manifest entry gated on `isTextNode`, not a
+`classStyleSections.ts` registry member anymore. The four rows themselves are
+unchanged; what changed is that the section dropped the Law-1
+`collapsedWhenEmpty` posture this doc describes below — a text layer, by
+Penpot's own confirmed behavior, always has real font values to show, so
+there is no genuinely empty state to collapse to (see that file's own doc).
+
 - **G9.4 — the relocation, completed in W8-1.** `color` moved to **Fill** and
   `textShadow` to **Effects**, which is what Figma does: a text node's colour
   *is* its fill, and a text shadow *is* a shadow. It could not ship with the
@@ -728,6 +738,22 @@ that declares one) or its host tag renders text (`p`, `h1`–`h6`, `span`, `a`,
 `label`, `li`, `strong`, `em`, …). The no-children clause is what keeps an
 `<a>` wrapping a card, or an `<li>` wrapping a row of controls, out of it.
 Figma reaches the same place by only HAVING a Text section on a text layer.
+
+**Superseded for the single-node surface (`STATE.md` `panel-25`, P3 item 9):**
+Typography itself migrated out of `CLASS_STYLE_SECTIONS` to its own
+`INSPECTOR_SECTIONS` manifest entry (`TextSection.tsx`), which reaches the
+exact same outcome Figma's own model does — a Text section that only EXISTS
+on a text layer, rather than one that is promoted to the top of a fixed list
+— by gating its `appliesTo` on this file's own `isTextNode`, reused (not
+duplicated) from `styleSectionOrder.ts`. `orderStyleSections`/
+`isTextSelection`/this section's own "Typography renders first" reordering
+stays live, unchanged, for the two surfaces this migration didn't touch:
+`MultiInlineStyleComposer.tsx` (multi-select) and `StyleRuleComposer.tsx`/
+`StyleCategoryRail.tsx` (`SelectorInspector.tsx`'s ambient global-selector
+surface) — both still render the legacy `CLASS_STYLE_SECTIONS` list directly
+and neither has a `typography` entry left to promote, so the reordering is
+now an inert no-op there, not a bug. It resolves for real when P6 deletes
+this whole mechanism alongside `classStyleSections.ts`.
 
 ### §5.1 Commit coerces; it never writes what CSS rejects
 

@@ -10,8 +10,14 @@
  * fails here instead of being noticed on the next Penpot-fidelity pass.
  *
  * `LayoutSection` migrated to `inspector/sections/LayoutSection.tsx` +
- * `inspector/sections/LayoutSection/` (`STATE.md` `panel-25`, P3 item 4) —
- * updated to the new location, same scope, same rule.
+ * `inspector/sections/LayoutSection/` (`STATE.md` `panel-25`, P3 item 4);
+ * `TypographySection` migrated to `inspector/sections/TextSection.tsx`
+ * (`STATE.md` `panel-25`, P3 item 9) — both updated to their new locations,
+ * same scope, same rule. `TextSection.tsx`'s own settings popover
+ * (`TextSettingsPopover.tsx`) DOES use `<Select>` (the `whiteSpace` field,
+ * ported unchanged from the pre-migration `TypographySettings.tsx`) — this
+ * gate was already, and stays, scoped to the RESIDENT section file only, not
+ * its popover, matching the pre-migration file's own scope.
  *
  * Scoped to exactly the two files/folders the plan names — this is not a
  * blanket "no Select in the inspector" rule. Plenty of inspector fields
@@ -28,7 +34,7 @@ const LAYOUT_SECTION_DIR = join(SRC_ROOT, 'admin/pages/site/inspector/sections/L
 const LAYOUT_SECTION_FILE = join(SRC_ROOT, 'admin/pages/site/inspector/sections/LayoutSection.tsx')
 const TYPOGRAPHY_SECTION_FILE = join(
   SRC_ROOT,
-  'admin/pages/site/panels/PropertiesPanel/TypographySection.tsx',
+  'admin/pages/site/inspector/sections/TextSection.tsx',
 )
 
 function collectTsxFiles(dir: string): string[] {

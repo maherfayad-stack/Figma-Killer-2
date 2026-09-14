@@ -5,7 +5,7 @@
  * StyleRule's `styles` / `contextStyles`) and `InlineStyleComposer` (edits a
  * node's `inlineStyles`). It knows nothing about WHERE the styles live: it
  * takes the resolved style bags plus a set of handlers and renders the curated
- * style sections (transform / typography / animations / interaction — see
+ * style sections (transform / animations / interaction — see
  * `classStyleSections.ts`'s own doc for what has migrated out to its own
  * `INSPECTOR_SECTIONS` manifest entry, `STATE.md` `panel-25`) followed by the
  * custom-properties editor.
@@ -21,7 +21,6 @@ import { Section } from '@ui/components/Section'
 import { Button } from '@ui/components/Button'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
-import { TypographySection } from './TypographySection'
 import { AnimationsSection, AnimationsSectionActions } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
 import { SectionStylesMenu } from './SectionStylesMenu'
@@ -36,7 +35,6 @@ import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StyleRuleComposer.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
 
-const TYPOGRAPHY_SECTION_ID = 'typography'
 const INTERACTION_SECTION_ID = 'interaction'
 const ANIMATIONS_SECTION_ID = 'animations'
 
@@ -114,9 +112,16 @@ interface StyleSectionsEditorProps {
   styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
   /**
    * The selection is a text layer (`styleSectionOrder.isTextSelection`), so
-   * Typography renders first. Resolved by the caller, which is the level that
-   * knows WHICH nodes are selected — this editor is target-agnostic and only
-   * knows which bag it was handed.
+   * Typography renders first — `orderStyleSections` (`styleSectionOrder.ts`)
+   * looks for a `typography`-id entry in whatever section list this call
+   * was given. Now that `typography` has migrated to its own
+   * `INSPECTOR_SECTIONS` manifest entry (`TextSection.tsx`, `STATE.md`
+   * `panel-25` P3 item 9) that lookup never matches for THIS registry
+   * (transform/animations/interaction) — this prop is a no-op for the
+   * single-node composer (`StyleSectionsComposer.tsx`, `inspector/sections/`)
+   * and stays live only for the ambient-selector/multi-select composers
+   * (`StyleRuleComposer.tsx`/`MultiInlineStyleComposer.tsx`, both out of P3's
+   * scope). Deleted for real when item 11 deletes this file wholesale.
    */
   textFirst?: boolean
 }
@@ -409,20 +414,7 @@ function StyleSectionGroup({
       actions={sectionActions}
     >
       <div className={sectionStyles.sectionBody}>
-        {section.id === TYPOGRAPHY_SECTION_ID ? (
-          <TypographySection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            visibleProperties={section.properties}
-            activeTab={activeTab}
-            onChange={onChange}
-            onRemove={onRemove}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-            provenanceByProperty={provenanceByProperty}
-          />
-        ) : section.id === ANIMATIONS_SECTION_ID ? (
+        {section.id === ANIMATIONS_SECTION_ID ? (
           <AnimationsSection
             key={activeTab}
             storedStyles={storedStyles}
