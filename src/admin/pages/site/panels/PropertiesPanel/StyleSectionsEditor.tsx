@@ -5,7 +5,7 @@
  * StyleRule's `styles` / `contextStyles`) and `InlineStyleComposer` (edits a
  * node's `inlineStyles`). It knows nothing about WHERE the styles live: it
  * takes the resolved style bags plus a set of handlers and renders the curated
- * style sections (effects / typography / animations / interaction — see
+ * style sections (transform / typography / animations / interaction — see
  * `classStyleSections.ts`'s own doc for what has migrated out to its own
  * `INSPECTOR_SECTIONS` manifest entry, `STATE.md` `panel-25`) followed by the
  * custom-properties editor.
@@ -22,7 +22,6 @@ import { Button } from '@ui/components/Button'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { TypographySection } from './TypographySection'
-import { EffectsSection, EffectsSectionActions } from './EffectsSection'
 import { AnimationsSection, AnimationsSectionActions } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
 import { SectionStylesMenu } from './SectionStylesMenu'
@@ -39,7 +38,6 @@ import sectionStyles from '@ui/components/Section/Section.module.css'
 
 const TYPOGRAPHY_SECTION_ID = 'typography'
 const INTERACTION_SECTION_ID = 'interaction'
-const EFFECTS_SECTION_ID = 'effects'
 const ANIMATIONS_SECTION_ID = 'animations'
 
 // ---------------------------------------------------------------------------
@@ -97,10 +95,10 @@ interface StyleSectionsEditorProps {
    * Track F1 — per-property winner/loser provenance, keyed by the SAME
    * string keys `ALL_CURATED_CSS_PROPERTIES` uses. Optional and purely
    * additive (see `ClassPropertyRow`'s doc) — only reaches the generic
-   * fallback rows (Effects section, this editor's own generic branch); the
-   * bespoke visual section components still mounted here (Typography, plus
-   * Effects/Animations/Interaction's own header actions) are unchanged by
-   * this pass — see `StyleSurface`'s doc for why.
+   * fallback rows (the Transform section, this editor's own generic branch);
+   * the bespoke visual section components still mounted here (Typography,
+   * plus Animations/Interaction's own header actions) are unchanged by this
+   * pass — see `StyleSurface`'s doc for why.
    */
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
   /**
@@ -320,41 +318,23 @@ function StyleSectionGroup({
 
   // Appearance's header eye + droplet moved to `LayerSection` (`STATE.md`
   // `panel-25`) — this section's header now carries only the generic styles
-  // menu, same as any other non-special-cased section.
-  //  Effects' header carries the typed "+" menu (F20 — Drop shadow / Inner
-  //  shadow / Layer blur / Background blur) rather than the generic reveal
-  //  button, because adding an effect here means choosing a KIND, not just
-  //  opening a body. It also carries the ⚙ for transform / transition /
-  //  animation, which are not effects in Figma's sense.
-  const effectsActions = (
-    <EffectsSectionActions
-      storedStyles={storedStyles}
-      currentStyles={currentStyles}
-      activeTab={activeTab}
-      onChange={addAndReveal}
-      onRemove={onRemove}
-      onPreview={onPreview}
-      onClearPreview={onClearPreview}
-    />
-  )
-
-  //  Animations' "+" is a typed menu too (Animation / Transition), and like
-  //  Effects' it has to be reachable at the one-line Law-1 rest state, since
-  //  that is the only way to add the first animation. Creating one also
-  //  creates a `@keyframes` rule, which needs to know WHICH NODE it belongs to
-  //  so its first write can be co-located with that node's page — hence
+  // menu, same as any other non-special-cased section. Effects' own typed
+  // "+" menu (Drop shadow / Inner shadow / Layer blur / Background blur)
+  // moved with it, into `ShadowSection.tsx`/`BlurSection.tsx`'s own manifest-
+  // section headers — this file no longer special-cases it.
+  //
+  //  Animations' "+" is a typed menu (Animation / Transition), and it has to
+  //  be reachable at the one-line Law-1 rest state, since that is the only
+  //  way to add the first animation. Creating one also creates a
+  //  `@keyframes` rule, which needs to know WHICH NODE it belongs to so its
+  //  first write can be co-located with that node's page — hence
   //  `styleTarget`, the same prop the section styles menu already uses.
   const animationsActions = (
     <AnimationsSectionActions storedStyles={storedStyles} onChange={addAndReveal} styleTarget={styleTarget} />
   )
 
   const sectionActions =
-    section.id === EFFECTS_SECTION_ID ? (
-      <>
-        {effectsActions}
-        {stylesMenu}
-      </>
-    ) : section.id === ANIMATIONS_SECTION_ID ? (
+    section.id === ANIMATIONS_SECTION_ID ? (
       <>
         {animationsActions}
         {stylesMenu}
@@ -387,9 +367,7 @@ function StyleSectionGroup({
         actions={
           <>
             {stylesMenu}
-            {section.id === EFFECTS_SECTION_ID ? (
-              effectsActions
-            ) : section.id === ANIMATIONS_SECTION_ID ? (
+            {section.id === ANIMATIONS_SECTION_ID ? (
               animationsActions
             ) : (
               <Button
@@ -433,19 +411,6 @@ function StyleSectionGroup({
       <div className={sectionStyles.sectionBody}>
         {section.id === TYPOGRAPHY_SECTION_ID ? (
           <TypographySection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            visibleProperties={section.properties}
-            activeTab={activeTab}
-            onChange={onChange}
-            onRemove={onRemove}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-            provenanceByProperty={provenanceByProperty}
-          />
-        ) : section.id === EFFECTS_SECTION_ID ? (
-          <EffectsSection
             key={activeTab}
             storedStyles={storedStyles}
             currentStyles={currentStyles}

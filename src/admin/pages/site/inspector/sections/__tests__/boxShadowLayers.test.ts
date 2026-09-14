@@ -20,7 +20,7 @@ import {
   serializeBoxShadowLayers,
   updateBoxShadowLayer,
   TEXT_SHADOW_GRAMMAR,
-} from './boxShadowLayers'
+} from '../boxShadowLayers'
 
 describe('parseShadowValue — empty', () => {
   it('treats undefined/null as empty', () => {
