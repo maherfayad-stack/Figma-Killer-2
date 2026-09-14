@@ -23,7 +23,7 @@ import { commitStudioDelete } from '@site/studio/studioStructuralCommits'
 import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
-import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, toastStructuralRefusal } from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
 import { tagStructuralGesture } from './structuralHistory'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
@@ -60,7 +60,17 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
       nodeIds.map((id) => target.tree.nodes[id] ?? cur.site?.pages.find((page) => page.nodes[id])?.nodes[id]),
     )
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, get)
+      const refusedNodeId = plan.nodeId
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
+        nodeId: refusedNodeId,
+        retry: refusedNodeId
+          ? (newNodeId) => {
+              get().deleteNodes(nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)))
+            }
+          : undefined,
+        getState: get,
+        set,
+      })
       return
     }
 

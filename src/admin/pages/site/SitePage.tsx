@@ -3,6 +3,7 @@ import { AdminCanvasLayout } from '@admin/layouts/AdminCanvasLayout'
 import { consumePendingAction } from '@admin/spotlight/pendingAction'
 import { useEditorStore } from '@site/store/store'
 import { useMcpWorkspaceBridge } from '@admin/ai/useMcpWorkspaceBridge'
+import { RefusalDialog } from '@site/ui/RefusalDialog'
 import { agentProjectDir, executeAgentTool } from './agent'
 import { flushEditorSave } from './hooks/editorSaveRef'
 
@@ -63,5 +64,10 @@ export function SitePage() {
     return unsubscribe
   }, [])
 
-  return <AdminCanvasLayout />
+  return (
+    <>
+      <AdminCanvasLayout />
+      <RefusalDialog />
+    </>
+  )
 }

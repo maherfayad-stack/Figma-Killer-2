@@ -55,6 +55,24 @@ export interface ConstraintActionContext {
    * — the same honesty rule as every other unwireable kind.
    */
   openSource?: (origin: SourceOrigin) => void
+  /**
+   * Fired once an action has run to completion — `detach`/`extract` call it
+   * `true`/`false` once their codemod actually settles; a target-carrying
+   * action (`jump-to-source`, `edit-array`, `edit-component`) calls it `true`
+   * right after opening the file, since it has nothing async to await. An
+   * action with no runnable handler at all (rendered as plain advice text,
+   * never a button) never fires this — there is no click to settle.
+   *
+   * `RefusalDialog` (R2, `store-10`) is the one caller that needs this: for
+   * `detach`/`extract` it has to know WHEN the async codemod finishes to
+   * start (and later stop) waiting for the board reload that follows a
+   * success, so it can re-issue the gesture the codemod's own refusal
+   * blocked; for every other action kind it just dismisses the dialog once
+   * the click has done its job. Every existing caller (`ConstraintNotice`,
+   * `SourceConstraintNotice`, `CodeValueControl`) omits this field and is
+   * completely unaffected.
+   */
+  onSettled?: (ok: boolean) => void
 }
 
 /** `Header.tsx:42` — the origin, short enough to sit inside a button label. */
@@ -75,15 +93,27 @@ export function resolveConstraintAction(
   const openSource = context.openSource
   if (action.target && openSource) {
     const target = action.target
-    return () => openSource(target)
+    // `RefusalDialog` (R2, `store-10`) is the one caller that supplies
+    // `onSettled` and needs to know when a synchronous, always-succeeds
+    // action like this one has "settled" — it dismisses the dialog on any
+    // non-detach/extract action once it fires. Every other caller
+    // (`ConstraintNotice`, `SourceConstraintNotice`, `CodeValueButtons`)
+    // omits `onSettled`, so this stays a no-op for them.
+    const onSettled = context.onSettled
+    return () => {
+      openSource(target)
+      onSettled?.(true)
+    }
   }
   if (action.kind === 'detach' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
-    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId))
+    const onSettled = context.onSettled
+    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId), onSettled)
   }
   if (action.kind === 'extract' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
-    return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId))
+    const onSettled = context.onSettled
+    return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId), onSettled)
   }
   return null
 }
@@ -134,6 +164,7 @@ export function constraintToastBody(
 async function runInstanceCodemod(
   gesture: 'Detach' | 'Duplicate',
   run: () => Promise<{ ok: boolean; message?: string }>,
+  onSettled?: (ok: boolean) => void,
 ): Promise<void> {
   try {
     const result = await run()
@@ -146,6 +177,7 @@ async function runInstanceCodemod(
         durationMs: null,
       })
     }
+    onSettled?.(result.ok)
   } catch (err) {
     console.error(`[ConstraintNotice] ${gesture} failed:`, err)
     pushToast({
@@ -153,5 +185,6 @@ async function runInstanceCodemod(
       title: `${gesture} failed`,
       body: getErrorMessage(err, `Unknown ${gesture.toLowerCase()} error`),
     })
+    onSettled?.(false)
   }
 }

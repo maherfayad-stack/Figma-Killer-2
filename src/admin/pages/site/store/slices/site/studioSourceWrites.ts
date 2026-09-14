@@ -33,14 +33,22 @@ import {
   planSourceDuplicate,
   planSourceInsert,
   planSourceWrap,
-  toastStructuralRefusal,
+  presentStructuralRefusal,
 } from './structuralSourceEdits'
 import { insertableJsxProps } from './insertablePropValues'
 import type { SiteSliceHelpers } from './types'
 
 export interface StudioSourceWrites {
-  /** True when an insert into this container is refused — the caller must stop. */
-  refuseInsertInto: (parentId: string) => boolean
+  /**
+   * True when an insert into this container is refused — the caller must
+   * stop. `retryWithParent`, when given, is called with whatever node
+   * replaces `parentId` once a `detach`/`extract` remedy lands — the caller's
+   * own way to re-run ITS gesture (`insertComponentRef`, `insertImportedNodes`)
+   * against the new parent, since neither of those goes through the
+   * self-recursive `write*ToSource` retry shape below (they mutate the tree
+   * directly rather than posting a source write).
+   */
+  refuseInsertInto: (parentId: string, retryWithParent?: (newParentId: string) => void) => boolean
   /** True when the caller must stop: the element was written to source, or the write was refused out loud. */
   writeInsertToSource: (
     moduleId: string,
@@ -67,19 +75,24 @@ export function createStudioSourceWrites(
   helpers: SiteSliceHelpers,
   readTree: () => NodeTree<PageNode> | null,
 ): StudioSourceWrites {
-  const { get } = helpers
+  const { get, set } = helpers
 
   /**
    * `struct-01` — refuse a structural gesture that cannot be written back to
    * a studio-imported `.tsx`. Returns true when the caller must stop.
    * A `null` tree (no site loaded) is not this guard's business.
    */
-  const refuseInsertInto = (parentId: string): boolean => {
+  const refuseInsertInto = (parentId: string, retryWithParent?: (newParentId: string) => void): boolean => {
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceInsert(tree, parentId)
     if (plan.ok) return false
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
+    presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
+      nodeId: plan.nodeId,
+      retry: retryWithParent,
+      getState: get,
+      set,
+    })
     return true
   }
 
@@ -100,7 +113,14 @@ export function createStudioSourceWrites(
     if (!tree) return false
     const plan = planSourceInsert(tree, parentId, index)
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
+        nodeId: plan.nodeId,
+        // The refused node here is the CONTAINER (`parentId`) — re-issue the
+        // same insert against whatever replaces it once detach/extract lands.
+        retry: (newParentId) => writeInsertToSource(moduleId, defaults, newParentId, index),
+        getState: get,
+        set,
+      })
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
@@ -135,7 +155,8 @@ export function createStudioSourceWrites(
 
     // Everything else is an editor construct with no spelling in a user's repo;
     // the picker hides those in studio mode, so this is the programmatic path.
-    toastStructuralRefusal(
+    // Always `actions: []` — always the toast, never the dialog.
+    presentStructuralRefusal(
       STRUCTURAL_REFUSAL_TITLE.insert,
       describeStructuralRefusal({
         refusal: {
@@ -143,7 +164,7 @@ export function createStudioSourceWrites(
           message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
         },
       }),
-      get,
+      { getState: get, set },
     )
     return true
   }
@@ -161,7 +182,17 @@ export function createStudioSourceWrites(
     if (!tree) return false
     const plan = planSourceDuplicate(tree, nodeIds)
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, get)
+      const refusedNodeId = plan.nodeId
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
+        nodeId: refusedNodeId,
+        retry: refusedNodeId
+          ? (newNodeId) => {
+              void writeDuplicateToSource(nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)))
+            }
+          : undefined,
+        getState: get,
+        set,
+      })
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
@@ -181,7 +212,21 @@ export function createStudioSourceWrites(
     if (!tree) return false
     const plan = planSourceWrap(tree, nodeIds)
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.wrap, plan.constraint, get)
+      const refusedNodeId = plan.nodeId
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.wrap, plan.constraint, {
+        nodeId: refusedNodeId,
+        retry: refusedNodeId
+          ? (newNodeId) => {
+              void writeWrapToSource(
+                nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
+                containerModuleId,
+                defaults,
+              )
+            }
+          : undefined,
+        getState: get,
+        set,
+      })
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
@@ -198,7 +243,8 @@ export function createStudioSourceWrites(
       void commitStudioWrap({ nodeId: plan.commit, name: intrinsic.tag })
       return true
     }
-    toastStructuralRefusal(
+    // Always `actions: []` — always the toast, never the dialog.
+    presentStructuralRefusal(
       STRUCTURAL_REFUSAL_TITLE.wrap,
       describeStructuralRefusal({
         refusal: {
@@ -206,7 +252,7 @@ export function createStudioSourceWrites(
           message: `"${mod?.name ?? containerModuleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write around this element. Wrap it in a container instead.`,
         },
       }),
-      get,
+      { getState: get, set },
     )
     return true
   }

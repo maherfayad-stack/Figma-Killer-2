@@ -1,0 +1,154 @@
+/**
+ * RefusalDialog — R2 (`store-10`). Covers the one behavior this component
+ * adds beyond rendering `ConstraintActionButtons` in a `<Dialog>`: the
+ * detach/extract retry-after-reload mechanism.
+ *
+ * `detachInstance`/`extractInstanceCopy` are mocked so this never touches the
+ * network or a real `.tsx` file — `constraintRefusalSurfaces.test.ts` already
+ * covers `presentStructuralRefusal`'s toast-vs-dialog split at the store
+ * layer; this suite is the one level up, the actual rendered dialog.
+ */
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { EditConstraint } from '@core/page-tree'
+import { useEditorStore } from '@site/store/store'
+import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
+
+const detachInstance = mock(() => Promise.resolve({ ok: true as const }))
+const extractInstanceCopy = mock(() => Promise.resolve({ ok: true as const }))
+
+mock.module('@site/studio/studioSaveRequests', () => ({
+  detachInstance,
+  extractInstanceCopy,
+}))
+
+const { RefusalDialog } = await import('./RefusalDialog')
+
+afterEach(() => {
+  cleanup()
+  detachInstance.mockClear()
+  extractInstanceCopy.mockClear()
+})
+
+const CALL_SITE = 'src/pages/Home.tsx:5:1'
+const ORIGINAL_NODE_ID = `${CALL_SITE}~src/components/Header.tsx:8:1`
+const REPLACEMENT_NODE_ID = CALL_SITE // detach inlines at the same call site, no tilde suffix
+
+const SHARED_COMPONENT: EditConstraint = {
+  reason: 'shared-component',
+  scope: 'node',
+  explanation: 'This element comes from a shared component.',
+  origin: { rel: 'src/components/Header.tsx', line: 8, col: 1 },
+  actions: [
+    { label: 'Detach this instance', kind: 'detach' },
+    { label: 'Duplicate as a new file and edit that', kind: 'extract' },
+  ],
+}
+
+function siteWithNode(nodeId: string) {
+  const node = makeNode({ id: nodeId, moduleId: 'base.div' })
+  const page = makePage({ nodes: { root: makeNode({ id: 'root', children: [nodeId] }), [nodeId]: node } })
+  return makeSite({ pages: [page] })
+}
+
+beforeEach(() => {
+  useEditorStore.setState({
+    site: siteWithNode(ORIGINAL_NODE_ID),
+    structuralRefusalDialog: null,
+  })
+})
+
+describe('RefusalDialog', () => {
+  it('re-issues the retry closure once a replacement node lands at the same call site', async () => {
+    const retry = mock((_newNodeId: string) => {})
+    act(() => {
+      useEditorStore.setState({
+        structuralRefusalDialog: {
+          title: 'Delete refused',
+          constraint: SHARED_COMPONENT,
+          nodeId: ORIGINAL_NODE_ID,
+          retry,
+        },
+      })
+    })
+
+    render(<RefusalDialog />)
+
+    fireEvent.click(screen.getByRole('button', { name: /detach this instance/i }))
+
+    await waitFor(() => expect(detachInstance).toHaveBeenCalledWith(ORIGINAL_NODE_ID))
+    // onSettled(true) has run and the dialog has started its retry-wait.
+    await waitFor(() => expect(screen.getByRole('status')).toBeTruthy())
+    expect(retry).not.toHaveBeenCalled()
+
+    // Simulate the fire-and-forget reload landing: a NEW node now occupies
+    // the same call site, with a DIFFERENT id than the one that was refused.
+    act(() => {
+      useEditorStore.setState({ site: siteWithNode(REPLACEMENT_NODE_ID) })
+    })
+
+    expect(retry).toHaveBeenCalledWith(REPLACEMENT_NODE_ID)
+    expect(retry).toHaveBeenCalledTimes(1)
+    // The dialog dismisses itself once the retry has fired.
+    expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
+  })
+
+  it('does not fire the retry if the dialog is dismissed before the reload lands', async () => {
+    const retry = mock((_newNodeId: string) => {})
+    act(() => {
+      useEditorStore.setState({
+        structuralRefusalDialog: {
+          title: 'Delete refused',
+          constraint: SHARED_COMPONENT,
+          nodeId: ORIGINAL_NODE_ID,
+          retry,
+        },
+      })
+    })
+
+    render(<RefusalDialog />)
+
+    fireEvent.click(screen.getByRole('button', { name: /detach this instance/i }))
+    await waitFor(() => expect(detachInstance).toHaveBeenCalledWith(ORIGINAL_NODE_ID))
+    await waitFor(() => expect(screen.getByRole('status')).toBeTruthy())
+
+    // User backs out (the X button) before the reload lands.
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
+    expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
+
+    // The reload lands anyway, sometime later — must NOT trigger retry now
+    // that the user has backed out.
+    act(() => {
+      useEditorStore.setState({ site: siteWithNode(REPLACEMENT_NODE_ID) })
+    })
+
+    expect(retry).not.toHaveBeenCalled()
+  })
+
+  it('dismisses immediately for a non-detach/extract action — nothing to retry', () => {
+    const jumpToSourceOnlyConstraint: EditConstraint = {
+      reason: 'list-row',
+      scope: 'node',
+      explanation: 'One piece of source renders every row of this list.',
+      actions: [
+        { label: 'Open the array in code', kind: 'edit-array', target: { rel: 'src/pages/Home.tsx', line: 70, col: 21 } },
+      ],
+    }
+    act(() => {
+      useEditorStore.setState({
+        structuralRefusalDialog: {
+          title: 'Delete refused',
+          constraint: jumpToSourceOnlyConstraint,
+          nodeId: ORIGINAL_NODE_ID,
+        },
+      })
+    })
+
+    render(<RefusalDialog />)
+    expect(screen.getByRole('alertdialog')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /open the array in code/i }))
+
+    expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
+  })
+})
