@@ -5,7 +5,7 @@ The documentation tree for Studio. This index tells you what to read, in what or
 If you're an agent: start at [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) for orientation and `CLAUDE.md` for the rules, then use [`agent-refs/`](agent-refs/) — compressed, agent-facing versions of everything below. Come here when you need the long form.
 If you're a human contributor: start with [`architecture.md`](architecture.md), then read whichever feature or reference page is closest to what you're changing.
 
-> **Note:** this tree still contains documentation for the dormant CMS half of the fork (auth, plugins, the server-side publisher, site shell). Studio's own docs are the `features/studio-*.md` and `features/canvas-*.md` pages plus [`features/inspector-disclosure.md`](features/inspector-disclosure.md). Where a CMS doc conflicts with `PROJECT-BRIEF.md`, the brief wins. Nothing in that half has been deleted — see [`STUDIO-CMS-REMOVAL-PLAN.md`](../STUDIO-CMS-REMOVAL-PLAN.md) for what is dead, what is load-bearing under a CMS-shaped name (`src/core/publisher/`, `server/auth/`, `src/core/page-tree/`), and what is blocked on a product decision.
+> **Note:** this tree still contains documentation for the dormant CMS half of the fork (auth, plugins, the server-side publisher, site shell). Studio's own docs are the `features/studio-*.md` and `features/canvas-*.md` pages plus [`features/inspector.md`](features/inspector.md). Where a CMS doc conflicts with `PROJECT-BRIEF.md`, the brief wins. Nothing in that half has been deleted — see [`STUDIO-CMS-REMOVAL-PLAN.md`](../STUDIO-CMS-REMOVAL-PLAN.md) for what is dead, what is load-bearing under a CMS-shaped name (`src/core/publisher/`, `server/auth/`, `src/core/page-tree/`), and what is blocked on a product decision.
 
 ## Agent references
 
@@ -44,7 +44,7 @@ docs/
 │   ├── canvas-iframe-per-frame.md  ← per-frame iframe rendering
 │   ├── canvas-rulers-and-guides.md ← rulers, persisted guides, useCanvas()
 │   ├── board-annotations.md        ← sticky notes + rich-text doc cards
-│   ├── inspector-disclosure.md     ← the properties panel's progressive disclosure
+│   ├── inspector.md                ← the properties panel's density contract
 │   │  Inherited (dormant CMS) + shared:
 │   ├── plugin-system.md            ← plugin SDK, sandbox, lifecycle, permissions
 │   ├── publisher.md                ← page tree → static HTML/CSS pipeline
@@ -182,7 +182,7 @@ Three categories, three voices:
 | [features/studio-import.md](features/studio-import.md)           | Studio opens a real React repo as a board — parse, inline, resolve values, import CSS |
 | [features/editor-preferences.md](features/editor-preferences.md) | Catalog-driven local UI preferences for the editor                   |
 | [features/canvas-iframe-per-frame.md](features/canvas-iframe-per-frame.md) | Per-breakpoint iframe rendering in the visual editor canvas |
-| [features/inspector-disclosure.md](features/inspector-disclosure.md) | The properties panel's progressive disclosure — which controls sit on a section's face, which live behind it |
+| [features/inspector.md](features/inspector.md) | The properties panel's progressive disclosure — which controls sit on a section's face, which live behind it |
 | [features/canvas-rulers-and-guides.md](features/canvas-rulers-and-guides.md) | Design-canvas rulers + persisted draggable guides (D1), and the shared `useCanvas()` `transformRef` API |
 | [features/board-annotations.md](features/board-annotations.md) | Sticky notes + rich-text doc cards on the Studio board: selection, resize, stacking, clipboard, the doc editor |
 | [features/studio-comments.md](features/studio-comments.md) | Review threads pinned to the board (`.studio/comments.json`): the anchor-confidence model, the op-based HTTP route, and the agent loop that reads, replies and resolves |
@@ -190,7 +190,7 @@ Three categories, three voices:
 | [features/studio-deploy.md](features/studio-deploy.md) | Preview deploys through the project's own Vercel/Netlify CLI — the Tier-2 gate, provider detection, the check → build → deploy job, and why Studio stores no provider token |
 | [features/studio-share.md](features/studio-share.md) | Share links: a read-only board snapshot at a revocable `/share/<token>` URL — the on-disk registry, the snapshot writer over the headless capture, the stripped viewer payload, and why every failure is the same 404 |
 | [features/studio-prototype.md](features/studio-prototype.md) | Prototype mode: authored links (`.studio/prototype.json`) plus the flow map Studio DERIVES from the project's own navigation code — the four AST rules, what they refuse, and the board-space connector layer |
-| [features/inspector-disclosure.md](features/inspector-disclosure.md) | The properties panel's density contract: the five laws, the ten goals (G1–G10) the panel source cites by number, the height budgets, and the Figma controls we refuse to fake |
+| [features/inspector.md](features/inspector.md) | The properties panel's density contract: the five laws, the ten goals (G1–G10) the panel source cites by number, the height budgets, and the Figma controls we refuse to fake |
 
 ### Reference
 

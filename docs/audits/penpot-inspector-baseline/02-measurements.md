@@ -156,12 +156,12 @@ and it's fully measured above.
 ## Add-property / collapsed-empty convention
 
 - **Collapsed-empty:** `Title` + trailing `+`, one `32px` row, no chevron —
-  matches Studio's own Law 1 already (`docs/features/inspector-disclosure.md`).
+  matches Studio's own Law 1 already (`docs/features/inspector.md`).
 - **On `+` click:** Penpot reveals the section's fields **and writes a real
   default value immediately** — clicking Stroke's `+` on a fresh rectangle
   writes a visible `1px solid #000000` stroke, not a placeholder. This is a
   **measured difference from Studio's own contract**, not a gap: Studio's
-  `AddablePropertyField` (Law 3 in `docs/features/inspector-disclosure.md`)
+  `AddablePropertyField` (Law 3 in `docs/features/inspector.md`)
   deliberately writes nothing until the user commits a value, because Studio
   edits real source files and a silent default write would show up as an
   unexplained diff. Keep Studio's rule; this is recorded so nobody "fixes"

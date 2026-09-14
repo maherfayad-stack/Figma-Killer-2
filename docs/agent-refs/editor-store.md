@@ -244,7 +244,7 @@ steps. The Properties panel's single multi-property write channel is
 `onChangeMany(patch)` (`StyleSectionsEditor`). And a field must compare before
 it commits — a prefilled field that writes its own displayed value on blur
 pushes an entry that reverts nothing visible. Both rules:
-[`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+[`docs/features/inspector.md`](../features/inspector.md)
 §10. Who owns the ⌘Z keystroke:
 [`docs/reference/editor-history.md`](../reference/editor-history.md) → "Who
 owns Ctrl/⌘+Z".
@@ -364,7 +364,7 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   clears the "used by N other elements" gate — but a class edit is an
   ordinary `updateClassStyles`, not a bulk write, because the class IS the one
   honest target. See
-  [`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+  [`docs/features/inspector.md`](../features/inspector.md)
   §9.
 - **Per-node bulk inline-style edit (W8-3 phase 3, G6.4):**
   `setNodesInlineStylesPerNode(patches, { coalesceKey })` takes a DIFFERENT

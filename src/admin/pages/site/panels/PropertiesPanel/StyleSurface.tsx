@@ -122,7 +122,13 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
   const hasModuleContent = definition != null && moduleContent != null
 
   return (
-    <div className={styles.surface}>
+    // `data-testid` is additive/queryable-only — no visual or behavioral
+    // change. `.surface` is "THE scroll container" (this file's own CSS
+    // comment); the e2e measurement gate
+    // (`tests/e2e/inspector-panel-measurement.e2e.ts`) needs a stable real-
+    // DOM handle on it since CSS Module class names are hashed in a real
+    // build.
+    <div className={styles.surface} data-testid="properties-panel-scroll">
       <div className={styles.surfaceContent}>
         {nodeId != null && (
           <WriteTargetRow
@@ -169,7 +175,13 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
             {INSPECTOR_SECTIONS.filter((section) => section.appliesTo(model))
               .sort((a, b) => a.order - b.order)
               .map((section) => (
-                <section.Component key={section.id} />
+                // `data-section-id` is additive/queryable-only — no visual or
+                // behavioral change. It gives Playwright a stable per-section
+                // root (`tests/e2e/inspector-panel-measurement.e2e.ts`) since
+                // this loop otherwise has no wrapper around each section.
+                <div data-section-id={section.id} key={section.id}>
+                  <section.Component />
+                </div>
               ))}
           </>
         )}

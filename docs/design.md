@@ -513,7 +513,7 @@ that refuses to shrink does not push the rail aside — it draws across it.
 **Progressive disclosure — the five laws.** Density is settled; what keeps the
 panel short now is *not drawing* what you have not used. The rules, and the
 Figma behaviour each one mirrors, are in
-[`docs/features/inspector-disclosure.md`](features/inspector-disclosure.md),
+[`docs/features/inspector.md`](features/inspector.md),
 which also carries the ten goals (G1–G10) the panel source cites by number:
 
 1. **An unused section costs one line.** A section marked `collapsedWhenEmpty`
@@ -542,7 +542,7 @@ which also carries the ten goals (G1–G10) the panel source cites by number:
 Where a Figma control has no honest CSS translation (corner smoothing, miter
 join, stroke Inside/Center/Outside), we omit it rather than ship a lookalike
 that writes something else — see
-[`inspector-disclosure.md`](features/inspector-disclosure.md) §7.
+[`inspector.md`](features/inspector.md) §7.
 
 **Opting in.** The panel root carries `data-field-skin="inspector"`; the skins
 themselves live beside the primitives they restyle (`Input.module.css`,
@@ -939,7 +939,7 @@ the step does not exist. See `OnboardingPanel` and its facts route.
 - [docs/architecture.md](architecture.md) — system overview
 - [docs/reference/design-tokens.md](reference/design-tokens.md) — complete token catalog
 - [docs/reference/ui-primitives.md](reference/ui-primitives.md) — primitive usage cookbook
-- [docs/features/inspector-disclosure.md](features/inspector-disclosure.md) — the inspector's five laws, ten goals (G1–G10) and do-not-copy list, in the numbering the panel source cites
+- [docs/features/inspector.md](features/inspector.md) — the inspector's five laws, ten goals (G1–G10) and do-not-copy list, in the numbering the panel source cites
 - Source-of-truth files:
   - `src/styles/globals.css` — all tokens
   - `src/ui/components/` — all primitives

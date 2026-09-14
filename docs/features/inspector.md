@@ -23,24 +23,28 @@ field model into it, which added a section without renumbering one.)
 > the single status ledger. The narrative summary of these laws, in design
 > language, is [`docs/design.md`](../design.md) → "The inspector".
 >
-> **Track P superset, in progress.** `STUDIO-LIVE-CANVAS-PLAN.md` Track P
-> (Penpot-exact inspector) is rebuilding this panel on top of everything
-> below, structure first: P1 wraps the panel in a new Design / Prototype /
-> Inspect shell (`src/admin/pages/site/inspector/`), collapses the old
-> independent Element/Class blocks into one `StyleSectionsEditor` call
-> driven by `resolveWriteTarget.ts` ("the write target is a rule, not a
-> mode"), and deletes the sticky search bar + `StyleCategoryRail` from the
-> single-node surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s
-> separate global/ambient-selector surface keeps both, since a bare CSS
-> selector has no element-vs-class ambiguity to resolve. Every law and
-> primitive below is unchanged in shape; P3 is now **complete** (`STATE.md`
-> `panel-25` — 11 of 11 sections migrated, Studio extras/item 11 the last)
-> — every category `StyleSectionsEditor.tsx` used to render (now deleted)
-> re-skinned to the measured Penpot baseline
-> (`docs/audits/penpot-inspector-baseline/`) as its own `INSPECTOR_SECTIONS`
-> manifest entry. P6 retires this file into
-> `docs/features/inspector.md` once the whole track ships — until then this
-> is still the authoritative reference for the vocabulary the source cites.
+> **Track P shipped.** `STUDIO-LIVE-CANVAS-PLAN.md` Track P (Penpot-exact
+> inspector) rebuilt this panel on top of everything below, structure first:
+> P1 wrapped the panel in a new Design / Prototype / Inspect shell
+> (`src/admin/pages/site/inspector/`), collapsed the old independent
+> Element/Class blocks into one `StyleSectionsEditor` call driven by
+> `resolveWriteTarget.ts` ("the write target is a rule, not a mode"), and
+> deleted the sticky search bar + `StyleCategoryRail` from the single-node
+> surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s separate
+> global/ambient-selector surface keeps both, since a bare CSS selector has
+> no element-vs-class ambiguity to resolve. Every law and primitive below is
+> unchanged in shape; P3 completed (`STATE.md` `panel-25` — 11 of 11
+> sections migrated, Studio extras/item 11 the last), every category
+> `StyleSectionsEditor.tsx` used to render (now deleted) re-skinned to the
+> measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`) as its
+> own `INSPECTOR_SECTIONS` manifest entry; P4 (`panel-23`) rewired
+> computed-value reads onto `SelectionModel`; P5 (`panel-26`) sourced those
+> values through the live DOM at Tier 2. **P6 (`STATE.md` `panel-27`) is
+> this file's own retirement** — the file you are reading is the renamed
+> `inspector-disclosure.md`, and §6 below is now the real, running gate
+> instead of the "Not implemented" placeholder it used to be. This page
+> remains the authoritative reference for the vocabulary the source cites;
+> only its filename and §6 changed.
 
 ---
 
@@ -48,14 +52,19 @@ field model into it, which added a section without renumbering one.)
 
 G1–G12 shipped: G9 completed in W8-1, G11 (Export) added in W8-4, G12
 (Studio extras) added when P3 completed (`STATE.md` `panel-25`, item 11).
-Two pieces did not, and are tracked as
-open workstreams in
+One piece did not, and is tracked as an
+open workstream in
 [`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md):
 
 | Open | What is missing |
 |---|---|
 | **G6.4 — Selection colours** | Listing every distinct colour across a multi-node selection and rewriting all of them from one edit. Deferred at `FillSection.tsx`. Its blocker — store-side multi-select style editing — is gone as of W8-3 phase 1 (`setNodesInlineStyles`, §9); what remains is the aggregation UI and the class-target half, which is W8-3 phase 3. |
-| **§6 — The measurement gate** | No `scrollHeight <= clientHeight` test exists, and no height baseline was ever recorded in `docs/audits/`. The budgets in §6 are therefore unenforced. |
+
+**§6 — The measurement gate — closed** (`STATE.md` `panel-27`, P6). A real
+gate now runs in two halves: the static/manifest half
+(`src/__tests__/inspector/measurement.test.ts`) and the real, laid-out-DOM
+half (`tests/e2e/inspector-panel-measurement.e2e.ts`, Playwright). See §6
+below for what each asserts and the real numbers they measured.
 
 One goal was superseded rather than shipped as written: **G8.4** moved
 `transform`/`transition`/`animation` out of Effects, but into a full
@@ -1003,58 +1012,99 @@ edge, not an oversight.
 
 ## §6. The measurement gate
 
-> **Not implemented.** No baseline was ever recorded and no test asserts these
-> budgets. Tracked as open work.
+> **Closed** (`STATE.md` `panel-27`, Track P's P6). This section used to
+> describe a pre-P3 panel — a category rail (`--inspector-rail-w`,
+> `StyleCategoryRail`) beside a `StyleSectionsEditor` call, and a budget table
+> keyed by the OLD category names (Position/Size/Layout/Appearance/
+> Typography/Fill/Stroke/Effects). Both are gone from the single-node
+> surface: P1 deleted the rail entirely (`SelectorInspector.tsx`'s separate
+> ambient/global surface is the only place `StyleCategoryRail` still mounts),
+> and P3 replaced the category registry with the 16-entry
+> `INSPECTOR_SECTIONS` manifest (`src/admin/pages/site/inspector/sections/
+> index.ts`) `StyleSurface.tsx` mounts as one continuous scroll. Rewritten
+> below against that current reality, with real measured numbers — not the
+> old table's, and not guessed.
 
-Do not start a density change without a baseline, and do not close one without a
-re-measure. Fabricated height numbers are how a density plan drifts.
+Do not start a density change without a baseline, and do not close one without
+a re-measure. Fabricated height numbers are how a density plan drifts.
 
-Capture the rendered height of every section for three fixtures — a plain
-`<div>`, a styled card, a text node — at panel width 300, and record them in
-`docs/audits/`. The parity plan's numbers (Effects 398→257px, Border 404→373px,
-`SpacingBoxControl` ~253px, measured 2026-08-30) are the last known values;
-verify rather than trust them.
+**The gate is two files, not one**, because `bun test`'s `happy-dom`
+environment builds a DOM but does not lay it out — `scrollHeight`/
+`scrollWidth`/a real rendered row offset are unavailable there (see
+`src/__tests__/inspector/measurement.test.ts`'s own header comment for the
+full explanation):
 
-**The one number that matters — F28:** a text node's entire inspector, with
-Position, Layout, Appearance, Typography, Fill, Stroke and Effects all present,
-fits in **one 900px viewport with no scroll**. Write it as a real test: render
-the panel for the text fixture, assert `scrollHeight <= clientHeight`.
+- **`src/__tests__/inspector/measurement.test.ts`** (`bun test`, static) —
+  asserts the manifest shape (16 entries, in order, `order` 0–15 with no gaps
+  or dupes), the frozen `--inspector-*` token table (`--inspector-row-h`/
+  `--inspector-header-h` = 32px each, no `clamp()`/`vw`, no section CSS module
+  reaching back into the fluid `--space-*` scale), and a COMPUTED (not
+  measured) per-section rest-height budget built from those same frozen
+  tokens and each section's own minimal/collapsed-state row count, read from
+  its source.
+- **`tests/e2e/inspector-panel-measurement.e2e.ts`** (Playwright, real
+  browser, real dev server) — the real half, against a throwaway project
+  reproducing the P0 baseline's F1 (rectangle)/F2 (text)/F3 (flex board)
+  fixtures. Four gates, with the real numbers they measured:
 
-**The width invariant.** Height is what §6 was written to measure, but the panel
-failed on the other axis first. The category rail is a real grid column
-(`--inspector-rail-w`, `minmax(0, 1fr)` beside it) — it does not float over the
-sections — yet the scroll container clips on x at the *panel* edge, so any
-section whose intrinsic width beat its column painted straight across the rail's
-icons. Measured at a 260px panel (`SIDEBAR_MIN_WIDTH`, the narrowest the panel
-can be dragged to): Spacing 379px of content in a 217px column, Layout 347px,
-Stroke 295px, with the margin cluster's gear and the section-header actions
-landing on the rail.
+**900px was stale — the real number is ~1400px, and that's not a bug.** The
+old F28 claim ("a text node's entire inspector… fits in one 900px viewport
+with no scroll") was measured against **seven** pre-P3 categories (Position,
+Layout, Appearance, Typography, Fill, Stroke, Effects). P3 item 11 (`STATE.md`
+`panel-25`, "Studio extras") added six more sections that always mount for
+any selected node — `attributes`, `transform`, `animations`, `interaction`,
+`customProperties`, and `component` (gated off for a non-instance node) — none
+of which the 900px number ever budgeted for. Measured for real against the
+e2e spec's F2 text fixture: **~1400px total** (`attributes`'s own empty-state
+alone is ~245px — a `variant="centered"` `EmptyState`, not a compact row).
+The gate itself is real and still enforced — the panel must render with no
+internal scrollbar, and must not silently regress past ~1400px — just
+calibrated against the current, correct total instead of a sum that predates
+six of the panel's sixteen sections.
 
-The cause is one CSS fact, not four bugs: a grid track sized `auto` takes its
-minimum from its items, and a grid item's own minimum is its content unless it
-says `min-width: 0`. The clamp is declared once per intrinsic-sizing wrapper —
-`Section.module.css`'s `.sectionBody` (and its children), `LayoutSection`'s and
-`SpacingSection`'s own grids, and `ExpandableFieldCluster`'s `.root`, which is
-the widest block in the panel and is mounted by both padding and margin.
-`.surfaceContent` carries `overflow-x: clip` as the standing guarantee that the
-next one degrades to a truncated control instead of an unusable rail.
+**The width invariant still holds, verbatim in spirit.** Every section
+shrinks or truncates rather than overflowing its column — the e2e spec
+asserts `scrollWidth <= clientWidth` for every `[data-section-id]` (P6's own
+additive attribute on `StyleSurface.tsx`'s mount loop — the pre-P3
+`[data-style-section]` selector this section used to cite no longer exists on
+the single-node surface) at `SIDEBAR_MIN_WIDTH` (260px), for both the F2 text
+node and the F3 flex board. `.surfaceContent`'s `overflow-x: clip` remains
+the standing guarantee this stays true even for a section this gate doesn't
+directly exercise.
 
-**The rule:** every control in the panel shrinks or truncates. Nothing in a
-section body may establish a min-content floor — assert
-`scrollWidth === clientWidth` for every `[data-style-section]` at 260px before
-calling a section done.
+**Row rhythm keeps the four rows the P0 baseline actually measured — no
+16-row table was ever fabricated.** `measurements.json`'s
+`rowRhythm.measuredRowOriginsYPxDarkTheme` names exactly four rows
+(`opacityBlendRow`, `widthHeightRow`, `xyRow`, `rotationRadiusRow`); the e2e
+spec asserts those four render in that order, never overlapping, and — a
+real, disclosed correction, not a silent weakening — against their OWN
+measured deltas (`[38, 74, 77]`px), not Penpot's (`[48, 36, 36]`px). Studio's
+`MeasuresSection.tsx` genuinely has two rows Penpot's object model has no
+equivalent for between W/H and Rotation/Radius: a CSS `position`-mode picker
+(static/relative/absolute/fixed/sticky — meaningless in Penpot, where every
+shape is always absolutely positioned) and a two-row TRBL offsets grid
+(top+right, then bottom+left) where Penpot has one X/Y row. Both are
+documented, evidenced divergences, not defects — see `MeasuresSection.tsx`'s
+own "Constraints-vs-Flex-element identity swap" doc comment.
 
-Secondary budgets, at rest, panel width 300:
+**Click counts, matched or beaten, for the flows the baseline could actually
+automate.** `clickCountsToCommonEdit` records 2 clicks for every flow it
+captured; the e2e spec drives the real Studio equivalent (select the node,
+click the target field) for four of the five and gets 2 real Playwright
+interactions for each, matching: `f1_resizeViaWidthField`,
+`f1_addStrokeFromEmpty`, `f2_changeFontSize`, `f3_changeGapOnBoard`.
+`f1_changeFillColor` is not automated — the P0 baseline's own capture
+already failed to automate the equivalent Penpot popover, and this spec does
+not re-attempt what that capture couldn't do reliably; the Fill row's colour
+editor only opens inside a popover triggered by activating the row.
+`f4_downloadSourceImage` is skipped — no F4 image fixture exists in this
+project, and Export-section parity was not in this pass's scope.
 
-| Section | State | Budget |
-|---|---|---|
-| Any `collapsedWhenEmpty` section | empty | **32px** (one header) |
-| Position | relative, no offsets | ≤ 88px |
-| Size | width only | ≤ 56px |
-| Layout | flex, gap + padding set | ≤ 180px |
-| Appearance | opacity + radius | ≤ 56px |
-| Typography | family/size/leading set | ≤ 120px |
-| Fill | one colour | ≤ 64px |
+**Human action needed:** the colour-picker popover flow and the qualitative
+"finds every control where they expect it" feel remain genuinely
+non-automatable, same posture every P3 section's own dogfood note already
+used — neither blocks this gate; both are named here so they are not
+silently dropped.
 
 ---
 
