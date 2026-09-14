@@ -4,6 +4,7 @@ import {
   escapeCssAttributeValue,
   findCanvasNodeRectSource,
   findRenderedCanvasNodeElement,
+  preferredRenderedCanvasNode,
   RenderedCanvasNodeCache,
 } from '@site/canvas/canvasNodeLookup'
 import {
@@ -34,6 +35,10 @@ function addCanvasFrame(html: string, breakpointId = 'bp-desktop'): HTMLIFrameEl
   const frameDoc = frame.contentDocument
   if (!frameDoc) throw new Error('Test iframe did not create a contentDocument')
   frameDoc.body.setAttribute('data-breakpoint-id', breakpointId)
+  // Mirrors IframeFrameSurface.tsx's own stamp (P5, STATE.md `panel-26`) —
+  // the outer <iframe> carries its own data-breakpoint-id, readable
+  // cross-origin, independent of the contentDocument body's copy above.
+  frame.setAttribute('data-breakpoint-id', breakpointId)
   frameDoc.body.innerHTML = html
   const adapter = new PortalFrameAdapter(frameDoc)
   adapters.push(adapter)
@@ -237,5 +242,53 @@ describe('canvasFrameDocuments / findCanvasNodeRectSource', () => {
 
     unregisterFrameAdapter(frame)
     expect(findCanvasNodeRectSource('title')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// preferredRenderedCanvasNode — the cross-mode ("Class B") sibling of
+// pickPreferredElement, mode-agnostic (P5, STATE.md `panel-26`). Portal
+// fixtures cover it fully here — BridgeFrameAdapter's own `measure()`
+// lifecycle is already covered in isolation by
+// `src/__tests__/canvas/frameAdapter/BridgeFrameAdapter.test.ts`, and
+// `findRenderedCanvasNodes` never branches on adapter kind, so a second
+// bridge-specific fixture here would only re-prove that same lifecycle.
+// ---------------------------------------------------------------------------
+
+describe('preferredRenderedCanvasNode', () => {
+  it('prefers the frame whose own data-breakpoint-id matches, over an earlier-registered match', async () => {
+    addCanvasFrame('<h1 data-node-id="title"></h1>', 'bp-desktop')
+    addCanvasFrame('<h1 data-node-id="title"></h1>', 'bp-tablet')
+
+    const result = await preferredRenderedCanvasNode('title', 'bp-tablet')
+
+    expect(result).not.toBeNull()
+    expect(result?.frame.getAttribute('data-breakpoint-id')).toBe('bp-tablet')
+  })
+
+  it('falls back to the first rendered match when none carry the preferred breakpoint id', async () => {
+    addCanvasFrame('<h1 data-node-id="title"></h1>', 'bp-desktop')
+    addCanvasFrame('<h1 data-node-id="title"></h1>', 'bp-tablet')
+
+    const result = await preferredRenderedCanvasNode('title', 'bp-mobile')
+
+    expect(result).not.toBeNull()
+    expect(result?.frame.getAttribute('data-breakpoint-id')).toBe('bp-desktop')
+  })
+
+  it('resolves null when no registered frame renders the node at all', async () => {
+    addCanvasFrame('<h1 data-node-id="other"></h1>', 'bp-desktop')
+
+    const result = await preferredRenderedCanvasNode('title', 'bp-desktop')
+
+    expect(result).toBeNull()
+  })
+
+  it('carries computedStyle through for the preferred frame', async () => {
+    addCanvasFrame('<h1 data-node-id="title" style="display:flex"></h1>', 'bp-desktop')
+
+    const result = await preferredRenderedCanvasNode('title', 'bp-desktop', ['display'])
+
+    expect(result?.computedStyle.display).toBe('flex')
   })
 })

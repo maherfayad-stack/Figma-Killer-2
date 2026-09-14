@@ -100,7 +100,7 @@ export function AlignSection() {
   // render — `parentNode`/`parentComputed` are `undefined`/`null` pre-
   // selection, which `resolveAlignWrite` already treats as "unavailable".
   const parentNode = selectedNodeId && page ? getParent(page, selectedNodeId) : undefined
-  const parentComputed = useFrameComputedStyleValues(parentNode?.id ?? null, activeBreakpointId, [
+  const { value: parentComputed } = useFrameComputedStyleValues(parentNode?.id ?? null, activeBreakpointId, [
     'display',
     'flexDirection',
   ])

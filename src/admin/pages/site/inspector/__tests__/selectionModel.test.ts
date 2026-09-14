@@ -57,6 +57,18 @@ describe('useSelectionModel — no selection', () => {
     expect(result.current.writableClasses).toEqual([])
     expect(result.current.inlineWritable).toBe(false)
   })
+
+  // P5, STATE.md `panel-26`: additive field, unwrapped from
+  // useFrameComputedStyleValues's new `{ value, isLoading }` shape. This
+  // fixture registers no canvas frame at all (portal or bridge), so
+  // `computedValues` stays null and `computedValuesLoading` stays false —
+  // a bridge-mode `true` case is covered in isolation by
+  // `useBridgeComputedValues.test.ts`, not duplicated here.
+  it('exposes computedValuesLoading, false on a portal-only (no bridge frame) fixture', () => {
+    const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.computedValues).toBeNull()
+    expect(result.current.computedValuesLoading).toBe(false)
+  })
 })
 
 describe('useSelectionModel — isMultiSelect', () => {

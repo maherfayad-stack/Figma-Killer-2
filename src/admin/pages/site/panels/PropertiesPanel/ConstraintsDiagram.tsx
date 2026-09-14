@@ -93,8 +93,12 @@ export function ConstraintsDiagram({ storedStyles, currentStyles, onChange, onCl
   const page = useEditorStore(selectActiveCanvasPage)
   const parentNode = selectedNodeId && page ? getParent(page, selectedNodeId) : undefined
 
-  const nodeComputed = useFrameComputedStyleValues(selectedNodeId, activeBreakpointId, NODE_PROPERTIES)
-  const parentComputed = useFrameComputedStyleValues(parentNode?.id ?? null, activeBreakpointId, PARENT_PROPERTIES)
+  const { value: nodeComputed } = useFrameComputedStyleValues(selectedNodeId, activeBreakpointId, NODE_PROPERTIES)
+  const { value: parentComputed } = useFrameComputedStyleValues(
+    parentNode?.id ?? null,
+    activeBreakpointId,
+    PARENT_PROPERTIES,
+  )
 
   const position = readString(currentStyles, 'position') ?? nodeComputed?.position ?? null
   const gate = resolvePositionedContext({

@@ -50,7 +50,7 @@ export function useSizingParentLayout(): SizingParentResolution {
   const page = useEditorStore(selectActiveCanvasPage)
 
   const parentNode = selectedNodeId && page ? getParent(page, selectedNodeId) : undefined
-  const parentComputed = useFrameComputedStyleValues(
+  const { value: parentComputed, isLoading: parentComputedLoading } = useFrameComputedStyleValues(
     parentNode?.id ?? null,
     activeBreakpointId,
     PARENT_LAYOUT_PROPERTIES,
@@ -76,6 +76,12 @@ export function useSizingParentLayout(): SizingParentResolution {
       reason:
         "This element's parent lives outside this file, so how it gets laid out isn't knowable here.",
     }
+  }
+  if (parentComputedLoading) {
+    // Tier 2 (bridge-mode) board: a real measurement is in flight, not
+    // permanently unavailable — "no live canvas frame is rendering it yet"
+    // below reads as PERMANENT, which is actively misleading mid-request.
+    return { layout: null, reason: 'Measuring the live frame…' }
   }
   return {
     layout: null,
