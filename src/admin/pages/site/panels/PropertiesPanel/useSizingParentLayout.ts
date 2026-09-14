@@ -5,7 +5,7 @@
  * Hug and Fill are only honest once you know how the parent lays the element
  * out (`elementSizing.ts`'s module doc explains why `100%` overflows a gapped
  * flex row). This hook is where that fact comes from, and it comes from the
- * same place `SingleNodeAlignRow` gets it: a live `getComputedStyle` read of
+ * same place `AlignSection` gets it: a live `getComputedStyle` read of
  * the parent's rendered element inside a canvas frame — never the parent's
  * stored declarations, which say nothing about what a class, the cascade, or
  * a media query actually resolved `display` to.

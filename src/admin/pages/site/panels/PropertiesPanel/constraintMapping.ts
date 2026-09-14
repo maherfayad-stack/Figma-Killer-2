@@ -139,7 +139,7 @@ export type PositionedContext = { ok: true } | { ok: false; reason: string }
  *   - Anything else is in normal flow, where insets either do nothing
  *     (`static`) or nudge the box away from a position it still occupies
  *     (`relative`/`sticky`) — neither is the constraints metaphor.
- *   - Unverifiable stays disabled, matching `resolveAlignWrite`'s
+ *   - Unverifiable stays disabled, matching `inspector/sections/resolveAlignWrite`'s
  *     "Can't verify the parent's layout." posture: no frame, no claim.
  */
 export function resolvePositionedContext({
