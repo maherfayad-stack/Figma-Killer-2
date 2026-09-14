@@ -29,7 +29,7 @@ import type { Token } from '@site/property-controls/tokenUtils'
 import { ScrubTokenField } from './LayoutSection/ScrubTokenField'
 import { ConstraintsDiagram } from './ConstraintsDiagram'
 import { hasStyleValue } from './styleValueUtils'
-import posStyles from './PositionSection.module.css'
+import posStyles from './PositionControls.module.css'
 
 /**
  * The offset field's in-field mark, which is also its scrub handle. It tracks

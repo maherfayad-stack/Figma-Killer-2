@@ -19,11 +19,8 @@
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
-import { CornerRadiusIcon } from '@ui/components/InspectorIcons'
 import { hasStyleValue } from './styleValueUtils'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
-import { MoveIcon } from 'pixel-art-icons/icons/move'
-import { ProportionsSolidIcon } from 'pixel-art-icons/icons/proportions-solid'
 import { RulerDimensionSolidIcon } from 'pixel-art-icons/icons/ruler-dimension-solid'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
@@ -52,24 +49,30 @@ export interface ClassStyleSectionDefinition {
    * line with a "+", not its full property grid. `StyleSectionGroup` in
    * `StyleSectionsEditor.tsx` is what reads this flag.
    *
-   * Left unset on `position`, `size`, `layout`, `spacing` and `appearance` —
-   * Figma's always-present blocks (F1, F3, F10) — which keep their controls
-   * resident even at rest.
+   * Left unset on `layout` and `spacing` — Figma's always-present blocks
+   * (F1, F3, F10) — which keep their controls resident even at rest.
+   * (`position`/`size`/`appearance` used to be in this same "always
+   * resident" group; both migrated out to `MeasuresSection.tsx` — `STATE.md`
+   * `panel-25`, P3 item 3 — which has no `collapsedWhenEmpty` concept of its
+   * own at all, matching Penpot's own W/H/X/Y/rotation/radius block, which
+   * is never collapsible.)
    */
   collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
 }
 
 // ---------------------------------------------------------------------------
-// Section order — WS-6.1's Figma-shaped top-to-bottom flow, extended by
-// docs/features/inspector-disclosure.md §4 G5: Position → Size → Auto layout →
-// Spacing → Appearance → Fill → Stroke → Effects → Typography → Animations →
-// Interaction. The last two are Studio's own additions — Figma has no
-// CSS-cursor/pointer-events concept, and its motion lives in prototyping
-// rather than in the style panel at all — so both stay at the end rather than
-// displacing anything Figma-native. Animations (W5-5) sits between them
-// because it is still a statement about the ELEMENT (how it behaves over
-// time), where Interaction is a statement about the pointer.
+// Section order — this registry is what remains of the pre-P3 (`STATE.md`
+// `panel-25`) Figma-shaped section list once Layer/Align/Measures migrate
+// out to their own `INSPECTOR_SECTIONS` manifest entries (`sections/index.ts`).
+// The Layout → Spacing → Fill → Stroke → Effects → Typography → Animations →
+// Interaction order below is what's left of docs/features/inspector-disclosure.md
+// §4 G5's original Position → Size → Auto layout → Spacing → Appearance →
+// Fill → Stroke → Effects → Typography → Animations → Interaction sequence.
+// The last two (Animations/Interaction) are Studio's own additions — Figma
+// has no CSS-cursor/pointer-events concept, and its motion lives in
+// prototyping rather than in the style panel at all — so both stay at the
+// end rather than displacing anything Figma-native.
 // Order is read by consumers via array iteration (`StyleCategoryRail`'s rail
 // buttons, `StyleSectionsEditor`'s scroll order) — changing it changes both
 // at once, deliberately, since they're meant to stay in lockstep.
@@ -96,45 +99,34 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   'opacity',
   'mixBlendMode',
   'visibility',
+  // Measures (P3 item 3) — src/admin/pages/site/inspector/sections/MeasuresSection.tsx.
+  // Absorbs the old `position` + `size` + `appearance` (radius-only remainder)
+  // entries wholesale — every property those three used to claim, unioned
+  // here in one step rather than split by their old section identity, since
+  // Measures is now the SINGLE section rendering all of them.
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'zIndex',
+  'rotate',
+  'scale',
+  'width',
+  'height',
+  'minWidth',
+  'maxWidth',
+  'minHeight',
+  'maxHeight',
+  'aspectRatio',
+  'boxSizing',
+  'borderTopLeftRadius',
+  'borderTopRightRadius',
+  'borderBottomRightRadius',
+  'borderBottomLeftRadius',
 ]
 
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    id: 'position',
-    title: 'Position',
-    icon: MoveIcon,
-    properties: [
-      'position',
-      'top',
-      'right',
-      'bottom',
-      'left',
-      'zIndex',
-      // F1's third row (G10): the standalone individual-transform properties
-      // the rotation field and the flip pair write (`RotationRow.tsx`).
-      // Claimed here so a style search finds them and the section's "N set"
-      // dot counts them — a property the panel edits must not read as
-      // "custom".
-      'rotate',
-      'scale',
-    ],
-  },
-  {
-    id: 'size',
-    title: 'Size',
-    icon: ProportionsSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'width',
-      'height',
-      'minWidth',
-      'maxWidth',
-      'minHeight',
-      'maxHeight',
-      'aspectRatio',
-      'boxSizing',
-    ],
-  },
   {
     id: 'layout',
     title: 'Layout',
@@ -180,23 +172,6 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'marginRight',
       'marginBottom',
       'marginLeft',
-    ],
-  },
-  {
-    // `opacity`/`mixBlendMode`/`visibility` moved to the new `LayerSection`
-    // manifest entry (`STATE.md` `panel-25`, P3 item 1) — this entry is now
-    // radius-only, a deliberate temporary remainder until Measures (P3 item
-    // 3) claims radius too and this whole entry (and `AppearanceSection.tsx`)
-    // is deleted. See `AppearanceSection.tsx`'s own doc.
-    id: 'appearance',
-    title: 'Appearance',
-    icon: CornerRadiusIcon,
-    defaultOpen: true,
-    properties: [
-      'borderTopLeftRadius',
-      'borderTopRightRadius',
-      'borderBottomRightRadius',
-      'borderBottomLeftRadius',
     ],
   },
   {

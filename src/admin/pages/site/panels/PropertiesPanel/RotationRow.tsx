@@ -35,7 +35,7 @@ import { ClassPropertyRow } from './ClassPropertyRow'
 import { hasStyleValue } from './styleValueUtils'
 import { resolveStyleFieldDisplay } from './styleFieldDisplay'
 import { parseFlipState, serializeFlipState, toggleFlipAxis, TRANSFORM_SCALE_FN_RE } from './flipValue'
-import posStyles from './PositionSection.module.css'
+import posStyles from './PositionControls.module.css'
 
 /** Matches `rotate(`, `rotateX(`, `rotateY(`, `rotateZ(`, `rotate3d(` — every
  *  rotate-family transform FUNCTION name, case-insensitive. */

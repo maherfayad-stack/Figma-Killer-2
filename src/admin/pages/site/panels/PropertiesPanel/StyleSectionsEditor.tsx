@@ -5,7 +5,7 @@
  * StyleRule's `styles` / `contextStyles`) and `InlineStyleComposer` (edits a
  * node's `inlineStyles`). It knows nothing about WHERE the styles live: it
  * takes the resolved style bags plus a set of handlers and renders the curated
- * style sections (spacing / layout / position / border / …) followed by the
+ * style sections (spacing / layout / fill / border / …) followed by the
  * custom-properties editor.
  *
  * Keeping this seam in one place means the two editing targets can never drift
@@ -22,10 +22,7 @@ import { SpacingSection } from './SpacingBoxControl/SpacingSection'
 import { StrokeSection } from './StrokeSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { LayoutSection } from './LayoutSection'
-import { PositionSection } from './PositionSection'
-import { SizeSection } from './SizeSection'
 import { TypographySection } from './TypographySection'
-import { AppearanceSection } from './AppearanceSection'
 import { FillSection, FillSectionActions } from './FillSection'
 import { EffectsSection, EffectsSectionActions } from './EffectsSection'
 import { AnimationsSection, AnimationsSectionActions } from './AnimationsSection'
@@ -36,7 +33,6 @@ import { CLASS_STYLE_SECTIONS, type ClassStyleSectionDefinition } from './classS
 import { orderStyleSections } from './styleSectionOrder'
 import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue, isMixedStyleValue } from './styleValueUtils'
-import { useSizingParentLayout, type SizingParentResolution } from './useSizingParentLayout'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { isMixed, MIXED } from '@ui/components/MixedValue'
 import type { PropertyProvenance } from './stylePropertyProvenance'
@@ -45,10 +41,7 @@ import sectionStyles from '@ui/components/Section/Section.module.css'
 
 const SPACING_SECTION_ID = 'spacing'
 const LAYOUT_SECTION_ID = 'layout'
-const POSITION_SECTION_ID = 'position'
-const SIZE_SECTION_ID = 'size'
 const TYPOGRAPHY_SECTION_ID = 'typography'
-const APPEARANCE_SECTION_ID = 'appearance'
 const FILL_SECTION_ID = 'fill'
 const INTERACTION_SECTION_ID = 'interaction'
 const EFFECTS_SECTION_ID = 'effects'
@@ -112,9 +105,11 @@ interface StyleSectionsEditorProps {
    * string keys `ALL_CURATED_CSS_PROPERTIES` uses. Optional and purely
    * additive (see `ClassPropertyRow`'s doc) — only reaches the generic
    * fallback rows (Effects section, Border's Advanced disclosure, this
-   * editor's own generic branch); the 7 bespoke visual section components
-   * (Spacing/Layout/Position/Size/Typography/Background/Border's primary
-   * controls) are unchanged by this pass — see `StyleSurface`'s doc for why.
+   * editor's own generic branch); the bespoke visual section components
+   * still mounted here (Spacing/Layout/Typography/Background/Border's
+   * primary controls — Position/Size/Appearance migrated out to
+   * `MeasuresSection.tsx`, `STATE.md` `panel-25` P3 item 3) are unchanged by
+   * this pass — see `StyleSurface`'s doc for why.
    */
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
   /**
@@ -160,13 +155,6 @@ export function StyleSectionsEditor({
 }: StyleSectionsEditorProps) {
   const visibleStyleSections = orderStyleSections(getVisibleStyleSections(styleQuery), textFirst)
   const hasActiveQuery = styleQuery.trim().length > 0
-
-  // W8-4 — the selected element's REAL parent layout, which is what decides
-  // whether `SizeSection`'s Fill writes `flex: 1 1 0`, `align-self: stretch`,
-  // or `100%` (and whether Hug/Fill can be offered at all). Resolved here,
-  // once per editor, rather than inside `StyleSectionGroup`, which mounts
-  // once per section.
-  const sizingParent = useSizingParentLayout()
 
   // Default open/closed state for every section, from the user preference.
   // NOTE: this no longer decides whether a `collapsedWhenEmpty` section
@@ -219,7 +207,6 @@ export function StyleSectionsEditor({
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
             styleTarget={styleTarget}
-            sizingParent={sizingParent}
           />
         </div>
       ))}
@@ -271,10 +258,6 @@ interface StyleSectionGroupProps {
   onClearPreview: () => void
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
   styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
-  /** Resolved once by the editor and threaded down — only `SizeSection` reads
-   *  it, and resolving it per section would multiply its store reads by the
-   *  section count for no gain. */
-  sizingParent: SizingParentResolution
 }
 
 function StyleSectionGroup({
@@ -296,7 +279,6 @@ function StyleSectionGroup({
   onClearPreview,
   provenanceByProperty,
   styleTarget,
-  sizingParent,
 }: StyleSectionGroupProps) {
   const setCount = section.properties.filter((prop) => hasStyleValue(storedStyles[prop])).length
 
@@ -498,33 +480,6 @@ function StyleSectionGroup({
             onPreview={onPreview}
             onClearPreview={onClearPreview}
           />
-        ) : section.id === POSITION_SECTION_ID ? (
-          <PositionSection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            activeTab={activeTab}
-            onChange={onChange}
-            onRemove={onRemove}
-            onClearProperty={onClearProperty}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-          />
-        ) : section.id === SIZE_SECTION_ID ? (
-          <SizeSection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            activeTab={activeTab}
-            onChange={onChange}
-            onChangeMany={onChangeMany}
-            onRemove={onRemove}
-            onClearProperty={onClearProperty}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-            parentLayout={sizingParent.layout}
-            parentLayoutReason={sizingParent.reason}
-          />
         ) : section.id === TYPOGRAPHY_SECTION_ID ? (
           <TypographySection
             key={activeTab}
@@ -537,15 +492,6 @@ function StyleSectionGroup({
             onPreview={onPreview}
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
-          />
-        ) : section.id === APPEARANCE_SECTION_ID ? (
-          <AppearanceSection
-            key={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            onChange={onChange}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
           />
         ) : section.id === FILL_SECTION_ID ? (
           <FillSection
