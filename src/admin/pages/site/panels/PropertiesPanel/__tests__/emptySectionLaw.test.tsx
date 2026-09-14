@@ -2,21 +2,27 @@
  * StyleSectionsEditor — the empty-section law
  * (docs/features/inspector-disclosure.md §1 Law 1 / §4 G1).
  *
- * `collapsedWhenEmpty` sections (transform / animations / typography /
- * interaction — every entry left in THIS registry) render as a single header
- * line with a "+" when nothing is set — ANYWHERE, not just on the active
- * breakpoint/condition tab — and must never collapse while an active style
- * search is filtering the panel. `position`/`size`/`appearance`/`layout`/
- * `spacing`/`fill`/`border`/`effects` used to be members of this same
+ * `collapsedWhenEmpty` sections (transform / animations / interaction —
+ * every entry left in THIS registry) render as a single header line with a
+ * "+" when nothing is set — ANYWHERE, not just on the active breakpoint/
+ * condition tab — and must never collapse while an active style search is
+ * filtering the panel. `position`/`size`/`appearance`/`layout`/`spacing`/
+ * `fill`/`border`/`effects`/`typography` used to be members of this same
  * registry but all migrated out to their own `INSPECTOR_SECTIONS` manifest
- * entries (`STATE.md` `panel-25`, P3 items 1-8) — Fill's own Law-1 coverage
+ * entries (`STATE.md` `panel-25`, P3 items 1-9) — Fill's own Law-1 coverage
  * now lives in `inspector/sections/__tests__/fillSection.test.tsx`, Stroke's
  * in `inspector/sections/__tests__/strokeSection.test.tsx`, Shadow's in
  * `inspector/sections/__tests__/shadowSection.test.tsx`, Blur's in
- * `inspector/sections/__tests__/blurSection.test.tsx`. `transform`/
- * `transformOrigin` are a NEW entry in this registry, relocated here from the
- * old `effects` entry's own ⚙ popover — see `classStyleSections.ts`'s own
- * doc for why.
+ * `inspector/sections/__tests__/blurSection.test.tsx`. Typography's own
+ * migration (`TextSection.tsx`, item 9) dropped `collapsedWhenEmpty`
+ * entirely rather than moving a Law-1 test elsewhere — a text layer always
+ * has real font values to show, so there is no genuinely empty state for it
+ * (`TextSection.tsx`'s own doc), and its coverage lives in
+ * `inspector/sections/__tests__/textSection.test.tsx` instead. Tests (a)-(f)
+ * below therefore exercise `transform` (this registry's own resident
+ * example) rather than the departed `typography`; `transformOrigin` are a
+ * NEW entry in this registry, relocated here from the old `effects` entry's
+ * own ⚙ popover — see `classStyleSections.ts`'s own doc for why.
  *
  * An empty section is also not a DISCLOSURE — no chevron, no toggle, nothing
  * to open. The header earns its accordion when the first value lands in it.
@@ -61,22 +67,21 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
   it('(a) an empty collapsible section renders its header only, with a "+"', () => {
     renderEditor()
 
-    // Typography is `collapsedWhenEmpty` and nothing is set anywhere — no
+    // Transform is `collapsedWhenEmpty` and nothing is set anywhere — no
     // property grid, just the header line and its "+".
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
-    expect(screen.getByRole('button', { name: /add typography/i })).toBeDefined()
-
-    // Same one-line treatment for the other collapsible sections.
+    expect(document.querySelector('[data-testid="css-property-row-transform"]')).toBeNull()
     expect(screen.getByRole('button', { name: /add transform/i })).toBeDefined()
+
+    // Same one-line treatment for the other collapsible section.
     expect(screen.getByRole('button', { name: /add interaction/i })).toBeDefined()
   })
 
   it('(b) a section with a base value set renders its body', () => {
-    renderEditor({ storedStyles: { fontFamily: 'Inter' } })
+    renderEditor({ storedStyles: { transform: 'rotate(10deg)' } })
 
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
-    expect(screen.queryByRole('button', { name: /add typography/i })).toBeNull()
-    expect(screen.getByTestId('class-style-section-dot-typography')).toBeDefined()
+    expect(document.querySelector('[data-testid="css-property-row-transform"]')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: /add transform/i })).toBeNull()
+    expect(screen.getByTestId('class-style-section-dot-transform')).toBeDefined()
   })
 
   it('(c) a section whose ONLY value is on a non-active breakpoint still renders its body', () => {
@@ -84,14 +89,14 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
     // (e.g. a tablet breakpoint override), surfaced via `crossContextStyles`.
     renderEditor({
       storedStyles: {},
-      crossContextStyles: [{}, { fontFamily: 'Inter' }],
+      crossContextStyles: [{}, { transform: 'rotate(10deg)' }],
     })
 
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
-    expect(screen.queryByRole('button', { name: /add typography/i })).toBeNull()
+    expect(document.querySelector('[data-testid="css-property-row-transform"]')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: /add transform/i })).toBeNull()
     // The dot reflects the cross-context value too — the section isn't just
     // open, it visibly says something is set somewhere.
-    expect(screen.getByTestId('class-style-section-dot-typography')).toBeDefined()
+    expect(screen.getByTestId('class-style-section-dot-transform')).toBeDefined()
   })
 
   it('a value on a non-active breakpoint does NOT force a truly empty section open', () => {
@@ -100,43 +105,43 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
       crossContextStyles: [{}, {}],
     })
 
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
-    expect(screen.getByRole('button', { name: /add typography/i })).toBeDefined()
+    expect(document.querySelector('[data-testid="css-property-row-transform"]')).toBeNull()
+    expect(screen.getByRole('button', { name: /add transform/i })).toBeDefined()
   })
 
   it('(d) an active style search forces bodies open, even for an otherwise-empty section', () => {
-    renderEditor({ storedStyles: {}, styleQuery: 'fontFamily' })
+    renderEditor({ storedStyles: {}, styleQuery: 'transform' })
 
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
-    expect(screen.queryByRole('button', { name: /add typography/i })).toBeNull()
+    expect(document.querySelector('[data-testid="css-property-row-transform"]')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: /add transform/i })).toBeNull()
   })
 
   it('clicking "+" reveals the section body for this render', () => {
     renderEditor()
 
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /add typography/i }))
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="css-property-row-transform"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /add transform/i }))
+    expect(document.querySelector('[data-testid="css-property-row-transform"]')).not.toBeNull()
   })
 
   it('(e) an empty section is NOT a disclosure — no chevron, no toggle, no body', () => {
     renderEditor()
 
-    const typography = document.querySelector('[data-style-section="typography"]')!
+    const transform = document.querySelector('[data-style-section="transform"]')!
     // The disclosure toggle is the only control in a Section header that
-    // carries `aria-expanded` for the section itself. Typography's empty
+    // carries `aria-expanded` for the section itself. Transform's empty
     // header offers a plain "+" and nothing else, so the whole subtree has
     // no expandable control and no body element to expand into.
-    expect(typography.querySelectorAll('[aria-expanded]')).toHaveLength(0)
-    expect(typography.querySelector('svg')).not.toBeNull() // the section's own icon survives
-    expect(typography.textContent).toContain('Typography')
+    expect(transform.querySelectorAll('[aria-expanded]')).toHaveLength(0)
+    expect(transform.querySelector('svg')).not.toBeNull() // the section's own icon survives
+    expect(transform.textContent).toContain('Transform')
   })
 
   it('(f) a filled section IS a disclosure — the accordion comes back with content', () => {
-    renderEditor({ storedStyles: { fontFamily: 'Inter' } })
+    renderEditor({ storedStyles: { transform: 'rotate(10deg)' } })
 
-    const typography = document.querySelector('[data-style-section="typography"]')!
-    const toggle = typography.querySelector('[aria-expanded]')
+    const transform = document.querySelector('[data-style-section="transform"]')!
+    const toggle = transform.querySelector('[aria-expanded]')
     expect(toggle).not.toBeNull()
     expect(toggle!.getAttribute('aria-expanded')).toBe('true')
   })

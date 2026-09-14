@@ -20,7 +20,6 @@
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { hasStyleValue } from './styleValueUtils'
-import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
 import { ArrowsScaleIcon } from 'pixel-art-icons/icons/arrows-scale'
 import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
 import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
@@ -46,17 +45,19 @@ export interface ClassStyleSectionDefinition {
    * `StyleSectionsEditor.tsx` is what reads this flag.
    *
    * `layout`/`spacing`/`position`/`size`/`appearance`/`fill`/`border`/
-   * `effects` used to be in this registry; all eight migrated out to their
-   * own `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/`AlignSection`/
-   * `MeasuresSection`/`LayoutSection.tsx`/`FillSection.tsx`/
-   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx` — `STATE.md`
-   * `panel-25`, P3 items 1-8). `FillSection.tsx`/`StrokeSection.tsx`/
-   * `ShadowSection.tsx`/`BlurSection.tsx` keep their own Law-1 empty-header/
-   * `forceOpen` disclosure locally (their own `setAnywhere` check +
-   * `Section`'s `empty` prop), same as `LayerSection`/`AlignSection`/
-   * `MeasuresSection` — none of the eight has a `collapsedWhenEmpty` concept
-   * of its own here anymore; see `LayoutSection.tsx`'s own doc for why IT
-   * stays always-open instead.
+   * `effects`/`typography` used to be in this registry; all nine migrated
+   * out to their own `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/
+   * `AlignSection`/`MeasuresSection`/`LayoutSection.tsx`/`FillSection.tsx`/
+   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx`/
+   * `TextSection.tsx` — `STATE.md` `panel-25`, P3 items 1-9). `FillSection.tsx`/
+   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx` keep their own
+   * Law-1 empty-header/`forceOpen` disclosure locally (their own
+   * `setAnywhere` check + `Section`'s `empty` prop), same as `LayerSection`/
+   * `AlignSection`/`MeasuresSection`/`TextSection` — none of the nine has a
+   * `collapsedWhenEmpty` concept of its own here anymore; see
+   * `LayoutSection.tsx`'s own doc for why IT stays always-open instead, and
+   * `TextSection.tsx`'s own doc for why a text layer has no genuinely empty
+   * state to collapse to in the first place.
    */
   collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
@@ -65,12 +66,13 @@ export interface ClassStyleSectionDefinition {
 // ---------------------------------------------------------------------------
 // Section order — this registry is what remains of the pre-P3 (`STATE.md`
 // `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout/
-// Fill/Stroke/Shadow/Blur migrate out to their own `INSPECTOR_SECTIONS`
-// manifest entries (`sections/index.ts`). The Transform → Typography →
-// Animations → Interaction order below is what's left of
+// Fill/Stroke/Shadow/Blur/Text migrate out to their own `INSPECTOR_SECTIONS`
+// manifest entries (`sections/index.ts`). The Transform → Animations →
+// Interaction order below is what's left of
 // docs/features/inspector-disclosure.md §4 G5's original Position → Size →
 // Auto layout → Spacing → Appearance → Fill → Stroke → Effects →
-// Typography → Animations → Interaction sequence.
+// Typography → Animations → Interaction sequence, once Typography (P3 item
+// 9) also migrated out to `TextSection.tsx`.
 //
 // `transform` is a NEW entry, not an original G5 member: it is
 // `transform`/`transformOrigin`, relocated here from the old `effects`
@@ -243,6 +245,31 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   // blur") — the other half of the old `effects` entry's claim.
   'filter',
   'backdropFilter',
+  // Text (P3 item 9) — src/admin/pages/site/inspector/sections/TextSection.tsx.
+  // Every property the old `typography` entry claimed, unioned here in one
+  // step, same pattern every migrated section established. `color`/
+  // `textShadow` stay claimed by Fill/Shadow (G9.4, W8-1) — this section
+  // doesn't touch either. `alignItems` (the vertical-align convenience
+  // write TextSection's own doc describes) stays credited to Layout below,
+  // NOT unioned here — a property is claimed by exactly one section.
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'lineHeight',
+  'letterSpacing',
+  'textAlign',
+  'textDecoration',
+  'textTransform',
+  'whiteSpace',
+  'textOverflow',
+  'textIndent',
+  'marginBlock',
+  'fontVariantNumeric',
+  'fontFeatureSettings',
+  'hangingPunctuation',
+  'fontKerning',
+  'fontVariationSettings',
 ]
 
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
@@ -285,43 +312,6 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'animationFillMode',
       'animationPlayState',
       'transition',
-    ],
-  },
-  {
-    id: 'typography',
-    title: 'Typography',
-    icon: TextStartTIcon,
-    collapsedWhenEmpty: true,
-    properties: [
-      'fontFamily',
-      'fontSize',
-      'fontWeight',
-      'fontStyle',
-      'lineHeight',
-      'letterSpacing',
-      'textAlign',
-      'textDecoration',
-      'textTransform',
-      'whiteSpace',
-      // `color` moved to Fill and `textShadow` to Shadow (`STATE.md`
-      // `panel-25`, P3 item 7 — the old `effects` entry Shadow migrated out
-      // of) — G9's target shape, finished once those two sections existed to
-      // receive them (docs/features/inspector-disclosure.md §4 G9). A property is claimed
-      // by exactly ONE section: this array drives the "N set" count and the
-      // style search, so leaving either listed here as well would count it
-      // twice and show it twice.
-      // Reached through the section's settings popover (G9 / Figma F25-F27),
-      // not as resident rows. Listed here so a style search still finds them
-      // and so they count toward the section's "N set" indicator — a property
-      // the user has set must never be invisible to the section that owns it.
-      'textOverflow',
-      'textIndent',
-      'marginBlock',
-      'fontVariantNumeric',
-      'fontFeatureSettings',
-      'hangingPunctuation',
-      'fontKerning',
-      'fontVariationSettings',
     ],
   },
   {
