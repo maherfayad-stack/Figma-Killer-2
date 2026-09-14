@@ -34,6 +34,10 @@
  * `Fill` (the old standalone, props-driven `FillSection`) is ALSO no longer
  * part of this file's coverage, for the exact same reason — it migrated into
  * `inspector/sections/FillSection.tsx` (`STATE.md` `panel-25`, P3 item 5).
+ * `Stroke` (the old standalone, props-driven `StrokeSection`) is ALSO no
+ * longer part of this file's coverage, for the exact same reason — it
+ * migrated into `inspector/sections/StrokeSection.tsx` (`STATE.md`
+ * `panel-25`, P3 item 6).
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -42,7 +46,6 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import { SizeSection } from '../SizeSection'
 import { TypographySection } from '../TypographySection'
 import { RadiusCluster } from '../../../inspector/sections/RadiusCluster'
-import { StrokeSection } from '../StrokeSection'
 
 /** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
 function noopMany() {}
@@ -118,31 +121,6 @@ describe('RadiusCluster (Measures) — corner radius', () => {
     // `ScrubInput` puts `data-testid` on the field WRAPPER and `-field` on
     // the `<input>` — same convention `measuresSection.test.tsx` documents.
     const field = screen.getByTestId('measures-radius-all-field') as HTMLInputElement
-    expect(field.value).toBe('')
-    expect(field.getAttribute('placeholder')).toBe('Mixed')
-  })
-})
-
-describe('Stroke', () => {
-  it('reads Mixed on the weight field', () => {
-    render(
-      <StrokeSection
-        activeTab="base"
-        storedStyles={{
-          borderTopWidth: MIXED,
-          borderRightWidth: MIXED,
-          borderBottomWidth: MIXED,
-          borderLeftWidth: MIXED,
-        }}
-        currentStyles={{}}
-        onChange={noop}
-        onChangeMany={noopMany}
-        onRemove={noop}
-        onClearProperty={noop}
-      />,
-    )
-    collapseCluster('stroke-sides')
-    const field = screen.getByTestId('stroke-weight-all-field') as HTMLInputElement
     expect(field.value).toBe('')
     expect(field.getAttribute('placeholder')).toBe('Mixed')
   })

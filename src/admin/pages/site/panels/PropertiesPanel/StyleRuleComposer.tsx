@@ -69,7 +69,6 @@ export function StyleRuleComposer({
   })
   const updateClassStyles = useEditorStore((s) => s.updateClassStyles)
   const setClassContextStyles = useEditorStore((s) => s.setClassContextStyles)
-  const removeClassStyleProperty = useEditorStore((s) => s.removeClassStyleProperty)
   const clearClassStyleProperties = useEditorStore((s) => s.clearClassStyleProperties)
   const setPreviewClassStyles = useEditorStore((s) => s.setPreviewClassStyles)
   const clearPreviewClassStyles = useEditorStore((s) => s.clearPreviewClassStyles)
@@ -108,27 +107,6 @@ export function StyleRuleComposer({
 
   const handleRemoveProperty = (key: keyof CSSPropertyBag) => {
     handleChange(key, undefined)
-  }
-
-  /**
-   * Fully clear a property — used by visual switchers (LayoutSection) where
-   * the X / clear affordance must really make a property go away regardless
-   * of whether the value at the active tab is stored or inherited from base.
-   * Routes through `removeClassStyleProperty` which removes the key from
-   * base styles AND every context override in a single history entry.
-   */
-  const handleClearProperty = (key: keyof CSSPropertyBag) => {
-    if (onCondition && activeConditionId) {
-      // On a custom-condition tab, "clear" removes the prop from that
-      // condition's override bag only. On a viewport-context tab it clears the
-      // property everywhere (base + every context) so the inherited base value
-      // can't bleed through and leave the switcher segment stuck pressed.
-      setClassContextStyles(classId, activeConditionId, {
-        [key]: undefined,
-      } as Partial<CSSPropertyBag>)
-      return
-    }
-    removeClassStyleProperty(classId, key)
   }
 
   // Clear a group of properties everywhere (base + every context) in one undo
@@ -193,7 +171,6 @@ export function StyleRuleComposer({
       styleQuery={styleQuery}
       onChange={handleChange}
       onRemove={handleRemoveProperty}
-      onClearProperty={handleClearProperty}
       onClearProperties={handleClearProperties}
       onChangeMany={handleChangeMany}
       onPreview={handlePreview}

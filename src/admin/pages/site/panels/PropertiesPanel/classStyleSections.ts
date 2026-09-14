@@ -21,7 +21,6 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { hasStyleValue } from './styleValueUtils'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
-import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
 import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
 import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
@@ -46,15 +45,17 @@ export interface ClassStyleSectionDefinition {
    * line with a "+", not its full property grid. `StyleSectionGroup` in
    * `StyleSectionsEditor.tsx` is what reads this flag.
    *
-   * `layout`/`spacing`/`position`/`size`/`appearance`/`fill` used to be in
-   * this registry; all six migrated out to their own `INSPECTOR_SECTIONS`
-   * manifest entries (`LayerSection`/`AlignSection`/`MeasuresSection`/
-   * `LayoutSection.tsx`/`FillSection.tsx` — `STATE.md` `panel-25`, P3 items
-   * 1-5). `FillSection.tsx` keeps its own Law-1 empty-header/`forceOpen`
-   * disclosure locally (its own `setAnywhere` check + `Section`'s `empty`
-   * prop), same as `LayerSection`/`AlignSection`/`MeasuresSection` — none of
-   * the five has a `collapsedWhenEmpty` concept of its own here anymore; see
-   * `LayoutSection.tsx`'s own doc for why IT stays always-open instead.
+   * `layout`/`spacing`/`position`/`size`/`appearance`/`fill`/`border` used to
+   * be in this registry; all seven migrated out to their own
+   * `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/`AlignSection`/
+   * `MeasuresSection`/`LayoutSection.tsx`/`FillSection.tsx`/
+   * `StrokeSection.tsx` — `STATE.md` `panel-25`, P3 items 1-6).
+   * `FillSection.tsx`/`StrokeSection.tsx` keep their own Law-1 empty-header/
+   * `forceOpen` disclosure locally (their own `setAnywhere` check +
+   * `Section`'s `empty` prop), same as `LayerSection`/`AlignSection`/
+   * `MeasuresSection` — none of the six has a `collapsedWhenEmpty` concept of
+   * its own here anymore; see `LayoutSection.tsx`'s own doc for why IT stays
+   * always-open instead.
    */
   collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
@@ -62,9 +63,9 @@ export interface ClassStyleSectionDefinition {
 
 // ---------------------------------------------------------------------------
 // Section order — this registry is what remains of the pre-P3 (`STATE.md`
-// `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout/Fill
-// migrate out to their own `INSPECTOR_SECTIONS` manifest entries
-// (`sections/index.ts`). The Border → Effects → Typography → Animations →
+// `panel-25`) Figma-shaped section list once Layer/Align/Measures/Layout/
+// Fill/Stroke migrate out to their own `INSPECTOR_SECTIONS` manifest entries
+// (`sections/index.ts`). The Effects → Typography → Animations →
 // Interaction order below is what's left of
 // docs/features/inspector-disclosure.md §4 G5's original Position → Size →
 // Auto layout → Spacing → Appearance → Fill → Stroke → Effects →
@@ -179,43 +180,41 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   'backgroundBlendMode',
   'objectFit',
   'objectPosition',
+  // Stroke (P3 item 6) — src/admin/pages/site/inspector/sections/StrokeSection.tsx.
+  // The per-side `border*Width/Style/Color` longhands (colour/style fanned
+  // to all four sides, weight per-side), `outline`/`outlineOffset`, and the
+  // raw shorthand escape hatches (reachable via Stroke's own ⚙ settings
+  // popover, `StackedPropertyGrid` — Law 2 turns an in-panel disclosure into
+  // a popover, it does not delete the capability behind it) — every property
+  // the old `border` entry used to claim, unioned here in one step, same
+  // pattern every migrated section established.
+  'borderTopWidth',
+  'borderTopStyle',
+  'borderTopColor',
+  'borderRightWidth',
+  'borderRightStyle',
+  'borderRightColor',
+  'borderBottomWidth',
+  'borderBottomStyle',
+  'borderBottomColor',
+  'borderLeftWidth',
+  'borderLeftStyle',
+  'borderLeftColor',
+  'outline',
+  'outlineOffset',
+  'border',
+  'borderTop',
+  'borderRight',
+  'borderBottom',
+  'borderLeft',
+  'borderWidth',
+  'borderStyle',
+  'borderColor',
+  'borderRadius',
+  'appearance',
 ]
 
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    id: 'border',
-    title: 'Border',
-    icon: BoxSolidIcon,
-    collapsedWhenEmpty: true,
-    // Drives the section "N set" dot + search filtering. The visual
-    // BorderControl edits the per-side longhands + outline; the shorthand
-    // props (border / borderTop / …) live in the section's Advanced
-    // disclosure and are listed here too so a search for "border" still
-    // surfaces the section. Per-corner radius moved to the `appearance`
-    // section (docs/features/inspector-disclosure.md §4 G5) — `borderRadius`
-    // (the shorthand) stays here in Advanced for the raw-string power case.
-    properties: [
-      // Per-side longhands (canonical, edited by BorderControl)
-      'borderTopWidth', 'borderTopStyle', 'borderTopColor',
-      'borderRightWidth', 'borderRightStyle', 'borderRightColor',
-      'borderBottomWidth', 'borderBottomStyle', 'borderBottomColor',
-      'borderLeftWidth', 'borderLeftStyle', 'borderLeftColor',
-      // Outline
-      'outline',
-      'outlineOffset',
-      // Shorthands (Advanced disclosure)
-      'border',
-      'borderTop',
-      'borderRight',
-      'borderBottom',
-      'borderLeft',
-      'borderWidth',
-      'borderStyle',
-      'borderColor',
-      'borderRadius',
-      'appearance',
-    ],
-  },
   {
     id: 'effects',
     title: 'Effects',

@@ -2,15 +2,16 @@
  * StyleSectionsEditor — the empty-section law
  * (docs/features/inspector-disclosure.md §1 Law 1 / §4 G1).
  *
- * `collapsedWhenEmpty` sections (border / effects / animations / typography /
+ * `collapsedWhenEmpty` sections (effects / animations / typography /
  * interaction — every entry left in THIS registry) render as a single header
  * line with a "+" when nothing is set — ANYWHERE, not just on the active
  * breakpoint/condition tab — and must never collapse while an active style
  * search is filtering the panel. `position`/`size`/`appearance`/`layout`/
- * `spacing`/`fill` used to be members of this same registry but all migrated
- * out to their own `INSPECTOR_SECTIONS` manifest entries (`STATE.md`
- * `panel-25`, P3 items 1-5) — Fill's own Law-1 coverage now lives in
- * `inspector/sections/__tests__/fillSection.test.tsx`.
+ * `spacing`/`fill`/`border` used to be members of this same registry but all
+ * migrated out to their own `INSPECTOR_SECTIONS` manifest entries
+ * (`STATE.md` `panel-25`, P3 items 1-6) — Fill's own Law-1 coverage now
+ * lives in `inspector/sections/__tests__/fillSection.test.tsx`, Stroke's in
+ * `inspector/sections/__tests__/strokeSection.test.tsx`.
  *
  * An empty section is also not a DISCLOSURE — no chevron, no toggle, nothing
  * to open. The header earns its accordion when the first value lands in it.
@@ -43,7 +44,6 @@ function renderEditor(overrides: Partial<EditorProps> = {}) {
       onChange={noop}
       onChangeMany={noopMany}
       onRemove={noop}
-      onClearProperty={noop}
       onClearProperties={noop}
       onPreview={noop}
       onClearPreview={noop}
@@ -62,7 +62,6 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
     expect(screen.getByRole('button', { name: /add typography/i })).toBeDefined()
 
     // Same one-line treatment for the other collapsible sections.
-    expect(screen.getByRole('button', { name: /add border/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add effects/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /add interaction/i })).toBeDefined()
   })
@@ -158,7 +157,6 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
         onChange={(property, value) => written.push([String(property), value])}
         onChangeMany={noopMany}
         onRemove={noop}
-        onClearProperty={noop}
         onClearProperties={noop}
         onPreview={noop}
         onClearPreview={noop}
@@ -182,7 +180,6 @@ describe('StyleSectionsEditor — empty-section law (G1)', () => {
         onChange={noop}
         onChangeMany={noopMany}
         onRemove={noop}
-        onClearProperty={noop}
         onClearProperties={noop}
         onPreview={noop}
         onClearPreview={noop}

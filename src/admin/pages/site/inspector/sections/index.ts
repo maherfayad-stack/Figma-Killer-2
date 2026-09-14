@@ -14,10 +14,10 @@
  * Interaction/Effects/Animations/Border) out into independently-manifested
  * sections with real `appliesTo` predicates (e.g. Typography only on a text
  * node), one section per PR, Penpot-ordered. `layer` (item 1), `align` (item
- * 2), `measures` (item 3), `layout` (item 4), and `fill` (item 5) are
- * migrated; `styles` is what remains of the old registry until the next
- * section peels off — its `order` is bumped down each time so `order`
- * always reflects the CURRENT Penpot sequence.
+ * 2), `measures` (item 3), `layout` (item 4), `fill` (item 5), and `stroke`
+ * (item 6) are migrated; `styles` is what remains of the old registry until
+ * the next section peels off — its `order` is bumped down each time so
+ * `order` always reflects the CURRENT Penpot sequence.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -27,6 +27,7 @@ import { LayerSection } from './LayerSection'
 import { MeasuresSection } from './MeasuresSection'
 import { LayoutSection } from './LayoutSection'
 import { FillSection } from './FillSection'
+import { StrokeSection } from './StrokeSection'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -56,5 +57,12 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // (matches the old `FillSection`'s own unconditional mount inside
   // `StyleSectionsEditor` — no node kind ever excluded it).
   { id: 'fill', order: 4, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
-  { id: 'styles', order: 5, appliesTo: () => true, Component: StyleSectionsComposer },
+  // Stroke (P3 item 6) — the `border*Width/Style/Color` longhands +
+  // `outline`/`outlineOffset`, uniform colour/style fanned to all four
+  // sides, per-side weight. Any selected node can carry a border (matches
+  // the old `StrokeSection`'s own unconditional mount inside
+  // `StyleSectionsEditor` via the `border` entry — no node kind ever
+  // excluded it).
+  { id: 'stroke', order: 5, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
+  { id: 'styles', order: 6, appliesTo: () => true, Component: StyleSectionsComposer },
 ]

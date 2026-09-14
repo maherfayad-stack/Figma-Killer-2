@@ -1,8 +1,11 @@
 /*
- * StrokeSection — F16's two-row shape: a PropertyList colour entry (present
- * only when a stroke exists — Law 1), and a resident controls row (position,
+ * StrokeSection — the Stroke `PropertyList` colour entry (present only once
+ * a border longhand is set — Law 1) plus a resident controls row (position,
  * weight, settings, sides) that is the section's permanent "one line" once
- * revealed, matching PropertyList's own empty state exactly.
+ * revealed. Ported from the pre-migration `panels/PropertiesPanel/
+ * StrokeSection.module.css` unchanged — this pass is a plumbing port onto
+ * the `INSPECTOR_SECTIONS` manifest, not a geometry redesign (`STATE.md`
+ * `panel-25`, P3 item 6).
  */
 
 .root {
@@ -34,7 +37,7 @@
 .trailingActions {
     display: flex;
     align-items: center;
-    gap: var(--inspector-space-4xs);
+    gap: var(--inspector-gap-tight);
     flex-shrink: 0;
 }
 
@@ -43,7 +46,7 @@
 .settingsBody {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-space-s);
+    gap: var(--inspector-group-gap);
 }
 
 /* The manual "Style" row (writes all four side longhands at once) uses the
@@ -65,7 +68,7 @@
 /* ── Sides menu ───────────────────────────────────────────────────────────── */
 
 .sidesMenuTitle {
-    padding: var(--inspector-space-3xs) var(--inspector-space-xs);
+    padding: var(--inspector-gap-tight) var(--inspector-field-gap);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-weight: 620;

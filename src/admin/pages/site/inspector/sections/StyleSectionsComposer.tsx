@@ -15,12 +15,11 @@
  * entry as a bare `<Component />`, so a section's ONLY inputs are the
  * selection-scoped hooks it calls itself.
  *
- * ## Mapping `StyleSectionsEditor`'s 7 handlers onto `InspectorCommitApi`
+ * ## Mapping `StyleSectionsEditor`'s handlers onto `InspectorCommitApi`
  *
  *   - `onChange`          -> `commitStyle(prop, value ?? null)` — single-context set.
  *   - `onRemove`          -> `commitStyle(prop, null, { existing: true })` — single-context null-set, existing target only (matches the old `handleRemove`, NOT a cross-context purge).
- *   - `onClearProperty`   -> `commitStyleMany({ [prop]: null }, { mode: 'clear' })` — a ONE-key batch call. `clearClassStyleProperties`/`removeClassStyleProperty` are the same cross-context-purge semantics for N=1 vs N=many (verified against `propertyActions.ts`), so this is exactly the old `handleClearProperty`'s behaviour, not an approximation of it.
- *   - `onClearProperties` -> `commitStyleMany(patch, { mode: 'clear' })` — the real batch purge.
+ *   - `onClearProperties` -> `commitStyleMany(patch, { mode: 'clear' })` — the real batch purge. (`onClearProperty`, a one-key version of this, was `StyleSectionsEditor`'s 7th handler until it migrated with the section that was its only consumer — `StrokeSection.tsx`, `STATE.md` `panel-25` P3 item 6 — leaving the prop itself dead; removed from `StyleSectionsEditorProps` in the same change.)
  *   - `onChangeMany`      -> `commitStyleMany(patch)` — `mode: 'set'` (default).
  *   - `onPreview`         -> `commitStyleMany(patch, { preview: true })`.
  *   - `onClearPreview`    -> `clearStylePreview()`.
@@ -100,7 +99,6 @@ export function StyleSectionsComposer() {
         styleQuery=""
         onChange={(property, value) => commit.commitStyle(property, value ?? null)}
         onRemove={(property) => commit.commitStyle(property, null, { existing: true })}
-        onClearProperty={(property) => commit.commitStyleMany({ [property]: null }, { mode: 'clear' })}
         onClearProperties={(properties) =>
           commit.commitStyleMany(
             Object.fromEntries(properties.map((p) => [p, null])) as Partial<Record<keyof CSSPropertyBag, string | number | null>>,

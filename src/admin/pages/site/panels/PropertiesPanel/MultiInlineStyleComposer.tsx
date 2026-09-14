@@ -234,7 +234,6 @@ export function MultiInlineStyleComposer({
           styleQuery={styleQuery}
           onChange={handleChange}
           onRemove={handleRemove}
-          onClearProperty={handleRemove}
           onClearProperties={handleClearProperties}
           onChangeMany={handleChangeMany}
           onPreview={handlePreview}

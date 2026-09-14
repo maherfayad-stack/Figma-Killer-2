@@ -5,7 +5,9 @@
  * StyleRule's `styles` / `contextStyles`) and `InlineStyleComposer` (edits a
  * node's `inlineStyles`). It knows nothing about WHERE the styles live: it
  * takes the resolved style bags plus a set of handlers and renders the curated
- * style sections (spacing / layout / fill / border / …) followed by the
+ * style sections (effects / typography / animations / interaction — see
+ * `classStyleSections.ts`'s own doc for what has migrated out to its own
+ * `INSPECTOR_SECTIONS` manifest entry, `STATE.md` `panel-25`) followed by the
  * custom-properties editor.
  *
  * Keeping this seam in one place means the two editing targets can never drift
@@ -18,7 +20,6 @@ import { ClassPropertyRow } from './ClassPropertyRow'
 import { Section } from '@ui/components/Section'
 import { Button } from '@ui/components/Button'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
-import { StrokeSection } from './StrokeSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { TypographySection } from './TypographySection'
 import { EffectsSection, EffectsSectionActions } from './EffectsSection'
@@ -40,7 +41,6 @@ const TYPOGRAPHY_SECTION_ID = 'typography'
 const INTERACTION_SECTION_ID = 'interaction'
 const EFFECTS_SECTION_ID = 'effects'
 const ANIMATIONS_SECTION_ID = 'animations'
-const BORDER_SECTION_ID = 'border'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -81,7 +81,6 @@ interface StyleSectionsEditorProps {
   styleQuery: string
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onRemove: (property: keyof CSSPropertyBag) => void
-  onClearProperty: (property: keyof CSSPropertyBag) => void
   /** Clear several properties in one undo step (e.g. display + its flex/grid deps). */
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
   /**
@@ -98,11 +97,9 @@ interface StyleSectionsEditorProps {
    * Track F1 — per-property winner/loser provenance, keyed by the SAME
    * string keys `ALL_CURATED_CSS_PROPERTIES` uses. Optional and purely
    * additive (see `ClassPropertyRow`'s doc) — only reaches the generic
-   * fallback rows (Effects section, Border's Advanced disclosure, this
-   * editor's own generic branch); the bespoke visual section components
-   * still mounted here (Spacing/Layout/Typography/Background/Border's
-   * primary controls — Position/Size/Appearance migrated out to
-   * `MeasuresSection.tsx`, `STATE.md` `panel-25` P3 item 3) are unchanged by
+   * fallback rows (Effects section, this editor's own generic branch); the
+   * bespoke visual section components still mounted here (Typography, plus
+   * Effects/Animations/Interaction's own header actions) are unchanged by
    * this pass — see `StyleSurface`'s doc for why.
    */
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
@@ -138,7 +135,6 @@ export function StyleSectionsEditor({
   styleQuery,
   onChange,
   onRemove,
-  onClearProperty,
   onClearProperties,
   onChangeMany,
   onPreview,
@@ -194,7 +190,6 @@ export function StyleSectionsEditor({
             onReveal={revealSection}
             onChange={onChange}
             onRemove={onRemove}
-            onClearProperty={onClearProperty}
             onClearProperties={onClearProperties}
             onChangeMany={onChangeMany}
             onPreview={onPreview}
@@ -244,7 +239,6 @@ interface StyleSectionGroupProps {
   onReveal: (sectionId: string) => void
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onRemove: (property: keyof CSSPropertyBag) => void
-  onClearProperty: (property: keyof CSSPropertyBag) => void
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
   /** See the group props above — one store write for a multi-property gesture. */
   onChangeMany: (patch: Record<string, string | number | null>) => void
@@ -266,7 +260,6 @@ function StyleSectionGroup({
   onReveal,
   onChange,
   onRemove,
-  onClearProperty,
   onClearProperties,
   onChangeMany,
   onPreview,
@@ -487,19 +480,6 @@ function StyleSectionGroup({
             activeTab={activeTab}
             onChange={onChange}
             onRemove={onRemove}
-            onPreview={onPreview}
-            onClearPreview={onClearPreview}
-            provenanceByProperty={provenanceByProperty}
-          />
-        ) : section.id === BORDER_SECTION_ID ? (
-          <StrokeSection
-            key={activeTab}
-            activeTab={activeTab}
-            storedStyles={storedStyles}
-            currentStyles={currentStyles}
-            onChange={onChange}
-            onRemove={onRemove}
-            onClearProperty={onClearProperty}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
