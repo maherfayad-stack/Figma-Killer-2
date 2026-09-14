@@ -3,12 +3,6 @@
  * LayoutSection.module.css's existing `positionDirectionsGrid`/`directionCell`
  * classes unchanged (this file does not touch that module). */
 
-/* Align row (F1) — sits above the position switcher with a small gap below
- * it so it reads as its own row rather than crowding the switcher. */
-.alignRow {
-    margin-bottom: var(--inspector-space-xs);
-}
-
 /* F29 — the absolute/fixed constraint block: the two axis rows (each a side
  * picker + value field) on the left, Figma's crosshair diagram on the right.
  * The stack takes the remaining width and is allowed to shrink (`minmax(0,
