@@ -204,4 +204,42 @@ describe('setUpProjectI18n', () => {
     const result = setUpProjectI18n(dir)
     expect(result.ok).toBe(false)
   })
+
+  it('finds a Studio scaffold at the app root even when the project also has a src/ directory', () => {
+    // A project with a `src/` directory makes `defaultScaffoldDir` (the
+    // CREATE-path heuristic) guess `src/i18n` — but this project's real,
+    // Studio-written scaffold lives at the app root. `findScaffoldedI18n`
+    // must go by the dictionary `readTranslationCatalog` actually found, not
+    // re-derive a directory from the `src/`-exists guess (regression for the
+    // bug where this refused with a false "not one Studio wrote").
+    write('src/App.tsx', 'export default function App() { return null }\n')
+    write(
+      'i18n/translations.ts',
+      "export const translations = { en: {}, ar: {} }\nexport type Locale = keyof typeof translations\n",
+    )
+    write(
+      'i18n/LanguageContext.tsx',
+      [
+        "import { translations } from './translations'",
+        'export function useLanguage() {',
+        "  const lang = 'en'",
+        '  return { t: translations[lang] }',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write('pages/Page.tsx', 'export default function Page() {\n  return <Banner title="Profile verified" />\n}\n')
+
+    const report = setUpProjectI18n(dir)
+    expect(report.ok).toBe(true)
+    if (!report.ok) return
+
+    expect(report.source).toBe('i18n/translations.ts')
+    expect(report.extracted).toBe(1)
+    expect(report.failures).toEqual([])
+    expect(read('pages/Page.tsx')).toContain('title={t.page.profileVerified}')
+
+    const keys = readTranslationCatalog(dir)?.entries.map((entry) => entry.key) ?? []
+    expect(keys).toContain('page.profileVerified')
+  })
 })

@@ -182,16 +182,18 @@ function rewriteFile(
 export function setUpProjectI18n(dir: string): I18nSetupReport | { ok: false; message: string } {
   // A project with no dictionary gets one; a project that already has
   // Studio's keeps it and just extracts what is still inline. A dictionary
-  // Studio did NOT write is refused rather than guessed at — see
-  // `findScaffoldedI18n`.
+  // Studio did NOT write is refused rather than guessed at. `findScaffoldedI18n`
+  // is handed the ALREADY-RESOLVED catalog rather than re-deriving where the
+  // dictionary "should" be — see that function's own doc for why that
+  // distinction matters.
   const existing = readTranslationCatalog(dir)
   let scaffold
   if (existing) {
-    scaffold = findScaffoldedI18n(dir)
+    scaffold = findScaffoldedI18n(existing)
     if (!scaffold) {
       return {
         ok: false,
-        message: `This project's dictionary (${existing.capability.source}) is not one Studio wrote, so it can't tell which hook a component should read strings from. Move these strings in by hand, or translate the keys that are already there.`,
+        message: `This project's dictionary (${existing.capability.source}) has no Studio-generated LanguageContext.tsx beside it exporting useLanguage(...), so Studio can't tell which hook a component should read strings from. Move these strings in by hand, or translate the keys that are already there.`,
       }
     }
   } else {

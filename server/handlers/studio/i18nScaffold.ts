@@ -48,9 +48,11 @@
  * scaffolding and extracting are separate steps for exactly this reason.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { dirname as posixDirname, join as posixJoin } from 'node:path/posix'
 import { resolveAppRoot } from './appRoot'
 import { detectLocales } from './localeProbe'
+import type { TranslationCatalog } from './translationCatalog'
 
 /** The locales every Studio-scaffolded project starts with. English is the source copy; Arabic is what the AI action fills. */
 export const SCAFFOLD_LOCALES = ['en', 'ar'] as const
@@ -135,12 +137,20 @@ export function useLanguage() {
 }
 
 /**
- * Where the i18n module goes: beside the rest of the source when the project
- * has a `src/`, at the app root otherwise. Both are conventional; guessing
- * deeper (next to the pages directory, inside a `lib/`) would be a guess about
- * a layout this function cannot see.
+ * Where a NEW i18n module goes: beside the rest of the source when the
+ * project has a `src/`, at the app root otherwise. Both are conventional;
+ * guessing deeper (next to the pages directory, inside a `lib/`) would be a
+ * guess about a layout this function cannot see.
+ *
+ * This heuristic is only ever a good answer to "where should Studio create
+ * one" — a project with NO dictionary yet has no fact to consult, so a
+ * convention is the honest best a create path can do. It must never be
+ * reused to answer "where is the dictionary that already exists": that
+ * project already carries the real answer (`localeProbe.ts`'s detected
+ * `LocalesCapability.source`), and re-guessing at find-time silently
+ * overrides a known fact with a coin flip — see {@link findScaffoldedI18n}.
  */
-function scaffoldDir(appRootAbs: string): { abs: string; rel: string } {
+function defaultScaffoldDir(appRootAbs: string): { abs: string; rel: string } {
   const hasSrc = existsSync(join(appRootAbs, 'src'))
   const rel = hasSrc ? 'src/i18n' : 'i18n'
   return { abs: join(appRootAbs, ...rel.split('/')), rel }
@@ -161,7 +171,7 @@ export function scaffoldProjectI18n(dir: string): ScaffoldResult {
       return { ok: false, message: 'This project already has a locale dictionary.' }
     }
 
-    const { abs, rel } = scaffoldDir(appRootAbs)
+    const { abs, rel } = defaultScaffoldDir(appRootAbs)
     const translationsAbs = join(abs, 'translations.ts')
     const contextAbs = join(abs, 'LanguageContext.tsx')
     if (existsSync(translationsAbs) || existsSync(contextAbs)) {
@@ -195,18 +205,47 @@ export function scaffoldProjectI18n(dir: string): ScaffoldResult {
  * a project with a different one is refused with a reason rather than
  * half-rewritten.
  *
- * Recognition is by content, not just by path: the context module must
- * actually export {@link SCAFFOLD_HOOK_NAME}.
+ * ## Find beside the dictionary that was actually found — never re-guess a directory
+ *
+ * This takes the ALREADY-RESOLVED {@link TranslationCatalog} (from
+ * `readTranslationCatalog`, which in turn trusts `localeProbe.ts`'s detected
+ * `LocalesCapability.source`) rather than re-deriving a directory from a
+ * `src/`-exists heuristic. That heuristic is the right tool in
+ * {@link scaffoldProjectI18n} — there is no dictionary yet, so a convention is
+ * the only thing to consult — but it is the wrong tool here: the dictionary's
+ * real location is a known fact once `readTranslationCatalog` has found it,
+ * and a guess has no business overriding a known location (a project with a
+ * `src/` directory whose Studio scaffold happens to live at the app root,
+ * for example, would be refused with a false "not one Studio wrote" for no
+ * reason but the guess landing on the wrong folder).
+ *
+ * A `locales/*.json` per-locale-file catalogue is never a Studio scaffold —
+ * Studio's own shape is always the two-file `translations.ts` +
+ * `LanguageContext.tsx` module — so that shape is rejected up front rather
+ * than probed.
+ *
+ * Recognition is by content, not just by path: the context module beside the
+ * dictionary must actually export {@link SCAFFOLD_HOOK_NAME}. This stays
+ * strict on purpose — the extraction codemod writes a real `import { useLanguage }`
+ * statement, so it must know the hook's exact exported name rather than infer
+ * one. A Studio scaffold whose hook was hand-renamed after the fact is a
+ * project that changed the contract, not one this function should guess back
+ * into shape.
  */
-export function findScaffoldedI18n(dir: string): I18nScaffold | undefined {
+export function findScaffoldedI18n(catalog: TranslationCatalog): I18nScaffold | undefined {
   try {
-    const appRootAbs = resolveAppRoot(dir)
-    const { abs, rel } = scaffoldDir(appRootAbs)
-    const contextAbs = join(abs, 'LanguageContext.tsx')
-    const translationsAbs = join(abs, 'translations.ts')
-    if (!existsSync(contextAbs) || !existsSync(translationsAbs)) return undefined
+    // Studio's scaffold is a single dictionary module, never a `locales/`
+    // directory of per-locale JSON files.
+    if (catalog.perLocaleFiles) return undefined
+
+    const dirAbs = dirname(catalog.sourceAbs)
+    const contextAbs = join(dirAbs, 'LanguageContext.tsx')
+    if (!existsSync(contextAbs)) return undefined
     if (!readFileSync(contextAbs, 'utf8').includes(`export function ${SCAFFOLD_HOOK_NAME}`)) return undefined
-    return { translationsRel: `${rel}/translations.ts`, contextRel: `${rel}/LanguageContext.tsx`, dirAbs: abs }
+
+    const translationsRel = catalog.capability.source
+    const contextRel = posixJoin(posixDirname(translationsRel), 'LanguageContext.tsx')
+    return { translationsRel, contextRel, dirAbs }
   } catch (err) {
     console.error('[studio:i18nScaffold]', err)
     return undefined
