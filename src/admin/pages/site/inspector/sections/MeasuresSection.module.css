@@ -5,24 +5,38 @@
  * tightly paired), rotation/radius row `y=252` (Δ4 — tightly paired). The
  * whole block is unlabeled — there is no "MEASURES" header text in the real
  * panel, matching Layer's own template.
+ *
+ * `.measures`'s own gap sits BETWEEN three distinct groups — the W/H size
+ * block, the position row, and the rotation/radius row — not within one, so
+ * it uses `--inspector-space-m` (the panel's between-group step), not the
+ * within-group `--inspector-gap-tight` it used to share with the tightly-
+ * paired fields inside each of those groups (`.positionBlock` below).
  */
 
 .measures {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-m);
     padding-inline: var(--inspector-pad-x);
     padding-block: var(--inspector-space-2xs);
 }
 
 /* The FLEX ELEMENT face's own body padding — `Section` already draws the
- * header row's own inline padding; the body needs the same tight rhythm the
- * unlabeled face uses so switching faces doesn't change row spacing. */
+ * header row's own inline padding, AND its `.sectionContent` already insets
+ * this body by `--inspector-pad-x` (this face mounts inside a real
+ * `<Section title="Flex element">`, unlike the headerless Constraints face
+ * `.measures` above, which has no such ancestor and legitimately sets its
+ * own `padding-inline`). Re-applying `--inspector-pad-x` here doubled the
+ * inset to 24px per side — the segmented control + chevron + settings icon
+ * lost 24px of width to padding they never needed, reading as cramped.
+ * `padding-block` stays: `.sectionContent` only pads its bottom, and this
+ * face needs the same top/bottom rhythm the unlabeled face uses so
+ * switching faces doesn't change row spacing. */
 .flexElementBody {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-gap-tight);
-    padding-inline: var(--inspector-pad-x);
+    gap: var(--inspector-space-2xs);
+    padding-inline: 0;
     padding-block: var(--inspector-space-2xs);
 }
 
@@ -41,7 +55,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
 }
 
 /* Rotation paired with the radius cluster on one row — the measured

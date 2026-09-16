@@ -21,13 +21,30 @@
 }
 
 /* ── Left content column ─────────────────────────────────────────────────── */
-/* Grid with the same 1px gap as `.styleSections` so the Module section and the
-   CSS sections share one consistent vertical rhythm. (The sticky search bar is
-   absolutely positioned, so it's out of flow and adds no gap.) */
+/*
+ * `.surfaceContent` is the single shared ancestor of EVERY top-level block
+ * the panel mounts — real `<Section>`-wrapped entries and the headerless
+ * ones (Layer/Align/Measures, which have no header and so never go through
+ * `Section.module.css` at all) alike — so this grid `gap` is where the
+ * panel's BETWEEN-SECTION spacing belongs, not in `Section.module.css`
+ * itself (`Section` is also used by GitPanel/FrameworkScalePanel, outside
+ * this panel's rhythm). Used to be `var(--space-px)` (1px) — sections read
+ * as one continuous wall with only a 1px hairline between them, no
+ * breathing room a scanning eye could use as a landmark. Now
+ * `--inspector-space-xl`, the panel's between-section step — the biggest of
+ * the three, so a section boundary is unmistakable while scrolling.
+ *
+ * This is also what makes each section's header sit closer to ITS OWN
+ * content than to the section above it: `Section.module.css`'s
+ * `.sectionContent` already has zero top padding (the header's own box ends
+ * and the first row begins immediately), so the only space around a header
+ * is this shared gap sitting ABOVE it — proximity, not a magic number tuned
+ * per header.
+ */
 .surfaceContent {
     display: grid;
     align-content: start;
-    gap: var(--space-px);
+    gap: var(--inspector-space-xl);
     min-width: 0;
     padding-bottom: var(--space-7xl);
     /*
@@ -63,18 +80,46 @@
     min-width: 0;
 }
 
+/*
+ * A section whose `appliesTo` passes but whose own component renders `null`
+ * (Align, with no flex/grid parent — its own doc: "the row doesn't exist in
+ * the DOM at all") still leaves its `[data-section-id]` wrapper `<div>` in
+ * the grid — a literal empty element, not a hidden one. Found auditing the
+ * new between-section gap this pass added: a CSS grid `gap` still applies on
+ * BOTH sides of a zero-height empty item, so one invisible section silently
+ * cost 2x the between-section step instead of 0. `:empty` collapses it out
+ * of the grid the same way the component itself already opted out of the
+ * DOM.
+ */
+[data-section-id]:empty {
+    display: none;
+}
+
 /* ── Generated utility lock wrapper ─────────────────────────────────────── */
 .lockedContent {
     padding: 0;
 }
 
 /* ── Module section — a fixed block, not an accordion (P2 rule 2) ──────── */
+/* This mini-section is hand-rolled rather than `<Section>` (it has no
+   disclosure toggle), so — unlike every real `INSPECTOR_SECTIONS` entry —
+   nothing here automatically supplies `--inspector-pad-x`. `.moduleHeader`
+   already applied it, just under the WRONG token name
+   (`--inspector-space-xl` — 12px today by coincidence, not by contract).
+   `.moduleBody` below is the fix that actually mattered: it was missing
+   entirely, so a module's own declared props (rendered through
+   `PropertyControlRenderer`/`ParamPromotableRow`, both zero-self-padding)
+   sat flush against the raw panel edge while this header sat 12px in. */
 .moduleHeader {
     display: flex;
     align-items: center;
     gap: var(--inspector-space-2xs);
-    padding: var(--inspector-space-l) var(--inspector-space-xl) var(--inspector-space-2xs);
+    padding: var(--inspector-space-l) var(--inspector-pad-x) var(--inspector-space-2xs);
     color: var(--text-subtle);
+}
+
+.moduleBody {
+    padding-inline: var(--inspector-pad-x);
 }
 
 .moduleTitle {
@@ -104,7 +149,7 @@
 .lockedPreviewTeaser {
     display: grid;
     gap: var(--inspector-space-s);
-    padding: var(--inspector-space-l) var(--inspector-space-xl);
+    padding: var(--inspector-space-l) var(--inspector-pad-x);
     pointer-events: none;
     opacity: 0.55;
     user-select: none;
@@ -150,7 +195,7 @@
 .generatedUtilityState {
     display: grid;
     gap: var(--inspector-space-s);
-    margin: var(--inspector-space-s) var(--inspector-space-l) var(--inspector-space-xl);
+    margin: var(--inspector-space-s) var(--inspector-pad-x) var(--inspector-space-xl);
     padding: var(--inspector-space-l);
     border-radius: 12px;
     background: var(--bg-surface);

@@ -23,19 +23,25 @@
     align-items: center;
     justify-content: flex-start;
     gap: var(--inspector-space-m);
-    margin-bottom: var(--inspector-space-l);
+    /* Between-group step, not `--inspector-space-l` — this sub-header
+       belongs to the rows below it more than to whatever sits above the
+       section, and used to sit further from its own rows than the rows sit
+       from each other. */
+    margin-bottom: var(--inspector-space-m);
 }
 
+/* Each attribute is its own independent row — between-group spacing. */
 .rows {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-space-s);
+    gap: var(--inspector-space-m);
 }
 
+/* Name/value/error are facets of ONE attribute — within-group spacing. */
 .row {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-space-3xs);
+    gap: var(--inspector-space-2xs);
 }
 
 .rowGrid {

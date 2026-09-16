@@ -12,6 +12,271 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### panel-28 — inspector spacing audit: one inset, one row height, a real hierarchy
+- **Agent:** panel-designer
+- **Stage:** done — PR open (draft) against `feat/alm-figma-killer-studio-shell`.
+- **Updated:** 2026-09-16.
+- **Goal:** fix two dogfooded spacing bugs (Component-section prop rows sitting
+  further left than their own header; the Measures "Flex element" face reading
+  cramped), generalize the fix to the whole class of drift across all 16
+  `INSPECTOR_SECTIONS`, then — a mid-task addition from the same dogfood pass —
+  give the panel a real spacing HIERARCHY (Gestalt proximity) instead of one flat
+  gap everywhere, expressed through the existing `--inspector-space-*` scale only.
+- **Scope:** `src/admin/pages/site/inspector/sections/*.module.css` (+
+  `MeasuresSection.tsx` doc-comment only), `src/admin/pages/site/panels/
+  PropertiesPanel/{ComponentRefView,ComponentParamsOverview,FrameBulkInspector,
+  FrameSizePanel,MultiSelectionInspector,MultiSelectorInspector,ParamRow,
+  StyleRuleComposer,StyleSurface}.{tsx,module.css}`, `src/ui/components/
+  PropertyList/PropertyList.module.css`, `src/styles/globals.css`,
+  `tests/e2e/inspector-panel-measurement.e2e.ts`. **Did not touch**
+  `ComponentSection.tsx`, `componentCallSiteRows.ts`, `buildDesignSystemManifest.ts`,
+  `component-manifest/types.ts` — another session owns those four (variant-
+  applicability logic); `ComponentSection.module.css` is mine.
+
+#### Part 1 — the horizontal-inset audit (the two reported screenshots + the class of drift)
+
+The frozen contract (`panel-25`): `--inspector-pad-x: 12px` is THE horizontal
+content inset; `--inspector-row-h: 32px` is THE row-height floor. Read every
+`.module.css` backing the 16 sections plus their shared row/control chrome.
+Found **four distinct failure shapes**, not one bug repeated:
+
+1. **Double-inset** (a block re-applies `--inspector-pad-x`-equivalent padding
+   INSIDE a `<Section>` whose `.sectionContent` already supplies it):
+   - `ComponentSection.module.css` — `.header`/`.actionsRow`/`.swapPicker`/
+     `.noParams` (padding) and `.refusalNotice` (margin) all added
+     `--inspector-space-l` (10px) horizontally on top of the ancestor's 12px —
+     22px total vs. the prop rows' correct 12px. **This was screenshot 1.**
+   - `MeasuresSection.module.css` `.flexElementBody` — re-applied
+     `padding-inline: var(--inspector-pad-x)` inside `<Section title="Flex
+     element">`, whose `.sectionContent` already insets it — 24px per side
+     instead of 12px, eating 24px of width from the segmented control +
+     chevron + settings icon row. **This was screenshot 2**, confirmed as the
+     sole cause (no other DropdownSwitcher/PositionControls issue found).
+   - `PropertyList.module.css` (`@ui/components/PropertyList`) — the SAME bug,
+     found by generalizing: `.row`'s own `padding-inline: var(--inspector-
+     pad-x)` (there on purpose, so its hover highlight can bleed to the
+     section edge) was never offset by a matching negative margin on `.list`,
+     so every `PropertyList` consumer — **Fill, Stroke, Shadow, Blur,
+     Animations, Export, six of the sixteen sections** — had its actual
+     row content sitting at 24px, not 12px. Fixed once, at the primitive:
+     `.list { margin-inline: calc(var(--inspector-pad-x) * -1); }` cancels the
+     inherited inset so `.row`'s own pad-x becomes the sole, correct one. This
+     was the highest-leverage fix in the pass — one file, six sections.
+2. **Wrong value, no ancestor to blame** (a block IS the true content edge —
+   no `<Section>` wrapper at all — and used `--inspector-space-l`/`-xl`
+   (10px/12px-by-coincidence) instead of naming `--inspector-pad-x`):
+   `ComponentRefView.module.css` (`.header`/`.noParams`/`.unknownVC`),
+   `ParamRow.module.css` (`.row`, `.rowWrapperDefault`, `.nameError`,
+   `.advanced`) — this is the OTHER instance-param row primitive (VC
+   `base.visual-component-ref`, not `studio.instance`), same class of bug,
+   different node kind than the reported screenshot. Also
+   `ComponentParamsOverview.module.css`, `FrameBulkInspector.module.css`,
+   `FrameSizePanel.module.css`, `MultiSelectionInspector.module.css`,
+   `MultiSelectorInspector.module.css`, `StyleRuleComposer.module.css` — same
+   family, mostly a harmless-value/wrong-name fix (`--inspector-space-xl`
+   already equals 12px by coincidence; renamed for correctness, not for a
+   visual change).
+3. **Missing entirely** — `StyleSurface.tsx`'s own hand-rolled "Module
+   section" (header + `moduleContent`, NOT built from `<Section>`, so nothing
+   supplies `--inspector-pad-x` automatically) had ZERO horizontal inset on
+   its body (`sectionStyles.sectionBody` alone has no padding) while its own
+   header sat at 12px (well, at `--inspector-space-xl`, same value, wrong
+   name) — any regular module's declared props (base.button's `label`, etc.)
+   rendered flush against the raw panel edge. Fixed with a new `.moduleBody`
+   class (`padding-inline: var(--inspector-pad-x)`) applied alongside
+   `sectionStyles.sectionBody` in `StyleSurface.tsx`.
+4. **Row-height literal** — `ParamRow.module.css` `.row` used a hardcoded
+   `min-height: 28px` instead of `var(--inspector-row-h)` (32px) — it is NOT
+   wrapped by `ControlRow` (which already gets 32px via `PropertiesPanel.
+   module.css`'s `--control-row-h: var(--inspector-row-h)` rebind), so the
+   literal was the actual rendered height, 4px short of every other row.
+
+**Rule applied:** one inset value (`--inspector-pad-x`), used by whichever
+element is the TRUE content edge for its context — a real `<Section>`'s own
+`.sectionContent`, OR the block itself when there is no such ancestor — never
+both. A block that needs its own visible edge-to-edge hover/highlight (like
+`PropertyList`'s row) may re-apply the inset to itself, but must cancel the
+inherited one first via an equal-and-opposite negative margin, not stack them.
+
+#### Part 2 — spacing hierarchy (Gestalt proximity), added mid-task per the user's dogfood follow-up
+
+**The ask:** consistent insets alone still read as a flat wall — nothing
+chunks the panel into scannable groups. Add a real hierarchy through spacing
+alone (no new borders/dividers/color), using ONLY the existing
+`--inspector-space-*` scale (4xs..xl), three meaningfully-picked steps:
+
+- **within-group = `--inspector-space-2xs` (4px)** — rows/fields that are
+  facets of one concept (Layout's direction+align+gap; Measures' position
+  mode + TRBL/diagram; an attribute's name/value/error).
+- **between-group = `--inspector-space-m` (8px)** — distinct concepts inside
+  one section (Layout's mode vs. padding vs. flex-block vs. margin; Measures'
+  size vs. position vs. rotation/radius; each declared Component prop; each
+  independent Attribute row; Stroke's colour-entry list vs. its controls row).
+- **between-section = `--inspector-space-xl` (12px)** — one section's content
+  to the next section's header. Lives in `StyleSurface.module.css`'s
+  `.surfaceContent` grid `gap`, NOT in `Section.module.css`'s own `.section`
+  padding — `Section` is shared with GitPanel/FrameworkScalePanel, outside
+  this panel's rhythm, so the fix had to sit in the one ancestor common to
+  BOTH `<Section>`-wrapped sections and the headerless ones (Layer/Align/
+  Measures, which never touch `Section.module.css` at all).
+
+**Retired `--inspector-gap-tight`/`--inspector-gap-group`** (the P3-era
+"additive rhythm" pair `globals.css` used to carry): `-gap-group` (16px) was
+defined but grep-confirmed **never applied anywhere** — a documented intent
+that was never wired up (the between-section gap it was meant for is exactly
+what `.surfaceContent`'s new gap now does, panel-wide). `-gap-tight` (4px) is
+the exact value `--inspector-space-2xs` already is — two names for one fact,
+which is precisely the "parallel scale" the task said not to introduce.
+Migrated every consumer (`LayoutSection`, `LayerSection`, `MeasuresSection`,
+`StrokeSection`) onto the 3-step vocabulary above instead, so the WHOLE panel
+reads off one scale.
+
+**Header proximity ("more space above than below") came for free**: every
+section's `.sectionContent` already has zero top padding (the header's own
+box ends and the first row begins immediately) — so once `.surfaceContent`'s
+gap became the panel's real between-section space, it automatically sits only
+ABOVE each header, never below it. No per-header tuning needed.
+
+**One extra bug this surfaced, fixed in the same pass**: `AlignSection`
+renders `null` (no flex/grid parent — by its own doc, "the row doesn't exist
+in the DOM at all"), but its `[data-section-id="align"]` wrapper `<div>`
+still rendered, empty. A CSS grid `gap` still applies gap on BOTH sides of a
+zero-height empty item, so one invisible section was silently costing 2x the
+between-section step. Fixed with `[data-section-id]:empty { display: none; }`
+in `StyleSurface.module.css` — the wrapper collapses out of the grid the same
+way the component itself already opted out of the DOM.
+
+**Files touched for the hierarchy, concretely:**
+- `LayoutSection.module.css` — `.layoutSection` (top-level: mode/flex/padding/
+  margin groups) → between-group; `.flexBlock`+children (direction/align/gap,
+  facets of one "auto layout" decision) → within-group.
+- `MeasuresSection.module.css` — `.measures` (size/position/rotation groups)
+  → between-group; `.positionBlock`/`.flexElementBody` → within-group.
+- `StrokeSection.module.css` — `.root` (PropertyList vs. controls row) was
+  `--inspector-field-gap` (6px, the wrong token family — that one names
+  pairing two fields on ONE row) → between-group `--inspector-space-m`.
+- `ComponentSection.module.css` — `.propsList` had **zero gap at all**
+  between declared prop rows (touching); added `gap`+`margin-top:
+  --inspector-space-m`.
+- `AttributesSection.module.css` — `.rows` (each attribute independent) 6px
+  → 8px between-group; `.row` (name/value/error, one attribute) 3px → 4px
+  within-group; `.header` margin-bottom 10px → 8px (a sub-header belongs to
+  its own rows, not equidistant from the section above).
+- `LayerSection.module.css` — pure token rename (already correct value/job).
+
+#### Verification
+- `bun run build` clean.
+- `bun test src/admin/pages/site src/__tests__/inspector/measurement.test.ts`
+  → **947 pass / 0 fail**. The computed rest-height table needed **no**
+  changes — none of this pass's edits changed any section's `rowCount`/
+  `hasHeader` (only horizontal insets and vertical GAPS between existing rows,
+  which that table doesn't model).
+- `bun test src/__tests__/architecture` → 550 pass / 2 fail, **both the two
+  pre-existing failures the work order named** (`icon-catalog-integrity`
+  chevron-left, `no-core-barrel-deep-imports`) — confirmed via `git status`
+  that neither touched file is in this diff.
+- `bun run lint` → 6 pre-existing `'os' unused` errors in `server/handlers/
+  __tests__/*` — none touched by this diff.
+- `bun run test:e2e -- tests/e2e/inspector-panel-measurement.e2e.ts` — **all 5
+  pass**, against a port-isolated e2e server (`E2E_CMS_PORT`/`E2E_VITE_PORT`/
+  `PUBLIC_ORIGIN` overridden to avoid colliding with a parallel session's
+  default :3002/:5174 — see Landmines). Two spec numbers updated, honestly
+  re-measured, not tuned to preserve the old ones (exactly as instructed):
+  - **Row rhythm test**: `REAL_MEASURED_DELTAS` `[38, 74, 77]` → `[48, 78,
+    81]`. Delta #0 (Layer→W/H) crosses a real section boundary and grew the
+    most (the new 12px between-section gap, minus the ~1px it already had,
+    plus the empty-Align-wrapper fix removing an extra 22px of accidental
+    double-gap along the way — both effects measured and reconciled before
+    landing the final number). Deltas #1/#2 barely moved (Measures' own
+    between-group step only grew 4px→8px).
+  - **Tall-viewport "no scroll" test**: real total for the F2 text-node
+    fixture is now **~1826px at a 2100px-tall viewport** (viewport bumped
+    from 1700, ceiling from 1600→1950), up from ~1400px — the deliberate
+    cost of a real between-section gap replacing a 1px hairline across 14
+    applicable sections. Full re-measurement narrative + the honest
+    viewport-coupling caveat below are in the spec's own updated doc comment.
+- **Not run:** manual browser dogfood (see below).
+
+#### Decisions
+- `PropertyList.module.css`'s `.list` gets a negative margin rather than
+  touching each of its 6 callers — verified none of the 6 render a sibling
+  beside `<PropertyList>` inside the same padded wrapper that the margin
+  could wrongly affect (only `StrokeSection` has a sibling, `.controlsRow`,
+  and it lives in a SEPARATE flex child, unaffected).
+- The between-section gap lives in `StyleSurface.module.css` (`.
+  surfaceContent`), not `Section.module.css` (`.section`) — `Section` is a
+  shared primitive used outside this panel (GitPanel, FrameworkScalePanel);
+  changing its own padding would have silently re-skinned surfaces this task
+  never reviewed.
+- `--inspector-gap-tight`/`--inspector-gap-group` retired outright rather than
+  left alongside the new 3-step scale — confirmed via grep that both were
+  confined to files inside this task's own scope before deleting.
+- `ParamRow.module.css`'s `.rowWrapperDefault` (the "default-edit" card,
+  its own rounded+backgrounded surface) kept ITS OWN uniform `--inspector-
+  space-l` padding as internal card chrome, but its horizontal component
+  still needed to become `--inspector-pad-x` to match the panel's frozen
+  inset (a card with no margin of its own is flush to the panel edge, same
+  as everything else) — vertical stayed on the space scale.
+
+#### Landmines
+- **`E2E_REUSE_SERVER`/hardcoded e2e ports collide across parallel agent
+  sessions.** `playwright.config.ts`'s `webServer` and `scripts/e2e-dev.ts`
+  default to fixed ports (CMS :3002, Vite :5174) — a parallel session already
+  had :3002 bound. All three of `E2E_CMS_PORT`/`E2E_VITE_PORT`/
+  `E2E_ADMIN_BASE_URL`/`E2E_PUBLIC_BASE_URL` must be overridden together
+  (they cross-reference each other), AND `PUBLIC_ORIGIN` must ALSO be set to
+  match the overridden Vite origin or every request 403s with "Forbidden:
+  invalid origin" during setup — same class of gotcha as the tunnel note in
+  memory, just for a same-machine port collision instead of a tunnel.
+- **`scrollHeight` of the properties-panel scroll surface is NOT perfectly
+  viewport-independent** — raising the e2e test's own viewport from 1700 to
+  2100 moved the measured total from ~1582 to ~1826, a bigger jump than the
+  spacing changes alone explain. Confirmed nothing this pass touched is
+  percentage/`vh`-based (the frozen-token gate explicitly bans that). Real,
+  reproduced twice, **not fixed here** — a separate, pre-existing coupling
+  somewhere in the panel shell, worth its own investigation, out of scope for
+  a spacing-hierarchy pass.
+- **`sectionStyles.sectionBody` (`Section.module.css`) is used in two
+  different ancestry shapes** — inside a real `<Section>` (where
+  `.sectionContent` already supplies the horizontal inset, so `sectionBody`
+  correctly carries none of its own) AND, in exactly one place
+  (`StyleSurface.tsx`'s hand-rolled Module section), with NO `<Section>`
+  ancestor at all. Don't assume `sectionBody`'s callers are interchangeable
+  when auditing insets — check what actually wraps it.
+- **`GeneratedUtilityLockedState`'s card** (`StyleSurface.module.css`
+  `.generatedUtilityState`) kept its own uniform `--inspector-space-l`
+  padding (internal card chrome, correct) but its MARGIN (which positions the
+  card relative to the panel edge, since it has no ancestor `<Section>`
+  either) needed the pad-x fix — same "margin vs. padding, which one is the
+  content inset" distinction as `ParamRow`'s card above; worth re-deriving
+  per file, not assuming one direction always wins.
+- **`ParamPromotableRow`/`renderModuleTabContent`'s VC-mode rows and
+  `LoopPropertiesView`** were checked for double-padding risk before adding
+  `.moduleBody`'s new pad-x (Part 1, item 3) — neither applies its own
+  horizontal padding, so the new ancestor inset lands clean. Re-check this
+  if either file grows a self-padded wrapper later.
+
+#### Human action needed
+Dogfood in the browser, three selection states:
+1. **Select a `studio.instance` (design-system Button) node.** Confirm the
+   Component section's `cardArt`/`label`/`size`/`variant`/… prop labels now
+   sit at the SAME horizontal inset as the "Component" header/name row above
+   them (screenshot 1's exact bug).
+2. **Select a flex/grid CHILD node** (a node that is itself a flex item, not
+   the flex container) so the Measures section shows its "Flex element" face.
+   Confirm the `Relative | Absolute | static` segmented control, chevron, and
+   trailing settings gear now have real breathing room instead of reading
+   cramped (screenshot 2's exact bug).
+3. **Select any plain node** (text or a rectangle) and scroll the whole
+   panel top to bottom. Confirm section boundaries are now visually
+   unmistakable (a clear gap before each new section title, tighter grouping
+   within e.g. Layout's padding/margin/flex clusters and Measures' W/H vs.
+   position vs. rotation), and that a Fill/Stroke/Shadow/Blur/Export list row
+   (once something is set) now aligns its text with the section header
+   instead of sitting visibly further right.
+
+---
+
 ### panel-27 — P6: delete and gate (work order)
 - **Agent:** studio-architect (design, original entry below) → test-engineer (implementation, see "Implementation" at the bottom).
 - **Stage:** done — PR [#117](https://github.com/maherfayad-stack/Figma-Killer-2/pull/117) open (draft) against `feat/alm-figma-killer-studio-shell`. **Track P (P0–P6) is now fully shipped.**

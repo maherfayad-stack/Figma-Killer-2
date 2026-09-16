@@ -244,15 +244,37 @@
     --inspector-space-l: 10px;
     --inspector-space-xl: 12px;
 
-    /* P3 (`STATE.md` `panel-25`) additive rhythm — Penpot's real two-value
-       row rhythm, measured in `docs/audits/penpot-inspector-baseline/`:
-       `4px` within a tightly-paired row, `16px` between row groups. The
-       9-step `--inspector-space-*` scale above stays untouched (46 files
-       still reference it) until the last old, not-yet-migrated section is
-       deleted — every NEW Penpot section built from here on uses ONLY
-       these two, never the old scale. */
-    --inspector-gap-tight: 4px;
-    --inspector-gap-group: 16px;
+    /* Panel spacing HIERARCHY (fix/inspector-spacing-audit) — three of the
+       nine steps above, each given one meaning, used consistently across
+       every section so proximity (not colour, not a new divider) is what
+       lets the eye chunk the panel into scannable groups:
+
+         - `--inspector-space-2xs` (4px) — WITHIN a group: rows/fields that
+           are facets of one concept (a W/H pair, the four padding sides, a
+           prop row's own advanced disclosure).
+         - `--inspector-space-m` (8px) — BETWEEN groups inside one section
+           (Layout's mode vs. padding vs. flex settings vs. margin; Measures'
+           size vs. position vs. rotation; one declared prop row vs. the
+           next). Already `Section.module.css`'s `.sectionBody` gap and
+           `PropertyList`'s row height rhythm — this pass just applies it
+           deliberately elsewhere instead of a smaller, arbitrary step.
+         - `--inspector-space-xl` (12px) — BETWEEN sections. Lives in
+           `StyleSurface.module.css`'s `.surfaceContent` gap (the single
+           shared ancestor of every section, headered or headerless), not in
+           `Section.module.css` itself (`Section` is also used by GitPanel/
+           FrameworkScalePanel, outside the Properties panel's rhythm). A
+           section's own `.sectionContent` already has zero top padding, so
+           this single shared gap is ALSO what gives a header more space
+           above it than below — the header belongs to its own content, not
+           to the section before it.
+
+       This replaces `--inspector-gap-tight`/`--inspector-gap-group`, the P3
+       pair this comment used to describe: `-gap-group` (16px) was defined
+       but never once applied in real CSS (confirmed by grep before this
+       pass), and `-gap-tight` (4px) is the exact value `--inspector-space-
+       2xs` already carries — two names for the same fact is exactly the
+       "parallel scale" the panel's own conventions warn against. Retired
+       rather than left dead. */
 
     /* `--inspector-pad-x`/`--inspector-row-h`/`--inspector-field-radius`
        corrected to Penpot's measured values (`04-token-gaps.md`) — pure

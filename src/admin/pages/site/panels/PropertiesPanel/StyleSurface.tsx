@@ -44,6 +44,7 @@ import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule } from '@core/page-tree'
 import { canWriteInlineStyleForModule, isGeneratedClassLocked, styleRuleDisplayName } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
+import { cn } from '@ui/cn'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
 import { WriteTargetRow, type WriteTargetChipInfo } from '@site/inspector/WriteTargetRow'
@@ -149,7 +150,7 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
               {ModuleIcon && <ModuleIcon size={14} aria-hidden="true" />}
               <span className={styles.moduleTitle}>{definition!.name}</span>
             </div>
-            <div key={nodeId} className={sectionStyles.sectionBody}>
+            <div key={nodeId} className={cn(styles.moduleBody, sectionStyles.sectionBody)}>
               {moduleContent}
             </div>
           </div>
