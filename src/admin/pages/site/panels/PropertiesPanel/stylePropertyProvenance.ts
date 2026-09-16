@@ -122,7 +122,13 @@ export function buildClassChain(
 // resolvePropertyProvenance
 // ---------------------------------------------------------------------------
 
-function normalizeForComparison(value: string | number | undefined): string {
+/**
+ * Lowercase/trim/collapse-whitespace normalizer for comparing two CSS values
+ * textually. Exported so `cssInitialValues.ts` reuses this exact normalizer
+ * for non-color property comparisons instead of duplicating a second one —
+ * see that module's doc.
+ */
+export function normalizeForComparison(value: string | number | undefined): string {
   if (value === undefined || value === null) return ''
   return String(value).trim().toLowerCase().replace(/\s+/g, ' ')
 }

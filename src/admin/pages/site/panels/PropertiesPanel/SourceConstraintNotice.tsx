@@ -38,6 +38,20 @@
  * stays hand-written rather than switching to `ConstraintNotice`'s generic
  * wrapper: it carries a nuance (structurally locked but "its own values are
  * editable") that `EditConstraint.explanation` alone doesn't.
+ *
+ * ## `writeTargetReason` — a THIRD, independent fact (`STATE.md` panel-30)
+ *
+ * `resolveWriteTarget`'s `{ kind: 'none', reason }` is a genuinely different
+ * claim from `lockReason`: it says nothing about the NODE's structure (the
+ * node itself is ordinarily movable, deletable, whatever) — it says one
+ * PROPERTY, right now, has no honest place for a NEW declaration to land (no
+ * writable class, inline locked). Reusing the structural prose's hardcoded
+ * "can't be moved or deleted" sentence for this fact would be actively
+ * wrong, so it gets its own short paragraph instead — same visual treatment
+ * (the warning-tone `.notice`, `LockSolidIcon`, "say so, don't hide it"),
+ * different words. Mutually exclusive with `lockReason`/`textOrigin` in
+ * practice (a Fill popover's muted row either has a write-target refusal or
+ * it doesn't), so no case renders more than one of the three at once.
  */
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
@@ -77,6 +91,13 @@ interface SourceConstraintNoticeProps {
   constraint?: EditConstraint | null
   /** The locked node's id — `detach`/`extract` act on this one call site. */
   nodeId?: string
+  /**
+   * `resolveWriteTarget`'s `{ kind: 'none' }.reason` — a single PROPERTY has
+   * no honest target for a new declaration. See this file's own doc comment
+   * for why this is independent of `lockReason` and gets its own prose
+   * rather than reusing the structural sentence.
+   */
+  writeTargetReason?: string
 }
 
 export function SourceConstraintNotice({
@@ -86,23 +107,34 @@ export function SourceConstraintNotice({
   hasWritableLocation,
   constraint,
   nodeId,
+  writeTargetReason,
 }: SourceConstraintNoticeProps) {
   const structural = lockReason !== undefined
+  const writeRefused = !structural && textOrigin === undefined && writeTargetReason !== undefined
 
-  // Neither fact applies — say nothing. `CodeValueControl` (per prop) and
-  // `InlineStyleComposer` (per style property, once F1's provenance wiring
-  // lands — see `editConstraint.ts`'s `explainStyleConstraint` doc) carry
-  // every other fact this component used to repeat.
-  if (!structural && textOrigin === undefined) return null
+  // None of the three facts applies — say nothing. `CodeValueControl` (per
+  // prop) and `InlineStyleComposer` (per style property, once F1's
+  // provenance wiring lands — see `editConstraint.ts`'s
+  // `explainStyleConstraint` doc) carry every other fact this component used
+  // to repeat.
+  if (!structural && textOrigin === undefined && writeTargetReason === undefined) return null
 
   return (
     <div
-      className={cn(styles.notice, structural ? undefined : styles.noticeInfo)}
+      className={cn(styles.notice, !structural && !writeRefused ? styles.noticeInfo : undefined)}
       role="note"
       data-testid="source-constraint-notice"
-      data-variant={structural ? (hasWritableLocation ? 'structure-locked' : 'list-row') : 'text-origin-only'}
+      data-variant={
+        structural
+          ? hasWritableLocation
+            ? 'structure-locked'
+            : 'list-row'
+          : writeRefused
+            ? 'write-target-refused'
+            : 'text-origin-only'
+      }
     >
-      {structural ? (
+      {structural || writeRefused ? (
         <LockSolidIcon size={14} className={styles.icon} />
       ) : (
         <CodeIcon size={14} className={styles.icon} />
@@ -125,6 +157,7 @@ export function SourceConstraintNotice({
               )}
             </>
           ) : null}
+          {writeRefused ? writeTargetReason : null}
           {textOrigin ? (
             <>
               {' '}Its text comes from{' '}

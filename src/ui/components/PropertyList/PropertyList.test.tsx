@@ -150,6 +150,32 @@ describe('PropertyList', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add fill' }))
   })
 
+  // ── muted / removable (`STATE.md` panel-30) ────────────────────────────────
+
+  it('renders a muted row with no remove button, and an un-muted row is unaffected', () => {
+    const entries: PropertyListEntry<Fixture>[] = [
+      makeEntry('fill-1', 'Fill 1', '#FFFFFF'),
+      { ...makeEntry('fill-2', 'Fill 2', '#000000'), muted: true, removable: false },
+    ]
+    render(<PropertyList listLabel="Fill" entries={entries} onRemove={() => {}} />)
+
+    const rows = screen.getAllByRole('listitem')
+    expect(rows[0]!.dataset.muted).toBeUndefined()
+    expect(screen.getByRole('button', { name: 'Remove Fill 1' })).toBeTruthy()
+
+    expect(rows[1]!.dataset.muted).toBe('true')
+    expect(screen.queryByRole('button', { name: 'Remove Fill 2' })).toBeNull()
+  })
+
+  it('an entry with no muted/removable fields renders byte-identical to today (both default off/on)', () => {
+    const entries = [makeEntry('fill-1', 'Fill 1', '#FFFFFF')]
+    render(<PropertyList listLabel="Fill" entries={entries} onRemove={() => {}} />)
+
+    const row = screen.getByRole('listitem')
+    expect(row.dataset.muted).toBeUndefined()
+    expect(screen.getByRole('button', { name: 'Remove Fill 1' })).toBeTruthy()
+  })
+
   // ── Keyboard reorder ───────────────────────────────────────────────────────
 
   function ReorderHarness({ onReorderSpy }: { onReorderSpy: (from: number, to: number) => void }) {

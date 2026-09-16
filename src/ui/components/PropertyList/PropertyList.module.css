@@ -50,6 +50,16 @@
     box-shadow: var(--focus-ring);
 }
 
+/* "Rendered, not stored" (`STATE.md` panel-30): the row's value came from
+   the frame's real computed style, not from anything the active target
+   declares. `.summary`/`.value` inherit `color` from this rule (neither sets
+   its own), the same "one tone down, never a placeholder" language
+   `ScrubInput.module.css`'s own `.input.inherited` already uses for the
+   identical fact on a scalar field. */
+.row.rowMuted {
+    color: var(--text-muted);
+}
+
 .leading {
     display: inline-flex;
     align-items: center;
@@ -71,4 +81,10 @@
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-variant-numeric: tabular-nums;
+}
+
+/* `.value` sets its own `color` above, so a muted row's inherited `color`
+   (from `.row.rowMuted`) needs restating here to actually reach it. */
+.row.rowMuted .value {
+    color: var(--text-muted);
 }
