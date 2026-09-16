@@ -18,11 +18,15 @@
  * computes `inlineWritable`/`classChain`/`computedValues`/
  * `provenanceByProperty`/`classLockInfo`/`writableClasses`/`writeTargetChips`
  * itself — it reads `useSelectionModel()` once for those facts and renders
- * `INSPECTOR_SECTIONS.filter((s) => s.appliesTo(model))` sections, each a
- * bare, prop-less `<Component />` that reads the same model/commit hooks
- * itself. This is the mount mechanism P3 (the section-by-section re-skin)
- * consumes — growing `INSPECTOR_SECTIONS` never needs to touch this file
- * again.
+ * `INSPECTOR_SECTIONS.filter((s) => (s.tab ?? 'design') === 'design' &&
+ * s.appliesTo(model))` sections, each a bare, prop-less `<Component />` that
+ * reads the same model/commit hooks itself. This is the mount mechanism P3
+ * (the section-by-section re-skin) consumes — growing `INSPECTOR_SECTIONS`
+ * never needs to touch this file again. The `tab` filter is additive
+ * (direct user feedback moved Transform/Animations/Interaction to the
+ * Prototype tab — see `inspector/sections/index.ts`'s own "tab" doc and
+ * `panels/PrototypePanel/PrototypePanel.tsx`, which mounts the rest of the
+ * same manifest array).
  *
  * ## What this file still owns
  *
@@ -173,7 +177,9 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
                 <GeneratedUtilityLockedState cls={soleGeneratedUtility} />
               </div>
             )}
-            {INSPECTOR_SECTIONS.filter((section) => section.appliesTo(model))
+            {INSPECTOR_SECTIONS.filter(
+              (section) => (section.tab ?? 'design') === 'design' && section.appliesTo(model),
+            )
               .sort((a, b) => a.order - b.order)
               .map((section) => (
                 // `data-section-id` is additive/queryable-only — no visual or

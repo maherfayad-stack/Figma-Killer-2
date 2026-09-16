@@ -20,10 +20,15 @@
  * dispatch reusable across surfaces.
  *
  * The Styles/Attributes node-view switch this file used to own was deleted
- * in P3 item 11 (`STATE.md` `panel-25`, Studio extras) — Attributes is now
- * its own `INSPECTOR_SECTIONS` manifest entry (`AttributesSection.tsx`),
- * rendered inline in the same scroll as every other section instead of
- * behind a tab.
+ * in P3 item 11 (`STATE.md` `panel-25`, Studio extras) — Attributes briefly
+ * became its own `INSPECTOR_SECTIONS` manifest entry (`AttributesSection.
+ * tsx`), rendered inline in the same scroll as every other section instead
+ * of behind a tab. Direct user feedback while dogfooding ("remove
+ * attributes") retired that manifest entry outright — `AttributesSection.
+ * tsx` and `htmlAttributesModel.ts` are kept in place, unmounted, since
+ * `htmlAttributes` is a real prop other consumers (publisher, `htmlImport`,
+ * every base module's renderer) still read — see `inspector/sections/
+ * index.ts`'s own doc for the full reasoning.
  */
 import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'

@@ -24,6 +24,17 @@
     border-top: 1px solid var(--border-subtle);
 }
 
+/* Transform/Animations/Interaction (`INSPECTOR_SECTIONS`, `tab: 'prototype'`)
+   render through the shared inspector `Section` primitive, which insets
+   itself horizontally by `--inspector-pad-x` on its own — see
+   `PrototypePanel.tsx`'s own doc on `PrototypeManifestSections` for why this
+   negative margin exists: it cancels that self-inset so `.panel`'s own
+   padding stays the ONLY horizontal inset, matching every other section in
+   this tab instead of doubling it. */
+.manifestSections {
+    margin-inline: calc(-1 * var(--inspector-pad-x));
+}
+
 .sectionTitle {
     margin: 0;
     color: var(--text-subtle);

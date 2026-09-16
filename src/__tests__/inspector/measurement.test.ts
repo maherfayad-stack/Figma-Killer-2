@@ -44,7 +44,22 @@
  * category now renders through its own `INSPECTOR_SECTIONS` manifest entry
  * with its own geometry, not a shared registry that budget could describe in
  * one place. What replaces it, below, is a per-SECTION computed rest-height
- * table built the same way, off the current 16-entry manifest.
+ * table built the same way, off the current 15-entry manifest.
+ *
+ * ── `panel-29` note (direct user feedback while dogfooding) ──────────────
+ * Two changes to the manifest itself, not just its consumers:
+ *   - `attributes` is REMOVED outright (not relocated) — "remove
+ *     attributes". `AttributesSection.tsx`/`htmlAttributesModel.ts` are kept
+ *     in place, unmounted, since `htmlAttributes` is a real prop other
+ *     consumers still read (see `inspector/sections/index.ts`'s own doc).
+ *   - `transform`/`animations`/`interaction` are tagged `tab: 'prototype'`
+ *     and move to `InspectorShell`'s Prototype tab — "put transform,
+ *     animations, and interaction in prototype". They still exist in this
+ *     SAME array (so they still count toward the 15 below and still carry
+ *     real `order` values), they just no longer mount in the Design tab
+ *     `StyleSurface.tsx` renders — the manifest shape this file pins is
+ *     tab-agnostic on purpose, since `tab` is an additive field or every
+ *     other entry's default.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -75,25 +90,41 @@ const EXPECTED_SECTION_IDS = [
   'text',
   'export',
   'component',
-  'attributes',
   'transform',
   'animations',
   'interaction',
   'customProperties',
 ] as const
 
+/** The 3 entries `panel-29` moved out of the Design tab — see this file's
+ *  own `panel-29` note above. */
+const PROTOTYPE_TAB_SECTION_IDS = ['transform', 'animations', 'interaction'] as const
+
 describe('INSPECTOR_SECTIONS manifest shape', () => {
-  it('has exactly 16 entries', () => {
-    expect(INSPECTOR_SECTIONS.length).toBe(16)
+  it('has exactly 15 entries', () => {
+    expect(INSPECTOR_SECTIONS.length).toBe(15)
   })
 
   it('lists ids in the exact order sections/index.ts itself documents', () => {
     expect(INSPECTOR_SECTIONS.map((s) => s.id)).toEqual([...EXPECTED_SECTION_IDS])
   })
 
-  it('has order fields 0-15 with no gaps or dupes', () => {
+  it('has order fields 0-14 with no gaps or dupes', () => {
     const orders = INSPECTOR_SECTIONS.map((s) => s.order).sort((a, b) => a - b)
-    expect(orders).toEqual(Array.from({ length: 16 }, (_, i) => i))
+    expect(orders).toEqual(Array.from({ length: 15 }, (_, i) => i))
+  })
+
+  it('tags exactly the 3 relocated sections tab: prototype; every other entry defaults to design', () => {
+    for (const section of INSPECTOR_SECTIONS) {
+      const expectedTab = (PROTOTYPE_TAB_SECTION_IDS as readonly string[]).includes(section.id)
+        ? 'prototype'
+        : undefined
+      expect(section.tab).toBe(expectedTab)
+    }
+  })
+
+  it('removed attributes outright — no manifest entry left for it', () => {
+    expect(INSPECTOR_SECTIONS.some((s) => s.id === 'attributes')).toBe(false)
   })
 })
 
@@ -267,10 +298,6 @@ describe('primitives carry the inspector skin', () => {
 //     manifest completeness, not exercised by the e2e spec): 1 row (the
 //     header/name row) for a component with zero declared props — a real
 //     floor, not its typical size (each declared prop adds one more row).
-//   - attributes (headered "Attributes", always resident): 1 row — the
-//     "Add" button row shown when `htmlAttributes` is empty (its own
-//     `EmptyState` message is a variable-height block, not a fixed 32px row,
-//     and is deliberately excluded from this literal-px budget).
 //   - customProperties (headered "Custom properties", always resident, per
 //     its own doc: "still render the section so the 'Add property'
 //     affordance is discoverable; just no rows"): 1 row — the "Add property"
@@ -300,7 +327,6 @@ const SECTION_MINIMAL_STATE: Record<(typeof EXPECTED_SECTION_IDS)[number], { has
   text: { hasHeader: true, rowCount: 4 },
   export: { hasHeader: true, rowCount: 0 },
   component: { hasHeader: true, rowCount: 1 },
-  attributes: { hasHeader: true, rowCount: 1 },
   transform: { hasHeader: true, rowCount: 0 },
   animations: { hasHeader: true, rowCount: 0 },
   interaction: { hasHeader: true, rowCount: 0 },
@@ -319,7 +345,6 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
   text: 172, // 32 + 4*32 + 3*4
   export: 32,
   component: 64, // 32 + 1*32 + 0*4
-  attributes: 64,
   transform: 32,
   animations: 32,
   interaction: 32,

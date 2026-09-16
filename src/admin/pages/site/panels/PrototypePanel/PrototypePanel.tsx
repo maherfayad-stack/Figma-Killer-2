@@ -46,6 +46,23 @@
  * would add a state ("edited but not saved") that has no meaning here and one
  * more way to lose work by clicking away. Same posture `commentActions` takes:
  * write through immediately, adopt the server's merged file.
+ *
+ * MANIFEST-DRIVEN SECTIONS BELOW THE LINK CONTENT (`panel-29` — direct user
+ * feedback while dogfooding, "put transform, animations, and interaction in
+ * prototype")
+ * ─────────────────────────────────────────────────────────────────────────
+ * Transform/Animations/Interaction (`../../inspector/sections/index.ts`,
+ * tagged `tab: 'prototype'`) mount here too, via the same `INSPECTOR_SECTIONS`
+ * array `StyleSurface.tsx` reads for the Design tab — `PrototypeManifestSections`
+ * below filters+sorts the `'prototype'`-tagged subset instead of importing
+ * each component by name (avoids a real naming collision: this file already
+ * has its own unrelated local `InteractionSection` — the link "On click"
+ * editor below — so importing the CSS `InteractionSection` by name would
+ * shadow it). They mount unconditionally at the end of `.panel`, after
+ * whichever of the three link-content branches above is showing — each of
+ * the three already renders `null` on no selection (their own file docs),
+ * so this is a no-op append when nothing is selected, exactly like every
+ * Design-tab section already behaves.
  */
 import { useEditorStore, selectActivePage } from '@site/store/store'
 import {
@@ -63,7 +80,14 @@ import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { deleteLink, saveLink, updateLink } from '@site/studio/prototypeActions'
+import { INSPECTOR_SECTIONS } from '@site/inspector/sections'
 import styles from './PrototypePanel.module.css'
+
+/** The `tab: 'prototype'` subset of the same manifest `StyleSurface.tsx`
+ *  reads for the Design tab — see this file's own doc above. */
+const PROTOTYPE_MANIFEST_SECTIONS = INSPECTOR_SECTIONS.filter((s) => s.tab === 'prototype').sort(
+  (a, b) => a.order - b.order,
+)
 
 const ACTION_OPTIONS: ReadonlyArray<{ value: PrototypeAction; label: string }> = [
   { value: 'navigate', label: 'Navigate to' },
@@ -129,7 +153,35 @@ export function PrototypePanel() {
       ) : (
         <EmptyState title="No page open" description="Open a page to work on its flows." />
       )}
+      <PrototypeManifestSections />
     </section>
+  )
+}
+
+/**
+ * The `tab: 'prototype'` manifest sections (Transform/Animations/
+ * Interaction), appended below this panel's own link-authoring content —
+ * see this file's own top-of-file doc. Wrapped in `.manifestSections`: the
+ * shared `Section` primitive these components render through already insets
+ * itself horizontally by `--inspector-pad-x` (same as the Design tab's
+ * `StyleSurface`, whose own content column has ZERO side padding for exactly
+ * this reason); `.panel` here ALSO insets by `--space-s`, so stacking both
+ * would double this tab's gutter for these three sections only. The wrapper
+ * cancels exactly `Section`'s own inset with a matching negative margin, so
+ * the total inset ends up identical to every other section in this panel —
+ * without touching `.panel`/`.section`'s existing padding, which several
+ * OTHER branches above (the bare top-level `EmptyState`s) still rely on.
+ */
+function PrototypeManifestSections() {
+  if (PROTOTYPE_MANIFEST_SECTIONS.length === 0) return null
+  return (
+    <div className={styles.manifestSections}>
+      {PROTOTYPE_MANIFEST_SECTIONS.map((section) => (
+        <div data-section-id={section.id} key={section.id}>
+          <section.Component />
+        </div>
+      ))}
+    </div>
   )
 }
 

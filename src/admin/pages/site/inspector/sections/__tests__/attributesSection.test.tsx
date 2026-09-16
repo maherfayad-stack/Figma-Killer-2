@@ -7,6 +7,13 @@
  * the store, same pattern every migrated section's own test suite already
  * established.
  *
+ * `inspector/sections/index.ts` no longer mounts this section in the panel
+ * (direct user feedback, "remove attributes") — the component and its
+ * `htmlAttributesModel.ts` are kept in place, unmounted but intact, since
+ * `htmlAttributes` is a real prop other consumers still read (see that
+ * file's own doc). This suite still exercises the component directly so it
+ * stays honest and working while unmounted, not silently bit-rotting.
+ *
  * Covers:
  *   1. Existing attributes render as name/value rows.
  *   2. Editing a value commits through `commitProp('htmlAttributes', …)`.
