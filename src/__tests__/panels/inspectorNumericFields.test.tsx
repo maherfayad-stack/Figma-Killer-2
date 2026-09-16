@@ -12,19 +12,39 @@
  * The gesture itself is covered by `scrubTokenField.test.tsx` (token-aware
  * half) and `ScrubInput/__tests__/scrubInput.test.tsx` (plain half); both
  * exercise the same `useScrubDrag` engine these fields now share.
+ *
+ * P3 (`STATE.md` `panel-25`) retired `AppearanceSection`/`PositionSection`/
+ * the old `LayoutSection/GapInput` (Track P). The `ClassPropertyRow`-only
+ * describes below (opacity/zIndex/lineHeight/letterSpacing/fontSize) are
+ * untouched by that migration — `ClassPropertyRow` itself did not move or
+ * change. "corner radius" and "position insets" are ported onto the sections
+ * that now own that geometry (`RadiusCluster`/`MeasuresSection`, P3 item 3 —
+ * see each file's own doc for "formerly AppearanceSection.tsx"/"ported
+ * verbatim from the retired PositionSection.tsx"). The old "gap" describe is
+ * deleted outright: the single `gap`-shorthand `GapInput` it drove no longer
+ * exists — `GapRow.tsx` (P3 item 4) replaced it with a `rowGap`/`columnGap`
+ * split, and the scrub-drag/clamp-at-zero gesture it exercised is the exact
+ * same `ScrubTokenField` engine `scrubTokenField.test.tsx` already covers
+ * generically (GapRow's fields are `ScrubTokenField`s with `min={0}`); the
+ * row/column write path itself is covered by
+ * `inspector/sections/__tests__/layoutSection.test.tsx`'s own "Row gap /
+ * Column gap" describe block.
  */
-import { describe, it, expect, mock, afterEach } from 'bun:test'
+import { afterEach, beforeEach, describe, it, expect, mock } from 'bun:test'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { ClassPropertyRow } from '@site/panels/PropertiesPanel/ClassPropertyRow'
-import { AppearanceSection } from '@site/panels/PropertiesPanel/AppearanceSection'
-import { GapInput } from '@site/panels/PropertiesPanel/LayoutSection/GapInput'
-import { PositionSection } from '@site/panels/PropertiesPanel/PositionSection'
-import {
-  isNudgeableProp,
-  isUnitlessNumberProp,
-} from '@site/panels/PropertiesPanel/cssControlTypes'
+import { RadiusCluster } from '@site/inspector/sections/RadiusCluster'
+import { MeasuresSection } from '@site/inspector/sections/MeasuresSection'
+import { isNudgeableProp, isUnitlessNumberProp } from '@site/panels/PropertiesPanel/cssControlTypes'
 import { getPropertyFieldGlyph } from '@site/panels/PropertiesPanel/cssPropertyIcons'
+import { useEditorStore } from '@site/store/store'
+import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import { makeSite, makePage, makeNode } from '../fixtures'
+import '@modules/base/index'
+
+const NODE_ID = 'node-1'
+const ROOT_ID = 'root'
 
 afterEach(cleanup)
 
@@ -199,28 +219,23 @@ describe('fontSize', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Corner radius — five bare Inputs before this change
+// Corner radius — ported onto `RadiusCluster` (P3 item 3, formerly
+// `AppearanceSection`'s radius-only remainder — see that file's own doc).
+// Props are unchanged except `activeTab` is gone (the section reads the
+// active breakpoint through `useSelectionModel()` itself, not a prop).
 // ---------------------------------------------------------------------------
 
 describe('corner radius', () => {
-  function renderAppearance(
+  function renderRadius(
     onChange: (p: keyof CSSPropertyBag, v: string | number | undefined) => void,
     stored: Record<string, unknown> = {},
   ) {
-    return render(
-      <AppearanceSection
-        storedStyles={stored}
-        currentStyles={{}}
-        activeTab="base"
-        onChange={onChange}
-        onRemove={noop}
-      />,
-    )
+    return render(<RadiusCluster storedStyles={stored} currentStyles={{}} onChange={onChange} />)
   }
 
   it('the linked field writes all four corners with a coerced value', () => {
     const onChange = mock((_p: keyof CSSPropertyBag, _v: string | number | undefined) => {})
-    renderAppearance(onChange)
+    renderRadius(onChange)
 
     typeAndBlur(screen.getByLabelText('Corner radius, all corners'), '12')
 
@@ -234,14 +249,14 @@ describe('corner radius', () => {
 
   it('the linked field scrubs, clamped at zero', () => {
     const onChange = mock((_p: keyof CSSPropertyBag, _v: string | number | undefined) => {})
-    renderAppearance(onChange, {
+    renderRadius(onChange, {
       borderTopLeftRadius: '4px',
       borderTopRightRadius: '4px',
       borderBottomRightRadius: '4px',
       borderBottomLeftRadius: '4px',
     })
 
-    pointerDrag(screen.getByTestId('appearance-radius-all-label'), 0, -40)
+    pointerDrag(screen.getByTestId('measures-radius-all-label'), 0, -40)
 
     expect(onChange).toHaveBeenLastCalledWith('borderBottomLeftRadius', '0px')
     expect(onChange.mock.calls.every(([, value]) => value === '0px')).toBe(true)
@@ -249,56 +264,68 @@ describe('corner radius', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Gap and the position insets
+// Position insets — ported onto `MeasuresSection` (P3 item 3), which mounts
+// `DirectionInput`/`PositionConstraints` "ported verbatim from the retired
+// `PositionSection.tsx`" (see `MeasuresSection.tsx`'s own doc). Unlike
+// `ClassPropertyRow`/`RadiusCluster`, `MeasuresSection` takes no props — it
+// reads/writes through `useSelectionModel()`/`useInspectorCommit()`, the
+// same store-backed pattern every migrated section's own test file
+// (`measuresSection.test.tsx`) already establishes. That file's own
+// "absolute-mode constraints" describe covers the side-picker/crosshair; it
+// does not exercise the scrub-drag gesture on either field, which is what
+// this describe adds.
 // ---------------------------------------------------------------------------
 
-describe('gap', () => {
-  it('scrubs from its in-field mark, clamped at zero', () => {
-    const onChange = mock((_v: string | undefined) => {})
-    render(<GapInput value="8px" isSet onChange={onChange} />)
-
-    pointerDrag(screen.getByTestId('css-gap-input-handle'), 0, 4)
-    expect(onChange).toHaveBeenLastCalledWith('12px')
-
-    pointerDrag(screen.getByTestId('css-gap-input-handle'), 0, -40)
-    expect(onChange).toHaveBeenLastCalledWith('0px')
-  })
-})
-
 describe('position insets', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setStudioStyleRuleSources({}, {})
+    useEditorStore.setState({
+      site: null,
+      activePageId: null,
+      selectedNodeId: null,
+      selectedNodeIds: [],
+      activeBreakpointId: 'desktop',
+      activeConditionId: null,
+      activeDocument: null,
+    } as Parameters<typeof useEditorStore.setState>[0])
+  })
+
+  function selectNode(overrides: Parameters<typeof makeNode>[0] = {}) {
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: ROOT_ID,
+      nodes: {
+        [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.body', children: [NODE_ID] }),
+        [NODE_ID]: makeNode({ id: NODE_ID, moduleId: 'base.div', ...overrides }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page] }),
+      activePageId: 'page-1',
+      selectedNodeId: NODE_ID,
+    } as Parameters<typeof useEditorStore.setState>[0])
+  }
+
+  function currentNode() {
+    return useEditorStore.getState().site?.pages[0]?.nodes[NODE_ID]
+  }
+
   it('each TRBL field scrubs from its direction arrow', () => {
-    const onChange = mock((_p: keyof CSSPropertyBag, _v: string | number | undefined) => {})
-    render(
-      <PositionSection
-        currentStyles={{ position: 'relative' }}
-        storedStyles={{ position: 'relative', top: '10px' }}
-        activeTab="base"
-        onChange={onChange}
-        onRemove={noop}
-        onClearProperty={noop}
-      />,
-    )
+    selectNode({ inlineStyles: { position: 'relative', top: '10px' } })
+    render(<MeasuresSection />)
 
     pointerDrag(screen.getByTestId('css-direction-top-handle'), 0, 6)
 
-    expect(onChange).toHaveBeenLastCalledWith('top', '16px')
+    expect(currentNode()?.inlineStyles?.top).toBe('16px')
   })
 
   it('the absolute-position constraint offset scrubs too', () => {
-    const onChange = mock((_p: keyof CSSPropertyBag, _v: string | number | undefined) => {})
-    render(
-      <PositionSection
-        currentStyles={{ position: 'absolute' }}
-        storedStyles={{ position: 'absolute', left: '20px' }}
-        activeTab="base"
-        onChange={onChange}
-        onRemove={noop}
-        onClearProperty={noop}
-      />,
-    )
+    selectNode({ inlineStyles: { position: 'absolute', left: '20px' } })
+    render(<MeasuresSection />)
 
     pointerDrag(screen.getByTestId('css-constraint-input-left-right-handle'), 0, 5)
 
-    expect(onChange).toHaveBeenLastCalledWith('left', '25px')
+    expect(currentNode()?.inlineStyles?.left).toBe('25px')
   })
 })

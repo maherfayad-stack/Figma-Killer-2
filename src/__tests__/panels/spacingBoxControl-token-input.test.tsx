@@ -13,13 +13,19 @@
  *      a preview when a token row is hovered.
  *   2. SpacingBoxControl's per-side field exhibits the SAME behaviour,
  *      proving it is genuinely backed by the shared component.
+ *
+ * `SpacingBoxControl` relocated from `panels/PropertiesPanel/
+ * SpacingBoxControl/` to `inspector/sections/LayoutSection/` in P3
+ * (`STATE.md` `panel-25`, item 4 — margin folded into Layout alongside
+ * padding) — the component itself and its props are unchanged, only the
+ * import path moved.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import type { Token } from '@site/property-controls/tokenUtils'
-import { SpacingBoxControl } from '@site/panels/PropertiesPanel/SpacingBoxControl/SpacingBoxControl'
+import { SpacingBoxControl } from '@site/inspector/sections/LayoutSection/SpacingBoxControl'
 import { useEditorStore } from '@site/store/store'
 import { makeSite } from '../fixtures'
 

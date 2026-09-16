@@ -1,13 +1,24 @@
+/**
+ * fontWeight select options reflect the installed variants for the active
+ * font token.
+ *
+ * Ported onto `TextSection` (P3, `STATE.md` `panel-25`, item 9) — the old
+ * `StyleSectionsEditor` this test drove is deleted; `fontWeightOptions.ts`
+ * itself is unchanged (panel-25's own mapping table: "kept, reused") and is
+ * still read by `ClassPropertyRow.tsx`, which `TextSection`'s `fontWeight`
+ * row renders through the same as every other migrated section's rows.
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { cleanup, render, screen } from '@testing-library/react'
 import type { FontEntry } from '@core/fonts'
-import { StyleSectionsEditor } from '@site/panels/PropertiesPanel/StyleSectionsEditor'
-import { setEditorPreference } from '@site/preferences/editorPreferences'
+import { TextSection } from '@site/inspector/sections/TextSection'
 import { useEditorStore } from '@site/store/store'
-import { makeSite } from '../fixtures'
+import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import { makeSite, makePage, makeNode } from '../fixtures'
+import '@modules/base/index'
 
-/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
-function noopMany() {}
+const NODE_ID = 'node-1'
+const ROOT_ID = 'root'
 
 const inter: FontEntry = {
   id: 'font-inter',
@@ -27,9 +38,33 @@ const inter: FontEntry = {
 }
 
 beforeEach(() => {
-  setEditorPreference('propertiesSectionsExpanded', true)
+  localStorage.clear()
+  setStudioStyleRuleSources({}, {})
+  useEditorStore.setState({
+    site: null,
+    activePageId: null,
+    selectedNodeId: null,
+    selectedNodeIds: [],
+    activeBreakpointId: 'desktop',
+    activeConditionId: null,
+    activeDocument: null,
+  } as Parameters<typeof useEditorStore.setState>[0])
+})
+
+afterEach(cleanup)
+
+function selectTextNode(inlineStyles: Record<string, unknown>) {
+  const page = makePage({
+    id: 'page-1',
+    rootNodeId: ROOT_ID,
+    nodes: {
+      [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.body', children: [NODE_ID] }),
+      [NODE_ID]: makeNode({ id: NODE_ID, moduleId: 'base.text', props: { tag: 'p' }, inlineStyles }),
+    },
+  })
   useEditorStore.setState({
     site: makeSite({
+      pages: [page],
       settings: {
         shortcuts: {},
         fonts: {
@@ -49,44 +84,9 @@ beforeEach(() => {
         },
       },
     }),
+    activePageId: 'page-1',
+    selectedNodeId: NODE_ID,
   } as Parameters<typeof useEditorStore.setState>[0])
-})
-
-afterEach(() => {
-  cleanup()
-  localStorage.clear()
-})
-
-describe('font weight style options', () => {
-  it('reflects the installed variants for the active font token', () => {
-    renderFontWeightRow({ fontFamily: 'var(--font-primary)' })
-
-    expect(fontWeightOptionValues()).toEqual(['', '300', '400', '700', '900'])
-  })
-
-  it('uses the default body font token when no explicit font family is set', () => {
-    renderFontWeightRow({})
-
-    expect(fontWeightOptionValues()).toEqual(['', '300', '400', '700', '900'])
-  })
-})
-
-function renderFontWeightRow(styles: Record<string, unknown>): void {
-  render(
-    <StyleSectionsEditor
-      storedStyles={styles}
-      currentStyles={styles}
-      sectionKey="base"
-      styleQuery="font weight"
-      onChange={() => {}}
-      onChangeMany={noopMany}
-      onRemove={() => {}}
-      onClearProperty={() => {}}
-      onClearProperties={() => {}}
-      onPreview={() => {}}
-      onClearPreview={() => {}}
-    />,
-  )
 }
 
 function fontWeightOptionValues(): string[] {
@@ -96,3 +96,19 @@ function fontWeightOptionValues(): string[] {
 
   return Array.from(select?.options ?? [], (option) => option.value)
 }
+
+describe('font weight style options', () => {
+  it('reflects the installed variants for the active font token', () => {
+    selectTextNode({ fontFamily: 'var(--font-primary)' })
+    render(<TextSection />)
+
+    expect(fontWeightOptionValues()).toEqual(['', '300', '400', '700', '900'])
+  })
+
+  it('uses the default body font token when no explicit font family is set', () => {
+    selectTextNode({})
+    render(<TextSection />)
+
+    expect(fontWeightOptionValues()).toEqual(['', '300', '400', '700', '900'])
+  })
+})
