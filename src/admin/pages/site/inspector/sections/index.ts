@@ -2,12 +2,12 @@
  * INSPECTOR_SECTIONS — the section manifest `STUDIO-LIVE-CANVAS-PLAN.md`
  * §P4 names (`STATE.md` `panel-23`, Phase B item 1).
  *
- * `StyleSurface.tsx` mounts every entry via
- * `INSPECTOR_SECTIONS.filter((s) => s.appliesTo(model)).sort((a, b) => a.order
- * - b.order).map((s) => <s.Component key={s.id} />)` — that MOUNT MECHANISM is
- * what this file owes P3 (the Penpot-ordered section-by-section re-skin), so
- * growing this array is P3's entire job, never touching the shell's mount
- * logic again.
+ * `StyleSurface.tsx` mounts every DESIGN-tab entry via
+ * `INSPECTOR_SECTIONS.filter((s) => (s.tab ?? 'design') === 'design' &&
+ * s.appliesTo(model)).sort((a, b) => a.order - b.order).map((s) =>
+ * <s.Component key={s.id} />)` — that MOUNT MECHANISM is what this file owes
+ * P3 (the Penpot-ordered section-by-section re-skin), so growing this array
+ * is P3's entire job, never touching the shell's mount logic again.
  *
  * P3 (`STATE.md` `panel-25`) is complete: `StyleSectionsEditor`'s 11 internal
  * CSS categories (Spacing/Layout/Position/Size/Typography/Appearance/Fill/
@@ -18,9 +18,41 @@
  * `layout` (item 4), `fill` (item 5), `stroke` (item 6), `shadow` (item 7),
  * `blur` (item 8), `text` (item 9), `export` (item 10), and the six Studio-
  * extras entries (item 11 — `component`/`attributes`/`transform`/
- * `animations`/`interaction`/`customProperties`) are ALL migrated. The old
+ * `animations`/`interaction`/`customProperties`) were ALL migrated. The old
  * `styles` catch-all entry (`StyleSectionsComposer.tsx`) is deleted — there
  * is nothing left in the legacy registry for it to render.
+ *
+ * ## `tab` — Design vs. Prototype residency (direct user feedback, dogfooding)
+ *
+ * Every entry declares which of `InspectorShell`'s tabs it belongs to via an
+ * additive `tab?: 'design' | 'prototype'` field, defaulting to `'design'` —
+ * so every entry EXCEPT the three below is untouched by this addition.
+ *
+ * `transform`/`animations`/`interaction` are tagged `tab: 'prototype'` and
+ * moved out of the Design tab into the Prototype tab
+ * (`panels/PrototypePanel/PrototypePanel.tsx`, which mounts the same
+ * `tab === 'prototype'` filtered-and-sorted subset below its own link-
+ * authoring content). They were parked in Design as "Studio extras" — no
+ * Penpot Design-tab equivalent — precisely because Penpot's own *Prototype*
+ * tab is where interaction/motion concerns belong; putting them in the tab
+ * actually named for that is the more coherent home, not a hack. Each
+ * section's own file doc (unchanged by this move) already documents that it
+ * takes no props and renders `null` on no selection — exactly the shape
+ * `InspectorShell`'s own doc requires for a tab that "renders regardless of
+ * whether a node is selected."
+ *
+ * `attributes` (`htmlAttributes`, the P3 item-11 "Attributes" section) is
+ * REMOVED from this manifest outright per the same feedback ("remove
+ * attributes") — it is the only entry retired rather than relocated.
+ * `AttributesSection.tsx`/`.module.css` and `htmlAttributesModel.ts` are kept
+ * in place, unmounted but intact and documented — see `AttributesSection.
+ * tsx`'s own doc header for why deleting them outright would strand real
+ * `htmlAttributes` data already written into users' `.tsx` source (the prop
+ * is read by the publisher, `htmlImport`, and every base module's own
+ * renderer — it is not this section's private concern to delete alongside
+ * its only editor UI).
+ *
+ * 15 entries now (was 16): 12 in the Design tab, 3 in the Prototype tab.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -36,7 +68,6 @@ import { BlurSection } from './BlurSection'
 import { TextSection } from './TextSection'
 import { ExportSection } from './ExportSection'
 import { ComponentSection } from './ComponentSection'
-import { AttributesSection } from './AttributesSection'
 import { TransformSection } from './TransformSection'
 import { AnimationsSection } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
@@ -45,6 +76,13 @@ import { CustomPropertiesSection } from './CustomPropertiesSection'
 export interface InspectorSectionDefinition {
   id: string
   order: number
+  /**
+   * Which `InspectorShell` tab this section mounts under. Defaults to
+   * `'design'` when omitted — every entry but `transform`/`animations`/
+   * `interaction` relies on that default. See this file's own "tab" doc
+   * above for why those three are `'prototype'`.
+   */
+  tab?: 'design' | 'prototype'
   appliesTo(selection: SelectionModel): boolean
   Component: ComponentType
 }
@@ -113,23 +151,26 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // branch, now its own manifest entry (`renderModuleTabContent.tsx`'s
   // `studio.instance` branch returns `null` instead).
   { id: 'component', order: 10, appliesTo: (m) => m.selectedNode?.moduleId === 'studio.instance', Component: ComponentSection },
-  // Attributes (P3 item 11) — the `htmlAttributes` prop. Used to live behind
-  // a separate Styles/Attributes tab switcher (`PropertiesPanelBody.tsx`,
-  // deleted); now inline in the same scroll as every other section.
-  { id: 'attributes', order: 11, appliesTo: (m) => m.selectedNode != null, Component: AttributesSection },
   // Transform (P3 item 11) — `transform`/`transformOrigin`. No Penpot section
   // to land in; parked in `classStyleSections.ts`'s now-empty registry until
-  // this pass claimed it for real (see that file's own doc).
-  { id: 'transform', order: 12, appliesTo: (m) => m.selectedNode != null, Component: TransformSection },
+  // P3 claimed it for real (see that file's own doc). Moved to the Prototype
+  // tab (direct user feedback, "put transform, animations, and interaction
+  // in prototype") — see this file's own "tab" doc above.
+  { id: 'transform', order: 11, tab: 'prototype', appliesTo: (m) => m.selectedNode != null, Component: TransformSection },
   // Animations (P3 item 11) — `animation*`/`transition`. Figma's own motion
-  // lives in prototyping, not the style panel — a Studio-only addition.
-  { id: 'animations', order: 13, appliesTo: (m) => m.selectedNode != null, Component: AnimationsSection },
+  // lives in prototyping, not the style panel — now literally in this
+  // panel's Prototype tab, not just a Studio-only style-panel addition.
+  { id: 'animations', order: 12, tab: 'prototype', appliesTo: (m) => m.selectedNode != null, Component: AnimationsSection },
   // Interaction (P3 item 11) — `cursor`/`pointerEvents`/`userSelect`/
-  // `scrollBehavior`. Figma has no CSS-cursor concept in its style panel.
-  { id: 'interaction', order: 14, appliesTo: (m) => m.selectedNode != null, Component: InteractionSection },
+  // `scrollBehavior`. Figma has no CSS-cursor concept in its style panel;
+  // moved to the Prototype tab alongside Transform/Animations.
+  { id: 'interaction', order: 13, tab: 'prototype', appliesTo: (m) => m.selectedNode != null, Component: InteractionSection },
   // Custom properties (P3 item 11) — every uncurated key
   // (`!isCuratedProperty`), the Webflow/Framer-style escape hatch. Stays
-  // LAST, exactly as it always has (`StyleSectionsEditor.tsx` always
-  // rendered it after every curated section).
-  { id: 'customProperties', order: 15, appliesTo: (m) => m.selectedNode != null, Component: CustomPropertiesSection },
+  // LAST within the Design tab, exactly as it always has (`StyleSectionsEditor
+  // .tsx` always rendered it after every curated section) — its `order`
+  // value only needs to be the highest AMONG DESIGN-tab entries, which 14
+  // is: the three Prototype-tab entries above it are filtered out of the
+  // Design tab's own sort entirely, so they never displace it there.
+  { id: 'customProperties', order: 14, appliesTo: (m) => m.selectedNode != null, Component: CustomPropertiesSection },
 ]

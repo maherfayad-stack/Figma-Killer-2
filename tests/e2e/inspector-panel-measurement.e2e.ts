@@ -298,15 +298,16 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
    * added SIX more always-mounted sections no text-node measurement ever
    * budgeted for: `component` (gated off for a non-instance node, so N/A
    * here), `attributes`, `transform`, `animations`, `interaction`,
-   * `customProperties`. Measured for real against this fixture's F2 text
-   * node: ~1400px total (`attributes`'s empty-state alone is ~245px — a
-   * `variant="centered"` `EmptyState`, not a compact row — see
-   * `AttributesSection.tsx`). That is not a bug this spec's own fixture
-   * introduced — every one of those 14 applicable sections legitimately
-   * mounts for ANY selected node by `StyleSurface.tsx`'s own by-design "all
-   * sections, one continuous scroll" model (P1's rewrite). Retrofitting
-   * "900px" is a real density-pass ticket (§6's own "capture… and record a
-   * baseline… before closing"), not P6's ("delete and gate") to invent.
+   * `customProperties`. Retrofitting "900px" is a real density-pass ticket
+   * (§6's own "capture… and record a baseline… before closing"), not P6's
+   * ("delete and gate") to invent.
+   *
+   * `panel-29` (direct user feedback while dogfooding) retired `attributes`
+   * outright and moved `transform`/`animations`/`interaction` out of the
+   * Design tab into the Prototype tab — this fixture's Design-tab panel now
+   * mounts 11 sections for the F2 text node (`component` was already N/A),
+   * not 14. See `inspector/sections/index.ts`'s own doc for the full
+   * reasoning.
    *
    * So this assertion keeps §6's real STRUCTURE (a text node's full panel
    * should render with no INTERNAL scrollbar in a realistic viewport) but
@@ -316,8 +317,8 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
    * past what it measures today. See `docs/features/inspector.md` §6 for the
    * same real number written down as the current baseline.
    *
-   * `fix/inspector-spacing-audit` re-measured this again at ~1826px (at
-   * this test's own 2100px-tall viewport — see the note below on why that
+   * `fix/inspector-spacing-audit` re-measured this at ~1826px (at this
+   * test's own 2100px-tall viewport — see the note below on why that
    * matters), up from ~1400px. That growth is the DELIBERATE cost of a real
    * spacing hierarchy (Gestalt proximity) the panel didn't have before: a
    * fixed `--inspector-space-xl` gap between every section instead of a 1px
@@ -335,8 +336,17 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
    * gated against exactly that), so the coupling lives somewhere else in
    * the panel shell — real, reproduced twice, but a separate, pre-existing
    * finding, not something to chase down inside a spacing-hierarchy pass.
-   * The number recorded below is the honest measurement AT this test's own
-   * viewport, not a viewport-independent constant.
+   * `panel-29` re-measured this AGAIN after dropping 4 sections from the
+   * Design tab and got the exact same ~1826px at this viewport (confirmed
+   * with the running dev server, not assumed) — consistent with, not a
+   * contradiction of, that same pre-existing coupling: `scrollHeight` here
+   * tracks something closer to available viewport space than to true
+   * content height, so a lighter Design tab did not shrink the number this
+   * test reads. The threshold below is left at its already-accurate,
+   * empirically re-confirmed value rather than tightened to a number this
+   * viewport-coupling quirk would immediately make stale again. The number
+   * recorded below is the honest measurement AT this test's own viewport,
+   * not a viewport-independent constant.
    */
   test('tall viewport: the F2 text node panel fits with no vertical scroll, at its real (not stale pre-P3) height', async ({
     page,

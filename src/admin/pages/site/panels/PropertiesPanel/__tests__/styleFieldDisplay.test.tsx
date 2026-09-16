@@ -10,7 +10,7 @@
 import { describe, it, expect, afterEach } from 'bun:test'
 import { render, screen, cleanup } from '@testing-library/react'
 import { MIXED } from '@ui/components/MixedValue'
-import { resolveStyleFieldDisplay } from '@site/panels/PropertiesPanel/styleFieldDisplay'
+import { resolveStyleFieldDisplay, roundDisplayNumber } from '@site/panels/PropertiesPanel/styleFieldDisplay'
 import { StackedPropertyGrid } from '@site/panels/PropertiesPanel/StackedPropertyGrid'
 import { SizeSection } from '@site/panels/PropertiesPanel/SizeSection'
 import type { SizingParentLayout } from '@site/panels/PropertiesPanel/elementSizing'
@@ -64,6 +64,33 @@ describe('resolveStyleFieldDisplay', () => {
       isSet: true,
       inherited: false,
     })
+  })
+
+  // The user's report: a W/H field reading `808.3556063558458` — a raw
+  // `getComputedStyle` float, not a clean measurement.
+  it('rounds a raw computed-style float to 2 decimals for display', () => {
+    expect(
+      resolveStyleFieldDisplay({ storedValue: undefined, currentValue: '808.3556063558458px' }).value,
+    ).toBe('808.36px')
+  })
+
+  it('trims trailing zeros instead of padding to 2 decimals', () => {
+    expect(resolveStyleFieldDisplay({ storedValue: '393px', currentValue: undefined }).value).toBe('393px')
+    expect(resolveStyleFieldDisplay({ storedValue: '8.10px', currentValue: undefined }).value).toBe('8.1px')
+  })
+})
+
+describe('roundDisplayNumber', () => {
+  it('rounds to at most 2 decimal places, trailing zeros trimmed', () => {
+    expect(roundDisplayNumber('808.3556063558458px')).toBe('808.36px')
+    expect(roundDisplayNumber('393.00px')).toBe('393px')
+    expect(roundDisplayNumber('0.5')).toBe('0.5')
+  })
+
+  it('leaves non-numeric CSS values untouched', () => {
+    expect(roundDisplayNumber('auto')).toBe('auto')
+    expect(roundDisplayNumber('translate(10px, 5px)')).toBe('translate(10px, 5px)')
+    expect(roundDisplayNumber('#ff0000')).toBe('#ff0000')
   })
 })
 
