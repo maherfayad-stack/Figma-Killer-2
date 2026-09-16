@@ -394,9 +394,23 @@ export function MeasuresSection() {
         parentLayoutReason={sizingParent.reason}
       />
       {isFlexOrGridChild ? (
-        <Section title="Flex element" forceOpen flush>
-          <div className={styles.flexElementBody}>{positionRow}</div>
-        </Section>
+        // `.measures` (above) already insets every child by `--inspector-
+        // pad-x`, but `<Section>` is a real Section — its OWN
+        // `.sectionHeader`/`.sectionContent` apply that SAME inset again to
+        // their own content, unconditionally (it doesn't know it's nested
+        // inside an already-inset ancestor). Left alone, that stacks to 24px
+        // total — the "Flex element" label and its row sat a full
+        // `--inspector-pad-x` right of the W/H and rotation rows above/below
+        // it. `.flexElementSectionBreakout`'s negative margin cancels
+        // `.measures`'s inherited inset so `<Section>`'s own chrome becomes
+        // the SOLE source of the 12px, landing flush with its neighbours —
+        // the same breakout `PropertyList.module.css`'s `.list` uses for the
+        // identical reason.
+        <div className={styles.flexElementSectionBreakout}>
+          <Section title="Flex element" forceOpen flush>
+            <div className={styles.flexElementBody}>{positionRow}</div>
+          </Section>
+        </div>
       ) : (
         positionRow
       )}

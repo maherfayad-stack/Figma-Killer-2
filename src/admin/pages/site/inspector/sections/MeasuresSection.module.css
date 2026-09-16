@@ -26,18 +26,40 @@
  * this body by `--inspector-pad-x` (this face mounts inside a real
  * `<Section title="Flex element">`, unlike the headerless Constraints face
  * `.measures` above, which has no such ancestor and legitimately sets its
- * own `padding-inline`). Re-applying `--inspector-pad-x` here doubled the
- * inset to 24px per side — the segmented control + chevron + settings icon
- * lost 24px of width to padding they never needed, reading as cramped.
- * `padding-block` stays: `.sectionContent` only pads its bottom, and this
- * face needs the same top/bottom rhythm the unlabeled face uses so
- * switching faces doesn't change row spacing. */
+ * own `padding-inline`). Re-applying `--inspector-pad-x` here on top of
+ * `Section`'s own chrome doubled THIS element's own inset; `padding-block`
+ * stays — `.sectionContent` only pads its bottom, and this face needs the
+ * same top/bottom rhythm the unlabeled face uses so switching faces doesn't
+ * change row spacing. See `.flexElementSectionBreakout` below for the OTHER
+ * half of this bug, which this rule alone did not fix. */
 .flexElementBody {
     display: flex;
     flex-direction: column;
     gap: var(--inspector-space-2xs);
     padding-inline: 0;
     padding-block: var(--inspector-space-2xs);
+}
+
+/*
+ * `<Section title="Flex element">` mounts as a plain CHILD of `.measures`
+ * above — so `.measures`'s own `padding-inline: --inspector-pad-x` insets
+ * `<Section>`'s outer box by 12px, same as every sibling row. But `<Section>`
+ * is a real `Section` primitive: its `.sectionHeader`/`.sectionContent`
+ * unconditionally apply `--inspector-pad-x` to their OWN content too — it
+ * has no way to know it is already sitting inside an inset ancestor. Left
+ * alone that stacks to 24px total: the "Flex element" label and the row
+ * below it sat a full `--inspector-pad-x` to the right of the W/H and
+ * rotation rows immediately above/below (measured live: 1134px vs. 1122px
+ * at a real breakpoint — exactly one extra 12px inset, not the doubled-and-
+ * then-fully-fixed 24px the first pass's fix believed it had reached).
+ *
+ * Same breakout `PropertyList.module.css`'s `.list` uses for the identical
+ * shape of bug: cancel the ancestor's inherited inset with an equal,
+ * opposite margin so `<Section>`'s own chrome becomes the SOLE source of
+ * the 12px, landing flush with the Constraints face's rows around it.
+ */
+.flexElementSectionBreakout {
+    margin-inline: calc(var(--inspector-pad-x) * -1);
 }
 
 /* Position switcher + directions/constraints, paired with the small z-index

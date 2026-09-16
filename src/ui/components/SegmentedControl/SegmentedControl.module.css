@@ -135,6 +135,26 @@
     width: auto;
 }
 
+/*
+ * The trailing chevron must stay a fixed square even inside a `fullWidth`
+ * inspector group. `.fullWidth .segment.segment` above (4 class selectors)
+ * and the base `.group .segment.trailing.trailing` rule (also 4) tie on
+ * specificity — this one wins on source order, silently overriding the
+ * trailing segment's own fixed width back to "stretch equally with the
+ * other segments". Measured live on `MeasuresSection`'s position switcher
+ * (`Relative | Absolute | static | ▼`): all four segments rendered at an
+ * identical 48px, including the chevron trigger — a wide button with a
+ * small icon adrift in the middle of it, reading as a dead gap inside the
+ * track. `--inspector-row-h` (not the base skin's 26px) matches every other
+ * fixed-width inspector segment's own sizing (`.group .segment.segment`
+ * above, non-fullWidth case) and the row height itself, so the chevron
+ * reads as a proper square tile flush with the row around it.
+ */
+[data-field-skin='inspector'] .fullWidth .segment.trailing.trailing {
+    flex: 0 0 var(--inspector-row-h);
+    width: var(--inspector-row-h);
+}
+
 [data-field-skin='inspector'] .group .segment.segment:hover {
     background: var(--inspector-field-bg-hover);
     color: var(--text);
