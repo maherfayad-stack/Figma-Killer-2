@@ -18,6 +18,7 @@ export type {
 } from '../module-engine/types'
 
 export type {
+  PropertyApplicability,
   PropertyCondition,
   PropertyControl,
   PropertyControlLayout,

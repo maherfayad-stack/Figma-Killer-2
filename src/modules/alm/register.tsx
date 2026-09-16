@@ -182,12 +182,22 @@ function propKindFor(p: PropSpec): PropKind {
   }
 }
 
+/**
+ * Carries `PropSpec.appliesWhen` (`buildDesignSystemManifest.ts`) onto the
+ * control the Properties panel actually renders — the fix for the reported
+ * bug: a `variant="primary"` `Button` showed a full image picker for
+ * `cardArt`, a prop the package's own docs say is `apple-pay` /
+ * `gpay-card` / `gpay-personalized` only. `renderModuleTabContent.tsx` is
+ * what actually hides the row; this is just the one place a manifest prop's
+ * gate becomes a schema control's gate.
+ */
 function buildSchema(props: PropSpec[]): ModuleDefinition['schema'] {
   const schema: Record<string, unknown> = {}
   for (const p of props) {
     if (isCanvasDrivenProp(p.name)) continue
     const control = controlForPropKind(p.name, propKindFor(p))
-    if (control) schema[p.name] = control
+    if (!control) continue
+    schema[p.name] = p.appliesWhen ? { ...control, appliesWhen: p.appliesWhen } : control
   }
   return schema as ModuleDefinition['schema']
 }

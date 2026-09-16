@@ -33,6 +33,7 @@ import { PropertyControlRenderer } from '@site/property-controls/PropertyControl
 import { evaluateCondition, explainPropConstraint, hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
 import type {
   AnyModuleDefinition,
+  PropertyApplicability,
   PropertyControl,
 } from '@core/module-engine'
 import type { Page, PageNode } from '@core/page-tree'
@@ -152,6 +153,9 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
         if (control.condition && !evaluateCondition(control.condition, resolvedPropsForBreakpoint)) {
           return null
         }
+        if (control.appliesWhen && !propAppliesToInstance(control.appliesWhen, key, resolvedPropsForBreakpoint)) {
+          return null
+        }
 
         if (inVisualComponent && activeDocument?.kind === 'visualComponent' && selectedNodeId) {
           return (
@@ -194,5 +198,31 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
 
 function isPromotedFormProperty(selectedNode: PageNode, key: string): boolean {
   return selectedNode.moduleId === 'base.form' && PROMOTED_FORM_PROPERTY_KEYS.has(key)
+}
+
+/**
+ * Whether a gated control's row should show, given the instance's CURRENT
+ * props — see `PropertyApplicability`'s own doc for why this is a separate
+ * check from `evaluateCondition`/`control.condition`.
+ *
+ * Two ways a row shows: the sibling gating prop's own resolved value is one
+ * of the documented `values` (the ordinary case), OR — checked first,
+ * because it must win regardless of the gate — the gated prop `key` ITSELF
+ * already carries a real value in this instance's props. A `Button` someone
+ * hand-wrote (or an agent wrote) as `variant="primary" cardArt="/x.png"`
+ * has a real, live `cardArt` in its source; hiding that row would make a
+ * value the user can see on the canvas silently un-editable and
+ * un-discoverable in the panel — worse than showing an occasionally-dead
+ * row. See CLAUDE.md's own "nothing rendered that lies" rule, which cuts
+ * both ways: never inventing an inapplicable control, and never hiding one
+ * that is already live.
+ */
+export function propAppliesToInstance(
+  gate: PropertyApplicability,
+  key: string,
+  resolvedProps: Record<string, unknown>,
+): boolean {
+  if (resolvedProps[key] !== undefined) return true
+  return gate.values.includes(resolvedProps[gate.prop] as string)
 }
 

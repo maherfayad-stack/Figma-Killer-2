@@ -23,6 +23,7 @@ export type {
   PropertyControlLayout,
   TextControlNormalize,
   PropertyCondition,
+  PropertyApplicability,
 } from './propertySchema'
 
 export {

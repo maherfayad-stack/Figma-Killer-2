@@ -16,6 +16,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { ComponentManifest, ComponentSpec, PropSpec, PropSpecKind } from '../component-manifest/types'
+import { inheritApplicability } from './applicabilityGates'
 
 const PACKAGE_NAME = '@alm-design/design-system'
 const FILE_SPECIFIER = PACKAGE_NAME
@@ -439,7 +440,13 @@ function documentedExample(
   return documentedScalarExample(propName, kind, rawValue)
 }
 
-function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
+interface BuiltProps {
+  props: PropSpec[]
+  /** Kept alongside the specs so {@link inheritApplicability} can re-read the raw doc comment once every component's enums (including the two inheritance passes below) have settled. */
+  propComments: Map<string, string>
+}
+
+function buildProps(name: string, catalog: DesignSystemCatalog): BuiltProps {
   let propNames: string[] | null
   try {
     propNames = catalog.propsFor(name)
@@ -482,7 +489,7 @@ function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
     return spec
   })
 
-  return withCollectionIndexLinks(specs, propComments)
+  return { props: withCollectionIndexLinks(specs, propComments), propComments }
 }
 
 /**
@@ -593,17 +600,25 @@ export async function buildDesignSystemManifest(): Promise<ComponentManifest> {
   const catalogUrl = pathToFileURL(join(pkgRoot, 'mcp/catalog.js')).href
   const catalog = (await import(catalogUrl)) as DesignSystemCatalog
 
-  const components: ComponentSpec[] = catalog.componentNames.map((name) => ({
-    name,
-    file: FILE_SPECIFIER,
-    exportName: name,
-    isDefaultExport: false,
-    props: buildProps(name, catalog),
-  }))
+  const propCommentsByComponent = new Map<string, Map<string, string>>()
+  const components: ComponentSpec[] = catalog.componentNames.map((name) => {
+    const { props, propComments } = buildProps(name, catalog)
+    propCommentsByComponent.set(name, propComments)
+    return {
+      name,
+      file: FILE_SPECIFIER,
+      exportName: name,
+      isDefaultExport: false,
+      props,
+    }
+  })
 
-  // Two recovery passes for props the docs describe without listing their
-  // options. Both run AFTER every component is built, because both need to
-  // read something outside the prop's own documentation line.
+  // Three recovery passes for props the docs describe without listing their
+  // options (or without saying when they apply at all). All three run AFTER
+  // every component is built, because each needs to read something outside
+  // the prop's own documentation line — the first two read another prop's
+  // enum or the package's stylesheet, the third re-reads the comment now that
+  // every enum (including the first two passes' own additions) has settled.
   inheritForwardedEnums(components)
   inheritTemplatedClassEnums(components, readPackageCss(pkgRoot), (name) => {
     try {
@@ -612,6 +627,7 @@ export async function buildDesignSystemManifest(): Promise<ComponentManifest> {
       return null
     }
   })
+  inheritApplicability(components, propCommentsByComponent)
 
   return { components }
 }
