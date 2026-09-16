@@ -298,6 +298,100 @@ Dogfood in the browser, three selection states:
    (once something is set) now aligns its text with the section header
    instead of sitting visibly further right.
 
+#### Follow-up — dogfood item 2 was still broken after this PR merged (PR [#122](https://github.com/maherfayad-stack/Figma-Killer-2/pull/122))
+
+The user re-reported "there is a problem with spacing" on exactly the Flex
+element row after #120 merged. **Ruled out a stale view first, as instructed**:
+`git log origin/feat/alm-figma-killer-studio-shell --oneline -- .../
+MeasuresSection.module.css` showed the merge commit with `padding-inline: 0`
+present — the fix genuinely reached the integration branch. So the original
+diagnosis was **incomplete, not stale**. Re-opened, cut a fresh worktree
+rebased on `origin/feat/alm-figma-killer-studio-shell`, and — rather than
+re-reading CSS and re-guessing — wrote a throwaway Playwright script (deleted
+before pushing, never committed) against a real, disposable dev server to
+select a genuine flex-child fixture (`.board-child-a` inside a flex `.board`,
+same fixture shape `inspector-panel-measurement.e2e.ts` already uses) and dump
+real `getBoundingClientRect()` numbers + screenshots for every element in the
+row, per the work order's own "look at the row itself... rather than by
+reading CSS alone" instruction.
+
+**Two real, independent bugs found, both fixed in [#122](https://github.com/maherfayad-stack/Figma-Killer-2/pull/122):**
+
+1. **The double-inset was only half-fixed by #120.** `<Section title="Flex
+   element">` mounts as a plain CHILD of `.measures`, which already insets
+   EVERY child (`SizeSection`, the position row, `.rotationRadiusRow`) by
+   `--inspector-pad-x`. `<Section>` is a real `Section` primitive — its own
+   `.sectionHeader`/`.sectionContent` apply that SAME inset again to their own
+   content, unconditionally, with no way to know it's already nested inside
+   an inset ancestor. #120's fix zeroed `.flexElementBody`'s own redundant
+   padding (removing the THIRD layer), but never accounted for `.measures`'s
+   ancestor inset stacking with `<Section>`'s OWN unavoidable chrome (the
+   remaining two layers) — so the row was still 12px too far right, not the
+   24px it was originally, but not the correct 0px extra either. **Measured
+   live, before the follow-up fix:** the "Flex element" label and its
+   position row sat at `x=1134`; the W/H row and rotation row immediately
+   above/below sat at `x=1122` — exactly one un-cancelled `--inspector-pad-x`.
+   Fixed with the same negative-margin breakout `PropertyList.module.css`'s
+   `.list` already uses for the identical shape of bug — a new
+   `.flexElementSectionBreakout` wrapper (`margin-inline: calc(--inspector-
+   pad-x * -1)`) around the `<Section>` call in `MeasuresSection.tsx`.
+   **After:** both measure `x=1122`. Exact match.
+2. **A second, unrelated bug in the row itself**, exactly the "large dead
+   gap" shape the follow-up work order predicted as most likely — found only
+   by measuring, not visible from reading `MeasuresSection`'s own files at
+   all: `SegmentedControl.module.css`'s inspector `fullWidth` skin rule
+   (`[data-field-skin='inspector'] .fullWidth .segment.segment { flex: 1 1 0;
+   width: auto; }`) ties in specificity (4 class selectors) with the base
+   `.group .segment.trailing.trailing { flex: 0 0 26px; width: 26px; }` rule
+   and wins on source order — so the position switcher's chevron dropdown
+   trigger rendered as a full, equal-width segment (measured: 48px, same as
+   `Relative`/`Absolute`/`static`) instead of a tight square icon button. A
+   wide button with a small centered chevron icon floating in the middle of
+   it IS the "large dead gap" complaint. This bug affects EVERY `fullWidth`
+   `DropdownSwitcher` under the inspector skin, not just Measures' position
+   switcher — `DropdownSwitcher.tsx`'s own doc names it as "shared... used by
+   the Layout and Position sections," so Layout's Display switcher had the
+   same bug and is fixed by the same change. Fixed with a higher-specificity
+   override, sized to `--inspector-row-h` (32px, not the base skin's 26px —
+   matches every other fixed-width inspector segment's own convention and the
+   row height itself) rather than fighting source order. **After:** chevron
+   is a proper 32×32 square; the three primary segments grew from 48px to
+   61px each with the freed-up space.
+3. **Checked, confirmed NOT a bug, left alone**: the `Relative`/`Absolute`
+   (capitalized, curated display labels for the two PROMOTED segments) vs.
+   `static` (lowercase) casing the work order flagged. `static` is
+   `DropdownSwitcher.tsx`'s own documented synthetic trailing-segment
+   behavior for an out-of-band CSS value — its doc is explicit: "the
+   synthetic segment never invents a label... it just echoes the raw CSS
+   value string." `static` here IS the honest raw value; the two curated
+   labels are the ones that diverge from raw CSS naming, by design. Not
+   touched — silently "fixing" it either direction would violate that
+   component's own contract for every OTHER out-of-band value it renders
+   (`display: inline-block`, etc.).
+
+**Verification:** `bun run build` clean; `bun test src/admin/pages/site
+src/__tests__/inspector/measurement.test.ts` 947/0; `bun test src/__tests__/
+architecture` 550 pass / 2 fail (same two pre-existing); `bun run lint` same 6
+pre-existing; `bun run test:e2e -- tests/e2e/inspector-panel-measurement.e2e.ts`
+5/5 pass, no recorded deltas needed updating (that spec's row-rhythm fixture
+is the F1 rectangle — `position:relative`, non-flex parent — so it exercises
+the Constraints face, not the Flex-element face this fix touches).
+
+**Landmine for the next agent:** don't trust "the section wraps its own
+content, so its own inset must be the only one" when a `<Section>` is nested
+INSIDE another element that ALSO applies `--inspector-pad-x` (a headerless
+block like `.measures`, or any other flex/grid container with its own
+padding). `<Section>` always re-applies its own inset unconditionally — check
+the FULL ancestor chain with real `getBoundingClientRect()` numbers, not a
+single-level reading of the immediately-touched file's CSS.
+
+**Human action needed:** dogfood item 2 above, again — select a flex/grid
+child node, confirm the Flex element row now lines up with the W/H and
+rotation rows above/below it, and that the chevron/gear no longer look
+oversized. Also worth a glance: Layout's Display switcher (any node, Layout
+section, "Display" row) — same chevron-sizing fix applies there too, never
+separately reported but same root cause.
+
 ---
 
 ### panel-28 — a Button on `variant="primary"` showed a dead `cardArt` picker: component prop rows now respect variant applicability
