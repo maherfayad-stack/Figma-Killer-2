@@ -74,6 +74,23 @@ export interface PropSpec {
    * index `items`.
    */
   indexesCollection?: string
+  /**
+   * A gate on when this prop actually applies to a rendered instance —
+   * "this prop only means something when `prop` is one of `values`" — read
+   * off the same trailing `//` doc comment {@link enumValues} is parsed
+   * from. `prop` names a SIBLING prop on the same component (almost always
+   * its variant/type/platform axis); `values` is the subset of that sibling
+   * prop's own documented enum this prop is documented to require.
+   *
+   * Absence means "applies unconditionally", which is also the correct
+   * reading for every prose form the parser could not confidently resolve
+   * to concrete, already-parsed enum members — see
+   * `buildDesignSystemManifest.ts`'s own doc comment for exactly which forms
+   * that is. A missing gate merely shows an always-visible row; a wrong one
+   * hides a real control, so the parser is deliberately biased toward the
+   * former.
+   */
+  appliesWhen?: { prop: string; values: string[] }
 }
 
 export interface ComponentSpec {

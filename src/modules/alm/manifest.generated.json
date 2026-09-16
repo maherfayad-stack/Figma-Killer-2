@@ -243,7 +243,13 @@
           "tsType": "unknown",
           "required": false,
           "kind": "boolean",
-          "example": false
+          "example": false,
+          "appliesWhen": {
+            "prop": "layout",
+            "values": [
+              "desktop"
+            ]
+          }
         },
         {
           "name": "showSponsored",
@@ -261,7 +267,13 @@
             "medium",
             "large"
           ],
-          "kind": "enum"
+          "kind": "enum",
+          "appliesWhen": {
+            "prop": "layout",
+            "values": [
+              "mobile"
+            ]
+          }
         },
         {
           "name": "skeleton",
@@ -500,7 +512,13 @@
           "tsType": "unknown",
           "required": false,
           "kind": "string",
-          "example": "$1,500"
+          "example": "$1,500",
+          "appliesWhen": {
+            "prop": "type",
+            "values": [
+              "starting-price"
+            ]
+          }
         },
         {
           "name": "paymentLogo",
@@ -624,14 +642,28 @@
           "name": "cardArt",
           "tsType": "unknown",
           "required": false,
-          "kind": "image"
+          "kind": "image",
+          "appliesWhen": {
+            "prop": "variant",
+            "values": [
+              "apple-pay",
+              "gpay-card",
+              "gpay-personalized"
+            ]
+          }
         },
         {
           "name": "cardLast4",
           "tsType": "unknown",
           "required": false,
           "kind": "string",
-          "example": "1394"
+          "example": "1394",
+          "appliesWhen": {
+            "prop": "variant",
+            "values": [
+              "gpay-personalized"
+            ]
+          }
         },
         {
           "name": "dir",
@@ -826,7 +858,13 @@
           "tsType": "unknown",
           "required": false,
           "kind": "number",
-          "example": 1
+          "example": 1,
+          "appliesWhen": {
+            "prop": "trailing",
+            "values": [
+              "stepper"
+            ]
+          }
         },
         {
           "name": "subtext",
@@ -854,7 +892,13 @@
           "tsType": "unknown",
           "required": false,
           "kind": "boolean",
-          "example": false
+          "example": false,
+          "appliesWhen": {
+            "prop": "trailing",
+            "values": [
+              "toggle"
+            ]
+          }
         },
         {
           "name": "trailing",
@@ -1085,6 +1129,12 @@
           "kind": "collection",
           "example": {
             "label": "Delete"
+          },
+          "appliesWhen": {
+            "prop": "layout",
+            "values": [
+              "stacked"
+            ]
           }
         },
         {
@@ -1365,7 +1415,13 @@
               "src": "/mada.svg",
               "alt": "mada"
             }
-          ]
+          ],
+          "appliesWhen": {
+            "prop": "platform",
+            "values": [
+              "desktop"
+            ]
+          }
         },
         {
           "name": "platform",
@@ -1605,7 +1661,13 @@
           "name": "icon",
           "tsType": "unknown",
           "required": false,
-          "kind": "icon"
+          "kind": "icon",
+          "appliesWhen": {
+            "prop": "type",
+            "values": [
+              "icon"
+            ]
+          }
         },
         {
           "name": "id",
@@ -1768,7 +1830,13 @@
           "name": "partnerLogoSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "image"
+          "kind": "image",
+          "appliesWhen": {
+            "prop": "type",
+            "values": [
+              "solid"
+            ]
+          }
         },
         {
           "name": "skeleton",
@@ -2047,7 +2115,13 @@
           "tsType": "unknown",
           "required": false,
           "kind": "boolean",
-          "example": false
+          "example": false,
+          "appliesWhen": {
+            "prop": "platform",
+            "values": [
+              "ios"
+            ]
+          }
         },
         {
           "name": "value",
@@ -2130,7 +2204,13 @@
           "tsType": "unknown",
           "required": false,
           "kind": "string",
-          "example": "OR"
+          "example": "OR",
+          "appliesWhen": {
+            "prop": "variant",
+            "values": [
+              "or"
+            ]
+          }
         },
         {
           "name": "type",
@@ -2364,7 +2444,13 @@
           "tsType": "unknown",
           "required": false,
           "kind": "string",
-          "example": "Ends in 2 days"
+          "example": "Ends in 2 days",
+          "appliesWhen": {
+            "prop": "platform",
+            "values": [
+              "desktop"
+            ]
+          }
         },
         {
           "name": "title",

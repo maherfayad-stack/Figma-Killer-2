@@ -71,4 +71,44 @@ describe('buildComponentCallSiteRows', () => {
     const rows = buildComponentCallSiteRows(null, { title: 'Hello' })
     expect(rows).toEqual([{ key: 'title', control: { type: 'text', label: 'title' }, value: 'Hello' }])
   })
+
+  describe('appliesWhen — prop applicability gates', () => {
+    const buttonSpec: LocalComponentSpec = {
+      name: 'Button',
+      file: 'src/components/Button.tsx',
+      exportName: 'default',
+      isDefaultExport: true,
+      props: [
+        { name: 'variant', kind: { kind: 'enum', values: ['primary', 'gpay-personalized'] }, required: false },
+        {
+          name: 'cardArt',
+          kind: { kind: 'image' },
+          required: false,
+          appliesWhen: { prop: 'variant', values: ['gpay-personalized'] },
+        },
+      ],
+    }
+
+    it('hides a gated row whose sibling prop currently holds a non-matching value', () => {
+      const rows = buildComponentCallSiteRows(buttonSpec, { variant: 'primary' })
+      expect(rows.find((r) => r.key === 'cardArt')).toBeUndefined()
+    })
+
+    it('shows a gated row once the sibling prop matches one of the documented values', () => {
+      const rows = buildComponentCallSiteRows(buttonSpec, { variant: 'gpay-personalized' })
+      expect(rows.find((r) => r.key === 'cardArt')).toBeDefined()
+    })
+
+    it('a set value on the gated prop itself always outranks the gate', () => {
+      // The bug this guards: an agent or hand edit writes
+      // `<Button variant="primary" cardArt="/x.png">` — a real, live value
+      // that a keystroke could touch. Hiding the row would make it silently
+      // un-editable and un-discoverable, which is worse than one
+      // occasionally-dead row.
+      const rows = buildComponentCallSiteRows(buttonSpec, { variant: 'primary', cardArt: '/x.png' })
+      const cardArtRow = rows.find((r) => r.key === 'cardArt')
+      expect(cardArtRow).toBeDefined()
+      expect(cardArtRow?.value).toBe('/x.png')
+    })
+  })
 })

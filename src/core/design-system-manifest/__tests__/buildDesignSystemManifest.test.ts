@@ -188,4 +188,93 @@ describe('buildDesignSystemManifest', () => {
       expect(component.file).toBe('@alm-design/design-system')
     }
   })
+
+  describe('appliesWhen — prop applicability gates', () => {
+    it("gates Button's payment-only props to the variants that actually use them", async () => {
+      // The reported bug: a `variant=\"primary\"` Button showed a full image
+      // picker for `cardArt` — 140px of dead panel height — because the
+      // manifest recorded no applicability at all. `cardArt` is documented
+      // "— apple-pay / gpay-card / gpay-personalized"; `cardLast4` is
+      // documented "shown by gpay-personalized".
+      const manifest = await buildDesignSystemManifest()
+      const button = manifest.components.find((c) => c.name === 'Button')
+      expect(button).toBeDefined()
+      const prop = (name: string) => button!.props.find((p) => p.name === name)
+
+      expect(prop('cardArt')?.appliesWhen).toEqual({
+        prop: 'variant',
+        values: ['apple-pay', 'gpay-card', 'gpay-personalized'],
+      })
+      expect(prop('cardLast4')?.appliesWhen).toEqual({ prop: 'variant', values: ['gpay-personalized'] })
+    })
+
+    it("declines to gate Button's size and icon props on a prose category it cannot resolve to literal variant values", async () => {
+      // `size` is documented "— text/payment only; brand-pay variants are
+      // single fixed size" and `leadingIcon`/`trailingIcon` "(text
+      // variants)". None of "text", "payment variants", or "brand-pay" is a
+      // literal member of `variant`'s own enum (only `payment` itself is),
+      // so this must NOT invent a gate — a wrong gate hides a real control.
+      const manifest = await buildDesignSystemManifest()
+      const button = manifest.components.find((c) => c.name === 'Button')
+      const prop = (name: string) => button!.props.find((p) => p.name === name)
+
+      expect(prop('size')?.appliesWhen).toBeUndefined()
+      expect(prop('leadingIcon')?.appliesWhen).toBeUndefined()
+      expect(prop('trailingIcon')?.appliesWhen).toBeUndefined()
+    })
+
+    it('gates props on other components via the `when prop="value"` and `prop="value" only` forms', async () => {
+      const manifest = await buildDesignSystemManifest()
+      const byName = new Map(manifest.components.map((c) => [c.name, c]))
+      const appliesWhenOf = (component: string, prop: string) =>
+        byName.get(component)?.props.find((p) => p.name === prop)?.appliesWhen
+
+      // `used when type="icon"`.
+      expect(appliesWhenOf('ListItem', 'icon')).toEqual({ prop: 'type', values: ['icon'] })
+      // `shown struck-through when type="starting-price"`.
+      expect(appliesWhenOf('BottomActionBar', 'originalPrice')).toEqual({
+        prop: 'type',
+        values: ['starting-price'],
+      })
+      // `overrides the OR label (variant="or" only)`.
+      expect(appliesWhenOf('Separator', 'label')).toEqual({ prop: 'variant', values: ['or'] })
+    })
+
+    it('gates a prop on an unnamed "<value> only" scope by resolving it against the one sibling enum that contains it', async () => {
+      const manifest = await buildDesignSystemManifest()
+      const byName = new Map(manifest.components.map((c) => [c.name, c]))
+      const appliesWhenOf = (component: string, prop: string) =>
+        byName.get(component)?.props.find((p) => p.name === prop)?.appliesWhen
+
+      // "enable the coral CTA over the image — desktop only" -> layout.
+      expect(appliesWhenOf('AdBanner', 'showImageAction')).toEqual({ prop: 'layout', values: ['desktop'] })
+      // "optional partner logo over the image (solid only)" -> type.
+      expect(appliesWhenOf('MarketingCard', 'partnerLogoSrc')).toEqual({ prop: 'type', values: ['solid'] })
+      // The scope-PREFIX form: "mobile only: small | medium | large" -> layout —
+      // size keeps its OWN enum (`drops a scope prefix…` test above) as well as
+      // gaining this gate; the two are independent facts about the same prop.
+      expect(appliesWhenOf('AdBanner', 'size')).toEqual({ prop: 'layout', values: ['mobile'] })
+    })
+
+    it('does not gate a bare `word/word` run that sits inside a parenthetical aside rather than a scope position', async () => {
+      // `AdBanner.imageSrc` — "hero (mobile medium/large) / trailing strip
+      // (mobile small) / side image (desktop)" — describes three ALWAYS-
+      // applicable interpretations of the same prop, not a condition on when
+      // it applies. `medium`/`large` are literal `size` values, so a naive
+      // "any slash-joined pair" rule would wrongly hide this prop outside
+      // size=medium/large. It must stay unconditional.
+      const manifest = await buildDesignSystemManifest()
+      const adBanner = manifest.components.find((c) => c.name === 'AdBanner')
+      expect(adBanner!.props.find((p) => p.name === 'imageSrc')?.appliesWhen).toBeUndefined()
+    })
+
+    it('does not gate a prop on a comment naming no resolvable sibling value at all', async () => {
+      // `AlmosaferLogo.lang` — "only affects wordmark; ignored for logomark
+      // and applogo" — puts the scope word AFTER "only", a grammar this
+      // parser deliberately does not attempt.
+      const manifest = await buildDesignSystemManifest()
+      const logo = manifest.components.find((c) => c.name === 'AlmosaferLogo')
+      expect(logo!.props.find((p) => p.name === 'lang')?.appliesWhen).toBeUndefined()
+    })
+  })
 })

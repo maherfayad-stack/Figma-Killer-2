@@ -57,10 +57,35 @@ const PropertyControlCategorySchema = Type.Union([
   Type.Literal('layout'),
 ])
 
+const PropertyApplicabilitySchema = Type.Object(
+  { prop: Type.String({ minLength: 1 }), values: Type.Array(Type.String()) },
+  { additionalProperties: false },
+)
+
 const PropertyControlBaseSchema = {
   label: Type.String({ minLength: 1 }),
   description: Type.Optional(Type.String()),
   condition: Type.Optional(PropertyConditionSchema),
+  /**
+   * A narrower, package-doc-derived sibling of `condition` — "this control
+   * only means anything when the sibling prop `prop` is one of `values`" —
+   * populated for design-system components off `PropSpec.appliesWhen`
+   * (`buildDesignSystemManifest.ts`; see that file for exactly which doc
+   * comment forms produce one). Kept SEPARATE from `condition` rather than
+   * translated into one on purpose: `condition`'s `evaluateCondition` hides a
+   * control purely on the OTHER field's value, with no awareness of the
+   * gated control's own value, which is the right behaviour for the
+   * hand-authored module conditions already relying on it (`base.forms`'s
+   * mode-gated fields, `base.button`'s href-gated text). This field's own
+   * evaluation (`renderModuleTabContent.tsx`) adds one exception those don't
+   * need: a call site that ALREADY sets the gated prop to a real value keeps
+   * showing it regardless of the gate — hiding it would silently make a
+   * live, source-backed value un-editable and un-discoverable. Reusing
+   * `condition` for this would have to add that exception to every existing
+   * caller too, changing tested behaviour this change has no business
+   * touching.
+   */
+  appliesWhen: Type.Optional(PropertyApplicabilitySchema),
   layout: Type.Optional(PropertyControlLayoutSchema),
   breakpointOverridable: Type.Optional(Type.Boolean()),
   /** Edit-permission category — see `PropertyControlCategorySchema`. */
@@ -218,6 +243,7 @@ export const PropertySchemaSchema = Type.Unsafe<Record<string, PropertyControl>>
 )
 
 export type PropertyCondition = Static<typeof PropertyConditionSchema>
+export type PropertyApplicability = Static<typeof PropertyApplicabilitySchema>
 export type PropertyControlLayout = Static<typeof PropertyControlLayoutSchema>
 export type TextControlNormalize = Static<typeof TextControlNormalizeSchema>
 type PropertyControlCategory = Static<typeof PropertyControlCategorySchema>
