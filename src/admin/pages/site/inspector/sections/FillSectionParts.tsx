@@ -61,6 +61,8 @@ import {
 } from '../../panels/PropertiesPanel/gradientValue'
 import { imageFillPreviewSrc, useProjectImageAssets } from '@site/studio/projectAssets'
 import { formatColor, parseCssColor } from '@ui/components/ColorPickerPopover'
+import { SourceConstraintNotice } from '../../panels/PropertiesPanel/SourceConstraintNotice'
+import type { WriteTarget } from '../resolveWriteTarget'
 import { ImageFillEditor } from './ImageFillEditorParts'
 import styles from './FillSection.module.css'
 
@@ -74,6 +76,78 @@ export function ColorSwatch({ color }: { color: string }) {
       className={styles.swatch}
       style={{ '--fill-swatch-color': color } as CSSProperties}
       aria-hidden="true"
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ColorPopoverField — the Text / Solid-fill popover body (`STATE.md`
+// panel-30). Three cases:
+//   - stored: `ColorValueInput` exactly as before this ticket.
+//   - muted (nothing stored), but a target exists: same `ColorValueInput`,
+//     prefilled with the RENDERED value; committing the SAME value writes
+//     nothing — the `docs/features/inspector.md` §5.0 rule this ticket
+//     reuses, not reinvents. A bare focus/blur on a prefilled-but-unstored
+//     field must never fabricate a declaration
+//     (`prefilledFieldCommitGuard.test.tsx`'s own precedent for why this
+//     comparison is load-bearing and belongs to the FIELD, not the panel).
+//   - muted, no honest write target: `SourceConstraintNotice` states why,
+//     the colour field disables — never a silently inert control that eats
+//     a keystroke (`resolveWriteTarget.ts`'s `{ kind: 'none' }`).
+// ---------------------------------------------------------------------------
+
+export function ColorPopoverField({
+  property,
+  ariaLabel,
+  swatchLabel,
+  stored,
+  storedDisplayValue,
+  mutedDisplayValue,
+  writeTarget,
+  onCommit,
+  onPreview,
+  onClearPreview,
+}: {
+  property: 'color' | 'backgroundColor'
+  ariaLabel: string
+  swatchLabel: string
+  /** Does the active target declare this property? Only `false` for the new "rendered, not stored" case. */
+  stored: boolean
+  storedDisplayValue: string | undefined
+  /** The frame's rendered value — populated only when `!stored` and `rendersUnstoredValue` said so. */
+  mutedDisplayValue: string | undefined
+  /** Only resolved by the caller when `!stored` — a stored row already has a real source. */
+  writeTarget: WriteTarget | null
+  onCommit: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
+  onPreview: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
+  onClearPreview: () => void
+}) {
+  if (!stored && writeTarget?.kind === 'none') {
+    return (
+      <div className={styles.popoverBody}>
+        <SourceConstraintNotice hasWritableLocation writeTargetReason={writeTarget.reason} />
+        <ColorValueInput
+          value={mutedDisplayValue ?? ''}
+          ariaLabel={ariaLabel}
+          swatchLabel={swatchLabel}
+          disabled
+          onChange={() => {}}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <ColorValueInput
+      value={(stored ? storedDisplayValue : mutedDisplayValue) ?? ''}
+      ariaLabel={ariaLabel}
+      swatchLabel={swatchLabel}
+      onChange={(next) => {
+        if (!stored && next === mutedDisplayValue) return
+        onCommit(property, next || undefined)
+      }}
+      onPreview={(next) => onPreview(property, next)}
+      onClearPreview={onClearPreview}
     />
   )
 }

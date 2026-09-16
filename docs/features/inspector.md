@@ -109,6 +109,26 @@ cases its own header. Emptiness is still judged **across every context**,
 not just the active breakpoint — a value living on another tab is still the
 user's own work and must never be hidden behind a `+`.
 
+**"Nothing is applied" means nothing STORED — Fill is the one section (so
+far) where that alone is not the whole story.** `STATE.md` `panel-30`: a
+node whose `background-color` resolves through an ambient/global CSS rule
+the parser captured but never attached to this node's `classIds`, or whose
+`color` is plain unremarkable inheritance, renders a real colour on the
+canvas that nothing in `storedStyles` explains — and `FillSection.tsx`'s
+`setAnywhere` used to be blind to it, collapsing next to a canvas that
+plainly disagreed. `setAnywhere` now ALSO opens when
+`renderedNotStored.ts`'s `rendersUnstoredValue` says the frame is genuinely
+painting/inheriting something no stored source explains (gated by the
+Tier 2 `computedValuesLoading` flag, and, for `color`, by `isTextNode` — an
+ordinary container's inherited black text is not the element's own paint the
+way a body's white background is). The row this reveals is presented per
+§5.0's three-tier vocabulary below, generalized from a scalar field to a
+`PropertyList` row — see that section for the full account, including why
+the section's "N set" INDICATOR still counts only `storedStyles`. Stroke,
+Shadow, and Blur are named follow-ups for the identical treatment
+(`STATE.md` panel-30's own Sequencing) — a future section must reuse
+`rendersUnstoredValue`, not reimplement this check.
+
 ### Law 2 — Rare options live in a popover anchored to the thing they modify (F5, F8, F17, F21, F25–F27)
 
 Figma has exactly one shape for this: a small **⚙ / sliders icon** at the right
@@ -819,11 +839,23 @@ already with the current values even if inline styles."
 **Set-ness is a separate fact and is unchanged.** `isSet` still means "the
 active target declares this property", and it is what drives the row's
 `data-state`, its muted caption, the indicator dot, the "N set" section meta,
-the remove button — and Law 1's disclosure, which is judged on the STORED bag
-and is untouched by prefill. What a field displays never changes what the panel
+and the remove button. What a field displays never changes what the panel
 claims about the source. The presentational half travels as `inherited`:
 `data-inherited="true"` on the row, and the `inherited` prop on `ScrubInput` /
 `AddablePropertyField` / `RevealedField` / `ScrubTokenField`.
+
+Law 1's disclosure is judged on the STORED bag and is untouched by prefill
+for every scalar-field section — **except Fill**, as of `STATE.md` panel-30:
+`FillSection.tsx`'s `setAnywhere` and its `PropertyList` row guards for
+`color`/`backgroundColor` now ALSO consult `renderedNotStored.ts`'s
+`rendersUnstoredValue`, the same three-tier idea above generalized from a
+scalar field to a `PropertyList` ROW (`PropertyListEntry.muted`/`removable`,
+not `resolveStyleFieldDisplay`'s `inherited`/`isSet` pair, since a list row
+has no single "field" to prefill — it either exists, muted, or doesn't exist
+at all). See §4's Law 1 for the full account and the non-inherited "true CSS
+initial value" guard (`cssInitialValues.ts`) that keeps an ordinary element
+from flooding open. Stroke/Shadow/Blur have not been migrated yet and remain
+governed by the STORED-bag-only rule this paragraph originally stated.
 
 **A prefilled value commits like any other.** Dragging Width from its rendered
 `320px` to `340px` sets `width: 340px` on the target — that is what the user

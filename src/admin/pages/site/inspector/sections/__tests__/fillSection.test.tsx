@@ -24,11 +24,19 @@
  *      its own).
  *   9. Code-locked properties — the write is refused, same posture
  *      `MeasuresSection`'s own rotation test already established.
+ *  10. `STATE.md` `panel-30` — a value the frame genuinely renders but
+ *      nothing stores anywhere still opens Fill, muted, no remove button;
+ *      a genuinely-initial value does not; the write-target refusal gap in
+ *      the muted row's own popover; the Tier 2 loading guard.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+import { BridgeFrameAdapter, type BridgeFrameChannel } from '@site/canvas/frameAdapter/BridgeFrameAdapter'
+import { toOutboundEnvelope, type InboundEnvelope } from '@core/studio-runtime'
 import { FillSection } from '../FillSection'
 import { makeSite, makePage, makeNode } from '../../../../../../__tests__/fixtures'
 import '@modules/base/index'
@@ -39,7 +47,108 @@ const ROOT_ID = 'root'
 const GRADIENT = 'linear-gradient(90deg, #ff0000 0%, #0000ff 100%)'
 const GRADIENT_B = 'radial-gradient(circle, #00ff00 0%, #ffffff 100%)'
 
-afterEach(cleanup)
+let liveFrames: Array<{ frame: HTMLIFrameElement; dispose: () => void }> = []
+
+afterEach(() => {
+  cleanup()
+  for (const live of liveFrames) live.dispose()
+  liveFrames = []
+})
+
+/**
+ * A registered PORTAL canvas frame carrying one styled element for
+ * `NODE_ID` — the exact pattern `useInspectComputedStyle.test.tsx` already
+ * established (see that file's own doc for why this, not a second fixture
+ * shape). `styleNode` sets whatever the FRAME actually renders — deliberately
+ * independent of the studio node's own (usually empty) `inlineStyles` bag,
+ * matching the real gap this suite exists to close: the CANVAS shows a
+ * colour the STORED bag never declared.
+ */
+function setUpCanvasFrame(nodeId: string, styleNode: (el: HTMLElement, frameDoc: Document) => void) {
+  const frame = document.createElement('iframe')
+  document.body.appendChild(frame)
+  const frameDoc = frame.contentDocument!
+  frameDoc.body.setAttribute('data-breakpoint-id', 'desktop')
+  frame.setAttribute('data-breakpoint-id', 'desktop')
+
+  const node = frameDoc.createElement('div')
+  node.setAttribute('data-node-id', nodeId)
+  frameDoc.body.appendChild(node)
+  styleNode(node, frameDoc)
+
+  const adapter = new PortalFrameAdapter(frameDoc)
+  registerFrameAdapter(frame, adapter)
+  liveFrames.push({
+    frame,
+    dispose: () => {
+      unregisterFrameAdapter(frame)
+      adapter.dispose()
+      frame.remove()
+    },
+  })
+  return node
+}
+
+const BRIDGE_ORIGIN = 'https://live.studio.test'
+
+/**
+ * A registered BRIDGE canvas frame (Tier 2, `panel-26`) whose `measure`
+ * requests this test resolves manually — same stub-channel shape
+ * `useBridgeComputedValues.test.ts` already established, trimmed to only
+ * what this suite needs (one manual resolve, no auto-reply).
+ */
+function addBridgeFrame(breakpointId: string) {
+  const frame = document.createElement('iframe')
+  frame.setAttribute('data-breakpoint-id', breakpointId)
+  document.body.appendChild(frame)
+
+  let handler: ((ev: MessageEvent) => void) | null = null
+  const posted: InboundEnvelope[] = []
+  const channel: BridgeFrameChannel = {
+    postMessage: (message) => posted.push(message as InboundEnvelope),
+    addEventListener: (type, h) => {
+      if (type === 'message') handler = h
+    },
+    removeEventListener: (type, h) => {
+      if (type === 'message' && handler === h) handler = null
+    },
+  }
+  const adapter = new BridgeFrameAdapter({ channel, frameOrigin: BRIDGE_ORIGIN })
+  registerFrameAdapter(frame, adapter)
+  liveFrames.push({
+    frame,
+    dispose: () => {
+      unregisterFrameAdapter(frame)
+      adapter.dispose()
+      frame.remove()
+    },
+  })
+
+  return {
+    /** Resolves the FIRST still-pending `measure` request with `computedStyle`. */
+    resolveFirstMeasure(computedStyle: Record<string, string>) {
+      const request = posted.find((env) => env.message.type === 'measure')
+      if (!request || request.message.type !== 'measure') {
+        throw new Error('No pending "measure" request')
+      }
+      handler?.({
+        origin: BRIDGE_ORIGIN,
+        source: undefined,
+        data: toOutboundEnvelope({
+          type: 'measure:result',
+          requestId: request.message.requestId,
+          measurements: request.message.refs.map((ref) => ({
+            nodeId: ref.nodeId,
+            occurrenceIndex: ref.occurrenceIndex,
+            rect: { x: 0, y: 0, width: 10, height: 10 },
+            computedStyle,
+          })),
+        }),
+      } as MessageEvent)
+    },
+    hasPendingMeasure: () => posted.some((env) => env.message.type === 'measure'),
+  }
+}
 
 beforeEach(() => {
   localStorage.clear()
@@ -353,5 +462,130 @@ describe('FillSection — code-locked properties', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /remove solid fill/i }))
     expect(currentNode()?.inlineStyles?.backgroundColor).toBe('#ff0000')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 10. `STATE.md` panel-30 — Fill shows what actually renders, not only what
+//     is stored. The user's own report: "if I choosed body, and the bg is
+//     white I don't see that in the fill".
+// ---------------------------------------------------------------------------
+
+describe('FillSection — rendered, not stored', () => {
+  it('a real, unstored background colour opens Fill, muted, with no remove button — the reported bug', () => {
+    selectNode()
+    setUpCanvasFrame(NODE_ID, (el) => {
+      el.style.backgroundColor = 'rgb(255, 255, 255)'
+    })
+    render(<FillSection />)
+
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('rgb(255, 255, 255)')
+    expect(row.dataset.muted).toBe('true')
+    expect(screen.queryByRole('button', { name: /remove solid fill/i })).toBeNull()
+
+    fireEvent.click(screen.getByText('rgb(255, 255, 255)'))
+    const popover = screen.getByRole('dialog', { name: 'Solid fill' })
+    const input = within(popover).getByRole('textbox', { name: 'Solid fill colour' })
+    expect(input).toHaveProperty('value', 'rgb(255, 255, 255)')
+
+    fireEvent.change(input, { target: { value: '#00ff00' } })
+    fireEvent.blur(input)
+    expect(currentNode()?.inlineStyles?.backgroundColor).toBe('#00ff00')
+  })
+
+  it('a bare focus/blur on the muted row commits nothing — the prefilled-field commit guard', () => {
+    selectNode()
+    setUpCanvasFrame(NODE_ID, (el) => {
+      el.style.backgroundColor = 'rgb(255, 255, 255)'
+    })
+    render(<FillSection />)
+
+    fireEvent.click(screen.getByText('rgb(255, 255, 255)'))
+    const popover = screen.getByRole('dialog', { name: 'Solid fill' })
+    const input = within(popover).getByRole('textbox', { name: 'Solid fill colour' })
+    fireEvent.focus(input)
+    fireEvent.blur(input)
+
+    expect(currentNode()?.inlineStyles?.backgroundColor).toBeUndefined()
+  })
+
+  it('stays collapsed for an element whose background is genuinely at its CSS initial (transparent) — no flood', () => {
+    selectNode()
+    setUpCanvasFrame(NODE_ID, (el) => {
+      el.style.backgroundColor = 'transparent'
+    })
+    render(<FillSection />)
+
+    expect(screen.getByText('Fill')).toBeTruthy()
+    expect(screen.queryByRole('list', { name: 'Fill' })).toBeNull()
+  })
+
+  it('opens a muted Text row for a TEXT node with an inherited colour and no stored color', () => {
+    selectNode({ moduleId: 'base.text' })
+    setUpCanvasFrame(NODE_ID, (el, frameDoc) => {
+      el.style.backgroundColor = 'transparent'
+      frameDoc.body.style.color = 'rgb(10, 20, 30)'
+    })
+    render(<FillSection />)
+
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('rgb(10, 20, 30)')
+    expect(row.dataset.muted).toBe('true')
+    expect(within(row).queryByRole('button', { name: 'Remove Text' })).toBeNull()
+  })
+
+  it('stays collapsed for a NON-text node with the IDENTICAL inherited colour', () => {
+    selectNode() // base.div — not a text node
+    setUpCanvasFrame(NODE_ID, (el, frameDoc) => {
+      el.style.backgroundColor = 'transparent'
+      frameDoc.body.style.color = 'rgb(10, 20, 30)'
+    })
+    render(<FillSection />)
+
+    expect(screen.queryByRole('list', { name: 'Fill' })).toBeNull()
+  })
+
+  it('shows the write-target refusal instead of a silently inert field when nothing can save it', () => {
+    // `pkg.*` — inline styles are written by the package's own source
+    // (`canWriteInlineStyleForModule`) — and no classIds, so no writable
+    // class either: `resolveWriteTarget` has nowhere honest to land a write.
+    selectNode({ moduleId: 'pkg.widget' })
+    setUpCanvasFrame(NODE_ID, (el) => {
+      el.style.backgroundColor = 'rgb(255, 255, 255)'
+    })
+    render(<FillSection />)
+
+    fireEvent.click(screen.getByText('rgb(255, 255, 255)'))
+    const popover = screen.getByRole('dialog', { name: 'Solid fill' })
+    expect(within(popover).getByTestId('source-constraint-notice').textContent).toMatch(
+      /has no writable class and its inline styles are locked/,
+    )
+    const input = within(popover).getByRole('textbox', { name: 'Solid fill colour' })
+    expect(input).toHaveProperty('disabled', true)
+
+    fireEvent.change(input, { target: { value: '#00ff00' } })
+    fireEvent.blur(input)
+    expect(currentNode()?.inlineStyles?.backgroundColor).toBeUndefined()
+  })
+})
+
+describe('FillSection — computed-values loading state (Tier 2 bridge measurement)', () => {
+  it('stays collapsed while the measurement is pending, then opens muted once it resolves', async () => {
+    selectNode()
+    const bridge = addBridgeFrame('desktop')
+    render(<FillSection />)
+
+    expect(bridge.hasPendingMeasure()).toBe(true)
+    expect(screen.queryByRole('list', { name: 'Fill' })).toBeNull()
+
+    act(() => {
+      bridge.resolveFirstMeasure({ 'background-color': 'rgb(255, 255, 255)' })
+    })
+
+    await waitFor(() => expect(screen.getByRole('list', { name: 'Fill' })).toBeTruthy())
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('rgb(255, 255, 255)')
+    expect(row.dataset.muted).toBe('true')
   })
 })

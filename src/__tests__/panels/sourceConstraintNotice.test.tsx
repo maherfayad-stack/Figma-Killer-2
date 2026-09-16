@@ -78,6 +78,28 @@ describe('SourceConstraintNotice', () => {
     expect(screen.getByTestId('source-constraint-notice').textContent).not.toMatch(/changes all/)
   })
 
+  // `STATE.md` panel-30 — a write-target refusal is a fact about ONE
+  // property, not the node, so it gets its own prose rather than the
+  // structural "can't be moved or deleted" sentence.
+  it('states a write-target refusal in its own words, not the structural move/delete sentence', () => {
+    render(
+      <SourceConstraintNotice
+        hasWritableLocation
+        writeTargetReason="Nothing here can save this — the element has no writable class and its inline styles are locked."
+      />,
+    )
+
+    const notice = screen.getByTestId('source-constraint-notice')
+    expect(notice.dataset.variant).toBe('write-target-refused')
+    expect(notice.textContent).toContain('Nothing here can save this')
+    expect(notice.textContent).not.toMatch(CANNOT_MOVE)
+  })
+
+  it('renders nothing when writeTargetReason is absent alongside the other two facts', () => {
+    const { container } = render(<SourceConstraintNotice hasWritableLocation />)
+    expect(container.firstChild).toBeNull()
+  })
+
   it('shows BOTH facts when a node is structurally locked AND has a resolved text origin', () => {
     render(
       <SourceConstraintNotice
