@@ -836,6 +836,188 @@ are the remaining WS-2 items, not yet dispatched. See
 
 **Track L orchestration is UNPAUSED (2026-09-13) — `feat/alm-figma-killer-studio-shell` is the active integration point, by explicit user instruction.** The pause below (originally 2026-09-10) asked for L1-L4 to be "confirmed merged to `main`" before dispatching L6+. That literal condition never happened — instead the user directed all nine Track L/P/R branches (L1-L5, R1, R3, P0-P2, P4) to be merged into `feat/alm-figma-killer-studio-shell` (see `meta-09`), then explicitly said to continue the plan. **`feat/alm-figma-killer-studio-shell` is therefore the real integration branch every subsequent Track L/P/R work order should target and verify against — not bare `origin/main`.** Any work order below that says "wait for `main`" or "PRs #91-94 must merge to `main` first" is reading the ORIGINAL, now-superseded condition; treat `feat/alm-figma-killer-studio-shell`'s current state (verified in `meta-09`) as the real base instead. PRs #90-99 themselves are untouched and their fate (close/keep open) is a separate, not-yet-made human call.
 
+### panel-30 — Fill (and later Stroke/Shadow/Blur) disclosure judged on STORED, not RENDERED — "the bg is white, I don't see it in Fill" (work order)
+- **Agent:** studio-architect (design, this entry) → `panel-designer` (implementation)
+- **Stage:** design — not started. Work order only, nothing coded.
+- **Updated:** 2026-09-16
+- **Roadmap:** `STUDIO-LIVE-CANVAS-PLAN.md` §P3/§P5 are both shipped (`panel-25`, `panel-26`) but this is a real defect inside what they shipped, not a new roadmap item — no plan-doc section names it. Closest kin: `docs/features/inspector.md` §5.0 (`resolveStyleFieldDisplay`, field-level prefill) and its own explicit carve-out, quoted verbatim below, which is the exact thing this ticket revisits.
+- **User's own words (verbatim, from the panel's most substantive feedback so far):** *"something I can't understand is there is a lot of elements missing still like I can't see typography colors for example"*; *"some aspects of the selected element are not reflected in properties for example if I choosed body, and the bg is white I don't see that in the fill"*; *"it's not see it should show me white."* Screenshot: a selected element rendering on an obviously white background, Fill collapsed to its empty one-line header beside it.
+
+#### Goal
+One root cause, not two: **Law 1's section-open/closed decision, and the Fill list's per-row existence, are both judged ONLY on the STORED style bag** (`docs/features/inspector.md` §5.0's own words: *"Law 1's disclosure, which is judged on the STORED bag and is untouched by prefill"*) **— never on what the frame actually renders.** `FillSection.tsx`'s `setAnywhere` (the Law-1 `empty` predicate) and every row's `showXEntry` guard (`showTextEntry`/`showColorEntry`/…) read `storedStyles` exclusively; `currentStyles`/`computedValues` are computed in the same function and threaded into two popover bodies already, but never consulted for "should this section/row exist at all." So an element whose `background-color` resolves to white through an ambient/global CSS rule the parser captured but never attached to this node's `classIds` (`StyleRule.kind: 'ambient'` — `body {}`, `h1 {}`, any selector-attached rule, `src/core/page-tree/styleRule.ts`), or through simple inheritance for `color`, shows a collapsed Fill even though the canvas right next to it is plainly white. This is the field-level bug `styleFieldDisplay.ts`/`stylePlaceholder.ts` already solved once, for SCALAR always-resident sections (Measures, etc.) — Track P3's list-style sections (Fill/Stroke/Shadow/Blur) never got the same treatment because they gate on section-level presence, not per-field prefill, and nobody carried the fix across that boundary.
+
+**"Typography colors" is the same bug, not a placement bug.** `color` is deliberately filed under Fill, not Text (`TextSection.tsx`'s own doc, G9.4: *"`color`/`textShadow` stay claimed by Fill/Shadow… a text node's colour is its fill"*) — and Penpot's own measured baseline agrees (`docs/audits/penpot-inspector-baseline/02-measurements.md` records Penpot's own Fill-section text colours, not a separate Typography-panel field). So the placement decision already made in `panel-25` stands; what's missing is that `color` on a text node with no explicit declaration ANYWHERE (the overwhelmingly common case — most `<p>`/`<span>`/`<div>` text never declares `color`, it just inherits black or the theme colour) never opens Fill's Text row, so it always reads as "no colour," which is what the user actually reported.
+
+#### DONE WHEN (observable)
+1. Select `body` (or any element) whose rendered background is a real, non-default colour with nothing in its own inline styles or assigned classes — Fill opens, shows a "Solid fill" row with the real colour, rendered in a visually distinct MUTED treatment (not indistinguishable from a stored value), and the row's popover shows that same colour.
+2. Select a text-bearing element with no `color` declared anywhere — Fill opens, shows a "Text" row with the real inherited colour, muted, same treatment.
+3. Select a `<div>` with no visible text and no explicit background (both computed values at their true CSS initial value: `transparent`, and — for `color` — the node has no rendered text content) — Fill stays collapsed exactly as today. **No flood**: an ordinary layout container does not sprout a Fill body just because `getComputedStyle` always returns SOME value for every property.
+4. Typing a new value into a muted row commits it for real, through the SAME `resolveWriteTarget`/`commitStyle` machinery every other field already uses — no new write path. If no honest target exists (`resolveWriteTarget` returns `{kind:'none', reason}`), the popover shows that reason instead of silently eating the keystroke.
+5. A stored value's row is completely unaffected — same summary, same edit, same remove button, same "N set" bookkeeping (unchanged, still judged on `storedStyles` — see Decisions).
+6. `bun test src/admin/pages/site/inspector` and `bun run build` pass; the existing `fillSection.test.tsx` suite (Law 1 empty-state test included) passes unchanged.
+
+#### Recon — what already exists and must be reused, not rebuilt
+- **`PropertyProvenance`** (`panels/PropertiesPanel/stylePropertyProvenance.ts`) already carries everything needed per property: `sources` (empty when nothing declares it anywhere in the node's own class chain + inline bag), `computedValue` (ground truth from the frame), and `inherited` (true when `sources.length === 0`, a computed value exists, AND the property is in the small `INHERITED_PROPERTIES` allow-list — `color` is already in it). **`SelectionModel.provenanceByProperty` already computes this for every `ALL_CURATED_CSS_PROPERTIES` key, including all of Fill's** — `FillSection.tsx` just never reads `model.provenanceByProperty`.
+- **`collapsedStyleBag.ts`'s `buildCollapsedCurrentStyles`** already merges `computedValues` under the class chain under `storedStyles` into a `currentStyles` bag `FillSection.tsx` already builds and already threads into `OrphanSatellitesBody`/`ContentFitPopoverBody` — it is simply never consulted for `setAnywhere` or the four `showXEntry` row guards.
+- **`resolveWriteTarget`/`resolveExistingWriteTarget`** (`inspector/resolveWriteTarget.ts`) already do the right thing for a property with an EMPTY provenance (no stored source anywhere): fall through to the node's one writable class, else inline, else `{kind:'none', reason}`. **Nothing about the write path needs to change** — a muted row committing a new value is exactly the same call `commitApi.ts`'s `commitStyle` already makes for a totally blank field today. The only new requirement is surfacing `{kind:'none'}`'s reason in the popover instead of the current silent no-op (`commitApi.ts`'s own comment: *"the row should already be disabled by the caller when this is reachable"* — Fill's popovers don't do this yet for ANY row, stored or not; this ticket only needs to add it for the new muted rows, since a stored row by construction already has a real source and therefore a real target).
+- **`resolveStyleFieldDisplay`/`stylePlaceholder.ts`** already established the exact "stored, then current-muted, then placeholder" three-tier vocabulary and the load-bearing "committing a prefilled value writes it for real; committing the SAME value writes nothing" rule — this ticket generalizes that vocabulary from scalar single-value fields to `PropertyList` ROWS, it does not invent a second one.
+- **`getCSSPropertyDefaultValue`/`DEFAULT_CSS_VALUES`** (`cssControlTypes.ts`) — **looks reusable for "is this just a UA default," and is NOT.** Its own doc says it answers *"the initial value to use when ADDING a property via search"* — a UX seed value, not always the true CSS initial/computed value. Confirmed wrong for at least `objectFit` (table says `'cover'`; true CSS initial is `'fill'`) and `objectPosition` (table says `'center center'`; `getComputedStyle` normalizes to `'50% 50%'` — same value, different spelling, a naive string compare would misfire). `backgroundColor`/`backgroundImage`/`backgroundSize`/`backgroundPosition`/`backgroundRepeat`/`backgroundAttachment`/`backgroundOrigin`/`backgroundClip`/`backgroundBlendMode` DO happen to already hold their correct true-CSS-initial values in that table — but "happens to be right for 9 of 13" is not a foundation to build a correctness gate on. **Do not reuse `DEFAULT_CSS_VALUES` for the new UA-default filter** — build a small, explicit, separately-named table (see Contracts).
+
+#### The presentation model (what a shown-but-not-stored value looks like)
+Generalizes `docs/features/inspector.md` §5.0's existing three-tier rule from a scalar field to a `PropertyList` row, reusing its vocabulary rather than inventing a parallel one:
+
+1. **Stored** (today's only state): normal-weight swatch/summary, remove button present, counts toward "N set"/the indicator dot.
+2. **Rendered, not stored** (new): the row exists, its swatch/summary/value read from `currentStyles`/`computedValue` instead of `storedStyles`, rendered in the panel's existing muted tone (`--text-muted`, the same token `styleFieldDisplay.ts`'s `inherited` flag already drives elsewhere — **no new token**). No remove button (there is nothing stored to remove — see Decisions). Clicking the row still opens the same popover; the field inside prefills with the rendered value, and — per §5.0's already-established rule, reused verbatim — committing it writes for real, committing the identical value writes nothing.
+3. **Genuinely unset** (today's collapsed/absent state): no row at all.
+
+`PropertyListEntry` (the shared `@ui/components/PropertyList` primitive, also used by Stroke/Shadow/Blur) needs one small additive extension to carry state (2) generically: a `muted?: boolean` flag the row renders with a muted class, and a `removable?: boolean` (default `true`) so a muted entry can suppress its own remove button without every OTHER caller having to pass one. Both are additive/optional — Stroke/Shadow/Blur's existing calls need zero changes until their own follow-up PR opts in.
+
+#### The UA-default guard (how this avoids flooding every section)
+Two different rules for two different property shapes, matching how `PropertyProvenance` already splits them:
+
+- **Inherited properties** (`color`, `fontFamily`, … — `INHERITED_PROPERTIES` in `stylePropertyProvenance.ts`): `provenance.inherited === true` is already exactly the right signal (no source anywhere + a real computed value + the property is one CSS inherits) — reuse it as-is, no new table.
+- **Non-inherited properties** (`backgroundColor`, `backgroundImage`, …): compare `computedValue` against that property's TRUE CSS initial value, normalized. When they match, the element genuinely has nothing painted — stays collapsed exactly as today. When they differ, something real is rendering that Studio cannot attribute to a stored source — show it, muted. Needs a new, small, explicitly-scoped table (see Contracts) — not `DEFAULT_CSS_VALUES` (see Recon).
+- **Loading state:** while `model.computedValuesLoading` is `true` (Tier 2 bridge-mode async measure, `panel-26`), keep the OLD stored-only disclosure — do not let a not-yet-arrived `undefined` computed value either show or hide a row. Once loading resolves, re-evaluate normally. Accept the possibility of the section popping open a tick after selection on a Tier 2 board (same accepted tradeoff `panel-26`'s own "Measuring…" precedent already established elsewhere); do not build new loading chrome for this in PR1 — flag it as a dogfood follow-up if it reads as jarring.
+- **Scope cut, named on purpose:** the background-image LAYER stack (`backgroundLayers.ts`'s per-layer rows), `objectFit`/`objectPosition` (Content fit), and the `background` shorthand escape hatch stay stored-only in this PR. `getComputedStyle('background-image')` returns a fully expanded, often lossy string that cannot be reliably re-parsed into an editable per-layer model the way `stylePlaceholder.ts`'s own "expansion noise" carve-out already refuses to do for shorthands generally — extending the muted-row treatment to layers is real, separate work with its own edge cases, not needed to answer the user's literal complaint (a solid background colour and a text colour), and not worth the risk in the PR that proves the mechanism.
+
+#### Editing a shown-but-not-stored value
+No new write mechanism. `resolveWriteTarget` already handles "nothing declares this property anywhere" by falling through to the node's single writable class, then inline, then `{kind:'none', reason}` — exactly the same rule that already applies to any blank field today. The one real gap: **Fill's popovers currently never check for `{kind:'none'}` and would silently no-op a keystroke** (`commitApi.ts`'s own comment says the caller is responsible for disabling this case; today's Fill never does, for any row). This ticket closes that gap for the new muted rows specifically (existing stored rows already have a real source, so a real target almost always resolves): before rendering `ColorValueInput` for a muted `text`/`color` entry, call `model.writeTargetFor(property)`; if `kind === 'none'`, render the existing `SourceConstraintNotice` component (`panels/PropertiesPanel/SourceConstraintNotice.tsx` — already the panel's established "say so, don't hide it" refusal-copy component, matching R3's "refusal as a choice in the field's own popover") with `target.reason` above the (now-disabled) colour field, instead of a silently inert control.
+
+#### FILES
+```
+create  src/admin/pages/site/inspector/cssInitialValues.ts
+  — new, small, explicitly-scoped table of TRUE CSS initial values for
+    Fill's 13 claimed properties (backgroundColor, background, backgroundImage,
+    backgroundSize, backgroundPosition, backgroundRepeat, backgroundAttachment,
+    backgroundOrigin, backgroundClip, backgroundBlendMode, objectFit,
+    objectPosition — color is handled via `inherited`, not this table) plus a
+    normalized-equality comparator. Color-valued entries (`backgroundColor`)
+    compare via `parseCssColor` (`@ui/components/ColorPickerPopover`, already
+    imported by `FillSectionParts.tsx`) so `'transparent'` and
+    `'rgba(0, 0, 0, 0)'` are recognized as equal; non-color entries fall back
+    to `stylePropertyProvenance.ts`'s existing `normalizeForComparison`
+    (needs exporting — see modify list). On a parse failure or an unknown
+    property, default to "meaningful" (show it) — a false positive here just
+    shows a real value in an unusual spelling; a false negative silently
+    re-hides the exact fact this ticket exists to surface.
+
+create  src/admin/pages/site/inspector/renderedNotStored.ts
+  — the ONE shared predicate, reused by Fill now and by Stroke/Shadow/Blur in
+    their own follow-up PRs (see Sequencing): `rendersUnstoredValue(provenance:
+    PropertyProvenance): boolean` — false if `sources.length > 0` or
+    `computedValue === undefined`; true if `inherited`; otherwise the result of
+    `cssInitialValues.ts`'s comparator. Pure, no React, no store — same shape
+    as `resolveWriteTarget.ts`/`resolveStyleFieldDisplay.ts`, easy to unit test
+    in isolation.
+
+modify  src/admin/pages/site/panels/PropertiesPanel/stylePropertyProvenance.ts
+  — export the existing private `normalizeForComparison` (currently
+    module-private) so `cssInitialValues.ts` reuses it instead of duplicating
+    a second lowercase/trim/collapse-whitespace normalizer. No behavior change.
+
+modify  src/admin/pages/site/inspector/sections/FillSection.tsx
+  — destructure `provenanceByProperty`, `computedValuesLoading` from
+    `useSelectionModel()` (already returns both; just not read here today).
+    `setAnywhere` gains an OR-branch: `!computedValuesLoading &&
+    (rendersUnstoredValue(provenanceByProperty.get('backgroundColor')) ||
+    (isTextNode(selectedNode) && rendersUnstoredValue(provenanceByProperty.get('color'))))`
+    — `isTextNode` imported from `panels/PropertiesPanel/styleSectionOrder.ts`
+    (already used by `TextSection`'s own `appliesTo`; the text-node gate is
+    what stops an ordinary non-text `<div>`'s inherited black `color` from
+    popping Fill open for no visible reason). `textValue`/`colorValue` each
+    gain a fallback to the muted (computed) value when nothing is stored, and
+    a companion `textStored`/`colorStored` boolean drives the new `muted`/
+    `removable` flags on their `PropertyListEntry`. `handleRemove`'s `text`/
+    `color` cases become no-ops when the entry isn't stored (defensive; the
+    row shouldn't offer remove at all once `removable: false` reaches
+    `PropertyList`). The `text`/`color` popover bodies gain the
+    `SourceConstraintNotice` refusal check described above. Module doc comment
+    updated: the existing "LAW 1 — EMPTY vs. POPULATED" section gains a
+    paragraph naming the new rule and pointing at `renderedNotStored.ts`.
+
+modify  src/ui/components/PropertyList/PropertyList.tsx (+ .module.css)
+  — additive: `PropertyListEntry.muted?: boolean` (renders the row's
+    label/summary/value in the muted tone, same visual language the file
+    header comment for `inherited` already uses elsewhere in this panel) and
+    `PropertyListEntry.removable?: boolean` (default `true`; when `false`,
+    the remove button is omitted for that row, not merely disabled — nothing
+    to remove). Both optional, backward compatible — Stroke/Shadow/Blur's
+    existing entries compile and render byte-identical without passing
+    either.
+
+modify  docs/features/inspector.md
+  — §5.0's own text ("Law 1's disclosure… is judged on the STORED bag and is
+    untouched by prefill") is now false for Fill specifically; correct it in
+    place, describe the new `renderedNotStored.ts` predicate, and note the
+    scope boundary (Fill only today; Stroke/Shadow/Blur named as the
+    follow-up). Add a short new subsection under §4 (Law 1) cross-referencing
+    it, so the next reader of Law 1 doesn't re-discover this split from
+    scratch.
+```
+
+#### STEPS (each leaves the tree building)
+1. `cssInitialValues.ts` + its own unit test (pure table + comparator, no React) → yes.
+2. Export `normalizeForComparison` from `stylePropertyProvenance.ts`; update its one new caller → yes.
+3. `renderedNotStored.ts` + its own unit test (feed it hand-built `PropertyProvenance` fixtures: stored source present → false; no source, `inherited: true` → true; no source, non-inherited, computed === true initial → false; no source, non-inherited, computed !== initial → true; `computedValue: undefined` → false) → yes.
+4. `PropertyList.tsx`/`.module.css` — add `muted`/`removable`, extend `PropertyList.test.tsx` with the two new cases (a muted row renders the muted class and no remove button; an un-muted row is pixel-identical to today) → yes.
+5. `FillSection.tsx` — wire `renderedNotStored.ts` into `setAnywhere` and the two row guards, add the `SourceConstraintNotice` refusal check to the two popover bodies, update the module doc → yes.
+6. New tests in `fillSection.test.tsx` (see Gates) — build a real iframe fixture via `registerFrameAdapter`/`PortalFrameAdapter` (the exact pattern `src/__tests__/panels/useInspectComputedStyle.test.tsx` already establishes — do not invent a second computed-style test fixture pattern) so `computedValues` is real, not `null`, then assert the four DONE-WHEN cases → yes.
+7. `docs/features/inspector.md` update → yes.
+8. `bun run build && bun test src/admin/pages/site/inspector src/ui/components/PropertyList && bun run lint` on the touched files.
+
+#### CONTRACTS
+```ts
+// src/admin/pages/site/inspector/cssInitialValues.ts
+export function isTrueCssInitialValue(
+  property: keyof CSSPropertyBag,
+  computedValue: string,
+): boolean
+
+// src/admin/pages/site/inspector/renderedNotStored.ts
+export function rendersUnstoredValue(
+  provenance: PropertyProvenance | undefined,
+): boolean
+
+// src/ui/components/PropertyList/PropertyList.tsx — additive fields only
+export interface PropertyListEntry<T = unknown> {
+  // …unchanged existing fields…
+  muted?: boolean
+  removable?: boolean // default true
+}
+```
+No server/HTTP surface, no new store action, no new codemod, no schema change — this is a read-side (disclosure) + row-visual change only. The write path is the existing `resolveWriteTarget` → `commitApi.commitStyle` call, unchanged.
+
+#### GATES
+- `src/admin/pages/site/inspector/__tests__/renderedNotStored.test.ts` (new) — the four cases in Step 3.
+- `src/admin/pages/site/inspector/__tests__/cssInitialValues.test.ts` (new) — `backgroundColor` `'transparent'`/`'rgba(0, 0, 0, 0)'` both read as initial; `objectFit` `'fill'` reads as initial (proving this table is NOT `DEFAULT_CSS_VALUES`, which would get this one wrong); a real non-default colour reads as non-initial.
+- `src/ui/components/PropertyList/PropertyList.test.tsx` — extended with `muted`/`removable` cases.
+- `src/admin/pages/site/inspector/sections/__tests__/fillSection.test.tsx` — extended: (a) existing Law-1-empty test passes unchanged with no computed values registered (proves zero behavior change for the untouched path); (b) a fixture with a real `PortalFrameAdapter`-backed iframe whose CSS sets `background-color: white` on the node with nothing stored anywhere — Fill opens, shows a muted "Solid fill" row, no remove button, editing it calls `updateClassStyles`/`setNodeInlineStyles` (whichever `resolveWriteTarget` picks for that fixture) with the typed value; (c) same fixture but the fixture's writable-class/inline paths are both deliberately closed off — the popover shows `SourceConstraintNotice` with `resolveWriteTarget`'s reason, no store write fires on a keystroke; (d) an inherited, un-set `color` on a text node opens Fill's Text row muted; the SAME fixture on a non-text container (`isTextNode` false) stays collapsed even with an identical inherited computed `color`; (e) `computedValuesLoading: true` keeps the section in its old collapsed state regardless of what `computedValues` would otherwise say.
+- No architecture gate needs a new rule — no banned import, no new token family (reuses `--text-muted`), no folder-layout change.
+
+#### RISKS
+- **False "meaningful" positives from an unrecognized/unparseable computed value** (e.g. a future CSS value shape `parseCssColor` doesn't understand) show a row that's technically at its default in an unusual spelling. Accepted per Decisions — favors over-showing (cosmetic noise, fixable by extending the comparator) over under-showing (the exact bug this ticket exists to close).
+- **`isTextNode` false negative** (a node that visually renders text through a path the parser doesn't classify as a "text node") would keep Fill's Text row collapsed for a real inherited colour. Bounded: `isTextNode` already exists and is already trusted by `TextSection`'s own `appliesTo` gate for the identical purpose — this ticket does not need it to be more correct than that existing usage already is.
+- **PropertyList's `muted`/`removable` additions are generic enough that Stroke/Shadow/Blur will eventually want them too** — if a later PR reimplements a parallel "is this row real" check instead of reusing `renderedNotStored.ts`, that is exactly the "two ways of doing something" `CLAUDE.md` bans. Named explicitly in Sequencing below so the next agent doesn't have to rediscover this.
+- **Module-size**: `FillSection.tsx` is already substantial (see its own current line count before this change); adding the muted-row branches keeps it under the 700-line `module-size-budgets.test.ts` ceiling by inspection, but re-measure in Step 8, don't assume.
+
+#### DECISIONS
+- **Text colour stays in Fill.** Already decided correctly in `panel-25` (G9.4) and matches Penpot's own measured baseline (`docs/audits/penpot-inspector-baseline/`) — a text node's colour is its fill in both CSS and Penpot's own object model. The user's "I can't see typography colors" complaint is the SAME disclosure bug as the background-white complaint, not evidence the placement is wrong. Mirroring `color` into BOTH Text and Fill was considered and rejected: it would be a second, parallel place to read/write the same property, and `CLAUDE.md` explicitly bans "two ways of doing something" — one honest home, already chosen, stays.
+- **Law 1's INDICATOR/"N set" count stays tied to `storedStyles` only, unchanged.** Only the `empty` (collapse) predicate and the row's existence/visual treatment change. A section popping open because something renders is not the same claim as "N properties are set here" — conflating the two would make the indicator dot lie about what's actually saved, which is the opposite of this ticket's goal.
+- **A rendered-not-stored row never offers Remove.** There is nothing stored to remove; offering a disabled or fake Remove button would either do nothing (confusing) or, worse, attempt to write an explicit override (`background-color: transparent`) just to "undo" a value the user never asked to store. Editing commits for real (§5.0's existing rule, reused); there is no undo affordance beyond the ordinary "type a different value" or Ctrl+Z on whatever the user DID type.
+- **Ambient-selector attribution (naming WHICH rule — `body {}`, a global stylesheet — produced the rendered value) is explicitly out of scope for this ticket.** `StyleRule.kind: 'ambient'` rules are real, parsed, first-class objects (`src/core/page-tree/styleRule.ts`) that plausibly explain many of these cases, but attributing a computed value to a specific ambient selector requires real CSS cascade/specificity matching against the DOM — a nontrivial parser feature `stylePropertyProvenance.ts`'s own doc already declines to build ("this module never resolves the CSS cascade itself"). Showing the honest computed value without claiming to know its exact source is sufficient to fix the user's actual complaint and is not a regression versus today (today shows nothing at all). Flagged as a real, worthwhile follow-up (`panel-3x`, name TBD) if a future session wants to make ambient rules directly editable from the row that renders their effect — NOT required here.
+- **`DEFAULT_CSS_VALUES` is not reused for the UA-default guard**, even though it looks tempting and lives one file away — see Recon for the concrete `objectFit`/`objectPosition` mismatches that make it actively wrong for this purpose. A new, small, explicitly-scoped table is the correct move, not a shim on top of a table built for a different question.
+- **Background-image layers, Content fit, and the `background` shorthand stay stored-only in this PR** — a deliberate scope cut (see the guard section above), not an oversight. Named in Sequencing as PR2/3 candidates once the mechanism is proven.
+
+#### Sequencing (recommended, not mandated)
+1. **PR1 — this ticket.** Fill only: `color` (text) + `backgroundColor` (solid fill). Proves the mechanism (`renderedNotStored.ts`, `cssInitialValues.ts`, `PropertyList`'s `muted`/`removable`, the `SourceConstraintNotice` refusal wiring) end to end on the two properties the user's own report names.
+2. **PR2 — Stroke.** `borderColor`/border presence follow the identical pattern; extend `cssInitialValues.ts` with border's true initial values (`border-style: none` is already correct in `DEFAULT_CSS_VALUES` by coincidence — still re-verify, don't assume, per this ticket's own finding).
+3. **PR3 — Shadow, Blur.** `boxShadow: 'none'`/`filter: 'none'` are the relevant defaults; likely the smallest of the three follow-ups since neither section has a border-style-equivalent extra axis.
+4. **PR4 (optional, only if a dogfood asks for it) — Fill's background-image layer stack, Content fit, shorthand.** The scope cut named above; genuinely harder (lossy shorthand expansion), do not bundle into PR1-3.
+5. **Not sequenced, explicitly deferred:** ambient-selector attribution (see Decisions).
+
+#### Human action needed
+None yet — this is a design-only entry. Once PR1 lands: dogfood against a real project with a global `body { background: … }`-style rule (or any element whose background comes from an ambient/ancestor source) and confirm Fill opens with the real colour, muted, and that typing a new value actually reaches the file Studio picks as the write target.
+
 ### server-21 — findScaffoldedI18n found the wrong directory in a `src/`-shaped project
 - **Agent:** server-engineer
 - **Stage:** done — PR [#118](https://github.com/maherfayad-stack/Figma-Killer-2/pull/118) open (draft) against `feat/alm-figma-killer-studio-shell`.
