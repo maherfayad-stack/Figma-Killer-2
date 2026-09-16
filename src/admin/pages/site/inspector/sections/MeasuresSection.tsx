@@ -12,9 +12,10 @@
  * `02-measurements.md`'s own Y-origins prove radius sits in the SAME section
  * as W/H/X/Y/rotation, not bundled with opacity/blend the way the old
  * `AppearanceSection.tsx` grouped them: `W/H row y=180` (Δ16 from Layer above
- * it — a real section-boundary gap, `--inspector-gap-group`), `X/Y row y=216`
- * (Δ4 — tightly paired, `--inspector-gap-tight`), `rotation/radius row y=252`
- * (Δ4 — ALSO tightly paired). Rotation therefore now pairs with RADIUS on one
+ * it — a real section-boundary gap; this file's own `.measures` renders that
+ * boundary with `--inspector-space-m`, the panel's between-group step),
+ * `X/Y row y=216` (Δ4 — tightly paired, `--inspector-space-2xs`),
+ * `rotation/radius row y=252` (Δ4 — ALSO tightly paired). Rotation therefore now pairs with RADIUS on one
  * row, not with the z-index settings trigger the way the old
  * `PositionSection.tsx` paired them — see "Where z-index lives" below for
  * where that trigger moved instead. The whole block is unlabeled — Penpot's

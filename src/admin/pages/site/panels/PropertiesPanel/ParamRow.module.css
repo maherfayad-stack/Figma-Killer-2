@@ -13,9 +13,13 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* This card floats flush inside `ComponentRefView`'s `.paramsList` (no
+   ancestor padding), so its horizontal inset must be the frozen
+   `--inspector-pad-x`, not `--inspector-space-l` — vertical breathing stays
+   on the internal space scale. */
 .rowWrapperDefault {
   gap: var(--inspector-space-m);
-  padding: var(--inspector-space-l);
+  padding: var(--inspector-space-l) var(--inspector-pad-x);
   border-bottom: none;
   border-radius: var(--panel-radius);
   background: var(--bg-surface-2);
@@ -69,13 +73,19 @@
 }
 
 /* ── Main row: label | value | chips ─────────────────────────────────────── */
+/* `.row` is rendered flush inside `ComponentRefView`'s `.paramsList` — no
+   ancestor supplies `--inspector-pad-x`, so this row applied it. It used to
+   reach for `--inspector-space-s` (6px), sitting 6px shy of the frozen 12px
+   inset the `.header` strip above it uses — the label text visibly started
+   further left than the header. `min-height` was a literal `28px`; every
+   other property row in the panel floors at `--inspector-row-h` (32px). */
 
 .row {
   display: flex;
   align-items: center;
   gap: var(--inspector-space-xs);
-  padding: var(--inspector-space-3xs) var(--inspector-space-s);
-  min-height: 28px;
+  padding: var(--inspector-space-3xs) var(--inspector-pad-x);
+  min-height: var(--inspector-row-h);
 }
 
 /* ── Label slot ──────────────────────────────────────────────────────────── */
@@ -166,7 +176,7 @@
 .nameError {
   font-size: var(--text-2xs);
   color: var(--danger-text);
-  padding: var(--inspector-space-4xs) var(--inspector-space-s) var(--inspector-space-3xs);
+  padding: var(--inspector-space-4xs) var(--inspector-pad-x) var(--inspector-space-3xs);
   line-height: 1.4;
 }
 
@@ -180,13 +190,13 @@
   display: flex;
   flex-direction: column;
   gap: var(--inspector-space-xs);
-  padding: var(--inspector-space-xs) var(--inspector-space-s) var(--inspector-space-s);
+  padding: var(--inspector-space-xs) var(--inspector-pad-x) var(--inspector-space-s);
   background: var(--bg-surface-2);
   border-top: 1px solid var(--border);
 }
 
 .rowWrapperDefault .advanced {
-  padding: var(--inspector-space-m);
+  padding: var(--inspector-space-m) var(--inspector-pad-x);
   border-top: none;
   border-radius: var(--panel-radius);
   background: var(--bg-surface);

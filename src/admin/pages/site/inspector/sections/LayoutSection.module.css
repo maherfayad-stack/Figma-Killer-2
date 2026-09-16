@@ -5,10 +5,20 @@
  * documented: several children (align pad, gap fields, padding/margin
  * clusters) have intrinsic widths past the panel's content column, and
  * without this the column grows to fit them.
+ *
+ * Spacing hierarchy (fix/inspector-spacing-audit): `.layoutSection`'s own
+ * gap sits BETWEEN four distinct groups — LayoutModeRow, the flex/grid
+ * block, PaddingCluster, the margin row — so it uses `--inspector-space-m`,
+ * the panel's between-group step. Every gap below it (`.flexBlock` and its
+ * own children) sits WITHIN one of those groups — direction/wrap/align/gap
+ * are all facets of the same "auto layout" decision — so those use
+ * `--inspector-space-2xs`, the within-group step. Both used to read the
+ * same 4px `--inspector-gap-tight` token, which is exactly why Layout's
+ * padding/flex/margin groups didn't read as separate groups.
  */
 .layoutSection {
     display: grid;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-m);
     min-width: 0;
 }
 
@@ -19,14 +29,14 @@
 
 .flexBlock {
     display: grid;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
 }
 
 /* Direction control + the wrap toggle, sharing one row. */
 .flexHeaderRow {
     display: flex;
     align-items: center;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
 }
 
 .flexHeaderRow > *:first-child {
@@ -40,7 +50,7 @@
 .alignGapRow {
     display: flex;
     align-items: center;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
 }
 
 /* Row gap / column gap, side by side — mirrors Penpot's own two-field row
@@ -48,7 +58,7 @@
 .gapRow {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
 }
 
 /* Margin cluster + the "Box model" settings trigger, one row — same shape
@@ -56,7 +66,7 @@
 .marginRow {
     display: flex;
     align-items: center;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
 }
 
 .marginRow > *:first-child {

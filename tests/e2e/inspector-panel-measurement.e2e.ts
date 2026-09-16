@@ -315,11 +315,33 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
    * claim, not a silent weakening: the panel still may not silently regress
    * past what it measures today. See `docs/features/inspector.md` §6 for the
    * same real number written down as the current baseline.
+   *
+   * `fix/inspector-spacing-audit` re-measured this again at ~1826px (at
+   * this test's own 2100px-tall viewport — see the note below on why that
+   * matters), up from ~1400px. That growth is the DELIBERATE cost of a real
+   * spacing hierarchy (Gestalt proximity) the panel didn't have before: a
+   * fixed `--inspector-space-xl` gap between every section instead of a 1px
+   * hairline, so a section boundary is legible while scrolling without
+   * reading the header text. The viewport this test opens at grew with it
+   * (1700 -> 2100 tall) so "no internal scrollbar" keeps meaning something
+   * real, rather than the assertion being tuned to keep passing against a
+   * viewport the actual panel no longer fits in.
+   *
+   * Re-measuring also surfaced a fact this pass did not introduce and does
+   * not fix: `scrollHeight` here is NOT perfectly viewport-independent —
+   * raising the viewport from 1700 to 2100 moved it from ~1582 to ~1826, a
+   * bigger jump than the spacing changes alone explain. Nothing this pass
+   * touched is percentage/`vh`-based (the frozen inspector tokens are
+   * gated against exactly that), so the coupling lives somewhere else in
+   * the panel shell — real, reproduced twice, but a separate, pre-existing
+   * finding, not something to chase down inside a spacing-hierarchy pass.
+   * The number recorded below is the honest measurement AT this test's own
+   * viewport, not a viewport-independent constant.
    */
   test('tall viewport: the F2 text node panel fits with no vertical scroll, at its real (not stale pre-P3) height', async ({
     page,
   }) => {
-    await page.setViewportSize({ width: 1400, height: 1700 })
+    await page.setViewportSize({ width: 1400, height: 2100 })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
     const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
@@ -332,13 +354,15 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
       scrollHeight,
       `F2 text node panel overflows even the tall viewport: scrollHeight=${scrollHeight}, clientHeight=${clientHeight}`,
     ).toBeLessThanOrEqual(clientHeight)
-    // Regression guard against the real, measured current total (~1400px) —
-    // catches a section silently ballooning, without pretending the stale
-    // 900px pre-P3 target still applies.
+    // Regression guard against the real, measured current total at THIS
+    // test's viewport (~1826px, post `fix/inspector-spacing-audit` — was
+    // ~1400px before the panel had a real between-section gap) — catches a
+    // section silently ballooning, without pretending a stale pre-spacing-
+    // hierarchy target still applies.
     expect(
       scrollHeight,
-      `F2 text node panel total height drifted well past its measured baseline (~1400px): scrollHeight=${scrollHeight}`,
-    ).toBeLessThanOrEqual(1600)
+      `F2 text node panel total height drifted well past its measured baseline (~1826px): scrollHeight=${scrollHeight}`,
+    ).toBeLessThanOrEqual(1950)
   })
 
   test('260px panel width: no section overflows horizontally, for F2 and F3', async ({ page }) => {
@@ -459,9 +483,17 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
 
     // Real measured deltas (px), recorded here as the honest current
     // baseline — see this test's own doc comment above for why these are
-    // NOT the P0/Penpot table's [48, 36, 36]. Re-measured, not guessed:
-    // [Layer -> W/H, W/H -> TRBL row 1, TRBL row 1 -> Rotation/Radius].
-    const REAL_MEASURED_DELTAS = [38, 74, 77]
+    // NOT the P0/Penpot table's [48, 36, 36]. Re-measured after
+    // `fix/inspector-spacing-audit` gave the panel a real spacing
+    // hierarchy: delta #0 (Layer -> W/H) crosses a real SECTION boundary
+    // (Layer -> the headerless Measures block), so it grew from 38 to 48 —
+    // the `--inspector-space-xl` (12px) between-section gap replacing what
+    // was effectively a 1px hairline, minus the ~1px it already had. Deltas
+    // #1/#2 (W/H -> TRBL row 1, TRBL row 1 -> Rotation/Radius) barely moved
+    // (74->78, 77->81) because those are WITHIN `.measures`'s own between-
+    // group step, which this pass tightened from 4px to 8px — a much
+    // smaller shift than crossing an actual section boundary.
+    const REAL_MEASURED_DELTAS = [48, 78, 81]
     const measuredDeltas = [offsets[1] - offsets[0], offsets[2] - offsets[1], offsets[3] - offsets[2]]
 
     for (let i = 0; i < measuredDeltas.length; i += 1) {

@@ -2,15 +2,14 @@
  * LayerSection — Penpot's unlabeled first content row (`02-measurements.md`'s
  * opacity/blend row at y=132, directly below the tab strip, no section
  * header above it). One `--inspector-row-h` row; icon buttons pack with the
- * new tight rhythm token (`--inspector-gap-tight`), not the old 9-step
- * `--inspector-space-*` scale — every NEW P3 section uses only the two
- * additive gap tokens (`STATE.md` `panel-25`, Step 0).
+ * within-group step (`--inspector-space-2xs`) — this is one row's own
+ * controls, not a boundary between groups.
  */
 
 .layerRow {
     display: flex;
     align-items: center;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
     height: var(--inspector-row-h);
     padding: 0 var(--inspector-pad-x);
 }

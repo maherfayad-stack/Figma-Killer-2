@@ -8,10 +8,15 @@
  * `panel-25`, P3 item 6).
  */
 
+/* `.root`'s gap sits BETWEEN the two distinct groups this section stacks —
+   the `PropertyList` colour entry and the controls row below it — so it uses
+   `--inspector-space-m` (between-group), not `--inspector-field-gap` (that
+   token names pairing two FIELDS on the same row, the wrong concept for a
+   gap between two different rows). */
 .root {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-field-gap);
+    gap: var(--inspector-space-m);
     width: 100%;
 }
 
@@ -37,7 +42,7 @@
 .trailingActions {
     display: flex;
     align-items: center;
-    gap: var(--inspector-gap-tight);
+    gap: var(--inspector-space-2xs);
     flex-shrink: 0;
 }
 
@@ -68,7 +73,7 @@
 /* ── Sides menu ───────────────────────────────────────────────────────────── */
 
 .sidesMenuTitle {
-    padding: var(--inspector-gap-tight) var(--inspector-field-gap);
+    padding: var(--inspector-space-2xs) var(--inspector-field-gap);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-weight: 620;
