@@ -7,9 +7,15 @@
  *      written for a project that did not ask (no `designSystem: 'alm'` in
  *      `.studio/meta.json`). An imported GitHub repository must not grow
  *      600 KB of someone else's `.jsx` because it was opened.
- *   2. **Only the icons a component actually imports** are copied. The real
- *      package ships 568 SVGs and ~20 are referenced; copying all of them
- *      would put 3.8 MB into every project and every download.
+ *   2. **Only the assets something actually imports** are copied. The real
+ *      package ships 568 icon files and ~20 are referenced; copying all of
+ *      them would put 3.8 MB into every project and every download.
+ *      "Something" is TWO demand sources, and each one shipped a project that
+ *      would not build when it was missed: the design system's own components
+ *      (which import `.png` logotypes as well as `.svg` icons — an SVG-only
+ *      rule died on `Could not resolve "…/card-sample.png"`), and the
+ *      PROJECT'S OWN pages (`import smsSvg from '../design-system/icons/…'`,
+ *      which the migration writes and no component demands).
  *   3. **Idempotent.** A second run with the same source writes nothing, so a
  *      board open does not move mtimes and invalidate every cache keyed on
  *      them. A changed source file rewrites that file; a source file that goes
@@ -28,12 +34,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { designSystemImportSpecifier, ensureDesignSystemFiles } from '../designSystemFiles'
+import { ensureDesignSystemFiles } from '../designSystemFiles'
 import { isDesignSystemBacked } from '../builtinDesignSystem'
 
 let root: string
 let sourceDir: string
 let projectDir: string
+
+/** A real PNG header — bytes that are not valid UTF-8, so a text round-trip is visible as corruption. */
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0xfe, 0xff, 0x80])
 
 /** Every file in the fake vendor package, keyed by its path relative to the package root. */
 const VENDOR_FILES: Record<string, string> = {
@@ -50,6 +59,8 @@ const VENDOR_FILES: Record<string, string> = {
     "import { useDir } from '../context/DesignSystemContext'",
     "import './Button.css'",
     "import chevron from '../icons/line-icons/chevron.svg?raw'",
+    // The real `Button.jsx` imports `../icons/logotypes/payment/card-sample.png`.
+    "import card from '../icons/logotypes/card-sample.png'",
     'export function Button() { return null }',
     '',
   ].join('\n'),
@@ -71,6 +82,10 @@ const VENDOR_FILES: Record<string, string> = {
     '',
   ].join('\n'),
   'src/icons/line-icons/chevron.svg': '<svg id="chevron" />',
+  // Binary on purpose: PNG_BYTES is written raw, and a copy that round-trips
+  // through UTF-8 mangles it. Written by `writeVendor` as latin1, compared
+  // back as bytes.
+  'src/icons/logotypes/card-sample.png': PNG_BYTES.toString('latin1'),
   'src/icons/line-icons/close.svg': '<svg id="close" />',
   'src/icons/line-icons/search.svg': '<svg id="search" />',
   // The 545 nobody imports. Exactly one stands in for them.
@@ -81,7 +96,7 @@ function writeVendor(files: Record<string, string> = VENDOR_FILES): void {
   for (const [relPath, contents] of Object.entries(files)) {
     const abs = path.join(sourceDir, ...relPath.split('/'))
     fs.mkdirSync(path.dirname(abs), { recursive: true })
-    fs.writeFileSync(abs, contents)
+    fs.writeFileSync(abs, Buffer.from(contents, 'latin1'))
   }
 }
 
@@ -160,6 +175,8 @@ describe('ensureDesignSystemFiles — the first run', () => {
       'icons/line-icons/chevron.svg',
       'icons/line-icons/close.svg',
       'icons/line-icons/search.svg',
+      // Not an SVG, and imported by a component — see the module doc's (2).
+      'icons/logotypes/card-sample.png',
       'index.js',
       'tokens/index.css',
       'tokens/tokens.js',
@@ -284,6 +301,66 @@ describe('ensureDesignSystemFiles — staying in step', () => {
   })
 })
 
+describe('ensureDesignSystemFiles — what the PROJECT itself demands', () => {
+  beforeEach(() => {
+    writeVendor()
+    markBacked()
+  })
+
+  /** A page in the project that imports an icon straight out of the folder — what the migration writes. */
+  function writePageImporting(specifier: string): void {
+    const file = path.join(projectDir, 'pages', 'SMS.tsx')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, `import svg from '${specifier}'\nexport default function SMS() { return null }\n`)
+  }
+
+  it("copies an icon only the project's own source imports", () => {
+    // `never-imported.svg` is the stand-in for the 545 no component wants.
+    // The project wanting it is the whole demand.
+    writePageImporting('../design-system/icons/line-icons/never-imported.svg?raw')
+
+    ensure()
+
+    expect(folderContents()).toContain('icons/line-icons/never-imported.svg')
+  })
+
+  it('takes the icon back out when the last import of it goes away', () => {
+    writePageImporting('../design-system/icons/line-icons/never-imported.svg?raw')
+    ensure()
+
+    fs.rmSync(path.join(projectDir, 'pages', 'SMS.tsx'))
+    const result = ensure()
+
+    expect(result.removed).toEqual(['icons/line-icons/never-imported.svg'])
+    expect(folderContents()).not.toContain('icons/line-icons/never-imported.svg')
+  })
+
+  it('ignores an import that does not land in the folder, and one naming a file the vendored source has not got', () => {
+    writePageImporting('../assets/local-only.svg?raw')
+    const first = folderContentsAfter()
+
+    writePageImporting('../design-system/icons/line-icons/does-not-exist.svg?raw')
+
+    // Neither adds anything: one is the project's own asset, the other names
+    // an icon Studio cannot supply. A broken import in a user's source is
+    // theirs — this never invents a file for it.
+    expect(folderContentsAfter()).toEqual(first)
+  })
+
+  it('copies a binary asset byte-for-byte', () => {
+    ensure()
+
+    const copied = fs.readFileSync(path.join(projectDir, 'design-system', 'icons', 'logotypes', 'card-sample.png'))
+    expect(copied.equals(PNG_BYTES)).toBe(true)
+  })
+
+  /** `ensure()` then the folder listing — the two-step this describe repeats. */
+  function folderContentsAfter(): string[] {
+    ensure()
+    return folderContents()
+  }
+})
+
 describe('ensureDesignSystemFiles — refusals', () => {
   it('writes nothing for a project that never asked for a design system', () => {
     writeVendor()
@@ -358,21 +435,5 @@ describe('ensureDesignSystemFiles — refusals', () => {
     ensure()
 
     expect(folderContents()).not.toContain('components/linked/leak.css')
-  })
-})
-
-describe('designSystemImportSpecifier', () => {
-  it('is the relative path from the importing file\'s own directory', () => {
-    expect(designSystemImportSpecifier('/p', '/p/pages')).toBe('../design-system')
-    expect(designSystemImportSpecifier('/p', '/p/components')).toBe('../design-system')
-    expect(designSystemImportSpecifier('/p', '/p/prototype')).toBe('../design-system')
-    expect(designSystemImportSpecifier('/p', '/p/pages/onboarding')).toBe('../../design-system')
-  })
-
-  it('is always `./`- or `../`-prefixed, so it can never be read as a package name', () => {
-    expect(designSystemImportSpecifier('/p', '/p')).toBe('./design-system')
-    for (const from of ['/p', '/p/pages', '/p/a/b/c']) {
-      expect(designSystemImportSpecifier('/p', from).startsWith('.')).toBe(true)
-    }
   })
 })

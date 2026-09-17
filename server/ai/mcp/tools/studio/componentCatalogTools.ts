@@ -80,6 +80,7 @@ import type { BundledComponentSpec } from '../../../../handlers/studio/component
 import type { PropKind, PropSpec } from '../../../../handlers/studio/packageManifestSchema'
 import { collectFigmaCodeConnectComponents } from '../../../../handlers/studio/figmaCodeConnect'
 import { PROJECT_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from '../../../../handlers/studio/builtinDesignSystem'
+import type { DesignSystemManifest } from '@core/design-system-manifest'
 import builtinManifestJson from '@modules/alm/manifest.generated.json'
 import type { FigmaCodeConnectComponent, FigmaCodeConnectProp } from '../../../../handlers/studio/figmaCodeConnectSchema'
 
@@ -100,11 +101,30 @@ interface FigmaBindingSummary {
 type CatalogEntry = BundledComponentSpec & {
   hiddenFromPalette: boolean
   apiSource: 'types' | 'code-connect' | 'builtin'
-  /** DS-6 adds these to `ComponentSpec` for the built-in system; read as optional here so this compiles either way. */
+  /**
+   * Present on every `apiSource: 'builtin'` entry and absent from every other
+   * one — see {@link BuiltinCatalogEntry}. A third-party package's `.d.ts` and
+   * a Figma Code Connect file carry prop truth and nothing else; nobody can
+   * honestly describe an arbitrary npm component in one sentence or file it
+   * under "Navigation", so those entries say nothing rather than guess.
+   */
   description?: string
   keywords?: string[]
   group?: string
   figma?: FigmaBindingSummary
+}
+
+/**
+ * A catalog entry for Studio's OWN design system, where the three descriptive
+ * fields are guaranteed rather than hoped for: they come off
+ * `DesignSystemComponentSpec`, which requires them, and
+ * `assets-search-coverage.test.ts` fails on a component that has none.
+ */
+type BuiltinCatalogEntry = CatalogEntry & {
+  apiSource: 'builtin'
+  description: string
+  keywords: string[]
+  group: string
 }
 
 /** Generous enough for a real design system in one screen (the real corpora run 39–42) without being unbounded. */
@@ -176,25 +196,16 @@ interface Catalog {
  * Read from the committed artefact rather than re-derived from the vendored
  * source: `buildDesignSystemManifest` already did that work at build time, and
  * a second extractor here could disagree with what the canvas actually
- * renders. `description`/`keywords`/`group` are read as OPTIONAL because DS-6
- * is what puts them on `ComponentSpec`; until then a built-in entry simply
- * carries none, rather than a fabricated one.
+ * renders.
+ *
+ * Typed as the manifest's OWN type, not a hand-copied structural twin — the
+ * same move `src/modules/alm/register.tsx` makes against the same file — so
+ * `description`/`keywords`/`group` are REQUIRED here because
+ * `DesignSystemComponentSpec` requires them, and a build that dropped one
+ * would fail at this line rather than silently ship a catalog entry with no
+ * description.
  */
-const builtinManifest: BuiltinManifest = builtinManifestJson
-
-/** The committed manifest's own shape (`@core/component-manifest`'s `ComponentSpec`), plus DS-6's optional additions. */
-interface BuiltinManifest {
-  components: ReadonlyArray<{
-    name: string
-    file: string
-    exportName: string
-    isDefaultExport: boolean
-    props: ReadonlyArray<{ name: string; required: boolean; kind?: string; enumValues?: string[] }>
-    description?: string
-    keywords?: string[]
-    group?: string
-  }>
-}
+const builtinManifest = builtinManifestJson as DesignSystemManifest
 
 /**
  * The manifest's documented prop kind -> the `PropKind` vocabulary every other
@@ -239,7 +250,7 @@ function builtinPropKind(prop: { kind?: string; enumValues?: string[] }): PropKi
  * tool description spells out what to write; `apiSource: 'builtin'` is what
  * tells the two cases apart without parsing `pkg`.
  */
-function builtinDesignSystemEntries(hiddenIds: ReadonlySet<string>): CatalogEntry[] {
+function builtinDesignSystemEntries(hiddenIds: ReadonlySet<string>): BuiltinCatalogEntry[] {
   return builtinManifest.components.map((spec) => ({
     name: spec.name,
     file: spec.file,
@@ -249,9 +260,9 @@ function builtinDesignSystemEntries(hiddenIds: ReadonlySet<string>): CatalogEntr
     pkg: PROJECT_DESIGN_SYSTEM_DIR,
     hiddenFromPalette: PALETTE_HIDDEN_NAME_RE.test(spec.name) || hiddenIds.has(`alm.${spec.name}`),
     apiSource: 'builtin' as const,
-    ...(spec.description === undefined ? {} : { description: spec.description }),
-    ...(spec.keywords === undefined ? {} : { keywords: spec.keywords }),
-    ...(spec.group === undefined ? {} : { group: spec.group }),
+    description: spec.description,
+    keywords: spec.keywords,
+    group: spec.group,
   }))
 }
 
@@ -374,7 +385,7 @@ const listComponentsTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'List this project\'s design-system components — the EXACT catalog the Studio insert palette draws from, read headlessly instead of through a live editor, PLUS every component this project only knows about through a Figma Code Connect binding (see apiSource below). Each entry is { name, pkg, exportName, isDefaultExport, file, hiddenFromPalette, apiSource, props, description?, keywords?, group?, figma? }: pkg is the import specifier to write (`import { name } from pkg` for a named export; `import name from pkg` when isDefaultExport is true) — EXCEPT for apiSource:"builtin" entries (Studio\'s built-in design system), where pkg is the project\'s own design-system/ FOLDER and the real specifier is relative to the importing file (`import { Button } from \'../design-system\'` from a page in pages/). Do not guess that path: a studio_apply_edits insert takes designSystemImport:true instead of importSpecifier and the server computes it. props is [{ name, kind, required }] where kind is one of string/number/boolean/enum(+values)/color/image/node/handler/unknown — the SAME classification the Properties panel uses to choose a control (enum -> dropdown, color -> color picker, node -> slot). apiSource is "builtin" for a component of Studio\'s built-in design system (manifested at build time from the system\'s own docs and source — always available, no install, no types needed; carries description/keywords/group where the manifest has them), "types" when props came from a real .d.ts/.tsx type (required is trustworthy), or "code-connect" when this project has NO typed entry for the package at all and every prop was instead reduced from a Figma Code Connect *.figma.tsx mapping file (required is always false there — Code Connect maps values a variant can take, not whether a prop is mandatory; do not trust it for that). When present, figma carries the raw Figma binding for that component regardless of apiSource: { url, fileKey, nodeId, nodeIdPlaceholder, verifiedNote, example, props }; nodeIdPlaceholder true means the URL\'s node-id is an un-filled-in "REPLACE-ME" template, not a real Figma reference — call studio_list_component_bindings for the full per-value Figma label mapping and verification prose this summary trims. hiddenFromPalette marks an overlay/portal component (Dialog/Sheet/Modal/Toast/Snackbar/Tooltip/Popover by name, or an explicit .studio/meta.json override) that is real and importable but excluded from the canvas picker as confusing to hand-place — still usable, just compose its JSX + import directly rather than through the palette. Pass filter to narrow by component name (case-insensitive substring) and package to restrict to one installed package when the project depends on more than one. Response is capped (default 60, max 200) and always reports matchedComponents/returnedComponents, with an honest omittedCount — never a silent drop. LIMITATION: a design system copied in via the "Import design tokens" wizard (styles/imported/<slug>/, plain CSS, no package.json, no Code Connect files either) has NO extractable component API from either source and returns zero components — check the response\'s designSystems field (source:"imported") and note to tell that case apart from "this project has no design system at all". Use studio_find_component when you already know a name or prop to search for instead of browsing the whole catalog.',
+    'List this project\'s design-system components — the EXACT catalog the Studio insert palette draws from, read headlessly instead of through a live editor, PLUS every component this project only knows about through a Figma Code Connect binding (see apiSource below). Each entry is { name, pkg, exportName, isDefaultExport, file, hiddenFromPalette, apiSource, props, description?, keywords?, group?, figma? }: pkg is the import specifier to write (`import { name } from pkg` for a named export; `import name from pkg` when isDefaultExport is true) — EXCEPT for apiSource:"builtin" entries (Studio\'s built-in design system), where pkg is the project\'s own design-system/ FOLDER and the real specifier is relative to the importing file (`import { Button } from \'../design-system\'` from a page in pages/). Do not guess that path: a studio_apply_edits insert takes designSystemImport:true instead of importSpecifier and the server computes it. props is [{ name, kind, required }] where kind is one of string/number/boolean/enum(+values)/color/image/node/handler/unknown — the SAME classification the Properties panel uses to choose a control (enum -> dropdown, color -> color picker, node -> slot). apiSource is "builtin" for a component of Studio\'s built-in design system (manifested at build time from the system\'s own docs and source — always available, no install, no types needed; always carries description/keywords/group), "types" when props came from a real .d.ts/.tsx type (required is trustworthy), or "code-connect" when this project has NO typed entry for the package at all and every prop was instead reduced from a Figma Code Connect *.figma.tsx mapping file (required is always false there — Code Connect maps values a variant can take, not whether a prop is mandatory; do not trust it for that). When present, figma carries the raw Figma binding for that component regardless of apiSource: { url, fileKey, nodeId, nodeIdPlaceholder, verifiedNote, example, props }; nodeIdPlaceholder true means the URL\'s node-id is an un-filled-in "REPLACE-ME" template, not a real Figma reference — call studio_list_component_bindings for the full per-value Figma label mapping and verification prose this summary trims. hiddenFromPalette marks an overlay/portal component (Dialog/Sheet/Modal/Toast/Snackbar/Tooltip/Popover by name, or an explicit .studio/meta.json override) that is real and importable but excluded from the canvas picker as confusing to hand-place — still usable, just compose its JSX + import directly rather than through the palette. Pass filter to narrow by component name (case-insensitive substring) and package to restrict to one installed package when the project depends on more than one. Response is capped (default 60, max 200) and always reports matchedComponents/returnedComponents, with an honest omittedCount — never a silent drop. LIMITATION: a design system copied in via the "Import design tokens" wizard (styles/imported/<slug>/, plain CSS, no package.json, no Code Connect files either) has NO extractable component API from either source and returns zero components — check the response\'s designSystems field (source:"imported") and note to tell that case apart from "this project has no design system at all". Use studio_find_component when you already know a name or prop to search for instead of browsing the whole catalog.',
   inputSchema: StudioListComponentsInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, filter, package: packageFilter, limit } = input as {

@@ -117,9 +117,23 @@ describe('designSystemImportSpecifier', () => {
     expect(designSystemImportSpecifier('src/app/routes/deep/Page.jsx')).toBe('../../../../design-system')
   })
 
+  // The three depths the SERVER writes at — a scaffolded page, a migrated
+  // component, and the prototype shell's `providers.generated.jsx`. They used
+  // to be asserted against a second implementation in
+  // `server/handlers/studio/designSystemFiles.ts`; that copy is gone and this
+  // is now the only one, so its cases live here.
+  it('is the same answer for every folder the server writes an import into', () => {
+    expect(designSystemImportSpecifier('components/SheetHeader.tsx')).toBe('../design-system')
+    expect(designSystemImportSpecifier('prototype/providers.generated.jsx')).toBe('../design-system')
+    expect(designSystemImportSpecifier('pages/onboarding/Step.tsx')).toBe('../../design-system')
+  })
+
   it('writes an explicitly-relative specifier for a file at the project root', () => {
     // Never `design-system` bare — that reads as a package specifier.
     expect(designSystemImportSpecifier('App.jsx')).toBe('./design-system')
+    for (const file of ['App.jsx', 'pages/Home.tsx', 'a/b/c/Deep.tsx']) {
+      expect(designSystemImportSpecifier(file).startsWith('.')).toBe(true)
+    }
   })
 })
 

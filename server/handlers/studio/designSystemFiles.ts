@@ -32,12 +32,23 @@
  * ## What is copied, and what deliberately is not
  *
  * `src/index.js`, `components/`, `context/`, `tokens/`, `icons/LineIcons.jsx` —
- * and, of the 568 icon SVGs the vendored package ships, ONLY the ones a
- * component or `LineIcons.jsx` actually imports. Those import specifiers are
- * read STATICALLY, with a regex over the `.jsx` source: nothing in the design
- * system is executed here, at any trust tier, exactly as nothing in the user's
- * project is. Dropping the unreferenced icons is the difference between ~20
- * files and 3.8 MB of SVG in every project.
+ * and, of the 568 icon SVGs the vendored package ships, ONLY the ones that are
+ * actually imported. Those import specifiers are read STATICALLY, with a regex
+ * over the source: nothing in the design system, and nothing in the user's
+ * project, is executed here at any trust tier. Dropping the unreferenced icons
+ * is the difference between ~20 files and 3.8 MB of SVG in every project.
+ *
+ * "Actually imported" has TWO sources, and missing the second one shipped a
+ * project that does not build. A design-system component imports ~20 icons
+ * (`../icons/line-icons/<name>.svg?raw`). But the PROJECT'S OWN pages import
+ * icons out of the same folder too — `test4`'s screens carry
+ * `import smsSvg from '../design-system/icons/line-icons/sms.svg?raw'`, which
+ * the migration rewrote from the retired npm's deep path — and those files are
+ * chosen by the user, not by the design system. So `collectProjectIconDemand`
+ * scans the project's own source for icon imports landing inside the folder
+ * and adds them to the set. They ride the content hash like every other file,
+ * so adding an icon import to a page rewrites the folder on the next load, and
+ * removing the last one takes the icon back out.
  *
  * ## Only for projects that asked
  *
@@ -75,7 +86,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, join, posix, sep } from 'node:path'
+import { dirname, join, posix } from 'node:path'
+import { listWorkspaceFiles } from '@core/page-parser'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import {
@@ -141,11 +153,20 @@ export interface EnsureDesignSystemOptions {
   sourceDir?: string
 }
 
-/** One file to write: where it goes under `design-system/`, and what goes in it. */
+/**
+ * One file to write: where it goes under `design-system/`, and its BYTES.
+ *
+ * Bytes, not a string, because the design system's own components import three
+ * `.png` assets (`Button.jsx` -> `../icons/logotypes/payment/card-sample.png`)
+ * alongside their SVGs. Round-tripping those through UTF-8 corrupts them, and
+ * this module's job is copying files — whether a file happens to be text is
+ * not its concern. The two callers that need text (`collectAssetImports`'s
+ * regex scan) decode explicitly.
+ */
 interface SourceFile {
   /** POSIX path relative to `<project>/design-system/`. */
   relPath: string
-  contents: string
+  contents: Buffer
 }
 
 function emptyResult(skipped: DesignSystemSkipReason): EnsureDesignSystemResult {
@@ -189,41 +210,109 @@ function walkFiles(root: string, prefix: string, budget: { left: number }): stri
   return found
 }
 
-/** Reads a source file, refusing anything that escapes `srcRoot` on its real path or busts the size cap. */
-function readSourceFile(srcRoot: string, relPath: string): string | null {
+/** Reads a source file's bytes, refusing anything that escapes `srcRoot` on its real path or busts the size cap. */
+function readSourceFile(srcRoot: string, relPath: string): Buffer | null {
   if (!isSafeRelPath(relPath)) return null
   const abs = join(srcRoot, ...relPath.split('/'))
   if (!isRealpathContained(abs, srcRoot)) return null
   try {
     if (statSync(abs).size > MAX_SOURCE_FILE_BYTES) return null
-    return readFileSync(abs, 'utf8')
+    return readFileSync(abs)
   } catch {
     return null
   }
 }
 
+const IMPORT_SPECIFIER_RE = /\bfrom\s*['"]([^'"]+)['"]|\bimport\s*['"]([^'"]+)['"]/g
+
+/** A module the bundler resolves through the module graph; anything else with an extension is an ASSET this module must copy. */
+const CODE_FILE_RE = /\.(tsx|jsx|ts|js|mts|cts|mjs|cjs)$/
+
+/** A walk bound for the project scan, same reasoning as {@link MAX_SOURCE_FILES}. */
+const MAX_PROJECT_FILES = 4000
+
 /**
- * Every `.svg` a collected `.jsx`/`.js` file imports, as a path relative to
- * the vendored `src/`.
+ * The relative ASSET a `.jsx`/`.js` import specifier names, resolved against
+ * `fromRelPath`'s own directory — or `null` when the specifier is not a
+ * relative asset import at all.
+ *
+ * An asset is anything with a file extension that is not a code extension:
+ * `.svg` (56 of them), `.css` (40), `.png` (3). Extension-less specifiers are
+ * sibling COMPONENTS, which are copied wholesale and need no demand pass.
+ */
+function resolvedAssetImport(fromRelPath: string, specifier: string): string | null {
+  if (!specifier.startsWith('.')) return null
+  const withoutQuery = specifier.split('?')[0] ?? ''
+  if (!/\.[A-Za-z0-9]+$/.test(withoutQuery) || CODE_FILE_RE.test(withoutQuery)) return null
+  const resolved = posix.normalize(posix.join(posix.dirname(fromRelPath), withoutQuery))
+  return isSafeRelPath(resolved) ? resolved : null
+}
+
+/**
+ * Every ASSET a collected `.jsx`/`.js` file imports, as a path relative to the
+ * vendored `src/`.
  *
  * Read with a regex, not by executing or even parsing the module: the design
  * system's components import ~20 icons as `../icons/line-icons/<name>.svg?raw`
- * (a Vite `?raw` import), and the whole point of this pass is that a project
- * carries those twenty and not the other 548.
+ * (a Vite `?raw` import) plus three `.png` logotypes, and the whole point of
+ * this pass is that a project carries those and not the other 548 icons.
+ *
+ * Not `.svg`-only. `Button.jsx` imports `card-sample.png` and `Footer.jsx` two
+ * more: an SVG-only rule shipped a project whose `vite build` died on
+ * `Could not resolve "../icons/logotypes/payment/card-sample.png"`.
  */
-const IMPORT_SPECIFIER_RE = /\bfrom\s*['"]([^'"]+)['"]|\bimport\s*['"]([^'"]+)['"]/g
-
-function collectSvgImports(files: readonly SourceFile[]): string[] {
+function collectAssetImports(files: readonly SourceFile[]): string[] {
   const wanted = new Set<string>()
   for (const file of files) {
     if (!/\.(jsx|js)$/.test(file.relPath)) continue
-    for (const match of file.contents.matchAll(IMPORT_SPECIFIER_RE)) {
-      const specifier = match[1] ?? match[2]
-      if (!specifier || !specifier.startsWith('.')) continue
-      const withoutQuery = specifier.split('?')[0] ?? ''
-      if (!withoutQuery.endsWith('.svg')) continue
-      const resolved = posix.normalize(posix.join(posix.dirname(file.relPath), withoutQuery))
-      if (isSafeRelPath(resolved)) wanted.add(resolved)
+    for (const match of file.contents.toString('utf8').matchAll(IMPORT_SPECIFIER_RE)) {
+      const resolved = resolvedAssetImport(file.relPath, match[1] ?? match[2] ?? '')
+      if (resolved) wanted.add(resolved)
+    }
+  }
+  return [...wanted].sort()
+}
+
+/**
+ * Icon assets the PROJECT'S OWN source imports out of `<project>/design-system/`,
+ * as paths relative to the vendored `src/` — the second demand source the
+ * module doc describes.
+ *
+ * Only `icons/` is looked in, because `icons/` is the ONE partial set:
+ * `components/`, `context/` and `tokens/` are copied wholesale, so an import
+ * landing in any of them already has its file. A specifier naming an icon the
+ * vendored source does not have resolves to nothing here and is simply not
+ * added — a broken import in the user's own source is theirs, and this
+ * function's job is not to invent a file for it.
+ *
+ * Read with the same regex the design system's own files are read with, over
+ * the same symlink-refusing walk (`listWorkspaceFiles`) the migration uses:
+ * nothing is executed, and the scan can never leave the project.
+ */
+function collectProjectIconDemand(projectDir: string): string[] {
+  const wanted = new Set<string>()
+  const iconPrefix = `${PROJECT_DESIGN_SYSTEM_DIR}/icons/`
+  let budget = MAX_PROJECT_FILES
+  for (const relPath of listWorkspaceFiles(projectDir)) {
+    if (budget <= 0) break
+    if (!CODE_FILE_RE.test(relPath)) continue
+    // Studio's own copy is not a consumer of itself — `collectAssetImports`
+    // already reads its imports, off the vendored source rather than off the
+    // project's (possibly stale) copy.
+    if (relPath === PROJECT_DESIGN_SYSTEM_DIR || relPath.startsWith(`${PROJECT_DESIGN_SYSTEM_DIR}/`)) continue
+    budget -= 1
+    let contents: string
+    try {
+      const abs = join(projectDir, ...relPath.split('/'))
+      if (statSync(abs).size > MAX_SOURCE_FILE_BYTES) continue
+      contents = readFileSync(abs, 'utf8')
+    } catch {
+      continue
+    }
+    for (const match of contents.matchAll(IMPORT_SPECIFIER_RE)) {
+      const resolved = resolvedAssetImport(relPath, match[1] ?? match[2] ?? '')
+      if (!resolved || !resolved.startsWith(iconPrefix)) continue
+      wanted.add(resolved.slice(PROJECT_DESIGN_SYSTEM_DIR.length + 1))
     }
   }
   return [...wanted].sort()
@@ -237,6 +326,15 @@ function readVendorVersion(sourceDir: string): string {
     {},
   )
   return parsed.version ?? '0.0.0'
+}
+
+/** A file's bytes, or `null` when it cannot be read — used only to answer "is this already exactly what we would write". */
+function readFileBytesOrNull(file: string): Buffer | null {
+  try {
+    return readFileSync(file)
+  } catch {
+    return null
+  }
 }
 
 function readFileOrEmpty(file: string): string {
@@ -253,7 +351,7 @@ function readFileOrEmpty(file: string): string {
  * the state of a checkout that has not run DS-1's sync, and is a no-op rather
  * than an error.
  */
-function collectSourceSet(sourceDir: string): SourceFile[] | null {
+function collectSourceSet(sourceDir: string, projectIconDemand: readonly string[]): SourceFile[] | null {
   const srcRoot = join(sourceDir, 'src')
   if (!existsSync(srcRoot)) return null
 
@@ -271,14 +369,20 @@ function collectSourceSet(sourceDir: string): SourceFile[] | null {
   }
   if (files.length === 0) return null
 
-  for (const relPath of collectSvgImports(files)) {
+  // Minus what the wholesale copy already has: a component's own
+  // `import './Button.css'` is an asset import too, and adding it here would
+  // write the same file into the set twice.
+  const alreadyCopied = new Set(files.map((file) => file.relPath))
+  const assetDemand = new Set([...collectAssetImports(files), ...projectIconDemand])
+  for (const relPath of [...assetDemand].sort()) {
+    if (alreadyCopied.has(relPath)) continue
     const contents = readSourceFile(srcRoot, relPath)
     if (contents === null) continue
     files.push({ relPath, contents })
   }
 
-  files.push({ relPath: 'README.md', contents: README })
-  files.push({ relPath: 'VERSION', contents: `${readVendorVersion(sourceDir)}\n` })
+  files.push({ relPath: 'README.md', contents: Buffer.from(README, 'utf8') })
+  files.push({ relPath: 'VERSION', contents: Buffer.from(`${readVendorVersion(sourceDir)}\n`, 'utf8') })
 
   files.sort((a, b) => (a.relPath < b.relPath ? -1 : 1))
   return files
@@ -328,7 +432,7 @@ export function ensureDesignSystemFiles(
     if (!existsSync(projectDir)) return emptyResult('not-design-system-backed')
     if (readStudioMeta(projectDir).designSystem !== 'alm') return emptyResult('not-design-system-backed')
 
-    const files = collectSourceSet(sourceDir)
+    const files = collectSourceSet(sourceDir, collectProjectIconDemand(projectDir))
     if (!files) return emptyResult('no-source')
 
     const dsRoot = join(projectDir, PROJECT_DESIGN_SYSTEM_DIR)
@@ -349,9 +453,9 @@ export function ensureDesignSystemFiles(
       if (!isSafeRelPath(file.relPath)) continue
       const abs = join(dsRoot, ...file.relPath.split('/'))
       if (!isRealpathContainedAllowingMissing(abs, dsRoot)) continue
-      if (existsSync(abs) && readFileOrEmpty(abs) === file.contents) continue
+      if (existsSync(abs) && readFileBytesOrNull(abs)?.equals(file.contents)) continue
       mkdirSync(dirname(abs), { recursive: true })
-      writeFileSync(abs, file.contents, 'utf8')
+      writeFileSync(abs, file.contents)
       result.written.push(file.relPath)
     }
 
@@ -374,22 +478,4 @@ export function ensureDesignSystemFiles(
     console.error('[studio/designSystemFiles]', err)
     return emptyResult('no-source')
   }
-}
-
-/**
- * The specifier a file in `fromDir` imports the project's design system by —
- * `'../design-system'` from `pages/`, `'../../design-system'` from
- * `pages/onboarding/`, and so on. Always `./`- or `../`-prefixed, always
- * POSIX, because it is going into a source file.
- *
- * Computed rather than hardcoded because the same folder is imported from
- * three different depths (`pages/`, `components/`, `prototype/`) and a page
- * may sit in a subdirectory of any of them.
- */
-export function designSystemImportSpecifier(projectDir: string, fromDir: string): string {
-  const toPosix = (value: string): string => (sep === '/' ? value : value.split(sep).join('/'))
-  const target = posix.join(toPosix(projectDir), PROJECT_DESIGN_SYSTEM_DIR)
-  const relative = posix.relative(toPosix(fromDir), target)
-  if (relative.length === 0) return '.'
-  return relative.startsWith('.') ? relative : `./${relative}`
 }

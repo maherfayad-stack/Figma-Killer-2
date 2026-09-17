@@ -33,8 +33,8 @@
  * anywhere would be a second source of truth that drifts from the file.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { parsePageFile } from '@core/page-parser'
+import { join, relative, sep } from 'node:path'
+import { designSystemImportSpecifier, parsePageFile } from '@core/page-parser'
 import { DEFAULT_PAGE_KIND, type PageKind } from '@core/studio-board'
 import {
   discoverPageFiles,
@@ -43,7 +43,7 @@ import {
   projectPagesDir,
 } from '../studioProjects'
 import { autoPlaceBoardFrame } from './boardFrames'
-import { designSystemImportSpecifier } from './designSystemFiles'
+
 import { detectPageTemplateKit, pageNameBase, starterPage } from './pageTemplates'
 import { pageIdFromRelPath } from '../studioPageIds'
 
@@ -86,7 +86,7 @@ export function createScaffoldedPage(
   // `detectPageFileExtension` above.
   const starter = starterPage(componentName, kind, {
     kit: detectPageTemplateKit(dir),
-    designSystemImport: designSystemImportSpecifier(dir, pagesDir),
+    designSystemImport: designSystemImportSpecifier(relative(dir, file).split(sep).join('/')),
   })
   writeFileSync(file, starter.component)
   // Written alongside the component, never lazily: the component imports it by

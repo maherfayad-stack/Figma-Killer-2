@@ -104,9 +104,11 @@ beforeEach(() => {
     'components/Card.tsx',
     [
       `import { Chip } from '${PKG}'`,
-      `import close from '${PKG}/src/icons/line-icons/close.svg?raw'`,
+      // A real icon of the vendored design system, so the folder Studio
+      // writes can be asserted to actually contain it after the rewrite.
+      `import sms from '${PKG}/src/icons/line-icons/sms.svg?raw'`,
       '',
-      'export function Card() { return <Chip>{close}</Chip> }',
+      'export function Card() { return <Chip>{sms}</Chip> }',
       '',
     ].join('\n'),
   )
@@ -156,7 +158,7 @@ describe('migrateProjectToBuiltinDesignSystem', () => {
     expect(read('pages/Home.tsx')).toContain("import { Button } from '../design-system'")
     expect(read('components/Card.tsx')).toContain("import { Chip } from '../design-system'")
     expect(read('components/Card.tsx')).toContain(
-      "import close from '../design-system/icons/line-icons/close.svg?raw'",
+      "import sms from '../design-system/icons/line-icons/sms.svg?raw'",
     )
     expect(result.filesRewritten).toBe(2)
     // Two named imports, one sub-path import, one removed stylesheet import.
@@ -227,6 +229,18 @@ describe('migrateProjectToBuiltinDesignSystem', () => {
     expect(meta.pagesDir).toBe('pages')
     expect(meta.trust).toBe('static')
     expect(meta.designSystem).toBe('alm')
+  })
+
+  it("writes the icons the PROJECT'S OWN source imports, not just the ones a component does", () => {
+    // `sms.svg` is demanded by `components/Card.tsx` and by nothing in the
+    // design system itself. The migration writes the folder BEFORE the
+    // rewrite, when the project still names the retired package and that
+    // demand is invisible — so it writes the folder a second time afterwards.
+    // Without that, `vite build` in the migrated project died on a missing
+    // `../design-system/icons/line-icons/sms.svg`.
+    migrateProjectToBuiltinDesignSystem(projectDir)
+
+    expect(fs.existsSync(path.join(projectDir, 'design-system', 'icons', 'line-icons', 'sms.svg'))).toBe(true)
   })
 
   it('is safe to run twice', () => {
