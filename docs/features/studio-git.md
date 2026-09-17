@@ -225,6 +225,17 @@ the token they sign in with is stored per user, encrypted.
   deliberately no `token` field on that wire, so no request and no proxy log can
   carry one. Nobody signed in is a normal state: git then falls back to the
   host's own credential helper or ssh-agent, exactly as before.
+- **Only a github.com remote is ever offered the token.** An askpass program is
+  handed a *prompt*, not a destination it can refuse — the script answers
+  whatever host git dialled. So the decision is made before the script exists:
+  `gitClone.ts` only ever has a `parseGithubRemoteUrl`-allowlisted URL, and
+  `pushCurrentBranch` reads `origin`'s push URL through that same allowlist
+  (`originAcceptsStoredGithubToken`) and drops the credential when it does not
+  pass. This matters because `origin` is not always Studio's: `setOriginRemote`
+  writes only allowlisted URLs, but a project can arrive with a `.git` the user
+  pointed at a company host, a mirror, or an `ext::` transport in their own
+  terminal. A non-GitHub origin is not an error — the push simply proceeds with
+  the pre-G2 fallback.
 - **`GIT_TERMINAL_PROMPT=0` stays**, credential or not — the askpass script
   answers without a terminal, and without the flag a remote needing a password
   would block on a read nobody will answer.

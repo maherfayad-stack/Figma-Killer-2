@@ -59,11 +59,18 @@
  * token is never read from the environment, never accepted as a request
  * field, and never placed in argv or a remote URL — `gitRunner.ts` hands it to
  * a one-shot askpass script instead.
+ *
+ * **The token is only offered to a github.com remote.** An askpass program
+ * answers whatever host git dialled — it is handed a prompt string, not a
+ * destination it can refuse — so `pushCurrentBranch` reads `origin`'s push URL
+ * and drops the credential unless `parseGithubRemoteUrl` accepts it. `origin`
+ * is not always Studio's: `setOriginRemote` only ever writes an allowlisted
+ * URL, but a project can arrive with a `.git` pointing anywhere.
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-import { isArgvSafeBranchName } from './gitPaths'
+import { isArgvSafeBranchName, parseGithubRemoteUrl } from './gitPaths'
 import {
   clientSafeGitError,
   runGit,
@@ -156,6 +163,36 @@ async function hasOriginRemote(dir: string): Promise<boolean> {
   const result = await runGit(dir, ['remote'])
   if (!result.ok) return false
   return result.stdout.split('\n').some((line) => line.trim() === 'origin')
+}
+
+/**
+ * True when `origin`'s push URL is a repository on github.com — the ONLY
+ * remote a stored GitHub token may be offered to.
+ *
+ * This is not belt-and-braces, it is the guard. `GIT_ASKPASS` answers whatever
+ * host git is talking to: the script `gitAskpass.ts` writes prints the token
+ * for every "Password for '…'" prompt, because an askpass program is not told
+ * which credential the caller intended. So the decision "is this remote
+ * allowed to see this token" has to be made HERE, before the script exists.
+ *
+ * `origin` is not always Studio's: `setOriginRemote` writes only URLs that
+ * passed `parseGithubRemoteUrl`, but a project can arrive with a `.git` whose
+ * `origin` the user set in their own terminal — a company GitLab, a mirror, an
+ * `ext::` transport. Without this check the first push after signing in hands
+ * that host a token with the `repo` scope over the whole account.
+ *
+ * A non-GitHub origin is NOT an error: the push proceeds with no credential
+ * from Studio, which is exactly the pre-G2 behaviour (the host's own helper or
+ * ssh-agent answers, or git reports why it could not).
+ *
+ * Exported because it IS the guard — it gets its own rejection tests rather
+ * than being reachable only through a push that needs a network.
+ */
+export async function originAcceptsStoredGithubToken(dir: string): Promise<boolean> {
+  const result = await runGit(dir, ['remote', 'get-url', '--push', 'origin'])
+  if (!result.ok) return false
+  const url = result.stdout.trim().split('\n')[0]?.trim() ?? ''
+  return parseGithubRemoteUrl(url) !== null
 }
 
 export interface GitRemote {
@@ -418,6 +455,10 @@ export interface GitPushResult {
  * own credential helper or ssh-agent exactly as it did before, and a failure
  * passes git's real message through, because "Support for password
  * authentication was removed" is exactly what the user needs to read.
+ *
+ * It is also DROPPED when `origin` is not a github.com repository — see
+ * `originAcceptsStoredGithubToken`. An askpass program answers whatever host
+ * git dialled, so "which remote may see this token" is decided here.
  */
 export async function pushCurrentBranch(
   dir: string,
@@ -436,9 +477,13 @@ export async function pushCurrentBranch(
   }
 
   const branch = status.branch.branch
+  // Resolved BEFORE the token is written anywhere: a non-GitHub origin never
+  // causes an askpass script carrying the token to exist at all.
+  const credential =
+    options.credential && (await originAcceptsStoredGithubToken(dir)) ? options.credential : undefined
   const result = await runGit(dir, ['push', '--set-upstream', 'origin', branch], {
     timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-    credential: options.credential,
+    credential,
   })
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Push failed'))
   return { ok: true, branch, output: clientSafeGitError(result, '') || result.stdout.trim() }

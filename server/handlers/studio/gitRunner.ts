@@ -155,9 +155,16 @@ export interface RunGitOptions {
    * credential helper the host has (the pre-G2 behaviour).
    *
    * The token never enters `env` and never enters an argv token: it is
-   * written to a 0600 one-shot `GIT_ASKPASS` script that is deleted in this
+   * written to a one-shot `GIT_ASKPASS` script that is deleted in this
    * function's `finally`. See `gitAskpass.ts` for why both alternatives are
    * worse.
+   *
+   * **The caller decides which host may see it.** The askpass script answers
+   * every password prompt git makes during this invocation, whatever remote
+   * that is — so passing `credential` for an operation whose remote has not
+   * been checked against `parseGithubRemoteUrl` hands that remote the token.
+   * `gitClone.ts` knows its URL is allowlisted; `pushCurrentBranch` reads
+   * `origin` and drops the credential when it is not github.com.
    */
   credential?: string
 }

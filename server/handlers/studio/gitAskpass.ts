@@ -44,6 +44,19 @@
  *     program, which is why one script file works on all three platforms and
  *     a `.bat` twin is not needed.
  *
+ * ## What this does NOT decide: which host gets the token
+ *
+ * An askpass program is handed a PROMPT, not a destination it can refuse —
+ * git asks "Password for 'https://x-access-token@<whatever origin says>'" and
+ * whatever the program prints goes to that host. So the script below answers
+ * every password prompt of the invocation it was written for, github.com or
+ * not. **Deciding whether a remote may see the token is the caller's job**,
+ * and it happens before this function is ever called: `gitClone.ts` only ever
+ * has a `parseGithubRemoteUrl`-allowlisted URL, and `pushCurrentBranch` reads
+ * `origin`'s push URL and drops the credential unless that same allowlist
+ * accepts it. Pass `credential` for an unchecked remote and you have handed
+ * that remote a `repo`-scoped token.
+ *
  * Nothing here logs. The script's contents, the path it was written to, and
  * the token are all absent from every message this module or its caller
  * produces.
