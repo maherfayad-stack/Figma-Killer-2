@@ -235,6 +235,15 @@ function BoardFrameViewImpl({
   // second offscreen frame to do this.
   const frameBodyRef = useRef<HTMLDivElement>(null)
   useFramePosterCapture(frameBodyRef, page, width, isOnScreen)
+  // S1 — the frame's mount is staged (iframe -> injectors -> node tree; see
+  // `IframeFrameSurface`'s header), so between entering the viewport and the
+  // tree's commit the iframe is a real but EMPTY document. The poster stays
+  // painted on top of it until then, which is what makes a zoom-out read as
+  // "these frames were always there" instead of a wave of white boxes.
+  // `setContentReady` is passed down raw: a `useState` setter's identity is
+  // stable by React's own contract, so it cannot defeat `BreakpointFrame`'s
+  // `memo()` bailout the way a fresh closure would.
+  const [contentReady, setContentReady] = useState(false)
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -512,11 +521,15 @@ function BoardFrameViewImpl({
                 // would be a second, board-global chrome strip on top of it.
                 // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
                 showBreakpointChrome={false}
+                onContentReadyChange={setContentReady}
               />
             </CanvasFrameContext.Provider>
           </CanvasPageContext.Provider>
         ) : (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
+        )}
+        {isOnScreen && !contentReady && (
+          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} overlay />
         )}
         {/* A page with nothing on it renders as a blank rectangle, which reads
             as "it did not load". Only for a frame that is actually drawing its

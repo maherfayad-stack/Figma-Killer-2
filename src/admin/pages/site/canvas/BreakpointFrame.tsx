@@ -73,6 +73,13 @@ interface BreakpointFrameProps {
    * (`CanvasTransformLayer`) has real, distinct breakpoints and keeps it.
    */
   showBreakpointChrome?: boolean
+  /**
+   * S1 — forwarded straight to `IframeFrameSurface`: `true` once the staged
+   * node tree has committed inside the iframe. Board frames pass a `useState`
+   * setter so they can hold their frozen poster over the frame until then; see
+   * that prop's doc on `IframeFrameSurface` for why it must not be a closure.
+   */
+  onContentReadyChange?: (ready: boolean) => void
 }
 
 // React Compiler exception #2: `memo()` re-render bailout on a hot,
@@ -95,6 +102,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
   frameId,
   axesOverride,
   showBreakpointChrome = true,
+  onContentReadyChange,
 }: BreakpointFrameProps) {
   // --bp-width drives both label width and viewport width via CSS (dynamic value)
   const bpStyle = { '--bp-width': `${breakpoint.width}px` } as CSSProperties
@@ -288,6 +296,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
           onReadonlyOpen={handleReadonlyOpen}
           runtimeScripts={runtimeScripts}
           axesOverride={axesOverride}
+          onContentReadyChange={onContentReadyChange}
         >
           <CanvasTemplateContext.Provider value={templateContext}>
             <CanvasBreakpointContext.Provider value={breakpoint.id}>

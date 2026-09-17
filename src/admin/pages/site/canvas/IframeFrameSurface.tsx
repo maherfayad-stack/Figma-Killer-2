@@ -40,6 +40,29 @@
  *    per-breakpoint class CSS (which uses `[data-breakpoint-id="..."]
  *    .myClass` selectors) matches inside the iframe.
  *
+ * A mount is THREE commits, not one (S1)
+ * ──────────────────────────────────────
+ * Measured on an 18-frame board (`perf/cheap-frame-mount-iframe-pool`): a
+ * zoom-out that mounts 14 frames at once produced a single 354 ms frame,
+ * because everything below happened in ONE React commit — 14 iframes, 14
+ * injector chains (each of which PARSES the whole vendor/authored/class/user
+ * stylesheet set into a brand-new document), and 14 `NodeRenderer` trees.
+ *
+ * So the mount is deliberately staged:
+ *   1. the `<iframe srcDoc>` element alone (this component's own return),
+ *   2. the injector chain, once `load`/`contentDocument` gives us a document,
+ *   3. the node tree + runtime scripts, in a `startTransition` scheduled from
+ *      the effect that runs right after (2) commits.
+ *
+ * Stage 3 is a `startTransition`, NOT an `rAF`/`setTimeout`/`requestIdleCallback`
+ * chain. That distinction is the whole reason this is safe to ship: the
+ * staging chain a predecessor removed could strand a frame as a skeleton
+ * forever in a backgrounded tab or a headless runner, because `rAF` never
+ * fires there. A transition is ordinary React work — it always runs, it is
+ * merely allowed to yield to a higher-priority update (the zoom gesture)
+ * first. `onContentReadyChange` reports stage 3's commit so a board frame can
+ * keep its frozen poster up until there is real content underneath it.
+ *
  * What's NOT in this component (yet):
  *  - Per-iframe `getComputedStyle` for code outside the iframe that measures
  *    elements (selection overlay handles its own iframe-rect translation).
@@ -55,6 +78,7 @@
 
 import {
   forwardRef,
+  startTransition,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -145,6 +169,21 @@ interface IframeFrameSurfaceProps {
   runtimeScripts?: InjectableRuntimeScript[]
   /** WS-10 Phase 2 — a "duplicate as variant" frame's `BoardFrame.axes`, merged onto the board-global axes in `useApplyPreviewAxes`. `undefined` outside board context. */
   axesOverride?: Partial<PreviewAxes>
+  /**
+   * S1 — called with `true` once the staged node tree (mount stage 3, see this
+   * module's header) has committed into the iframe body, and with `false`
+   * while there is nothing in it. `BoardFrameView` keeps its frozen poster on
+   * top of the iframe until this turns true, so a frame entering the viewport
+   * never flashes an empty document.
+   *
+   * Pass a `useState` SETTER, not a fresh closure: `BreakpointFrame` is
+   * `memo()`'d (React Compiler exception #2) and a new identity here defeats
+   * that bailout on every render. A setter's identity is stable for the life
+   * of the component, guaranteed by React itself rather than by the compiler —
+   * the same reasoning `BoardFrameView.tsx`'s `activatePageHandler` interning
+   * is written out at length for.
+   */
+  onContentReadyChange?: (ready: boolean) => void
 }
 
 export interface IframeFrameSurfaceHandle {
@@ -183,6 +222,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       runtimeScripts,
       onReadonlyOpen,
       axesOverride,
+      onContentReadyChange,
     },
     ref,
     ) {
@@ -194,6 +234,9 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const iframeRef = useRef<HTMLIFrameElement | null>(null)
       const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
+      // Mount stage 3 — see this module's header. `false` until the injector
+      // commit has landed and the transition scheduled below has run.
+      const [treeMounted, setTreeMounted] = useState(false)
 
     useIframeCursorBridge(iframeRef, iframeDoc, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(iframeDoc, { breakpointId, enabled: !isLive })
@@ -202,6 +245,27 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
     // per-frame override merged onto the board-global axes inside the hook.
     const frameAxes = useApplyPreviewAxes(iframeDoc, axesOverride)
+
+    // Mount stage 3 (see this module's header): schedule the node tree as a
+    // TRANSITION from the effect that runs after the injector commit, so the
+    // two land in separate commits and a zoom gesture can interleave between
+    // them. Unmounting the document resets the gate so a re-entering frame
+    // stages again rather than re-mounting everything at once.
+    useEffect(() => {
+      if (!iframeDoc) {
+        setTreeMounted(false)
+        return
+      }
+      startTransition(() => setTreeMounted(true))
+    }, [iframeDoc])
+
+    // Report stage 3 to the board frame, which keeps its frozen poster on top
+    // of the iframe until there is real content underneath.
+    useEffect(() => {
+      if (!onContentReadyChange) return
+      onContentReadyChange(treeMounted)
+      return () => onContentReadyChange(false)
+    }, [onContentReadyChange, treeMounted])
 
     // Bridge the iframe handle out to the parent (selection overlay reads
     // `iframeElement` to translate inside-iframe rects into editor coordinates).
@@ -411,8 +475,18 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               <CanvasDiagnosticsInjector targetDocument={iframeDoc} />
               {/* Design frames only: selection/hover rings + the node-name badge
                   render INSIDE this document (WS-5.1) so they track the element
-                  with zero zoom/pan conversion. See its own docblock. */}
-              {!isLive && !isCapture && (
+                  with zero zoom/pan conversion. See its own docblock.
+
+                  Gated on `treeMounted` with the node tree, and NOT because it
+                  is expensive — because it is the one injector that appends a
+                  real element to `<body>`. Its effect runs after the commit's
+                  DOM writes, so in a single-commit mount the authored content
+                  was already there and the overlay root landed behind it. Mount
+                  it in stage 2 and it becomes `body`'s FIRST child, which
+                  breaks `body > :first-child` / `:nth-child` / `:empty` for the
+                  page's own CSS — the exact invariant
+                  `bodyPresentation.test.tsx` guards. */}
+              {!isLive && !isCapture && treeMounted && (
                 <CanvasSelectionOverlayInjector
                   targetDocument={iframeDoc}
                   parentDocument={document}
@@ -446,10 +520,15 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               <AuthoredCssInjector targetDocument={iframeDoc} viewport={viewport} />
               <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
               <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
-              {children}
+              {/* Mount stage 3 — the node tree, one commit later than the
+                  injectors above. See this module's header. */}
+              {treeMounted && children}
               {/* Runtime scripts (opt-in) run against the node tree mounted
-                  above. Empty list = no-op, so this is safe to always mount. */}
-              <RuntimeScriptInjector targetDocument={iframeDoc} scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
+                  above, so they are gated on the same stage. Empty list =
+                  no-op, so this is safe to always mount. */}
+              {treeMounted && (
+                <RuntimeScriptInjector targetDocument={iframeDoc} scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
+              )}
             </CanvasFrameContexts>,
             iframeDoc.body,
           )}
