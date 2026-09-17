@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
+import { BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './helpers/canvasPerf'
 
 /**
  * Real-browser perf measurement for `perf-01` (WS-5.3 / WS-5.4).
@@ -23,9 +23,10 @@ import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
  * (`studio-workspace/maherfayad-stack-eSIM`, 15 pages / ~803 nodes) and
  * read-only — it pans, zooms and counts, and never writes to the project.
  *
- * The frame-timing instrumentation itself (`profileGesture`, `readBoardCounts`)
- * lives in `helpers/canvasPerf.ts` so `studio-feel.e2e.ts` measures a zoom the
- * same way this spec does.
+ * The frame-timing instrumentation (`profileGesture`, `readBoardCounts`) AND
+ * the zoom budgets live in `helpers/canvasPerf.ts`, so `studio-feel.e2e.ts`
+ * measures a zoom the same way this spec does and ratchets against the same
+ * number. Read `BUDGET_ZOOM_WORST_FRAME_MS` there before loosening it.
  *
  * What each assertion is actually evidence of:
  *
@@ -59,73 +60,6 @@ const BUDGET_PAN_WORST_FRAME_MS = 40
 /** Observed 0 in every run. A handful would be unrelated chrome; a re-render storm is hundreds. */
 const BUDGET_PAN_LAYER_MUTATIONS = 10
 
-/**
- * **A ratchet on a defect that is now half fixed, not a 60fps target.**
- *
- * A zoom-out that crosses virtualization boundaries mounts live iframes, which
- * `perf-01` measured at **290-337 ms** for a 6 → 15 sweep on this corpus and
- * left the budget at 600 ms, because the two fixes it tried (`useDeferredValue`
- * and staggering) both failed. S1 then made one mount cheap instead of
- * rescheduling the batch, and measured the result.
- *
- * ## Where 250 comes from, and what it cannot claim
- *
- * `studio-workspace/maherfayad-stack-eSIM` — the corpus every number in this
- * file was taken against — **is no longer on any machine here**, so this spec
- * skips and S1 could not re-measure it. The stand-in was an 18-frame board of
- * the same shape (three ~50-node mobile screens repeated, 865 DOM nodes vs the
- * eSIM board's 946), driven by the same scripted zoom-out through the same
- * Playwright runner, on the same machine, in a dev build:
- *
- * | 4 → 18 frame mount sweep | before S1 | after S1 |
- * |---|---|---|
- * | worst animation frame | 350 / 354 / 375 ms | 195 / 198 / 200 ms |
- * | mean animation frame | 41 / 46 / 44 ms | 22 / 21 / 21 ms |
- * | frames over 50 ms | 13 / 14 / 13 | 7 / 7 / 7 |
- *
- * The three fixes, each measured on its own: the poster-capture burst was ~100
- * ms of the worst frame (`framePosterQueue.ts`), the per-frame `:hover` CSSOM
- * walk another ~100 ms (`CanvasHoverSuppressionInjector`'s plan cache), and
- * splitting the mount into three commits halved the mean
- * (`IframeFrameSurface`'s staged mount). A separate churn pan — frames leaving
- * and re-entering — went from a 148 ms worst frame and 13 frames over 50 ms to
- * ~50-92 ms and 1-5, via the mount pool (`frameMountPool.ts`).
- *
- * 250 ms is ~1.25x the measured worst frame and comfortably BELOW every
- * pre-S1 measurement on either corpus, so the original defect would fail it.
- * It is deliberately not 50 ms: admitting a dozen frames at once still creates
- * a dozen documents and parses the vendor/authored/class/user stylesheets into
- * each, which nothing here removes — see the S1 `STATE.md` entry for the two
- * remaining levers (a literal iframe pool that re-points a parked document,
- * and zoom-aware virtualization) and why neither was in scope.
- *
- * **Re-measure this against the real corpus before tightening further.** A
- * budget calibrated on a stand-in is a ratchet, not a target.
- *
- * ## There is a SECOND copy of this number, and a trap under it
- *
- * `tests/e2e/studio-feel.e2e.ts` (PR #152, branch `test/browser-perf-gate`,
- * not yet on this base) carries its own `BUDGET_ZOOM_WORST_FRAME_MS = 600`
- * plus a `BUDGET_ZOOM_MEAN_FRAME_MS = 45`, measured against the TRACKED
- * `studio-workspace/test4`. Whoever integrates the two branches should hoist
- * the constants into `tests/e2e/helpers/canvasPerf.ts` and import them from
- * both specs, rather than ratcheting two copies forever.
- *
- * The trap, measured on this machine with S1's own copy of that spec's zoom
- * test: **`test4`'s three frames all fit inside the viewport margin at the
- * opening zoom**, so its scripted zoom-out mounts nothing at all — 3 live
- * iframes before, 3 after, in three runs on the PRE-S1 tree and three runs
- * on the post-S1 tree alike (worst frame 18.6-21.1 ms before, 18.1-29.8 ms
- * after; a mean of 16.7 ms either way, i.e. 60fps). That spec's zoom budget
- * is therefore a smoothness gate, not a mount gate, and the 260-520 ms it
- * records having observed cannot be reproduced here.
- *
- * S1's mount pool sharpens that: it holds at least `MIN_FRAME_POOL` (8) live
- * frames, so on any board of 8 frames or fewer EVERY frame stays mounted and
- * there is no mount left to measure. **A gate on the mount path needs a board
- * of at least 9 frames.**
- */
-const BUDGET_ZOOM_WORST_FRAME_MS = 250
 
 interface StudioProjectSummary {
   dir: string

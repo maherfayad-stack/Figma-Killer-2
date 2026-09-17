@@ -1,7 +1,7 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
+import { BUDGET_ZOOM_MEAN_FRAME_MS, BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './helpers/canvasPerf'
 
 /**
  * `STUDIO-FIGMA-FEEL-PLAN.md` V1 — the browser gate for "does this feel like a
@@ -259,31 +259,6 @@ function annotate(label: string, value: string): void {
   console.log(`[studio-feel] ${label}: ${value}`)
 }
 
-/**
- * **A ratchet on a known defect, not a target** — deliberately the same number
- * as `studio-board-perf.e2e.ts`'s `BUDGET_ZOOM_WORST_FRAME_MS`, because it
- * records the same defect and must move in the same change (`S1` ratchets both
- * to 50 once a frame mount is cheap).
- *
- * Measured here, against `test4`: a monotonic zoom-out mounts one more live
- * iframe mid-gesture (2 → 3), and that single `BreakpointFrame` mount costs
- * **260-520 ms in one frame** — worst frame 515.8 / 444.1 / 260.1 ms across
- * three runs, against a mean of 20.3 / 19.8 / 18.6 ms. So the defect `perf-01` measured on the
- * 15-page eSIM corpus reproduces on a **three-frame** board: it is the cost of
- * ONE mount, not of mounting many.
- *
- * That is why this is not set at 2× the observation the way the cheap budgets
- * below are. It is set where the honest fix has to take it past.
- */
-const BUDGET_ZOOM_WORST_FRAME_MS = 600
-
-/**
- * The frames that are NOT paying for a mount. Calibrated at ~2× the observed
- * mean (20.3 / 19.8 / 18.6 ms across three runs) — loose enough not to flake on machine
- * noise, tight enough that a re-render storm on every wheel tick fails even
- * while the single-mount spike above is still allowed.
- */
-const BUDGET_ZOOM_MEAN_FRAME_MS = 45
 
 test.describe('V1: the studio feels like a design tool', () => {
   // Board open on a cold ts-morph parse, plus five structural writes.
@@ -476,7 +451,7 @@ test.describe('V1: the studio feels like a design tool', () => {
 
     expect(
       zoom.worstFrameMs,
-      `the worst frame during a scripted zoom exceeded ${BUDGET_ZOOM_WORST_FRAME_MS}ms — read BUDGET_ZOOM_WORST_FRAME_MS's docblock before loosening it: it is a ratchet on a known defect, and S1 is the work order that lowers it`,
+      `the worst frame during a scripted zoom exceeded ${BUDGET_ZOOM_WORST_FRAME_MS}ms — read BUDGET_ZOOM_WORST_FRAME_MS's docblock before loosening it: it is a ratchet, S1 already lowered it once, and it is shared with studio-board-perf.e2e.ts`,
     ).toBeLessThan(BUDGET_ZOOM_WORST_FRAME_MS)
     expect(
       zoom.meanFrameMs,
