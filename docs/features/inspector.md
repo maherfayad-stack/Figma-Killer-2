@@ -791,27 +791,49 @@ repository.
 > properties") and still don't; this is where Studio's own additions live,
 > at the tail of the Design-tab scroll, after Export.
 
-P3's last item folds the five remaining "no Penpot home" concerns into six
-`INSPECTOR_SECTIONS` manifest entries (order 10–15, a contiguous tail block
-— `export` stays `order: 9`) — the same one-continuously-scrolling column
-every other section renders in, no separate tab:
+P3's last item folded the remaining "no Penpot home" concerns into their own
+`INSPECTOR_SECTIONS` manifest entries — the same one-continuously-scrolling
+column every other section renders in, no separate tab. **S5 then moved four
+of them off the Design tab's always-mounted height**, because none of them is
+something a designer reaches for often enough to pay 164px for on every
+selection (see §6):
 
-| order | id | Component | `appliesTo` | Claims |
+| order | id | Component | Where it mounts | Claims |
 |---|---|---|---|---|
-| 10 | `component` | `ComponentSection.tsx` | `studio.instance` nodes only | call-site props |
-| 11 | `attributes` | `AttributesSection.tsx` | any selected node | `htmlAttributes` |
-| 12 | `transform` | `TransformSection.tsx` | any selected node | `transform`, `transformOrigin` |
-| 13 | `animations` | `AnimationsSection.tsx` | any selected node | `animation*`, `transition` |
-| 14 | `interaction` | `InteractionSection.tsx` | any selected node | `cursor`, `pointerEvents`, `userSelect`, `scrollBehavior` |
-| 15 | `customProperties` | `CustomPropertiesSection.tsx` (manifest wrapper) | any selected node | every uncurated key |
+| 10 | `component` | `ComponentSection.tsx` | Design, inline — `studio.instance` nodes only | call-site props |
+| 11 | `transform` | `TransformSection.tsx` | Design **More**, and Prototype expanded | `transform`, `transformOrigin` |
+| 12 | `animations` | `AnimationsSection.tsx` | Design **More**, and Prototype expanded | `animation*`, `transition` |
+| 13 | `interaction` | `InteractionSection.tsx` | Design **More**, and Prototype expanded | `cursor`, `pointerEvents`, `userSelect`, `scrollBehavior` |
+| 14 | `customProperties` | `CustomPropertiesSection.tsx` (manifest wrapper) | Design **More** | every uncurated key |
 
-**Six entries, not one "Studio extras" component** — Component only applies
-to `studio.instance` nodes (the other five apply to any node), and cramming
-five different `appliesTo` predicates behind one component's internal `if`
+Two manifest fields carry that, and nothing else changed about any of these
+components:
+
+- **`tabs`** (default `['design']`) — which `InspectorShell` tabs mount the
+  section. The three motion/behaviour sections are `['design', 'prototype']`:
+  expanded on Prototype, which is the tab that exists for exactly this
+  material, and still reachable from Design so a CSS `transform` doesn't
+  require knowing to switch tabs.
+- **`designGroup`** (default `'primary'`) — `'more'` means "render inside the
+  ONE collapsed `Section title="More"` at the end of the Design tab", which
+  `StyleSurface.tsx` mounts with the same loop it uses for the continuous
+  scroll. Collapsed, the four of them cost one 32px header between them.
+
+The retired `attributes` entry is gone entirely: `panel-29` removed it from
+the manifest on direct user feedback and parked `AttributesSection.tsx` /
+`.module.css` / `htmlAttributesModel.ts` "unmounted but intact", which is the
+`No dead code` rule's exact failure mode. S5 deleted all three and their
+tests. The `htmlAttributes` **prop** is untouched — the publisher,
+`htmlImport`, and every base module's renderer still read it; only its
+retired editor UI is gone.
+
+**Separate entries, not one "Studio extras" component** — Component only applies
+to `studio.instance` nodes (the others apply to any node), and cramming
+several different `appliesTo` predicates behind one component's internal `if`
 ladder would reintroduce the per-node-kind branching this whole series spent
-eleven sections removing. `component`/`attributes` are near-verbatim moves
-(`InstanceCallSiteView.tsx`/`HtmlAttributesPanel.tsx`, renamed) off their old
-bespoke Module-section / tab-switcher homes; `transform`/`interaction` follow
+eleven sections removing. `component` is a near-verbatim move
+(`InstanceCallSiteView.tsx`, renamed) off its old bespoke Module-section
+home; `transform`/`interaction` follow
 Law 1's empty-header/`forceOpen` disclosure exactly like Stroke/Shadow/Blur;
 `animations` is the heaviest port, combining what used to be two exports
 (`AnimationsSection` the body, `AnimationsSectionActions` the header "+"
@@ -1113,48 +1135,67 @@ edge, not an oversight.
 > Typography/Fill/Stroke/Effects). Both are gone from the single-node
 > surface: P1 deleted the rail entirely (`SelectorInspector.tsx`'s separate
 > ambient/global surface is the only place `StyleCategoryRail` still mounts),
-> and P3 replaced the category registry with the 16-entry
+> and P3 replaced the category registry with the
 > `INSPECTOR_SECTIONS` manifest (`src/admin/pages/site/inspector/sections/
 > index.ts`) `StyleSurface.tsx` mounts as one continuous scroll. Rewritten
 > below against that current reality, with real measured numbers — not the
-> old table's, and not guessed.
+> old table's, and not guessed. S5 (WS-14.5) then made the 900px number in
+> the original claim reachable again, and gave it a spec.
 
 Do not start a density change without a baseline, and do not close one without
 a re-measure. Fabricated height numbers are how a density plan drifts.
 
-**The gate is two files, not one**, because `bun test`'s `happy-dom`
+**The gate is three files, not one**, because `bun test`'s `happy-dom`
 environment builds a DOM but does not lay it out — `scrollHeight`/
 `scrollWidth`/a real rendered row offset are unavailable there (see
 `src/__tests__/inspector/measurement.test.ts`'s own header comment for the
 full explanation):
 
 - **`src/__tests__/inspector/measurement.test.ts`** (`bun test`, static) —
-  asserts the manifest shape (16 entries, in order, `order` 0–15 with no gaps
-  or dupes), the frozen `--inspector-*` token table (`--inspector-row-h`/
-  `--inspector-header-h` = 32px each, no `clamp()`/`vw`, no section CSS module
-  reaching back into the fluid `--space-*` scale), and a COMPUTED (not
-  measured) per-section rest-height budget built from those same frozen
-  tokens and each section's own minimal/collapsed-state row count, read from
-  its source.
-- **`tests/e2e/inspector-panel-measurement.e2e.ts`** (Playwright, real
-  browser, real dev server) — the real half, against a throwaway project
-  reproducing the P0 baseline's F1 (rectangle)/F2 (text)/F3 (flex board)
-  fixtures. Four gates, with the real numbers they measured:
+  asserts the manifest shape (15 entries, in order, `order` 0–14 with no gaps
+  or dupes, plus which entries carry `tabs`/`designGroup`), the frozen
+  `--inspector-*` token table (`--inspector-row-h`/`--inspector-header-h` =
+  32px each, no `clamp()`/`vw`, no section CSS module reaching back into the
+  fluid `--space-*` scale), and a COMPUTED (not measured) per-section
+  rest-height budget built from those same frozen tokens and each section's
+  own minimal/collapsed-state row count, read from its source — now summed
+  into a **Design-tab total** for the F2 text fixture.
+- **`tests/e2e/inspector-height.e2e.ts`** (Playwright) — WS-14.5, the 900px
+  gate itself: `scrollHeight <= clientHeight` at 900px for all four baseline
+  fixtures (F1 rectangle, F2 text, F3 flex board, F4 image), plus a check
+  that the four Studio-extras sections are folded at rest and one click
+  reaches them. It writes the MEASURED per-section height table to
+  `docs/audits/penpot-inspector-baseline/05-section-heights.json`.
+- **`tests/e2e/inspector-panel-measurement.e2e.ts`** (Playwright) — the older
+  gate, still live and measuring different things: row rhythm, the 260px
+  width invariant, and click counts, at its own tall viewport.
 
-**900px was stale — the real number is ~1400px, and that's not a bug.** The
-old F28 claim ("a text node's entire inspector… fits in one 900px viewport
-with no scroll") was measured against **seven** pre-P3 categories (Position,
-Layout, Appearance, Typography, Fill, Stroke, Effects). P3 item 11 (`STATE.md`
-`panel-25`, "Studio extras") added six more sections that always mount for
-any selected node — `attributes`, `transform`, `animations`, `interaction`,
-`customProperties`, and `component` (gated off for a non-instance node) — none
-of which the 900px number ever budgeted for. Measured for real against the
-e2e spec's F2 text fixture: **~1400px total** (`attributes`'s own empty-state
-alone is ~245px — a `variant="centered"` `EmptyState`, not a compact row).
-The gate itself is real and still enforced — the panel must render with no
-internal scrollbar, and must not silently regress past ~1400px — just
-calibrated against the current, correct total instead of a sum that predates
-six of the panel's sixteen sections.
+**900px is real again, and S5 is what made it reachable.** The old F28 claim
+("a text node's entire inspector… fits in one 900px viewport with no scroll")
+was measured against **seven** pre-P3 categories. P3 item 11 (`STATE.md`
+`panel-25`, "Studio extras") added six more always-mounted sections nobody
+had budgeted for, and `fix/inspector-spacing-audit`'s real between-section
+gap grew it further: the F2 text node measured **~1826px** at that spec's own
+2100px-tall viewport. S5 did not shrink a single control to fix that. It moved
+`transform`/`animations`/`interaction`/`customProperties` behind one collapsed
+**More** disclosure and deleted the retired `attributes` code outright, which
+removes **164px** of always-mounted Design-tab height — computed from the
+frozen tokens and asserted in the static half:
+
+| | Design-tab sections, F2 text, at rest |
+|---|---:|
+| 11 inline sections + 4 Studio extras inline | **920px** |
+| 10 inline sections + 1 collapsed `More` header | **756px** |
+
+`docs/audits/penpot-inspector-baseline/05-section-heights.md` carries the
+full per-section table, both computed and measured, and explains why neither
+replaces the other.
+
+**The panel chrome is not in that number and cannot be.** The write-target
+chip row, ClassPicker, the Module block, and `.surface`'s own padding are
+fluid `--space-*` values with no fixed px, so no static sum can see them.
+That is exactly why the 900px assertion is a Playwright spec measuring the
+real scroll container, not an arithmetic claim.
 
 **The width invariant still holds, verbatim in spirit.** Every section
 shrinks or truncates rather than overflowing its column — the e2e spec

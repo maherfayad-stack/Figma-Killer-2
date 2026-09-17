@@ -20,15 +20,12 @@
  * dispatch reusable across surfaces.
  *
  * The Styles/Attributes node-view switch this file used to own was deleted
- * in P3 item 11 (`STATE.md` `panel-25`, Studio extras) — Attributes briefly
- * became its own `INSPECTOR_SECTIONS` manifest entry (`AttributesSection.
- * tsx`), rendered inline in the same scroll as every other section instead
- * of behind a tab. Direct user feedback while dogfooding ("remove
- * attributes") retired that manifest entry outright — `AttributesSection.
- * tsx` and `htmlAttributesModel.ts` are kept in place, unmounted, since
- * `htmlAttributes` is a real prop other consumers (publisher, `htmlImport`,
- * every base module's renderer) still read — see `inspector/sections/
- * index.ts`'s own doc for the full reasoning.
+ * in P3 item 11 (`STATE.md` `panel-25`, Studio extras); direct user feedback
+ * while dogfooding ("remove attributes") then retired the `attributes`
+ * manifest entry outright, and S5 deleted its now-unmounted components and
+ * model. The `htmlAttributes` PROP is untouched — the publisher,
+ * `htmlImport`, and every base module's renderer still read it; only its
+ * retired editor UI is gone.
  */
 import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
@@ -235,10 +232,9 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           `codeProps` props — see `selectionModel.ts`'s own doc). Only the
           module/panel-chrome concerns SelectionModel deliberately doesn't
           own are still passed down. P3 item 11 (`STATE.md` `panel-25`) deleted
-          the Styles/Attributes switcher that used to gate this — Attributes
-          is now `AttributesSection.tsx`, one of `StyleSurface`'s own
-          `INSPECTOR_SECTIONS` entries, rendered unconditionally alongside
-          every other section in the same scroll. */}
+          the Styles/Attributes switcher that used to gate this — every
+          section now mounts from `INSPECTOR_SECTIONS`, in one continuous
+          scroll with a single collapsed More group at its end. */}
       <StyleSurface
         definition={definition}
         moduleContent={moduleTabContent}

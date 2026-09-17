@@ -2,57 +2,67 @@
  * INSPECTOR_SECTIONS — the section manifest `STUDIO-LIVE-CANVAS-PLAN.md`
  * §P4 names (`STATE.md` `panel-23`, Phase B item 1).
  *
- * `StyleSurface.tsx` mounts every DESIGN-tab entry via
- * `INSPECTOR_SECTIONS.filter((s) => (s.tab ?? 'design') === 'design' &&
- * s.appliesTo(model)).sort((a, b) => a.order - b.order).map((s) =>
- * <s.Component key={s.id} />)` — that MOUNT MECHANISM is what this file owes
- * P3 (the Penpot-ordered section-by-section re-skin), so growing this array
- * is P3's entire job, never touching the shell's mount logic again.
+ * `StyleSurface.tsx` mounts the DESIGN-tab entries via
+ * `designPrimarySections(model)` + `designMoreSections(model)` below;
+ * `PrototypePanel.tsx` mounts the PROTOTYPE-tab entries via
+ * `PROTOTYPE_TAB_SECTIONS`. That MOUNT MECHANISM
+ * is what this file owes P3 (the Penpot-ordered section-by-section re-skin),
+ * so growing this array is P3's entire job, never touching either shell's
+ * mount logic again.
  *
  * P3 (`STATE.md` `panel-25`) is complete: `StyleSectionsEditor`'s 11 internal
  * CSS categories (Spacing/Layout/Position/Size/Typography/Appearance/Fill/
  * Interaction/Effects/Animations/Border) fanned out into independently-
  * manifested sections with real `appliesTo` predicates (e.g. Typography only
  * on a text node), one section (or, for item 11, six sections) per PR,
- * Penpot-ordered. `layer` (item 1), `align` (item 2), `measures` (item 3),
- * `layout` (item 4), `fill` (item 5), `stroke` (item 6), `shadow` (item 7),
- * `blur` (item 8), `text` (item 9), `export` (item 10), and the six Studio-
- * extras entries (item 11 — `component`/`attributes`/`transform`/
- * `animations`/`interaction`/`customProperties`) were ALL migrated. The old
- * `styles` catch-all entry (`StyleSectionsComposer.tsx`) is deleted — there
- * is nothing left in the legacy registry for it to render.
+ * Penpot-ordered. The old `styles` catch-all entry
+ * (`StyleSectionsComposer.tsx`) is deleted — there is nothing left in the
+ * legacy registry for it to render.
  *
- * ## `tab` — Design vs. Prototype residency (direct user feedback, dogfooding)
+ * ## `tabs` — which shells mount a section
  *
- * Every entry declares which of `InspectorShell`'s tabs it belongs to via an
- * additive `tab?: 'design' | 'prototype'` field, defaulting to `'design'` —
- * so every entry EXCEPT the three below is untouched by this addition.
+ * Every entry declares which of `InspectorShell`'s tabs it belongs to via
+ * `tabs`, defaulting to `['design']` — so every entry except
+ * `transform`/`animations`/`interaction` is untouched by this field.
  *
- * `transform`/`animations`/`interaction` are tagged `tab: 'prototype'` and
- * moved out of the Design tab into the Prototype tab
- * (`panels/PrototypePanel/PrototypePanel.tsx`, which mounts the same
- * `tab === 'prototype'` filtered-and-sorted subset below its own link-
- * authoring content). They were parked in Design as "Studio extras" — no
- * Penpot Design-tab equivalent — precisely because Penpot's own *Prototype*
- * tab is where interaction/motion concerns belong; putting them in the tab
- * actually named for that is the more coherent home, not a hack. Each
- * section's own file doc (unchanged by this move) already documents that it
- * takes no props and renders `null` on no selection — exactly the shape
- * `InspectorShell`'s own doc requires for a tab that "renders regardless of
- * whether a node is selected."
+ * Those three are `['design', 'prototype']`: motion, transforms, and
+ * cursor/pointer behaviour belong to the Prototype tab (Figma's own motion
+ * lives in prototyping, not the style panel), and `PrototypePanel` renders
+ * them there **expanded**, at rest, because that tab exists for exactly this
+ * material. They ALSO stay reachable from Design — a CSS `transform` is a
+ * style, and hiding it behind a tab switch would make it undiscoverable for
+ * a user who never opens Prototype — but only inside the collapsed **More**
+ * disclosure described below, never as always-mounted Design-tab height.
  *
- * `attributes` (`htmlAttributes`, the P3 item-11 "Attributes" section) is
- * REMOVED from this manifest outright per the same feedback ("remove
- * attributes") — it is the only entry retired rather than relocated.
- * `AttributesSection.tsx`/`.module.css` and `htmlAttributesModel.ts` are kept
- * in place, unmounted but intact and documented — see `AttributesSection.
- * tsx`'s own doc header for why deleting them outright would strand real
- * `htmlAttributes` data already written into users' `.tsx` source (the prop
- * is read by the publisher, `htmlImport`, and every base module's own
- * renderer — it is not this section's private concern to delete alongside
- * its only editor UI).
+ * ## `designGroup` — the 900px budget, and the one More disclosure (S5)
  *
- * 15 entries now (was 16): 12 in the Design tab, 3 in the Prototype tab.
+ * `docs/features/inspector.md` §6's budget is a text node's WHOLE Design tab
+ * rendering with no internal scrollbar at a 900px viewport. The four Studio-
+ * extras sections — Transform, Animations, Interaction, Custom properties —
+ * are what pushed it past that: none of them has a Penpot/Figma Design-tab
+ * equivalent, each is genuinely rare, and together they cost a header plus
+ * (for Custom properties) an always-resident "Add property" row of permanent
+ * Design-tab height for material almost no selection needs.
+ *
+ * `designGroup: 'more'` moves an entry out of the continuous scroll and into
+ * ONE collapsed `Section title="More"` that `StyleSurface.tsx` renders at the
+ * very end of the Design tab. Collapsed, the four of them cost a single
+ * 32px header between them instead of four headers plus their resident rows;
+ * expanded, they render exactly as before, in manifest order, with no second
+ * copy of any component. `designGroup` defaults to `'primary'` (the
+ * continuous scroll) — every other entry relies on that default.
+ *
+ * The retired `attributes` entry (P3 item 11's "Attributes" section) is gone
+ * for good in the same pass: `panel-29` removed it from this manifest on
+ * direct user feedback and parked `AttributesSection.tsx`/`.module.css`/
+ * `htmlAttributesModel.ts` unmounted "but intact", which is exactly the
+ * `No dead code` rule's failure mode — three files and a test suite nothing
+ * renders. They are deleted. The `htmlAttributes` PROP is untouched and
+ * still read by the publisher, `htmlImport`, and every base module's own
+ * renderer; only its retired editor UI is gone.
+ *
+ * 15 entries: 11 mount in the Design tab's continuous scroll, 4 in Design's
+ * More disclosure (3 of which also mount, expanded, in Prototype).
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -73,16 +83,18 @@ import { AnimationsSection } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 
+export type InspectorSectionTab = 'design' | 'prototype'
+
+/** Design-tab residency — see this file's own `designGroup` doc. */
+export type InspectorSectionDesignGroup = 'primary' | 'more'
+
 export interface InspectorSectionDefinition {
   id: string
   order: number
-  /**
-   * Which `InspectorShell` tab this section mounts under. Defaults to
-   * `'design'` when omitted — every entry but `transform`/`animations`/
-   * `interaction` relies on that default. See this file's own "tab" doc
-   * above for why those three are `'prototype'`.
-   */
-  tab?: 'design' | 'prototype'
+  /** Which `InspectorShell` tabs mount this section. Defaults to `['design']`. */
+  tabs?: ReadonlyArray<InspectorSectionTab>
+  /** Where inside the Design tab it mounts. Defaults to `'primary'`. */
+  designGroup?: InspectorSectionDesignGroup
   appliesTo(selection: SelectionModel): boolean
   Component: ComponentType
 }
@@ -122,10 +134,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   { id: 'shadow', order: 6, appliesTo: (m) => m.selectedNode != null, Component: ShadowSection },
   // Blur (P3 item 8) — `filter: blur()` ("Layer blur") / `backdrop-filter:
   // blur()` ("Background blur"), the other half of the old `EffectsSection.
-  // tsx` split. `EffectsSection.tsx`/`EffectEditorPopover.tsx` are deleted in
-  // this same PR now that both Shadow and Blur have migrated — see
-  // `classStyleSections.ts`'s own doc for where `transform`/`transformOrigin`
-  // (the old Effects settings ⚙, no Penpot home) relocated to.
+  // tsx` split.
   { id: 'blur', order: 7, appliesTo: (m) => m.selectedNode != null, Component: BlurSection },
   // Text (P3 item 9) — family/weight/size/line-height/letter-spacing/align/
   // vertical-align, split out of the old `typography` entry. The first
@@ -136,41 +145,92 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // Export (P3 item 10) — PNG/SVG of a node, Copy CSS, Copy JSX. Node-level,
   // not a set of CSS properties, so unlike every other entry here it never
   // wrote to `classStyleSections.ts` in the first place (see
-  // `ExportSection.tsx`'s own doc for why) — this migration only moves its
-  // MOUNT, from a bespoke conditional at the bottom of `StyleSurface.tsx`
-  // into this manifest, gated the same way every other entry now is
-  // (`appliesTo`, and the shared `canEditStyleHere`/`nothingWritable` gate
-  // `StyleSurface.tsx` still applies around this whole array — a disclosed
-  // behaviour change from the pre-migration mount, which rendered
-  // unconditionally; see `STATE.md` `panel-25`'s Section 10 entry).
+  // `ExportSection.tsx`'s own doc for why).
   { id: 'export', order: 9, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
   // Component (P3 item 11, `STATE.md` `panel-25`, Studio extras) — call-site
-  // props for a selected `studio.instance` node. The only one of the six
-  // Studio-extras entries with a node-KIND predicate, not just "a node is
-  // selected" — matches the pre-migration file's own bespoke Module-section
-  // branch, now its own manifest entry (`renderModuleTabContent.tsx`'s
-  // `studio.instance` branch returns `null` instead).
+  // props for a selected `studio.instance` node. The only one of the Studio-
+  // extras entries with a node-KIND predicate, not just "a node is selected".
   { id: 'component', order: 10, appliesTo: (m) => m.selectedNode?.moduleId === 'studio.instance', Component: ComponentSection },
-  // Transform (P3 item 11) — `transform`/`transformOrigin`. No Penpot section
-  // to land in; parked in `classStyleSections.ts`'s now-empty registry until
-  // P3 claimed it for real (see that file's own doc). Moved to the Prototype
-  // tab (direct user feedback, "put transform, animations, and interaction
-  // in prototype") — see this file's own "tab" doc above.
-  { id: 'transform', order: 11, tab: 'prototype', appliesTo: (m) => m.selectedNode != null, Component: TransformSection },
-  // Animations (P3 item 11) — `animation*`/`transition`. Figma's own motion
-  // lives in prototyping, not the style panel — now literally in this
-  // panel's Prototype tab, not just a Studio-only style-panel addition.
-  { id: 'animations', order: 12, tab: 'prototype', appliesTo: (m) => m.selectedNode != null, Component: AnimationsSection },
+  // Transform (P3 item 11) — `transform`/`transformOrigin`. Expanded in
+  // Prototype, behind Design's More disclosure. See the `tabs`/`designGroup`
+  // docs above.
+  {
+    id: 'transform',
+    order: 11,
+    tabs: ['design', 'prototype'],
+    designGroup: 'more',
+    appliesTo: (m) => m.selectedNode != null,
+    Component: TransformSection,
+  },
+  // Animations (P3 item 11) — `animation*`/`transition`.
+  {
+    id: 'animations',
+    order: 12,
+    tabs: ['design', 'prototype'],
+    designGroup: 'more',
+    appliesTo: (m) => m.selectedNode != null,
+    Component: AnimationsSection,
+  },
   // Interaction (P3 item 11) — `cursor`/`pointerEvents`/`userSelect`/
-  // `scrollBehavior`. Figma has no CSS-cursor concept in its style panel;
-  // moved to the Prototype tab alongside Transform/Animations.
-  { id: 'interaction', order: 13, tab: 'prototype', appliesTo: (m) => m.selectedNode != null, Component: InteractionSection },
+  // `scrollBehavior`.
+  {
+    id: 'interaction',
+    order: 13,
+    tabs: ['design', 'prototype'],
+    designGroup: 'more',
+    appliesTo: (m) => m.selectedNode != null,
+    Component: InteractionSection,
+  },
   // Custom properties (P3 item 11) — every uncurated key
   // (`!isCuratedProperty`), the Webflow/Framer-style escape hatch. Stays
-  // LAST within the Design tab, exactly as it always has (`StyleSectionsEditor
-  // .tsx` always rendered it after every curated section) — its `order`
-  // value only needs to be the highest AMONG DESIGN-tab entries, which 14
-  // is: the three Prototype-tab entries above it are filtered out of the
-  // Design tab's own sort entirely, so they never displace it there.
-  { id: 'customProperties', order: 14, appliesTo: (m) => m.selectedNode != null, Component: CustomPropertiesSection },
+  // LAST, now as the last row inside More rather than the last always-
+  // mounted section of the Design tab: its "Add property" trigger is
+  // resident even when nothing is set, which is real permanent height for
+  // the rarest surface in the panel.
+  {
+    id: 'customProperties',
+    order: 14,
+    designGroup: 'more',
+    appliesTo: (m) => m.selectedNode != null,
+    Component: CustomPropertiesSection,
+  },
 ]
+
+const DEFAULT_TABS: ReadonlyArray<InspectorSectionTab> = ['design']
+
+function mountsIn(section: InspectorSectionDefinition, tab: InspectorSectionTab): boolean {
+  return (section.tabs ?? DEFAULT_TABS).includes(tab)
+}
+
+function designSections(
+  selection: SelectionModel,
+  group: InspectorSectionDesignGroup,
+): InspectorSectionDefinition[] {
+  return INSPECTOR_SECTIONS.filter(
+    (section) =>
+      mountsIn(section, 'design') &&
+      (section.designGroup ?? 'primary') === group &&
+      section.appliesTo(selection),
+  ).sort((a, b) => a.order - b.order)
+}
+
+/** Design-tab sections in the continuous scroll, in manifest order. */
+export function designPrimarySections(selection: SelectionModel): InspectorSectionDefinition[] {
+  return designSections(selection, 'primary')
+}
+
+/** Design-tab sections inside the collapsed More disclosure, in manifest order. */
+export function designMoreSections(selection: SelectionModel): InspectorSectionDefinition[] {
+  return designSections(selection, 'more')
+}
+
+/**
+ * Prototype-tab sections, in manifest order. No `appliesTo` filter and no
+ * `SelectionModel` argument: `PrototypePanel` mounts these unconditionally
+ * (each already renders `null` on no selection — their own file docs), so
+ * this is a constant the panel can hold at module scope.
+ */
+export const PROTOTYPE_TAB_SECTIONS: ReadonlyArray<InspectorSectionDefinition> =
+  INSPECTOR_SECTIONS.filter((section) => mountsIn(section, 'prototype')).sort(
+    (a, b) => a.order - b.order,
+  )

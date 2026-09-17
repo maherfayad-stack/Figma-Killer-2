@@ -39,6 +39,13 @@ canonical version.
    changes *hue* between themes, not just lightness) and one concept
    (`--inspector-label-w`) that doesn't survive contact with Penpot's
    icon-glyph field labels at all.
+7. **[`05-section-heights.md`](./05-section-heights.md)** — the one file in
+   here that measures **Studio**, not Penpot: the per-section Design-tab
+   height table (computed and measured) behind
+   `docs/features/inspector.md` §6's 900px budget, and what the collapsed
+   **More** disclosure bought back. Read it with
+   `src/__tests__/inspector/measurement.test.ts` and
+   `tests/e2e/inspector-height.e2e.ts`.
 
 ## Screenshots
 

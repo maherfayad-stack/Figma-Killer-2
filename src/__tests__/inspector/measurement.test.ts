@@ -47,26 +47,36 @@
  * table built the same way, off the current 15-entry manifest.
  *
  * ── `panel-29` note (direct user feedback while dogfooding) ──────────────
- * Two changes to the manifest itself, not just its consumers:
- *   - `attributes` is REMOVED outright (not relocated) — "remove
- *     attributes". `AttributesSection.tsx`/`htmlAttributesModel.ts` are kept
- *     in place, unmounted, since `htmlAttributes` is a real prop other
- *     consumers still read (see `inspector/sections/index.ts`'s own doc).
- *   - `transform`/`animations`/`interaction` are tagged `tab: 'prototype'`
- *     and move to `InspectorShell`'s Prototype tab — "put transform,
- *     animations, and interaction in prototype". They still exist in this
- *     SAME array (so they still count toward the 15 below and still carry
- *     real `order` values), they just no longer mount in the Design tab
- *     `StyleSurface.tsx` renders — the manifest shape this file pins is
- *     tab-agnostic on purpose, since `tab` is an additive field or every
- *     other entry's default.
+ * `attributes` was REMOVED from the manifest outright (not relocated) —
+ * "remove attributes" — and `transform`/`animations`/`interaction` moved to
+ * `InspectorShell`'s Prototype tab.
+ *
+ * ── S5 note (`STUDIO-FIGMA-FEEL-PLAN.md`, the 900px budget) ──────────────
+ * Three further manifest-shape changes this file pins:
+ *   - `tab?: 'design' | 'prototype'` became `tabs?: readonly
+ *     InspectorSectionTab[]`, because `transform`/`animations`/`interaction`
+ *     now mount in BOTH tabs: expanded in Prototype (the tab that exists for
+ *     that material), and inside Design's one collapsed **More** disclosure,
+ *     so a CSS `transform` is still reachable without a tab switch.
+ *   - `designGroup: 'more'` tags the four Studio-extras sections
+ *     (`transform`/`animations`/`interaction`/`customProperties`) that
+ *     `StyleSurface.tsx` renders inside that single collapsed group instead
+ *     of the continuous scroll. The computed rest-height table at the bottom
+ *     of this file is what makes that a measurable saving rather than a
+ *     claim: it now carries a Design-tab TOTAL for the F2 text fixture, in
+ *     both the collapsed and expanded states.
+ *   - `AttributesSection.tsx`/`.module.css`/`htmlAttributesModel.ts` and
+ *     their tests are DELETED. `panel-29` parked them "unmounted but
+ *     intact", which is the `No dead code` rule's exact failure mode. The
+ *     `htmlAttributes` PROP is untouched — the publisher, `htmlImport`, and
+ *     every base module's renderer still read it.
  */
 
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getPropertyFieldGlyph } from '@site/panels/PropertiesPanel/cssPropertyIcons'
-import { INSPECTOR_SECTIONS } from '@site/inspector/sections'
+import { INSPECTOR_SECTIONS, PROTOTYPE_TAB_SECTIONS } from '@site/inspector/sections'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const GLOBALS_CSS = readFileSync(join(SRC_ROOT, 'styles/globals.css'), 'utf8')
@@ -96,9 +106,16 @@ const EXPECTED_SECTION_IDS = [
   'customProperties',
 ] as const
 
-/** The 3 entries `panel-29` moved out of the Design tab — see this file's
- *  own `panel-29` note above. */
+/** The 3 entries that mount in BOTH tabs — see this file's own S5 note. */
 const PROTOTYPE_TAB_SECTION_IDS = ['transform', 'animations', 'interaction'] as const
+
+/** The 4 entries behind Design's one collapsed More disclosure (S5). */
+const MORE_GROUP_SECTION_IDS = [
+  'transform',
+  'animations',
+  'interaction',
+  'customProperties',
+] as const
 
 describe('INSPECTOR_SECTIONS manifest shape', () => {
   it('has exactly 15 entries', () => {
@@ -114,12 +131,25 @@ describe('INSPECTOR_SECTIONS manifest shape', () => {
     expect(orders).toEqual(Array.from({ length: 15 }, (_, i) => i))
   })
 
-  it('tags exactly the 3 relocated sections tab: prototype; every other entry defaults to design', () => {
+  it('tags exactly the 3 dual-tab sections tabs: [design, prototype]; every other entry defaults to design-only', () => {
     for (const section of INSPECTOR_SECTIONS) {
-      const expectedTab = (PROTOTYPE_TAB_SECTION_IDS as readonly string[]).includes(section.id)
-        ? 'prototype'
+      const expectedTabs = (PROTOTYPE_TAB_SECTION_IDS as readonly string[]).includes(section.id)
+        ? ['design', 'prototype']
         : undefined
-      expect(section.tab).toBe(expectedTab)
+      expect(section.tabs).toEqual(expectedTabs)
+    }
+  })
+
+  it('PROTOTYPE_TAB_SECTIONS is exactly those 3, in manifest order', () => {
+    expect(PROTOTYPE_TAB_SECTIONS.map((s) => s.id)).toEqual([...PROTOTYPE_TAB_SECTION_IDS])
+  })
+
+  it('puts exactly the 4 Studio-extras sections behind the one More disclosure', () => {
+    for (const section of INSPECTOR_SECTIONS) {
+      const expectedGroup = (MORE_GROUP_SECTION_IDS as readonly string[]).includes(section.id)
+        ? 'more'
+        : undefined
+      expect(section.designGroup).toBe(expectedGroup)
     }
   })
 
@@ -351,6 +381,47 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
   customProperties: 64,
 }
 
+// ---------------------------------------------------------------------------
+// Design-tab TOTAL for the F2 text fixture — the number S5 exists to move.
+//
+// Still computed, not measured (same happy-dom limitation as everything
+// above): the sum of the sections the F2 text node mounts in the Design tab,
+// plus `.surfaceContent`'s own `--inspector-space-xl` (12px) grid gap between
+// every mounted wrapper. `align` renders `null` for this fixture but still
+// occupies a grid item, so it contributes 0px of height and one full gap —
+// counted honestly rather than skipped.
+//
+// Panel CHROME above the sections (the write-target chip row, ClassPicker,
+// the Module block, `.surface`'s own fluid padding) is NOT in this number and
+// cannot be: those are fluid `--space-*` values with no fixed px. The real,
+// whole-panel `scrollHeight <= clientHeight` assertion at 900px lives in
+// `tests/e2e/inspector-height.e2e.ts`, which also writes the MEASURED version
+// of this table to `docs/audits/penpot-inspector-baseline/`.
+// ---------------------------------------------------------------------------
+
+const BETWEEN_SECTION_GAP = 12 // --inspector-space-xl
+/** `Section`'s header alone, which is all a collapsed More group costs. */
+const MORE_HEADER_H = HEADER_H
+
+/** What the F2 text node mounts in the Design tab's continuous scroll. */
+const F2_PRIMARY_SECTION_IDS = [
+  'layer',
+  'align',
+  'measures',
+  'layout',
+  'fill',
+  'stroke',
+  'shadow',
+  'blur',
+  'text',
+  'export',
+] as const
+
+function sumWithGaps(heights: ReadonlyArray<number>): number {
+  const gaps = heights.length > 0 ? (heights.length - 1) * BETWEEN_SECTION_GAP : 0
+  return heights.reduce((total, h) => total + h, 0) + gaps
+}
+
 describe('computed section rest-height budget', () => {
   it('matches the formula for every section id in the manifest', () => {
     for (const id of EXPECTED_SECTION_IDS) {
@@ -373,5 +444,28 @@ describe('computed section rest-height budget', () => {
     expect(widthHeightRow).toBeGreaterThan(layerRow)
     expect(xyRow - widthHeightRow).toBeLessThanOrEqual(ROW_H + WITHIN_GROUP_GAP)
     expect(rotationRadiusRow - xyRow).toBeLessThanOrEqual(ROW_H + WITHIN_GROUP_GAP)
+  })
+
+  it('the F2 text node Design tab costs 756px of sections with More collapsed', () => {
+    const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
+    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(756)
+  })
+
+  it('the More disclosure buys back 164px that used to be always-mounted', () => {
+    const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
+    const moreSectionHeights = MORE_GROUP_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
+    // Before S5: all four mounted inline, each its own grid item.
+    const before = sumWithGaps([...primary, ...moreSectionHeights])
+    // After S5: one collapsed header in their place.
+    const after = sumWithGaps([...primary, MORE_HEADER_H])
+    expect(before - after).toBe(164)
+  })
+
+  it('leaves the Design tab room for real panel chrome inside a 900px viewport', () => {
+    const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
+    // The whole-panel gate is the e2e spec's; this is the static half of the
+    // same claim — the sections alone must not eat the entire budget, or no
+    // amount of chrome tuning could ever make 900px fit.
+    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBeLessThan(900)
   })
 })
