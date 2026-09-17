@@ -21,6 +21,7 @@ import * as path from 'node:path'
 import { PNG } from 'pngjs'
 import { parseBoardsFile, serializeBoardsFile, upsertFrame } from '@core/studio-board'
 import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
+import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import { registerDesignReference } from '../../../../handlers/studio/designReferenceStore'
 import type { AiBrowserBridge } from '../../../runtime/types'
 import type { AiToolOutput } from '@core/ai'
@@ -183,8 +184,11 @@ function scaffoldPageAt(name: string, width: number, height: number): string {
   return scaffolded.pageId
 }
 
+/** Named because the per-account verification store is keyed off it — a test that reads that store back has to use the SAME id the handler was given. */
+const CTX_USER_ID = 'u1'
+
 function ctx(): Parameters<NonNullable<typeof studioCompareTool.handler>>[1] {
-  return { userId: 'u1', signal: new AbortController().signal } as unknown as Parameters<NonNullable<typeof studioCompareTool.handler>>[1]
+  return { userId: CTX_USER_ID, signal: new AbortController().signal } as unknown as Parameters<NonNullable<typeof studioCompareTool.handler>>[1]
 }
 
 interface PageResult {
@@ -271,10 +275,18 @@ describe('studio_compare — dpr selection + purpose threading', () => {
 
     bridgeImpl = async () => {
       // Baseline differs from the reference in the LOWER-RIGHT quadrant of
-      // image space, (290,290)-(350,350) — inside CSS-px node rect
-      // (140,140)-(180,180) ("bottom-right-card") at imageScale:2, and large
-      // enough (2.25% of the frame) to be a structural region.
-      const baseline = pngWithBlock(400, 400, { x: 290, y: 290, w: 60, h: 60 })
+      // image space, (230,230)-(360,360). That rectangle is:
+      //   - inside `bottom-right-card`'s CSS-px rect (110,110)-(190,190) ONCE
+      //     scaled by imageScale:2 to (220,220)-(380,380) — and outside BOTH
+      //     node rects if the bug this test is named after comes back and the
+      //     unscaled CSS-px numbers are used as image coordinates, so the
+      //     assertion below can still fail;
+      //   - 130x130 = 16,900px of 160,000 = 10.56% of the frame, past
+      //     `balanced`'s 6% structural-region ceiling (FIDELITY_THRESHOLDS),
+      //     and a 89.44% similarity score, under its 92% pass mark. The
+      //     earlier 60x60 block was sized for the retired 98/1.5 thresholds
+      //     W9-2 replaced, which is why it stopped failing.
+      const baseline = pngWithBlock(400, 400, { x: 230, y: 230, w: 130, h: 130 })
       return {
         ok: true,
         data: {
@@ -286,8 +298,8 @@ describe('studio_compare — dpr selection + purpose threading', () => {
               height: 400,
               imageIndex: 0,
               nodeRects: [
-                { nodeId: 'top-left-card', x: 0, y: 0, width: 100, height: 100 },
-                { nodeId: 'bottom-right-card', x: 140, y: 140, width: 40, height: 40 },
+                { nodeId: 'top-left-card', x: 0, y: 0, width: 80, height: 80 },
+                { nodeId: 'bottom-right-card', x: 110, y: 110, width: 80, height: 80 },
               ],
               imageScale: 2,
               warnings: [],
@@ -316,8 +328,9 @@ describe('studio_compare — dpr selection + purpose threading', () => {
     const registered = await registerDesignReference(dir, new Uint8Array(referenceBytes), { pageId })
     if (!registered.ok) throw new Error(registered.error)
 
-    // A 40x40 block on a 100x100 frame = 16% of the frame — well past the
-    // default 1.5% structural-region floor.
+    // A 40x40 block on a 100x100 frame = 16% of the frame — well past
+    // `balanced`'s 6% structural-region ceiling (the derived mode here: a
+    // reference is armed and nothing overrides it).
     bridgeImpl = async () => ({
       ok: true,
       data: {
@@ -387,7 +400,13 @@ describe('studio_compare — dpr selection + purpose threading', () => {
     expect(result.data.results[0]!.pass).toBe(true)
 
     const { readPassingCompare } = await import('../../../../handlers/studio/pageVerificationStore')
-    const recorded = readPassingCompare(dir, pageId)
+    // The store is keyed per (project, ACCOUNT, page) — W10 §5 moved it under
+    // `.studio/cache/agent/<userKey>/` so one person's passing compare cannot
+    // satisfy another's Stop gate. It is read back with the same key the tool
+    // wrote it under, derived from `ctx().userId` — not with two arguments,
+    // which silently looked up page `undefined` under a userKey that was
+    // really a page id and could only ever answer `null`.
+    const recorded = readPassingCompare(dir, studioAgentUserKey(CTX_USER_ID), pageId)
     expect(recorded).not.toBeNull()
     expect(recorded!.referenceId).toBe(registered.reference.id)
     expect(recorded!.passedAtMs).toBeGreaterThanOrEqual(before)
@@ -412,7 +431,7 @@ describe('studio_compare — dpr selection + purpose threading', () => {
     expect(result.data.results[0]!.pass).toBe(false)
 
     const { readPassingCompare } = await import('../../../../handlers/studio/pageVerificationStore')
-    expect(readPassingCompare(dir, pageId)).toBeNull()
+    expect(readPassingCompare(dir, studioAgentUserKey(CTX_USER_ID), pageId)).toBeNull()
   })
 })
 
