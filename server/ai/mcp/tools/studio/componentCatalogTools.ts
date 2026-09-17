@@ -2,8 +2,9 @@
  * studio_list_components / studio_find_component — the design-system
  * COMPONENT catalog the Studio insert palette draws from, exposed headlessly.
  *
- * Root cause this closes: the palette (`moduleInserterModel.ts`, Studio mode
- * only shows `category === 'Design System'` entries) is fed by
+ * Root cause this closes: the palette (the Assets panel's `assetsModel.ts` —
+ * whatever a module's `category` says, it offers every module with an honest
+ * source spelling) is fed by
  * `POST /admin/api/studio/component-bundle`'s `BundledComponentSpec[]` — a
  * complete, typed, machine-readable component API (name, package, prop specs
  * with enum variants). No MCP tool exposed any of it. An agent could not

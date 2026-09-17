@@ -464,7 +464,19 @@ async function syncProjectModules(dir: string): Promise<void> {
         id,
         name: spec.name,
         description: `${spec.name} — ${spec.pkg}`,
-        category: 'Design System',
+        // `category` is a SECTION NAME in the Assets panel, not a kind tag. It
+        // used to read `'Design System'`, which was tolerable while every
+        // importable module shared that one flat category — it now reads as a
+        // claim that a user's own npm component belongs to Studio's built-in
+        // design system, which it does not. Studio's own components carry
+        // their purpose group here (Navigation, Actions, …); a third-party
+        // package's components carry `'Packages'`, and `AssetsPanel`'s
+        // `groupByCategory` sorts an unknown group after the known ones, so
+        // they land in their own sub-group at the foot of the section with
+        // `PackageBundleNotice` above them. Splitting is by module ID
+        // (`base.*` vs everything else), never by this string, so the section
+        // a `pkg.*` component appears in does not depend on it.
+        category: 'Packages',
         version: '1.0.0',
         icon: CursorClickSolidIcon,
         trusted: true,

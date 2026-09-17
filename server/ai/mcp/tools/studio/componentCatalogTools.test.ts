@@ -235,6 +235,40 @@ describe('studio_list_components', () => {
     expect(button!.props.every((p) => typeof p.kind.kind === 'string')).toBe(true)
   })
 
+  /**
+   * DS-1 filled `description`/`keywords`/`group` on every component in the
+   * committed manifest; DS-3 wrote this tool to pass them through as OPTIONAL
+   * so the two branches could compile apart. Now that both have landed, they
+   * are real data and an agent choosing a component reads them — so assert
+   * against the REAL manifest, not a fixture, that they survive the trip. A
+   * regenerated manifest that dropped them would otherwise fail silently here
+   * and leave the agent back on guessing from names.
+   */
+  it('carries the built-in manifest\'s description, keywords and group through to the catalog', async () => {
+    write('design-system/index.js', 'export {}\n')
+
+    const result = (await call('studio_list_components')) as {
+      components: Array<{ name: string; apiSource: string; description?: string; keywords?: string[]; group?: string }>
+    }
+
+    const builtin = result.components.filter((c) => c.apiSource === 'builtin')
+    expect(builtin.length).toBeGreaterThan(10)
+    // Every one of them, not just the one we spot-check below.
+    for (const entry of builtin) {
+      expect(typeof entry.description).toBe('string')
+      expect(entry.description!.length).toBeGreaterThan(0)
+      // The placeholder DS-6 replaced named the retired npm.
+      expect(entry.description).not.toContain('@alm-design/design-system')
+      expect(Array.isArray(entry.keywords)).toBe(true)
+      expect(entry.keywords!.length).toBeGreaterThanOrEqual(3)
+      expect(typeof entry.group).toBe('string')
+      expect(entry.group!.length).toBeGreaterThan(0)
+    }
+
+    const button = builtin.find((c) => c.name === 'Button')
+    expect(button!.group).toBe('Actions')
+  })
+
   it('lists NO built-in components for a project that does not carry the folder', async () => {
     // The refusal: naming components a project cannot import is worse than an
     // empty list, because the agent writes the import and the build breaks.

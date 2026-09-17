@@ -3,13 +3,31 @@
  *
  * The queries in `PURPOSE_QUERIES` are the ones DS-6 exists for: a designer
  * types what a component is FOR ("header", "pill", "row"), not what the
- * library decided to call it. They are the same pairs DS-9's
- * `assets-search-coverage.test.ts` will assert against the REAL registry once
- * DS-1 has filled every module's keywords; here they run against synthetic
- * items so the ranking itself is under test, not the registry's data.
+ * library decided to call it.
+ *
+ * They are asserted TWICE, on purpose:
+ *
+ *   - against the synthetic `CATALOG` below, so a ranking regression is
+ *     diagnosable without the registry in the frame; and
+ *   - against the REAL merged registry (the last `describe`), because the
+ *     ranking and the keyword data are two halves of one promise and each can
+ *     be right while the pair is wrong — a component whose keywords are fine
+ *     still loses if a sibling outranks it on a substring nobody thought
+ *     about. `src/__tests__/architecture/assets-search-coverage.test.ts`
+ *     holds the same table with its own crude scorer; keep the three lists
+ *     identical.
  */
 import { describe, expect, it } from 'bun:test'
 import { queryTokens, rankAssets, type RankableAsset } from '@site/panels/AssetsPanel/rankAssets'
+import { registry } from '@core/module-engine'
+import {
+  buildAssetItems,
+  type ModuleInsertionContext,
+} from '@site/panels/AssetsPanel/assetsModel'
+// Side-effect registration, exactly as `canvasModuleSet.ts` does it — the real
+// registry is the point of the last `describe` in this file.
+import '@modules/base'
+import '@modules/alm/register'
 
 function asset(name: string, keywords: string[] = [], description = ''): RankableAsset {
   return { name, keywords, description }
@@ -27,7 +45,7 @@ const BUTTON_GROUP = asset('ButtonGroup', ['segmented', 'actions'], 'Several but
 
 const CATALOG = [NAVBAR, CHIP, CELL, SNACKBAR, TOGGLE, SEPARATOR, CONTAINER, BUTTON, BUTTON_GROUP]
 
-/** query → the name that must come back first. The DS-9 coverage table. */
+/** query → the name that must come back first. The shared coverage table. */
 const PURPOSE_QUERIES: [string, string][] = [
   ['header', 'Navbar'],
   ['pill', 'Chip'],
@@ -36,6 +54,20 @@ const PURPOSE_QUERIES: [string, string][] = [
   ['switch', 'Toggle'],
   ['divider', 'Separator'],
   ['wrapper', 'Container'],
+]
+
+/**
+ * The same seven rows keyed by MODULE ID — byte-for-byte
+ * `assets-search-coverage.test.ts`'s `EXPECTED_FIRST_HIT`.
+ */
+const PURPOSE_QUERIES_BY_MODULE_ID: [string, string][] = [
+  ['header', 'alm.Navbar'],
+  ['pill', 'alm.Chip'],
+  ['row', 'alm.Cell'],
+  ['toast', 'alm.Snackbar'],
+  ['switch', 'alm.Toggle'],
+  ['divider', 'alm.Separator'],
+  ['wrapper', 'base.container'],
 ]
 
 describe('rankAssets', () => {
@@ -113,5 +145,78 @@ describe('queryTokens', () => {
   it('lowercases, splits on whitespace and drops empties', () => {
     expect(queryTokens('  Bottom   SHEET ')).toEqual(['bottom', 'sheet'])
     expect(queryTokens('   ')).toEqual([])
+  })
+})
+
+/**
+ * The same table, run through the SAME `rankAssets` the panel calls, over the
+ * REAL registry.
+ *
+ * Two populations, because they answer two different questions:
+ *
+ *   - **Every registered module** — the data question, and the same
+ *     population `assets-search-coverage.test.ts` scores. `toast` must resolve
+ *     to `alm.Snackbar` even though the panel never shows a Snackbar card:
+ *     Snackbar is one of the five palette-hidden overlays, and its keywords
+ *     still have to be right, because the DOM panel's right-click picker and
+ *     every future surface read the same model.
+ *   - **What the panel actually offers** — the product question. Six of the
+ *     seven rows are insertable and must come first there too.
+ */
+describe('rankAssets over the real registry', () => {
+  const PAGE_CONTEXT: ModuleInsertionContext = {
+    isVCMode: false,
+    activeVcId: null,
+    isTemplate: false,
+    hasOutlet: false,
+  }
+
+  /** Every REGISTERED module as a rankable item — visible or not. */
+  const allModuleAssets = registry.list().map((mod) => ({
+    id: mod.id,
+    name: mod.name,
+    description: mod.description ?? '',
+    keywords: mod.keywords ?? [],
+  }))
+
+  const { moduleItems } = buildAssetItems({
+    modules: registry.list(),
+    context: PAGE_CONTEXT,
+    savedLayouts: [],
+    visualComponents: [],
+  })
+
+  it('offers the design system and the base elements at all', () => {
+    expect(moduleItems.some((item) => item.id.startsWith('alm.'))).toBe(true)
+    expect(moduleItems.some((item) => item.id === 'base.container')).toBe(true)
+  })
+
+  for (const [query, expectedId] of PURPOSE_QUERIES_BY_MODULE_ID) {
+    it(`puts ${expectedId} first for "${query}"`, () => {
+      const ranked = rankAssets(query, allModuleAssets)
+
+      expect(ranked.length).toBeGreaterThan(0)
+      expect(ranked[0]?.item.id).toBe(expectedId)
+      // Unambiguous, not merely first: a tie would make the order depend on
+      // registration order, which is not a promise this data can keep.
+      if (ranked.length > 1) expect(ranked[0]!.score).toBeGreaterThan(ranked[1]!.score)
+    })
+  }
+
+  for (const [query, expectedId] of PURPOSE_QUERIES_BY_MODULE_ID) {
+    // Snackbar is palette-hidden (an overlay you place in source, not from a
+    // card), so the panel is EXPECTED to find nothing for "toast" — asserted
+    // below rather than skipped, so unhiding it is a visible change here.
+    if (expectedId === 'alm.Snackbar') continue
+    it(`offers ${expectedId} first in the panel for "${query}"`, () => {
+      const ranked = rankAssets(query, moduleItems)
+
+      expect(ranked[0]?.item.id).toBe(expectedId)
+    })
+  }
+
+  it('finds no CARD for "toast" — the Snackbar is a hidden overlay, by design', () => {
+    expect(rankAssets('toast', moduleItems)).toEqual([])
+    expect(rankAssets('toast', allModuleAssets)[0]?.item.id).toBe('alm.Snackbar')
   })
 })

@@ -20,7 +20,7 @@ import { registry, type AnyModuleDefinition } from '@core/module-engine'
 import {
   moduleAvailability,
   type ModuleInsertionContext,
-} from '@site/module-picker/moduleInserterModel'
+} from '@site/panels/AssetsPanel/assetsModel'
 import manifestJson from '@modules/alm/manifest.generated.json'
 import type { DesignSystemManifest } from '@core/design-system-manifest'
 import '@modules/base'
