@@ -72,7 +72,7 @@
  * wrong more often.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk } from '@core/ai'
+import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
@@ -141,22 +141,26 @@ export const studioMeasureReferenceTool: AiTool = {
     const match = resolvePageByName(pages, page)
     if (!match) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return aiToolError(`No screen matched "${page}". This project has: ${known}.`)
+      return toolRefusal('no-such-page', `No screen matched "${page}".`, { remedy: `This project has: ${known}.` })
     }
 
     const resolved = resolveDesignReference(dir, match.id, referenceId)
-    if (!resolved.ok) return aiToolError(resolved.error)
+    if (!resolved.ok) return resolved
     const { reference } = resolved
 
     const bytes = readDesignReferenceBytes(dir, reference)
     if (!bytes) {
-      return aiToolError(`Design reference "${reference.id}" is registered but its file could not be read from disk — it may have been removed outside Studio.`)
+      return toolRefusal('reference-unreadable', `Design reference "${reference.id}" is registered but its file could not be read from disk — it may have been removed outside Studio.`, {
+        remedy: 'Register the export again with studio_register_design_reference.',
+      })
     }
 
     const cssScale = cssPxPerReferencePx(dir, match.id, reference.width)
     if (cssScale === null) {
-      return aiToolError(
-        `"${match.title}" has no board frame, so there is no authored width to convert this reference's pixels into CSS px — and an unscaled measurement off a 2x export is exactly as wrong as guessing. Place the screen on the board (studio_set_frames) and call this again.`,
+      return toolRefusal(
+        'no-board-frame',
+        `"${match.title}" has no board frame, so there is no authored width to convert this reference's pixels into CSS px — and an unscaled measurement off a 2x export is exactly as wrong as guessing.`,
+        { remedy: 'Place the screen on the board (studio_set_frames) and call this again.' },
       )
     }
 

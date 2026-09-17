@@ -139,12 +139,35 @@ Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorte
 
 ### How a project gets in, and what it reports on the way (W7-4)
 
-Three entry paths, two routes, one aftermath:
+Four entry paths, three routes, one aftermath:
 
 | Path | Route | Transport |
 |---|---|---|
 | GitHub URL | `POST /admin/api/studio/import-github` → `{ jobId }`, then poll `GET .../import-github/status` | zipball fetch, phases reported (`downloading` with a byte count, `unpacking`, `probing`) |
+| GitHub URL, **Keep history (clone)** | `POST /admin/api/studio/git/clone` → `{ jobId }`, then poll `GET .../git/clone/status` | `git clone --filter=blob:none`, phases `cloning` / `probing` |
 | `.zip` / picked folder / **folder dropped on the launcher** | `POST /admin/api/studio/import-upload` | multipart XHR (upload progress) |
+
+**Why a clone is a separate route, not a flag on the import.** They share no
+machinery: the zipball path is an HTTP fetch plus an `unzipSync` with an
+entry-decider (the zip-bomb mitigation); the clone path is a subprocess behind
+`gitRunner.ts`'s guards, with the URL judged by `gitPaths.ts`'s transport
+allowlist and the credential handed over through a one-shot askpass. They meet
+again at `buildImportSummary`, which is the part that genuinely is the same —
+so both land the user on the identical summary step.
+
+The zipball stays the **default**: it needs no `git` on the host and no
+credential, which is right for "show me this repo". Turn **Keep history** on
+and the project arrives with its commit history, every branch, and `origin`
+already set, so the version-control panel is fully working the moment the board
+opens instead of the user's first commit having no parent. The clone path
+deliberately has no `ref` or `subdir` field — a clone brings every branch (so a
+ref is something to switch to afterwards, in the panel) and a partial checkout
+is not a clone — and no `token` field either: the credential is the signed-in
+GitHub account's, resolved server-side from the session
+([`studio-git.md`](studio-git.md)). It **refuses rather than overwrites** when
+`studio-workspace/<owner>-<repo>` already exists; the zipball path clears that
+directory because re-importing is how a zipball user updates, and a clone user
+has `git pull`.
 
 A dropped folder is not a fourth path. `src/admin/pages/site/studio/droppedFolderWalk.ts`
 walks the `DataTransfer` entry tree (`webkitGetAsEntry()`, paging `readEntries`
@@ -1010,7 +1033,20 @@ The path, end to end:
 | `duplicate-selector` / `duplicate-declaration` / `shorthand-override` / `important-override` | apply to `unset` exactly as they do to `set` — removing a declaration the cascade was already ignoring changes the file and nothing on screen |
 | `compiled-stylesheet` | a `.min.css` or a `dist/`-style build path (`classifyStylesheetEditability`). A `*.module.css` is **not** in this bucket — what is compiled there is the class NAME, not the file, and `studioCss.ts`'s `cssModuleSource` inverts `moduleClassMaps` so the selector arriving here is the one as written in the file |
 
-**Where a BRAND-NEW class's first declarations go** is the same "exactly one honest target" rule one level up, and it lives in `src/admin/pages/site/studio/cssInsertDestination.ts`. In order: the stylesheet **co-located with the class's own page** (`pages/Home.tsx` → `pages/Home.module.css`); else the single editable `.css` file this project already writes to; else a named refusal (`ambiguous-stylesheet`, listing the candidates); else, with no stylesheet anywhere, a `create` edit naming the page for the server to co-locate a new one with.
+**Where a BRAND-NEW class's first declarations go** is the same "exactly one honest target" rule one level up, and it lives in `src/admin/pages/site/studio/cssInsertDestination.ts`. In order:
+
+1. the stylesheet the **user already chose** for this rule (`pinCssInsertDestination` — see the ambiguity remedy below);
+2. the stylesheet **co-located with the class's anchor page** (`pages/Home.tsx` → `pages/Home.module.css`);
+3. else the single editable `.css` file this project already writes to;
+4. else, with more than one, a named refusal — `ambiguous-stylesheet`, **carrying the candidates as data**, never creating a further file;
+5. else, with no stylesheet anywhere, a `create` edit naming the anchor page for the server to co-locate a new one with;
+6. else `no-editable-stylesheet`, which now means what it says: no stylesheet exists, and nothing names a page to put one beside.
+
+**The anchor page is the class's own page, or failing that the page that is OPEN (Z8).** Steps 2 and 5 both ask "which page is this class's?", and the only answer used to be `pageFileForRule` — the rule's `scope`, or where the class is assigned. A class made the ordinary way (the Selectors panel's "create class", nothing selected) is on no element, so that answered `null` and the resolver refused, with the words "this class has no page to co-locate a new one with" and the reason "this module has no notion of which page is open". The client does. `collectStyleRuleEdits` takes the board's `activePageId`, `resolveOpenPageFile` turns it into the one source file that page's own markup lives in, and the resolver treats it as the anchor of **last resort** — strictly a fallback, so a class already used on Home never follows the board to Onboarding.
+
+`resolveOpenPageFile` is stricter than `server/handlers/studio/pageSourceFile.ts`'s `resolvePageSourceFile`, and deliberately not the same function: that one answers "a file to READ for this page" best-effort (first decodable node id wins, tail-first, so an inlined `<Header/>` as the first child answers `components/Header.tsx`). A destination for a WRITE cannot be best-effort. This one reads each node's **call site** (the head of a composite id — always a position in the page's own file), skips Next route chrome (a `layout.tsx` is composed into every route, so a stylesheet beside it is a stylesheet every frame imports), and answers only when every node agrees on one file.
+
+**`ambiguous-stylesheet` is a choice, not a toast.** The refusal carries every candidate, so it reaches the user as a `RefusalDialog` with one `choose-stylesheet` remedy per file (`explainCssRuleConstraint` builds them; `constraintActions.ts` runs them). Clicking one pins the destination for that rule and asks for an immediate save; the declarations the user typed are still in the diff, because `fsCodemodAdapter` seeds `refusedRuleIds` with every destination refusal so `commitBaseline` never advances past one. Without that, the baseline adopted a value that had never reached disk and the user's answer landed on a diff reading "no change" — the `style-02` failure mode, one level up. A pin is dropped on every `loadSite`, and ignored if the file it names stops being one of the project's editable stylesheets.
 
 `style-02`: that co-location step used to read the page from `rule.scope.nodeId` only, and the sole producer of node-scoped rules (`ensureNodeStyleClass`) has no non-test caller — so it never fired, and **every** new class in a project with two or more stylesheets refused with "Studio found N candidate stylesheets". The page was recoverable the whole time from where the class is *assigned*: `buildClassPageIndex` walks the pages, decodes each node id back to its file, and answers when every node carrying that class is in one file (two files ⇒ still ambiguous, still refused).
 
@@ -1031,7 +1067,7 @@ The path, end to end:
 - A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
 - A **`@container` / `@supports` context**. `setDeclarationAtMedia` emits `@media` and nothing else, so writing one of those would put the declaration under a condition the user did not ask for.
 
-Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip. Each unmapped class carries its own `reason` (`UnmappedStyleRule`), rendered as the toast BODY — `style-02`: it used to be concatenated into the generic lead, producing the self-contradictory "…has no hand-editable CSS file in this project — Studio found 4 candidate stylesheets…".
+Both surface as toasts on save (`StyleRuleEditPlan.unmapped` / `unwritableContexts`). A **destination** refusal is a third, separate list (`destinationRefusals`) and not one of these: that class is writable the moment a file is named, so it gets the dialog described above rather than a toast. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip. Each unmapped class carries its own `reason` (`UnmappedStyleRule`), rendered as the toast BODY — `style-02`: it used to be concatenated into the generic lead, producing the self-contradictory "…has no hand-editable CSS file in this project — Studio found 4 candidate stylesheets…".
 
 **A baseline never advances past a refusal (`style-02`).** `commitBaseline` ran unconditionally after every save, including the ones the server refused. The declaration never reached disk, but the baseline adopted it — so the user's obvious next move, typing the same value again, diffed as "no change", produced no edit, and was never attempted a second time. The refusal was reported once and then became permanent and invisible. `commitBaseline` now takes `refusedRuleIds` (joined from the save response's `refusals` through `StyleRuleEditPlan.ruleIdByNodeId`) and keeps those rules' previous baseline entry; the repeat TOAST is de-duplicated instead, in `refusalToasts.ts`. `commitClassIdsBaseline`'s `refusedNodeIds` is the same fix on the `className` side.
 

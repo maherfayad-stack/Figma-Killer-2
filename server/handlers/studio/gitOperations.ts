@@ -1,5 +1,5 @@
 /**
- * gitOperations — the eight things Studio is allowed to ask git to do, and
+ * gitOperations — the ten things Studio is allowed to ask git to do, and
  * nothing else.
  *
  * Each exported function builds its own argv from already-validated pieces and
@@ -28,10 +28,21 @@
  *   never ride along in a commit the user thinks they understand.
  * - **Pushing without an `origin` remote refuses** rather than inventing one.
  *   Push always names the branch explicitly and always sets upstream; it is
- *   never `--force`, and there is no route that could make it so.
+ *   never `--force`, and there is no route that could make it so. Adding that
+ *   remote is a separate, explicit act (`setOriginRemote`).
+ * - **`origin` is the only remote name Studio writes.** `setOriginRemote` has
+ *   no name parameter, and the URL it takes has already been through
+ *   `parseGithubRemoteUrl`'s two-shape allowlist — git's URL grammar includes
+ *   transports that execute (`ext::`) and transports that point at this
+ *   server's own disk (`file://`).
  * - **Restoring a file requires a raw sha** (`gitPaths.isCommitSha`), not git's
  *   revision grammar — the only shas that exist in the UI are ones `git log`
  *   printed.
+ * - **Every mutating verb holds the project write lock** (G7,
+ *   `projectWriteLock.ts`, via `withGitWriteLock` below) so a canvas save
+ *   cannot land between two of its subprocesses, and two git verbs cannot race
+ *   into git's own `index.lock`. A verb that waits more than five seconds
+ *   refuses with `code: 'busy'`. Reads take no lock — see `withGitWriteLock`.
  *
  * ## What the status view hides, and says it hides
  *
@@ -45,15 +56,28 @@
  *
  * ## Credentials
  *
- * There are none here. `push` succeeds if the user's own git credential helper
- * or ssh-agent answers, and otherwise fails with git's real message passed
- * through (`clientSafeGitError`). Studio never stores a git token, never reads
- * one from its environment, and never accepts one on this wire.
+ * Nothing here reads one. `pushCurrentBranch` takes an OPTIONAL `credential`
+ * string that its route resolved from the signed-in session (G2's encrypted
+ * per-user token — `githubToken.ts`); without one, `push` succeeds exactly
+ * when the user's own credential helper or ssh-agent answers, and otherwise
+ * fails with git's real message passed through (`clientSafeGitError`). The
+ * token is never read from the environment, never accepted as a request
+ * field, and never placed in argv or a remote URL — `gitRunner.ts` hands it to
+ * a one-shot askpass script instead.
+ *
+ * **The token is only offered to a github.com remote.** An askpass program
+ * answers whatever host git dialled — it is handed a prompt string, not a
+ * destination it can refuse — so every network verb (`push`, `fetch`, `pull`)
+ * reads `origin`'s push URL through `originAcceptsStoredGithubToken` and drops
+ * the credential unless `parseGithubRemoteUrl` accepts it. `origin` is not
+ * always Studio's: `setOriginRemote` only ever writes an allowlisted URL, but a
+ * project can arrive with a `.git` pointing anywhere.
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-import { isArgvSafeBranchName } from './gitPaths'
+import { isArgvSafeBranchName, parseGithubRemoteUrl } from './gitPaths'
+import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
 import {
   clientSafeGitError,
   runGit,
@@ -80,10 +104,21 @@ export interface GitOperationFailure {
     | 'detached-head'
     | 'empty-file-list'
     | 'already-a-repository'
+    | 'busy'
+    /** A pull stopped on a conflict, or `continue` found the next commit conflicts too. */
+    | 'conflict'
+    /** `ff-only` could not fast-forward: both sides have commits. The panel asks rebase or merge. */
+    | 'diverged'
+    /** `continue` was asked for while files are still unmerged. */
+    | 'unresolved-conflicts'
+    /** `continue`/`abort`/`resolve` with no rebase or merge stopped. */
+    | 'nothing-in-progress'
     | 'git-failed'
   message: string
   /** Present only for `dirty-tree` — the paths that must be dealt with first. */
   dirtyFiles?: string[]
+  /** Present only for `conflict`/`unresolved-conflicts` — the unmerged paths, so the panel can offer a choice per file. */
+  conflictFiles?: string[]
 }
 
 /**
@@ -124,7 +159,7 @@ function isExcludedPath(path: string): boolean {
 /** `git status --porcelain=v2 --branch -z`, parsed, plus the two extra facts the panel needs. */
 export async function readGitStatus(dir: string): Promise<GitProjectStatus | GitOperationFailure> {
   const result = await runGit(dir, ['status', '--porcelain=v2', '--branch', '-z'])
-  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not read git status'))
+  if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Could not read git status'))
 
   const parsed = parseGitStatusPorcelainV2(result.stdout)
   // Every account's log, not just the viewer's: "an agent wrote this file" is
@@ -142,10 +177,105 @@ export async function readGitStatus(dir: string): Promise<GitProjectStatus | Git
   }
 }
 
-async function hasOriginRemote(dir: string): Promise<boolean> {
+/** Whether an `origin` remote exists at all. Exported for `gitSyncOperations.ts`'s fetch, which has the same precondition. */
+export async function hasOriginRemote(dir: string): Promise<boolean> {
   const result = await runGit(dir, ['remote'])
   if (!result.ok) return false
   return result.stdout.split('\n').some((line) => line.trim() === 'origin')
+}
+
+/**
+ * True when `origin`'s push URL is a repository on github.com — the ONLY
+ * remote a stored GitHub token may be offered to.
+ *
+ * This is not belt-and-braces, it is the guard. `GIT_ASKPASS` answers whatever
+ * host git is talking to: the script `gitAskpass.ts` writes prints the token
+ * for every "Password for '…'" prompt, because an askpass program is not told
+ * which credential the caller intended. So the decision "is this remote
+ * allowed to see this token" has to be made HERE, before the script exists.
+ *
+ * `origin` is not always Studio's: `setOriginRemote` writes only URLs that
+ * passed `parseGithubRemoteUrl`, but a project can arrive with a `.git` whose
+ * `origin` the user set in their own terminal — a company GitLab, a mirror, an
+ * `ext::` transport. Without this check the first push after signing in hands
+ * that host a token with the `repo` scope over the whole account.
+ *
+ * A non-GitHub origin is NOT an error: the push proceeds with no credential
+ * from Studio, which is exactly the pre-G2 behaviour (the host's own helper or
+ * ssh-agent answers, or git reports why it could not).
+ *
+ * Exported because it IS the guard — it gets its own rejection tests rather
+ * than being reachable only through a push that needs a network.
+ */
+export async function originAcceptsStoredGithubToken(dir: string): Promise<boolean> {
+  const result = await runGit(dir, ['remote', 'get-url', '--push', 'origin'])
+  if (!result.ok) return false
+  const url = result.stdout.trim().split('\n')[0]?.trim() ?? ''
+  return parseGithubRemoteUrl(url) !== null
+}
+
+export interface GitRemote {
+  name: string
+  fetchUrl: string
+  pushUrl: string
+}
+
+/**
+ * Every remote this repository has, as `git remote -v` reports them.
+ *
+ * Read-only and unfiltered: a project that already had three remotes when the
+ * user opened it should SEE three, even though Studio will only ever write
+ * `origin`. Hiding them would make the panel disagree with the user's
+ * terminal, which is the failure mode `excludedCount` exists to avoid
+ * elsewhere in this module.
+ */
+export async function readRemotes(dir: string): Promise<GitRemote[] | GitOperationFailure> {
+  const result = await runGit(dir, ['remote', '-v'])
+  if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Could not read the remotes'))
+
+  const byName = new Map<string, GitRemote>()
+  for (const line of result.stdout.split('\n')) {
+    // `<name>\t<url> (fetch|push)` — tab-separated by git's own porcelain.
+    const match = /^(\S+)\t(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
+    if (!match) continue
+    const [, name, url, kind] = match
+    const existing = byName.get(name) ?? { name, fetchUrl: '', pushUrl: '' }
+    if (kind === 'fetch') existing.fetchUrl = url
+    else existing.pushUrl = url
+    byName.set(name, existing)
+  }
+  return [...byName.values()]
+}
+
+/**
+ * Points `origin` at `url`, creating it or replacing it.
+ *
+ * Two deliberate narrowings, both from the G1 work order:
+ *
+ *   - **`origin` is the only name.** There is no parameter for another one.
+ *     A designer who needs a second remote has a terminal; a UI that can
+ *     create arbitrarily-named remotes is a UI that can create one Studio's
+ *     own push path then silently disagrees with.
+ *   - **`url` must already have been through `parseGithubRemoteUrl`**, and
+ *     what is passed here is that function's RE-COMPOSED url, never the
+ *     caller's string. This function does not re-validate, and its only
+ *     callers are the route and the clone job, both of which do.
+ *
+ * `set-url` then `add` rather than `remove` then `add`: replacing a remote
+ * must not drop the remote-tracking refs a later fetch/pull depends on.
+ */
+export async function setOriginRemote(dir: string, url: string): Promise<GitRemote | GitOperationFailure> {
+  const setUrl = await runGit(dir, ['remote', 'set-url', 'origin', url])
+  if (!setUrl.ok) {
+    const add = await runGit(dir, ['remote', 'add', 'origin', url])
+    if (!add.ok) return gitFailure('git-failed', clientSafeGitError(add, 'Could not set the origin remote'))
+  }
+
+  const remotes = await readRemotes(dir)
+  if (isGitFailure(remotes)) return remotes
+  const origin = remotes.find((remote) => remote.name === 'origin')
+  if (!origin) return gitFailure('git-failed', 'git accepted the remote but did not report it back.')
+  return origin
 }
 
 export interface GitFileDiff {
@@ -177,7 +307,7 @@ export async function readGitFileDiff(dir: string, relPath: string): Promise<Git
     const result = await runGit(dir, ['diff', '--no-index', '--', '/dev/null', relPath])
     // 0 = identical (an empty new file), 1 = differs. Anything else is a real failure.
     if (result.exitCode !== 0 && result.exitCode !== 1) {
-      return failure('git-failed', clientSafeGitError(result, 'Could not read the diff for this file'))
+      return gitFailure('git-failed', clientSafeGitError(result, 'Could not read the diff for this file'))
     }
     return { file: relPath, staged: '', unstaged: result.stdout, untracked: true, truncated: result.stdoutTruncated }
   }
@@ -188,7 +318,7 @@ export async function readGitFileDiff(dir: string, relPath: string): Promise<Git
   ])
   if (!unstagedResult.ok || !stagedResult.ok) {
     const failed = unstagedResult.ok ? stagedResult : unstagedResult
-    return failure('git-failed', clientSafeGitError(failed, 'Could not read the diff for this file'))
+    return gitFailure('git-failed', clientSafeGitError(failed, 'Could not read the diff for this file'))
   }
   return {
     file: relPath,
@@ -222,7 +352,7 @@ export async function readGitLog(dir: string, limit: number): Promise<GitLogEntr
   if (!result.ok) {
     // A fresh repository has no HEAD; `git log` fails there and that is not an error worth surfacing.
     if (/does not have any commits yet|unknown revision/i.test(result.stderr)) return []
-    return failure('git-failed', clientSafeGitError(result, 'Could not read the commit log'))
+    return gitFailure('git-failed', clientSafeGitError(result, 'Could not read the commit log'))
   }
   return result.stdout
     .split(RECORD_SEP)
@@ -233,6 +363,37 @@ export async function readGitLog(dir: string, limit: number): Promise<GitLogEntr
       if (!sha || !shortSha) return []
       return [{ sha, shortSha, author: author ?? '', date: date ?? '', subject: subject ?? '' }]
     })
+}
+
+/**
+ * Runs one MUTATING git verb with exclusive write access to the project.
+ *
+ * A git verb is a sequence of subprocesses with real `await` points between
+ * them, and a canvas save is synchronous — so without this, a save lands
+ * BETWEEN the staging step and the commit step, and the commit contains
+ * content the user never reviewed. Two overlapping git verbs produce git's own
+ * `index.lock` error, which carries a filesystem path and has no business
+ * reaching a browser. See `projectWriteLock.ts`.
+ *
+ * Five seconds, then `busy` — a 409 at the route. A person who clicked Commit
+ * would rather be told the project is busy than watch a spinner for the length
+ * of a dependency install.
+ *
+ * READS (`readGitStatus`, `readGitFileDiff`, `readGitLog`, `listGitBranches`)
+ * deliberately do NOT go through here: they mutate nothing, the panel re-reads
+ * status after every action, and a read that could answer `busy` would turn
+ * the whole panel into an error state for the duration of an install.
+ */
+export async function withGitWriteLock<T>(
+  dir: string,
+  run: () => Promise<T | GitOperationFailure>,
+): Promise<T | GitOperationFailure> {
+  try {
+    return await withProjectWriteLock(dir, run, { waitMs: GIT_LOCK_WAIT_MS })
+  } catch (err) {
+    if (err instanceof ProjectWriteLockBusyError) return gitFailure('busy', err.message)
+    throw err
+  }
 }
 
 export interface GitBranchResult {
@@ -249,22 +410,52 @@ export interface GitBranchResult {
  * flag) and then git's own `check-ref-format`, which is the authority on what
  * a ref may be called.
  */
-export async function switchBranch(
+export function switchBranch(
   dir: string,
   name: string,
   mode: 'create' | 'switch',
 ): Promise<GitBranchResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runSwitchBranch(dir, name, mode))
+}
+
+/**
+ * Both halves of "is this a usable branch name", as a reusable refusal:
+ * argv-safety first (`gitPaths.ts` — a leading `-` would be read as a flag by
+ * the very command that is about to receive it), then git's own
+ * `check-ref-format`, which is the authority on what a ref may be called
+ * (`feat..x`, `x.lock`, `x~1` all fail here and nowhere else).
+ *
+ * Exported because `commitAndSwitchBranch` has to ask BEFORE it commits.
+ * Leaving the second half inside `switchBranch` meant a name that passed
+ * argv-safety but failed `check-ref-format` produced a commit that existed
+ * only to enable a switch that then refused — the outcome that function's
+ * own doc calls the worst of both.
+ */
+export async function assertUsableBranchName(
+  dir: string,
+  name: string,
+): Promise<GitOperationFailure | null> {
   if (!isArgvSafeBranchName(name)) {
-    return failure('invalid-branch-name', `"${name}" is not a usable branch name.`)
+    return gitFailure('invalid-branch-name', `"${name}" is not a usable branch name.`)
   }
   const refCheck = await runGit(dir, ['check-ref-format', `refs/heads/${name}`])
   if (!refCheck.ok) {
-    return failure('invalid-branch-name', `git rejected "${name}" as a branch name.`)
+    return gitFailure('invalid-branch-name', `git rejected "${name}" as a branch name.`)
   }
+  return null
+}
+
+async function runSwitchBranch(
+  dir: string,
+  name: string,
+  mode: 'create' | 'switch',
+): Promise<GitBranchResult | GitOperationFailure> {
+  const unusable = await assertUsableBranchName(dir, name)
+  if (unusable) return unusable
 
   if (mode === 'switch') {
     const dirty = await dirtyPaths(dir)
-    if (dirty === null) return failure('git-failed', 'Could not read git status before switching branches.')
+    if (dirty === null) return gitFailure('git-failed', 'Could not read git status before switching branches.')
     if (dirty.length > 0) {
       return {
         ok: false,
@@ -278,7 +469,7 @@ export async function switchBranch(
 
   const args = mode === 'create' ? ['switch', '--create', name] : ['switch', name]
   const result = await runGit(dir, args)
-  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not switch branch'))
+  if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Could not switch branch'))
   return { ok: true, branch: name, created: mode === 'create' }
 }
 
@@ -307,20 +498,28 @@ export interface GitCommitResult {
  *
  * `files` must already have been through `resolveWorkspaceRelativePath`.
  */
-export async function commitFiles(
+export function commitFiles(
+  dir: string,
+  message: string,
+  files: readonly string[],
+): Promise<GitCommitResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runCommitFiles(dir, message, files))
+}
+
+async function runCommitFiles(
   dir: string,
   message: string,
   files: readonly string[],
 ): Promise<GitCommitResult | GitOperationFailure> {
   if (files.length === 0) {
-    return failure('empty-file-list', 'Select at least one file to commit.')
+    return gitFailure('empty-file-list', 'Select at least one file to commit.')
   }
 
   const add = await runGit(dir, ['add', '--', ...files])
-  if (!add.ok) return failure('git-failed', clientSafeGitError(add, 'Could not stage the selected files'))
+  if (!add.ok) return gitFailure('git-failed', clientSafeGitError(add, 'Could not stage the selected files'))
 
   const commit = await runGit(dir, ['commit', '--message', message, '--', ...files])
-  if (!commit.ok) return failure('git-failed', clientSafeGitError(commit, 'Could not create the commit'))
+  if (!commit.ok) return gitFailure('git-failed', clientSafeGitError(commit, 'Could not create the commit'))
 
   const head = await runGit(dir, ['rev-parse', 'HEAD'])
   const sha = head.ok ? head.stdout.trim() : ''
@@ -338,29 +537,50 @@ export interface GitPushResult {
  * `git push --set-upstream origin <branch>`. Never `--force`, never
  * `--force-with-lease`, and there is no route parameter that could add one.
  *
- * Authentication is entirely the user's own credential helper's or
- * ssh-agent's — see the module doc. A failure passes git's real message
- * through, because "Support for password authentication was removed" is
- * exactly what the user needs to read.
+ * `credential` is the signed-in user's GitHub token (G2), resolved by the
+ * route from the session — never from a request field and never from the
+ * environment. It is optional: without it the push falls back to the user's
+ * own credential helper or ssh-agent exactly as it did before, and a failure
+ * passes git's real message through, because "Support for password
+ * authentication was removed" is exactly what the user needs to read.
+ *
+ * It is also DROPPED when `origin` is not a github.com repository — see
+ * `originAcceptsStoredGithubToken`. An askpass program answers whatever host
+ * git dialled, so "which remote may see this token" is decided here.
  */
-export async function pushCurrentBranch(dir: string): Promise<GitPushResult | GitOperationFailure> {
+export function pushCurrentBranch(
+  dir: string,
+  options: { credential?: string } = {},
+): Promise<GitPushResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runPushCurrentBranch(dir, options))
+}
+
+async function runPushCurrentBranch(
+  dir: string,
+  options: { credential?: string },
+): Promise<GitPushResult | GitOperationFailure> {
   const status = await readGitStatus(dir)
   if ('ok' in status) return status
   if (!status.hasOrigin) {
-    return failure(
+    return gitFailure(
       'no-origin-remote',
       'This project has no "origin" remote, so there is nowhere to push. Add one with git, then try again.',
     )
   }
   if (status.branch.detached || !status.branch.branch) {
-    return failure('detached-head', 'HEAD is detached, so there is no branch to push. Switch to a branch first.')
+    return gitFailure('detached-head', 'HEAD is detached, so there is no branch to push. Switch to a branch first.')
   }
 
   const branch = status.branch.branch
+  // Resolved BEFORE the token is written anywhere: a non-GitHub origin never
+  // causes an askpass script carrying the token to exist at all.
+  const credential =
+    options.credential && (await originAcceptsStoredGithubToken(dir)) ? options.credential : undefined
   const result = await runGit(dir, ['push', '--set-upstream', 'origin', branch], {
     timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    credential,
   })
-  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Push failed'))
+  if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Push failed'))
   return { ok: true, branch, output: clientSafeGitError(result, '') || result.stdout.trim() }
 }
 
@@ -388,22 +608,26 @@ export interface GitInitResult {
  * only refuses the cases that are wrong regardless of consent (a repository
  * already exists).
  */
-export async function initRepository(dir: string, message: string): Promise<GitInitResult | GitOperationFailure> {
+export function initRepository(dir: string, message: string): Promise<GitInitResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runInitRepository(dir, message))
+}
+
+async function runInitRepository(dir: string, message: string): Promise<GitInitResult | GitOperationFailure> {
   if (existsSync(join(dir, '.git'))) {
-    return failure('already-a-repository', 'This project already has a git repository.')
+    return gitFailure('already-a-repository', 'This project already has a git repository.')
   }
 
   const init = await runGit(dir, ['init', '--initial-branch=main'])
-  if (!init.ok) return failure('git-failed', clientSafeGitError(init, 'Could not initialise a git repository'))
+  if (!init.ok) return gitFailure('git-failed', clientSafeGitError(init, 'Could not initialise a git repository'))
 
   const gitignore = join(dir, '.gitignore')
   if (!existsSync(gitignore)) writeFileSync(gitignore, SCAFFOLDED_GITIGNORE)
 
   const add = await runGit(dir, ['add', '--all'])
-  if (!add.ok) return failure('git-failed', clientSafeGitError(add, 'Could not stage the project for its first commit'))
+  if (!add.ok) return gitFailure('git-failed', clientSafeGitError(add, 'Could not stage the project for its first commit'))
 
   const commit = await runGit(dir, ['commit', '--message', message])
-  if (!commit.ok) return failure('git-failed', clientSafeGitError(commit, 'Could not create the first commit'))
+  if (!commit.ok) return gitFailure('git-failed', clientSafeGitError(commit, 'Could not create the first commit'))
 
   const head = await runGit(dir, ['rev-parse', 'HEAD'])
   const listed = await runGit(dir, ['ls-files', '-z'])
@@ -424,17 +648,30 @@ export interface GitRestoreResult {
  * path must survive `resolveWorkspaceRelativePath`, and the client puts a
  * danger-styled confirmation in front of it.
  */
-export async function restoreFileFromCommit(
+export function restoreFileFromCommit(
+  dir: string,
+  sha: string,
+  relPath: string,
+): Promise<GitRestoreResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runRestoreFileFromCommit(dir, sha, relPath))
+}
+
+async function runRestoreFileFromCommit(
   dir: string,
   sha: string,
   relPath: string,
 ): Promise<GitRestoreResult | GitOperationFailure> {
   const result = await runGit(dir, ['checkout', sha, '--', relPath])
-  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not restore that file'))
+  if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Could not restore that file'))
   return { ok: true, file: relPath, sha }
 }
 
-function failure(code: GitOperationFailure['code'], message: string): GitOperationFailure {
+/**
+ * A refusal, as a value. Exported because `gitSyncOperations.ts` builds the
+ * same shape for the remote verbs and must not invent a second vocabulary for
+ * it.
+ */
+export function gitFailure(code: GitOperationFailure['code'], message: string): GitOperationFailure {
   return { ok: false, code, message }
 }
 

@@ -10,19 +10,21 @@
  */
 import { describe, expect, it } from 'bun:test'
 import {
-  describeStructuralRefusal,
   explainClassNameConstraint,
   explainCssRuleConstraint,
   explainDetachConstraint,
-  explainGestureConstraint,
-  explainMintedInsertConstraint,
   explainPropConstraint,
-  explainStructuralConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
   explainUnexplainedSkip,
   type EditConstraint,
 } from '../editConstraint'
+import {
+  describeStructuralRefusal,
+  explainGestureConstraint,
+  explainMintedInsertConstraint,
+  explainStructuralConstraint,
+} from '../structuralConstraint'
 import type { StructuralMovePreview, StructuralRefusalReason } from '../sourceStructure'
 
 /** Every non-null constraint must carry a real sentence and a real (possibly empty) actions array. */
@@ -329,7 +331,7 @@ describe('explainStructuralConstraint', () => {
 // `[]`, never an unreviewed fallback. The production table
 // (`STRUCTURAL_ACTIONS` in `editConstraint.ts`) is a `Record<StructuralRefusalReason,
 // ...>` literal with no `default` branch, so `tsc` already refuses to compile
-// if `sourceStructure.ts` grows a 12th reason without a matching entry there.
+// if `sourceStructure.ts` grows a new reason without a matching entry there.
 // This block is the runtime half of that gate: `ALL_REASONS` below is typed
 // `satisfies Record<StructuralRefusalReason, true>`, so if this TEST FILE
 // itself ever drifts out of sync with the union (a reason renamed, added, or
@@ -346,6 +348,9 @@ describe('structuralActions — compile-time-exhaustive remedy map (R1)', () => 
     'insert': true,
     'duplicate': true,
     'wrap': true,
+    'group': true,
+    'ungroup': true,
+    'has-behaviour': true,
     'multi-select': true,
     'cross-file': true,
     'no-sibling-anchor': true,
@@ -362,7 +367,7 @@ describe('structuralActions — compile-time-exhaustive remedy map (R1)', () => 
 
   it('the reasons with no honest way forward all resolve to an explicit empty array, not a missing one', () => {
     const node = { id: 'src/screens/Home.jsx:9:1' }
-    for (const reason of ['reparent', 'insert', 'duplicate', 'wrap', 'no-sibling-anchor', 'multi-select'] as const) {
+    for (const reason of ['reparent', 'insert', 'duplicate', 'wrap', 'group', 'ungroup', 'no-sibling-anchor', 'multi-select'] as const) {
       expect(describeStructuralRefusal({ refusal: { reason, message: 'test message' }, node }).actions).toEqual([])
     }
   })
@@ -376,6 +381,11 @@ describe('structuralActions — compile-time-exhaustive remedy map (R1)', () => 
     expect(describeStructuralRefusal({ refusal: { reason: 'code-placed', message: 'x' }, node: plain }).actions.length).toBeGreaterThan(0)
     expect(describeStructuralRefusal({ refusal: { reason: 'cross-file', message: 'x' }, node: plain }).actions.length).toBeGreaterThan(0)
     expect(describeStructuralRefusal({ refusal: { reason: 'list-row', message: 'x' }, node: row }).actions.length).toBeGreaterThan(0)
+    // K3 — `has-behaviour` (a container carrying a handler, a ref, a `key`, a
+    // spread) is the one new reason with a remedy: go look at what it is doing.
+    expect(describeStructuralRefusal({ refusal: { reason: 'has-behaviour', message: 'x' }, node: plain }).actions).toEqual([
+      { label: 'Open it in code', kind: 'jump-to-source', target: { rel: 'src/screens/Home.jsx', line: 9, col: 1 } },
+    ])
   })
 })
 

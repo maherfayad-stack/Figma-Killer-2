@@ -69,6 +69,23 @@ export function resizeAxes(handle: ResizeHandle): { width: boolean; height: bool
  *
  * Dimensions the handle does not own come back unchanged, so a caller can
  * compare against `start` to decide what to write.
+ *
+ * ## `proportional` — `K4`'s scale tool (`K`)
+ *
+ * With the scale tool armed, a drag keeps the element's START aspect ratio and
+ * returns BOTH dimensions, including the one the handle does not own: dragging
+ * the east edge of a 200×100 box to 300 wide also makes it 150 tall. The ratio
+ * is taken from `start`, never from the running size — deriving it per move
+ * would compound rounding and let the shape drift over a long drag.
+ *
+ * A corner handle owns both axes and therefore has two candidate sizes; the
+ * one with the LARGER relative change wins, so the box follows whichever way
+ * the pointer actually travelled rather than snapping to the axis that happens
+ * to be listed first.
+ *
+ * A zero-width or zero-height start has no ratio to preserve (an empty inline
+ * element, a `display: contents` host), so `proportional` degrades to the
+ * ordinary single-axis resize rather than dividing by zero.
  */
 export function resizeElementSize(
   handle: ResizeHandle,
@@ -76,14 +93,29 @@ export function resizeElementSize(
   dx: number,
   dy: number,
   minSize: number = MIN_ELEMENT_SIZE,
+  proportional = false,
 ): ElementSize {
   const axes = resizeAxes(handle)
   // West/north handles invert: dragging them "outward" is a negative delta.
   const widthDelta = handle.includes('w') ? -dx : dx
   const heightDelta = handle.includes('n') ? -dy : dy
-  return {
+  const free = {
     width: axes.width ? Math.max(minSize, Math.round(start.width + widthDelta)) : start.width,
     height: axes.height ? Math.max(minSize, Math.round(start.height + heightDelta)) : start.height,
+  }
+  if (!proportional || start.width <= 0 || start.height <= 0) return free
+
+  const ratio = start.height / start.width
+  const scale =
+    axes.width && axes.height
+      ? Math.max(free.width / start.width, free.height / start.height)
+      : axes.width
+        ? free.width / start.width
+        : free.height / start.height
+
+  return {
+    width: Math.max(minSize, Math.round(start.width * scale)),
+    height: Math.max(minSize, Math.round(start.width * scale * ratio)),
   }
 }
 
@@ -96,15 +128,22 @@ export function resizeElementSize(
  * the element's own `style={{ … }}` in the user's source, and `width: 148`
  * there reads as a React number that React will serialize to `148px` anyway —
  * spelling the unit keeps the emitted source saying what it means.
+ *
+ * With `proportional` (`K4`'s scale tool) the axis guard is lifted: the whole
+ * point of that drag is that the handle changes the dimension it does not own,
+ * so refusing to write it would leave the committed source disagreeing with
+ * what the user watched happen on screen. The `!== start` guard stays, so a
+ * drag that genuinely moved only one dimension still writes only that one.
  */
 export function resizeStylePatch(
   handle: ResizeHandle,
   start: ElementSize,
   next: ElementSize,
+  proportional = false,
 ): Record<string, string> | null {
   const axes = resizeAxes(handle)
   const patch: Record<string, string> = {}
-  if (axes.width && next.width !== start.width) patch['width'] = `${next.width}px`
-  if (axes.height && next.height !== start.height) patch['height'] = `${next.height}px`
+  if ((proportional || axes.width) && next.width !== start.width) patch['width'] = `${next.width}px`
+  if ((proportional || axes.height) && next.height !== start.height) patch['height'] = `${next.height}px`
   return Object.keys(patch).length > 0 ? patch : null
 }

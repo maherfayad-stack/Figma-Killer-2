@@ -39,9 +39,12 @@
     gap: var(--inspector-space-2xs);
 }
 
-.flexHeaderRow > *:first-child {
-    flex: 1;
-    min-width: 0;
+/* One connected cluster — reverse + wrap read as a pair, Figma's own
+ * auto-layout header shape, rather than two unrelated ghost buttons. */
+.flowCluster {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-3xs);
 }
 
 /* Align pad + the (now two-field) gap row live on their own rows — the pad

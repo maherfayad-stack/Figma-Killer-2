@@ -49,7 +49,6 @@ import { FrameBulkInspector } from './FrameBulkInspector'
 import { InspectorShell } from '@site/inspector/InspectorShell'
 import { NodeHeader } from './NodeHeader'
 import { SelectorHeader } from './SelectorHeader'
-import { MultiSelectionHeader } from './MultiSelectionInspector'
 import { MultiSelectorHeader } from './MultiSelectorInspector'
 import { type ClassPickerHandle } from './ClassPicker'
 import { useEditorStore } from '@site/store/store'
@@ -249,7 +248,6 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
                   isSelectorMultiSelect={data.isSelectorMultiSelect}
                   activeBreakpointId={data.activeBreakpointId}
                   isMultiSelect={data.isMultiSelect}
-                  selectedNodeIds={data.selectedNodeIds}
                   selectedNode={data.selectedNode}
                   selectedNodeId={data.selectedNodeId}
                   definition={data.definition}
@@ -319,7 +317,10 @@ function HeaderTitleContent({
     )
   }
   if (isMultiSelect) {
-    return <MultiSelectionHeader count={selectedNodeIdsCount} />
+    // Static count, no rename affordance — rename is single-only. Inlined
+    // here when S5 deleted `MultiSelectionInspector.tsx`, whose only other
+    // export this was.
+    return <span>{selectedNodeIdsCount} layers selected</span>
   }
   if (selectedNode && definition && selectedNodeId) {
     return (

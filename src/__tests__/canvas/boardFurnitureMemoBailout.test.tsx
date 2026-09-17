@@ -107,6 +107,7 @@ describe('BoardFrameView memo() bailout', () => {
             isActive={false}
             isSelected={false}
             isOnScreen={false}
+            isMounted={false}
           />
           <BoardFrameView
             frame={frameB}
@@ -119,6 +120,7 @@ describe('BoardFrameView memo() bailout', () => {
             isActive={false}
             isSelected={false}
             isOnScreen={false}
+            isMounted={false}
           />
         </>
       )

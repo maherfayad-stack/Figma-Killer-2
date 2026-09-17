@@ -28,7 +28,7 @@
  * asks a question about layout the agent itself just authored, where the tab
  * would only ever be a slower way to read the same file.
  */
-import { StudioMeasureElementInputSchema, aiToolError } from '@core/ai'
+import { StudioMeasureElementInputSchema, toolRefusal } from '@core/ai'
 import type { PreviewAxes } from '@core/studio-board'
 import type { AgentFrameInspectRequest } from '@core/studio-capture'
 import type { AiTool, ToolContext } from '../../../runtime/types'
@@ -67,7 +67,7 @@ const measureElementTool: AiTool = {
     const page = resolvePageByName(pages, args.page)
     if (!page) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return aiToolError(`No screen matched "${args.page}". This project has: ${known}.`)
+      return toolRefusal('no-such-page', `No screen matched "${args.page}".`, { remedy: `This project has: ${known}.` })
     }
 
     // W9-5 lever 2 — no live-reload wait. `inspectFrameHeadless` has no live
@@ -89,9 +89,10 @@ const measureElementTool: AiTool = {
       ...(args.axes === undefined ? {} : { axes: args.axes }),
     })
     if (!measured.ok) {
-      return aiToolError(
-        `measure-unavailable (${measured.code}): ${measured.error} This tool renders the screen in a headless browser on the server; it needs a Chromium available to playwright-core, installed with \`bunx playwright install chromium\`.`,
-      )
+      return toolRefusal('measure-unavailable', measured.error, {
+        remedy: 'This tool renders the screen in a headless browser on the server; it needs a Chromium available to playwright-core, installed with `bunx playwright install chromium`. Report that rather than calling again unchanged.',
+        details: { headlessCode: measured.code },
+      })
     }
 
     return {

@@ -34,6 +34,30 @@ export interface InsertLocation {
 }
 
 /**
+ * "Right next to this one" — `target`'s parent, at `target`'s index + 1.
+ *
+ * `resolveInsertLocation` below answers "where does a new node belong given
+ * this target", which for a CONTAINER means inside it. This answers the
+ * different question the keyboard asks: `K4`'s `R`/`O` and `K7`'s ⌘V are
+ * gestures about a SELECTION, and a user watching a selected box on screen
+ * expects the new thing beside it, not swallowed by it. Both questions are
+ * legitimate; they are just not the same question, which is why this is
+ * exported rather than folded into a flag on the other.
+ *
+ * The page ROOT has no parent and nothing can sit beside it, so a root target
+ * falls back to `resolveInsertLocation` — inside the root, which is the only
+ * place left. Returns null only for a node that is genuinely orphaned.
+ */
+export function resolveSiblingAfterLocation(
+  page: NodeTree<PageNode>,
+  targetNodeId: string,
+): InsertLocation | null {
+  if (!page.nodes[targetNodeId]) return null
+  if (page.rootNodeId === targetNodeId) return resolveInsertLocation(page, targetNodeId)
+  return siblingAfter(page, targetNodeId)
+}
+
+/**
  * Sibling-after fallback: insert at `target`'s parent, right after `target`.
  * Returns null only when the target has no parent (e.g. the root) — that's
  * the genuine dead-end case where the caller has nowhere to place content.

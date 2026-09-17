@@ -99,12 +99,12 @@
  *
  * ## MULTI-SELECT
  *
- * Out of scope, structurally: `PropertiesPanelBody.tsx` early-returns
- * `<MultiSelectionInspector>` before `StyleSurface`/`INSPECTOR_SECTIONS` ever
- * mount when `isMultiSelect` is true (the same fact every migrated section's
- * own doc already established) — this section never renders during a
- * multi-select. `bespokeSectionsMixed.test.tsx`'s own "Typography" describe
- * block was removed for this reason.
+ * Supported, with no code of its own (S5). `useSelectionModel()` describes
+ * N nodes now — it hands this section the anchor wearing the selection's
+ * COLLAPSED inline bag, `MIXED` wherever the layers disagree — so this file
+ * renders and commits for a multi-selection through exactly the same reads
+ * and `useInspectorCommit` calls it uses for one. See `selectionModel.ts`'s
+ * own "Multi-select" doc.
  */
 import { useRef, useState } from 'react'
 import type { IconComponent } from 'pixel-art-icons/types'

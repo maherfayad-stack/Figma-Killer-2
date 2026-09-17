@@ -1,0 +1,18 @@
+{
+  "displayName": "Canonical JSX Fixture",
+  "pagesDir": "src/screens",
+  "agentSession": {
+    "effort": "medium"
+  },
+  "previewAxes": {
+    "direction": "ltr",
+    "colorScheme": "dark",
+    "locale": "en"
+  },
+  "approvedMcpServers": [
+    "design-system"
+  ],
+  "approvedRegisteredMcpServers": [
+    "figma"
+  ]
+}

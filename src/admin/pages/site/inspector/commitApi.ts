@@ -52,6 +52,27 @@
  * refusal (any code-valued key in the SAME store-level call aborts the whole
  * patch) is a different, lower-level guard — this file never passes it a
  * mixed patch, so that guard is never the thing that fires here.
+ *
+ * ## N nodes (S5)
+ *
+ * `SelectionModel` now describes a multi-selection too, so this file is where
+ * "one commit" stops meaning "one node". The only branch is the INLINE
+ * target: `setNodesInlineStyles(ids, patch)` instead of
+ * `setNodeInlineStyles(id, patch)`. It runs over `mutateTreesForNodeIds`, so a
+ * selection spanning several board frames writes each frame's own page tree
+ * inside ONE history transaction — an N-node edit is one Ctrl+Z, the same
+ * contract `deleteNodes`/`wrapNodes` carry (`docs/features/inspector.md`
+ * §9.1). The ids are `model.inlineWritableNodeIds`, not the raw selection: a
+ * `pkg.*`/`studio.instance` node takes no inline write at all, and including
+ * it would render on canvas and then be dropped at save.
+ *
+ * A CLASS target needs no branch — one class write already reaches every
+ * element carrying the class, which is exactly why it is gated behind an
+ * explicit blast-radius confirmation before the model will hand it over.
+ *
+ * `commitProp` stays single-selection. A module prop belongs to one call
+ * site's schema; fanning one key across N nodes of possibly different modules
+ * is not a Mixed collapse, it is a guess.
  */
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
@@ -138,6 +159,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     return conditions && conditions.some((c) => c.id === id) ? id : null
   })
   const setNodeInlineStyles = useEditorStore((s) => s.setNodeInlineStyles)
+  const setNodesInlineStyles = useEditorStore((s) => s.setNodesInlineStyles)
   const updateClassStyles = useEditorStore((s) => s.updateClassStyles)
   const setClassContextStyles = useEditorStore((s) => s.setClassContextStyles)
   const clearClassStyleProperties = useEditorStore((s) => s.clearClassStyleProperties)
@@ -148,7 +170,21 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const updateNodeProps = useEditorStore((s) => s.updateNodeProps)
   const setBreakpointOverride = useEditorStore((s) => s.setBreakpointOverride)
 
-  const { selectedNodeId, selectedNode, activeContextId, writeTargetFor } = model
+  const {
+    selectedNodeId,
+    selectedNode,
+    activeContextId,
+    writeTargetFor,
+    isMultiSelect,
+    inlineWritableNodeIds,
+  } = model
+
+  /** The ids an inline write lands on — the whole writable selection, or the one node. */
+  const inlineTargetIds = isMultiSelect
+    ? inlineWritableNodeIds
+    : selectedNodeId
+      ? [selectedNodeId]
+      : []
 
   const onCondition = activeConditionId !== null
   const activeTab = getActiveStyleTab(activeBreakpointId)
@@ -158,7 +194,11 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const writeToTarget = (target: WriteTarget, patch: Record<string, string | number | null>) => {
     if (!selectedNodeId) return
     if (target.kind === 'inline') {
-      setNodeInlineStyles(selectedNodeId, patch)
+      if (inlineTargetIds.length === 0) return
+      // One store action per cardinality, both sharing `applyInlineStylePatch`
+      // so "clear this property" cannot mean two things.
+      if (isMultiSelect) setNodesInlineStyles([...inlineTargetIds], patch)
+      else setNodeInlineStyles(inlineTargetIds[0], patch)
     } else if (target.kind === 'class') {
       if (activeContextId) {
         setClassContextStyles(target.classId, activeContextId, patch as Partial<CSSPropertyBag>)
@@ -182,17 +222,16 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
         styles: patch,
       })
     } else if (target.kind === 'inline') {
-      if (!selectedNodeId) return
-      setPreviewNodeStyles({ nodeIds: [selectedNodeId], styles: patch })
+      if (inlineTargetIds.length === 0) return
+      setPreviewNodeStyles({ nodeIds: [...inlineTargetIds], styles: patch })
     }
   }
 
   const clearToTarget = (target: WriteTarget, keys: string[]) => {
-    if (!selectedNodeId) return
     if (target.kind === 'class') {
       clearClassStyleProperties(target.classId, keys as ReadonlyArray<keyof CSSPropertyBag>)
     } else if (target.kind === 'inline') {
-      setNodeInlineStyles(selectedNodeId, Object.fromEntries(keys.map((k) => [k, null])))
+      writeToTarget(target, Object.fromEntries(keys.map((k) => [k, null])))
     }
   }
 
@@ -229,12 +268,13 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
 
   const clearStylePreview = () => {
     clearPreviewClassStyles()
-    if (selectedNodeId) clearPreviewNodeStyles(selectedNodeId)
+    for (const id of inlineTargetIds) clearPreviewNodeStyles(id)
   }
 
   const moduleId = selectedNode?.moduleId
   const commitProp: InspectorCommitApi['commitProp'] = (key, value) => {
-    if (!selectedNodeId) return
+    // See this module's doc: a module prop has no honest N-node collapse.
+    if (!selectedNodeId || isMultiSelect) return
     const def = moduleId ? registry.get(moduleId) : null
     const isOverridable = def?.schema[key]?.breakpointOverridable === true
     if (activeBreakpointId && activeBreakpointId !== 'desktop' && isOverridable) {

@@ -75,15 +75,23 @@ export const CORE_CAPABILITIES = [
   // Studio MCP tool family (WS-9) — separate from `site.*` because a Studio
   // project is a filesystem workspace, not a DB-backed site document.
   // `studio.write` gates install/save/frame/codemod mutations; `studio.run.project`
-  // gates Tier 2 (executing the OPEN PROJECT's own code — dev server + Playwright)
-  // and is never granted by default.
+  // gates Tier 2 (executing the OPEN PROJECT's own code — dev server + Playwright).
+  // It is held by Owner and Admin, and it is only HALF the Tier-2 gate: the
+  // project's own `.studio/meta.json` trust tier must also be `run-project`,
+  // checked per call via `handlers/studio/trustGate.ts`. Neither half is
+  // sufficient alone. The second half proves the PROJECT is at Tier 2, which
+  // is not the same as a human having consented to this call — see
+  // `server/auth/capabilities.ts` and `docs/reference/capabilities.md` for
+  // exactly what it does and does not establish.
   'studio.write',
   'studio.run.project',
   // Committing to the open project's git repository (W4-3). Separate from
   // `studio.write` on purpose: writing a file into a workspace is a draft the
   // user can see and undo in the editor, while recording a commit attaches
   // their git identity to a change in a repository they may push to a team.
-  // Like `studio.run.project`, it is never granted by default — see
+  // Unlike `studio.run.project` — which A10 granted to Admin once the
+  // per-project trust tier became a second, independent gate — this one has
+  // no second gate to lean on, so it is still never granted by default. See
   // `server/auth/capabilities.ts`.
   'studio.git.write',
 ] as const

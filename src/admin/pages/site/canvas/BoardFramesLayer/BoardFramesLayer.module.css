@@ -310,3 +310,16 @@
     font-size: var(--text-s);
     color: var(--text-muted);
 }
+
+/* S1 — the staged-mount poster: the same frozen picture (or plain title
+   stand-in) the offscreen placeholder shows, painted OVER the live iframe
+   between its injector commit and its node-tree commit. Without it a frame
+   entering the viewport flashes an empty white document for one commit, and a
+   zoom-out that admits a dozen frames reads as a wave of blank boxes rather
+   than content that was always there. `.frameBody` is already the containing
+   block (it positions `CanvasEmptyPageHint` the same way). */
+.mountOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+}

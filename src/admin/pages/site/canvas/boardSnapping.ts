@@ -42,6 +42,37 @@ export interface SnapResult {
   guides: SnapGuide[]
 }
 
+/**
+ * Whether two guide lists would draw the same lines.
+ *
+ * D2 G8 — a furniture drag recomputes the snap on every `pointermove` and
+ * hands the result to `setBoardSnapGuides`. On the overwhelming majority of
+ * those events the answer is identical to the last one (usually: no guides at
+ * all), and a store write of an equal value is still a full notification plus
+ * a selector sweep across every board subscriber — per pointer event, for a
+ * redraw of nothing. This is what lets that write be skipped. Kept beside the
+ * type it compares (and pure) rather than inside the store action, so the
+ * board-drag handlers, the annotation drag and any future furniture share one
+ * definition of "the same guides".
+ */
+export function snapGuidesEqual(a: readonly SnapGuide[], b: readonly SnapGuide[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const left = a[i]!
+    const right = b[i]!
+    if (
+      left.axis !== right.axis ||
+      left.position !== right.position ||
+      left.start !== right.start ||
+      left.end !== right.end
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
 /** Default snap distance, in board units (not screen pixels — a fixed feel
  * regardless of zoom was simpler than dividing a screen-pixel constant by
  * zoom, and reads fine in practice since board furniture rarely sits near

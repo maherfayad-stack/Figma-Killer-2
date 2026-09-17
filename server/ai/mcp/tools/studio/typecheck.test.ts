@@ -74,23 +74,26 @@ describe('studio_typecheck', () => {
     expect(result.code).toBe('trust-tier-required')
   })
 
-  it('reports available:false with reason no-tsconfig once promoted, when the project has no tsconfig.json', async () => {
+  it('refuses with code no-tsconfig once promoted, when the project has no tsconfig.json', async () => {
     promoteTrust(dir)
-    const result = (await studioTypecheckTool.handler!({ dir }, {} as never)) as { ok: boolean; available?: boolean; reason?: string; fix?: string }
+    // A14 — the reason was always a stable code; it just was not in the field
+    // every driver forwards. It is now `code`, and the old `fix` is `remedy`.
+    const result = (await studioTypecheckTool.handler!({ dir }, {} as never)) as { ok: boolean; available?: boolean; code?: string; remedy?: string; error?: string }
     expect(result.ok).toBe(false)
     expect(result.available).toBe(false)
-    expect(result.reason).toBe('no-tsconfig')
-    expect(result.fix).toBeTruthy()
+    expect(result.code).toBe('no-tsconfig')
+    expect(result.remedy).toBeTruthy()
+    expect(result.error).toContain('[code=no-tsconfig retryable=false]')
   })
 
-  it('reports available:false with reason typescript-not-installed once promoted, when typescript is not installed', async () => {
+  it('refuses with code typescript-not-installed once promoted, when typescript is not installed', async () => {
     promoteTrust(dir)
     write(dir, 'tsconfig.json', '{}')
-    const result = (await studioTypecheckTool.handler!({ dir }, {} as never)) as { ok: boolean; available?: boolean; reason?: string; fix?: string }
+    const result = (await studioTypecheckTool.handler!({ dir }, {} as never)) as { ok: boolean; available?: boolean; code?: string; remedy?: string }
     expect(result.ok).toBe(false)
     expect(result.available).toBe(false)
-    expect(result.reason).toBe('typescript-not-installed')
-    expect(result.fix).toMatch(/studio_install_deps/)
+    expect(result.code).toBe('typescript-not-installed')
+    expect(result.remedy).toMatch(/studio_install_deps/)
   })
 
   it('passes cleanly with pass:true and no diagnostics against a clean project', async () => {

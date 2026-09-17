@@ -22,7 +22,10 @@
  *     see "setAxes" below for why this does NOT import
  *     `previewAxesFrameEffect.ts`),
  *   - pointer/text-edit event capture and forwarding,
- *   - optimistic DOM mutation for insert/delete/move/text.
+ *   - optimistic DOM mutation for insert/delete/move/text,
+ *   - (Z5) the four runtime-error taps a portal frame gets from
+ *     `CanvasDiagnosticsInjector.tsx` — installed by `runtimeErrorTaps.ts`,
+ *     reported here as the outbound `error` message.
  *
  * ## Security posture (this file is reviewed for it explicitly)
  *
@@ -34,18 +37,17 @@
  *     TypeBox schema runs, so a same-shaped message from an unrelated
  *     `postMessage` sender (React DevTools, a browser extension) is dropped
  *     without ever reaching a handler.
- *   - `optimistic.insert`/`optimistic.text` never touch `innerHTML` — new
- *     elements are built with `document.createElement` + `tagName` (itself
- *     schema-validated to `^[a-zA-Z][a-zA-Z0-9-]*$`, and further checked
- *     case-insensitively against `DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES`
- *     before `createElement` ever runs — `<script>`/`<iframe>`/etc. are
- *     refused even though this message is already unreachable from an
- *     untrusted sender), and all text goes through `Node.textContent`,
- *     never a parsed HTML string.
+ *   - `optimistic.insert`/`optimistic.text` never touch `innerHTML`, and
+ *     refuse a dangerous tag name case-insensitively before
+ *     `createElement` runs — see `optimisticDomOps.ts`, which owns all four
+ *     mutations and is deliberately small enough to audit at a glance.
+ *   - The outbound `error` channel (Z5) carries only bounded plain text, no
+ *     HTML and no node id, capped and rate-limited at this honest sender
+ *     (`runtimeErrorTaps.ts`). A same-realm forger can still post directly,
+ *     which is why the parent validates the bounds rather than trusting it.
  */
 import { Value } from '@sinclair/typebox/value'
 import {
-  DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES,
   InboundEnvelopeSchema,
   RUNTIME_MESSAGE_SOURCE,
   toOutboundEnvelope,
@@ -55,6 +57,14 @@ import {
   type OutboundRuntimeMessage,
   type RuntimeMode,
 } from './messages'
+import { startRuntimeErrorTaps } from './runtimeErrorTaps'
+import {
+  applyOptimisticDelete,
+  applyOptimisticInsert,
+  applyOptimisticMove,
+  applyOptimisticText,
+  sweepOptimisticGhosts,
+} from './optimisticDomOps'
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
 import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRules'
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
@@ -65,7 +75,6 @@ import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight,
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
 const NODE_ID_ATTR = 'data-node-id'
-const OPTIMISTIC_ATTR = 'data-studio-optimistic'
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
 const RUNTIME_ANIMATION_STYLE_ID = 'studio-runtime-animation-freeze'
 const OVERLAY_STYLE_ID_PREFIX = 'studio-runtime-overlay-'
@@ -366,57 +375,6 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     html.style.colorScheme = axes.colorScheme
   }
 
-  // ---- optimistic DOM ops — structured fields only, never innerHTML --------
-  function handleOptimisticInsert(
-    nodeId: string,
-    parentNodeId: string,
-    parentOccurrenceIndex: number,
-    index: number,
-    tagName: string,
-    text: string | undefined,
-  ): void {
-    // Case-insensitive: `document.createElement` normalizes an HTML tag
-    // name's case regardless of how it was spelled, so `SCRIPT`/`Script`
-    // must be caught the same as `script` — see `messages.ts`'s
-    // `DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES` doc for why this lives here
-    // and not in the schema's regex.
-    if (DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES.has(tagName.toLowerCase())) return
-    const parent = findByNodeId(doc, parentNodeId, parentOccurrenceIndex)
-    if (!parent) return
-    const el = doc.createElement(tagName)
-    el.setAttribute(NODE_ID_ATTR, nodeId)
-    el.setAttribute(OPTIMISTIC_ATTR, '')
-    if (text !== undefined) el.textContent = text
-    parent.insertBefore(el, parent.children[index] ?? null)
-  }
-
-  /** `live-07` — clears every optimistic-insert ghost once Vite has landed the real element (`vite:afterUpdate` fires "once the new DOM exists"). Without this a successful insert leaves a permanent duplicate. A refusal that writes no file never fires this — same limitation portal mode already has. */
-  function sweepOptimisticGhosts(): void {
-    doc.querySelectorAll(`[${OPTIMISTIC_ATTR}]`).forEach((el) => el.remove())
-  }
-
-  function handleOptimisticDelete(nodeId: string, occurrenceIndex: number): void {
-    findByNodeId(doc, nodeId, occurrenceIndex)?.remove()
-  }
-
-  function handleOptimisticMove(
-    nodeId: string,
-    occurrenceIndex: number,
-    parentNodeId: string,
-    parentOccurrenceIndex: number,
-    index: number,
-  ): void {
-    const el = findByNodeId(doc, nodeId, occurrenceIndex)
-    const parent = findByNodeId(doc, parentNodeId, parentOccurrenceIndex)
-    if (!el || !parent) return
-    parent.insertBefore(el, parent.children[index] ?? null)
-  }
-
-  function handleOptimisticText(nodeId: string, occurrenceIndex: number, text: string): void {
-    const el = findByNodeId(doc, nodeId, occurrenceIndex)
-    if (el) el.textContent = text
-  }
-
   // ---- outbound: pointer + text:edit ---------------------------------------
   function postOutbound(message: OutboundRuntimeMessage): void {
     parentWindow.postMessage(toOutboundEnvelope(message), parentOrigin)
@@ -461,6 +419,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     postOutbound({ type: 'text:edit', nodeId, occurrenceIndex: occurrence?.occurrenceIndex ?? 0, text: target.textContent ?? '' })
   }
   doc.addEventListener('input', onInput, true)
+
+  // ---- outbound: runtime errors (Z5) — taps + bounds in `runtimeErrorTaps.ts` ----
+  const disposeErrorTaps = startRuntimeErrorTaps(view, (finding) => postOutbound({ type: 'error', ...finding }))
 
   // ---- resize / layout-driven ring repositioning ----------------------------
   view.addEventListener('resize', scheduleReposition)
@@ -608,23 +569,16 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         applyMode(message.mode)
         return
       case 'optimistic.insert':
-        handleOptimisticInsert(
-          message.nodeId,
-          message.parentNodeId,
-          message.parentOccurrenceIndex,
-          message.index,
-          message.tagName,
-          message.text,
-        )
+        applyOptimisticInsert(doc, message)
         return
       case 'optimistic.delete':
-        handleOptimisticDelete(message.nodeId, message.occurrenceIndex)
+        applyOptimisticDelete(doc, message.nodeId, message.occurrenceIndex)
         return
       case 'optimistic.move':
-        handleOptimisticMove(message.nodeId, message.occurrenceIndex, message.parentNodeId, message.parentOccurrenceIndex, message.index)
+        applyOptimisticMove(doc, message.nodeId, message.occurrenceIndex, message.parentNodeId, message.parentOccurrenceIndex, message.index)
         return
       case 'optimistic.text':
-        handleOptimisticText(message.nodeId, message.occurrenceIndex, message.text)
+        applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)
         return
     }
   }
@@ -654,7 +608,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       options.hot,
       () => postOutbound({ type: 'hmr:before' }),
       () => {
-        sweepOptimisticGhosts()
+        sweepOptimisticGhosts(doc)
         postOutbound({ type: 'hmr:after' })
       },
     )
@@ -672,6 +626,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       doc.removeEventListener('pointerup', onPointerUp, true)
       doc.removeEventListener('click', onClick, true)
       doc.removeEventListener('input', onInput, true)
+      disposeErrorTaps()
       layoutObserver?.disconnect()
       if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)
       frameResizeObserver?.disconnect()

@@ -7,7 +7,7 @@
  */
 
 import type { StoreApi } from 'zustand'
-import type { Draft, Patches } from 'mutative'
+import type { Draft } from 'mutative'
 import type { FrameworkColorToken, FrameworkColorUtilityType, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkScaleMode, FrameworkSettings, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
 import type {
   DecorativeSiteExplorerSectionId,
@@ -28,7 +28,6 @@ import type {
 import type { FontEntry, FontToken } from '@core/fonts'
 import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
-import type { BoardsFile } from '@core/studio-board'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
 import type { SlotOwnerEntry } from './nodeIndex'
@@ -129,95 +128,19 @@ type UpdateFontTokenPatch = Partial<{
 }>
 
 /**
- * One undoable transaction, stored as Mutative patch pairs scoped to the
- * SiteDocument (paths are relative to `site`, e.g. `['pages', 0, 'nodes', …]`).
- *
- * - `inverse` reverts the transaction (applied on undo).
- * - `forward` re-applies it (applied on redo).
- * - `coalesceKey` carries the in-progress input-burst identity so consecutive
- *   per-keystroke edits fold into a single entry (see `commitHistoryEntry`).
- *
- * An entry may ALSO (or instead) carry `board` — the board domain's state pair
- * (`store-09`). One stack, two domains: ⌘Z undoes the last thing the user did,
- * whether it lived in the `.tsx` or in `.studio/boards.json`.
+ * The undo-stack shapes. They live in `historyTypes.ts` (this file passed the
+ * 700-line ceiling) and are re-exported here so the slice keeps one front
+ * door — every consumer already imports them from `./types`.
  */
-export interface HistoryEntry {
-  inverse: Patches
-  forward: Patches
-  coalesceKey: string | null
-  /**
-   * `store-08` — present only when this transaction also WROTE STRUCTURE to
-   * the user's source. Undo/redo must then re-issue the gesture rather than
-   * replay `inverse`/`forward`: `saveSite` diffs node VALUES and has no notion
-   * of parent or order (see `structuralSourceEdits.ts`'s header), so a
-   * patch-only undo moves the element on the canvas, leaves the `.tsx` saying
-   * the opposite, and the next reparse silently wins.
-   */
-  structural?: StructuralHistory
-  /**
-   * `store-09` — present when this transaction changed BOARD state (frames,
-   * sticky notes, doc cards, guides, board CRUD). See `BoardHistory`.
-   */
-  board?: BoardHistory
-}
+import type { HistoryEntry } from './historyTypes'
 
-/**
- * The board-domain fields one transaction changed, before and after.
- *
- * SNAPSHOT PAIRS, NOT PATCHES — and deliberately so. Every board mutation is a
- * pure `Board -> Board` transform re-published through `upsertBoard`, so
- * `boards` is already a persistent immutable structure: a "snapshot" is two
- * object references that share everything the mutation did not touch. Storing
- * them is O(1), restoring them is O(1), and there is no patch path to go stale
- * when a board index shifts. Patches buy nothing here that structural sharing
- * has not already bought.
- *
- * Correctness rests on undo being strictly LIFO: the stack is only ever read
- * from the top, so the state at the moment of undo is exactly this entry's
- * `after`, and assigning `before` is exact rather than approximate. The one
- * way that can break is a board mutation that does NOT go through the history
- * stack (a fresh `.studio/boards.json` read) — which is why `loadBoards` and
- * `markBoardsLoadFailed` purge board entries outright. See `boardHistory.ts`.
- *
- * `activeBoardId` rides along because `addBoard`/`removeBoard` change it in
- * the same gesture, and undoing "create board" without returning to the board
- * you were on leaves you staring at a board you did not choose.
- */
-export interface BoardHistorySnapshot {
-  boards: BoardsFile
-  activeBoardId: string | null
-}
-
-export interface BoardHistory {
-  before: BoardHistorySnapshot
-  after: BoardHistorySnapshot
-}
-
-/** One end of a re-issuable structural gesture: "put this node here". */
-export interface StructuralHistoryMove {
-  nodeId: string
-  /** The node id this move's destination parent has — the synthetic page root included. */
-  parentId: string
-  /** Index into the destination parent's children AFTER the node is detached, matching `moveNode`. */
-  index: number
-}
-
-/**
- * What undo/redo has to re-issue for a structural transaction.
- *
- * `move` is re-issuable in both directions: the inverse of a move is another
- * move, planned against the live tree by the same `moveNodes` action a drag
- * uses, so it rides every refusal gate and writes to source exactly once.
- *
- * `delete` is NOT. Undoing a source delete means writing the element's
- * original markup back into the file, and the writeback protocol has no edit
- * kind that carries a subtree's source text — `insert` names a component and
- * literal props. Rather than replay patches that would re-add nodes the file
- * does not contain, undo refuses and says so.
- */
-export type StructuralHistory =
-  | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
-  | { gesture: 'delete' }
+export type {
+  HistoryEntry,
+  BoardHistorySnapshot,
+  BoardHistory,
+  StructuralHistoryMove,
+  StructuralHistory,
+} from './historyTypes'
 
 export interface SiteSlice {
   site: SiteDocument | null
@@ -306,7 +229,19 @@ export interface SiteSlice {
   setPageAsHomepage: (pageId: string) => void
 
   // Node mutations (operate on the active page)
-  insertNode: (moduleId: string, defaults: Record<string, unknown>, parentId: string, index?: number) => string
+  /**
+   * `inlineStyles` is the node's `style={{ … }}` bag, applied as part of the
+   * SAME insert (`K4`'s `O`). A follow-up `setNodeInlineStyles` cannot work on
+   * a studio tree: the insert is an async source write, this returns `''`, and
+   * no id exists to style until the resync lands.
+   */
+  insertNode: (
+    moduleId: string,
+    defaults: Record<string, unknown>,
+    parentId: string,
+    index?: number,
+    inlineStyles?: Record<string, string>,
+  ) => string
 
   /**
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.
@@ -404,12 +339,40 @@ export interface SiteSlice {
   duplicateNode: (nodeId: string) => string
   /** Multi-duplicate: duplicates every id in place (single undo step). Returns the new ids. */
   duplicateNodes: (nodeIds: string[]) => string[]
+  /**
+   * K2 — Alt+drag: copy `nodeIds` INTO `newParentId` at `newIndex`, rather
+   * than beside the original.
+   *
+   * A distinct action, not a flag on `duplicateNodes`, because on a
+   * studio-imported tree it is a genuinely different source write
+   * (`duplicateJsxElement`'s destination form) planned against a genuinely
+   * different question (`planSourceDuplicateTo` — may this element be copied,
+   * AND may it land there). On a CMS / Visual Component tree it degrades to
+   * exactly what it says: duplicate in place, then move the copies.
+   * Returns the new ids (empty on a studio tree, where the copies do not
+   * exist until the commit's resync brings them in).
+   */
+  duplicateNodesTo: (nodeIds: string[], newParentId: string, newIndex: number) => string[]
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor
    * semantics. Returns the new wrapper id, or `null` when the selection is empty.
    */
   wrapNodes: (nodeIds: string[], containerModuleId: string, defaults?: Record<string, unknown>) => string | null
+  /**
+   * K3 — ⌘G. The selection goes inside ONE new container: `wrapNodes` on a CMS
+   * tree, a SOURCE write (`wrapJsxElements`) on a studio-imported one, where it
+   * returns `null` because the container's id is the `line:col` that write
+   * produces. Refuses out loud unless the selection is a contiguous run of
+   * siblings in the code. See `groupActions.ts`.
+   */
+  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>) => string | null
+  /**
+   * K3 — ⌘⇧G. The container goes; its children take its place at its own index.
+   * On a studio tree that is `unwrapJsxElement`, which refuses a container
+   * carrying anything but `className`/`style`/`id`/`data-*`.
+   */
+  ungroupNode: (nodeId: string) => void
 
   // Breakpoint mutations
   addBreakpoint: (bp: Omit<Breakpoint, 'id'>) => Breakpoint

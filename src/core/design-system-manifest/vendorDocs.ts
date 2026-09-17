@@ -25,9 +25,27 @@ interface Heading {
   line: number
 }
 
-/** All headings in a markdown document, ignoring anything inside a fenced code block. */
+/**
+ * All headings in a markdown document, ignoring anything inside a fenced code
+ * block.
+ *
+ * Split on `/\r?\n/`, never a bare `'\n'`. In a JS regex `.` does not match
+ * `\r` — it is a line terminator — so `/^(#{1,6})\s+(.*)$/` cannot match
+ * `"### Button\r"`, and a CRLF document (the default working-tree form of a
+ * Windows checkout, `core.autocrlf=true`) produced ZERO headings here: no
+ * `apiDoc`, no `intentDoc`, no props and a placeholder description for all 39
+ * components, and `bun run alm:sync` then wrote that empty manifest over the
+ * committed one. `readVendorFile` normalises too, so the production path is
+ * covered twice on purpose: this class is also constructed directly (tests,
+ * and any future caller reading docs from somewhere other than the vendor
+ * directory), and the parse must not depend on who read the file.
+ * Gated by `__tests__/vendorDocsCrlf.test.ts`.
+ *
+ * `lines` therefore holds LF-only text, which is what `sliceAt` re-joins and
+ * every downstream parser in this module expects.
+ */
 function headingsOf(markdown: string): { lines: string[]; headings: Heading[] } {
-  const lines = markdown.split('\n')
+  const lines = markdown.split(/\r?\n/)
   const headings: Heading[] = []
   let inFence = false
   lines.forEach((line, index) => {

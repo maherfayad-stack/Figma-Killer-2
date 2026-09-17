@@ -78,10 +78,12 @@ docs/
 │
 ├── deployment/                 Operator docs (platform targets + generic hosts)
 ├── e2e/                        Agent-run browser test protocols (kept as-is)
-└── plans/                      In-flight design plans (transient)
+├── audits/                     Dated read-only audit reports (historical, not maintained)
+├── state-archive/              STATE.md overflow, verbatim, one file per quarter
+└── assets/                     Images the pages above reference
 ```
 
-**Plans are not docs.** They live in `plans/` because they describe work-in-progress decisions. When a plan ships, the resulting state goes into `features/` or `reference/` — the plan itself is deleted or archived. Never read `plans/` to learn how the system works.
+**Plans are not docs, and they do not live in `docs/`.** They are `STUDIO-*-PLAN.md` files at the repo root, indexed in [`README.md`](README.md) → "Plans", because they describe work-in-progress decisions rather than the system. When a plan ships, the resulting state goes into `features/` or `reference/`. Never read a plan to learn how the system works.
 
 ---
 
@@ -163,7 +165,7 @@ The `Related` section is mandatory. It tells the reader what to read next and wh
 
 7. **No history. No "we used to ..." No comparisons to previous designs.** The repo is pre-release. There is one current design. Document that. Git remembers the rest.
 
-8. **No aspiration. No "we plan to ..."** If it's planned but not built, it goes in `docs/plans/`, not in a feature or reference doc.
+8. **No aspiration. No "we plan to ..."** If it's planned but not built, it goes in the matching `STUDIO-*-PLAN.md` at the repo root, not in a feature or reference doc.
 
 9. **One topic per doc.** A feature doc covers one feature. A reference doc answers one question. If a doc is sprawling, split it. If two docs heavily overlap, merge them.
 

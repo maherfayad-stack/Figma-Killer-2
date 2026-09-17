@@ -8,16 +8,24 @@
  * This test greps for inline key-combo matchers (e.g. `e.metaKey && e.key === 'k'`)
  * that bypass the registry, and fails if it finds any in files outside the allowlist.
  *
+ * Its sibling gate, `keybindings-single-dispatcher.test.ts`, covers the other
+ * half of the same rule: this file gates WHAT a shortcut is, that one gates WHO
+ * hears it (one `keydown` listener under `canvas/`, plus justified exemptions).
+ *
  * Allowlisted files — consolidation touchpoints and legitimate exceptions:
  *   - keybindings.ts           — registry itself (defines match functions)
  *   - HelpKeybindingsList.tsx  — reads from registry, renders <kbd> tags
  *   - SpotlightRow.tsx         — reads from registry, renders <kbd> tags
- *   - CanvasRoot.tsx           — uses getKeybindingForCommand().match(e)
  *   - usePersistence.ts        — uses getKeybindingForCommand().match(e)
  *   - SpotlightRoot.tsx        — uses getKeybindingForCommand().match(e)
- *   - UndoRedoButtons.tsx      — uses getKeybindingForCommand().match(e)
  *   - useCanvas.ts             — canvas-specific zoom/pan shortcuts (not global)
  *   - Spotlight.tsx            — ⌘ symbol appears only in a JSDoc comment
+ *
+ * `CanvasRoot.tsx` and `UndoRedoButtons.tsx` were on this list until `K1` and
+ * have been removed: neither matches a chord any more. CanvasRoot registers
+ * scope handlers, and the undo/redo keystroke moved to
+ * `useEditorHistoryShortcuts`. A stale allowlist entry is a hole, not a
+ * comment — it silently permits a future inline matcher in that file.
  */
 
 import { describe, it, expect } from 'bun:test'
@@ -39,10 +47,8 @@ const ALLOWLIST = new Set([
   // ⌘ symbol appears only in a JSDoc comment, not JSX output
   'admin/spotlight/Spotlight.tsx',
   // Handlers that use getKeybindingForCommand().match(e)
-  'admin/pages/site/canvas/CanvasRoot.tsx',
   'admin/pages/site/hooks/usePersistence.ts',
   'admin/spotlight/SpotlightRoot.tsx',
-  'admin/pages/site/canvas/UndoRedoButtons.tsx',
   // Canvas-specific zoom/pan shortcuts (Ctrl+0, f, 1, 2) — not global commands.
   // These are canvas viewport controls that don't belong in the palette registry.
   'admin/pages/site/hooks/useCanvas.ts',

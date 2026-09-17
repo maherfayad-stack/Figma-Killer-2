@@ -18,12 +18,39 @@
  * there is nothing left to learn from another status round trip once a dev
  * server has finished booting or given up. Never starts at all below Tier 2
  * (`getDevServerStatus` 409s there — no reason to pay the round trip).
+ *
+ * **The poll backs off, and it reports once per condition** (Z3). It used to
+ * be a flat 1 s tick that logged its failure on every single one of them. A
+ * dev server that is down is down for minutes, so what that produced was a
+ * console filling at one line a second with the same sentence — noise that
+ * hides the one line that actually said something new, and a request per
+ * second going nowhere. The interval now doubles from
+ * {@link POLL_INTERVAL_START_MS} to a {@link POLL_INTERVAL_MAX_MS} ceiling
+ * while nothing changes, and RESETS the moment `phase` does: a boot that just
+ * moved is worth watching closely again. Logging is keyed on the condition, so
+ * a repeating failure is reported once and a genuinely new one still gets
+ * through.
  */
 import { useSyncExternalStore } from 'react'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { getDevServerStatus, type DevServerStatus } from './devServerRequests'
 import { getStudioTrustTier, subscribeStudioTrustTier } from './studioProjectTrust'
 
-const POLL_INTERVAL_MS = 1000
+/** The first interval, and the one a phase change returns to. */
+export const POLL_INTERVAL_START_MS = 1000
+/** The ceiling the interval doubles up to while nothing changes. */
+export const POLL_INTERVAL_MAX_MS = 10_000
+const POLL_BACKOFF_FACTOR = 2
+
+/**
+ * One backoff step. Pure and exported so the curve is checkable without
+ * spending ten real seconds proving it; the reset on a phase change is the
+ * caller's decision, not this function's, because only the caller knows one
+ * happened.
+ */
+export function nextPollDelayMs(currentMs: number): number {
+  return Math.min(currentMs * POLL_BACKOFF_FACTOR, POLL_INTERVAL_MAX_MS)
+}
 
 export interface DevServerReadiness {
   phase: DevServerStatus['phase']
@@ -41,6 +68,14 @@ interface PollEntry {
   listeners: Set<() => void>
   timer: ReturnType<typeof setTimeout> | null
   inFlight: boolean
+  /** The delay the next scheduled poll will use. Doubles while nothing changes; resets on a phase change. */
+  delayMs: number
+  /**
+   * The condition this entry last reported, so the same one is never reported
+   * twice running. `null` once something changed, which is what lets a
+   * recurring failure speak again after a recovery.
+   */
+  lastLogged: string | null
 }
 
 const entries = new Map<string, PollEntry>()
@@ -48,7 +83,14 @@ const entries = new Map<string, PollEntry>()
 function getEntry(dir: string): PollEntry {
   let entry = entries.get(dir)
   if (!entry) {
-    entry = { state: DEFAULT_READINESS, listeners: new Set(), timer: null, inFlight: false }
+    entry = {
+      state: DEFAULT_READINESS,
+      listeners: new Set(),
+      timer: null,
+      inFlight: false,
+      delayMs: POLL_INTERVAL_START_MS,
+      lastLogged: null,
+    }
     entries.set(dir, entry)
   }
   return entry
@@ -58,21 +100,41 @@ function notify(entry: PollEntry): void {
   for (const listener of entry.listeners) listener()
 }
 
+/** Report `message` unless this entry's last report said exactly the same thing. */
+function logOncePerCondition(entry: PollEntry, key: string, message: string): void {
+  if (entry.lastLogged === key) return
+  entry.lastLogged = key
+  console.error(`[useDevServerReadiness] ${message}`)
+}
+
 async function pollOnce(dir: string, entry: PollEntry): Promise<void> {
   entry.inFlight = true
+  const previousPhase = entry.state.phase
   try {
     const status = await getDevServerStatus(dir)
     entry.state = { phase: status.phase, log: status.log }
   } catch (err: unknown) {
-    console.error('[useDevServerReadiness] status poll failed', err)
+    logOncePerCondition(entry, `poll-failed:${getErrorMessage(err, 'unknown error')}`, `status poll failed: ${getErrorMessage(err, 'unknown error')}`)
     // Leave the previous state in place — a transient network hiccup mid-boot
     // shouldn't flip a booting frame back to "stopped" and reset its fallback.
+  }
+  const phaseChanged = entry.state.phase !== previousPhase
+  if (phaseChanged) {
+    // A change is the one thing worth resetting BOTH bounds for: poll tightly
+    // again, and let the next condition report itself even if it repeats one
+    // from before the change.
+    entry.lastLogged = null
+    if (entry.state.phase === 'failed') {
+      logOncePerCondition(entry, 'phase:failed', `dev server failed to start for ${dir}`)
+    }
   }
   entry.inFlight = false
   notify(entry)
   entry.timer = null
   if (entry.listeners.size > 0 && !isSettled(entry.state.phase)) {
-    entry.timer = setTimeout(() => void pollOnce(dir, entry), POLL_INTERVAL_MS)
+    if (phaseChanged) entry.delayMs = POLL_INTERVAL_START_MS
+    entry.timer = setTimeout(() => void pollOnce(dir, entry), entry.delayMs)
+    entry.delayMs = nextPollDelayMs(entry.delayMs)
   }
 }
 

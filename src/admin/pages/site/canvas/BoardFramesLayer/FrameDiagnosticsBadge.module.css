@@ -1,0 +1,117 @@
+/**
+ * The frame-header diagnostics dot and its popover body (Z5).
+ *
+ * `--warning` carries the meaning it carries everywhere else in this codebase:
+ * not necessarily broken, but do not trust it yet. `--danger` is reserved for
+ * the `data-crashed` case — the screen's own code threw, so what is on the
+ * board is not the screen.
+ *
+ * Deliberately small and silent: this sits beside a frame title at any zoom,
+ * and a badge that draws attention when nothing is wrong is a badge people
+ * learn to ignore.
+ */
+
+.badge {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-4xs);
+    border-radius: var(--radius-sm);
+    cursor: default;
+}
+
+.badge:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--warning);
+}
+
+.badge[data-crashed='true'] .dot {
+    background: var(--danger);
+}
+
+/* ── Popover body ──────────────────────────────────────────────────────── */
+
+.popover {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    text-align: left;
+}
+
+.popoverTitle {
+    margin: 0;
+    color: var(--text-bright);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.entry {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4xs);
+    min-width: 0;
+}
+
+.entryHead {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3xs);
+}
+
+.entryCode {
+    color: var(--warning-text);
+    font-size: var(--text-3xs);
+    font-weight: 700;
+}
+
+.entryCount {
+    color: var(--text-subtle);
+    font-size: var(--text-3xs);
+}
+
+.entryMessage {
+    color: var(--text);
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+    /* A 400-character message must not stretch the bubble to the board's width. */
+    overflow-wrap: anywhere;
+}
+
+.entryUrl {
+    color: var(--text-subtle);
+    font-size: var(--text-3xs);
+    overflow-wrap: anywhere;
+}
+
+.entryStack {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: monospace;
+    font-size: var(--text-3xs);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.more {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-3xs);
+}

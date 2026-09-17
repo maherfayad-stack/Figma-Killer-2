@@ -6,13 +6,41 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
+import { getDevServerStatus, startDevServer, stopDevServer, type DevServerOverrides } from '../studio/devServer'
 import { readStudioMeta } from '../studio/studioMeta'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioTrustTier } from '../studio/trustTier'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
+import type { SpawnedProcessLike } from '../studio/subprocessRunner'
+
+/**
+ * A dev-server process that never exits on its own — the shape a real one has
+ * while it is serving. `startDevServer`'s `spawn` seam takes it, so no real
+ * subprocess is ever created here (same posture as `devServer.test.ts`).
+ */
+function fakeDevServerProcess(): { proc: SpawnedProcessLike; wasKilled: () => boolean } {
+  let killed = false
+  let resolveExited!: (code: number) => void
+  const exited = new Promise<number>((resolve) => {
+    resolveExited = resolve
+  })
+  const never = () => new ReadableStream<Uint8Array>({ start() {} })
+  return {
+    proc: {
+      stdout: never(),
+      stderr: never(),
+      exited,
+      pid: 4242,
+      kill: () => {
+        killed = true
+        resolveExited(-1)
+      },
+    },
+    wasKilled: () => killed,
+  }
+}
 
 function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
   const url = new URL(`http://localhost${pathAndQuery}`)
@@ -86,6 +114,46 @@ describe('tryServeStudioTrustTier', () => {
     )
     const res = await tryServeStudioTrustTier(req, url, pathname)
     expect(res!.status).toBe(400)
+  })
+
+  /**
+   * The security half of a demotion. Writing `trust: 'static'` only closes the
+   * Tier-2 ROUTES; the dev server `useDevServerPrewarm` already started keeps
+   * executing the user's code, and `server/liveOrigin.ts`'s unauthenticated
+   * `/p/<projectKey>/` proxy keeps serving it, because that listener
+   * deliberately trusts the registry rather than re-reading `.studio/meta.json`.
+   * So the route has to stop the process, not just record that it should not be
+   * running — otherwise the auto-promote notice's "Undo" is cosmetic.
+   */
+  it('POST stops a running dev server when it demotes the project below run-project', async () => {
+    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { dev: 'vite' } }))
+    const fake = fakeDevServerProcess()
+    const overrides: DevServerOverrides = { spawn: () => fake.proc }
+    startDevServer(wsDir, overrides)
+    expect(getDevServerStatus(wsDir).phase).not.toBe('stopped')
+
+    const { req, url, pathname } = makeRequest('/admin/api/studio/trust-tier', postBody({ dir: wsDir, trust: 'static' }))
+    const res = await tryServeStudioTrustTier(req, url, pathname)
+
+    expect(res!.status).toBe(200)
+    expect(readStudioMeta(wsDir).trust).toBe('static')
+    expect(fake.wasKilled()).toBe(true)
+    expect(getDevServerStatus(wsDir).phase).toBe('stopped')
+  })
+
+  it('POST leaves a running dev server alone when the write keeps the project at run-project', async () => {
+    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { dev: 'vite' } }))
+    const fake = fakeDevServerProcess()
+    startDevServer(wsDir, { spawn: () => fake.proc })
+
+    const { req, url, pathname } = makeRequest(
+      '/admin/api/studio/trust-tier',
+      postBody({ dir: wsDir, trust: 'run-project' }),
+    )
+    await tryServeStudioTrustTier(req, url, pathname)
+
+    expect(fake.wasKilled()).toBe(false)
+    stopDevServer(wsDir)
   })
 
   it('POST rejects a dir outside studio-workspace/ without writing anything', async () => {

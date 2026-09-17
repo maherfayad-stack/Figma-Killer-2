@@ -4,7 +4,8 @@
  * Responsibilities:
  * - Captures all wheel, drag, and pinch gestures via useCanvas
  * - Manages the CanvasSelectionContext (click → selectNode, hover → hoverNode)
- * - Delegates canvas-level keyboard shortcuts to useCanvasKeyboardShortcuts
+ * - Registers the canvas keyboard SCOPES on the editor key ladder
+ *   (`editorKeyDispatcher.ts`); the one listener lives in `SitePage`
  * - Delegates the rename modal to useCanvasRenameDialog + CanvasRenameDialog
  * - Delegates the right-click menu to useCanvasLayerContextMenu + CanvasLayerContextMenu
  * - Renders CanvasTransformLayer inside the gesture-capture area
@@ -22,14 +23,12 @@
  * - prefers-reduced-motion: CSS transitions are disabled for users who opt out
  */
 
-import { lazy, Suspense, useContext, useEffect, useEffectEvent, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { useEditorStore, selectActiveCanvasPage, selectRightSidebarExpanded } from '@site/store/store'
 import type { Breakpoint } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { getNodeDisplayName } from '@core/page-tree'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
-import { SpotlightContext } from '@admin/spotlight/spotlightContext'
-import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { useCanvas } from '@site/hooks/useCanvas'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
@@ -53,14 +52,17 @@ import { CanvasRenameDialog } from './CanvasRenameDialog'
 import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
-import { useCanvasKeyboardShortcuts } from './useCanvasKeyboardShortcuts'
+import { useCanvasNodeShortcuts } from './useCanvasNodeShortcuts'
+import { useEditorHistoryShortcuts } from './useEditorHistoryShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
 import { usePrototypeLinkKeyboard } from './usePrototypeLinkKeyboard'
+import { usePrototypePlayTriggers } from './usePrototypePlayTriggers'
 import { usePrototypePlayback } from './usePrototypePlayback'
 import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
+import { useCanvasHandTool } from './useCanvasHandTool'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
 import { useCopyAsPngShortcut } from './useCopyAsPngShortcut'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
@@ -92,7 +94,6 @@ interface CanvasRootProps {
 export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const transformLayerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
-  const spotlight = useContext(SpotlightContext)
 
   // Store subscriptions
   const editingPage = useEditorStore(selectActiveCanvasPage)
@@ -106,6 +107,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     overlayTransition: playOverlayTransition,
     overlayLeaveTransition: playOverlayLeaveTransition,
     playMode,
+    stackDepth: playStackDepth,
   } = usePrototypePlayback(editingPage)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
@@ -120,18 +122,15 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const clearSelection = useEditorStore((s) => s.clearSelection)
   const deleteNode = useEditorStore((s) => s.deleteNode)
-  // Multi-select: keyboard shortcuts dispatch the *Nodes batch actions when a
-  // multi-selection is active so a single Ctrl+D / Delete / Cmd+C/X/V acts on
-  // every selected layer in one undo step.
-  const deleteNodes = useEditorStore((s) => s.deleteNodes)
+  // Subscribed here only because the right-click menu renders them as actions.
+  // The KEYBOARD equivalents (including the `*Nodes` batch variants a
+  // multi-selection needs) read the store live inside `useCanvasNodeShortcuts`
+  // — a shortcut handler has no reason to re-render this component.
   const duplicateNode = useEditorStore((s) => s.duplicateNode)
-  const duplicateNodes = useEditorStore((s) => s.duplicateNodes)
   const renameNode = useEditorStore((s) => s.renameNode)
   const wrapNode = useEditorStore((s) => s.wrapNode)
   const copyNode = useEditorStore((s) => s.copyNode)
-  const copyNodes = useEditorStore((s) => s.copyNodes)
   const cutNode = useEditorStore((s) => s.cutNode)
-  const cutNodes = useEditorStore((s) => s.cutNodes)
   const pasteNode = useEditorStore((s) => s.pasteNode)
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
@@ -324,99 +323,78 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   const viewportActionsContextValue = { canvasRootRef: canvasRef, panBy, transformRef }
 
-  // ─── Canvas-level keyboard shortcuts ──────────────────────────────────────
-  // Match predicates come from the keybindings registry — single source of truth.
+  // ─── Canvas keyboard scopes ───────────────────────────────────────────────
+  //
+  // None of these mount a listener. Each registers a handler on ONE rung of
+  // the editor key ladder (`editorKeyDispatcher.ts`), whose single `document`
+  // listener lives in `SitePage`. The ladder — not the order of the calls
+  // below — decides who wins a shared keystroke; the order here only fixes
+  // sequence WITHIN a rung, which matters for `node` (the selection ladder is
+  // consulted before the node shortcuts) and for `board` (no overlaps).
+  //
+  // The canvas div's own `onKeyDown` is now just `useCanvas`'s viewport keys
+  // (+ / − / ⇧1 / ⇧2). Delete and ⌘D used to be there too, which is why this
+  // file also carried a SECOND, `document`-level Delete listener with its own
+  // focus test — a React handler on the canvas div stops firing the moment the
+  // user clicks the Properties panel. Both are gone; `useCanvasNodeShortcuts`
+  // is the one owner, scoped by intent.
 
-  const handleKeyDown = useCanvasKeyboardShortcuts({
-    canvasKeyDown,
-    selectedNodeId,
-    editable,
-    clearSelection,
-    requestDeleteNode,
-    deleteNodes,
-    duplicateNode,
-    duplicateNodes,
-    copyNode,
-    copyNodes,
-    cutNode,
-    cutNodes,
-    pasteNode,
-    runShortcut: spotlight?.runShortcut,
-  })
-
-  const requestDeleteSelectionFromShortcut = useEffectEvent((
-    currentSelectedNodeId: string,
-    currentIds: readonly string[],
-  ) => {
-    if (currentIds.length > 1) {
-      deleteNodes([...currentIds])
-      clearSelection()
-    } else {
-      requestDeleteNode(currentSelectedNodeId)
-    }
-  })
-
-  useEffect(() => {
-    if (isLive || !editable) return
-    const deleteBinding = getKeybindingForCommand('layers.delete')
-    if (!deleteBinding) return
-
-    const isCanvasEvent = (event: KeyboardEvent) => {
-      const target = event.target
-      if (target instanceof Element && canvasRef.current?.contains(target)) return true
-      const activeElement = document.activeElement
-      return activeElement instanceof Element && canvasRef.current?.contains(activeElement)
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      if (useEditorStore.getState().activeInlineEdit) return
-      if (!deleteBinding.match(event)) return
-      if (!isCanvasEvent(event)) return
-
-      const state = useEditorStore.getState()
-      const currentIds = state.selectedNodeIds
-      const currentSelectedNodeId = state.selectedNodeId
-      if (!currentSelectedNodeId) return
-
-      event.preventDefault()
-      event.stopPropagation()
-
-      requestDeleteSelectionFromShortcut(currentSelectedNodeId, currentIds)
-    }
-
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [editable, isLive])
-
-  // ⌘/Ctrl+A selects every frame on the active board (board-02).
-  useBoardSelectAllShortcut(editable, isLive)
-  // Not gated on `editable`: copying a screen as an image reads the board, it
-  // never writes to it, so a read-only board is still worth photographing.
-  useCopyAsPngShortcut(isLive)
-
-  // ─── Enter / Escape: the whole selection ladder ────────────────────────────
-  // Enter steps into a `studio.instance` (instance-ui-01); Escape steps back
-  // out, and otherwise clears the node + frame selection and leaves VC mode
-  // (select-01). Document-level, not React `onKeyDown` — see that file for why
-  // focus-scoping silently killed Escape the moment the user touched a panel.
-  // viewport-01 also gave it Shift+Enter (select parent), Enter's
-  // select-first-child fallback, and Cmd/Ctrl+R → the canvas's own rename dialog.
-  useCanvasSelectionKeyboard(editable, isLive, renameDialog.open)
-
-  // Sticky notes + doc cards: delete / duplicate / copy-paste / nudge.
-  useBoardAnnotationKeyboard(editable, isLive)
-
-  // Prototype mode: Delete removes the selected connector, Escape deselects it.
-  // Board-only — a link is a thing on the board, and live mode is the player.
+  // `prototype-link` — Delete removes the selected connector, Escape deselects
+  // it. Above `node` so a Delete pressed with BOTH a connector and an element
+  // selected removes only the connector.
   usePrototypeLinkKeyboard(editable && !isLive)
 
-  // Board frames: arrow-key nudge. Mounted AFTER the annotation hook on
-  // purpose — see `useBoardFrameNudge`'s doc for the mixed-selection rule.
+  // `annotation` — sticky notes + doc cards: delete / duplicate / copy-paste /
+  // nudge. Above `node` and `board`, which is what makes a mixed marquee
+  // selection nudge the notes rather than the frames.
+  useBoardAnnotationKeyboard(editable, isLive)
+
+  // `node`, first handler — Enter steps into a `studio.instance`
+  // (instance-ui-01); Escape steps back out, and otherwise clears the node +
+  // frame selection and leaves VC mode (select-01). viewport-01 also gave it
+  // ⇧Enter (select parent), Enter's select-first-child fallback, and ⌘R → the
+  // canvas's own rename dialog. Registered before the node shortcuts below so
+  // Enter / Escape / ⌘R are decided first.
+  useCanvasSelectionKeyboard(editable, isLive, renameDialog.open)
+
+  // `node`, second handler — Delete / ⌘D / ⌘C / ⌘X / ⌘V / ⌥↑ / ⌥↓.
+  useCanvasNodeShortcuts({ editable, isLive, requestDeleteNode })
+
+  // `board` — ⌘/Ctrl+A selects every frame on the active board (board-02).
+  useBoardSelectAllShortcut(editable, isLive)
+
+  // `board` — ⌘⇧C copies the selection as a PNG. Not gated on `editable`:
+  // photographing a screen reads the board, it never writes to it.
+  useCopyAsPngShortcut(isLive)
+
+  // The two screen-scoped prototype triggers — `after-delay` and `key`. The
+  // other three arrive as pointer events on a node and belong to
+  // `useCanvasNodeInteraction`; these have no element under them when they
+  // fire. Mounted here because this is where the player's current screen and
+  // overlay are already derived.
+  usePrototypePlayTriggers({
+    playMode,
+    screenPageId: canvasPage?.id ?? null,
+    overlayPageId: overlayPage?.id ?? null,
+    stackDepth: playStackDepth,
+  })
+
+  // `board` — arrow-key frame nudge. Also broadcasts the keyup that closes an
+  // arrow-nudge undo burst, for annotations as well as frames.
   useBoardFrameNudge(editable, isLive)
 
-  // Bare-letter tool keys: T (text), F (container), C (comment mode).
+  // `board` — bare-letter tool keys: T (text), F (container inside), C
+  // (comment mode), H (hand), K (scale), R / O (box beside the selection).
   useCanvasToolShortcuts(editable, isLive)
+
+  // Not a key scope: mirrors the latched hand tool onto the shared space-pan
+  // flag, which is what every pan-aware surface already reads.
+  useCanvasHandTool()
+
+  // `global`, the bottom rung — undo / redo: what you get when nothing more
+  // specific claimed the key. Moved off `UndoRedoButtons` so it survives the
+  // notch being hidden and stands down during an inline edit.
+  useEditorHistoryShortcuts()
 
   // ─── Canvas background click → deselect ───────────────────────────────────
   //
@@ -460,7 +438,11 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // real-size frame scrolls natively. Spreading {} keeps the outer div's prop
   // shape stable when toggling.
   const gestureBindings = isLive ? {} : bind()
-  const onCanvasKeyDown = isLive ? undefined : handleKeyDown
+  // The ONLY React key handler left on the canvas div: the viewport keys
+  // (+ / − / ⇧1 / ⇧2), which are legitimately focus-scoped — they act on the
+  // thing under the cursor's canvas, not on a selection. Every selection-acting
+  // shortcut moved to the editor key ladder (see the scopes block above).
+  const onCanvasKeyDown = isLive ? undefined : canvasKeyDown
   const onCanvasClick = isLive ? undefined : handleCanvasClick
 
   return (
@@ -486,9 +468,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           // to be) silently discarded EVERY canvas keyboard shortcut —
           // Escape, +/-, Ctrl+C/X/V/D — to that library-internal handler.
           // `board-02` found this while diagnosing why Escape didn't clear
-          // a frame selection; it explains the same for every OTHER
-          // shortcut `useCanvasKeyboardShortcuts` owns, not just the frame
-          // ones. Empty in preview mode — see gestureBindings above.
+          // a frame selection. Only the viewport keys ride this prop now
+          // (`K1`), but the spread order still matters for them. Empty in
+          // preview mode — see gestureBindings above.
           {...gestureBindings}
           onKeyDown={onCanvasKeyDown}
           onClick={onCanvasClick}

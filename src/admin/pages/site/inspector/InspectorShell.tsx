@@ -25,6 +25,27 @@
  * Inspect both have real "nothing selected" states of their own already
  * (`EmptyState`/`"Select an element to inspect."`); only Design's own
  * branching (in `PropertiesPanelBody`) decides what that tab shows.
+ *
+ * ## All three panels are mounted; the inactive two are `hidden`
+ *
+ * This is deliberate and unchanged since P1. Switching tabs keeps each
+ * surface's scroll offset and transient local state (`InspectPanel`'s
+ * copied-key flash, the Design column's scroll position — and the Design
+ * column really does scroll: see `docs/features/inspector.md` §6 for the
+ * measured numbers), which a mount/unmount swap would throw away on every
+ * round trip.
+ *
+ * The cost is that a section rendered in TWO tabs — `transform`,
+ * `animations` and `interaction` all declare `tabs: ['design','prototype']`
+ * (`sections/index.ts`) — has two live DOM subtrees at once, only one of
+ * them visible. **Anything querying the inspector's DOM must therefore say
+ * which tab it means**: a document-wide `[data-section-id="transform"]`
+ * lookup finds the hidden Prototype copy even while Design is showing. That
+ * is what `data-inspector-tab` below is for — an additive, queryable-only
+ * attribute (same posture as `StyleSurface.tsx`'s `data-section-id`), so a
+ * caller scopes with `[data-inspector-tab="design"]:not([hidden])` instead
+ * of relying on which tabs happen to be mounted today. `STATE.md` panel-37
+ * is the defect that made this explicit.
  */
 import { useState, type ReactNode } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -73,13 +94,13 @@ export function InspectorShell({ designContent }: InspectorShellProps) {
           aria-label="Inspector tab"
         />
       </div>
-      <div className={styles.tabContent} hidden={tab !== 'design'}>
+      <div className={styles.tabContent} data-inspector-tab="design" hidden={tab !== 'design'}>
         {designContent}
       </div>
-      <div className={styles.tabContent} hidden={tab !== 'prototype'}>
+      <div className={styles.tabContent} data-inspector-tab="prototype" hidden={tab !== 'prototype'}>
         <PrototypePanel />
       </div>
-      <div className={styles.tabContent} hidden={tab !== 'inspect'}>
+      <div className={styles.tabContent} data-inspector-tab="inspect" hidden={tab !== 'inspect'}>
         <InspectPanel />
       </div>
     </div>

@@ -431,7 +431,6 @@ The visual editor uses additional raw z-index values that are **not** tokenised.
 | 90    | Shared admin floating windows (`FloatingWindow`, `MediaViewerWindow`, agent image preview) |
 | 80    | CodeEditorPanel |
 | 201   | Toolbar popovers / dropdowns |
-| 400–401 | PreviewOverlay |
 
 **Canvas-internal context** (confined inside CanvasRoot's `z-index: 0`):
 

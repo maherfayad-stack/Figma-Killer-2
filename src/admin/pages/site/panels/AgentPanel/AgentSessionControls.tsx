@@ -54,7 +54,9 @@ import { useAdminUi } from '@admin/state/adminUi'
 import { useAgentStore } from '@admin/ai/useAgentStore'
 import {
   agentSessionControlsInitialState,
+  fetchStudioAgentDesignPolicy,
   fetchStudioAgentFidelityMode,
+  persistStudioAgentDesignPolicy,
   persistStudioAgentFidelityMode,
   type AgentSlice,
 } from '@site/agent'
@@ -71,6 +73,7 @@ import styles from './AgentSessionControls.module.css'
 
 type AgentPermissionMode = AgentSlice['agentPermissionMode']
 type AgentFidelityMode = AgentSlice['agentFidelityMode']
+type AgentDesignPolicy = AgentSlice['agentDesignPolicy']
 
 const MODE_OPTIONS: ReadonlyArray<{ value: AgentPermissionMode; label: string; shortLabel: string }> = [
   { value: 'default', label: 'Ask before edits', shortLabel: 'Ask' },
@@ -92,6 +95,23 @@ const FIDELITY_OPTIONS: ReadonlyArray<{ value: AgentFidelityMode; label: string;
   { value: 'creative', label: 'Creative', shortLabel: 'Creative', hint: 'A reference is a direction — design, propose variants, do not chase pixels' },
   { value: 'balanced', label: 'Balanced', shortLabel: 'Balanced', hint: 'Match the design, deviate deliberately and say so' },
   { value: 'strict', label: 'Strict', shortLabel: 'Strict', hint: 'Reproduce the design — highest thresholds, no reference guessing' },
+]
+
+/**
+ * A12's design-policy picker. `null` is a first-class option for exactly the
+ * reason it is on the fidelity picker: it means "use this project's own
+ * default", which is the only way to UNDO a session override without guessing
+ * which literal the project is set to.
+ *
+ * The hints name what each position DOES to the grader, not how it feels — a
+ * picker whose options read as moods gets picked by mood, and this one decides
+ * whether a raw hex fails the Stop gate.
+ */
+const DESIGN_POLICY_OPTIONS: ReadonlyArray<{ value: AgentDesignPolicy; label: string; shortLabel: string; hint: string }> = [
+  { value: null, label: 'Project default', shortLabel: 'System', hint: 'Use whatever this project is set up to expect' },
+  { value: 'follow', label: 'Follow the system', shortLabel: 'Follow', hint: 'Tokens and this project’s own components only — a raw or off-scale value is an error' },
+  { value: 'balanced', label: 'Balanced', shortLabel: 'Balanced', hint: 'Prefer tokens and components; a one-off is allowed when the reply says why' },
+  { value: 'free', label: 'Free', shortLabel: 'Free', hint: 'The design system is optional — design a distinct visual language instead' },
 ]
 
 interface AgentSessionControlsProps {
@@ -184,6 +204,7 @@ export function AgentSessionControls({ hasCredentials }: AgentSessionControlsPro
         </ContextMenu>
       )}
       <FidelityModeControl />
+      <DesignPolicyControl />
       <RestartSessionButton />
     </div>
   )
@@ -275,6 +296,100 @@ function FidelityModeControl() {
             <ContextMenuItem
               key={opt.value ?? 'project-default'}
               selected={opt.value === agentFidelityMode}
+              onClick={() => choose(opt.value)}
+            >
+              {opt.label}
+            </ContextMenuItem>
+          ))}
+        </ContextMenu>
+      )}
+    </>
+  )
+}
+
+/**
+ * The design-policy trigger (A12) — follow / balanced / free, or the
+ * project's own default.
+ *
+ * A THIRD trigger, beside fidelity, because it answers a third question.
+ * Permission mode is "may you", fidelity is "how closely must this match the
+ * design", and this is "how much of the design system must you use". Folding
+ * it into the fidelity menu was the obvious saving and the wrong one: the two
+ * combine in both directions (strict fidelity with a free policy is "the comp
+ * is the spec, the system is not"; creative fidelity with follow is "invent,
+ * but out of our own vocabulary"), and a single control cannot express a
+ * pair.
+ *
+ * Persisted per project and per account through the same
+ * `/admin/api/ai/studio-session` route and the same `.studio/meta.json`
+ * `agentSession` shape as fidelity mode, for the same reason it is safe to
+ * persist: clearing it lands on `balanced`, which asks for MORE design-system
+ * discipline than `free`, never less. No reload can hand a user a looser bar
+ * than the one they chose.
+ */
+function DesignPolicyControl() {
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+
+  const agentDesignPolicy = useAgentStore((s) => s.agentDesignPolicy)
+  const setAgentDesignPolicy = useAgentStore((s) => s.setAgentDesignPolicy)
+  const studioProjectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
+
+  // Restore this project's persisted policy when it opens — same best-effort
+  // posture the fidelity control takes: a failed read leaves the session on
+  // null, which is "let the server decide" and never a wrong grading bar.
+  useEffect(() => {
+    if (!studioProjectDir) return
+    const controller = new AbortController()
+    void fetchStudioAgentDesignPolicy(studioProjectDir, controller.signal)
+      .then((policy) => {
+        if (!controller.signal.aborted) setAgentDesignPolicy(policy)
+      })
+      .catch(() => { /* best-effort — see doc comment */ })
+    return () => controller.abort()
+  }, [studioProjectDir, setAgentDesignPolicy])
+
+  const current = DESIGN_POLICY_OPTIONS.find((opt) => opt.value === agentDesignPolicy) ?? DESIGN_POLICY_OPTIONS[0]!
+
+  function choose(next: AgentDesignPolicy): void {
+    setAgentDesignPolicy(next)
+    // Not awaited — a failed persist costs the next reopen's default, not
+    // this turn's policy, which is already in the store and goes out with it.
+    if (studioProjectDir) void persistStudioAgentDesignPolicy(studioProjectDir, next)
+    setOpen(false)
+  }
+
+  return (
+    <>
+      <Button
+        ref={triggerRef}
+        type="button"
+        variant="ghost"
+        size="xs"
+        className={styles.trigger}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Design system: ${current.label} — ${current.hint}`}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span>{current.shortLabel}</span>
+        <ChevronDownIcon size={10} aria-hidden="true" />
+      </Button>
+      {open && (
+        <ContextMenu
+          anchorRef={triggerRef}
+          triggerRef={triggerRef}
+          align="start"
+          side="auto"
+          offset={6}
+          minWidth={230}
+          ariaLabel="Design system"
+          onClose={() => setOpen(false)}
+        >
+          {DESIGN_POLICY_OPTIONS.map((opt) => (
+            <ContextMenuItem
+              key={opt.value ?? 'project-default'}
+              selected={opt.value === agentDesignPolicy}
               onClick={() => choose(opt.value)}
             >
               {opt.label}

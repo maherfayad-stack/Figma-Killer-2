@@ -1,0 +1,1 @@
+export { LiveAutoPromoteNotice } from './LiveAutoPromoteNotice'

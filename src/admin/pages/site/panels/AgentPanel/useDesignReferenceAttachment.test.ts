@@ -6,7 +6,7 @@
  * imports, then the hook module is imported afterwards so it binds to the
  * mock.
  */
-import { afterEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { DesignReferenceMeta } from '@core/ai'
 
@@ -28,15 +28,32 @@ let uploadImpl = async (): Promise<DesignReferenceMeta> => meta
 let deleteImpl = async (): Promise<void> => {}
 let dimensionsImpl = async () => ({ width: 1290, height: 8400 })
 
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file.
+// Both replacements below publish a SUBSET of their module's exports, so
+// without the `afterAll` restore every later file in the worker sees that
+// subset. Snapshot the real namespaces as plain objects BEFORE mocking (the
+// namespace object itself is live and gets rewritten). Gated by
+// `mock-module-must-restore.test.ts`.
+const realUploadDesignReference = { ...(await import('../../studio/uploadDesignReference')) }
+const realDesignReferenceHeader = { ...(await import('./designReferenceHeader')) }
+
 mock.module('../../studio/uploadDesignReference', () => ({
+  ...realUploadDesignReference,
   fetchDesignReference: (...args: unknown[]) => fetchImpl(...(args as [])),
   uploadDesignReference: (...args: unknown[]) => uploadImpl(...(args as [])),
   deleteDesignReference: (...args: unknown[]) => deleteImpl(...(args as [])),
 }))
 
 mock.module('./designReferenceHeader', () => ({
+  ...realDesignReferenceHeader,
   readDesignReferenceDimensions: (...args: unknown[]) => dimensionsImpl(...(args as [])),
 }))
+
+afterAll(() => {
+  mock.module('../../studio/uploadDesignReference', () => realUploadDesignReference)
+  mock.module('./designReferenceHeader', () => realDesignReferenceHeader)
+})
 
 const { useDesignReferenceAttachment } = await import('./useDesignReferenceAttachment')
 

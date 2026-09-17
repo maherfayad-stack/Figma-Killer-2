@@ -129,12 +129,20 @@ describe('PropertyControlRenderer — wrapper (data-testid + minHeight)', () => 
       'utf-8',
     )
     expect(css).toMatch(/min-height:\s*var\(--control-row-h\)/)
-    // The admin default stays at the documented compact density; the
-    // inspector's own row is tighter still, and never taller.
+    // Both concrete values are pinned, each on its own.
+    //
+    // This used to assert `inspectorRow <= adminRow`. That ordering was never
+    // a design rule — it was true by coincidence, and `globals.css`'s own
+    // comment records why it stopped being: `--inspector-row-h` was
+    // deliberately corrected to Penpot's measured 32px ("pure 1:1 value fixes,
+    // not a restructuring"), so the inspector row is now TALLER than the admin
+    // default by design. Asserting an invented ordering made a deliberate
+    // token correction look like a regression; asserting each value pins what
+    // is actually decided, and still fails if either drifts.
     const adminRow = Number(globals.match(/--control-row-h:\s*(\d+)px/)?.[1])
     const inspectorRow = Number(globals.match(/--inspector-row-h:\s*(\d+)px/)?.[1])
     expect(adminRow).toBe(28)
-    expect(inspectorRow).toBeLessThanOrEqual(adminRow)
+    expect(inspectorRow).toBe(32)
   })
 
   it('keeps the renderer shell separate from the concrete control layout wrapper', async () => {

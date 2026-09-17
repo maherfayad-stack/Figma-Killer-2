@@ -51,6 +51,16 @@
   font-weight: 500;
 }
 
+/* Holds a binding's primary keycaps and, when it has one, its alias keycaps
+   (⌥↑ AND ⌘] both reorder a layer). Two groups on one row, never two rows —
+   one action, one line. */
+.shortcutGroup {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--space-l);
+}
+
 .shortcutHint {
   flex-shrink: 0;
 }

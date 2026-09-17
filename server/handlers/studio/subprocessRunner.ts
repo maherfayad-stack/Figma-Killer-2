@@ -7,9 +7,11 @@
  * interpolated into a command string), a timeout that kills the child, and
  * stdout/stderr capture that cannot grow unbounded. Extracted here so the
  * mechanics — draining both streams concurrently so a full pipe buffer can't
- * wedge the exit syscall, racing a kill against the timeout, capping bytes —
- * exist in exactly one place. See `.claude/agents/security-guard.md`
- * "Subprocesses".
+ * wedge the exit syscall, racing a kill against the timeout, bounding the
+ * drain that FOLLOWS that kill so an unclosed pipe cannot make the returned
+ * promise never settle, capping bytes — exist in exactly one place. See
+ * `.claude/agents/security-guard.md` "Subprocesses", and
+ * `captureSubprocess`'s own doc for why the timeout alone is not a bound.
  *
  * `env` is a REQUIRED option on every entry point here — `Bun.spawn` silently
  * inherits the whole parent process's environment when `env` is omitted,
@@ -143,7 +145,27 @@ interface CaptureOptions {
   /** Test seam — inject to assert/trigger the timeout deterministically, without a real wait. */
   setTimeoutImpl?: typeof setTimeout
   clearTimeoutImpl?: typeof clearTimeout
+  /**
+   * How long {@link captureSubprocess} keeps draining AFTER the timeout has
+   * killed the child, before it gives up and returns whatever it captured.
+   * See that function's doc for why this bound has to exist. Test seam only —
+   * production uses {@link DEFAULT_DRAIN_GRACE_MS}.
+   */
+  drainGraceMs?: number
 }
+
+/**
+ * The bound on "the child was killed, but its pipes have not reached EOF".
+ *
+ * Five seconds, matching `claudeCliSpawn.ts`'s own drain grace, which solved
+ * the same problem first: long enough that a child genuinely mid-flush
+ * finishes, short enough that nothing waits on a pipe nobody is going to
+ * close.
+ */
+const DEFAULT_DRAIN_GRACE_MS = 5_000
+
+/** Resolution marker for the grace race. A unique object, so it can never be confused with a real capture result. */
+const DRAIN_ABANDONED = Symbol('drain-abandoned')
 
 export interface CappedText {
   text: string
@@ -207,10 +229,56 @@ export async function pumpCapped(
  * which spawns synchronously before returning a job id) call this directly
  * with the live `proc`. Callers that don't care about that distinction use
  * `runCappedSubprocess` below.
+ *
+ * ## Why the timeout alone is not a bound
+ *
+ * The timeout kills the CHILD. It does not close the pipe: a grandchild that
+ * inherited the write end keeps it open, so `pumpCapped` never sees `done`
+ * and `proc.exited` may already have resolved with nothing else to wait for.
+ * `pumpCapped`'s own doc says as much, and `claudeCliSpawn.ts` has raced it
+ * against a grace period for exactly this reason since it was written. This
+ * function had no such bound, which meant its returned promise could simply
+ * never settle.
+ *
+ * That used to strand one job. Since G7 (`projectWriteLock.ts`) it is worse:
+ * `installDeps.ts` awaits this INSIDE the project write lock, and a save
+ * waits on that lock with no `waitMs` at all — so one unclosed pipe would
+ * wedge every canvas save for that project for the life of the process, and
+ * every git verb would answer `busy` forever. `runGit` is on the same path,
+ * and `git push` spawning `git-remote-https` is precisely the "grandchild
+ * holds the pipe" shape, on the platform where `kill()` reaches only the
+ * direct child.
+ *
+ * So the kill starts a grace timer. When it expires, this returns whatever
+ * each stream had accumulated (via `pumpCapped`'s `onProgress` snapshot —
+ * partial output is worth more than none for diagnosing a hang) with
+ * `timedOut: true` and a `null` exit code. The abandoned readers are left to
+ * settle or not on their own; nothing waits on them.
+ *
+ * The grace timer deliberately uses the REAL `setTimeout`, not
+ * `setTimeoutImpl`: the injected timer in these tests fires synchronously, so
+ * sharing the seam would abandon the drain the instant the main timeout fired
+ * and change what every existing timeout test observes. `drainGraceMs` is the
+ * seam for driving this path itself.
  */
 export async function captureSubprocess(proc: SpawnedProcessLike, options: CaptureOptions): Promise<CappedSubprocessResult> {
   const setTimeoutImpl = options.setTimeoutImpl ?? setTimeout
   const clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout
+
+  let stdoutSnapshot: CappedText = { text: '', truncated: false }
+  let stderrSnapshot: CappedText = { text: '', truncated: false }
+  const stdoutPromise = pumpCapped(proc.stdout, options.maxStdoutBytes, (snapshot) => {
+    stdoutSnapshot = snapshot
+  })
+  const stderrPromise = pumpCapped(proc.stderr, options.maxStderrBytes, (snapshot) => {
+    stderrSnapshot = snapshot
+  })
+
+  let abandonDrain: () => void = () => {}
+  const abandoned = new Promise<typeof DRAIN_ABANDONED>((resolve) => {
+    abandonDrain = () => resolve(DRAIN_ABANDONED)
+  })
+  let graceTimer: ReturnType<typeof setTimeout> | null = null
 
   let timedOut = false
   const timer = setTimeoutImpl(() => {
@@ -220,14 +288,16 @@ export async function captureSubprocess(proc: SpawnedProcessLike, options: Captu
     } catch {
       // already exited — nothing to kill
     }
+    graceTimer = setTimeout(abandonDrain, options.drainGraceMs ?? DEFAULT_DRAIN_GRACE_MS)
   }, options.timeoutMs)
 
   const [stdoutResult, stderrResult, exitCode] = await Promise.all([
-    pumpCapped(proc.stdout, options.maxStdoutBytes),
-    pumpCapped(proc.stderr, options.maxStderrBytes),
-    proc.exited,
+    Promise.race([stdoutPromise, abandoned]).then((r) => (r === DRAIN_ABANDONED ? stdoutSnapshot : r)),
+    Promise.race([stderrPromise, abandoned]).then((r) => (r === DRAIN_ABANDONED ? stderrSnapshot : r)),
+    Promise.race([proc.exited, abandoned]).then((r) => (r === DRAIN_ABANDONED ? null : r)),
   ])
   clearTimeoutImpl(timer)
+  if (graceTimer !== null) clearTimeout(graceTimer)
 
   return {
     stdout: stdoutResult.text,

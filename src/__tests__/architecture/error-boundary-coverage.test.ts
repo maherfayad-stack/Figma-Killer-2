@@ -22,7 +22,12 @@
  * a location string, or removes a root callback), this gate fails CI loudly
  * with a single fix instruction.
  *
+ * It also gates the Track Z rule that boundaries **render in place instead of
+ * toasting**: `silentToast` defaults to true, `admin-shell` is the one seam
+ * that opts back in, and no seam carries a redundant explicit `silentToast`.
+ *
  * @see CLAUDE.md "Error handling" — boundary + tagged logging conventions
+ * @see STUDIO-FIGMA-FEEL-PLAN.md — Z2
  */
 
 import { describe, it, expect } from 'bun:test'
@@ -127,10 +132,60 @@ describe('Error boundary coverage gate', () => {
     expect(missing).toEqual([])
   })
 
-  it('admin/main.tsx mounts the single ToastProvider so boundaries can publish errors', () => {
+  it('admin/main.tsx mounts the single ToastProvider so the root callbacks can publish errors', () => {
     const source = read('admin/main.tsx')
     expect(source).toMatch(/from\s+['"]@ui\/components\/Toast['"]/)
     expect(source).toMatch(/<ToastProvider\s*\/>/)
+  })
+
+  // ── Z2: boundaries render in place, they do not toast ─────────────────────
+  //
+  // A boundary is mounted per seam AND per canvas node, so a toast-by-default
+  // boundary turns one bad module into one identical red card per node. The
+  // crash already has an honest place to render: the hole it left. Only
+  // `admin-shell` opts back in, because its catch leaves nothing else on
+  // screen to read.
+
+  it('the boundary is silent by default — only an explicit silentToast={false} toasts', () => {
+    const source = read('ui/components/ErrorBoundary/ErrorBoundary.tsx')
+    // The push must be gated on the EXPLICIT opt-out. `if (!this.props.silentToast)`
+    // is the opt-in default this assertion exists to prevent coming back.
+    expect(source).toMatch(/if\s*\(this\.props\.silentToast\s*===\s*false\)/)
+    expect(source).not.toMatch(/if\s*\(!this\.props\.silentToast\)/)
+  })
+
+  it('admin-shell is the only seam that opts into the toast', () => {
+    const optIns: string[] = []
+    for (const { file } of REQUIRED_BOUNDARIES) {
+      const source = read(file)
+      if (/silentToast\s*=\s*\{\s*false\s*\}/.test(source)) optIns.push(file)
+    }
+    expect(optIns).toEqual(['admin/main.tsx'])
+  })
+
+  it('no seam carries a redundant silentToast — it is the default', () => {
+    const redundant: string[] = []
+    for (const { file } of REQUIRED_BOUNDARIES) {
+      const source = read(file)
+      if (/silentToast(\s*=\s*\{\s*true\s*\})?(\s*\/?>|\s*\n\s*>)/.test(source)) {
+        redundant.push(file)
+      }
+    }
+    if (redundant.length > 0) {
+      throw new Error(
+        `[Error boundary coverage] silentToast is the default — drop it from:\n` +
+          redundant.map((f) => `  - ${f}`).join('\n'),
+      )
+    }
+    expect(redundant).toEqual([])
+  })
+
+  it('the default fallback renders in place with a reset action', () => {
+    const source = read('ui/components/ErrorBoundary/ErrorBoundary.tsx')
+    expect(source).toMatch(/Reload this panel/)
+    expect(source).toMatch(/onClick=\{reset\}/)
+    const css = read('ui/components/ErrorBoundary/ErrorBoundary.module.css')
+    expect(css).toMatch(/background:\s*var\(--bg-surface-2\)/)
   })
 
   it('the ErrorBoundary primitive lives in src/ui/components/ErrorBoundary/', () => {

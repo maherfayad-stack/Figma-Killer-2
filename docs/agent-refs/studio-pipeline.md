@@ -201,10 +201,13 @@ therefore reached **no** code path at all: the tree changed, the save reported
 success, the `.tsx` was untouched, and the change was gone on reload. In Studio
 the repository IS the document, so that was a silent no-op.
 
-Six kinds now exist — **`move`** and **`reparent`** (`moveJsxElement`, whose
+Eight kinds now exist — **`move`** and **`reparent`** (`moveJsxElement`, whose
 destination-parent form is W4-1's), **`delete`** (`deleteJsxElement`),
-**`insert`** (`insertJsxElement`), **`duplicate`** (`duplicateJsxElement`) and
-**`wrap`** (`wrapJsxElement`) — and everything else refuses out loud.
+**`insert`** (`insertJsxElement`), **`duplicate`** (`duplicateJsxElement`),
+**`wrap`** (`wrapJsxElement`), and K3's **`group`** (`wrapJsxElements` — ONE
+container around a contiguous run of siblings, ⌘G) and **`ungroup`**
+(`unwrapJsxElement` — the container goes, its children take its place, ⌘⇧G) —
+and everything else refuses out loud.
 
 **None of them mints a node; all of them ask the SOURCE to grow one.** Adding a
 design-system component from the picker writes `<Button … />` *and* the `import`
@@ -214,11 +217,16 @@ the editor invented. W4-1 generalised that write-then-re-read shape to the last
 three Figma verbs, which is why they stopped refusing: a duplicate is the
 element's own bytes written in again, a wrap replaces its range with itself
 inside a container, and a reparent splices its bytes into a different parent in
-the same file. The module declares its own source spelling via
+the same file. **K2 gave `duplicate` a second form**: with a `parentNodeId` the
+copy lands INSIDE that container instead of beside the original (Alt+drag),
+through the same `jsxChildPlacement` resolver an insert and a reparent use.
+That form answers the questions a reparent answers — `cross-file`,
+`into-own-descendant`, `out-of-scope` — and a plain in-place duplicate still
+answers none of them. The module declares its own source spelling via
 `ModuleDefinition.sourceImport` / `sourceIntrinsic`, so nothing in the store is
 coupled to a particular design system. The plugin/agent dispatcher
 (`applyTreeOperation`) still refuses — `refuseMintedNodeInsert` for an insert,
-`refuseMintedNodeCopy` for a duplicate/wrap/reparent — because those callers
+`refuseMintedNodeCopy` for a duplicate/wrap/group/ungroup/reparent — because those callers
 persist a TREE (into a `data_row`), never a `.tsx`, so the write would never
 reach the file. A reorder through them mints nothing and stays allowed.
 
@@ -239,14 +247,19 @@ from the node id and `lockReason` alone:
 | `route-chrome` | a Next `layout`/`template` — one file, many frames |
 | `code-placed` | the parser recorded a structural `lockReason` |
 | `insert` | asked about the CONTAINER, not a node — it refuses only when the container itself is a `.map` row / inlined / route chrome / code-placed |
-| `reparent` | no container to write into, or one that is not an ordinary element. `duplicate`/`wrap` carry no refusal of their own beyond the four above |
-| `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or DUPLICATE is fine — the batch is ordered bottom-to-top |
+| `reparent` | no container to write into, or one that is not an ordinary element. An in-place `duplicate`/`wrap` carries no refusal of its own beyond the four above; a `duplicate` WITH a destination (K2's Alt+drag) asks the reparent question about that destination too |
+| `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or in-place DUPLICATE is fine — the batch is ordered bottom-to-top. A GROUP (K3) of several is fine too, and this is the refusal it gets when the selection is not one run: different parents, or a gap between the members. A multi Alt+DRAG is not: N copies at one drop position have no single order in the code (`planSourceDuplicateTo`) |
+| `group` / `ungroup` | K3's members of the "this caller cannot write" family (`refuseMintedNodeCopy`), plus a group whose members mix imported markup with canvas-only nodes |
+| `has-behaviour` | K3, AST-decided: the container being ungrouped carries something other than `className`/`style`/`id`/`data-*` (a handler, a `ref`, a `key`, a spread), or it is a COMPONENT rather than an intrinsic element. Removing it would drop behaviour, so the remedy is to open it in code |
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file |
 
 The AST adds the refusals only it can answer: `not-siblings`,
 `expression-child` (the element comes out of `{cond && <X/>}`, so its position
-is decided at runtime), `mixed-indentation`, `no-jsx-parent` (it is what the
-component returns), `stale-source`, `into-own-descendant`, and W4-1's
+is decided at runtime — and, for a group, something the code decides sits
+between the members), `mixed-indentation`, `no-jsx-parent` (it is what the
+component returns), `stale-source`, `into-own-descendant`, K3's
+**`not-contiguous`** (an element the user did not select sits inside the span a
+group would wrap) and **`has-behaviour`**, and W4-1's
 **`out-of-scope`** — a reparent whose markup reads a binding that does not exist
 where it would land (`subtreeFreeVariables.ts`; the refusal names the
 variables). It is a static scope walk over the declarations enclosing the
@@ -276,6 +289,17 @@ A delete is NOT refused for orphaning an import. `pruneOrphanedImports` retires
 any binding the removed markup alone was using, once per file after the whole
 batch has landed — see `studio-import.md`, "The two codemods".
 
+**A group is written around a SPAN, an ungroup replaces one.** `wrapJsxElements`
+takes the run's endpoints and replaces the bytes between them with themselves
+inside one new element — so a comment, a blank line or the text between two
+inline tags travels verbatim, because it is inside the span rather than
+something the codemod re-renders. It refuses (`not-contiguous`) when the
+parent's element children between the ends are not exactly the ones named, and
+(`expression-child`) when an expression container sits between them. ⌘G on ONE
+element is not this kind: it is the existing `wrap`, unchanged. `unwrapJsxElement`
+is the inverse — the children, dedented one level, replace the container's own
+range.
+
 **A reorder is written against an ANCHOR, never an index.** The editor's child
 list and the JSX child list are different lists. `planSourceMove` simulates the
 move, finds the neighbour the node lands beside, and sends
@@ -287,7 +311,8 @@ the text on disk differs from the text ts-morph parsed. An AST rewrite that
 reformats an untouched sibling is a defect.
 
 **Commit shape.** Structural edits are one-shot commits
-(`commitStudioMove` / `commitStudioDelete` / `commitStudioDuplicate` / … in
+(`commitStudioMove` / `commitStudioDelete` / `commitStudioDuplicate` /
+`commitStudioGroup` / `commitStudioUngroup` / … in
 `studioStructuralCommits.ts`), like
 asset/detach/swap — never the `saveSite` diff, which has no notion of parent or
 order. They always reload afterwards: a successful write shifted every

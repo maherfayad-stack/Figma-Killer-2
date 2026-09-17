@@ -66,7 +66,7 @@
  * explanation.
  */
 import { join } from 'node:path'
-import { StudioListComponentsInputSchema, StudioFindComponentInputSchema } from '@core/ai'
+import { StudioListComponentsInputSchema, StudioFindComponentInputSchema, toolRefusal } from '@core/ai'
 import { packageModuleId, PALETTE_HIDDEN_NAME_RE } from '@core/module-engine'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -447,10 +447,9 @@ const findComponentTool: AiTool = {
       limit?: number
     }
     if (!name && !prop) {
-      return {
-        ok: false,
-        error: 'Pass at least one of "name" or "prop" to search by. Use studio_list_components to browse the whole catalog instead.',
-      }
+      return toolRefusal('invalid-input', 'Pass at least one of "name" or "prop" to search by.', {
+        remedy: 'Use studio_list_components to browse the whole catalog instead.',
+      })
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
     const { packages, designSystems, components, warnings } = collectCatalog(dir)

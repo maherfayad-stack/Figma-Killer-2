@@ -163,25 +163,38 @@ function emptyManifest(): GeneratedManifest {
  * keeping it is not the safe option. The once-per-project record above is
  * what keeps the sweep from becoming a recurring delete.
  */
+/**
+ * Project-relative POSIX paths, NOT `path.join(...)` results.
+ *
+ * These strings are both REPORTED to the client and PERSISTED into
+ * `.studio-generated.json`'s `prunedLegacyArtefacts`, which is what makes the
+ * sweep run exactly once per path per project. Built with `join` they carried
+ * the OS separator, so a project touched by both a Windows and a macOS machine
+ * recorded a backslash-separated path on one machine and `.claude/figma.md` on
+ * the other, never recognised the other's entry, and swept again — which is the
+ * "a user who later writes their own `.claude/figma.md` must keep it" hazard
+ * the `prunedLegacyArtefacts` doc above warns about. `join(dir, rel)` accepts
+ * `/` segments on win32, so nothing downstream needs to change.
+ */
 export const LEGACY_GUIDE_ARTEFACTS: readonly string[] = [
-  join('.claude', 'figma.md'),
-  join('.claude', 'studio-tools.md'),
-  join('.claude', 'studio-design-principles.md'),
-  join('.claude', 'studio-invariants.md'),
-  join('.claude', 'canonical-jsx.md'),
-  join('.claude', 'node-ids-and-writeback.md'),
-  join('.claude', 'project-conventions.md'),
-  join('.claude', 'agents', 'agent-creator.md'),
-  join('.claude', 'agents', 'almosafer-ds-expert.md'),
-  join('.claude', 'agents', 'arabic-ux-writer.md'),
-  join('.claude', 'agents', 'design-critic.md'),
-  join('.claude', 'agents', 'fidelity-auditor.md'),
-  join('.claude', 'agents', 'figma-asset-scout.md'),
-  join('.claude', 'agents', 'screen-builder.md'),
-  join('.claude', 'agents', 'screen-scout.md'),
-  join('.claude', 'agents', 'style-surgeon.md'),
-  join('.claude', 'agents', 'synthesizer.md'),
-  join('.claude', 'agents', 'system-prompt-expert.md'),
+  '.claude/figma.md',
+  '.claude/studio-tools.md',
+  '.claude/studio-design-principles.md',
+  '.claude/studio-invariants.md',
+  '.claude/canonical-jsx.md',
+  '.claude/node-ids-and-writeback.md',
+  '.claude/project-conventions.md',
+  '.claude/agents/agent-creator.md',
+  '.claude/agents/almosafer-ds-expert.md',
+  '.claude/agents/arabic-ux-writer.md',
+  '.claude/agents/design-critic.md',
+  '.claude/agents/fidelity-auditor.md',
+  '.claude/agents/figma-asset-scout.md',
+  '.claude/agents/screen-builder.md',
+  '.claude/agents/screen-scout.md',
+  '.claude/agents/style-surgeon.md',
+  '.claude/agents/synthesizer.md',
+  '.claude/agents/system-prompt-expert.md',
 ]
 
 export interface PruneLegacyArtefactsResult {

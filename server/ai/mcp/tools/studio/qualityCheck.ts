@@ -84,7 +84,7 @@
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError } from '@core/ai'
+import { toolRefusal } from '@core/ai'
 import { createWorkspaceProject, parsePageFile, unresolvedRawTextImports } from '@core/page-parser'
 import { collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
@@ -95,6 +95,10 @@ import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
 import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
 import { auditPageSourceQuality, auditStylesheetQuality, type DesignSystemCatalog, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
+import { findingSeverity, describeDesignPolicy, type DesignPolicy } from '../../../../handlers/studio/designPolicy'
+import { resolveProjectDesignPolicy } from '../../../../handlers/studio/projectDesignPolicy'
+import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
+import { recordPassingQualityCheck } from '../../../../handlers/studio/pageVerificationStore'
 import { auditCompositionQuality, type PageStylesheetText } from '../../../../handlers/studio/compositionAudit'
 import { resolveDesignSystemGuide } from '../../../../handlers/studio/projectGuide'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
@@ -117,6 +121,15 @@ const InputSchema = Type.Object(
           'Which screens to audit, by name — "Checkout", "Checkout.tsx", "pages/Checkout.tsx", or a raw page id all work. Omit to audit every screen in the project (up to 20) in one call.',
       }),
     ),
+    designPolicy: Type.Optional(
+      Type.Union(
+        [Type.Literal('follow'), Type.Literal('balanced'), Type.Literal('free')],
+        {
+          description:
+            'How much of this project’s own design system to hold the screen to, which decides which findings are errors. "follow" — tokens and the project’s own components only: raw-hex-color, raw-px-length, off-scale-spacing, off-scale-type-size, design-system-unused and design-system-coverage-low are ERRORS. "balanced" — the same findings as warnings, so a one-off value is allowed when you say why. "free" — those findings are not produced at all, and the screen is judged on composition and correctness instead. Contrast, a missing font, an unresolved asset import, a hand-drawn path and every composition rule are errors at EVERY policy and no policy turns them off. Omit this: the policy is resolved for you from this session and the project default. Pass it only to audit one call differently on purpose, and never to make a failing screen pass.',
+        },
+      ),
+    ),
   },
   { additionalProperties: false },
 )
@@ -128,9 +141,44 @@ interface PageQualityResult {
   rulesScanned: number
   findings: QualityFinding[]
   findingCount: number
+  /** A12 — how many of `findings` are at ERROR severity under the resolved policy. This is the number that decides whether the page counts as clean; `findingCount` includes warnings. */
+  errorCount?: number
   truncated: boolean
   note?: string
   error?: string
+}
+
+/** A page with zero ERROR-severity findings has passed; warnings do not block. Recorded for the CREATIVE Stop gate — see `pageVerificationStore.ts`'s `recordPassingQualityCheck`. */
+function recordCleanRun(
+  dir: string,
+  userKey: string,
+  pageId: string,
+  findingCount: number,
+  errorCount: number,
+  policy: DesignPolicy,
+): void {
+  if (errorCount > 0) return
+  recordPassingQualityCheck(dir, userKey, pageId, findingCount, policy)
+}
+
+/**
+ * A12 — drop the findings this policy turns off, and stamp a severity on the
+ * rest.
+ *
+ * Dropped, not returned-and-marked: a `free` turn that got back eleven
+ * `raw-hex-color` findings labelled "ignore me" would read as a failing audit
+ * to any model skimming a list, and the next thing it does is stop trusting
+ * the tool. `findingSeverity` is the single source for the split, shared with
+ * the Stop gate.
+ */
+function applyDesignPolicy(findings: readonly QualityFinding[], policy: DesignPolicy): QualityFinding[] {
+  const graded: QualityFinding[] = []
+  for (const finding of findings) {
+    const severity = findingSeverity(finding.code, policy)
+    if (severity === 'off') continue
+    graded.push({ ...finding, severity })
+  }
+  return graded
 }
 
 export const studioQualityCheckTool: AiTool = {
@@ -141,18 +189,30 @@ export const studioQualityCheckTool: AiTool = {
     'Reference-free quality signals for one or more screens you built WITHOUT a design to measure against — studio_compare and studio_measure_reference both need a registered reference; this needs none. Statically scans each screen\'s own .css/.module.css (and any inlined local component\'s) AND its own .tsx. Stylesheet checks: raw-hex-color / raw-px-length — a literal value where the project already declares a var(--token) close enough that it is almost certainly the one you meant, so you know exactly which var() to swap in — and low-contrast-pair — a single rule that declares both color and a background whose WCAG contrast falls under the 4.5:1 AA-normal-text floor (this cannot see font-size/font-weight, so a genuinely large/bold rule may still pass WCAG AA\'s looser 3:1 large-text threshold in practice; the finding says so). Page-source checks, the ones that catch the agent hand-rolling something the design system already provides, or shipping an icon that is simply absent: unresolved-asset-import — a `?raw` import naming a file that is NOT on disk, so the element renders empty while still typechecking and still holding its box (the one finding here no screenshot and no `tsc` run will ever tell you); hand-authored-vector-path — a literal <svg> containing a hand-written <path d="..."> instead of a real icon; hardcoded-inline-sizing — style={{ width: 24 }} patching layout inline instead of in the stylesheet (does not flag the legitimate style={{ \'--x\': value }} dynamic-custom-property case, or any genuinely computed value); design-system-unused — this screen imports nothing at all from the project\'s configured design-system package(s), worth checking even though a legitimately plain screen can have zero imports; design-system-coverage-low — this screen DOES use the design system but renders fewer than 4 distinct components from it while the catalog offers 8 or more, and the finding NAMES the ones it did not take (the diagnosed failure: a shipped screen used 2 of 42 available components and hand-rolled the rest, which no other check here can see); font-not-available — the FIRST family in a font-family stack that this project cannot load (no @font-face anywhere it can see, no Google Fonts link, no next/font/google import, no matching font file on disk), so the browser silently renders the screen in a fallback face whose metrics differ and every font-size you then tune against a screenshot is tuned against the wrong typeface. Composition checks, page-wide aggregates rather than one finding per declaration, each graded ONLY against the project\'s own declared tokens (a project that declares no spacing tokens gets no spacing rule, never an invented 4px default): off-scale-spacing — how many padding/margin/gap values are not multiples of the step this project\'s own spacing tokens are built on, with each offender\'s file:line; off-scale-type-size — font-size values sitting on no step of the project\'s type scale, with the scale listed; flat-type-hierarchy — the screen\'s largest type divided by its most common (body) size is under 1.6, i.e. nothing leads and the screen reads as a list of equals. Each finding carries a file:line and a message naming the exact fix. Name screens the way you named the files ("Checkout"), or pass several at once to audit a whole flow in one call, or omit `pages` to audit every screen in the project. This complements studio_screenshot, it does not replace it — a clean audit here says nothing about whether the screen LOOKS right, only whether its source follows the project\'s own rules. Returns { results[] }, each { ok, page, findings[], findingCount, filesScanned, rulesScanned, truncated } — a page whose own source location can\'t be decoded becomes an ok:false entry rather than failing the whole call.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, pages: requested } = input as { dir?: string; pages?: string[] }
+    const { dir: dirInput, pages: requested, designPolicy: policyArg } = input as { dir?: string; pages?: string[]; designPolicy?: DesignPolicy }
     const dir = resolveToolProjectDir(dirInput, ctx)
+
+    // A12 — resolved ONCE per call: the tool argument (a caller who names a
+    // policy means that policy), then this turn's resolved policy from the
+    // chat handler, then the project's persisted default, then `balanced`.
+    // Same chain the prompt block was built from, so the grader can never
+    // apply a policy the agent was not told about.
+    const agentUserKey = studioAgentUserKey(ctx.userId)
+    const designPolicy = policyArg
+      ?? ctx.designPolicy
+      ?? resolveProjectDesignPolicy(dir, agentUserKey)
 
     const { pages } = await loadStudioPages(dir)
     const { ids, unmatched } = resolveRequestedPages(pages, requested, MAX_BATCH_PAGES)
     if (ids.length === 0) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return aiToolError(
-        unmatched.length > 0
-          ? `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`
-          : `This project has no screens to audit yet.`,
-      )
+      return unmatched.length > 0
+        ? toolRefusal('no-such-page', `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}.`, {
+            remedy: `This project has: ${known}.`,
+          })
+        : toolRefusal('no-such-page', 'This project has no screens to audit yet.', {
+            remedy: 'Create one with studio_create_page before auditing it.',
+          })
     }
 
     const pageById = new Map(pages.map((p) => [p.id, p]))
@@ -238,7 +298,10 @@ export const studioQualityCheckTool: AiTool = {
       }
 
       if (sheets.length === 0) {
-        const bounded = findings.slice(0, MAX_FINDINGS_PER_PAGE)
+        const graded = applyDesignPolicy(findings, designPolicy)
+        const bounded = graded.slice(0, MAX_FINDINGS_PER_PAGE)
+        const errorCount = bounded.filter((f) => f.severity === 'error').length
+        recordCleanRun(dir, agentUserKey, match.id, bounded.length, errorCount, designPolicy)
         results.push({
           ok: true,
           page: { id: match.id, title: match.title },
@@ -246,7 +309,8 @@ export const studioQualityCheckTool: AiTool = {
           rulesScanned,
           findings: bounded,
           findingCount: bounded.length,
-          truncated: truncated || findings.length > MAX_FINDINGS_PER_PAGE,
+          errorCount,
+          truncated: truncated || graded.length > MAX_FINDINGS_PER_PAGE,
           note: `"${match.title}" (or its inlined local components) imports no .css/.module.css file — nothing there to audit for token/contrast issues. If it should have a stylesheet, that is itself worth a note: "Real styling belongs in the stylesheet" from the system prompt.`,
         })
         continue
@@ -282,8 +346,16 @@ export const studioQualityCheckTool: AiTool = {
       rulesScanned += composition.rulesScanned
       findings.push(...composition.findings)
 
-      const bounded = findings.slice(0, MAX_FINDINGS_PER_PAGE)
-      truncated = truncated || findings.length > MAX_FINDINGS_PER_PAGE
+      const graded = applyDesignPolicy(findings, designPolicy)
+      const bounded = graded.slice(0, MAX_FINDINGS_PER_PAGE)
+      truncated = truncated || graded.length > MAX_FINDINGS_PER_PAGE
+      const errorCount = bounded.filter((f) => f.severity === 'error').length
+      // A9 — a clean run is the CREATIVE mode's verification, so it has to
+      // outlive this process: the Stop gate reads it from a separate `bun`
+      // subprocess that shares nothing with this server but the filesystem.
+      // Only recorded when the page was genuinely audited (a truncated result
+      // has not been fully seen and must not close a gate).
+      if (!truncated) recordCleanRun(dir, agentUserKey, match.id, bounded.length, errorCount, designPolicy)
 
       results.push({
         ok: true,
@@ -292,6 +364,7 @@ export const studioQualityCheckTool: AiTool = {
         rulesScanned,
         findings: bounded,
         findingCount: bounded.length,
+        errorCount,
         truncated,
       })
     }
@@ -299,6 +372,11 @@ export const studioQualityCheckTool: AiTool = {
     return {
       ok: true,
       dir,
+      // Named in every response, because a finding list only means something
+      // once you know which policy produced it — an empty list under `free`
+      // and an empty list under `follow` are very different claims.
+      designPolicy,
+      designPolicyNote: describeDesignPolicy(designPolicy),
       results,
       ...(unmatched.length > 0 ? { unmatched } : {}),
       tokensIndexed: { colorCount: tokens.colors.length, sizeCount: tokens.fontSizes.length + tokens.lengths.length },

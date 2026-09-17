@@ -526,7 +526,7 @@ describe('ensurePrototypeShell — prototype links', () => {
             id: 'link-1',
             origin: 'design',
             source: { pageId: 'home', node: { nodeId: 'pages/Home.tsx:2:10', indexPath: [0, 1], moduleId: 'alm.Button', textSnippet: '' } },
-            trigger: 'click',
+            trigger: { kind: 'click' },
             action: 'navigate',
             targetPageId: 'home',
             transition: 'instant',

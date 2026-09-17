@@ -6,7 +6,9 @@
  *
  *   - Handler files must not read `.ciphertext` / `.iv` — there is no
  *     legitimate handler reason to touch raw encryption material from
- *     `plugin_secrets` rows.
+ *     `plugin_secrets` rows. `RAW_MATERIAL_ALLOWLIST` names the files under
+ *     this directory that are credential REPOSITORIES rather than handlers,
+ *     each with a §-numbered justification and its own no-leak test.
  *
  *   - Handler files must not import `resolvePluginSecretsForRuntime` — the
  *     decrypted-plaintext projection is reserved for the server-side
@@ -32,6 +34,28 @@ const RUNTIME_RESOLUTION_ALLOWLIST = new Set([
   'server/plugins/settingsCache.ts',
 ])
 
+/**
+ * Files under `server/handlers/**` that are CREDENTIAL REPOSITORIES rather
+ * than HTTP handlers, and therefore legitimately hold `ciphertext`/`iv`.
+ *
+ * The scan's directory is an over-approximation of "HTTP handler": Studio's
+ * server half is organised by feature under `server/handlers/studio/`, so a
+ * feature's own repository lives beside its routes. The rule this gate
+ * actually protects — encryption material never reaches a response body — is
+ * preserved for each entry by a wire-shape that has no such field, plus a test
+ * that asserts it.
+ *
+ * §1  githubCredentialStore.ts — the `git_credentials` table (G2). It is the
+ *     only module that encrypts, decrypts, or deletes a user's GitHub token;
+ *     the shape it hands the route (`GithubAccountView`) carries login,
+ *     avatar, scopes, and expiry and NOTHING else, and
+ *     `server/handlers/__tests__/githubAuth.test.ts` asserts that no response
+ *     body from any `/admin/api/studio/github/*` route contains the token.
+ */
+const RAW_MATERIAL_ALLOWLIST = new Set([
+  'server/handlers/studio/githubCredentialStore.ts',
+])
+
 function listFilesRecursive(dir: string): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir)) {
@@ -53,11 +77,16 @@ describe('plugin-secrets-never-leak gate', () => {
       const src = readFileSync(file, 'utf8')
       const rel = relative(REPO_ROOT, file).replaceAll('\\', '/')
 
+      const rawMaterialAllowed = RAW_MATERIAL_ALLOWLIST.has(rel)
       const PATTERNS: Array<{ name: string; re: RegExp }> = [
-        { name: '.ciphertext member access', re: /\.ciphertext\b/ },
-        // `\.iv\b` is too noisy (matches `.invoke` etc.). Require an
-        // ASCII boundary specifically after the `iv` field.
-        { name: '.iv member access', re: /\.iv(?=[\s,;)\]}.])/ },
+        ...(rawMaterialAllowed
+          ? []
+          : ([
+              { name: '.ciphertext member access', re: /\.ciphertext\b/ },
+              // `\.iv\b` is too noisy (matches `.invoke` etc.). Require an
+              // ASCII boundary specifically after the `iv` field.
+              { name: '.iv member access', re: /\.iv(?=[\s,;)\]}.])/ },
+            ] as Array<{ name: string; re: RegExp }>)),
         { name: 'import of resolvePluginSecretsForRuntime (plaintext projection)', re: /resolvePluginSecretsForRuntime/ },
       ]
 

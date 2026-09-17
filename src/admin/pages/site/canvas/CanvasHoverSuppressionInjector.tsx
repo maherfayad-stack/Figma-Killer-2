@@ -22,6 +22,15 @@
  * because it has no separate "editor chrome" stylesheet namespace to
  * allowlist: a live frame IS the project's own document.)
  *
+ * ## Why it is not a full CSSOM walk per frame
+ *
+ * It was, and on an 18-frame board that cost ~100 ms of a single 255 ms
+ * animation frame during a zoom-out (S1, `perf-07`) — frame-invariant work
+ * paid N times for one answer. `planHoverRewrites` in the runtime module does
+ * the walk once per distinct sheet TEXT and hands every later frame an
+ * index-path plan to apply; read its doc for why a path built in one document
+ * addresses the same rule in another.
+ *
  * Portal mode only (`live-05`, STATE.md, Batch 5) — reads the frame's
  * `Document` through `PortalFrameAdapter`'s escape hatch, calling
  * `startHoverSuppression` directly rather than `adapter.setInteractionMode`,

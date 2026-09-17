@@ -25,13 +25,48 @@ const TEST_CREDENTIAL = {
   expiresAt: null,
 } as const
 
+/**
+ * Every `AgentPanel` mount fires two background reads the panel's own tests
+ * never care about: `ModelEffortPicker` calls `fetchStudioAgentEffort` and
+ * `fetchStudioAgentFidelityMode`, both `GET /admin/api/ai/studio-session?dir=...`
+ * (`agentApi.ts`). Both are deliberately SOFT -- a failure is caught and
+ * treated as "nothing persisted yet" -- so an unmocked route does not fail an
+ * assertion, it floods the run with `Unexpected fetch` stack traces that bury
+ * the real ones.
+ *
+ * `installFetch` is this file's single fetch seam: the test's own handler is
+ * tried first (so a test that WANTS to assert on the session route still
+ * can), and only a session-route request the handler rejected falls back to
+ * the "nothing persisted" body a fresh project would return. Every other URL
+ * is passed straight through, so a handler's `Unexpected fetch` throw stays
+ * meaningful -- it now fires only on a request the test genuinely did not
+ * expect.
+ */
+const STUDIO_SESSION_PATH = '/admin/api/ai/studio-session'
+
+function installFetch(
+  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): void {
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url.startsWith(STUDIO_SESSION_PATH)) {
+      try {
+        return await handler(input, init)
+      } catch {
+        return jsonResponse({ effort: null, fidelityMode: null })
+      }
+    }
+    return handler(input, init)
+  }) as typeof fetch
+}
+
 function installModelFetch(
   visionInput: boolean,
   toolCalling = true,
   contextWindow: number | null = 128_000,
   credential: CredentialView = TEST_CREDENTIAL,
 ): void {
-  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+  installFetch(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
     if (url.endsWith('/admin/api/ai/credentials')) {
       return jsonResponse({ credentials: [credential] })
@@ -54,7 +89,7 @@ function installModelFetch(
       })
     }
     throw new Error(`Unexpected fetch: ${url}`)
-  }) as typeof fetch
+  })
 }
 
 interface Deferred<T> {
@@ -277,13 +312,13 @@ describe('AgentPanel', () => {
   })
 
   it('surfaces a large setup empty state and header shortcut when no credentials exist', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) {
         return jsonResponse({ credentials: [] })
       }
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
 
     renderAgentPanel()
 
@@ -311,7 +346,7 @@ describe('AgentPanel', () => {
   })
 
   it('shows the build prompt when a provider is active (default preloaded)', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) {
         return jsonResponse({
@@ -332,7 +367,7 @@ describe('AgentPanel', () => {
         return jsonResponse({ models: [] })
       }
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
 
     // Active credential + model stands in for a preloaded default.
     renderAgentPanel({ agentActiveCredentialId: 'cred_1', agentActiveModelId: 'gpt-4o' })
@@ -493,7 +528,7 @@ describe('AgentPanel', () => {
   })
 
   it('prompts to choose a model when credentials exist but no default is set', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) {
         return jsonResponse({
@@ -514,7 +549,7 @@ describe('AgentPanel', () => {
         return jsonResponse({ models: [] })
       }
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
 
     // No active credential/model and no default loaded → must choose a model.
     renderAgentPanel()
@@ -533,13 +568,13 @@ describe('AgentPanel', () => {
   })
 
   it('preloads the default on open', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) {
         return jsonResponse({ credentials: [] })
       }
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
 
     let called = 0
     renderAgentPanel({ loadStudioDefault: async () => { called += 1 } })
@@ -551,7 +586,7 @@ describe('AgentPanel', () => {
     // Reproduces issue #2: a prior send left a sticky "No AI provider
     // configured" error; the user then picked a model (active credential +
     // model staged). The setup lockout must NOT show — the composer is usable.
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) {
         return jsonResponse({
@@ -572,7 +607,7 @@ describe('AgentPanel', () => {
         return jsonResponse({ models: [] })
       }
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
 
     renderAgentPanel({
       agentActiveCredentialId: 'cred_1',
@@ -842,11 +877,11 @@ describe('AgentPanel', () => {
   })
 
   it('renders a rehydrated user image block in conversation history', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) return jsonResponse({ credentials: [] })
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
 
     renderAgentPanel({
       agentMessages: [{
@@ -862,11 +897,11 @@ describe('AgentPanel', () => {
   })
 
   it('coalesces images into compact galleries and opens a focus-restoring preview', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) return jsonResponse({ credentials: [] })
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
     const { store } = renderAgentPanel({
       agentMessages: [{
         id: 'image-message',
@@ -914,11 +949,11 @@ describe('AgentPanel', () => {
   })
 
   it('opens the same image action menu from chat, keyboard, and the preview', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) return jsonResponse({ credentials: [] })
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
     renderAgentPanel({
       agentMessages: [{
         id: 'image-message',
@@ -961,7 +996,7 @@ describe('AgentPanel', () => {
 
   it('saves a lazy conversation image through the canonical Media upload', async () => {
     let uploadedFile: File | null = null
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    installFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) return jsonResponse({ credentials: [] })
       if (url === '/conversation-image/0') {
@@ -984,7 +1019,7 @@ describe('AgentPanel', () => {
         }, 201)
       }
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
     renderAgentPanel({
       agentMessages: [{
         id: 'image-message',
@@ -1008,11 +1043,11 @@ describe('AgentPanel', () => {
   })
 
   it('uses the same gallery for assistant and plural tool-result images', async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    installFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) return jsonResponse({ credentials: [] })
       throw new Error(`Unexpected fetch: ${url}`)
-    }) as typeof fetch
+    })
     renderAgentPanel({
       agentMessages: [{
         id: 'assistant-images',

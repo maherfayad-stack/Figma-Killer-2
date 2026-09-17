@@ -40,6 +40,35 @@
  *    per-breakpoint class CSS (which uses `[data-breakpoint-id="..."]
  *    .myClass` selectors) matches inside the iframe.
  *
+ * A mount is THREE commits, not one (S1)
+ * ──────────────────────────────────────
+ * Measured on an 18-frame board (`perf/cheap-frame-mount-iframe-pool`): a
+ * zoom-out that mounts 14 frames at once produced a single 354 ms frame,
+ * because everything below happened in ONE React commit — 14 iframes, 14
+ * injector chains (each of which PARSES the whole vendor/authored/class/user
+ * stylesheet set into a brand-new document), and 14 `NodeRenderer` trees.
+ *
+ * So the mount is deliberately staged:
+ *   1. the `<iframe srcDoc>` element alone (this component's own return),
+ *   2. the injector chain, once `load`/`contentDocument` gives us a document,
+ *   3. the node tree + runtime scripts, in a `startTransition` scheduled from
+ *      the effect that runs right after (2) commits.
+ *
+ * Stage 3 is a `startTransition`, NOT an `rAF`/`setTimeout`/`requestIdleCallback`
+ * chain. That distinction is the whole reason this is safe to ship: the
+ * staging chain a predecessor removed could strand a frame as a skeleton
+ * forever in a backgrounded tab or a headless runner, because `rAF` never
+ * fires there. A transition is ordinary React work — it always runs, it is
+ * merely allowed to yield to a higher-priority update (the zoom gesture)
+ * first. Stage 3's commit is published two ways from ONE state
+ * (`treeMounted`): `onContentReadyChange` so a board frame can keep its frozen
+ * poster up until there is real content underneath it, and
+ * `data-studio-canvas-content-ready` on the iframe element for DOM-only
+ * callers — the agent's capture path (`renderEvidence.ts`) will not hand a
+ * loaded-but-empty frame to a screenshot.
+ *
+ * `interaction === 'capture'` does NOT stage. See the effect for why.
+ *
  * What's NOT in this component (yet):
  *  - Per-iframe `getComputedStyle` for code outside the iframe that measures
  *    elements (selection overlay handles its own iframe-rect translation).
@@ -55,12 +84,11 @@
 
 import {
   forwardRef,
+  startTransition,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
-  type CSSProperties,
-  type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
@@ -75,24 +103,23 @@ import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
 import { CanvasSelectionOverlayInjector } from './CanvasSelectionOverlayInjector'
 import { EditorChromeInjector } from './EditorChromeInjector'
 import { RuntimeScriptInjector } from './RuntimeScriptInjector'
-import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { useIframeCursorBridge } from './useIframeCursorBridge'
 import { useIframeEventForwarding } from './useIframeEventForwarding'
 import { useCanvasFormControlSuppression } from './useCanvasFormControlSuppression'
 import { CANVAS_VIEWPORT_HEIGHT, type CanvasViewport } from './resolveViewportUnits'
 import { useIframeFrameAutoHeight } from './useIframeFrameAutoHeight'
-import { applyIframeBodyReset, type IframeInteraction } from './iframeBodyReset'
+import { applyIframeBodyReset } from './iframeBodyReset'
+import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
 import styles from './IframeFrameSurface.module.css'
 import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
 import { CanvasFrameContexts } from './CanvasFrameContexts'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
-import type { PreviewAxes } from '@core/studio-board'
 import { PortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { BridgeFrameAdapter, isBridgeFrameAdapter, type BridgeFrameChannel } from './frameAdapter/BridgeFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { registerFrameAdapter, unregisterFrameAdapter } from './frameAdapter/canvasFrameAdapterRegistry'
-import { resolveLiveFrameSrc, type LiveFrameSource } from './resolveLiveFrameSrc'
+import { resolveLiveFrameSrc } from './resolveLiveFrameSrc'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -105,98 +132,11 @@ const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
  */
 const NAVIGABLE_SELECTOR = 'a[href], area[href], button[type="submit"], input[type="submit"], input[type="image"]'
 
-interface IframeFrameSurfaceProps {
-  /** Stable id used to tag the iframe's `<body>` with `data-breakpoint-id`. */
-  breakpointId: string
-  /** Logical viewport width in px; drives the iframe's CSS width. */
-  width: number
-  className?: string
-  style?: CSSProperties
-  /**
-   * Click handler delegated to the iframe's `<body>`. The original frame
-   * had its onClick on the viewport `<div>`; we replicate that on the body
-   * so clicking the empty area still activates the breakpoint.
-   */
-  onClick?: () => void
-  /** Cursor movement inside the iframe, translated by callers as needed. */
-  onCursorMove?: (event: MouseEvent) => void
-  /** Cursor leave from the iframe element. */
-  onCursorLeave?: () => void
-  /** Page tree React subtree to mount inside the iframe's body. */
-  children: ReactNode
-  /**
-   * `data-*` attributes forwarded onto the iframe element itself. The
-   * outgoing `data-breakpoint-id` lives on the iframe's `<body>` (so it can
-   * be a target of the canvas's `[data-breakpoint-id]`-scoped CSS), but
-   * the editor sometimes wants identifiers on the iframe wrapper too —
-   * e.g. testids that the agent-browser can target without crossing the
-   * iframe boundary.
-   */
-  dataAttrs?: Record<string, string | undefined>
-  /** Interaction model — see {@link IframeInteraction}. Defaults to 'canvas'. */
-  interaction?: IframeInteraction
-  /**
-   * Double-click handler for read-only composed regions (template chrome,
-   * inlined components, outlet previews). Resolved from the nearest ancestor
-   * carrying `data-studio-readonly-*` markers; opens that source for editing.
-   */
-  onReadonlyOpen?: (kind: 'page' | 'component', id: string) => void
-  /**
-   * Bundled runtime scripts to execute inside the frame. Empty/undefined runs
-   * nothing — the frame stays a pure render. Same in both interaction modes
-   * (the "Run scripts" toggle drives this), so authored behaviour can run
-   * alongside the live editor.
-   */
-  runtimeScripts?: InjectableRuntimeScript[]
-  /** WS-10 Phase 2 — a "duplicate as variant" frame's `BoardFrame.axes`, merged onto the board-global axes in `useApplyPreviewAxes`. `undefined` outside board context. */
-  axesOverride?: Partial<PreviewAxes>
-  /**
-   * How this frame's DOM is reached (`live-05`, STATE.md). `'portal'`
-   * (Tier 0/1, same-origin React portal — today's ONLY real mode) is the
-   * default and is entirely inert for every existing Tier 0/1 call site:
-   * omitting this prop reproduces today's behavior exactly, byte-for-byte.
-   * `'bridge'` (Tier 2, cross-origin `postMessage` to a real dev-server
-   * page) requires `liveFrame` and constructs a `BridgeFrameAdapter`
-   * instead of a `PortalFrameAdapter` — the fork itself is real, committed,
-   * tested code, and `liveFrame.liveOrigin`/`screenKey`/`axes` now resolve
-   * to a genuinely working URL (`resolveLiveFrameSrc.ts`) now that L6's
-   * `/__screen/<key>` route exists in the generated shell and Studio's own
-   * live-origin proxy forwards to it correctly (`STATE.md`'s `live-06`).
-   * What is still missing is the CALLER: nothing in production yet
-   * constructs a `LiveFrameSource` and flips a real board frame's
-   * `documentMode` to `'bridge'` — that decision (which frames, when, gated
-   * on what) is separate, not-yet-scoped work. No injector subtree is
-   * portaled into a bridge-mode frame — see the render fork below.
-   */
-  documentMode?: 'portal' | 'bridge'
-  /** Bridge-mode-only inputs. Required (and only read) when `documentMode === 'bridge'`. */
-  liveFrame?: LiveFrameSource
-}
-
-export interface IframeFrameSurfaceHandle {
-  /** The iframe element itself. `null` until the iframe mounts. */
-  iframeElement: HTMLIFrameElement | null
-  /** The iframe's contentDocument. `null` until the iframe has loaded. */
-  contentDocument: Document | null
-  /** Convenience: the iframe's body. `null` until loaded. */
-  contentBody: HTMLBodyElement | null
-  /**
-   * The in-iframe selection-overlay root (WS-5.1) — `null` in live and
-   * capture modes (never mounted) and until `CanvasSelectionOverlayInjector`
-   * creates it.
-   * `BreakpointSelectionOverlay` portals rings/badge into this instead of the
-   * parent canvas root, so they live in the same coordinate space as the
-   * element they track.
-   */
-  contentOverlayRoot: HTMLDivElement | null
-  /**
-   * The frame's `FrameDocumentAdapter` (`live-05`, STATE.md) — `null` until
-   * the iframe document exists. `contentDocument`/`contentBody`/
-   * `contentOverlayRoot` above are migrating to this one field batch by
-   * batch; both coexist until every consumer has moved over.
-   */
-  adapter: FrameDocumentAdapter | null
-}
+// The contract this component implements — see
+// `iframeFrameSurfaceContract.ts`. Re-exported because every consumer
+// already imports the handle from this module.
+export type { IframeFrameSurfaceHandle } from './iframeFrameSurfaceContract'
+import type { IframeFrameSurfaceHandle, IframeFrameSurfaceProps } from './iframeFrameSurfaceContract'
 
 type IframeWithCleanup = HTMLIFrameElement & { _studioCleanup?: () => void }
 
@@ -218,6 +158,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       axesOverride,
       documentMode = 'portal',
       liveFrame,
+      onContentReadyChange,
     },
     ref,
     ) {
@@ -230,6 +171,9 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
       const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
+      // Mount stage 3 — see this module's header. `false` until the injector
+      // commit has landed and the transition scheduled below has run.
+      const [treeMounted, setTreeMounted] = useState(false)
 
     // `live-07` (STATE.md) — keeps the freshest `liveFrame` reachable from
     // inside the construct effect below WITHOUT it being a dependency of
@@ -328,6 +272,61 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
     // per-frame override merged onto the board-global axes inside the hook.
     const frameAxes = useApplyPreviewAxes(adapter, axesOverride)
+
+    // Mount stage 3 (see this module's header): schedule the node tree as a
+    // TRANSITION from the effect that runs after the injector commit, so the
+    // two land in separate commits and a zoom gesture can interleave between
+    // them. Unmounting the document resets the gate so a re-entering frame
+    // stages again rather than re-mounting everything at once.
+    //
+    // A CAPTURE frame is the one exception, and it is not a hedge: staging
+    // exists to keep a gesture smooth while MANY board frames mount at once.
+    // A capture frame is exactly one frame, offscreen, `inert`, mounted on
+    // demand by `AgentSnapshotFrame`, with an agent tool call already blocked
+    // on its tree — there is no gesture to yield to, and yielding hands React
+    // licence to leave that one commit behind whatever higher-priority work
+    // the editor is doing (an agent turn streams store updates continuously).
+    // Measured: the transient frame's body held 0 children for the WHOLE 5 s
+    // `waitForAgentRenderFrame` window, so the capture timed out with
+    // "did not become ready" — `agentBreakpointCapture.test.tsx` is the gate.
+    useEffect(() => {
+      if (!iframeDoc) {
+        setTreeMounted(false)
+        return
+      }
+      if (isCapture) {
+        setTreeMounted(true)
+        return
+      }
+      startTransition(() => setTreeMounted(true))
+    }, [iframeDoc, isCapture])
+
+    // Publish stage 3. ONE readiness notion, two transports:
+    //  - `onContentReadyChange` for the board frame, which keeps its frozen
+    //    poster on top of the iframe until there is real content underneath;
+    //  - `data-studio-canvas-content-ready` on the iframe element for callers
+    //    that only hold DOM — `renderEvidence.ts` refuses to hand the agent a
+    //    frame whose document has loaded but whose node tree has not landed,
+    //    which is otherwise a rasterised blank PNG (`studio_export_frames`).
+    //
+    // This effect is the attribute's SOLE owner. `attachIframeDoc` below runs
+    // again whenever the ref re-attaches and clears `studioCanvasDocumentLoaded`
+    // there — but it re-sets that one synchronously in `captureSrcDoc`, which
+    // has no equivalent here, so clearing the readiness stamp from the ref
+    // callback would strip it for good (measured: `contentReady=undefined` on a
+    // frame whose body already held its tree).
+    useEffect(() => {
+      const iframe = iframeRef.current
+      if (iframe) {
+        if (treeMounted) iframe.dataset.studioCanvasContentReady = 'true'
+        else delete iframe.dataset.studioCanvasContentReady
+      }
+      onContentReadyChange?.(treeMounted)
+      return () => {
+        if (iframe) delete iframe.dataset.studioCanvasContentReady
+        onContentReadyChange?.(false)
+      }
+    }, [onContentReadyChange, treeMounted])
 
     // Bridge the iframe handle out to the parent (selection overlay reads
     // `iframeElement` to translate inside-iframe rects into editor coordinates).
@@ -574,8 +573,18 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               <CanvasDiagnosticsInjector />
               {/* Design frames only: selection/hover rings + the node-name badge
                   render INSIDE this document (WS-5.1) so they track the element
-                  with zero zoom/pan conversion. See its own docblock. */}
-              {!isLive && !isCapture && (
+                  with zero zoom/pan conversion. See its own docblock.
+
+                  Gated on `treeMounted` with the node tree, and NOT because it
+                  is expensive — because it is the one injector that appends a
+                  real element to `<body>`. Its effect runs after the commit's
+                  DOM writes, so in a single-commit mount the authored content
+                  was already there and the overlay root landed behind it. Mount
+                  it in stage 2 and it becomes `body`'s FIRST child, which
+                  breaks `body > :first-child` / `:nth-child` / `:empty` for the
+                  page's own CSS — the exact invariant
+                  `bodyPresentation.test.tsx` guards. */}
+              {!isLive && !isCapture && treeMounted && (
                 <CanvasSelectionOverlayInjector onRootReady={setOverlayRoot} />
               )}
               {/* Vendor package CSS (Alm design-system + the open project's own
@@ -612,10 +621,15 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               <AuthoredCssInjector viewport={viewport} />
               <ClassStyleInjector viewport={viewport} />
               <UserStylesheetInjector viewport={viewport} />
-              {children}
+              {/* Mount stage 3 — the node tree, one commit later than the
+                  injectors above. See this module's header. */}
+              {treeMounted && children}
               {/* Runtime scripts (opt-in) run against the node tree mounted
-                  above. Empty list = no-op, so this is safe to always mount. */}
-              <RuntimeScriptInjector scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
+                  above, so they are gated on the same stage. Empty list =
+                  no-op, so this is safe to always mount. */}
+              {treeMounted && (
+                <RuntimeScriptInjector scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
+              )}
             </CanvasFrameContexts>,
             iframeDoc.body,
           )}

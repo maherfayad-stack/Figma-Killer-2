@@ -2,7 +2,7 @@
  * `studio_upload_asset` — the one Studio tool that still genuinely needs the
  * user's own browser session.
  *
- * This file used to declare four `execution: 'browser'` tools. W9-6 moved
+ * This file used to declare four `execution: 'bridge'` tools. W9-6 moved
  * three of them server-side, because none of the three was ever about the
  * user's session: `studio_computed_styles` asks what the CSS on disk resolved
  * to (`computedStyles.ts`), and `studio_set_frame_axes` /
@@ -27,7 +27,7 @@ import type { AiTool } from '../../../runtime/types'
 const uploadAssetTool: AiTool = {
   name: 'studio_upload_asset',
   scope: 'site',
-  execution: 'browser',
+  execution: 'bridge',
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:

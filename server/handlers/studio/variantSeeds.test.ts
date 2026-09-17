@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { generateVariantSeeds, MAX_VARIANTS_PER_SET, VARIANT_DENSITIES } from './variantSeeds'
 import { buildProjectTokenIndex } from './projectTokenIndex'
-import { MIN_TYPE_HIERARCHY_RATIO } from './compositionAudit'
+import { LAYOUT_ARCHETYPES, MIN_TYPE_HIERARCHY_RATIO } from './compositionAudit'
 
 const PROJECT_CSS = `:root {
   --spacing-xs: 4px;
@@ -127,5 +127,87 @@ describe('generateVariantSeeds', () => {
     const set = generateVariantSeeds({ tokens: oneRadius, brief: 'b', baseName: 'Home', count: 3, rngSeed: 9 })
     expect(new Set(set.map((v) => v.style.radiusFamily))).toEqual(new Set(['soft']))
     for (const variant of set) expect(variant.style.radiusToken).toBe('--radius-soft')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A13 — archetype sequences: the axis that makes A/B/C different SCREENS
+// ---------------------------------------------------------------------------
+
+describe('generateVariantSeeds — archetype sequences', () => {
+  it('gives every variant a sequence of real archetypes', () => {
+    const ids = new Set(LAYOUT_ARCHETYPES.map((a) => a.id))
+    for (const variant of seeds()) {
+      expect(variant.style.archetypes.length).toBeGreaterThanOrEqual(3)
+      for (const id of variant.style.archetypes) expect(ids.has(id)).toBe(true)
+    }
+  })
+
+  it('never repeats a band inside one variant', () => {
+    for (const variant of seeds()) {
+      expect(new Set(variant.style.archetypes).size).toBe(variant.style.archetypes.length)
+    }
+  })
+
+  it('opens each variant on a different shape — the point of the axis', () => {
+    const openings = seeds().map((v) => v.style.archetypes[0])
+    expect(new Set(openings).size).toBe(openings.length)
+  })
+
+  it('is reproducible from the recorded rngSeed, sequence included', () => {
+    expect(seeds(42).map((v) => v.style.archetypes)).toEqual(seeds(42).map((v) => v.style.archetypes))
+  })
+
+  it('puts the sequence and the composition rules in the directive, in order', () => {
+    const [first] = seeds()
+    const directive = first!.directive
+    for (const [index, id] of first!.style.archetypes.entries()) {
+      const archetype = LAYOUT_ARCHETYPES.find((a) => a.id === id)!
+      expect(directive).toContain(`${index + 1}. ${archetype.label}`)
+    }
+    expect(directive).toContain('do not reorder it')
+    expect(directive).toContain('monotone-band-rhythm')
+  })
+})
+
+describe('generateVariantSeeds — design policy', () => {
+  it('stays inside the project’s own token space under follow and balanced', () => {
+    for (const designPolicy of ['follow', 'balanced'] as const) {
+      const set = generateVariantSeeds({ tokens, brief: 'b', baseName: 'Home', count: 3, rngSeed: 5, designPolicy })
+      for (const variant of set) {
+        expect(variant.style.designPolicy).toBe(designPolicy)
+        // Every declared radius family in this fixture has a token, so each
+        // seed must name one rather than inventing a family.
+        expect(variant.style.radiusToken).toBeDefined()
+        expect(variant.style.headingSizeToken).toBeDefined()
+        expect(variant.style.typeScaleRatio).toBeGreaterThanOrEqual(MIN_TYPE_HIERARCHY_RATIO)
+      }
+    }
+  })
+
+  it('free draws from the extended type pool, past what the project’s scale expresses', () => {
+    const projectMax = 42 / 16
+    const set = generateVariantSeeds({ tokens, brief: 'b', baseName: 'Home', count: 3, rngSeed: 5, designPolicy: 'free' })
+    expect(set.some((v) => v.style.typeScaleRatio > projectMax)).toBe(true)
+    // ...and never claims a token whose px is not the size it chose.
+    for (const variant of set) expect(variant.style.headingSizeToken).toBeUndefined()
+  })
+
+  it('free varies the spacing BASE, not only the density multiplier', () => {
+    const set = generateVariantSeeds({ tokens, brief: 'b', baseName: 'Home', count: 3, rngSeed: 11, designPolicy: 'free' })
+    expect(new Set(set.map((v) => v.style.spacingBasePx)).size).toBeGreaterThan(1)
+  })
+
+  it('free tells the subagent a raw value is the point, and every other policy tells it the opposite', () => {
+    const [free] = generateVariantSeeds({ tokens, brief: 'b', baseName: 'Home', count: 1, rngSeed: 3, designPolicy: 'free' })
+    expect(free!.directive).toContain('design system is OPTIONAL')
+    expect(free!.directive).toContain('WCAG AA contrast')
+
+    const [follow] = generateVariantSeeds({ tokens, brief: 'b', baseName: 'Home', count: 1, rngSeed: 3, designPolicy: 'follow' })
+    expect(follow!.directive).toContain('do not substitute a raw hex')
+  })
+
+  it('defaults to balanced when no policy is given', () => {
+    for (const variant of seeds()) expect(variant.style.designPolicy).toBe('balanced')
   })
 })

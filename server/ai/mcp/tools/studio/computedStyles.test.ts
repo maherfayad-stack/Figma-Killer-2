@@ -10,10 +10,12 @@
  * says about that, and what happens when neither can.
  *
  * The old behaviour this pins against: the tool used to be
- * `execution: 'browser'` with no handler at all, so a project with no tab open
+ * `execution: 'bridge'` with no handler at all, so a project with no tab open
  * spent ~8s in the bridge and then refused.
  */
-import { afterEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AiBrowserBridge } from '../../../runtime/types'
 import type { AiToolOutput } from '@core/ai'
 import type { AgentComputedStylesResult } from '@core/studio-capture'
@@ -42,11 +44,36 @@ let headlessImpl: () => Promise<unknown> = async () => ({ ok: true, result: HEAD
 let bridgeImpl: ((toolName: string, input: unknown) => Promise<AiToolOutput>) | null = null
 let bridgeCalls: Array<{ toolName: string; input: unknown }> = []
 
+// Snapshotted as plain objects BEFORE mocking (a live namespace object is
+// itself rewritten by `mock.module`), and handed back in `afterAll` below.
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file, so
+// without this every later file in the worker gets this file's stubs (or, for
+// an export the replacement omits, a link-time `SyntaxError` that takes the
+// whole file down). Gated by `mock-module-must-restore.test.ts`.
+const realHeadlessFrameInspect = { ...(await import('../../capture/headlessFrameInspect')) }
+const realEditorBridge = { ...(await import('../../editorBridge')) }
+
+afterAll(() => {
+  mock.module('../../capture/headlessFrameInspect', () => realHeadlessFrameInspect)
+  mock.module('../../editorBridge', () => realEditorBridge)
+})
+
+// Spread over the REAL namespace, never a bare object literal: `mock.module`
+// replaces the whole module, so an export the factory omits simply stops
+// existing — and a static `import { editorBridgeScope }` elsewhere in the
+// graph then fails to LINK, taking the importing file down with
+// `SyntaxError: Export named 'editorBridgeScope' not found`. That is exactly
+// what this file did before: it reported `0 pass / 1 error` in isolation.
+// Spreading the snapshot keeps every other export real and overrides only
+// what the test actually doubles.
 mock.module('../../capture/headlessFrameInspect', () => ({
+  ...realHeadlessFrameInspect,
   inspectFrameHeadless: async () => headlessImpl(),
 }))
 
 mock.module('../../editorBridge', () => ({
+  ...realEditorBridge,
   awaitEditorBridgeForUser: async (): Promise<AiBrowserBridge | null> => {
     if (!bridgeImpl) return null
     return {
@@ -61,12 +88,23 @@ mock.module('../../editorBridge', () => ({
 const { studioComputedStylesMcpTools } = await import('./computedStyles')
 const tool = studioComputedStylesMcpTools.find((t) => t.name === 'studio_computed_styles')!
 
+/**
+ * A project dir INSIDE the suite's workspace root, not the literal
+ * `'/tmp/project'` this used to pass. `resolveProjectDir` containment-checks
+ * every `dir` against `projectsRootDir()`, which `src/__tests__/setup.ts`
+ * pins to `os.tmpdir()` for the whole suite — and on win32 `resolve('/tmp/project')`
+ * is `C:\tmp\project`, which is NOT under `%TEMP%`. Every routing test below
+ * therefore threw `ProjectDirOutsideWorkspaceError` on Windows and passed on
+ * Linux, where `/tmp/project` happens to sit under `/tmp`.
+ */
+const WORKSPACE_DIR = join(tmpdir(), 'studio-computed-styles-project')
+
 function ctx() {
   return {
     userId: 'u1',
     capabilities: [],
     conversationId: 'c1',
-    workspaceDir: '/tmp/project',
+    workspaceDir: WORKSPACE_DIR,
     snapshot: null,
     signal: new AbortController().signal,
     db: undefined,
@@ -86,8 +124,12 @@ afterEach(() => {
 })
 
 describe('studio_computed_styles routing', () => {
-  it('is a SERVER tool now — a browser-executed tool has no handler to call at all', () => {
-    expect(tool.execution).toBe('server')
+  it('runs in-process with the tab as a FALLBACK — a relayed tool has no handler to call at all', () => {
+    // A11: the value says "headless first, open tab only if that cannot run",
+    // which is also what the system prompt's live-tab sentence is generated
+    // from. Reverting it to `bridge` would put this tool back on the prompt's
+    // "needs the open board" list, which is the exact claim `mcp-20` made false.
+    expect(tool.execution).toBe('server-with-bridge-fallback')
     expect(tool.handler).toBeDefined()
   })
 

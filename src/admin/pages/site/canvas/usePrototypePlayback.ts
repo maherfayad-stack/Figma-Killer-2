@@ -32,6 +32,14 @@ export interface PrototypePlayback {
   overlayLeaveTransition: PrototypeTransition | null
   /** Whether clicks in the live frame belong to the player. */
   playMode: boolean
+  /**
+   * How many surfaces are stacked up — screens pushed plus overlays presented.
+   *
+   * Exists for the `after-delay` triggers, which have to re-arm when the player
+   * RETURNS to a screen it has already been on: the page id alone is unchanged
+   * there, so it is not enough to tell "we came back" from "nothing moved".
+   */
+  stackDepth: number
 }
 
 export function usePrototypePlayback(editingPage: Page | null): PrototypePlayback {
@@ -49,6 +57,7 @@ export function usePrototypePlayback(editingPage: Page | null): PrototypePlaybac
       overlayTransition: null,
       overlayLeaveTransition: null,
       playMode: false,
+      stackDepth: 0,
     }
   }
 
@@ -73,5 +82,6 @@ export function usePrototypePlayback(editingPage: Page | null): PrototypePlaybac
     overlayTransition: overlayPage ? playTransition : null,
     overlayLeaveTransition: playLeaveTransition,
     playMode: true,
+    stackDepth: playState.screens.length + playState.overlays.length,
   }
 }

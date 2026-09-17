@@ -449,6 +449,27 @@
        a selection. */
     --canvas-selector-ring: inset 0 0 0 1px #ff8800;
     --canvas-selector-ring-color: #ff8800;
+    /* Alt-hover measurement (K5): the distance segments from the selection to
+       the hovered element, their numeric pills, and the hovered element's
+       padding bands.
+
+       Fixed values that do NOT follow the editor theme, for the same reason
+       --canvas-node-badge-text and --canvas-comment-pin-ring don't: these
+       marks are painted on top of the USER'S rendered page, and have to stay
+       legible against arbitrary content while the EDITOR's theme changes
+       independently. The two hues are the scale's own red (--accent-10) and
+       violet (--accent-2) identities, frozen between their dark-theme
+       (#ff9f9f / #c8b6ff) and light-theme (#b91c1c / #6d28d9) values so one
+       pill colour reads on both — a theme-following pill would invert its own
+       contrast against its text half the time. Red is distance, violet is
+       padding; both are distinct from the green selection, pink hover, orange
+       selector and cyan snap affordances above. */
+    --canvas-measure-line-color: #e8384f;
+    --canvas-measure-pill-bg: #e8384f;
+    --canvas-measure-pill-text: #fff5f6;
+    --canvas-measure-padding-fill: rgba(151, 118, 233, 0.3);
+    --canvas-measure-padding-line: #9776e9;
+    --canvas-measure-padding-text: #f7f4ff;
     /* Board snap guide (Phase 6B): the thin alignment line drawn while
        dragging a frame/sticky-note/doc-block into alignment with its
        neighbors. A fourth neon identity distinct from the selection (green),

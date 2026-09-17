@@ -283,7 +283,7 @@ import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
-import { applyStudioEditBatch } from './studioWriteback'
+import { applyStudioEditBatchLocked } from './studioWriteback'
 import { tryServeStudioProbe } from './studio/projectProbe'
 import { tryServeStudioInstall } from './studio/installDeps'
 import { tryServeStudioIngest } from './studio/importUpload'
@@ -312,6 +312,9 @@ import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
 import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
+import { tryServeStudioGitSync } from './studio/gitSyncRoutes'
+import { tryServeStudioGithubAuth } from './studio/githubAuthRoutes'
+import { tryServeStudioGitRemote } from './studio/gitRemoteRoutes'
 import { tryServeStudioDeploy } from './studio/deploy'
 import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
@@ -361,6 +364,8 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
+  tryServeStudioGitRemote,
+  tryServeStudioGitSync,
   tryServeStudioDeploy,
   tryServeStudioDevServer,
   tryServeStudioStories,
@@ -372,6 +377,7 @@ const STUDIO_SUB_ROUTERS = [
  * capture, a file's contents) rather than merely reading a project directory.
  */
 const STUDIO_SESSION_SUB_ROUTERS = [
+  tryServeStudioGithubAuth,
   tryServeStudioComments,
   tryServeStudioProjectRoutes,
   tryServeStudioTrashRoutes,
@@ -520,7 +526,7 @@ export async function tryServeStudio(
       // detection all live in `applyStudioEditBatch` — the single engine both
       // this route and `studio_apply_edits` (MCP) run through.
       const { written, skipped, shifted, sharedComponents, refusals, swapDetails, createdStylesheets, unexplainedSkips, touchedFiles } =
-        applyStudioEditBatch(dir, edits)
+        await applyStudioEditBatchLocked(dir, edits)
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically

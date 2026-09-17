@@ -43,6 +43,7 @@ type FrameMutationActions = Pick<
   | 'addFrame'
   | 'seedFramesForActiveBoard'
   | 'duplicateFrameAsVariant'
+  | 'duplicateFrameAt'
   | 'setFrameAxes'
 >
 
@@ -155,6 +156,29 @@ export function createFrameMutationActions(
           }
         },
       })
+      return newFrameId
+    },
+
+    /**
+     * K2 — the copy an Alt+drag spawns, at the position the gesture started
+     * from. The drag then moves THIS frame, so the user sees a copy follow the
+     * cursor and the original stay put, which is what the modifier promises.
+     *
+     * Coalesced under the copy's own move key so the spawn and every
+     * subsequent move of it collapse into ONE undo entry: ⌘Z after an
+     * Alt+drag removes the copy outright rather than walking it back across
+     * the board first.
+     */
+    duplicateFrameAt: (sourceFrameId, x, y) => {
+      const { boards, activeBoardId } = get()
+      const board = getActiveBoard(boards, activeBoardId)
+      if (!board) return null
+
+      const newFrameId = crypto.randomUUID()
+      const nextBoard = duplicateFrame(board, sourceFrameId, { id: newFrameId, x, y })
+      if (!nextBoard) return null
+
+      commitBoardChange(set, get, boardCoalesceKey.frameMove(newFrameId), upsertBoard(boards, nextBoard))
       return newFrameId
     },
 

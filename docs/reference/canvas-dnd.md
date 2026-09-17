@@ -32,6 +32,22 @@ topology below first.
   capture handler, it must see a press on any node without threading a
   callback through every module's prop bag, and it adds no element to the
   canvas DOM.
+- **The canvas node reorder is a SESSION (S2, D2's `dragSession`), not a
+  re-render.** `pointerdown` measures everything the gesture needs once;
+  every `pointermove` writes a ref; ONE `requestAnimationFrame` resolves the
+  drop target and paints the indicator straight into the DOM; `pointerup`
+  writes the store once. **Per pointermove: zero React commits and zero forced
+  layout reads** — the gesture commits React exactly twice, at its two edges.
+  See "[The drag session](#the-drag-session-s2)" below.
+- **Alt+drag drops a copy** — for canvas elements (one source write through
+  `duplicateJsxElement`'s destination form) and for board frames (a cheap
+  `boards.json` copy). Refuses for exactly the reasons the same drag without
+  Alt would. See "[Alt+drag duplicates (K2)](#altdrag-duplicates-k2)".
+- **⌘/Ctrl+drag places by coordinates** instead of reordering — an inline
+  `left`/`top` (or `inset-inline-start` in RTL) on one element, snapped to its
+  siblings' edges and centres. Refuses, with a one-click remedy, when the
+  container is `position: static`. See
+  "[Free movement (K6)](#free-movement-k6)".
 - `@dnd-kit/core` genuinely IS used — but only on one surface that never
   crosses an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s
   `<DndContext>`). The Site Explorer used to be the second such surface; its
@@ -275,6 +291,225 @@ regardless of trigger, so there is little for one to do yet.
 
 ---
 
+## The drag session (S2)
+
+`useCanvasReorderDrag.ts` runs one gesture as one session. Three files:
+
+| File | Owns |
+|---|---|
+| `useCanvasReorderDrag.ts` | The session: listeners, activation distance, the single rAF, the one store write |
+| `useCanvasBodyDragTrigger.ts` | The second activation point — "does this press mean a drag at all" |
+| `canvasDragSession.ts` | `frameCandidateIndex` — the measurements, and when they go stale |
+| `canvasDragPainter.ts` | Everything the drag draws, written straight into the DOM |
+
+**The two React commits.** `dragging` flips on when the press clears the
+activation distance and off at release / Escape / cancel — and never in
+between. It stays React state rather than a ref because a consumer genuinely
+renders from it: the selection overlay's measurement scheduler keeps measuring
+while a continuous gesture is in flight, and a ref would leave that loop off
+for the whole drag.
+
+**The session also holds a `canvasGesture`** (`beginCanvasGesture` at
+`pointerdown`, `endCanvasGesture` in the reset). Not because a reorder mutates
+the page — it writes nothing until `pointerup` — but because the two things
+that gesture flag freezes, the frame's **auto-height refit** and the
+parent-document **selection anchor**, are exactly the two that would otherwise
+reflow the frame mid-drag and invalidate the candidate index from underneath a
+pointer the user has not moved. The `ResizeObserver` below and the frozen
+auto-height are therefore cooperating, not racing: the observer exists for
+reflows the drag does not control (an image finishing, an HMR patch), and the
+one reflow source the editor DOES control is held still.
+
+**What is measured, and when it is re-measured.** `beginDrag` builds a
+`frameCandidateIndex`: every `[data-node-id]` rect in the frame (in
+viewport-local/frame-space coordinates), plus the viewport's client origin
+and the live canvas scale. Both are constant for the length of an ordinary
+drag, so both are measured exactly once. Two things invalidate them, and
+only two:
+
+- **A real reflow** — a `ResizeObserver` on the frame body sets
+  `index.stale`, and the next rAF rebuilds the candidate rects. Nothing
+  polls.
+- **A real transform change** — the index remembers the `CanvasTransform` its
+  origin was measured under and compares against D1's **live `transformRef`**
+  (`CanvasViewportActionsContext`), never the store's `zoom`/`panX`/`panY`,
+  which are the ~100 ms-debounced commit values and lag a gesture by design.
+  Auto-pan is the case that makes this necessary: it moves the layer under a
+  stationary pointer.
+
+Candidate rects themselves survive a pan or a zoom untouched — they are
+stored in frame space, and a pure translate/scale of the transform layer
+cancels out of both terms of `(clientLeft - viewportClientLeft) / scale`.
+Only the POINTER's conversion needs a fresh origin.
+
+**One rAF does the whole visual half**: refresh the index, resolve the drop
+target, compute the auto-pan delta (READ phase), then paint (WRITE phase).
+Reads and writes are never interleaved. The frame re-arms itself only while
+auto-pan is still moving the canvas, so a stationary pointer costs nothing.
+
+**Escape cancels**, because the tree was never touched — cancelling is just
+dropping the session. Listened for on the parent document AND the frame's own
+document, since a keystroke raised inside an iframe never reaches the parent
+window. **Shift constrains the axis** (`constrainToDragAxis`), applied in
+client space before the frame-space conversion so the locked axis is the one
+the user sees. **The ghost follows the cursor exactly**, painted from the same
+pointer position the resolution used, in the same frame.
+
+**`pointerup` resolves any still-pending frame synchronously** before
+committing, so a flick whose last move and release land inside one animation
+frame commits the position the user actually pointed at.
+
+---
+
+## Alt+drag duplicates (K2)
+
+Hold Alt and the same drag drops a **copy**. Two surfaces, one gesture,
+different mechanics because they write to different places.
+
+### Elements
+
+Alt is read off **every pointer event**, never latched at `pointerdown`:
+release it mid-drag and the drop is a move again; press it mid-drag and the
+same drop becomes a copy. The ghost shows a `+` while it is held, which is
+therefore an honest readout rather than a decoration. The commit reads the
+modifier state at **release**.
+
+`pointerup` routes to `duplicateNodesTo(ids, parentId, index)` instead of
+`moveNodes`. On a studio-imported tree that is **one source write**:
+
+```
+duplicateNodesTo
+  └─ writeDuplicateToSource(ids, { parentId, index })
+       ├─ guardAgainstConcurrentStructuralCommit()   ← same store-11 guard as ⌘D
+       ├─ planSourceDuplicateTo(tree, ids, parentId, index)
+       └─ commitStudioDuplicate([nodeId], { parentNodeId, anchorNodeId, position })
+            └─ POST /studio/save  { kind: 'duplicate', nodeId, parentNodeId, … }
+                 └─ duplicateJsxElement({ …, destinationLine, destinationCol, anchorLine, … })
+```
+
+`planSourceDuplicateTo` composes the two questions the gesture is made of, so
+**Alt+drag refuses for exactly the reasons the same drag without Alt would**:
+
+| Question | Answered by | Refusals it carries |
+|---|---|---|
+| May this element be copied at all? | `refuseStructuralEdit({ kind: 'duplicate' })` — the identical question ⌘D asks | `list-row`, `shared-component`, `route-chrome`, `code-placed` |
+| May it land *there*? | `previewStructuralMove` — the identical question a plain drag asks | `cross-file`, a container that is not an ordinary element, `insert` |
+
+Plus one of its own: a **multi-node** Alt+drag refuses as `multi-select` — the
+session resolves one drop target, and N copies dropped at one position would
+have to be ordered against each other inside a child list each of them is
+shifting. All of these reach the user through `RefusalDialog` (or the toast,
+for the remedy-less reasons) — the same channel a refused move uses.
+
+The **commit** is an insert's, not a move's. `previewStructuralMove` resolves
+its anchor from the child list with the dragged node *removed*, because that is
+what a move does to it; a copy removes nothing, so the same index names a
+different neighbour. `resolveContainerAnchor` — `planSourceInsert`'s own
+resolver — is the honest one here, and a duplicate-to is precisely an insert of
+markup that already exists.
+
+`duplicateJsxElement` grew a second form to match (`destinationLine` /
+`destinationCol`, mirroring `moveJsxElement`'s reorder/reparent split). It is
+**one text edit**, not two — there is nothing to remove, so no last-first
+`applyTextEdits` ordering and no `exclude` range for the placement to step
+around. It refuses `into-own-descendant` (the copy would land inside itself)
+and `out-of-scope` (markup lifted out of a `.map` callback loses the row it
+read) — the latter through the same `freeVariablesOutOfScopeAt` a reparent
+uses, because a copy landing where its bindings do not exist breaks the file
+exactly as a move would.
+
+On a CMS / Visual Component tree there is no file to disagree with, so
+`duplicateNodesTo` degrades to "duplicate in place, then move the copies" —
+reusing `duplicateNodes` (which already owns per-node scoped-class cloning and
+the one-outlet guard) rather than re-implementing either.
+
+### Board frames
+
+Alt is **latched at `pointerdown`**, not read live — a frame copy is a real
+object in `boards.json` the moment it exists, so letting the modifier toggle
+mid-gesture would mean creating and destroying a board frame on every keypress.
+
+The copy is spawned on the **first pointermove**, not at `pointerdown`, so a
+plain Alt+click that never travels leaves no stray frame. From then on the
+drag moves the copy (`DragState.movingFrameId`) and the original never hears
+about the gesture again. Escape removes the copy outright.
+
+`duplicateFrameAt(sourceFrameId, x, y)` is a cheap `boards.json` write through
+the same pure `duplicateFrame` transform "duplicate as variant" uses — it
+never touches the user's source. It is coalesced under the copy's own move key
+so the spawn and every subsequent move collapse into one undo entry: ⌘Z after
+an Alt+drag removes the copy rather than walking it back across the board
+first.
+
+The gesture is documented in the `?` sheet as a virtual, never-matching
+`keybindings.ts` entry (`canvas.altDragDuplicate`) — that array *is* the sheet,
+and documenting a gesture anywhere else would fork the registry's
+single-source-of-truth gate.
+
+---
+
+## Free movement (K6)
+
+§15 decision 3 of the parity plan stands: **Studio does not fake absolute
+placement of flow elements.** Dragging an ordinary element still reorders it,
+and the canvas still shows the reflow that implies. What §6 decision 6 of the
+feel plan grants is narrower and explicit — a gesture may write `left`/`top`
+as an INLINE STYLE, which is one JSX element's `style={{…}}` and therefore one
+honest target, in exactly two cases. `canvasFreeMove.ts` owns the whole thing.
+
+| The element is… | ⌘/Ctrl held? | What happens |
+|---|---|---|
+| `position: absolute \| fixed` | not needed | the drag writes `left`/`top` — that is already the property deciding where it is, so dragging it into the child order would be the surprising behaviour |
+| in flow, parent is positioned | yes | the drag writes `position: absolute` **and** `left`/`top`. Writing the offsets alone would do nothing at all on a static element, and a declaration with no effect is exactly the silent no-op this codebase refuses |
+| in flow, parent is `position: static` | yes | **refuses** — see below |
+| in flow | no | ordinary reorder |
+
+**The refusal, and its remedy.** Absolutely positioning an element inside a
+static parent hands it to the nearest *positioned* ancestor, or to the
+viewport — not to the container the user dropped it in. So a ⌘-drag there
+refuses through `RefusalDialog`, with the one remedy that is actually true:
+make that container `position: relative`. This is the only
+`EditConstraintAction` whose handler is a **write** rather than a navigation
+(`position-parent-relative`), and therefore the only one the engine cannot
+run: the handler is injected by `ConstraintActionButtons`, the same way
+`jump-to-source`'s `openSource` already is, because `constraintActions.ts`
+sits inside the store's own import graph and may not import the composed store
+back. It is also the one refusal in `editConstraint.ts` that is NOT a
+source-writability question: the file would take the write; the CSS would not
+do what was pointed at.
+
+**RTL.** In a right-to-left element the physical `left` is the wrong property:
+a drag to the right must DECREASE the distance from the inline start. The
+write is `inset-inline-start`, with the horizontal delta negated. `top` is
+unaffected — RTL mirrors the inline axis only, never the block axis.
+
+**Snapping.** The moved rect snaps to its SIBLINGS' edges and centres through
+`computeSnap` — the same pure resolver board furniture already uses, at the
+same "closest wins, at most one snap per axis" contract, at
+`FREE_MOVE_SNAP_PX` in frame space. Guides are painted by the same imperative
+painter as everything else the drag draws, from a pool of at most two
+elements. Peers are read once from the drag session's candidate index, because
+siblings do not move while one element is being positioned.
+
+**Preview, then commit.** The step is written straight onto the element's own
+`style` during the drag — no store round trip, so it tracks the pointer at
+frame rate and the selection ring (which re-measures the real element) follows
+for free. The preview is dropped BEFORE the store commit, never after: they
+are the same DOM property, so clearing it afterwards would delete exactly what
+React just wrote. Same shape, and the same reasoning, as
+`useElementResizeDrag`.
+
+**A free move resolves no drop target and runs no auto-pan.** The two are
+different gestures: one places inside a container, the other looks for a
+position in a child list.
+
+**Modifier state is read per event, not latched**, exactly like Alt — press ⌘
+mid-drag and a reorder becomes a placement, release it and it goes back. The
+resolution itself is cached on the session (it reads computed style, which is
+a layout read) and re-taken only when the modifier flips.
+
+---
+
 ## Drop overlay
 
 The overlay highlights the resolved drop position. Geometry comes from the resolver or, for insert sources, from `canvasInsertionDrop.ts`'s fixed preview helpers:
@@ -283,7 +518,17 @@ The overlay highlights the resolved drop position. Geometry comes from the resol
 - **Into** — a sky-tinted dashed outline inset 4px from the target's bounding box.
 - **Invalid** — a danger-tinted outline (`--danger`) + a tooltip explaining why (`'cannot drop into self'`, `'target is locked'`).
 
-The overlay is a separate React tree positioned with absolute coordinates derived from the canvas zoom/pan transform.
+**For the canvas node reorder the overlay is NOT a React tree.** React renders
+one empty, click-through layer per frame (`CanvasDropIndicators`, in the
+breakpoint viewport — already inside `CanvasTransformLayer`, which is why the
+frame-space rects go in unconverted) and never gives it children.
+`canvasDragPainter.ts` creates, positions, and hides the drop line, the
+refused-position box, the refusal chip and the drag ghost inside it, through
+the `--canvas-drop-*` custom-property channel, skipping every write whose
+value is unchanged. Same division of labour as the selector-affinity ring
+pool (`syncSelectorHighlightRings`), for the same reason: a pointermove must
+not cost a React commit. Insert-source overlays (`useCanvasInsertionDrag`)
+still render from React — they are not in a per-pointermove path.
 
 ---
 
@@ -366,6 +611,8 @@ Studio-mode board furniture — frames (`BoardFramesLayer`), sticky notes (`Boar
 - **`collectPeerRects(board, dragged)`** — flattens a board's frames/notes/docs into the flat `SnapRect[]` peer list, excluding whichever object is being dragged. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`, mirroring `BoardFramesLayer`'s own render-time fallback.
 - **Threshold:** `SNAP_THRESHOLD_BOARD_UNITS = 8` — a fixed board-unit distance, not a screen-pixel feel divided by zoom. Simpler, and board furniture rarely sits near the threshold at extreme zoom in practice.
 - **Guides are transient, not persisted.** `boardSnapGuides` (`boardSlice`) is a top-level store field holding the active drag's `SnapGuide[]`, separate from `boards`/`BoardsFile` — it never reaches `serializeBoardsFile` or the boards auto-save effect, and `setBoardSnapGuides` never flips `boardsDirty`. Each move handler calls `setBoardSnapGuides(snapped.guides)`; pointer-up/cancel clears it (`setBoardSnapGuides([])`).
+- **One store write per pointermove, not two (D2 G8).** A furniture drag calls `setBoardSnapGuides` alongside `setFramePosition` on every move, and on the overwhelming majority of those events the guide list is identical to the last one (usually empty). `setBoardSnapGuides` now no-ops when `snapGuidesEqual(current, next)` — so the second write costs nothing until the guides actually change.
+- **Escape cancels a frame drag (D2 G8).** Unlike the element drag (which writes nothing until `pointerup`), a frame drag writes its position live, so cancelling restores the position captured at `pointerdown` (`DragState.frameX/frameY`), clears the guides, and closes the `store-09` coalescing burst. The listener is on `window`, not the header: the pointer is captured but keyboard focus is not.
 - **`BoardGuidesLayer`** (`canvas/BoardGuidesLayer/`) renders the active guides as thin lines, mounted last inside `CanvasTransformLayer` so it paints above every furniture layer and inherits the pan/zoom transform for free. `pointer-events: none` throughout — guides are purely visual. Line color is the `--canvas-snap-guide-color` token (globals.css) — a fourth canvas-affordance identity distinct from the selection/hover/selector rings.
 
 **Deferred from this pass** (see the plan's backlog): multi-select drag for board furniture (marquee/shift-click, moving several objects together), and drop-precision improvements to the tree-reorder system (`useCanvasReorderDrag.ts`) — a different drag system, out of scope here.

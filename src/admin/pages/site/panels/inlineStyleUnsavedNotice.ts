@@ -17,8 +17,8 @@
  *
  * `StyleSurface` does gate the OFFER for the single-selection inline composer
  * (`showInlineModuleLockedNotice`), but that is one entry point out of
- * several. `MultiInlineStyleComposer`'s write reach models only the
- * per-property `codeProps` locks, an agent tool writes through the store
+ * several. A multi-selection's write reach (`selectionModel.ts`) models only
+ * the per-property `codeProps` locks, an agent tool writes through the store
  * directly, and any future surface starts unguarded. So the honest place for
  * the refusal is the same chokepoint the edit is dropped at — one message, at
  * the moment the write would have been attempted, for every path at once.

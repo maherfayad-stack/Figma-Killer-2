@@ -43,6 +43,7 @@ import {
   projectPagesDir,
 } from '../studioProjects'
 import { autoPlaceBoardFrame } from './boardFrames'
+import { withProjectWriteLock } from './projectWriteLock'
 
 import { detectPageTemplateKit, pageNameBase, starterPage } from './pageTemplates'
 import { pageIdFromRelPath } from '../studioPageIds'
@@ -104,6 +105,27 @@ export function createScaffoldedPage(
   // Node ids are source locations (trap #2) — read the root by parsing the
   // file just written, never constructed from the name/path.
   return { ok: true, relPath, pageId, title: componentName, rootNodeId: scaffoldedPageRootNodeId(dir, file) }
+}
+
+/**
+ * {@link createScaffoldedPage}, serialized against every other writer of this
+ * project — **the entry every production caller uses** (`POST
+ * /admin/api/studio/page` and the MCP `studio_create_page` tool). The
+ * synchronous function above stays exported for tests, which drive it against
+ * a temp directory with nothing else running.
+ *
+ * Scaffolding writes two files and `.studio/boards.json`; a git verb holding
+ * the lock across `add` + `commit` must not see half of that. No `waitMs` —
+ * creating a page waits rather than failing, for the same reason a save does.
+ * See `projectWriteLock.ts`.
+ */
+export function scaffoldPageLocked(
+  dir: string,
+  nameInput: string,
+  kind: PageKind = DEFAULT_PAGE_KIND,
+  boardId?: string,
+): Promise<ScaffoldPageResult> {
+  return withProjectWriteLock(dir, () => createScaffoldedPage(dir, nameInput, kind, boardId))
 }
 
 /**

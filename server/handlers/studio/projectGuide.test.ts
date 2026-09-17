@@ -60,6 +60,21 @@ describe('generateStudioProjectGuide', () => {
       expect(stop.hooks[0]!.command).toContain('stopGateCheck.ts')
     })
 
+    it('wires the PreToolUse(Write|Edit) control-plane refusal — the security-load-bearing one (sec-12)', () => {
+      // Without this hook the agent's native Write reaches `.studio/meta.json`
+      // and can promote its own project to Tier 2, which is exactly the
+      // consent A10's second gate reads. See `agentWriteScope.ts`.
+      generateStudioProjectGuide(dir)
+      const settings = JSON.parse(read(dir, '.claude/settings.local.json')) as {
+        hooks: { PreToolUse?: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+      }
+      const preToolUse = settings.hooks.PreToolUse?.[0]
+      expect(preToolUse, 'no PreToolUse hook — nothing stops a native write into .studio/').toBeDefined()
+      expect(preToolUse!.matcher).toBe('Write|Edit')
+      expect(preToolUse!.hooks[0]!.command).toContain(process.execPath)
+      expect(preToolUse!.hooks[0]!.command).toContain('denyControlPlaneWrite.ts')
+    })
+
     it('never overwrites a hand-edited settings.local.json — same never-clobber manifest as CLAUDE.md', () => {
       generateStudioProjectGuide(dir)
       write(dir, '.claude/settings.local.json', JSON.stringify({ hooks: { UserPromptSubmit: [] } }, null, 2))

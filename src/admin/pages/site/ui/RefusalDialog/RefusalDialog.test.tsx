@@ -8,7 +8,7 @@
  * covers `presentStructuralRefusal`'s toast-vs-dialog split at the store
  * layer; this suite is the one level up, the actual rendered dialog.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { EditConstraint } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
@@ -17,10 +17,24 @@ import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 const detachInstance = mock(() => Promise.resolve({ ok: true as const }))
 const extractInstanceCopy = mock(() => Promise.resolve({ ok: true as const }))
 
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file. The
+// replacement below publishes TWO of `studioSaveRequests`'s exports; every
+// later file in the worker that imports any other one would get `undefined`.
+// Snapshot the real namespace as a plain object BEFORE mocking (the namespace
+// object itself is live and gets rewritten). Gated by
+// `mock-module-must-restore.test.ts`.
+const realStudioSaveRequests = { ...(await import('@site/studio/studioSaveRequests')) }
+
 mock.module('@site/studio/studioSaveRequests', () => ({
+  ...realStudioSaveRequests,
   detachInstance,
   extractInstanceCopy,
 }))
+
+afterAll(() => {
+  mock.module('@site/studio/studioSaveRequests', () => realStudioSaveRequests)
+})
 
 const { RefusalDialog } = await import('./RefusalDialog')
 

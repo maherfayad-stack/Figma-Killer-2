@@ -22,7 +22,20 @@ import type { EditConstraint, EditConstraintAction } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
 import { resolveConstraintAction } from '@site/store/constraintActions'
+import { useEditorStore } from '@site/store/store'
 import styles from './ConstraintActionButtons.module.css'
+
+/**
+ * K6's `position-parent-relative` remedy, supplied here rather than inside
+ * `constraintActions.ts` for the same reason `openSource` is: that module sits
+ * inside the store's own import graph and may not import the composed store
+ * back. One inline declaration on the container, through the ordinary
+ * inline-style write path — so it lands in the user's `style={{…}}` like any
+ * other inspector edit, and ⌘Z undoes it.
+ */
+function makeParentRelative(nodeId: string): void {
+  useEditorStore.getState().setNodeInlineStyles(nodeId, { position: 'relative' })
+}
 
 interface ConstraintActionButtonsProps {
   constraint: EditConstraint
@@ -49,6 +62,7 @@ export function ConstraintActionButtons({ constraint, nodeId, onActionSettled }:
         const run = resolveConstraintAction(action, {
           nodeId,
           openSource: jumpToSource,
+          makeParentRelative,
           ...(onActionSettled ? { onSettled: (ok: boolean) => onActionSettled(action, ok) } : {}),
         })
         return run ? (

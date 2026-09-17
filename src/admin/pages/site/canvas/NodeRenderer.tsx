@@ -582,14 +582,11 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // entire canvas. The boundary scope is per-module render path; the rest
   // of the page tree keeps working. resetKeys on the moduleId means an
   // editor swap to a different module clears any stuck error.
-  // silentToast: the canvas-level boundary already toasts; 100 nodes with
-  // one bad module would otherwise produce 100 identical toasts per render.
+  // The boundary renders its fallback in place and stays silent — that is
+  // now the default for every seam but `admin-shell`, so the explicit
+  // `silentToast` this used to carry is gone.
   return (
-    <ErrorBoundary
-      location="node-renderer"
-      resetKeys={[node.moduleId, nodeId]}
-      silentToast
-    >
+    <ErrorBoundary location="node-renderer" resetKeys={[node.moduleId, nodeId]}>
       {shouldRenderSandbox ? (
         <ModuleSandboxFrame
           moduleDefinition={definition}

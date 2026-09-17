@@ -25,6 +25,7 @@ import { cn } from '@ui/cn'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
+import { Select } from '@ui/components/Select'
 import { ScrubInput } from '@ui/components/ScrubInput'
 import { ColorValueInput } from '@site/property-controls/ColorValueInput'
 import { SelectControl } from '@site/property-controls/SelectControl'
@@ -232,7 +233,7 @@ export function BackgroundLayerPopoverBody({
 
       <div className={styles.sizingGroup}>
         <p className={styles.sizingHeading}>Layer</p>
-        {BACKGROUND_SATELLITE_PROPS.map((prop) => (
+        {popoverSatelliteProps(model, index).map((prop) => (
           <LayerSatelliteRow
             key={prop}
             model={model}
@@ -244,6 +245,85 @@ export function BackgroundLayerPopoverBody({
         ))}
       </div>
     </div>
+  )
+}
+
+/**
+ * Which satellites the layer popover still draws. `background-blend-mode` is
+ * NOT one of them: it moved out to the layer's own row (`LayerBlendSelect`),
+ * where Figma puts a fill's blend mode — visible without opening anything,
+ * beside the fill it composites. It comes BACK here only when the declaration
+ * could not be split per layer, because the row's per-layer select would then
+ * have nothing honest to write and the raw text field is the only edit left.
+ */
+function popoverSatelliteProps(model: BackgroundModel, index: number): ReadonlyArray<BackgroundSatelliteProp> {
+  return BACKGROUND_SATELLITE_PROPS.filter(
+    (prop) => prop !== 'backgroundBlendMode' || backgroundLayerSatellite(model, prop, index).kind === 'raw',
+  )
+}
+
+/**
+ * One fill layer's blend mode, on the layer's own row.
+ *
+ * `mix-blend-mode` is the ELEMENT's blend against what is behind it and lives
+ * in the Layer section; there is no CSS property that blends one fill of an
+ * element against another fill of the same element in general. What CSS does
+ * have — and what Figma's per-fill Blend really maps onto here — is
+ * `background-blend-mode`: a per-layer list composited within the element's
+ * own background stack. So this control appears on `background-image` layer
+ * rows only, and the Text / Content-fit / Solid-fill rows deliberately have no
+ * blend control at all rather than a decorative one that writes the
+ * element-level property behind the user's back.
+ *
+ * Writing one layer's blend emits the whole list — CSS has no "leave the other
+ * layers alone" syntax, so the untouched layers are written with the initial
+ * the browser was already using (`setBackgroundLayerSatellite`). When the
+ * declared list is shorter than the layer count CSS repeats it cyclically,
+ * which means the value is not this layer's alone; the select says so in its
+ * title rather than letting the edit surprise the user.
+ */
+export function LayerBlendSelect({
+  model,
+  index,
+  onModelChange,
+}: {
+  model: BackgroundModel
+  index: number
+  onModelChange: (next: BackgroundModel) => void
+}) {
+  const view = backgroundLayerSatellite(model, 'backgroundBlendMode', index)
+  const keywords = getEnumOptions('backgroundBlendMode') ?? []
+  const shared = view.kind === 'value' && view.shared
+  const refused = view.kind === 'raw' ? view.reason : undefined
+
+  return (
+    // The row itself is clickable (`PropertyList` opens the layer popover), so
+    // the select is guarded the same way `ColorFieldRow`'s own input is.
+    <span
+      className={styles.layerBlendGuard}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+    <Select
+      fieldSize="xs"
+      aria-label={`Blend mode, layer ${index + 1}`}
+      title={
+        refused ??
+        (shared ? 'This background-blend-mode is shared by every layer — editing it splits the list.' : undefined)
+      }
+      disabled={refused != null}
+      value={view.kind === 'value' ? view.value : ''}
+      options={[
+        { value: '', label: BACKGROUND_SATELLITE_INITIALS.backgroundBlendMode },
+        ...keywords.map((keyword) => ({ value: keyword, label: keyword })),
+      ]}
+      className={styles.layerBlendSelect}
+      data-testid={`fill-layer-${index}-blend`}
+      onChange={(e) =>
+        onModelChange(setBackgroundLayerSatellite(model, 'backgroundBlendMode', index, e.target.value || undefined))
+      }
+    />
+    </span>
   )
 }
 

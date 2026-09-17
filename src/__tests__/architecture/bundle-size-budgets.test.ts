@@ -163,7 +163,16 @@ const BUDGETS: ChunkBudget[] = [
     // chunks (`plugin-sdk`, `plugin-host-ui`, `usePluginEventBridge`,
     // `pluginRuntimeBootstrap`, `plugin-host-hooks`) that a Studio session no
     // longer downloads — a ~105:1 trade. Measured 36,647 B.
-    maxBytes: 36_700,
+    //
+    // Raised 36.7 KB -> 39.4 KB for Z6's `SaveStatusChip`: always-visible
+    // toolbar chrome (a failed save has to be visible the moment it happens,
+    // so a lazy boundary would be both slower and larger than the component).
+    // Measured both ways on the same tree: 36,390 B without it, 38,193 B with
+    // — +1,803 B, all of it the chip's own compiled output. Audited: the
+    // `studioStructuralCommits` import it adds does NOT move that module,
+    // which already lives in the shared `store-*` chunk this route loads
+    // ("Still writing your last change" occurs 0 times in `SitePage-*.js`).
+    maxBytes: 39_400,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +
@@ -179,7 +188,21 @@ const BUDGETS: ChunkBudget[] = [
     // RefusalDialog — all genuinely new post-paint editor-body code, not a
     // lazy-boundary leak. Measured 834,254 B; headroom left for the
     // remaining 7 P3 sections still to land the same way.
-    maxBytes: 850_000,
+    //
+    // Raised 850,000 -> 880,000 for the Figma-feel wave 1 integration.
+    // Measured 861,893 B — +27,639 B, and every kilobyte of it is new
+    // post-paint editor-body behaviour rather than a lazy-boundary leak:
+    // K5's `MeasureLayer` + measure geometry, S2/K2/K6's drag session
+    // (`canvasDragSession`/`canvasDragPainter`/`canvasDragAutoPan`/
+    // `canvasFreeMove`), S1's mount pool and poster queue, K1's key
+    // dispatcher and its six scope hooks, Z5/P8's diagnostics buffer +
+    // `PlayCrashCard`/`LiveRuntimePill`/`LiveAutoPromoteNotice`, P7's
+    // trigger and smart-animate runtime, and P9/S5's inspector sections.
+    // Audited against the route shell: `SitePage-*.js` measured 37,632 B
+    // against its own 39,400 cap, so none of it leaked forward of the
+    // lazy boundary. ~18 KB of headroom left; the next raise should be
+    // preceded by an audit of what is actually in this chunk.
+    maxBytes: 880_000,
     rationale:
       'post-paint Site editor body (canvas + panels + modules + publisher). ' +
       'Current ~815 KB raw / ~271 KB gzipped after the 2026-09-14 P3/Track-L/R2 ' +

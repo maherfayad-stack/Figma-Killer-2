@@ -2,6 +2,7 @@ import { describe, test, expect, afterEach } from 'bun:test'
 import { Type } from '@core/utils/typeboxHelpers'
 import { anthropicDriver } from '../../../server/ai/drivers/anthropic'
 import {
+  MAX_TOOL_ROUNDS,
   PROVIDER_RETRY_IMAGE_OMITTED,
   messageCacheBreakpoints,
   projectHeavyElision,
@@ -105,7 +106,7 @@ function makeRequest(
     name: 'paint',
     description: 'a browser tool',
     scope: 'site',
-    execution: 'browser',
+    execution: 'bridge',
     inputSchema: Type.Object({}),
   }
   return {
@@ -336,6 +337,151 @@ describe('runToolLoop via anthropicDriver', () => {
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: 'error' })
     expect((events[0] as { message: string }).message).toContain('Your history is still saved')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Z3 — the loop's two ceilings
+// ---------------------------------------------------------------------------
+
+/** A mutating server tool that records every input its handler actually ran with. */
+function mutatingTool(calls: unknown[]): AiTool {
+  return {
+    name: 'site_duplicate_node',
+    description: 'duplicates a node',
+    scope: 'site',
+    execution: 'server',
+    mutates: true,
+    inputSchema: Type.Object({ nodeId: Type.Optional(Type.String()) }),
+    async handler(input) {
+      calls.push(input)
+      return { nodeId: 'node-2' }
+    },
+  }
+}
+
+describe('a repeated mutating call is answered, not re-executed', () => {
+  test('runs the write once however many times the model asks for it', async () => {
+    const handlerCalls: unknown[] = []
+    // Fifty identical calls, one per round — the shape the plan names: "a
+    // fixture model that emits the same call 50 times produces one write".
+    const requestBodies = scriptedFetch(
+      Array.from({ length: 50 }, (_, i) => toolUseTurn([{ id: `t${i}`, name: 'site_duplicate_node' }])),
+    )
+    const req = makeRequest({ async callBrowser() { return { ok: true } } }, [], {
+      tools: [mutatingTool(handlerCalls)],
+    })
+
+    const events: AiStreamEvent[] = []
+    for await (const event of anthropicDriver.stream(req)) events.push(event)
+
+    // ONE write. Every later call was answered without reaching the handler.
+    expect(handlerCalls).toHaveLength(1)
+
+    // And the SECOND ceiling stops the turn before all fifty rounds are paid
+    // for: a model repeating itself is not going to stop on its own.
+    expect(requestBodies).toHaveLength(MAX_TOOL_ROUNDS)
+    const last = events.at(-1) as { type: string; message: string }
+    expect(last.type).toBe('error')
+    expect(last.message).toContain('site_duplicate_node')
+
+    const toolResults = events.filter((e) => e.type === 'toolResult') as Array<{ ok: boolean; error?: string }>
+    expect(toolResults).toHaveLength(MAX_TOOL_ROUNDS)
+    expect(toolResults[0]!.ok).toBe(true)
+    expect(toolResults.slice(1).every((r) => r.ok === false)).toBe(true)
+    // The refusal SAYS why — a silent no-op would leave the model calling it
+    // another forty-nine times for the same lack of a reason.
+    expect(toolResults[1]!.error).toContain('already called this turn with identical arguments')
+
+    // And the model is told so structurally, carrying the first call's own
+    // outcome so it can carry on from a real result.
+    expect(JSON.stringify(requestBodies[1])).not.toContain('duplicate-call')
+    const thirdRoundBody = JSON.stringify(requestBodies[2])
+    expect(thirdRoundBody).toContain('duplicate-call')
+    expect(thirdRoundBody).toContain('priorResult')
+    expect(thirdRoundBody).toContain('node-2')
+  })
+
+  test('treats a different argument as a different call', async () => {
+    const handlerCalls: unknown[] = []
+    const withArg = (id: string, nodeId: string): string =>
+      sse(
+        { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id, name: 'site_duplicate_node', input: {} } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ nodeId }) } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+        { type: 'message_stop' },
+      )
+    scriptedFetch([withArg('a', 'n1'), withArg('b', 'n2'), withArg('c', 'n1'), TURN2])
+    const req = makeRequest({ async callBrowser() { return { ok: true } } }, [], {
+      tools: [mutatingTool(handlerCalls)],
+    })
+
+    for await (const _event of anthropicDriver.stream(req)) { /* drain */ }
+
+    // n1 and n2 both ran; the repeat of n1 did not.
+    expect(handlerCalls).toEqual([{ nodeId: 'n1' }, { nodeId: 'n2' }])
+  })
+
+  test('exempts read-only tools — re-reading is how a model checks its own work', async () => {
+    const serverCalls: unknown[] = []
+    scriptedFetch([
+      toolUseTurn([{ id: 'r1', name: 'echo' }]),
+      toolUseTurn([{ id: 'r2', name: 'echo' }]),
+      toolUseTurn([{ id: 'r3', name: 'echo' }]),
+      TURN2,
+    ])
+    const req = makeRequest({ async callBrowser() { return { ok: true } } }, serverCalls)
+
+    const events: AiStreamEvent[] = []
+    for await (const event of anthropicDriver.stream(req)) events.push(event)
+
+    expect(serverCalls).toHaveLength(3)
+    expect((events.filter((e) => e.type === 'toolResult') as Array<{ ok: boolean }>).every((r) => r.ok)).toBe(true)
+  })
+})
+
+describe('the tool-round cap', () => {
+  test('ends the turn with one error naming the last tool, and persists the usage first', async () => {
+    const serverCalls: unknown[] = []
+    const requestBodies = scriptedFetch(
+      Array.from({ length: 10 }, (_, i) => toolUseTurn([{ id: `e${i}`, name: 'echo' }])),
+    )
+    const req: AiStreamRequest = {
+      ...makeRequest({ async callBrowser() { return { ok: true } } }, serverCalls),
+      maxToolRounds: 3,
+    }
+
+    const events: AiStreamEvent[] = []
+    for await (const event of anthropicDriver.stream(req)) events.push(event)
+
+    // Three provider rounds, then the loop stops it — the fourth POST is never made.
+    expect(requestBodies).toHaveLength(3)
+    expect(serverCalls).toHaveLength(3)
+
+    const last = events.at(-1) as { type: string; message: string }
+    expect(last.type).toBe('error')
+    expect(last.message).toContain('3 tool rounds')
+    expect(last.message).toContain('echo')
+    // Usage is emitted BEFORE the terminal error: the provider billed every
+    // one of those rounds whether or not the turn reached an answer.
+    expect(events.at(-2)?.type).toBe('usage')
+  })
+
+  test('leaves a turn that finishes inside the cap alone', async () => {
+    const serverCalls: unknown[] = []
+    scriptedFetch([toolUseTurn([{ id: 'e0', name: 'echo' }]), TURN2])
+    const req: AiStreamRequest = {
+      ...makeRequest({ async callBrowser() { return { ok: true } } }, serverCalls),
+      maxToolRounds: 3,
+    }
+
+    const events: AiStreamEvent[] = []
+    for await (const event of anthropicDriver.stream(req)) events.push(event)
+
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text).join('')).toBe('all done')
   })
 })
 

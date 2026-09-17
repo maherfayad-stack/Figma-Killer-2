@@ -63,6 +63,22 @@ export const TreeOperationSchema = Type.Union([
       defaults: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
     }, { additionalProperties: false }),
   }, { additionalProperties: false }),
+  // K3 — ⌘G / ⌘⇧G. `groupNodes` is `wrapNode` widened to a CONTIGUOUS RUN of
+  // siblings (one container around all of them); `ungroupNode` is its inverse,
+  // hoisting a container's children into its own place. Both ride the same
+  // source gate every other structural op does — see `applyTreeOperation`.
+  Type.Object({
+    kind: Type.Literal('groupNodes'),
+    nodeIds: Type.Array(Type.String(), { minItems: 1 }),
+    wrapper: Type.Object({
+      moduleId: Type.String(),
+      defaults: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    }, { additionalProperties: false }),
+  }, { additionalProperties: false }),
+  Type.Object({
+    kind: Type.Literal('ungroupNode'),
+    nodeId: Type.String(),
+  }, { additionalProperties: false }),
   Type.Object({
     kind: Type.Literal('deleteNode'),
     nodeId: Type.String(),

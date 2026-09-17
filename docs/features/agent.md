@@ -25,6 +25,7 @@ The agent runs on a provider-agnostic AI runtime (`server/ai/`) that can drive a
 ```text
 src/core/ai/
 ├── toolOutput.ts           — AiToolOutput type + AiToolOutputSchema + aiToolOk / aiToolError
+├── turnBudget.ts            — AGENT_TURN_ROUND_BUDGET + parseTurnStepReport / formatTurnProgress (A9; shared by the server prompt and the panel)
 ├── toolSchemas.ts          — all site write-tool schemas; provider/execution layers for site_apply_css share field definitions here
 └── index.ts                — barrel re-export (canonical @core/ai import path)
 
@@ -342,6 +343,8 @@ Same cacheable 3-element form as the CMS prompt. Its job shrank to what a genera
 
 The "Tools available" line is exactly `STUDIO_AGENT_TOOL_NAMES` (`agentToolNames.ts`, the same list `index.ts` resolves into real `AiTool` objects), so the prompt cannot advertise a tool the agent is not offered.
 
+The static prefix also states the turn's **step budget** and asks for `step k/N` reports (A9 — see "A turn has a budget and shows its work" below), and ends with the two per-turn blocks that vary with the session controls: `MODE_BLOCK[fidelityMode]` and `DESIGN_POLICY_BLOCK[designPolicy]`. Both tables live in **`promptSessionBlocks.ts`**, split out of this module on that seam — the invariant half of the prompt, and the half that varies with the two controls — when it crossed the 700-line module ceiling. They stay part of the *prefix* so each (mode, policy) pair is its own stable prompt-cache partition.
+
 The dynamic suffix carries the project profile, trust tier, the live board/selection/fidelity digest (`liveDigest.ts`), and the `Design references registered:` line — what `studio_compare` can measure against this turn, or an explicit statement that nothing is armed.
 
 ### The Studio toolset (`server/ai/tools/studio/index.ts`)
@@ -354,20 +357,124 @@ What survives is what the filesystem cannot do: see the canvas (`studio_screensh
 
 **Deliberately withheld from every tool, no exceptions:** a shell, and trust promotion. An agent may *ask* the user to promote a project's trust tier; it may never perform the promotion itself.
 
+### How a Studio tool refuses
+
+Every `studio_*` tool answers a refusal in one shape, from one builder
+(`toolRefusal` in `src/core/ai/toolRefusal.ts`):
+
+```
+{ ok: false, code, message, remedy?, retryable, error }
+```
+
+Before A14 a refusal was whatever each tool felt like returning — a bare
+`aiToolError('No screen matched "Chekout"...')` in one file, an
+`{ ok: false, code }` in another, an `{ ok: false, error }` with no code in a
+third. The consumer is often a small model, and it paid for all three: nothing
+was machine-readable, so it pattern-matched on prose; nothing said whether a
+retry was pointless, which is the single largest source of wasted rounds in an
+observed turn; and nothing said what to do instead.
+
+**`retryable` means one specific thing:** *this identical call could succeed
+once some external condition changes, with no change to your arguments.* A
+disconnected board can reconnect; a transient IO error can clear. A page that
+does not exist will not start existing because you asked twice, and a project
+at Tier 0 will not promote itself. It is derived from the code, never passed in
+per call, so two call sites cannot disagree about the same code. The system
+prompt's failure list states the consequence as a rule: a `retryable: false`
+code is never retried with the same args.
+
+**The code is also rendered into `error`.** Every consumer path reduces a
+failed tool result to its `error` STRING and nothing else — `mcp/server.ts`'s
+`CallToolResult` builder, and the three `toolResultText` helpers in the
+drivers. So `error` ends with `[code=<code> retryable=<true|false>]`; a
+structured field the model never sees would be decoration.
+
+`studio_compare`'s per-page `results[]` entries carry the same
+`code`/`remedy`/`retryable` triple without the refusal envelope — the call
+itself succeeded, one page inside it did not.
+
+<!-- refusal-codes:start -->
+
+| Code | Retryable | Meaning |
+|---|---|---|
+| `ambiguous-reference` | no | Two or more equally-ranked design references could stand in for this page. Name one explicitly with referenceId. |
+| `asset-write-failed` | no | Bytes were obtained but could not be landed as a project file (validation, containment, or naming). |
+| `capture-unavailable` | no | Neither the headless browser nor a live tab could produce the capture. Usually a missing Chromium (`bunx playwright install chromium`) — report it, do not re-capture. |
+| `codemod-refused` | no | The AST edit has no single honest target, or would destroy a binding. The refusal names the reason. |
+| `crop-out-of-bounds` | no | The requested rectangle falls outside the source image. Deliberately refused rather than clamped — a silently clamped crop is a wrong asset that looks right. |
+| `dev-server-failed-to-boot` | no | The project's own dev script did not come up. The refusal carries the captured stdout/stderr tail — read it, fix the cause, then call again. |
+| `duplicate-call` | no | This exact mutating call, with these exact arguments, already ran this turn. The loop answered from the first call's result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it. |
+| `empty-body` | no | A comment reply needs a non-empty body. |
+| `empty-file-list` | no | The operation needs at least one file and none was usable. |
+| `git-failed` | no | git itself refused. The message is git's own — a missing git identity and an empty commit both land here. |
+| `image-decode-failed` | no | Image bytes were found but could not be decoded as a raster image. |
+| `invalid-input` | no | The arguments are self-contradictory or incomplete in a way the schema cannot express (e.g. exactly one of three fields required). |
+| `invalid-message` | no | A commit message outside the accepted length range. |
+| `invalid-path` | no | A named path is not usable for this operation — not project-relative, or in a never-committable area (build output, node_modules, .git, .studio). |
+| `io-error` | yes | An unexpected filesystem or subprocess error. The message carries the underlying cause. |
+| `measure-unavailable` | no | The headless browser could not render the screen to measure it. Same cause and same remedy as capture-unavailable. |
+| `missing-param` | no | A parameter this particular verb/mode requires was not supplied. |
+| `no-board-connected` | yes | This tool needs the project open in a Studio browser tab, and none is connected. The server already waited for a reconnecting tab before answering. |
+| `no-board-frame` | no | The page exists but has no frame placed on the board yet. |
+| `no-design-reference` | no | This page has no design to measure against — either nothing is registered for the project, or every registered reference belongs to a different screen. Register one, or say plainly that there is no design rather than guessing a score. |
+| `no-package-json` | no | This project has no package.json, so there is no dependency manifest to act on. |
+| `no-such-file` | no | No readable regular file at that project-relative path, or it exceeds the read cap. |
+| `no-such-job` | no | No background job with that id — it expired, or the id is wrong. |
+| `no-such-page` | no | No screen in this project matched the given name or page id. The refusal lists the names that do exist. |
+| `no-such-reference` | no | No design reference is registered under that id for this project. |
+| `no-such-thread` | no | No comment thread with that seq exists on the board. |
+| `no-such-variable-set` | no | No design-variable set is ingested under that id for this project. |
+| `no-such-variant-set` | no | No variant set is recorded under that id for this project. |
+| `no-tsconfig` | no | The project has no tsconfig.json, so there is no project config to type-check under. |
+| `no-writable-location` | no | The node has no single honest source location to write to — a synthetic node, or one produced inside a `.map` iteration. |
+| `not-a-file` | no | The path exists but is a directory or another non-regular file. |
+| `not-a-repository` | no | This project has no git repository of its own. Ask the user to create one from the Version control panel — you may not create it yourself. |
+| `outside-workspace` | no | The directory given is not a Studio project. |
+| `path-outside-project` | no | The path resolves outside the project directory. Containment is absolute. |
+| `reference-unreadable` | no | A registered design reference is on the books but its file could not be read from disk. |
+| `remote-fetch-failed` | no | A remote URL could not be fetched, was refused by the SSRF guard, or exceeded the size cap. |
+| `render-failed` | no | The dev server is up but the route could not be rendered or screenshotted. |
+| `stale-anchor` | no | A comment thread's anchored element has moved or gone, so resolving it would attach the reply to the wrong thing. |
+| `strict-mode-stand-in-refused` | no | Strict fidelity mode will not measure against a stand-in reference. Register the real design as a spec first. |
+| `trust-tier-required` | no | This project's trust tier is below what the operation needs. Ask the user to promote it — you may never promote it yourself, so the same call will keep refusing until they do. |
+| `tsc-invocation-error` | no | tsc itself could not run — a broken toolchain or tsconfig, not a code error. The refusal carries a capped output excerpt. |
+| `typecheck-timed-out` | no | tsc was killed before it finished. Any diagnostics it had already printed are returned and `pass` is forced false — an incomplete run never reports a pass. |
+| `typescript-not-installed` | no | The project has no TypeScript of its own to type-check with. Studio never substitutes its own — the refusal carries the install command to ask for. |
+| `unknown-verb` | no | The requested operation name is not one this tool implements. |
+| `write-conflict` | no | The write would collide with something already on disk, and overwriting it is not this tool's decision to make. |
+
+<!-- refusal-codes:end -->
+
+Gates: `src/core/ai/toolRefusal.test.ts` (the shape and the rendering) and
+`src/__tests__/architecture/studio-tool-refusals-are-coded.test.ts` (no
+code-less `aiToolError` under `server/ai/mcp/tools/studio/`, every produced
+code in the vocabulary, every code in this table and vice versa, and the
+Retryable column matching the source).
+
 ### Studio tool index
 
 Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "Gate" is the tool's own `requiredCapabilities` / `mutates` posture; a **read** row is reachable by any `ai.chat` caller. Prose for each group follows below.
 
+"Where it runs" is the tool's own `execution` field, which has exactly three values (`server/ai/runtime/toolExecution.ts`):
+
+| `execution` | Dispatch | Needs the open board? |
+|---|---|---|
+| `server` | in-process | never |
+| `server-with-bridge-fallback` | in-process, headless first; relays to an open board only when the headless path cannot run, or when the caller explicitly wants the live tab's own state | never — it gets slower without one, not unavailable |
+| `bridge` | relayed whole by the runner when the tool declares no handler; dispatched in-process when it does, in which case the handler owns the relay and the "no board" message | **yes** — no board means a refusal |
+
+**The prompt's live-tab claim is generated from this field.** The static prefix used to name `studio_computed_styles` and `studio_page_diagnostics` by hand as the tools that require the open board. That was true when it was written and became false in `mcp-20`, when `studio_computed_styles` went headless — and nothing caught it, because a prompt string has no compiler. The failure mode is the expensive kind: the agent does not get an error, it simply stops calling a tool that works, and reports "the project is not open" on a question that would have been answered off disk. Both halves of that paragraph are now built by `buildBoardRequirementParagraph` from the caller's own capability-filtered tool array, and `src/__tests__/architecture/prompt-claims-match-tool-metadata.test.ts` asserts the generated sentence names **exactly** the `bridge`-only set.
+
 | Tool | Where it runs | Gate | One line |
 |---|---|---|---|
-| `studio_screenshot` | server (headless capture, live tab fallback) | read | Sync frames from disk, wait for the reload, capture. The agent's eyes |
-| `studio_compare` | server | read | Capture + score against the page's registered design reference in one call. The agent's ruler |
+| `studio_screenshot` | `server-with-bridge-fallback` | read | Sync frames from disk, wait for the reload, capture. The agent's eyes |
+| `studio_compare` | `server-with-bridge-fallback` | read | Capture + score against the page's registered design reference in one call. The agent's ruler |
 | `studio_measure_reference` | server | read | Read the design's own colours, type sizes and line-heights out of the reference, in CSS px |
-| `studio_computed_styles` | browser (live board) | read | What the CSS actually resolved to on the canvas — real px, real weight, real colour, real font |
-| `studio_page_diagnostics` | server → live board | read | What the screen's runtime said: exceptions, `console.error`, failed assets/modules/fetches |
-| `studio_render_reference` | server | `studio.run.project` | Boot the project's OWN dev server and screenshot a route through it. Tier 2 only |
-| `studio_quality_check` | server (headless) | read | Reference-free source audit: raw hex/px where a token exists, AA contrast, hand-rolled icons, design-system coverage, spacing/type-scale composition |
-| `studio_plan_variants` | server | `studio.write` | N style seeds for one brief, each drawn from the project's own tokens, plus a self-contained subagent directive per variant |
+| `studio_computed_styles` | `server-with-bridge-fallback` | read | What the CSS actually resolved to on the canvas — real px, real weight, real colour, real font |
+| `studio_page_diagnostics` | `bridge` (needs the open board) | read | What the screen's runtime said: exceptions, `console.error`, failed assets/modules/fetches |
+| `studio_render_reference` | server | `studio.run.project` **and** the project at `run-project` trust | Boot the project's OWN dev server and screenshot a route through it. Tier 2 only |
+| `studio_quality_check` | server (headless) | read | Reference-free source audit: raw hex/px where a token exists, AA contrast, hand-rolled icons, design-system coverage, spacing/type-scale composition, band rhythm and focal point. Severities come from the turn’s design policy |
+| `studio_plan_variants` | server | `studio.write` | N style seeds for one brief — the project's own tokens, and a layout-archetype SEQUENCE so A/B/C differ in structure — plus a self-contained subagent directive per variant |
 | `studio_list_variant_sets` | server | read | Read back a recorded seed set, so "make B but tighter" is an edit to B's density rather than a re-roll |
 | `studio_typecheck` | server (subprocess) | `studio.write` + trust ≥ Tier 1 | Run the project's own `tsc --noEmit` and return structured diagnostics |
 | `studio_fidelity_report` | server | read | The machine-readable "what will not import faithfully", as stable codes with a fix |
@@ -389,7 +496,7 @@ Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "
 | `studio_list_tokens` | server | read | The project's colours and type/spacing scales, projected small |
 | `studio_list_components` | server | read | The design system's real component API — the same catalog the insert palette shows |
 | `studio_find_component` | server | read | The narrow lookup into that catalog, by component name and/or a prop it declares |
-| `studio_upload_asset` | browser (live board) | `studio.write` | Land bytes the model holds as a new image file in the project |
+| `studio_upload_asset` | `bridge` (needs the open board) | `studio.write` | Land bytes the model holds as a new image file in the project |
 | `studio_fetch_remote_asset` | server | `studio.write` | Fetch a URL server-side and land it as a project image; bytes never transit the model |
 | `studio_extract_reference_asset` | server | `studio.write` | Crop artwork out of the registered reference when it exists nowhere else |
 | `studio_install_deps` | server (background job) | `studio.write` + trust ≥ Tier 1 | Start a `bun install --ignore-scripts` job; returns a `jobId` |
@@ -414,8 +521,24 @@ Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "
 | `studio_delete_design_variable_set` | `studio.write` | Remove an ingested variable set; idempotent |
 | `studio_list_component_bindings` | read | The raw Figma Code Connect `*.figma.tsx` mapping data, including every per-value label pair |
 | `studio_read_package_doc` | read | A dependency's own markdown docs **by section** — `outline: true`, then `section: "<heading>"` |
-| `studio_git_commit` | `studio.git.write` | Commit an explicit file list. No push, no branch, no init — publishing is the user's decision |
+| `studio_git_status` | read | Branch, upstream divergence, and every changed path with its staged/unstaged/untracked state. `isRepo:false` is a normal answer. A read on purpose: reporting what you changed must not need permission to commit it |
+| `studio_git_branch` | `studio.git.write` | `list` / `create` (allowed with a dirty tree — a pointer move loses nothing) / `switch` (refuses over a dirty tree, naming the files; Studio never stashes) |
+| `studio_git_commit` | `studio.git.write` | Commit an explicit file list. Stages exactly those paths, never `add -A` |
+| `studio_git_push` | `studio.git.write` | `--set-upstream origin <branch>`. Never a force push — no parameter and no route could make it one. Authentication is the user's own connected GitHub account or host credential helper |
+| `studio_git_open_pr` | `studio.git.write` | Open a GitHub pull request for the current branch, with base/title/body defaulted from the repository. No token → a named refusal carrying the compare URL |
 | `studio_import_project` | `studio.write` | The GitHub-import engine, exposed headlessly |
+
+**The git family, and the line it does not cross.** The five `studio_git_*`
+tools are the whole publish sentence — *status → branch → commit → push → open a
+PR* — and all four mutating ones sit behind the single `studio.git.write`
+capability, which is **not** granted to the built-in Admin role. That grant is
+the human decision; requiring it again per call bought no safety and produced
+an agent that could build a branch and then not ship it. A pull request is
+where the sentence ends, because a proposal a human reviews is the right shape
+of consent for delegated work. There is deliberately **no** `init`, `restore`,
+`pull`, `merge`, `rebase` or conflict-resolution tool: each of those can
+overwrite work the user has on screen and cannot see being overwritten, which
+is exactly why the Version control panel shows them a list instead.
 
 **Non-Studio MCP tools.** `get_context` (`mcp/tools/contextTool.ts`) is the orientation call for the CMS half: it reports whether the Site editor is connected — every browser tool needs it — and which templates wrap pages, so an agent knows what its authored markup is *in addition to*. Headless; call it first when a browser tool answers "open the workspace". `mcp_list_project_servers` and `mcp_propose_server` (`mcpServerTool.ts`) cover external MCP servers: the first lists every project-declared (`.mcp.json`) and Studio-registered server with its approval state and its *secret field names* — never a secret value; the second registers a proposal that is saved **unapproved and cannot be approved by any tool or agent**, so the honest report to the user is "proposed, needs your review", never "set up". `site_read_styles` and `site_list_breakpoints` (`styleTools.ts`) are headless replacements for their snapshot-backed `site_*` siblings, which read a browser-posted snapshot that is `null` over MCP; `site_publish` (`publishTool.ts`) is the one explicitly capability-gated write that leaves draft state. The CMS `site_*` toolset itself is tabulated under [Tools](#tools) below.
 
@@ -484,7 +607,7 @@ One control that says how much invention is wanted and how hard the measurement 
 
 The numbers in the blocks are interpolated from `FIDELITY_THRESHOLDS`, so the prompt cannot state a threshold the tool does not apply.
 
-**Creative's variants are generated, not asked for.** The `creative` block asks for more than one idea, and asking is not enough for a measurable reason: a model given one brief three times returns the same composition three times, because nothing in the second prompt differs from the first. The variance has to come from **outside** the model. `studio_plan_variants` (`server/handlers/studio/variantSeeds.ts`) generates it — one **style seed** per variant over four axes (type contrast, spacing density, corner family, accent), assigned **without replacement** so distinctness is structural rather than hoped for, and every value taken from a token **this project already declares**. Variety bought by breaking the design system is not variety, it is three screens that fail `studio_quality_check`'s own `raw-hex-color`/`off-scale-*` rules; the type-contrast pool is bounded below by the same `MIN_TYPE_HIERARCHY_RATIO` that `flat-type-hierarchy` grades against — imported, not restated — so a seed can never propose a screen its own audit would then fail, and the density multipliers are whole multiples of the project's spacing base for the same reason.
+**Creative's variants are generated, not asked for.** The `creative` block asks for more than one idea, and asking is not enough for a measurable reason: a model given one brief three times returns the same composition three times, because nothing in the second prompt differs from the first. The variance has to come from **outside** the model. `studio_plan_variants` (`server/handlers/studio/variantSeeds.ts`) generates it — one **style seed** per variant over five axes (type contrast, spacing density, corner family, accent, and A13’s layout-archetype sequence), assigned **without replacement** so distinctness is structural rather than hoped for, and every value taken from a token **this project already declares**. Variety bought by breaking the design system is not variety, it is three screens that fail `studio_quality_check`'s own `raw-hex-color`/`off-scale-*` rules; the type-contrast pool is bounded below by the same `MIN_TYPE_HIERARCHY_RATIO` that `flat-type-hierarchy` grades against — imported, not restated — so a seed can never propose a screen its own audit would then fail, and the density multipliers are whole multiples of the project's spacing base for the same reason.
 
 Each variant comes back with a page name (`Home` → `HomeA`/`HomeB`/`HomeC`) and a **self-contained `directive`** — the exact subagent prompt, since a subagent sees only the text it is sent. The tool **plans**; it does not create the pages or place them on the board, because page creation and `.studio/boards.json` are the orchestrator's alone under the parallel-work rules above. The set is recorded in **`.studio/variants.json`** (`variantStore.ts`, a sibling of `boards.json`, validated on read and capped at 20 sets) with its `rngSeed`, so a later "make B but tighter" is an **edit to B's recorded density** — `studio_list_variant_sets` — and not a re-roll that loses everything the user liked.
 
@@ -498,7 +621,44 @@ The Stop hook (`hooks/stopGateCheck.ts`) is a standalone `bun` subprocess with a
 
 **UI.** A third `ContextMenu` trigger in `AgentSessionControls.tsx`, beside permission mode. `Project default` is a first-class option (the store value is `null`), which is how a user undoes a session override without guessing what the project is set to. It **persists**, unlike permission mode, and the asymmetry is deliberate: permission mode is not written to disk because a reset must never land a user in a *looser* state than they chose, and fidelity mode has no looser-than-chosen state to land in — clearing it hands the decision back to the project default and then to the derived value, both of which somebody already made.
 
-**Not done (W9-3):** the creative and balanced halves of the mode-aware Stop gate. Creative's DONE is a passing `quality_check` since the last write, which needs a quality-check verification record that does not exist yet; balanced's "every deviation named" is not machine-checkable from the gate's side. Both currently fall through to the pre-W9-2 rule (any post-write passing compare), which is the safe direction — it asks for a measurement, it never waves a page through.
+**The mode-aware Stop gate, finished (A9).** Each mode now defines "verified since the write" the way its own DONE definition does, so the gate never asks for a measurement the mode does not define. `computePageWriteVerification(dir, userKey, pages, { fidelityMode, replyText })`:
+
+| Mode | The gate's bar | Evidence it reads |
+|---|---|---|
+| `creative` | a **clean `studio_quality_check`** since the last write — there may be no reference at all, so a compare is not the bar | `pageVerificationStore.qualityChecks[pageId]`, written by the tool for every page whose run returned **no ERROR-severity finding** under the turn's design policy |
+| `balanced` | a compare has **RUN** since the last write, and every region that still differs is **fixed or NAMED** in the reply | `pageVerificationStore.compareVerdicts[pageId]` (written for every `ok` verdict, pass **or** fail, with its region labels) plus the turn's trailing assistant reply |
+| `strict` | unchanged — a passing compare graded **at strict** | `pageVerificationStore.pages[pageId]` + its recorded `fidelityMode` |
+
+Two mechanisms make balanced's half machine-checkable, which it previously was not:
+
+- **A stable, quotable region label.** `compareRegionLabel(index, top)` produces `R1@y412` — short enough that an agent will paste it into a sentence, unique enough that two regions on one screen never collide. `studio_compare` returns it on every region (`results[].regions[].label`) and the gate looks for exactly that string. One function, beside the store the gate reads, so the tool and the gate can never print and search different formats.
+- **The reply is read from the CLI's own transcript.** The `Stop` hook payload carries `transcript_path`; `hooks/stopHookTranscript.ts` reads only the tail, only the trailing assistant text (never back past the last user turn — a region named three turns ago was named about a screen that has since been rewritten), and returns `undefined` on any failure. No reply means nothing counts as named, which is the safe direction *and* the truth at that moment.
+
+A passing compare still short-circuits balanced through either record, because the two are written by different calls and a page that passed is verified whether or not a verdict row happens to sit beside it.
+
+### Design policy — `follow` / `balanced` / `free` (A12)
+
+A **second axis**, beside fidelity mode, and the reason it is not more values on the first is that the two combine in both directions. Fidelity grades against a **reference**; design policy grades against the **project's own tokens and components**. `strict` + `free` is "the comp is the spec, the design system is not". `creative` + `follow` is "invent something new, entirely out of our own vocabulary" — the position the owner asked for by name, and one a single combined control could never express.
+
+| Policy | Design-system findings | The prompt block says |
+|---|---|---|
+| `follow` | **errors** | tokens and this project's own components only; where the system has no token, say which gap you hit rather than quietly writing the raw value |
+| `balanced` (default) | **warnings** | prefer tokens and components; a one-off is allowed and its price is one sentence in the reply naming which and why |
+| `free` | **not produced at all** | the design system is optional — spend that on a distinct visual language, not on arbitrariness |
+
+The governed set is exactly `raw-hex-color`, `raw-px-length`, `off-scale-spacing`, `off-scale-type-size`, `design-system-unused`, `design-system-coverage-low` (`DESIGN_SYSTEM_FINDING_CODES`). Everything else — contrast, a font the project cannot load, an unresolved asset import, a hand-drawn `<path>`, and **every** composition rule — is an error at every policy and no policy turns it off. `free` means "this screen need not use our design system", never "this screen may be broken or undesigned".
+
+A finding the policy turns off is **not produced**, not produced-and-labelled: a `free` turn handed eleven `raw-hex-color` findings marked "ignore me" reads as a failing audit to any model skimming a list, and the next thing it does is stop trusting the tool. `findingSeverity(code, policy)` is the single source for the split, shared by `studio_quality_check` and the Stop gate.
+
+**Resolution precedence** — `resolveDesignPolicy` (`server/handlers/studio/designPolicy.ts`), mirroring `resolveFidelityMode` minus the two tiers with no analogue (a design reference declares a fidelity about itself; it declares nothing about a component library): tool argument → per-turn `AiChatRequestBody.designPolicy` → `.studio/meta.json`'s `agentSession.byUser[<userKey>].designPolicy` → `balanced`. The disk half is `projectDesignPolicy.ts`, its own module for the same module-init cycle reason `projectFidelityMode.ts` is.
+
+**Never derived away from `balanced`.** `follow` would fail an ordinary from-scratch screen on a project whose design system may not even cover it; `free` would be the server silently dropping the design-system rules, which is a loosening it may never do on its own — the same one-directional rule `strict` states, pointing the other way.
+
+**Prompt.** `DESIGN_POLICY_BLOCK` is appended to the static prefix after `MODE_BLOCK`, so each (mode, policy) pair is its own stable cache partition. Both tables live in `server/ai/tools/studio/promptSessionBlocks.ts` — split out of `systemPrompt.ts` on the real seam (the invariant half of the prompt, and the half that varies with the two session controls) when the module crossed the 700-line ceiling.
+
+**Variant seeds honour it.** Under `follow`/`balanced` every seeded value is a token the project declares — a seed that invented `1.618` and `#7B61FF` would hand three subagents instructions their own `studio_quality_check` then fails. Under `free`, `generateVariantSeeds` draws from an extended pool: a wider type-contrast range (up to 4x, past what most project scales express), the whole radius vocabulary rather than only the families the project has tokens for, and a varied spacing **base** rather than only the density multiplier — two variants at one base and different densities are one system at two zoom levels, not two visual languages. A `free` seed names no token whose px is not the size it chose.
+
+**UI.** A fourth `ContextMenu` trigger in `AgentSessionControls.tsx`. `Project default` is again a first-class option (store value `null`), persisted through the same `GET/POST /admin/api/ai/studio-session` route and the same `agentSession` shape as fidelity mode, and safe to persist for the same reason: clearing it lands on `balanced`, which asks for **more** design-system discipline than `free`, never less.
 
 ### Arming the ruler — `turnDesignReferences.ts`
 
@@ -556,7 +716,7 @@ see in a picture but not name, so it "fixed" a value that was already correct:
   still being estimated off a screenshot.
 
 **W9-6 — neither needs a browser tab.** `studio_computed_styles` shipped as
-`execution: 'browser'`, so a project with no editor open spent ~8s in the bridge
+`execution: 'bridge'`, so a project with no editor open spent ~8s in the bridge
 and then refused — on a question whose whole subject matter is what is on disk.
 Both now render the screen on the same headless capture substrate
 `studio_screenshot` uses. `studio_computed_styles` keeps the live tab as its
@@ -608,11 +768,13 @@ It is explicitly second choice to a real source (the design system's own icon se
 
 Five tools that answer "is what I built actually right", each covering a channel the others are blind to. A screenshot is only one of them, and it is the one that lies most easily.
 
-**`studio_computed_styles`** (`browserBridgeTools.ts`, `execution: 'browser'`) is the only read in that file and the only one there that does not mutate. Per node it reports what the CSS *resolved to* on the live canvas: font-size and line-height in real px, font-weight, colour and background as rgb, and — the field a picture can never give — the font family the text is genuinely **set in**, as opposed to the declared stack. A stack whose first family never loaded looks identical to one that did, and that difference makes correct px look like the wrong size; every "fix" that follows edits a value that was already correct. It defaults to nodes with their own text (`textOnly`); pass `textOnly: false` for container padding, radius and background. This is the half of a fidelity loop that lets a difference be closed by arithmetic — diff these numbers against the design's own (a Figma connector's variable-definitions tool, or `studio_read_design_variable_set`) and fix whatever disagrees. It requires the project open in a Studio browser tab, because the numbers exist only where the frames are.
+**`studio_computed_styles`** (`computedStyles.ts`, `execution: 'server-with-bridge-fallback'`) is a pure read. Per node it reports what the CSS *resolved to* on the live canvas: font-size and line-height in real px, font-weight, colour and background as rgb, and — the field a picture can never give — the font family the text is genuinely **set in**, as opposed to the declared stack. A stack whose first family never loaded looks identical to one that did, and that difference makes correct px look like the wrong size; every "fix" that follows edits a value that was already correct. It defaults to nodes with their own text (`textOnly`); pass `textOnly: false` for container padding, radius and background. This is the half of a fidelity loop that lets a difference be closed by arithmetic — diff these numbers against the design's own (a Figma connector's variable-definitions tool, or `studio_read_design_variable_set`) and fix whatever disagrees. It does **not** need a Studio browser tab: since `mcp-20` it renders the screen on the same headless capture substrate `studio_screenshot` uses, keeping the open tab only as a fallback (`readVia` says which answered). The system prompt claimed the opposite for months — see "The prompt's live-tab claim is generated" below.
 
 **`studio_page_diagnostics`** (`pageDiagnostics.ts`) reads what the screen's runtime *said*: uncaught exceptions, unhandled rejections, `console.error` output (how React reports a failed render, an invalid hook call and a hydration mismatch), assets that failed to load, module specifiers that did not resolve, and failed `fetch`es from inside the frame. It exists because a frame whose component throws photographs as a blank rectangle, honestly and with no error, and *every other tool agrees with the photograph* — compare reports ~100% different, quality-check reads a stylesheet that never ran, computed-styles reports an empty body. The loop that follows is screenshot, adjust CSS, screenshot, against a page that never executed; the one fact that ends it in a single step was in the frame's own console the whole time. Batch by name, one call per turn's worth of screens. Every finding carries a stable `code` from `@core/ai`'s `PAGE_DIAGNOSTIC_CODES` with that code's suggested `fix`, an occurrence count, and — when the failure is on a real element — the `file:line` its node id decodes to. It is a pure read and deliberately does **not** sync board frames from disk the way `studio_screenshot` does: placing a frame would be a mutation, and a page with no frame is a genuinely different answer, reported as `status: "no-frame"` rather than as clean. Like `studio_computed_styles` it needs a connected board, and says so in a message that tells the user the tab reconnects on its own.
 
-**`studio_render_reference`** (`referenceRender.ts`) is the Tier 2 outlier: it boots the **project's own** dev server (its `dev`/`start` script, via the detected package manager) and screenshots a `route` through a real headless browser at a given viewport — ground truth to compare a `studio_export_frames` capture against. It is the one Studio tool that executes the user's code, so it requires `studio.run.project`, which is never granted by default and never implicit. `route` must be a path the project's own router actually serves, which is not the same set as Studio's page slugs — a screen reachable only by tapping through the app has no route here. The dev server is reused across calls and torn down after `idleTimeoutMs`; a boot failure returns `ok: false` with the captured stdout/stderr tail rather than a synthetic result.
+**`studio_render_reference`** (`referenceRender.ts`) is the Tier 2 outlier: it boots the **project's own** dev server (its `dev`/`start` script, via the detected package manager) and screenshots a `route` through a real headless browser at a given viewport — ground truth to compare a `studio_export_frames` capture against. It is the one Studio tool that executes the user's code, so it is gated **twice** — and both gates are load-bearing. The caller needs the `studio.run.project` capability, *and* the target project's own `.studio/meta.json` trust tier must be exactly `run-project`; the handler checks the second through `checkTrustTier` in `server/handlers/studio/trustGate.ts`, the same helper the `/admin/api/studio/dev-server` route uses for the identical spawn. Below Tier 2 it refuses with `{ ok: false, code: 'trust-tier-required', trust, requiredTrust }` and spawns nothing — the agent may ask the user to promote the project and may never promote it itself, so retrying the same call unchanged returns the same refusal.
+
+Until A10 the capability was the *only* gate here, and it was withheld from the built-in Admin role — so the one tool that validates against the app actually running was unreachable for every real operator (audit `01-figma-fidelity.md`), while the MCP path was simultaneously *weaker* than the HTTP route, which had always demanded the tier (`sec-05` finding 1). Both are now fixed by the same change: Admin holds `studio.run.project`, and the per-project promotion is what actually authorises execution. `route` must be a path the project's own router actually serves, which is not the same set as Studio's page slugs — a screen reachable only by tapping through the app has no route here. The dev server is reused across calls and torn down after `idleTimeoutMs`; a boot failure returns `ok: false` with the captured stdout/stderr tail rather than a synthetic result.
 
 **`studio_quality_check`** (`qualityCheck.ts`) is the reference-*free* counterpart to compare/measure. Both of those need a registered design; on a from-scratch brief neither has anything to measure against, and the agent's only signal was its own judgement of a picture. This scans the screen's own stylesheets and its own `.tsx`, headlessly. The stylesheet rules are `raw-hex-color` / `raw-px-length` (a literal where the project already declares a `var(--token)` close enough to be the one that was meant — so the response names the exact `var()` to swap in) and `low-contrast-pair` (one rule declaring both `color` and a `background` under the 4.5:1 AA floor; it cannot see font-size or weight, so a genuinely large rule may still pass WCAG's looser 3:1 threshold, and the finding says so). The page-source rules catch the agent hand-rolling what the design system already ships: `unresolved-asset-import` (a `?raw` import naming a file that is not on disk — the element renders empty while still typechecking and still holding its box, which is the one finding neither a screenshot nor `tsc` will ever report), `hand-authored-vector-path`, `hardcoded-inline-sizing` (which does not flag the legitimate `style={{ '--x': value }}` custom-property case), and `design-system-unused`. A seventh rule, `font-not-available` (`fontAvailability.ts` — its own module, because unlike every other rule it needs the *workspace*: a font-file disk walk and the project's setup files), names the first family in a `font-family` stack that the project cannot load. That is the most expensive silent failure in the loop: the browser falls back, everything still renders and still typechecks, and the fallback's x-height and advance widths are different — so the screen reads as "the type is the wrong size" and every size tuned against a screenshot from there on is tuned against the wrong typeface. Availability is deliberately generous (an `@font-face` in the page's own sheets, the compiled project CSS or the vendor CSS; a `fonts.googleapis.com` link; a `next/font/google` import; a matching font file on disk), it resolves `font-family: var(--font-display)` through the project's own custom properties before judging it, it judges only the **first** family (the rest of a stack is the fallback chain, which is the point of having one), and it **stands down entirely** for a project using `next/font/local`, whose generated family names cannot be judged from static text. The scoring engine reuses the exact `buildProjectTokenIndex` / `contrastRatio` machinery `studio_measure_reference` already uses — no second colour-matching implementation. A fourth rule, flagging hand-built markup for a role the generated `CLAUDE.md` maps to a real component, was prototyped as name-overlap and **rejected**: against the fixture that motivated it, it fired ~20 times for one genuine hit, and a noisy rule trains the agent to ignore the tool entirely. A clean audit says nothing about whether the screen *looks* right — only that its source follows the project's own rules.
 
@@ -622,6 +784,15 @@ Five tools that answer "is what I built actually right", each covering a channel
 - **`off-scale-spacing` / `off-scale-type-size` / `flat-type-hierarchy`** (`auditCompositionQuality`, `server/handlers/studio/compositionAudit.ts`) — **page-level aggregates**, at most one finding per rule per screen, each carrying a count, a ratio, and the offending `file:line` list. Aggregate rather than per-declaration because per-declaration would double-report every value `raw-px-length` already flags; page-level rather than per-file because a screen's type scale lives across every stylesheet it imports, so a "largest ÷ body" ratio computed inside one `.module.css` measures a fragment and calls it a hierarchy. Both scale rules run **only** against tokens the project actually declares — no spacing tokens means no spacing rule, not an invented 4px default. `flat-type-hierarchy` needs no tokens: it is the ratio between the screen's own largest and most-common type size, and under **1.6** the screen reads flat.
 
 The rejected name-overlap rule was **not** resurrected for either — none of these use a name-similarity heuristic.
+
+**Composition archetypes and two more findings (A13).** `flat-type-hierarchy` grades whether the screen has a **scale**; two new page-level aggregates grade whether it was **composed**:
+
+- **`no-focal-point`** — the screen has a scale and yet nothing leads the eye. Three causes, named individually in the message: fewer than **three** distinct type sizes in use (body and one heading is a document, not a screen); the largest size set on more than **two** rules (a size used that often is a body style, not a focal point); or a largest-to-second-largest step under **1.2** (the top two levels read as the same weight twice). It never fires when `flat-type-hierarchy` did — a screen with no scale at all is one problem reported once, and a tool that reports it twice starts reading as noise. The 1.2 is deliberately *not* `MIN_TYPE_HIERARCHY_RATIO`: that ratio grades display-vs-body across the whole scale, and demanding it between two **adjacent** levels would fail every well-built modular scale.
+- **`monotone-band-rhythm`** — the screen's spacing is one value repeated, or its largest gap is less than one step above its inner rhythm. Equidistant spacing groups nothing: every element is as related to its neighbour as to the section above it, so the screen reads as one undifferentiated column no matter what is in it. Unlike the two `off-scale-*` rules this needs **no tokens** — whether a screen separates its bands is true or false regardless of whose scale the values came from — and "one step" is the project's own base where it declares one, otherwise the smallest gap the screen actually uses, never an invented 4px.
+
+Both are errors at **every** design policy: they are composition, not design-system adherence.
+
+`LAYOUT_ARCHETYPES` and `COMPOSITION_RULES` (also in `compositionAudit.ts`) are the shared vocabulary above them — six shapes (hero, feature grid, split, testimonial band, pricing, footer), each with a stand-alone brief, and the five rules that make a screen read as designed (≥ 3 type-scale steps in use, one accent, one radius family, ≥ 1 spacing step between bands, contrast ≥ AA). Two consumers must agree on them: the creative prompt block names the shapes and quotes the rules, and `generateVariantSeeds` gives each variant a different **archetype sequence**, walking a shuffled order from a per-variant offset of one so every variant opens on a different shape and repeats no band inside itself. Three variants × three bands over six archetypes is nine slots, so *some* overlap between variants is arithmetic, not a bug — what the axis buys is that A/B/C differ in **structure and order**, not only in tokens. Four of the five rules name the finding that grades them; the archetypes themselves are **never detected from CSS** and deliberately never will be, because "is this a testimonial band" is a semantic question about content and a textual scan that guessed at it would be exactly the word-overlap heuristic already prototyped and rejected.
 
 **`studio_typecheck`** (`typecheck.ts`, over `handlers/studio/typecheck.ts`) closes the largest verification gap the toolset had: the agent writes `.tsx` with no shell, so before this there was no way to confirm what it wrote compiles, and both `studio_screenshot` and `studio_compare` pass happily on a screen that never typechecks. It runs the **project's own** installed `tsc --noEmit`, never Studio's. `tsc` cannot check a subset of a project without losing its config, so `paths` never changes what runs — it filters which diagnostics come *back*, and the response always names which mode ran (`scope: 'project' | 'filtered'`) and how many diagnostics exist outside the filter, so nothing is hidden. Failures are structured rather than thrown: `trust-tier-required`, `available: false` with `typescript-not-installed`/`no-tsconfig` plus a fix, or `timedOut: true` carrying whatever partial diagnostics `tsc` had already printed (with `pass` forced to `false` — an incomplete run must never report a pass just because no error had surfaced yet). Running a binary the workspace's `node_modules` supplied is the same risk class as installing dependencies, so it takes the same gate: `mutates: true` plus `requiredCapabilities: ['studio.write']`, and a hard refusal at Tier 0. A connector that cannot install dependencies cannot typecheck either. The prompt states the rule as: a screen is not done until it both compares clean **and** typechecks.
 
@@ -716,7 +887,9 @@ The deep-dive sibling `studio_list_component_bindings` — the full per-value Fi
 
 ### Session controls — model, effort, mode, attachments (WS-12 §5)
 
-**Model** — `ModelPicker.tsx`, populated live from each provider (no hardcoded list). **Effort** and **mode** are `AgentSessionControls.tsx`, above the composer: `--effort` (`low|medium|high|xhigh|max`) and `--permission-mode` (`default|acceptEdits|plan|bypassPermissions`), both request-driven end to end (`chatRequest.ts` → `AiStreamRequest` → `claudeCli.ts`'s argv), request-body fields every non-`claudeCli` driver ignores. **Fidelity mode** (W9-2) is the third trigger in that row and rides the same wire, but is consumed server-side rather than mapped onto a CLI flag — see "Fidelity modes" above.
+**Model** — `ModelPicker.tsx`, populated live from each provider (no hardcoded list). **Effort** and **mode** are `AgentSessionControls.tsx`, above the composer: `--effort` (`low|medium|high|xhigh|max`) and `--permission-mode` (`default|acceptEdits|plan|bypassPermissions`), both request-driven end to end (`chatRequest.ts` → `AiStreamRequest` → `claudeCli.ts`'s argv), request-body fields every non-`claudeCli` driver ignores. **Fidelity mode** (W9-2) is the third trigger in that row and **design policy** (A12) the fourth; both ride the same wire and are consumed server-side rather than mapped onto a CLI flag — see "Fidelity modes" and "Design policy" above.
+
+**Two more fields ride the same wire, and neither has a picker (Z3).** `maxToolRounds` and `turnCapMs` are per-turn OVERRIDES of the loop ceilings described under "Every loop has a ceiling" and "Abort + crash recovery" — a turn that names neither is still bounded, so omitting them is the normal case and no caller can remove a ceiling by leaving one out. They are bounded at the schema (1–200 rounds; 1 min – 2 h) rather than clamped in a driver: a caller asking for a thousand rounds is asking for exactly what the ceilings exist to prevent, and a validation refusal says so instead of quietly substituting a different number. `maxToolRounds` is read only by the shared HTTP tool loop and `turnCapMs` only by `claudeCli`; each driver ignores the other's.
 
 **Bypass is the Studio panel's DEFAULT mode.** An initial pass refused `bypassPermissions` outright, reading this driver's "never pass a permission-bypassing flag" rule as covering the literal value under any circumstance; that was resolved to "a user deliberately selecting Bypass IS the consent", and it is now the mode the composer starts in (`agentSessionControlsInitialState`). `--dangerously-skip-permissions`/`--allow-dangerously-skip-permissions` (a different, blunter flag) remain permanently, unconditionally forbidden — this driver's argv never constructs either, checked or not.
 
@@ -731,7 +904,7 @@ D5 §11.5's rail 1 ("non-persisting") is retired by this: it existed to stop Stu
 
 **The server still never invents Bypass.** `resolvePermissionMode` (`claudeCliPermissionMode.ts`) falls back to `acceptEdits`/`default`, never to Bypass — a caller that names no mode (an external MCP client, a script, a future driver) is not a person choosing it. `assertBypassCameFromRequest` sits at the literal argv-construction site and throws if `bypassPermissions` would reach argv without the request having named it. It was renamed from `assertBypassOnlyFromExplicitRequest`, because "explicit request" stopped being true the moment a default put the value in the request — a guard whose name overstates what it checks is worse than no guard.
 
-**Effort persists per project AND per account** (D5, W10) — `.studio/meta.json`'s `agentSession.byUser[<studioAgentUserKey>].effort` (the bare `agentSession.effort` is still READ as the project-wide default for an account that has never saved one, and never written again), round-tripped through `GET/POST /admin/api/ai/studio-session` (`server/ai/handlers/studioAgentSession.ts` — lives under `server/ai/handlers/`, not `server/handlers/studio/`, specifically so it needs no change to `studio.ts`'s own sub-router array). Fidelity mode persists through the same route and the same per-account shape (W9-2); each control is sent on its own request and an omitted field means "leave alone", so the two pickers never overwrite each other. **Permission** mode is never accepted by this route's request schema at all — the same "nowhere to write it" enforcement as the store-level rail above.
+**Effort persists per project AND per account** (D5, W10) — `.studio/meta.json`'s `agentSession.byUser[<studioAgentUserKey>].effort` (the bare `agentSession.effort` is still READ as the project-wide default for an account that has never saved one, and never written again), round-tripped through `GET/POST /admin/api/ai/studio-session` (`server/ai/handlers/studioAgentSession.ts` — lives under `server/ai/handlers/`, not `server/handlers/studio/`, specifically so it needs no change to `studio.ts`'s own sub-router array). Fidelity mode (W9-2) and design policy (A12) persist through the same route and the same per-account shape; each control is sent on its own request and an omitted field means "leave alone", so the three pickers never overwrite each other. **Permission** mode is never accepted by this route's request schema at all — the same "nowhere to write it" enforcement as the store-level rail above.
 
 **Effort is ROUTED per turn when nobody pinned one** (`server/ai/routing/turnRouting.ts`). Before this, every turn shipped at `DEFAULT_EFFORT` — "what does that class do?" paid the same price as "rebuild this screen from the Figma frame", in latency the user sits through and in a rate limit they hit later. Two rules bound it:
 
@@ -739,6 +912,22 @@ D5 §11.5's rail 1 ("non-persisting") is retired by this: it existed to stop Stu
 2. **Unsure routes UP.** Under-serving a build turn costs a wrong screen plus a full corrective turn; over-serving a question costs a few seconds. So `build` is the fallback answer and `question` must be positively earned: nothing attached, short (≤320 chars), no imperative verb, and question-shaped. A vague follow-up ("is that right?") after a turn that wrote files is routed up, not down — `readTurnWriteLog` is read before `resetTurnWriteLog` clears it, so "did the last turn write anything" is a real signal rather than a guess.
 
 Three shapes (`question` / `smallEdit` / `build`) map onto two efforts: `question` → `low`, the other two → the same `medium` that was previously unconditional. **Nothing routes above the old default** — raising effort would be a latency and rate-limit regression nobody asked for, and there is no measurement here saying `high` builds a better screen. The classifier is pure and table-tested (`turnRouting.test.ts`).
+
+### A turn has a budget and shows its work (A9)
+
+**The budget.** `AGENT_TURN_ROUND_BUDGET` (40) lives in `@core/ai`'s `turnBudget.ts` — the leaf both halves already depend on, because three surfaces have to agree on the same integer or the control is a lie: the prompt states it, the driver loop caps rounds at it, and the panel renders progress against it. The static prefix's "Step budget" section states the ceiling, asks the model to report `step k/N` as it works, and says why: the user is watching a progress line built from exactly those reports, and the model is budgeting against a ceiling it can see rather than discovering it as a truncation. It also carries the two loop rules — never re-issue a mutating call with identical arguments, and a `retryable: false` code is final.
+
+**The progress line.** `parseTurnStepReport` (a narrow regex; a bare "3/6" is a fraction, only the literal word `step` in front of it makes the claim) runs on each text delta in `streamEvents.ts` and stamps `AgentMessage.reportedStep` — session-only, display-only, never persisted and never replayed to a model. `formatTurnProgress` composes the line: the model's own `step 3 of 6` when it reported one, `2 of 3 steps done` from the tool-call ledger when it did not, plus the round count against the budget once the turn passes `AGENT_TURN_ROUND_WARN_AT` (3/4 of it), because at that point the honest question stops being "what is it doing" and becomes "will it get to finish". It renders in `AgentActivity`'s meta line beside the elapsed clock — **passive**, in the transcript, never a toast. A turn that is working is not an event.
+
+A report split across two stream deltas is missed. That costs the line its nicer denominator for one step and nothing else: the tool-call fallback is always available.
+
+**Per-turn telemetry — `.studio/agent-turns.jsonl`.** One line per tool round: tool name, ms, bytes in/out, `ok`, cache hit, execution class, and the turn's resolved fidelity mode and design policy. Recorded in `executeAiTool` (`server/ai/drivers/http/execTool.ts`) and nowhere else, because that is the **one** choke point both the HTTP drivers (via `toolLoop.ts`) and the `claude` CLI (via `server/ai/mcp/server.ts`) pass through — instrumenting the two loops separately would produce two logs that disagree about what a round is. TypeBox schema, capped at 2 MB with a whole-line trim to 1 MB on the next append, and every function swallows its own failures: a telemetry write that failed must never turn into a failed tool call.
+
+**Byte counts, never bytes.** A tool argument can carry a file path, a design brief or a pasted credential; `bytesIn`/`bytesOut` carry none of those and answer the only question this log exists to answer.
+
+A rejected browser bridge is deliberately **not** recorded — a round that never reached a tool has no tool latency, and logging it as one would poison the p95.
+
+**`bench:agent-turn` reads it back.** A fifth section reports per-tool p50/p95/max/total and cache-hit rate (slowest total first — the order that answers "where did the turn go"), then grades each conversation's summed tool time against A9's two budgets: **90 s** for a creative turn with no reference to measure against, **3 min** otherwise (`AGENT_TURN_BUDGETS`). `observedMs` is Studio's own tool time, **not wall clock** — the model's thinking time is neither Studio's to measure nor Studio's to fix, and a reader who thinks otherwise reads every verdict as optimistic. The budgets assert as **warnings**, not failures, for as long as no real turn has been measured on this machine: a budget that fails a suite on a number nobody has observed trains people to ignore the suite. Every row names its `worstTool`, which is where to look first. With no log anywhere the section reports `unavailable` with the reason, the same posture the capture section takes without Chromium — it never fabricates a number.
 
 **The MODEL is deliberately not routed.** `req.effort` is `undefined` until the user picks one, which is exactly what makes "pinned vs default" knowable; `req.modelId` has no such tell — the session always carries a concrete model id and nothing distinguishes "the user chose Opus" from "Opus is what the credential defaulted to". Routing on that would silently demote a deliberate choice, which is the failure rule 1 exists to prevent. Model routing needs the conversation to record *why* a model id is set, which is a schema change, not a heuristic.
 
@@ -853,11 +1042,11 @@ Two consequences worth knowing. `StudioCapabilityDigest.figma.status` gained **`
 
 `server/ai/tools/studio/parityMatrix.ts` is the enforcement mechanism for "the agent can do what you can do in the canvas" — not documentation. Every real editor action resolves to exactly one status: a real tool (name-checked against the live registry), an explicitly withheld action (a stated reason — undo/redo, viewport pan/zoom, trust promotion, project deletion, a shell tool, a raw file-overwrite), or a confirmed gap. `parityMatrix.test.ts` gates all of it, including the inverse direction (every registered mutating tool is referenced by at least one row — an orphaned tool is itself a finding), plus a regression test pinning the current gap count so a future "missing" row silently downgraded to "withheld" fails loudly.
 
-**The three gaps the matrix found are now closed.** All three shipped as thin `execution: 'browser', scope: 'site'` wrappers over the SAME verb the canvas UI already calls; W9-6 then moved two of them server-side, because only one of the three was ever actually about the user's browser:
+**The three gaps the matrix found are now closed.** All three shipped as thin `execution: 'bridge', scope: 'site'` wrappers over the SAME verb the canvas UI already calls; W9-6 then moved two of them server-side, because only one of the three was ever actually about the user's browser:
 
 | Editor action | Tool | Where it runs, and why |
 |---|---|---|
-| Upload a new image asset into the project | `studio_upload_asset` | **Browser** (`server/ai/mcp/tools/studio/uploadAssetTool.ts` declares it; `src/admin/pages/site/agent/studioUploadAsset.ts` runs it). Decodes the agent's base64 into a `Blob` and posts real `FormData` to `POST /admin/api/studio/asset-upload` **as the signed-in user** — that endpoint's authority is the operator's session, the one thing a server-side tool cannot honestly stand in for. Every validation (magic-number sniffing, containment) happens server-side exactly as for a human upload. |
+| Upload a new image asset into the project | `studio_upload_asset` | **`bridge`** (`server/ai/mcp/tools/studio/uploadAssetTool.ts` declares it; `src/admin/pages/site/agent/studioUploadAsset.ts` runs it). Decodes the agent's base64 into a `Blob` and posts real `FormData` to `POST /admin/api/studio/asset-upload` **as the signed-in user** — that endpoint's authority is the operator's session, the one thing a server-side tool cannot honestly stand in for. Every validation (magic-number sniffing, containment) happens server-side exactly as for a human upload. |
 | Set a board frame's preview axes (direction/locale/color-scheme) | `studio_set_frame_axes` | **Server** (`frameAxesTools.ts`). Writes `.studio/boards.json` and pushes a live reload. |
 | Duplicate a board frame as a variant | `studio_duplicate_frame_as_variant` | **Server** (`frameAxesTools.ts`). Same file, same push; the variant lands beside its source at the shared `VARIANT_GAP`. |
 
@@ -1052,9 +1241,9 @@ Resolved server-side from the posted `SiteAgentSnapshot` or the data repositorie
 | `site_list_loop_sources` | Loop source ids, source fields, order/filter options, and data-table field catalogs with valid `{currentEntry.field}` tokens. For post/custom table loops, use source id `data.rows`, the returned table `id` as `<studio-loop data-table-id>`, and the returned tokens inside the loop body |
 | `site_list_tokens`     | Design tokens: colors (with shades/tints), typography/spacing scale steps, font tokens — each with CSS variable + utility classes; optional `family` filter (`colors`\|`typography`\|`spacing`\|`fonts`) |
 
-### Site browser tools — 29, browser-bridged
+### Site bridge tools — 29, relayed to the open workspace
 
-All 29 tools carry `execution: 'browser'` in their `AiTool` definition. The server emits `toolRequest`; the browser executor validates input with TypeBox, runs the store action or read helper, and POSTs the canonical `AiToolOutput` result back.
+All 29 tools carry `execution: 'bridge'` in their `AiTool` definition. The server emits `toolRequest`; the browser executor validates input with TypeBox, runs the store action or read helper, and POSTs the canonical `AiToolOutput` result back.
 
 **Documents**
 
@@ -1204,6 +1393,13 @@ When a node-targeting write tool (`site_insert_html`, `site_get_node_html`, `sit
 Snapshot pixels come from the iframe document's authored rendering. Full-page captures rasterise `<html>` at the exact iframe viewport width and full document height, so a narrow/transformed body cannot shrink the reported viewport or omit document gutters. Node-scoped captures rasterise that same document painting context and crop to the node rectangle, so transparent sections retain HTML/body/ancestor colors, gradients, and background images. A white browser-default fallback is composited only behind pixels the authored page leaves transparent — it is never written onto the cloned document.
 
 Every request uses `AgentSnapshotFrame`, an offscreen one-shot `IframeFrameSurface` at the configured width. Before it becomes capturable, a revisioned barrier waits for template preview rows, nested loop data, media metadata, web fonts, the resulting React commit, and a quiet DOM window. Readiness lives on the host iframe, never on authored `<html>`/`<body>`, so user attribute selectors cannot distinguish Agent evidence from the published page. Lazy `<img>` resources are left authored as-is; `html-to-image` makes its private clones eager and embeds image/background resources before `toCanvas()` resolves. The frame deliberately does not execute authored runtime scripts, and it is released after capture without changing `activeBreakpointId`, `canvasView`, or collapsed-frame state. Parallel requests are serialized so they cannot replace the single transient frame mid-capture.
+
+**Which iframe gets captured** is decided by `findAgentRenderFrame` (`agent/renderEvidence.ts`), and the canvas's staged mount (S1 — see `canvas-internals.md` §Perf) makes two of its rules load-bearing:
+
+- A `'visible'` query never returns anything inside the transient capture frame. `IframeFrameSurface` stamps `data-breakpoint-id` on the iframe ELEMENT in both document modes (so a cross-mode caller can read a frame's breakpoint without touching `contentDocument`), which otherwise makes the offscreen capture frame's own iframe a match — and an `<iframe>` returned where a frame HOST is expected yields `null` from the capture, silently.
+- A frame with no capture-request marker is ready only once its iframe carries `data-studio-canvas-content-ready`. The srcDoc document loads, and its body is tagged with the breakpoint id, one or more commits BEFORE the node tree is portalled into it; capturing in between rasterises an empty document. The transient frame vouches for itself through the stronger, request-scoped `data-agent-snapshot-ready`, written by a marker that lives inside the node tree and only after the settle barrier.
+
+The transient frame itself is mounted UNSTAGED for this reason — see `IframeFrameSurface`'s stage-3 effect.
 
 ---
 
@@ -1390,6 +1586,24 @@ The `<ContextMeter>` is a five-segment battery-style status beside the image act
 
 **Tool dispatch within a round.** A batch is executed in ordered groups: consecutive `mutates !== true` tools run **concurrently**, and any tool that mutates state (or a name that resolves to no registered tool) gets a group of its own. The system prompt asks the model to issue its reads as one batch, and running that batch serially made a round cost the SUM of every read instead of the slowest one. The conservatism is deliberate — two writes to the same file, or a read the model issued *after* a write in order to observe it, must never be reordered. Stream events are still emitted in the model's own call order regardless of which tool finished first. See `groupToolCalls` in `drivers/http/toolLoop.ts`.
 
+#### Every loop has a ceiling (Z3)
+
+The loop was a bare `for (;;)` whose only exits were "the model stopped", "the transport died", and abort. A model that kept issuing tool calls kept the turn running; a model that issued the same write repeatedly executed it repeatedly. That is the "I made this multiple times" and "twenty minutes for one page" experience, and two differently-shaped bounds close it. Both live in `drivers/http/toolLoop.ts` and both are gated by `src/__tests__/architecture/no-unbounded-tool-loop.test.ts`.
+
+**1 — `MAX_TOOL_ROUNDS` (default 40).** A turn may spend at most this many provider rounds. Reaching it emits the aggregated `usage` event (the provider billed every one of those rounds whether or not the turn reached an answer) and then exactly one `error` event that **names the last tool the model called**, so the transcript says what it was looping on rather than simply stopping. Forty is roughly twice the longest legitimate build turn measured here, so a working turn never touches it. Overridable per turn with the request's `maxToolRounds` (1–200, validated by `AiChatRequestBodySchema`).
+
+**2 — repeated mutating calls are answered, not re-executed.** Each mutating call is fingerprinted as `toolName` + its arguments in canonical JSON (key order normalised recursively — `toolCallFingerprint`). The fingerprint set is **per turn**: a write the user asks for again in their next message is a new instruction and runs. The second identical call in one turn never reaches the handler; it is answered with
+
+```json
+{ "ok": false, "code": "duplicate-call", "toolName": "…", "priorResult": { "ok": true, "data": "…" } }
+```
+
+`priorResult` is the FIRST call's own outcome, with its images dropped and its `data` truncated at 2 KB — the model gets the real result to carry on from, not an unbounded re-send of evidence already in the transcript. The payload is carried both in the tool output's `data` (what Studio's transcript and UI keep) **and** serialized into its `error` string, because every provider adapter renders a failed tool result as its `error` text alone and discards `data` — a machine-readable code the model cannot read would be no code at all.
+
+The fingerprint applies only to `mutates === true` tools, the same read/write boundary `groupToolCalls` uses. **Read-only tools are deliberately exempt:** re-reading a document after a write is how a model checks its own work, and that second read is a different question with the same arguments.
+
+The recorded fingerprint covers a FAILED write too. A write that refused for a reason in its own error text refuses identically the second time, and re-running it is exactly the loop the bound exists to stop.
+
 **Live context, cumulative billing.** A turn makes one provider round-trip per tool batch. The tool loop emits a `context` event **each round** carrying THAT round's input buckets; the chat handler injects the normalised `contextTokens` and the browser updates the meter on every round — so the remaining-capacity battery drains *during* a long tool loop instead of only at the end. The measurement is the LATEST round's input, never the sum across rounds (which would over-count, since each round re-sends the growing context). The terminal `usage` event is **billing only**: prompt/completion/cache counts are summed across rounds. Before forwarding that terminal event, the persister resolves authoritative cache-aware spend (or accepts OpenRouter's native cost), writes the usage, then includes the resolved `costUsd` on the wire. The browser accumulates those totals in `agentUsage`; `loadAgentConversation` hydrates the same totals from `ConversationView`. The tooltip labels the sections “Context remaining” and “Conversation billing” so the two token meanings cannot be confused.
 
 Five equal bands approximate remaining capacity: an empty conversation has all five filled, then the display drains by fifths until no capacity remains. More than 40% remaining is healthy, 20–40% warns, and below 20% is danger. An unmeasured model switch uses five neutral segments until its first response. The keyboard-focusable details button exposes the exact remaining/window counts and percentage in its accessible name; segment count is only the compact visual approximation.
@@ -1428,6 +1642,15 @@ unblocks deletion of the credential that had been protected by the default FK.
 - **Tool failure.** Browser executors wrap every call in try/catch. Failures return `{ ok: false, error }`. The model reads the error message in the next turn and retries with corrected input.
 - **Tool-result delivery failure.** A 404 means the browser completed work for a bridge the active runtime no longer owns (commonly a server restart). While the chat signal is active, `postToolResult` propagates that failure, the client aborts the stale response, finalizes its pending badge, and asks the user to send again. Only a POST already being torn down by an aborted signal is ignored quietly. A clean NDJSON EOF without `done` or `error` is handled the same way instead of being mistaken for success.
 - **Page reload mid-stream.** The response cancel hook aborts the provider and releases the writer lock. Conversation rows survive; loading the thread shows any unmatched call once as interrupted, with no reconstructed session-only screenshot and no live timeout/spinner.
+- **A turn that never ends (Z3).** The HTTP drivers are bounded by `MAX_TOOL_ROUNDS` (above). The `claudeCli` driver owns no loop of its own — the subprocess does — so it is bounded in wall time instead, by **two differently-shaped timers**:
+  - **`idleTimeoutMs` (10 min)** — silence on the child's stdout, re-armed by every chunk. Asks "is this process still alive".
+  - **`TOTAL_TURN_CAP_MS` (20 min, `claudeCliSpawn.ts`)** — armed once when the turn starts, never re-armed. Asks "is this turn ever going to end". The idle window is blind to a turn that streams steadily forever, and that blindness IS the "twenty minutes on one page" failure: a model looping over the same edit produces output the whole time, so every chunk re-arms the idle timer and nothing stops it.
+
+  On the cap, the **warm** session sends the CLI's own `interrupt` control request over the open stdin (`claudeCliStdinProtocol.ts` §5) rather than killing anything, drains to the terminating `result` line without forwarding it — post-interrupt output belongs to a turn the user is about to be told ended — and **keeps the process alive** for the next turn, so a capped turn costs the turn and not the session's MCP handshakes. Only an interrupt that goes unanswered for `interruptGraceMs` disposes the session; a wedged process is the one thing a cap may not leave running. The **cold** path has no control channel (its stdin already carried the prompt and closed), so it kills the process.
+
+  Either way the turn ends on one terminal `turnCapped` raw event, which `translateClaudeCliStream` renders as exactly one `error` naming the last tool the turn was on — "it ran too long" alone tells the user nothing they can act on, and a capped turn is usually stuck repeating one tool. `turnCapped` is a distinct raw event from `exit` on purpose: `exit` says the process is gone, and on the warm path it deliberately is not.
+
+  Overridable per turn with the request's `turnCapMs` (1 min – 2 h, validated by `AiChatRequestBodySchema`), on the same session-controls wire as `effort`. Every HTTP driver ignores it, exactly as every non-`claudeCli` driver ignores `effort`.
 
 ---
 
@@ -1440,7 +1663,7 @@ unblocks deletion of the credential that had been protected by the default FK.
 | Importing `zod` anywhere | Banned repo-wide — TypeBox schemas pass directly as JSON Schema to every provider. Gated by `ai-driver-isolation.test.ts`. |
 | Writing a private `parseToolArguments` / `parseJsonOrEmpty` copy inside a driver | Import `parseToolArguments` from `./http/toolArgs`. Private copies diverge silently — the same malformed model output produces different outcomes per provider. Gated by `ai-driver-shared-helpers.test.ts`. |
 | Redefining `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` in a driver or prompt builder | Import it from `server/ai/runtime/types.ts`. One source — if a driver or builder drifts the literal, prompt caching silently breaks for that driver. Gated by `ai-driver-shared-helpers.test.ts`. |
-| Routing a write tool as a server-side read (resolving from snapshot) | Write tools are `execution: 'browser'` — they must go through the bridge. The Site editor store is the write authority. |
+| Routing a write tool as a server-side read (resolving from snapshot) | Write tools are `execution: 'bridge'` — they must go through the bridge. The Site editor store is the write authority. |
 | Using invented breakpoint ids in `breakpointStyles` (`"mobile"`, `"desktop"`, etc.) | Use verbatim ids from the dynamic suffix. Invalid ids are rejected by the executor. |
 
 ---
@@ -1470,7 +1693,7 @@ unblocks deletion of the credential that had been protected by the default FK.
   - `server/ai/inputImages.ts` — server-side base64, JPEG, byte, and dimension validation before persistence
   - `server/ai/drivers/modelCapabilities.ts` — cached, timed, authoritative/fail-closed selected-model capability resolution on every turn
   - `server/ai/drivers/modelList.ts` — bounded provider catalogue lookup with caller cancellation
-  - `server/ai/drivers/http/toolLoop.ts` — provider loop, grouped (concurrent-read) tool dispatch, heavy tool-result elision as a per-request projection, message cache-breakpoint policy, and one provider-triggered historical-image fallback
+  - `server/ai/drivers/http/toolLoop.ts` — provider loop, its two ceilings (`MAX_TOOL_ROUNDS` and the per-turn `duplicate-call` fingerprint set), grouped (concurrent-read) tool dispatch, heavy tool-result elision as a per-request projection, message cache-breakpoint policy, and one provider-triggered historical-image fallback
   - `server/ai/drivers/anthropicWire.ts` — Anthropic's request-side block shapes plus the tool-block and message `cache_control` builders
   - `server/ai/conversations/history.ts` — interrupted-tool healing plus outbound user-image replay projection
   - `src/admin/pages/site/agent/siteAgentSnapshot.ts` — `SiteAgentSnapshotSchema` (TypeBox source of truth) + `SiteAgentSnapshot` (derived type) + `buildSiteAgentSnapshot`

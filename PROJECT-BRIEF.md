@@ -63,7 +63,8 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
   one <iframe> per frame              IframeFrameSurface.tsx
         │
         │  user edits a prop / text / style / class / tag, or inserts,
-        │  reorders, reparents, duplicates, wraps or deletes an element
+        │  reorders, reparents, duplicates, wraps, groups, ungroups or
+        │  deletes an element
         ▼
   Typed StudioEdit batch              POST /admin/api/studio/save
         │
@@ -72,7 +73,8 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
         │                              setJsxClassName, setStringLiteral,
         │                              setJsxTagName, insertJsxElement,
         │                              moveJsxElement, deleteJsxElement,
-        │                              duplicateJsxElement, wrapJsxElement)
+        │                              duplicateJsxElement, wrapJsxElement,
+        │                              wrapJsxElements, unwrapJsxElement)
         │
         └──▶ postcss CST codemods     src/core/css-codemods/
              rewrite the user's .css  (setDeclaration, insertRule — routed by
@@ -95,8 +97,20 @@ never silently no-ops.
    toolchain compiles in a capped subprocess (`styleCompileTier1.ts`) and its
    package components are bundled and rendered in the canvas
    (`componentBundle.ts`). **The parse itself never executes anything at any
-   tier**, and Tier 2 (`run-project`) is a defined value that no gate yet
-   distinguishes from Tier 1 — both read as `trust !== 'static'`.
+   tier**, and Tier 2 (`run-project`) is genuinely distinct from Tier 1: the
+   dev-server manager, the preview deploy, and the agent's
+   `studio_render_reference` all demand `trust === 'run-project'` exactly, via
+   `server/handlers/studio/trustGate.ts` — not the looser `trust !== 'static'`
+   that Tier-1 consumers read. There is **one narrow automatic promotion, the
+   owner's call on 2026-09-17** (`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2): a
+   Vite project with a lockfile is promoted to `run-project` on first open —
+   once per project, ever, with a notice and an **Undo** in the board chrome,
+   the origin recorded on disk, and every condition re-checked server-side in
+   `trustTier.ts`. Read that promotion for what it is: **Tier 2 for a Vite
+   project is a product default, not a consent boundary** (`sec-12`). Anything
+   that needs a human to have agreed must ask at the point of use. Tier-1
+   promotion is still always an explicit click, and a non-Vite project is never
+   promoted by Studio at all.
 2. **A write must have exactly one honest target.** Every lock, every
    `codeProps` entry, every refusal exists because writing an edit there would
    destroy a binding, change N places at once, or write to a file that does not
@@ -112,15 +126,37 @@ never silently no-ops.
 | Base branch for PRs | `main` (protected — never push to it). Branch per change, `<type>/<kebab>` |
 | Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the feature plan (WS-1…WS-9). **Intent, not status** — most of it has shipped; check §0a below before believing a "not built" claim there. [`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md) carries the workstreams beyond it (WS-10…WS-14) |
 | Defect + parity plan | [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) — **§0a is the granular per-track status ledger.** When you need finer detail than the two lists below, read it there, not here |
-| Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — Tier 2 live runtime frames, refusals-as-choices, and the Penpot-measured inspector rebuild. Proposed 2026-09-08, nothing started |
+| **Active plan** | [`STUDIO-FIGMA-FEEL-PLAN.md`](STUDIO-FIGMA-FEEL-PLAN.md) — **the plan currently being executed** (opened 2026-09-17). Tracks Z (zero noise, a barrier before everything else), S (snappy), K (keys and hands), P (panels/prototype/preview), A (agent), G (GitHub), V (verification). Its §0 lists what is already true, §6 the owner's seven decisions, §7 the defects found in the audit that opened it |
+| Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — **landed**: Tier 2 live runtime frames (L1–L8), refusals-as-choices (R1–R3) and the Penpot-measured inspector rebuild (P0–P6) are all in the tree. L9 is the only unstarted work order, and no project has ever been promoted to Tier 2, so Track L is code-verified rather than user-verified |
 | Built-in design system | [`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`](STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md) — **shipped (DS-1…DS-9)**, 2026-09-17. The `@alm-design/design-system` npm is retired: the design system is vendored at `vendor/alm-design-system/`, projects carry their own `design-system/` folder, the insert dialog is an **Assets** panel of live previews, and the toolbar `+` is **Add page**. Only DS-4b (drag a card to the canvas) is open |
 | Live coordination | [`STATE.md`](STATE.md) — **read at the start of every task, write at the end** |
 | Entry point in the app | `/admin/site` — `src/admin/router.tsx` renders the studio editor there unconditionally; there is no mode flag and no `?studio` param. Which project is open comes from `src/admin/pages/site/studio/studioWorkspaceDir.ts` (localStorage-sticky, set by the Overview launcher; the server falls back to the first project on disk) |
-| Test projects on disk | `studio-workspace/` — `test`, `esim-journey`, `my-workspace`, `untitled*` |
+| Test projects on disk | `studio-workspace/` — whatever folders are there on your checkout (`test4` and `test4 copy` on this one). **User data: never `rm -rf` one, and never assume a given project exists.** |
 
 ### What works today (do not rebuild)
 
-- GitHub zipball import with path-traversal / zip-bomb guards
+- GitHub zipball import with path-traversal / zip-bomb guards, plus a
+  **Keep history (clone)** alternative (`POST git/clone`) that lands the repo
+  with its history and `origin` set — target derived server-side, refuses an
+  existing project rather than clearing it
+- **Sign in to GitHub** (device flow + paste-a-PAT), token stored encrypted per
+  user in `git_credentials` and handed to git through a 0600 one-shot
+  `GIT_ASKPASS` script — never an env var, never a URL. Connect a repository
+  (`git/remotes`, `git/remote`) with a two-shape URL allowlist. See
+  [`docs/features/studio-git.md`](docs/features/studio-git.md)
+- **The whole git publish sentence in the Version control panel**: a branch
+  *dropdown* (list / create-from-current / commit-and-switch — never a stash),
+  fetch, `--ff-only` pull with an explicit rebase-or-merge choice on divergence,
+  per-file conflict resolution (*Keep mine / Keep theirs / Open in code* →
+  *Continue*, with `mine`/`theirs` translated server-side because git's
+  `--ours`/`--theirs` invert during a rebase), push disabled while behind, and
+  **Open PR** with base/title/body defaulted from the repository. The same five
+  verbs are MCP tools behind `studio.git.write` (`studio_git_status` is a read)
+- **One write lock per project** (`server/handlers/studio/projectWriteLock.ts`):
+  saves, page scaffolds, dependency installs and every mutating git verb take
+  an async mutex keyed by the real project path, so a canvas save can no longer
+  land between a `git add` and its `git commit`. A git verb waiting more than
+  5 s answers `409 { code: 'busy' }`; a save waits
 - Multi-file page discovery + `.studio/meta.json` (`displayName`, `pagesDir`, `previewAxes` — `direction`/`colorScheme`/`locale`)
 - ts-morph parse, local-component inlining through barrels, tsconfig `paths` aliases
 - Static value resolution Tiers A/B/C, `.map` expansion, multi-return/ternary/`&&`
@@ -142,13 +178,32 @@ never silently no-ops.
   `static` (Tier 0, the never-auto-promoted default), `render-packages`
   (Tier 1), `run-project` (Tier 2) — read/written by
   `server/handlers/studio/trustTier.ts` and driven from the client by
-  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion is an
-  explicit user click, never a side effect of loading a page. Tier 2
+  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion to
+  **Tier 1** is an explicit user click. Promotion to **Tier 2 has one narrow
+  exception the owner called on 2026-09-17** (`STUDIO-FIGMA-FEEL-PLAN.md` §6
+  decision 2): a **Vite project with a lockfile** is auto-promoted to
+  `run-project` on first open — once, ever — with a notice and an **Undo** in
+  the board chrome (`canvas/LiveAutoPromoteNotice/`). The origin and the
+  once-latch live on disk (`trustAutoPromoted`/`trustAutoPromotedAt`), and
+  `trustTier.ts` re-checks every condition server-side. A non-Vite project is
+  never touched — the canvas pill reads "Live needs Vite" (§6 decision 5,
+  deferred). Tier 2
   (`run-project`) now has a real gated consumer beyond the MCP visual-audit
   tool: `server/handlers/studio/devServer.ts`'s dev-server process manager
   (Track L, `live-01`) — one reused, idle-timed subprocess per project,
   exposed as a polled `status`/`start`/`stop` route family and prewarmed the
   instant a Tier-2 project's canvas mounts.
+  **A Tier-2 action needs two independent gates, and the tier is the one that
+  cannot be delegated.** The `studio.run.project` capability (now held by
+  Owner *and* Admin, A10) says a caller may run project code at all; the
+  project's own tier says *this* project may be run. Every Tier-2 entry point
+  checks both through the one shared helper — `requireTrustTier` for an HTTP
+  route, `checkTrustTier` for an agent tool — in
+  `server/handlers/studio/trustGate.ts`. Until A10 the MCP tool
+  `studio_render_reference` checked only the capability, which made it
+  strictly weaker than the route performing the identical spawn (`sec-05`
+  finding 1); the trap to avoid is adding a Tier-2 tool that leans on the
+  capability alone.
 - **A built-in design system, and an Assets panel to insert from**
   (`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`, DS-1…DS-9). The 39-component ALM
   design system is **vendored into Studio** at `vendor/alm-design-system/` and
@@ -234,11 +289,16 @@ never silently no-ops.
   - `op: 'set'` — change a value on a rule the parser mapped to a real
     hand-authored `.css` file (`setDeclaration`).
   - `op: 'insert'` — a rule the user created in the editor that has no source
-    yet, written into the project's one editable stylesheet (`insertRule`).
-    `resolveCssInsertDestination` refuses by name when the destination is
-    ambiguous rather than guessing.
+    yet, written into the stylesheet co-located with its anchor page, or the
+    project's one editable stylesheet (`insertRule`). The anchor page is the
+    class's own page, or — for a class that is on no element yet — the page
+    the user has OPEN (Z8, `resolveOpenPageFile`). With several candidates and
+    none co-located, `resolveCssInsertDestination` still refuses rather than
+    guessing, but the refusal is a **choice**: a `RefusalDialog` with one
+    `choose-stylesheet` remedy per candidate file, which pins the destination
+    and re-runs the insert. Never a toast.
   - `op: 'create'` — no editable stylesheet exists at all: the server invents
-    one co-located with the page, wires the page's `import`
+    one co-located with the anchor page, wires the page's `import`
     (`ensureStylesheetImport`, a ts-morph edit — which is why it cannot happen
     client-side), and writes the rule into it.
 
@@ -333,10 +393,19 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
 - **Cross-FILE reparent refuses** — `refuseStructuralEdit` in
   `src/core/page-tree/sourceStructure.ts`. Every structural verb now writes
   within one file (W4-1: duplicate, wrap and same-file reparent joined reorder,
-  delete and insert), but moving markup into another module would land it where
-  the values it reads do not exist. A same-file move whose subtree captures a
-  binding that is not in scope at the destination refuses too, naming the
-  binding.
+  delete and insert; K3: group and ungroup), but moving markup into another
+  module would land it where the values it reads do not exist. A same-file move
+  whose subtree captures a binding that is not in scope at the destination
+  refuses too, naming the binding.
+- **⌘G groups a CONTIGUOUS RUN of siblings, and only that** (K3). One container
+  around one span (`wrapJsxElements`); a selection that crosses parents or has
+  a gap in it refuses with `multi-select` — "select siblings next to each
+  other" — because the wrapper would otherwise land around elements the user
+  never selected. ⌘G on one element is the existing single-element `wrap`.
+  **⌘⇧G refuses to dissolve a container that is doing anything but holding its
+  children** (`has-behaviour`): a handler, a `ref`, a `key`, a spread, or a
+  component tag rather than an intrinsic element. Only
+  `className`/`style`/`id`/`data-*` are inert enough to drop.
 - **JS-driven animation does not freeze.** `CanvasAnimationInjector` handles
   CSS animations/transitions, smooth scroll and media; it makes no attempt to
   intercept `requestAnimationFrame`, so framer-motion and GSAP keep running on
@@ -448,11 +517,34 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     that is exactly how the `frameId` branch slipped past the first fix.
     `src/__tests__/store/selectCanvasPageFor.test.ts` is the gate.
 12. **`studio-workspace/*` is user data.** Never `rm -rf` a project directory, and
-    never write outside a workspace root without a containment guard.
+    never write outside a workspace root without a containment guard. It is also
+    **gitignored** except for a named sample list (`__canonical-fixture/`,
+    `test4/`) — see the block in `.gitignore`. Adding a project to that list
+    means committing someone's repository into this one.
 13. **Do not run browser/e2e tests to validate UI changes.** The human dogfoods
     UI. Run static gates (`bun test`, `bun run build`, `bun run lint`) and hand
     off with a "needs human dogfood" note.
 14. **Bun, not Node/npm/pnpm/yarn.** Lockfile is `bun.lock`.
+15. **Generated artefacts are compared byte-for-byte, so line endings matter.**
+    `.gitattributes` forces LF for `vendor/`, the ALM manifest, the
+    studio-runtime bundles and the QuickJS bootstrap. Without it a Windows CRLF
+    checkout makes all four `*:check` gates permanently red, and `bun run
+    alm:sync` *overwrites* the real design-system manifest with 39 propless
+    components — `vendorDocs.ts` matches headings with `/^(#{1,6})\s+(.*)$/`,
+    and JavaScript's `.` does not match `\r`. Never add a `-text` or CRLF rule
+    for those paths.
+16. **Most `/admin/api/studio/*` routes have no per-request auth at all.** Studio
+    is a single-operator tool: the only thing every Studio route enforces is
+    path containment (`resolveProjectDir`), and the namespace does not even run
+    the CSRF origin check the CMS and AI dispatchers run. Ten routes carry a
+    real guard — delete/duplicate/sample/trash-restore/trash-purge on
+    `requireCapability('studio.write')`, onboarding/comments/node-export/shares
+    on `requireAuthenticatedUser`. Do not read a neighbouring ungated route as
+    permission to ship another one, do not assume `req` has a session behind it,
+    and never expose this server to an untrusted network. The full posture,
+    with paths: `docs/server.md` → "Single-operator posture on the Studio
+    routes". Closing it is the first follow-up wave in
+    `STUDIO-FIGMA-FEEL-PLAN.md` §9.
 
 ---
 
@@ -465,12 +557,66 @@ bun run build          # tsc -b && vite build   ← type errors fail this
 bun test               # unit + architecture gates
 bun run lint           # eslint incl. react-compiler rules
 bun test src/__tests__/architecture   # gates only, fast
+bun run test:e2e       # Playwright — the fourth gate, for canvas/panel work
 bun run bench          # perf benchmarks
+bun run bench:studio-board   # canvas budgets, via Playwright's Node runner
 ```
+
+`bun run dev` preflights itself (`scripts/lib/devPreflight.ts`): it installs when
+`node_modules/` is missing a `file:` dependency or `bun.lock` moved, and reports
+any stale generated artefact with the `bun run <x>:sync` that fixes it — in the
+background, so it never delays the server.
 
 **Verification is an end-of-task gate, not a per-edit ritual.** Run the three
 (`build`, `test`, `lint`) once, at the end. Pre-existing failures from parallel
 sessions are not yours — triage with `git status` / `git diff` and say so.
+
+**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run
+`bun run test:e2e` too — it is the fourth gate, not an optional extra.**
+`standing-02` says why: happy-dom has no layout engine, so a unit test on
+those surfaces structurally cannot fail on the thing it is named after (WS-8.2
+shipped a real frame-height bug behind a green one). Assert on *computed*
+layout — measured rects, `scrollHeight`, computed styles after layout.
+
+The budget slice of that suite — `studio-board-perf`,
+`inspector-panel-measurement`, `inspector-height`, `studio-feel` — also runs
+in CI as the `e2e-budgets` job (`.github/workflows/ci.yml`). Locally it is
+cheaper to run just those four by path than the whole suite. Note that
+`studio-board-perf.e2e.ts` measures `studio-workspace/maherfayad-stack-eSIM`,
+which is **not tracked by git**: it self-skips on a clean checkout, and
+`studio-feel.e2e.ts` (against the tracked `studio-workspace/test4`) is what
+gates the canvas budget in CI.
+
+### What watches what in `bun run dev`
+
+The two dev processes watch on opposite principles. Knowing which is which is
+the difference between debugging a phantom and debugging a real restart.
+
+| Process | Watcher | Scope | Reacts to a `studio-workspace/` write? |
+|---|---|---|---|
+| cms (`bun --watch server/index.ts`) | Bun, **module-graph**, per file | exactly the 630 modules `server/index.ts` transitively imports — 567 `server/`, 55 `src/modules/base`, 3 `src/core/data`, 3 `src/modules/studio`, 2 `src/core/persistence` | **No.** Nothing under `studio-workspace/`, `uploads/`, `.tmp/`, `.data/` or `dist/` is in that graph, and nothing in it is a test file. |
+| vite | chokidar, **directory tree**, rooted at the repo root | everything under the root except `server.watch.ignored` (`.tmp`, `uploads`, `dist`, `studio-workspace`) and Vite's own defaults | **No — since the `studio-workspace` ignore was added.** Before that it did: Vite full-reloads on any watched `.html` change that maps to no module, and every React app Studio imports ships a root `index.html`. |
+
+Measured 2026-09-17 (`dev-04`), not inferred. Bun's `--watch` restarts **only**
+for files in the entry's module graph: a new file in a sibling directory, a
+modified file in a sibling directory, 300 files written into a `studio-workspace/`
+under the cwd, and an unimported file dropped into the very directory holding an
+imported module all produced zero restarts; touching the imported module
+restarted every time. Bun holds no OS handle on a directory containing no graph
+module, so the Windows `EBUSY` watcher panic in `server-14` cannot come from a
+workspace write.
+
+Consequences:
+
+- **Do not replace `--watch` with a hand-maintained directory allowlist.** Any
+  such list drifts from the real graph the moment an import changes — a plausible
+  guess at it (`server/**`, `src/core/**`, `vendor/**`) was already wrong in two
+  directions: it misses all 55 `src/modules/base` modules and watches `vendor/`,
+  of which the server imports none.
+- **When you add a runtime-written directory at the repo root, add it to
+  `vite.config.ts` `server.watch.ignored`** in the same change.
+  `src/__tests__/devWorkflow.test.ts` is the gate.
+- `bun run dev:server` runs the server alone, same watcher.
 
 ---
 
@@ -483,4 +629,6 @@ sessions are not yours — triage with `git status` / `git diff` and say so.
 - [ ] Docs updated in the same change (`docs/features/*` or `docs/agent-refs/*`).
 - [ ] If a structural rule moved, its gate test in `src/__tests__/architecture/` moved too.
 - [ ] `bun run build && bun test && bun run lint` pass for the files you touched.
+- [ ] If the change touched canvas / frames / overlays / geometry / panel height,
+      `bun run test:e2e` ran too (`standing-02` — happy-dom cannot answer those).
 - [ ] **`STATE.md` updated with a handoff entry** — see `handoff-protocol.md`.

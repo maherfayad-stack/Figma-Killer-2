@@ -5,15 +5,16 @@ import {
   getMissingModuleDependencies,
   normalizeModuleDependencies,
 } from '@core/module-engine'
-import type { SiteDocument } from '@core/page-tree'
+import type { ConditionDef, StyleRule } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import type { FocusedPanel } from '@site/store/slices/uiSlice'
 import { Button } from '@ui/components/Button'
 import { CanvasModulePlaceholder } from '@ui/components/CanvasModulePlaceholder'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { cn } from '@ui/cn'
-import { collectSiteStyleBackgroundImagePaths, generateClassCSS, type ResponsiveCssOptions } from '@core/publisher'
+import type { ViewportContext } from '@core/publisher'
 import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
+import { generateNodeClassCSS, nodeClassBackgroundImagePaths } from './canvasClassCss'
 import {
   createSandboxSrcDoc,
   HOST_MESSAGE_SOURCE,
@@ -31,27 +32,14 @@ interface ModuleSandboxFrameProps {
   classIds?: readonly string[]
 }
 
-function collectNodeClassRules(site: SiteDocument | null, classIds: readonly string[] | undefined): SiteDocument['styleRules'] {
-  const classes: SiteDocument['styleRules'] = {}
-  if (!site || !classIds?.length) return classes
-
-  for (const id of classIds) {
-    const cls = site.styleRules[id]
-    if (cls) classes[id] = cls
-  }
-  return classes
-}
-
-function getNodeClassCSS(
-  site: SiteDocument | null,
-  classIds: readonly string[] | undefined,
-  responsiveOptions: ResponsiveCssOptions = {},
-): string {
-  if (!site) return ''
-  const classes = collectNodeClassRules(site, classIds)
-  if (Object.keys(classes).length === 0) return ''
-  return generateClassCSS(classes, site.breakpoints, site.conditions ?? [], responsiveOptions)
-}
+/**
+ * Stable empty fallbacks for the narrow store reads below (Guideline #239 — an
+ * inline `?? {}` / `?? []` in a selector mints a new identity on every store
+ * change, which is the very thing these selectors exist to avoid).
+ */
+const EMPTY_STYLE_RULES: Record<string, StyleRule> = {}
+const EMPTY_BREAKPOINTS: ViewportContext[] = []
+const EMPTY_CONDITIONS: ConditionDef[] = []
 
 export function ModuleSandboxFrame({
   moduleDefinition,
@@ -61,7 +49,14 @@ export function ModuleSandboxFrame({
   mcClassName,
   classIds,
 }: ModuleSandboxFrameProps) {
-  const site = useEditorStore((s) => s.site)
+  // S3 — narrow subscriptions, NOT `s.site`. Mutative replaces the `site` root
+  // on every mutation anywhere in the document, so subscribing to it made every
+  // sandboxed module on the page re-render (and re-emit its CSS) on every
+  // keystroke. Each of these three keeps its reference across any mutation that
+  // does not touch that branch, thanks to Mutative's structural sharing.
+  const styleRules = useEditorStore((s) => s.site?.styleRules ?? EMPTY_STYLE_RULES)
+  const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
+  const conditions = useEditorStore((s) => s.site?.conditions ?? EMPTY_CONDITIONS)
   const packageJson = useEditorStore((s) => s.packageJson)
   const selectNode = useEditorStore((s) => s.selectNode)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
@@ -76,10 +71,20 @@ export function ModuleSandboxFrame({
   // (with a one-click "add" affordance) before mounting the iframe at all.
   const missingDependencies = getMissingModuleDependencies(moduleDefinition, packageJson)
 
-  const nodeClassRules = collectNodeClassRules(site, classIds)
-  const classBackgroundPaths = [...collectSiteStyleBackgroundImagePaths({ styleRules: nodeClassRules })]
-  const { mediaAssets: responsiveMediaAssets } = useResponsiveEditorMediaAssets(classBackgroundPaths)
-  const classCSS = getNodeClassCSS(site, classIds, { mediaAssets: responsiveMediaAssets })
+  // Both of these used to run in the render body over the whole site: a
+  // background-path scan and a full `generateClassCSS` emission, per sandboxed
+  // module instance, on every store change. They now go through the per-node
+  // memo in `canvasClassCss.ts` — the same cross-frame memo shape
+  // `generateCanvasClassCSS` uses, keyed by the node's `classIds` signature.
+  const classBackgroundPaths = nodeClassBackgroundImagePaths(styleRules, classIds)
+  const {
+    mediaAssets: responsiveMediaAssets,
+    signature: responsiveMediaSignature,
+  } = useResponsiveEditorMediaAssets(classBackgroundPaths)
+  const classCSS = generateNodeClassCSS(styleRules, classIds, breakpoints, conditions, {
+    mediaAssets: responsiveMediaAssets,
+    mediaSignature: responsiveMediaSignature,
+  })
 
   // The iframe's import map is filtered from the site's precomputed
   // `runtime.packageImportmap` — the server built it from the actual

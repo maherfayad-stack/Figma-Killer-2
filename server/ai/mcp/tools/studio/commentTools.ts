@@ -43,6 +43,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal } from '@core/ai'
 import {
   addReply,
   buildCommentLocation,
@@ -267,7 +268,7 @@ const studioReplyCommentTool: AiTool = {
       now: new Date().toISOString(),
     })
     if (!next) {
-      return { ok: false, code: 'empty-body', error: 'A reply needs a non-empty body.' }
+      return toolRefusal('empty-body', 'A reply needs a non-empty body.')
     }
 
     writeCommentsFile(dir, next)
@@ -345,14 +346,10 @@ const studioResolveCommentTool: AiTool = {
           writeCommentsFile(dir, explained)
           pushStudioLiveReload(ctx.userId, { dir, commentsChanged: true })
         }
-        return {
-          ok: false,
-          code: 'stale-anchor',
-          seq,
-          threadId: thread.id,
-          anchorConfidence: confidence,
-          error: reason,
-        }
+        return toolRefusal('stale-anchor', reason, {
+          remedy: 'Re-resolve the element against the current tree before closing this thread — the reply just posted already explains the refusal to the reviewer.',
+          details: { seq, threadId: thread.id, anchorConfidence: confidence },
+        })
       }
     }
 
@@ -376,12 +373,10 @@ const studioResolveCommentTool: AiTool = {
 
 /** Names the seqs that DO exist, so a wrong guess is one round trip, not a search. */
 function notFound(seq: number, file: CommentsFile) {
-  return {
-    ok: false,
-    code: 'no-such-thread',
-    error: `No comment thread with seq ${seq}.`,
-    availableSeqs: file.threads.map((thread) => thread.seq),
-  }
+  return toolRefusal('no-such-thread', `No comment thread with seq ${seq}.`, {
+    remedy: 'Pick one of the seqs in availableSeqs, or call studio_list_comments again.',
+    details: { availableSeqs: file.threads.map((thread) => thread.seq) },
+  })
 }
 
 export const studioCommentMcpTools: AiTool[] = [

@@ -71,6 +71,7 @@
  * own concern (see `server/handlers/studioProjects.ts`), not this file's.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from 'bun:test'
+import { join } from 'node:path'
 import type { DevServerStatus } from './handlers/studio/devServer'
 
 interface FakeProjectEntry {
@@ -78,9 +79,25 @@ interface FakeProjectEntry {
   url: string | null
 }
 
+/** The fake workspace root the mocked `projectsRootDir` returns — and the one `registerProject` keys off. */
+const MOCK_PROJECTS_ROOT = '/studio-workspace'
+
 let registry: Record<string, FakeProjectEntry | undefined> = {}
 
+// `mock.module` is PROCESS-WIDE and PERMANENT — `mock.restore()` does not
+// undo it, and `bun test --parallel=4` gives each worker a process, not a
+// file. Leaving these two in place cost the full suite 129 FILES: every later
+// file in this worker that imported anything from `./handlers/studioProjects`
+// got `SyntaxError: Export named 'rethrowProjectDirRefusal' not found`,
+// because the replacement below publishes exactly two of its exports. Capture
+// the real namespaces as plain objects FIRST (the namespace object itself is
+// live and gets rewritten by `mock.module`), then hand them back in
+// `afterAll`. Gated by `mock-module-must-restore.test.ts`.
+const realDevServer = { ...(await import('./handlers/studio/devServer')) }
+const realStudioProjects = { ...(await import('./handlers/studioProjects')) }
+
 mock.module('./handlers/studio/devServer', () => ({
+  ...realDevServer,
   getDevServerStatus: (dir: string): DevServerStatus =>
     registry[dir]?.status ?? { phase: 'stopped', pid: null, startedAt: null, log: '' },
   getDevServerUpstreamUrl: (dir: string): string | null =>
@@ -88,9 +105,15 @@ mock.module('./handlers/studio/devServer', () => ({
 }))
 
 mock.module('./handlers/studioProjects', () => ({
-  projectsRootDir: () => '/studio-workspace',
+  ...realStudioProjects,
+  projectsRootDir: () => MOCK_PROJECTS_ROOT,
   resolveExistingProjectDir: (requested: string): string | null => (requested in registry ? requested : null),
 }))
+
+afterAll(() => {
+  mock.module('./handlers/studio/devServer', () => realDevServer)
+  mock.module('./handlers/studioProjects', () => realStudioProjects)
+})
 
 const {
   handleLiveOriginFetch,
@@ -115,7 +138,15 @@ function registerProject(projectKey: string, phase: DevServerStatus['phase'], ur
   // runtime (`join(projectsRootDir(), projectKey)`, real `node:path.join`,
   // not mocked) — see the `mock.module('./handlers/studioProjects', ...)`
   // comment above.
-  const dir = `/studio-workspace/${projectKey}`
+  //
+  // Built with the SAME `join`, not a `/`-joined template literal: on win32
+  // `join('/studio-workspace', 'booting-app')` is `\studio-workspace\booting-app`,
+  // so the template-literal key never matched, the mocked
+  // `resolveExistingProjectDir` answered `null` for every project, and six of
+  // this file's assertions read 404 ("unknown project") where they expected a
+  // real project's 503/200/upgrade path. Every one of them passed on macOS and
+  // Linux and had been red on Windows since the file was written.
+  const dir = join(MOCK_PROJECTS_ROOT, projectKey)
   registry[dir] = { status: { phase, pid: null, startedAt: null, log: '' }, url: phase === 'ready' ? url : null }
 }
 

@@ -9,7 +9,10 @@ import {
   canGoBack,
   currentOverlay,
   currentScreen,
-  linkForClick,
+  delayTriggersForScreen,
+  linkForKey,
+  linkForTrigger,
+  releaseActionFor,
   reverseTransition,
   type PlayState,
   type PrototypeLink,
@@ -23,7 +26,7 @@ function link(overrides: Partial<PrototypeLink> = {}): PrototypeLink {
       pageId: 'welcome',
       node: { nodeId: 'cta', indexPath: [0], moduleId: 'base.button', textSnippet: 'Continue' },
     },
-    trigger: 'click',
+    trigger: { kind: 'click' },
     action: 'navigate',
     targetPageId: 'sign-in',
     transition: 'slide-left',
@@ -122,7 +125,7 @@ describe('overlays', () => {
   })
 })
 
-describe('linkForClick', () => {
+describe('linkForTrigger', () => {
   const cardLink = link({ id: 'card' })
   const buttonLink = link({ id: 'button' })
   const resolved = new Map([
@@ -133,27 +136,119 @@ describe('linkForClick', () => {
   it('follows the innermost link, not the one you happened to be inside', () => {
     // A linked button inside a linked card: you followed the thing you clicked.
     const chain = ['button-node', 'card-node', 'root']
-    expect(linkForClick([cardLink, buttonLink], resolved, chain, 'welcome')?.id).toBe('button')
+    expect(linkForTrigger([cardLink, buttonLink], resolved, chain, 'welcome', 'click')?.id).toBe('button')
   })
 
   it('falls through to an ancestor when the clicked element itself has none', () => {
     const chain = ['label-node', 'card-node', 'root']
-    expect(linkForClick([cardLink, buttonLink], resolved, chain, 'welcome')?.id).toBe('card')
+    expect(linkForTrigger([cardLink, buttonLink], resolved, chain, 'welcome', 'click')?.id).toBe('card')
   })
 
   it('is null when nothing in the chain is linked', () => {
-    expect(linkForClick([cardLink], resolved, ['stray', 'root'], 'welcome')).toBeNull()
+    expect(linkForTrigger([cardLink], resolved, ['stray', 'root'], 'welcome', 'click')).toBeNull()
   })
 
   it('ignores links belonging to another page', () => {
-    expect(linkForClick([cardLink], resolved, ['card-node'], 'sign-in')).toBeNull()
+    expect(linkForTrigger([cardLink], resolved, ['card-node'], 'sign-in', 'click')).toBeNull()
   })
 
   it('cannot follow a link whose source no longer resolves', () => {
     // A `detached` link has no entry in the resolution map. Refusing it here is
     // why it is DRAWN broken rather than dropped: a silent refusal would be
     // indistinguishable from a link that was never created.
-    expect(linkForClick([cardLink], new Map(), ['card-node'], 'welcome')).toBeNull()
+    expect(linkForTrigger([cardLink], new Map(), ['card-node'], 'welcome', 'click')).toBeNull()
+  })
+
+  it('matches the trigger exactly — a click never follows a hover link', () => {
+    // Two triggers on one element are two statements the user made separately.
+    // Falling back would fire the wrong one on the gesture the other was for.
+    const hoverLink = link({ id: 'card', trigger: { kind: 'hover' } })
+    expect(linkForTrigger([hoverLink], resolved, ['card-node'], 'welcome', 'click')).toBeNull()
+    expect(linkForTrigger([hoverLink], resolved, ['card-node'], 'welcome', 'hover')?.id).toBe('card')
+  })
+
+  it('lets one element carry a hover link and a click link at once', () => {
+    const peek = link({ id: 'card', trigger: { kind: 'hover' }, targetPageId: 'preview' })
+    const open = link({ id: 'card-click', targetPageId: 'sign-in' })
+    const both = [peek, { ...open, source: peek.source }]
+    const map = new Map([
+      ['card', 'card-node'],
+      ['card-click', 'card-node'],
+    ])
+    expect(linkForTrigger(both, map, ['card-node'], 'welcome', 'hover')?.targetPageId).toBe('preview')
+    expect(linkForTrigger(both, map, ['card-node'], 'welcome', 'click')?.targetPageId).toBe('sign-in')
+  })
+})
+
+describe('key triggers', () => {
+  const enter = link({ id: 'enter', trigger: { kind: 'key', key: 'Enter' } })
+  const resolved = new Map([['enter', 'cta-node']])
+
+  it('matches case-insensitively — caps lock is not a different key', () => {
+    const k = link({ id: 'enter', trigger: { kind: 'key', key: 'k' } })
+    expect(linkForKey([k], resolved, 'welcome', 'K')?.id).toBe('enter')
+  })
+
+  it('is scoped to the screen showing, not to a pointer', () => {
+    expect(linkForKey([enter], resolved, 'welcome', 'Enter')?.id).toBe('enter')
+    expect(linkForKey([enter], resolved, 'sign-in', 'Enter')).toBeNull()
+  })
+
+  it('ignores a link whose source no longer resolves', () => {
+    expect(linkForKey([enter], new Map(), 'welcome', 'Enter')).toBeNull()
+  })
+
+  it('ignores a link that is not a key trigger at all', () => {
+    expect(linkForKey([link({ id: 'enter' })], resolved, 'welcome', 'Enter')).toBeNull()
+  })
+})
+
+describe('after-delay triggers', () => {
+  const splash = link({ id: 'splash', trigger: { kind: 'after-delay', ms: 1500 } })
+  const resolved = new Map([['splash', 'root-node']])
+
+  it('reports what arriving on a screen owes, and schedules nothing itself', () => {
+    expect(delayTriggersForScreen([splash], resolved, 'welcome')).toEqual([
+      { link: splash, ms: 1500 },
+    ])
+  })
+
+  it('leaves out the other screens, the other triggers and the broken links', () => {
+    expect(delayTriggersForScreen([splash], resolved, 'sign-in')).toEqual([])
+    expect(delayTriggersForScreen([link()], resolved, 'welcome')).toEqual([])
+    expect(delayTriggersForScreen([splash], new Map(), 'welcome')).toEqual([])
+  })
+})
+
+describe('what letting go of a press undoes', () => {
+  it('reverses a navigate with a back and an overlay with a close', () => {
+    const peek = link({ trigger: { kind: 'press', reverseOnRelease: true } })
+    expect(releaseActionFor(peek)?.action).toBe('back')
+    expect(releaseActionFor(peek)?.targetPageId).toBeNull()
+
+    const sheet = link({
+      action: 'overlay',
+      transition: 'sheet',
+      trigger: { kind: 'press', reverseOnRelease: true },
+    })
+    expect(releaseActionFor(sheet)?.action).toBe('close')
+  })
+
+  it('actually pops the stack when applied', () => {
+    const peek = link({ trigger: { kind: 'press', reverseOnRelease: true } })
+    const pressed = apply(INITIAL_PLAY_STATE, peek)
+    expect(currentScreen(pressed, 'welcome')).toBe('sign-in')
+    expect(currentScreen(apply(pressed, releaseActionFor(peek)!), 'welcome')).toBe('welcome')
+  })
+
+  it('is null when the press was not asked to come back, or there is nothing to undo', () => {
+    expect(releaseActionFor(link({ trigger: { kind: 'press', reverseOnRelease: false } }))).toBeNull()
+    expect(releaseActionFor(link())).toBeNull()
+    expect(
+      releaseActionFor(
+        link({ action: 'back', targetPageId: null, transition: undefined, trigger: { kind: 'press', reverseOnRelease: true } }),
+      ),
+    ).toBeNull()
   })
 })
 

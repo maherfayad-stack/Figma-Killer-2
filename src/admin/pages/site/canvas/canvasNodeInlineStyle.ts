@@ -8,7 +8,7 @@ import type { NodeStylesPreview } from '@site/store/slices/styleRuleSlice'
  * STUDIO-LIVE-CANVAS-PLAN.md Track P). The class-target preview
  * (`previewClassStyles`/`ClassStyleInjector`) has shipped end-to-end since
  * before this rule; the Element target had no preview channel at all —
- * `InlineStyleComposer`/`MultiInlineStyleComposer` wired `onPreview={noop}`.
+ * the pre-P4 inline composers wired `onPreview={noop}`.
  * This is the other half: `previewNodeStyles` (transient UI state, no undo
  * history) consumed here, at the one render boundary that spreads
  * `node.inlineStyles` onto the DOM (`NodeRenderer`'s `useResponsiveBackgroundStyle`

@@ -1,0 +1,26 @@
+/* Selection colours (G6.4) — one row per distinct colour the selection uses,
+   regardless of which property it arrived on. */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-3xs);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--inspector-space-2xs);
+}
+
+/* The colour field takes the row; the usage count keeps its intrinsic width. */
+.row > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.usage {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}

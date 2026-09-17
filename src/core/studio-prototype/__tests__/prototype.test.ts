@@ -52,7 +52,7 @@ function link(overrides: Partial<PrototypeLink> = {}): PrototypeLink {
   return {
     id: 'link-1',
     source: { pageId: 'welcome', node: captureNodeHint(tree(), 'cta')! },
-    trigger: 'click',
+    trigger: { kind: 'click' },
     action: 'navigate',
     targetPageId: 'sign-in',
     transition: 'slide-left',
@@ -108,8 +108,41 @@ describe('repair vs drop', () => {
   })
 
   it('reads an unknown trigger as the click it almost certainly is', () => {
-    const file = parsePrototypeFile({ version: 1, links: [{ ...link(), trigger: 'hover' }] })
-    expect(file.links[0]!.trigger).toBe('click')
+    // Including the bare `"click"` string Phase 1 wrote, and a kind from a
+    // build that knows one this one does not.
+    const legacy = parsePrototypeFile({ version: 1, links: [{ ...link(), trigger: 'click' }] })
+    expect(legacy.links[0]!.trigger).toEqual({ kind: 'click' })
+    const future = parsePrototypeFile({ version: 1, links: [{ ...link(), trigger: { kind: 'shake' } }] })
+    expect(future.links[0]!.trigger).toEqual({ kind: 'click' })
+  })
+
+  it('keeps the four triggers it does know, payload and all', () => {
+    const kept = (trigger: unknown) =>
+      parsePrototypeFile({ version: 1, links: [{ ...link(), trigger }] }).links[0]!.trigger
+
+    expect(kept({ kind: 'hover' })).toEqual({ kind: 'hover' })
+    expect(kept({ kind: 'press', reverseOnRelease: false })).toEqual({
+      kind: 'press',
+      reverseOnRelease: false,
+    })
+    expect(kept({ kind: 'after-delay', ms: 1500 })).toEqual({ kind: 'after-delay', ms: 1500 })
+    expect(kept({ kind: 'key', key: 'ArrowRight' })).toEqual({ kind: 'key', key: 'ArrowRight' })
+  })
+
+  it('repairs a trigger payload rather than losing the flow with it', () => {
+    const kept = (trigger: unknown) =>
+      parsePrototypeFile({ version: 1, links: [{ ...link(), trigger }] }).links[0]!.trigger
+
+    // A press says nothing about the release: Figma's press trigger IS "while
+    // pressing", so the one that does not come back is the deliberate choice.
+    expect(kept({ kind: 'press' })).toEqual({ kind: 'press', reverseOnRelease: true })
+    // A hand-edited delay is clamped, not rejected — a one-minute wait the user
+    // can see and fix beats a timer nobody will sit through.
+    expect(kept({ kind: 'after-delay', ms: 30_000_000 })).toEqual({ kind: 'after-delay', ms: 60_000 })
+    expect(kept({ kind: 'after-delay', ms: -5 })).toEqual({ kind: 'after-delay', ms: 0 })
+    expect(kept({ kind: 'after-delay' })).toEqual({ kind: 'after-delay', ms: 800 })
+    // A key trigger naming no key could never fire, so it is not a trigger.
+    expect(kept({ kind: 'key', key: '' })).toEqual({ kind: 'click' })
   })
 
   it('drops a navigate/overlay with no target rather than inventing a destination', () => {

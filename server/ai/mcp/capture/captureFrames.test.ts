@@ -16,7 +16,7 @@
  *   - (W9-5 lever 2) the live-reload wait is paid ONLY on the bridge fallback,
  *     never on the headless path and never for `source: 'live'`.
  */
-import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test'
 import type { AiToolOutput } from '@core/ai'
 import type { AiBrowserBridge } from '../../runtime/types'
 
@@ -26,7 +26,19 @@ let headlessImpl: () => Promise<unknown> = async () => ({
   error: 'no browser',
 })
 
+// Snapshotted as plain objects BEFORE mocking (a live namespace object is
+// itself rewritten by `mock.module`), and handed back in `afterAll`.
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file.
+// Publishing every export (as the `liveReloadPush` replacement below does)
+// keeps LINKING working for later files but still hands them this file's
+// stubs; only the restore gives them the real functions back. Gated by
+// `mock-module-must-restore.test.ts`.
+const realHeadlessCapture = { ...(await import('./headlessCapture')) }
+const realLiveReloadPush = { ...(await import('../tools/studio/liveReloadPush')) }
+
 mock.module('./headlessCapture', () => ({
+  ...realHeadlessCapture,
   captureFramesHeadless: async () => headlessImpl(),
 }))
 
@@ -36,10 +48,16 @@ let reloadCalls: Array<Record<string, unknown>> = []
 // file in the same `bun test` run, and other suites import the real
 // `pushStudioLiveReload` through the tool under test.
 mock.module('../tools/studio/liveReloadPush', () => ({
+  ...realLiveReloadPush,
   awaitStudioLiveReload: async (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
   pushStudioLiveReload: (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
   STUDIO_LIVE_RELOAD_TOOL_NAME: 'studio_live_reload',
 }))
+
+afterAll(() => {
+  mock.module('./headlessCapture', () => realHeadlessCapture)
+  mock.module('../tools/studio/liveReloadPush', () => realLiveReloadPush)
+})
 
 const { captureFrames } = await import('./captureFrames')
 const { clearLaunchFailureMemo } = await import('./browserPool')

@@ -8,9 +8,8 @@
  * `screenshots/f3-flexboard/dark/design.png` (the board itself selected, a
  * flex container with two children): a real uppercase "LAYOUT" header
  * (chevron + title + trailing ⋮ + trailing −), then two rows of icon
- * toggles (wrap/direction, then align/justify — reused unchanged via the
- * existing `LayoutModeRow`+`FlexDirectionControl`+`WrapToggleButton`+
- * `AlignGrid`), then a gap row, then a padding row, THEN a separate
+ * toggles (wrap/direction, then align/justify — `LayoutModeRow` +
+ * `FlexFlowControl` + `AlignGrid`), then a gap row, then a padding row, THEN a separate
  * "FLEX BOARD" header with an undecoded icon-only row (P0 never captured
  * what those four icons write — same evidence gap `MeasuresSection.tsx`'s
  * own doc flags for the FLEX ELEMENT icon row, and the same posture is
@@ -99,8 +98,7 @@ import {
   resolveLayoutMode,
   type LayoutMode,
 } from './LayoutSection/layoutMode'
-import { FlexDirectionControl } from './LayoutSection/FlexDirectionControl'
-import { WrapToggleButton } from './LayoutSection/WrapToggleButton'
+import { FlexFlowControl } from './LayoutSection/FlexFlowControl'
 import { GapRow } from './LayoutSection/GapRow'
 import { GridTrackControl } from './LayoutSection/GridTrackControl'
 import { LayoutSettingsButton } from './LayoutSection/LayoutSettingsButton'
@@ -304,16 +302,12 @@ export function LayoutSection() {
         {isFlex && (
           <div className={styles.flexBlock}>
             <div className={styles.flexHeaderRow}>
-              <FlexDirectionControl
-                value={isMixed(currentStyles.flexDirection) ? MIXED : flexDirection}
-                isSet={hasStyleValue(storedStyles.flexDirection)}
-                onChange={(v) => onChange('flexDirection', v)}
-                onClear={() => onClearProperty('flexDirection')}
-              />
-              <WrapToggleButton
-                value={flexWrap}
-                onChange={(v) => onChange('flexWrap', v)}
-                onClear={() => onClearProperty('flexWrap')}
+              <FlexFlowControl
+                flexDirection={isMixed(currentStyles.flexDirection) ? MIXED : flexDirection}
+                flexWrap={flexWrap}
+                onChangeDirection={(v) => onChange('flexDirection', v)}
+                onChangeWrap={(v) => onChange('flexWrap', v)}
+                onClearWrap={() => onClearProperty('flexWrap')}
               />
             </div>
             <div className={styles.alignGapRow}>
@@ -379,6 +373,7 @@ export function LayoutSection() {
           currentStyles={currentStyles}
           tokens={spacingTokens}
           onChange={onChange}
+          onChangeMany={onChangeMany}
           onPreview={onPreview}
           onClearPreview={onClearPreview}
         />

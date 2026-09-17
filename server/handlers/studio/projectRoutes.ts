@@ -111,7 +111,7 @@ import { projectThumbnailQueue } from './projectThumbnailQueue'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
-import { createScaffoldedPage } from './pageScaffold'
+import { scaffoldPageLocked } from './pageScaffold'
 import { detectPageTemplateKit, starterPage } from './pageTemplates'
 import { isSafePagesDirOverride } from './studioMeta'
 import {
@@ -445,7 +445,7 @@ export async function tryServeStudioProjectRoutes(
     try {
       const body = await readValidatedBody(req, CreatePageBodySchema)
       if (!body) return badRequest('invalid page body')
-      const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
+      const result = await scaffoldPageLocked(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
       if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
       return jsonResponse(result)
     } catch (err) {

@@ -235,12 +235,23 @@ export default defineConfig({
   },
   server: {
     watch: {
-      // Runtime-written paths: the publish pipeline bakes HTML into the uploads
-      // dir, the SQLite DB and E2E artefacts live under .tmp, and dist holds the
-      // built bundle. None are part of the client module graph, so watching them
-      // only triggers spurious full reloads — which, during E2E, would reload the
-      // admin app mid-test. Ignore them.
-      ignored: ['**/.tmp/**', '**/uploads/**', '**/dist/**'],
+      // Runtime-written paths: Studio writes the user's React source into
+      // studio-workspace/ on every save and import, the publish pipeline bakes
+      // HTML into the uploads dir, the SQLite DB and E2E artefacts live under
+      // .tmp, and dist holds the built bundle. None are part of the client
+      // module graph, so watching them only triggers spurious full reloads —
+      // which, during E2E, would reload the admin app mid-test. Ignore them.
+      //
+      // studio-workspace/ is not hypothetical and not merely wasteful: Vite's
+      // watcher is rooted at the project root (the opposite of Bun's, which
+      // keys on the server's module graph), and Vite full-reloads on ANY
+      // watched `.html` change that maps to no module. Every Vite-template
+      // React app Studio imports ships an `index.html` at its own root, so a
+      // GitHub import or a save that rewrites it reloaded the editor out from
+      // under the user. Measured on 2026-09-17 before this entry existed:
+      // touching `studio-workspace/test4/index.html` logged
+      // `[vite] (client) page reload studio-workspace/test4/index.html`.
+      ignored: ['**/.tmp/**', '**/uploads/**', '**/dist/**', '**/studio-workspace/**'],
     },
     proxy: {
       // The whole `/admin/api/` prefix (CMS + agent) is forwarded to the

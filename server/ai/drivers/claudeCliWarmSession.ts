@@ -49,7 +49,7 @@ import {
   type SpawnedProcessLike,
   type SubprocessSpawnFn,
 } from '../../handlers/studio/subprocessRunner'
-import { ClaudeCliSpawnError, type ClaudeCliRawEvent } from './claudeCliSpawn'
+import { ClaudeCliSpawnError, TOTAL_TURN_CAP_MS, type ClaudeCliRawEvent } from './claudeCliSpawn'
 import { buildControlRequestLine, buildUserMessageLine, encodeStdinLine } from './claudeCliStdinProtocol'
 
 /** A spawned process whose stdin stayed open — what `stdin: 'pipe'` returns, narrowed so the rest of this file can rely on it. */
@@ -188,7 +188,25 @@ export class ClaudeCliWarmSession {
    * anything — when the process is unusable, so the caller can fall back to a
    * cold spawn without the user seeing a duplicated or truncated reply.
    */
-  async *runTurn(prompt: string, signal: AbortSignal): AsyncGenerator<ClaudeCliRawEvent, void, void> {
+  async *runTurn(
+    prompt: string,
+    signal: AbortSignal,
+    /**
+     * Z3 — total wall time this ONE turn may run. Per turn, not per session:
+     * the process is pooled and outlives the turn, so a cap baked into the
+     * constructor would be the first turn's cap forever.
+     *
+     * On expiry this sends the CLI's own `interrupt` control request rather
+     * than killing anything. The spike behind `claudeCliStdinProtocol.ts` §5
+     * measured exactly that: the running generation stops, a normal `result`
+     * line closes the turn, and the next user message on the same stdin is
+     * answered normally. So a capped turn costs the user the turn, not the
+     * warm session and its MCP handshakes. Only an interrupt the CLI does not
+     * answer within `interruptGraceMs` disposes the session — at that point it
+     * is wedged, which is the one thing a cap cannot leave running.
+     */
+    totalTurnCapMs: number = TOTAL_TURN_CAP_MS,
+  ): AsyncGenerator<ClaudeCliRawEvent, void, void> {
     if (!this.alive) throw new ClaudeCliWarmSessionDeadError('The warm Claude CLI session is no longer running.')
     if (this.turnInFlight) throw new ClaudeCliWarmSessionDeadError('The warm Claude CLI session is already serving a turn.')
 
@@ -221,15 +239,40 @@ export class ClaudeCliWarmSession {
         )
       }
 
+      const turnStartedAt = Date.now()
+      let capFired = false
+      /** Send the cap's `interrupt` if the turn has run out its total time. True when it just fired. */
+      const fireCapIfDue = (): boolean => {
+        if (capFired || interruptSentAt !== null) return false
+        if (Date.now() - turnStartedAt < totalTurnCapMs) return false
+        capFired = true
+        interruptSentAt = Date.now()
+        this.sendControl({ subtype: 'interrupt' })
+        return true
+      }
+
       let yieldedAnything = false
       for (;;) {
         const deadline =
           interruptSentAt === null
-            ? this.idleTimeoutMs
+            // Wake at whichever comes first: the idle window running out
+            // (nothing at all from the child) or the total cap coming due.
+            ? Math.min(this.idleTimeoutMs, Math.max(0, totalTurnCapMs - (Date.now() - turnStartedAt)))
             : Math.max(0, this.interruptGraceMs - (Date.now() - interruptSentAt))
         const line = await this.nextLine(deadline)
 
         if (line === undefined) {
+          // The cap's deadline expiring is not a dead process — it is this
+          // driver's cue to interrupt and wait for the turn to close itself.
+          if (fireCapIfDue()) continue
+          if (capFired) {
+            // The interrupt went unanswered for the whole grace window. That
+            // is the one case a cap may not leave running: a wedged process
+            // must not be handed to the next turn.
+            this.dispose()
+            yield { kind: 'turnCapped', capMs: totalTurnCapMs }
+            return
+          }
           // Either the process died, or it went silent for the whole window.
           // With nothing yielded yet this turn is recoverable by a cold retry;
           // once output has reached the user it is not, so it degrades to the
@@ -245,6 +288,18 @@ export class ClaudeCliWarmSession {
           }
           yield { kind: 'exit', exitCode: this.exitCode, stderr: this.stderrSnapshot.text, timedOut }
           return
+        }
+
+        if (capFired) {
+          // Everything after the interrupt belongs to a turn the user is about
+          // to be told ended. Drain to the `result` that closes it rather than
+          // forwarding it, then report the cap with the session still ALIVE —
+          // the whole reason the cap interrupts instead of killing.
+          if (isResultLine(line)) {
+            yield { kind: 'turnCapped', capMs: totalTurnCapMs }
+            return
+          }
+          continue
         }
 
         yieldedAnything = true

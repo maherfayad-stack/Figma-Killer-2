@@ -104,7 +104,7 @@ import type {
   NoteColor,
   PreviewAxes,
 } from '@core/studio-board'
-import type { SnapGuide } from '@site/canvas/boardSnapping'
+import { snapGuidesEqual, type SnapGuide } from '@site/canvas/boardSnapping'
 import {
   createBoard,
   createBoardsFile,
@@ -309,6 +309,20 @@ interface BoardSlice {
    * data, trap #12).
    */
   duplicateFrameAsVariant: (sourceFrameId: string, axesOverride: Partial<PreviewAxes>) => string | null
+  /**
+   * K2 — Alt+drag on a frame header: a plain copy of `sourceFrameId` at
+   * `x`/`y`, keeping the source's own preview axes (a copy, not a variant).
+   * Returns the new frame's id, or `null` if the source is gone.
+   *
+   * A separate action from `duplicateFrameAsVariant` rather than an optional
+   * `axesOverride`, because the two differ in more than that argument: a
+   * variant lands at a computed position beside the source and takes the
+   * selection, while an Alt+drag copy lands where the pointer is and must NOT
+   * disturb the selection mid-gesture. Both go through the same pure
+   * `duplicateFrame` transform, so there is still one definition of what a
+   * duplicated frame is.
+   */
+  duplicateFrameAt: (sourceFrameId: string, x: number, y: number) => string | null
   /** WS-10 Phase 2 — set (or clear, passing `undefined`) one frame's per-axis preview override by `id`. No-op if the frame id doesn't exist. */
   setFrameAxes: (frameId: string, axes: Partial<PreviewAxes> | undefined) => void
   /** Clear the dirty flag after a successful save. */
@@ -557,7 +571,15 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     })
   },
 
-  setBoardSnapGuides: (guides) => set({ boardSnapGuides: guides }),
+  // D2 G8 — a furniture drag called this on EVERY pointermove, alongside its
+  // `setFramePosition`: two store writes (each a full notification and
+  // selector sweep) per pointer event where one of them almost always wrote
+  // the same empty list back. The equality check makes the guide write cost
+  // nothing until the guides actually change — see `snapGuidesEqual`.
+  setBoardSnapGuides: (guides) => {
+    if (snapGuidesEqual(get().boardSnapGuides, guides)) return
+    set({ boardSnapGuides: guides })
+  },
 
   // ── Frame multi-selection (WS-7.1) — implementation split out to
   // `boardFrameSelectionActions.ts` purely to stay under the module-size

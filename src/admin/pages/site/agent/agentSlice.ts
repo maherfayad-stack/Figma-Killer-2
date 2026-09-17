@@ -544,7 +544,7 @@ export function createAgentSlice(
           }
         }
 
-        const { agentEffort, agentPermissionMode, agentFidelityMode } = get()
+        const { agentEffort, agentPermissionMode, agentFidelityMode, agentDesignPolicy } = get()
         const body = buildChatRequestBody({
           conversationId,
           content,
@@ -555,6 +555,7 @@ export function createAgentSlice(
           agentEffort,
           agentPermissionMode,
           agentFidelityMode,
+          agentDesignPolicy,
         })
         const res = await fetch('/admin/api/ai/chat', {
           method: 'POST',

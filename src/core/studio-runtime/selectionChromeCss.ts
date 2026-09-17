@@ -53,6 +53,20 @@ export const SELECTION_CHROME_TOKENS = [
   '--canvas-selection-ring-color',
   '--canvas-node-badge-text',
   '--canvas-resize-handle-fill',
+  // Alt-hover measurement (K5). `--font-mono`, `--radius-sm` and `--text-2xs`
+  // are ordinary editor tokens rather than `--canvas-*` affordances — they
+  // are forwarded because the measurement pill is the first piece of in-frame
+  // chrome that has to match the editor's own type scale, and a frame
+  // document defines none of them.
+  '--canvas-measure-line-color',
+  '--canvas-measure-pill-bg',
+  '--canvas-measure-pill-text',
+  '--canvas-measure-padding-fill',
+  '--canvas-measure-padding-line',
+  '--canvas-measure-padding-text',
+  '--font-mono',
+  '--radius-sm',
+  '--text-2xs',
 ] as const
 
 /**
@@ -191,6 +205,59 @@ export const SELECTION_CHROME_RULES = `
 }
 [data-canvas-resize-handle="w"] { left: 0; }
 [data-canvas-resize-handle="e"] { left: 100%; }
+
+/* Alt-hover measurement (K5) - the distance segments between the selection
+   and the hovered element, their numeric pills, and the hovered element's
+   padding bands + content box. Appearance only; every position and size is
+   written imperatively by MeasureLayer.tsx, exactly like the rings above.
+   (No backticks anywhere in this template literal - they would end it.)
+
+   Everything is transform-positioned inside the zero-size overlay root, so
+   none of it can feed back into body.scrollHeight and grow the frame. */
+[data-canvas-measure-line],
+[data-canvas-measure-padding],
+[data-canvas-measure-content-box] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+[data-canvas-measure-line] {
+  background: var(--canvas-measure-line-color);
+}
+
+[data-canvas-measure-padding] {
+  background: var(--canvas-measure-padding-fill);
+}
+
+[data-canvas-measure-content-box] {
+  outline: 1px dashed var(--canvas-measure-padding-line);
+  outline-offset: -1px;
+}
+
+[data-canvas-measure-label] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--canvas-measure-pill-bg);
+  color: var(--canvas-measure-pill-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+[data-canvas-measure-label][data-measure-kind="padding"] {
+  background: var(--canvas-measure-padding-line);
+  color: var(--canvas-measure-padding-text);
+}
 `.trim()
 
 /** `buildSelectionChromeTokenBlock(sourceDoc)` + `SELECTION_CHROME_RULES`, combined the same way both callers need it. */

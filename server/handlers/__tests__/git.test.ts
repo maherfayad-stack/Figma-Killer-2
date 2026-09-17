@@ -28,6 +28,7 @@ import * as path from 'node:path'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioGit } from '../studio/git'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { isProjectWriteLocked, withProjectWriteLock } from '../studio/projectWriteLock'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
@@ -441,5 +442,181 @@ describe('git routes — rejections', () => {
     }
     expect(status.status.entries.map((e) => e.path)).toEqual(['pages/Home.tsx'])
     expect(status.status.excludedCount).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The write lock (G7)
+// ---------------------------------------------------------------------------
+
+/**
+ * A commit is several subprocesses with awaits between them; a canvas save is
+ * one synchronous burst of `writeFileSync`. Without the lock the save lands
+ * between the staging step and the commit step and the commit carries content
+ * the user never reviewed — and two overlapping git verbs surface git's own
+ * `index.lock`, which has a filesystem path in it.
+ *
+ * `applyStudioEditBatchLocked` is the real save entry point, so these drive the
+ * same lock the save route takes rather than a stand-in.
+ */
+describe('git routes — the project write lock', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+  })
+
+  it('commits the content the panel showed even when a save is issued mid-commit', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'REVIEWED\n')
+
+    const commit = call('/admin/api/studio/git/commit', post({ dir, message: 'Reviewed', files: ['pages/Home.tsx'] }))
+    // Wait for the route to actually be inside its critical section rather
+    // than guessing a number of microtasks — the assertion below is about
+    // what happens to a save issued DURING the commit, so "during" has to be
+    // observed, not assumed.
+    while (!isProjectWriteLocked(dir)) await Bun.sleep(1)
+
+    // Issued while the commit is in flight. It must wait, not overwrite the
+    // file between the staging step and the commit step.
+    const save = withProjectWriteLock(dir, () => {
+      fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'WRITTEN AFTER THE COMMIT\n')
+    })
+
+    const [commitRes] = await Promise.all([commit, save])
+    expect(commitRes.status).toBe(200)
+
+    const committed = await git(dir, ['show', 'HEAD:pages/Home.tsx'])
+    expect(committed.out).toContain('REVIEWED')
+    expect(committed.out).not.toContain('WRITTEN AFTER THE COMMIT')
+    // And the save did land — it waited, it was not dropped.
+    expect(fs.readFileSync(path.join(dir, 'pages', 'Home.tsx'), 'utf8')).toContain('WRITTEN AFTER THE COMMIT')
+  })
+
+  it('answers 409 busy — with no filesystem path — when another writer holds the lock past the wait', async () => {
+    let finishTheOtherWriter = () => {}
+    const otherWriter = withProjectWriteLock(
+      dir,
+      () => new Promise<void>((resolve) => (finishTheOtherWriter = resolve)),
+    )
+
+    const res = await call('/admin/api/studio/git/commit', post({ dir, message: 'x', files: ['pages/Home.tsx'] }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: string; code: string }
+    expect(body.code).toBe('busy')
+    expect(body.error).not.toContain(dir)
+    expect(body.error).not.toContain(projectsRootDir())
+
+    finishTheOtherWriter()
+    await otherWriter
+  })
+
+  it('leaves reads working while a writer holds the lock — status must never answer busy', async () => {
+    let finishTheOtherWriter = () => {}
+    const otherWriter = withProjectWriteLock(
+      dir,
+      () => new Promise<void>((resolve) => (finishTheOtherWriter = resolve)),
+    )
+
+    const res = await call(`/admin/api/studio/git/status?dir=${encodeURIComponent(dir)}`)
+    expect(res.status).toBe(200)
+
+    finishTheOtherWriter()
+    await otherWriter
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CSRF — the guard that matters most here, because nothing else defends these
+// ---------------------------------------------------------------------------
+
+/**
+ * These routes read no session, so `SameSite=Lax` on a cookie protects nothing
+ * about them, and `readValidatedBody` calls `req.json()` whatever the content
+ * type claims — which means a page on an unrelated origin can reach every POST
+ * below with a plain `<form enctype="text/plain">`: no preflight, no cookie.
+ * `originAllowed` is the only thing standing between that page and a `push`
+ * carrying the user's stored GitHub token, or a `restore` that overwrites a
+ * file they have open and never saved.
+ */
+describe('git routes — CSRF', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+  })
+
+  /**
+   * `Origin` is a forbidden header in the `Request` constructor, so it has to
+   * be set afterwards — which is also why the check is worth anything: a page
+   * cannot forge the header, only the browser writes it.
+   *
+   * `text/plain` is exactly what a cross-origin `<form>` can send, and the body
+   * parser accepts it: the content type is not the control here, the Origin
+   * check is.
+   */
+  async function forged(action: string, body: unknown, origin = 'https://evil.test'): Promise<Response> {
+    const { req, url, pathname } = request(`/admin/api/studio/git/${action}`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify(body),
+    })
+    req.headers.set('origin', origin)
+    const res = await tryServeStudioGit(req, url, pathname)
+    if (!res) throw new Error(`no route matched ${action}`)
+    return res
+  }
+
+  it('refuses every mutating verb from a foreign origin, before git runs', async () => {
+    const head = (await git(dir, ['rev-parse', 'HEAD'])).out.trim()
+    for (const [action, body] of [
+      ['branch', { dir, create: 'feat/forged' }],
+      ['commit', { dir, message: 'forged', files: ['pages/Home.tsx'] }],
+      ['push', { dir }],
+      ['init', { dir, confirm: true }],
+      ['restore', { dir, sha: head, file: 'pages/Home.tsx' }],
+    ] as const) {
+      const res = await forged(action, body)
+      expect({ action, status: res.status }).toEqual({ action, status: 403 })
+    }
+
+    // Nothing happened: no new branch, no new commit.
+    expect((await git(dir, ['branch', '--list', 'feat/forged'])).out.trim()).toBe('')
+    expect((await git(dir, ['log', '--format=%s'])).out.trim()).toBe('Initial commit')
+  })
+
+  it('says nothing about the filesystem when it refuses', async () => {
+    const body = (await (await forged('push', { dir })).json()) as { error: string }
+    expect(body.error).not.toContain(dir)
+    expect(body.error).not.toContain(projectsRootDir())
+  })
+
+  it('leaves the reads alone — a GET mutates nothing, so the check would only break the panel', async () => {
+    const { req, url, pathname } = request(`/admin/api/studio/git/status?dir=${encodeURIComponent(dir)}`)
+    req.headers.set('origin', 'https://evil.test')
+    expect((await tryServeStudioGit(req, url, pathname))?.status).toBe(200)
+  })
+
+  it('still admits the panel\'s own request, and a client that sends no Origin at all', async () => {
+    expect((await forged('branch', { dir, create: 'feat/allowed' }, 'http://localhost')).status).toBe(200)
+
+    // curl / a script: no Origin header is not a browser, so it is not CSRF.
+    expect((await call('/admin/api/studio/git/branch', post({ dir, switch: 'main' }))).status).toBe(200)
+  })
+
+  it('does not answer for a POST that belongs to a sibling sub-router under the same prefix', async () => {
+    // `pull`/`fetch`/`pull-request` are `gitSyncRoutes.ts`'s and
+    // `remote`/`clone` are `gitRemoteRoutes.ts`'s. Each runs its own check;
+    // this one must fall through rather than 403 on their behalf.
+    for (const action of ['pull', 'fetch', 'remote', 'clone', 'pull-request']) {
+      const { req, url, pathname } = request(`/admin/api/studio/git/${action}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      req.headers.set('origin', 'https://evil.test')
+      expect({ action, res: await tryServeStudioGit(req, url, pathname) }).toEqual({ action, res: null })
+    }
   })
 })

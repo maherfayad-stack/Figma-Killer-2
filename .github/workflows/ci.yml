@@ -69,11 +69,104 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # No path filter, deliberately: every architecture gate under
+      # `src/__tests__/architecture/` — including every new one a work order
+      # adds — is picked up by this job automatically. A gate that has to be
+      # named here to run is a gate that will be forgotten.
       - name: Test
         run: bun test
 
-# NOTE: The Playwright E2E suite is intentionally NOT run in CI yet. As
-# configured (`workers: 1`, fully serial, 156 tests) it takes ~45-60 min and is
-# timeout-fragile against the un-optimized dev server, so it cannot gate PRs
-# reliably today. Run it locally with `bun run test:e2e`. It will be reintroduced
-# as its own workflow once the suite is sharded/parallelized and stabilized.
+  # The FULL Playwright suite is still not run in CI: as configured
+  # (`workers: 1`, fully serial, 150+ tests) it takes ~45-60 min and is
+  # timeout-fragile against the un-optimized dev server. This job runs the
+  # narrow canvas + inspector BUDGET slice instead — the specs that measure
+  # computed layout and frame time, which happy-dom structurally cannot answer
+  # (`standing-02`). Run the whole suite locally with `bun run test:e2e`.
+  e2e-budgets:
+    name: Browser budgets (canvas + inspector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # Started here rather than left to `playwright.config.ts`'s `webServer`
+      # block: that block waits 120s, and a COLD Vite (no pre-bundled deps in a
+      # fresh checkout) can spend longer than that compiling the editor chunk
+      # before it answers. The wait below is explicit and generous, and the log
+      # is kept as an artifact so a failure to boot is readable rather than a
+      # bare timeout.
+      - name: Start the disposable e2e stack
+        run: |
+          mkdir -p .tmp
+          bun run e2e:dev > .tmp/e2e-dev.log 2>&1 &
+          echo "E2E_DEV_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for the stack
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5174/admin && curl -fsS -o /dev/null http://127.0.0.1:3002/; then
+              echo "stack up after ~$((attempt * 2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the e2e stack never came up on 127.0.0.1:5174 / :3002"
+          cat .tmp/e2e-dev.log
+          exit 1
+
+      # Only paths that exist are passed to Playwright: a path it cannot
+      # resolve fails the whole run with "no tests found", so a spec that has
+      # not landed yet (`inspector-height.e2e.ts` is S5's) would turn this job
+      # red for the wrong reason. A missing spec costs coverage and says so.
+      #
+      # `studio-board-perf.e2e.ts` SELF-SKIPS here: the corpus it measures
+      # (`studio-workspace/maherfayad-stack-eSIM`) is not tracked by git, so a
+      # clean checkout does not have it. `studio-feel.e2e.ts` measures the same
+      # zoom against `studio-workspace/test4`, which IS tracked — that is the
+      # canvas budget this job actually gates today.
+      - name: Run the budget specs
+        env:
+          E2E_REUSE_SERVER: '1'
+        run: |
+          specs=""
+          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
+            if [ -f "$spec" ]; then
+              specs="$specs $spec"
+            else
+              echo "::notice::$spec is not in this checkout yet — running without it"
+            fi
+          done
+          if [ -z "$specs" ]; then
+            echo "::error::none of the budget specs exist in this checkout"
+            exit 1
+          fi
+          echo "running:$specs"
+          bunx playwright test $specs
+
+      - name: Stop the e2e stack
+        if: always()
+        run: kill "$E2E_DEV_PID" 2>/dev/null || true
+
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            .tmp/playwright-report
+            .tmp/playwright-results
+            .tmp/e2e-dev.log
+          retention-days: 7
+          if-no-files-found: warn

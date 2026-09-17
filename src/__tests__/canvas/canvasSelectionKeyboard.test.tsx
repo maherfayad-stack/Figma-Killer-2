@@ -13,9 +13,19 @@ import { describe, it, expect, afterEach, beforeEach } from 'bun:test'
 import { cleanup, renderHook } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { useCanvasSelectionKeyboard } from '@site/canvas/useCanvasSelectionKeyboard'
+import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 
+/**
+ * `K1` — the hook no longer owns a listener; it registers a `node`-rung scope
+ * handler with the editor key dispatcher, whose single `document` listener
+ * `SitePage` mounts. Both halves are needed for a keystroke to reach it, so
+ * both are mounted here.
+ */
 function mount() {
-  return renderHook(() => useCanvasSelectionKeyboard(true, false))
+  return renderHook(() => {
+    useEditorKeyDispatcher()
+    useCanvasSelectionKeyboard(true, false, () => {})
+  })
 }
 
 /** A real keydown on `document` — the shape both the parent document and `IframeFrameSurface`'s bridge produce. */
@@ -139,7 +149,10 @@ describe('useCanvasSelectionKeyboard — Escape', () => {
   })
 
   it('does not run at all on a read-only or live canvas', () => {
-    renderHook(() => useCanvasSelectionKeyboard(true, true))
+    renderHook(() => {
+      useEditorKeyDispatcher()
+      useCanvasSelectionKeyboard(true, true, () => {})
+    })
     useEditorStore.setState({ selectedNodeId: 'n1', selectedNodeIds: ['n1'] })
 
     expect(pressEscape()).toBe(false)

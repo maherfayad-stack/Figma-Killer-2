@@ -156,6 +156,212 @@ describe('duplicateJsxElement', () => {
   })
 })
 
+/**
+ * K2's Alt+drag — the duplicate-to form. Held to the same whole-file bar as
+ * everything else in this file: the ORIGINAL must come out byte-identical
+ * (this is a copy, not a move), and the copy must land with exactly the
+ * whitespace a newly inserted element would have had.
+ */
+describe('duplicateJsxElement — the duplicate-to form (K2)', () => {
+  it('appends the copy as the destination\'s last child, reindented, leaving the original untouched', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <p className="first">First</p>
+      <aside>
+        <span>kept</span>
+      </aside>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const result = duplicateJsxElement({
+      file,
+      ...locateTag(source, 'p'),
+      ...destination(locateTag(source, 'aside')),
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      source.replace(
+        '        <span>kept</span>\n',
+        '        <span>kept</span>\n        <p className="first">First</p>\n',
+      ),
+    )
+  })
+
+  it('writes the copy BEFORE a named anchor inside the destination', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <p className="first">First</p>
+      <aside>
+        <span>kept</span>
+      </aside>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const anchor = locateTag(source, 'span')
+    const result = duplicateJsxElement({
+      file,
+      ...locateTag(source, 'p'),
+      ...destination(locateTag(source, 'aside')),
+      anchorLine: anchor.line,
+      anchorCol: anchor.col,
+      position: 'before',
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      source.replace(
+        '        <span>kept</span>\n',
+        '        <p className="first">First</p>\n        <span>kept</span>\n',
+      ),
+    )
+  })
+
+  it('copies a multi-line element into a deeper container, re-hanging its indentation', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <img
+        src="/one.png"
+        alt="one"
+      />
+      <aside>
+        <span>kept</span>
+      </aside>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const result = duplicateJsxElement({
+      file,
+      ...locateTag(source, 'img'),
+      ...destination(locateTag(source, 'aside')),
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      source.replace(
+        '        <span>kept</span>\n',
+        '        <span>kept</span>\n        <img\n          src="/one.png"\n          alt="one"\n        />\n',
+      ),
+    )
+  })
+
+  it('reopens a self-closing destination into a paired tag to give it its first child', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <p>First</p>
+      <aside />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const result = duplicateJsxElement({
+      file,
+      ...locateTag(source, 'p'),
+      ...destination(locateTag(source, 'aside')),
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      source.replace('      <aside />\n', '      <aside>\n        <p>First</p>\n      </aside>\n'),
+    )
+  })
+
+  it('REFUSES a copy into the element being copied — it would land inside itself', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <article>
+        <p>Body</p>
+      </article>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const result = duplicateJsxElement({
+      file,
+      ...locateTag(source, 'article'),
+      ...destination(locateTag(source, 'p')),
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.refusal.reason).toBe('into-own-descendant')
+    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+
+  it('REFUSES a copy that would leave its own bindings behind, and names them', () => {
+    const source = `export default function Page({ rows }) {
+  return (
+    <section>
+      <aside>
+        <span>kept</span>
+      </aside>
+      {rows.map((row) => (
+        <ul key={row.id}>
+          <li>{row.label}</li>
+        </ul>
+      ))}
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const result = duplicateJsxElement({
+      file,
+      ...locateTag(source, 'li'),
+      ...destination(locateTag(source, 'aside')),
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.refusal.reason).toBe('out-of-scope')
+      // The whole point of this refusal is that it is actionable — "some
+      // binding" is not something a person can do anything about.
+      expect(result.refusal.message).toContain('row')
+    }
+    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+
+  it('REFUSES a destination the file no longer has an element at, and writes nothing', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <p>First</p>
+      <aside />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const result = duplicateJsxElement({
+      file,
+      ...locateTag(source, 'p'),
+      destinationLine: 9_000,
+      destinationCol: 1,
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.refusal.reason).toBe('not-found')
+    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+})
+
+/** `locateTag`'s result, spelled as the codemod's destination fields. */
+function destination(at: { line: number; col: number }) {
+  return { destinationLine: at.line, destinationCol: at.col }
+}
+
 describe('wrapJsxElement', () => {
   it('wraps a whole-line element in a div, re-hanging only its own indentation', () => {
     const file = writeFixture(PAGE)

@@ -56,7 +56,7 @@ import { resolvePublicOrigins } from '../../config'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
-import { detectPackageManager, type PackageManager } from './installDeps'
+import { detectPackageManager, type PackageManager } from './packageManager'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { requireTrustTier } from './trustGate'
 

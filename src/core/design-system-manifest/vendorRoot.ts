@@ -30,9 +30,26 @@ export const VENDOR_DESIGN_SYSTEM_DIR = join(REPO_ROOT, 'vendor/alm-design-syste
  */
 export const VENDOR_DESIGN_SYSTEM_SPECIFIER = 'alm-design-system'
 
-/** Read a file from the vendored package, relative to its root. Throws if absent. */
+/**
+ * Read a file from the vendored package, relative to its root. Throws if absent.
+ *
+ * **Line endings are normalised to `\n`, and that is load-bearing.** Everything
+ * downstream (`vendorDocs.ts`'s heading scanner, `componentCuration.ts`'s
+ * Decision-Map table reader, `buildDesignSystemManifest.ts`'s usage-example
+ * parser) slices these markdown files with line-anchored regexes. In a JS
+ * regex `.` does NOT match `\r` — `\r` is a line terminator — so
+ * `/^(#{1,6})\s+(.*)$/` fails to match `"### Button\r"`, and on a checkout
+ * with CRLF working-tree files (`core.autocrlf=true` is the Git-for-Windows
+ * default) EVERY heading in `CLAUDE.md`/`design.md` went unseen: zero props
+ * and a placeholder `"<Name> component"` description for all 39 components,
+ * in the Properties panel and the Assets panel alike. `bun run alm:sync` then
+ * wrote that empty result over the committed manifest.
+ *
+ * Normalising here, at the one place that knows how to read a vendored file,
+ * is the fix — not a `\r?` sprinkled through every downstream regex.
+ */
 export function readVendorFile(relativePath: string): string {
-  return readFileSync(join(VENDOR_DESIGN_SYSTEM_DIR, relativePath), 'utf8')
+  return readFileSync(join(VENDOR_DESIGN_SYSTEM_DIR, relativePath), 'utf8').replace(/\r\n/g, '\n')
 }
 
 /** Read a file from the vendored package, or `null` when it does not exist. */

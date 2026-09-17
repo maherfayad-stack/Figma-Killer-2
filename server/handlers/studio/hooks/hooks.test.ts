@@ -120,7 +120,12 @@ describe('stopGateCheck.ts (spawned)', () => {
     }
   }, SPAWN_TIMEOUT_MS)
 
-  it('blocks with a specific, actionable reason for a page written this turn with no reference armed', async () => {
+  // A9 — a project with NO design reference derives CREATIVE fidelity
+  // (`resolveFidelityMode`'s derived tier), and creative's bar is a clean
+  // `studio_quality_check`, not a compare it has nothing to compare against.
+  // Asking such a project to register a design reference is the instruction
+  // the mode-aware gate exists to stop giving.
+  it('blocks a page written this turn with the bar its OWN fidelity mode defines', async () => {
     const projectDir = await freshDir()
     try {
       const scaffolded = createScaffoldedPage(projectDir, 'Onboarding')
@@ -143,7 +148,11 @@ describe('stopGateCheck.ts (spawned)', () => {
       const parsed = JSON.parse(result.stdout) as { decision: string; reason: string }
       expect(parsed.decision).toBe('block')
       expect(parsed.reason).toContain('Onboarding')
-      expect(parsed.reason).toContain('studio_register_design_reference')
+      expect(parsed.reason).toContain('studio_quality_check')
+      expect(parsed.reason).toContain('CREATIVE')
+      // The one instruction this project cannot act on: there is no design to
+      // register and nothing to compare against.
+      expect(parsed.reason).not.toContain('studio_register_design_reference')
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }

@@ -471,7 +471,6 @@ Why this matters: selection rings and the floating selection toolbar are portale
 | LeftSidebar, RightSidebar             | 85      | `sidebars/{Left,Right}Sidebar/` |
 | CodeEditorPanel (floats over sidebars)| 95      | `code-editor/CodeEditorPanel.module.css` |
 | Toolbar popovers / dropdowns          | 201     | `toolbar/Toolbar.module.css` |
-| PreviewOverlay                        | 400–401 | `preview/PreviewOverlay.module.css` |
 
 **Canvas-internal z-index table** (all confined inside the `z-index: 0` canvas context):
 
@@ -608,11 +607,33 @@ The sidebar shell expands/collapses by animating `--*-panel-width`. The panel sl
 `src/admin/pages/site/toolbar/`:
 
 - `StudioToolbarActions` — bundles `ImportProjectButton`, `PreviewAxesControls`, `DownloadCodeButton` (Studio's export story — no CMS publish pipeline). `ImportProjectButton` is one of two mounts of the same dialog: the dashboard launcher offers "Import project" beside "New project", and both render `LazyImportProjectDialog` from `src/admin/shared/dialogs/ImportProjectDialog/`
+- `SaveStatusChip` — `Saved · Saving… · Unsaved · Unsaved — retry`, bound to `usePersistence`'s `saveStatus` and to `isStructuralCommitInFlight()`. See "Save status" below
 - `SettingsButton` — opens the Settings modal (see below)
 - `ZoomControls` — canvas zoom
 - `OpenLivePageButton` (`src/admin/shared/OpenLivePageButton/`) — toolbar icon (always visible, not Site-editor-only) that opens the live site in a new tab. Target URL is read from `adminUi.activeLivePath`: active document's public path when an editor is open, site root (`/`) otherwise. Tooltip changes between "Open live page" (active path) and "Open live site" (null). Component stays outside `src/admin/pages/site/` so it mounts on every admin route without touching the editor graph.
 
 **Global trailer.** `Toolbar.tsx` renders a fixed trailer at the right end of every admin route, regardless of which layout mounted it or what the caller passes in `rightSlot`: `SettingsButton` → `OpenLivePageButton` → `AccountMenuButton`. These are not layout- or page-owned — the settings cog, live-page link, and account menu are identical everywhere, the same way the left nav is. `SettingsButton` reads only the tiny `adminUi` store, so hosting it in the shell keeps the editor toolchain out of the lightweight admin bundles. Layouts use `rightSlot` only for surface-specific controls *before* the trailer (e.g. `ZoomControls` + `StudioToolbarActions` on the Site editor, the Uploads toggle on Media); pages must never inject their own `SettingsButton`.
+
+### Save status
+
+`SaveStatusChip.tsx`, mounted by `AdminCanvasLayout` at the head of the toolbar's `rightSlot`.
+
+`usePersistence`'s save path is silent on failure **by design**: it restores the dirty snapshot it took before the request, so nothing is lost and the next save ships the same marks again. Before this chip nothing rendered that state, so a failed save looked exactly like a successful one — the user kept editing a canvas whose source had stopped following it.
+
+| `saveStatus.state` | Chip |
+|---|---|
+| `loading` | nothing — the board is not editable yet |
+| `saved` | "Saved", muted, static |
+| `saving` | "Saving…", muted, static |
+| `unsaved` | "Unsaved" — clickable, saves now instead of waiting out the autosave debounce |
+| `error` + `retrying: true` | "Saving…" — the automatic ladder is mid-flight |
+| `error` + `retrying: false` | "Unsaved — retry", `tone="danger"`, clickable |
+
+The ladder — three automatic attempts at 2 s / 4 s / 8 s (`SAVE_RETRY_BACKOFF_MS`) — lives in `usePersistence`, not in the chip: retrying a save is the persistence layer's job, and it already owns the single-flight queue and the dirty snapshot a retry re-ships. Each retry re-enters through `saveCurrentSite`, so a retry can never interleave with a live save. The first success clears the streak, so a later failure starts at 2 s again; a manual click does **not** restart the ladder, because an exhausted ladder means the failure is not transient and looping again silently would hide that. The chip renders `status.retrying` and nothing more.
+
+A structural commit (`insert` / `duplicate` / `wrap` writing your source) bypasses the autosave path entirely, so the chip also subscribes to `subscribeStructuralCommitInFlight` (`studio/studioStructuralCommits.ts`) and reads "Saving…" while one is on the wire.
+
+**There is no toast anywhere on this path.** A save can fail a dozen times in a row while a dev server restarts; a dozen red cards is the disease, not the cure.
 
 ### Settings modal
 

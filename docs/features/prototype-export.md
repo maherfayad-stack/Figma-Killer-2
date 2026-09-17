@@ -242,6 +242,27 @@ independent of that workspace's own freeze state:
   `src/core/studio-runtime/runtime.ts`'s own header for the bridge's security
   posture (origin + source-window checks on every inbound message).
 
+### What the bridge reports back, beyond selection (Z5)
+
+The bridge also installs four **runtime-error taps** inside the workspace's own
+page — capture-phase `error`, `unhandledrejection`, a pass-through
+`console.error` patch, and a `fetch` wrapper — and posts what they find as the
+outbound `error` message (`messages.ts`). The parent records those into
+`canvasDiagnosticsBuffer.ts` under the iframe's own `contentWindow`, which is
+the same key `studio_page_diagnostics` reads, and shows a passive `--warning`
+dot on the frame's chrome. Before this, a crash inside a Tier-2 live frame
+reached nothing in Studio at all.
+
+Bounded at the sender: 10 posts per second, 50 per document, every free-text
+field truncated to the schema's own `maxLength`. See
+`docs/agent-refs/canvas-internals.md` → "Runtime diagnostics".
+
+**`vite.config.js` deliberately leaves Vite's own error overlay enabled.** It is
+the user's app reporting a compile error in the user's own words, in the frame
+where it happened; Studio's badge sits beside it rather than replacing it. The
+generated template carries a comment saying so, so nobody switches it off to
+make the canvas look tidier.
+
 ## 8. Tests
 
 | File | Covers |
@@ -252,5 +273,8 @@ independent of that workspace's own freeze state:
 | `server/handlers/studio/__tests__/designSystemMigrate.test.ts` | the migration: relative rewrites at each depth, the dropped stylesheet import, `package.json` formatting, the guarded `node_modules` delete, a refused symlinked install, and a whole-tree hash proving nothing else changed |
 | `src/core/ast-codemods/__tests__/rewriteImportSpecifier.test.ts` | the codemod: default/named/namespace imports, sub-paths, quote style, and full-file byte equality where it had nothing to do |
 | `server/handlers/studio/__tests__/devServer.test.ts` | `spawnEntry` injecting `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV` (present only when `PUBLIC_ORIGIN` is set) alongside the existing `STUDIO_LIVE_BASE_PATH_ENV` |
+| `src/__tests__/studio-runtime/runtimeErrorTaps.test.ts` | Z5's four in-frame error taps, the pass-through `console.error` patch and its exact-reference restore, the `fetch` wrapper's unchanged pass-through, and both sender-side bounds (10/s, 50/document) |
+| `src/__tests__/canvas/frameAdapter/bridgeFrameErrors.test.ts` | the parent half of the `error` message: verbatim forwarding, and every forged payload the schema's bounds reject |
+| `src/__tests__/canvas/canvasDiagnosticsScope.test.ts` | the scope-keyed publication the frame badge subscribes to — stable-reference contract, repeat re-publication, and a reloaded frame clearing the previous document's findings |
 | `src/core/studio-runtime/__tests__/vitePlugin.test.ts` | `studioRuntimeIdPlugin()`'s two-plugin split: the config plugin's `apply`-free `resolveId`/`load`, the id-stamp plugin's unchanged `apply: 'serve'` `transform` |
 | `src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts` | both generated bundles (`vitePluginBundle.ts`, `runtimeBridgeBundle.ts`) match a fresh re-bundle of their sources |

@@ -27,13 +27,40 @@ const registry = new Map<HTMLIFrameElement, FrameDocumentAdapter>()
 
 export function registerFrameAdapter(iframe: HTMLIFrameElement, adapter: FrameDocumentAdapter): void {
   registry.set(iframe, adapter)
+  notifyFrameAdapterChange()
 }
 
 export function unregisterFrameAdapter(iframe: HTMLIFrameElement): void {
-  registry.delete(iframe)
+  if (!registry.delete(iframe)) return
+  notifyFrameAdapterChange()
 }
 
 /** Every mounted canvas frame's adapter, keyed by its iframe element. Live view — do not mutate. */
 export function listFrameAdapters(): ReadonlyMap<HTMLIFrameElement, FrameDocumentAdapter> {
   return registry
+}
+
+/**
+ * Callbacks for "the set of registered adapters changed".
+ *
+ * `BreakpointSelectionOverlay` is rendered as a SIBLING of the frame surface,
+ * not a descendant, so it cannot read `CanvasFrameAdapterContext` — it only
+ * holds the iframe element. It needs the adapter to subscribe to the frame's
+ * `hmr:before`/`hmr:after`/`frame:resize` runtime events (S4), and the
+ * registration effect inside `IframeFrameSurface` may run either before or
+ * after the overlay's own effect. Polling for it would reintroduce exactly the
+ * kind of loop S4 removes, so registration announces itself instead.
+ */
+const changeListeners = new Set<() => void>()
+
+function notifyFrameAdapterChange(): void {
+  for (const listener of changeListeners) listener()
+}
+
+/** Subscribe to registrations/unregistrations. Returns an unsubscribe. */
+export function onFrameAdapterRegistryChange(listener: () => void): () => void {
+  changeListeners.add(listener)
+  return () => {
+    changeListeners.delete(listener)
+  }
 }

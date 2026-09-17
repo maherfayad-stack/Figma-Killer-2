@@ -63,6 +63,23 @@ const CANVAS_DIR = join(REPO_ROOT, 'src/admin/pages/site/canvas')
  *   - `ModuleSandboxFrame.tsx`: a Tier 1 `pkg.*` component sandbox iframe —
  *     its own `postMessage` bridge protocol, not a `FrameDocumentAdapter`-
  *     governed canvas breakpoint frame. Out of `live-05`'s scope entirely.
+ *   - `useBridgeFrameDiagnostics.ts` (Z5): the one file that reaches for a
+ *     BRIDGE frame's `contentWindow`, and the only sanctioned reach-in that
+ *     is not portal-mode. It is not driving the frame's DOM — a cross-origin
+ *     `WindowProxy` exposes nothing to drive — it is using the reference
+ *     purely as the `WeakMap` KEY `canvasDiagnosticsBuffer.ts` stores under,
+ *     because that is the same key `agent/studioPageDiagnostics.ts` reads
+ *     (`iframe.contentWindow`) for a portal frame. Recording under any other
+ *     key would make `studio_page_diagnostics` report `no-collector` for
+ *     exactly the Tier-2 frames most likely to be broken. Nothing is read
+ *     off the window; if it were, a cross-origin SecurityError would say so
+ *     immediately.
+ *   - `iframeFrameSurfaceContract.ts`: the handle TYPE the file above
+ *     returns. `contentDocument`/`contentOverlayRoot` are declarations, not
+ *     reach-ins — the fields exist because `IframeFrameSurface` performs the
+ *     one sanctioned reach-in and hands the result back. They are migrating
+ *     to `adapter` field by field; when the last one goes, so does this
+ *     entry.
  *   - Three test files that legitimately assert on the raw DOM a portal-mode
  *     `IframeFrameSurface`/adapter construction actually produced.
  */
@@ -70,8 +87,10 @@ const ALLOWLIST = new Set([
   'src/admin/pages/site/canvas/frameAdapter/PortalFrameAdapter.ts',
   'src/__tests__/canvas/frameAdapter/PortalFrameAdapter.test.ts',
   'src/admin/pages/site/canvas/IframeFrameSurface.tsx',
+  'src/admin/pages/site/canvas/iframeFrameSurfaceContract.ts',
   'src/admin/pages/site/canvas/iframeFrameObservers.ts',
   'src/admin/pages/site/canvas/ModuleSandboxFrame.tsx',
+  'src/admin/pages/site/canvas/useBridgeFrameDiagnostics.ts',
   'src/admin/pages/site/canvas/__tests__/useIframeFrameAutoHeight.test.tsx',
   'src/admin/pages/site/canvas/__tests__/canvasDiagnosticsInjector.test.tsx',
   'src/admin/pages/site/canvas/__tests__/iframeFrameSurfaceDocumentMode.test.tsx',

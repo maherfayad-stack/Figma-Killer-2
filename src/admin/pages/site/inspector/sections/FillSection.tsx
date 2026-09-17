@@ -22,10 +22,13 @@
  *      the element's OWN replaced content (an `<img>`'s picture), which
  *      paints above the background entirely.
  *   3. **Background layer 1…N** — one row per `background-image` layer, in
- *      CSS paint order. Each layer's six satellites (`background-size`,
- *      `-position`, `-repeat`, `-attachment`, `-origin`, `-clip`) plus its
- *      `background-blend-mode` are edited INSIDE that row's popover, per
- *      layer. Layers add, remove and reorder like Effects' shadow layers,
+ *      CSS paint order. Each layer's six positioning satellites
+ *      (`background-size`, `-position`, `-repeat`, `-attachment`, `-origin`,
+ *      `-clip`) are edited INSIDE that row's popover, per layer. The layer's
+ *      `background-blend-mode` sits on the ROW itself instead, where Figma
+ *      puts a fill's blend mode — see `LayerBlendSelect` for why that
+ *      property, and not `mix-blend-mode`, is the honest per-fill target.
+ *      Layers add, remove and reorder like Effects' shadow layers,
  *      over the same `PropertyList` gestures (click to edit, `−` to remove,
  *      `Alt+↑/↓` to reorder).
  *   4. **Solid fill** — `backgroundColor`, when set. Pinned BOTTOM-most among
@@ -120,12 +123,21 @@
  *
  * MULTI-SELECT
  * ------------
- * Out of scope, structurally: `PropertiesPanelBody.tsx` early-returns
- * `<MultiSelectionInspector>` before `StyleSurface`/`INSPECTOR_SECTIONS` ever
- * mount when `isMultiSelect` is true (the same fact `AlignSection`'s own doc
- * already established) — this section never renders during a multi-select,
- * so it drops the old `FillSection.tsx`'s `isMixed`/`MIXED_PLACEHOLDER`
- * handling entirely rather than porting dead code.
+ * Mounts for N nodes as of S5: `useSelectionModel()` hands this section the
+ * anchor wearing the selection's COLLAPSED inline bag, so every read and
+ * every `useInspectorCommit` call below works unchanged, and a commit lands
+ * on all N. `SelectionColorsSection` (`selectionColors`, directly under this
+ * one in the manifest) is the multi-only companion that answers "what
+ * colours is this selection made of" across properties.
+ *
+ * KNOWN GAP, disclosed rather than silently shipped: this file dropped the
+ * pre-P3 `isMixed`/`MIXED_PLACEHOLDER` handling when it was written, on the
+ * then-true premise that it could never see a multi-selection. A disagreeing
+ * fill therefore renders this section's ordinary UNSET state rather than the
+ * word "Mixed" (`readString` returns `undefined` for the sentinel, so nothing
+ * stringifies a Symbol and nothing lies about a value — it just under-states
+ * the disagreement). Re-wiring it is `docs/features/inspector.md` §9.3's
+ * table, one row per field, and belongs with whoever next owns this file.
  *
  * LOCKED (CODE-VALUED) PROPERTIES
  * --------------------------------
@@ -149,6 +161,7 @@ import {
   BackgroundLayerPopoverBody,
   ContentFitPopoverBody,
   ImageSwatch,
+  LayerBlendSelect,
   OrphanSatellitesBody,
   ShorthandEscapeHatchBody,
 } from './FillSectionParts'
@@ -414,7 +427,9 @@ export function FillSection() {
         label: described.label,
         leading: described.leading,
         summary: described.summary,
-        value: described.value,
+        // Figma shows a fill's blend mode ON the fill row. `LayerBlendSelect`
+        // explains why `background-blend-mode` is the only honest target.
+        value: <LayerBlendSelect model={parsedModel} index={index} onModelChange={write} />,
         data: { kind: 'layer', index },
       })
     })
@@ -644,7 +659,7 @@ function describeLayer(
   image: string,
   index: number,
   total: number,
-): { label: string; summary: ReactNode; value?: ReactNode; leading: ReactNode } {
+): { label: string; summary: ReactNode; leading: ReactNode } {
   const suffix = total > 1 ? ` ${index + 1}` : ''
 
   if (image.trim().toLowerCase() === 'none') {
@@ -668,8 +683,9 @@ function describeLayer(
     const kindLabel = parsed.gradient.kind === 'linear' ? 'Linear gradient' : 'Radial gradient'
     return {
       label: `${kindLabel} fill${suffix}`,
-      summary: kindLabel,
-      value: `${parsed.gradient.stops.length} stops`,
+      // The stop count used to live in the row's trailing `value` slot, which
+      // the layer's blend select now occupies.
+      summary: `${kindLabel} · ${parsed.gradient.stops.length} stops`,
       leading: <ImageSwatch image={image} />,
     }
   }

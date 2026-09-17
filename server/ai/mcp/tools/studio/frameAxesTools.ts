@@ -5,7 +5,7 @@
  *
  * ## Why these are server tools now (W9-6)
  *
- * Both shipped as `execution: 'browser'` wrappers over `EditorStore`'s own
+ * Both shipped as `execution: 'bridge'` wrappers over `EditorStore`'s own
  * `setFrameAxes`/`duplicateFrameAsVariant`, because that is where the toolbar
  * calls them from. That reasoning does not survive one question: where does the
  * result LIVE? Not in the store. A frame's axes override and a variant frame

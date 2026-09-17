@@ -14,7 +14,7 @@ That same process also starts a SECOND, independent `Bun.serve` listener — the
 - **Router:** `server/router.ts` — ordered route table, first-match wins. Each route is a `tryServeX(req, runtime, url, pathname)` function returning `Response | null`.
 - **Studio's own server half** lives at `server/handlers/studio/` (~120 files: parse, filesystem writeback, git, trust tiers, capture) plus a handful of top-level `server/handlers/studio*.ts` entries, matched early via `tryServeStudio` (`/studio/*`). It is separate from the inherited CMS handlers below. The MCP server endpoint (`tryServeMcp`, `/_studio/mcp`) and headless agent capture (`tryServeAgentCaptureRoute`, `/admin/agent-capture` + `/admin/api/agent-capture/*`) are also matched early, each with its own non-session auth.
 - **CMS API:** every `/admin/api/cms/*` request goes through `server/handlers/cms/index.ts`, which runs a CSRF origin check and dispatches to per-resource handler groups.
-- **Auth:** session cookie (`SESSION_COOKIE_NAME`) → `findUserBySessionHash` → `requireCapability(req, db, 'site.read')`. Every state-changing handler starts with one of these guards.
+- **Auth:** session cookie (`SESSION_COOKIE_NAME`) → `findUserBySessionHash` → `requireCapability(req, db, 'site.read')`. Every state-changing CMS, AI, and plugin handler starts with one of these guards. **The Studio namespace is the exception** — see "Single-operator posture on the Studio routes".
 - **DB:** one `DbClient` interface (`server/db/client.ts`) — tagged-template callable returning `{ rows, rowCount }`. Two adapters: `postgres.ts` (via `Bun.sql`) and `sqlite.ts` (via `bun:sqlite`). Selected by `DATABASE_URL`.
 - **Repositories** (`server/repositories/`) hold all SQL. Handlers never write SQL directly.
 - **Plugins:** `server/plugins/runtime.ts` activates installed plugins at boot. Server entrypoints run in per-plugin Bun workers that host QuickJS-WASM (`server/plugins/pluginWorker.ts`, `server/plugins/host/workerPool.ts`, `server/plugins/quickjs/vm.ts`); module packs use `server/plugins/modulePackVm.ts` for server-side evaluation.
@@ -358,6 +358,43 @@ if (stepUp) return stepUp
 This is what keeps a capability-gated sensitive write to one session lookup: the capability guard hydrates the session once, and `requireStepUp` only reads `step_up_expires_at` for that session. (Handlers with no preceding capability guard — e.g. the `/me/*` security routes — call `requireAuthenticatedUser` first to obtain `user`.)
 
 Step-up is required by default with a 15-minute window, can be configured per user from Account -> Security, and can be disabled per user. The expiry lives on the session row as `step_up_expires_at` and is refreshed by `POST /admin/api/cms/auth/step-up`.
+
+### Single-operator posture on the Studio routes
+
+**Most of `/admin/api/studio/*` runs no per-request authentication and no per-request authorization.** Studio is built as a single-operator tool: one signed-in admin, one machine, one `studio-workspace/`. The guards above are the CMS/AI/plugin model, not the Studio model.
+
+`tryServeStudio` (`server/handlers/studio.ts:392-406`) walks `STUDIO_SUB_ROUTERS` and `STUDIO_SESSION_SUB_ROUTERS` in order and each sub-router goes straight to `resolveProjectDir`; `server/handlers/studio.ts` imports nothing from `server/auth/authz.ts`. The CSRF origin check that `handleCmsRequest` (`server/handlers/cms/index.ts:72`) and the AI dispatcher (`server/ai/handlers/index.ts:40`) run on state-changing methods is **not** applied to this namespace either.
+
+What does protect a Studio route:
+
+| Protection | Where | What it stops |
+|---|---|---|
+| Path containment | `resolveProjectDir` → `isRealpathContainedAllowingMissing` (`server/handlers/studioProjects.ts:121-131`); `ProjectDirOutsideWorkspaceError` becomes one 404 in the router's top-level catch (`server/router.ts`) | Reading or writing any path outside `studio-workspace/` |
+| Cookie scope | The session cookie is issued `Path=/admin; HttpOnly; SameSite=Lax` (`server/handlers/cms/session.ts:37`) | A cross-site state-changing request carrying the cookie. It does **not** stop an unauthenticated request — nothing on these routes reads the cookie |
+| Trust tier | `requireTrustTier` (`server/handlers/studio/trustGate.ts:44`), called by `deploy.ts:170` and `devServer.ts:449,458` | Running the user's project below `trust === 'run-project'` — a 409, not a 401 |
+
+These Studio routes carry a real session guard. This is the whole list:
+
+| Route | Guard |
+|---|---|
+| `POST /admin/api/studio/delete` (`studio/projectRoutes.ts:238`) | `requireCapability('studio.write')` |
+| `POST /admin/api/studio/duplicate` (`studio/projectRoutes.ts:265`) | `requireCapability('studio.write')` |
+| `POST /admin/api/studio/sample` (`studio/projectRoutes.ts:287`) | `requireCapability('studio.write')` |
+| `POST /admin/api/studio/trash/restore` (`studio/trashRoutes.ts:80`) | `requireCapability('studio.write')` |
+| `POST /admin/api/studio/trash/purge` (`studio/trashRoutes.ts:101`) | `requireCapability('studio.write')` |
+| `GET /admin/api/studio/onboarding` (`studio/projectRoutes.ts:308`) | `requireAuthenticatedUser` |
+| `/admin/api/studio/comments` (GET and POST), the two node-export paths, and `/admin/api/studio/shares` (`studio/commentsRoutes.ts:56,68`, `studio/nodeExportRoutes.ts:88`, `studio/shareRoutes.ts:73`) | `requireAuthenticatedUser` — each acts on behalf of a named user (a byline, a share owner, a capture) |
+
+Everything else — `load`, `save`, `boards`, `framework`, `install`, `git`, `deploy`, `componentBundle`, `trust`, `devServer`, and the rest of the ~146 modules under `server/handlers/studio/` — answers any request that reaches the port.
+
+**Consequences, stated plainly:**
+
+- Do not deploy this server on a network where an untrusted client can reach `/admin/api/studio/*`. Path containment limits the blast radius to `studio-workspace/`; it does not limit *who* may write there.
+- A new Studio route matching its neighbours' posture is following a known gap, not a precedent. Say so in a comment if you add one, the way `projectRoutes.ts:239-242` does.
+- There is no gate for this. `src/__tests__/architecture/cms-handlers-capability-gated.test.ts` and `ai-handlers-capability-gated.test.ts` assert that every file under `server/handlers/cms/` and `server/ai/handlers/` calls an auth guard; no equivalent exists for `server/handlers/studio/`, which is why an ungated route cannot be caught by `bun test`.
+- The related weakness on the MCP side: `studio_render_reference` (`server/ai/mcp/tools/studio/referenceRender.ts`) is gated on the connector capability `studio.run.project` only and does not consult the target project's own `.studio/meta.json` trust tier.
+
+Per-request capability gating across the whole namespace is the first follow-up wave in `STUDIO-FIGMA-FEEL-PLAN.md` §9. Until it lands, the posture above is the contract.
 
 ---
 

@@ -21,14 +21,15 @@
  * Kept in place, NOT moved into `inspector/sections/` — this component is
  * genuinely shared by three real callers, matching this doc's own
  * "target-agnostic… keeps the two editing targets from drifting" framing,
- * now three targets: the thin `inspector/sections/CustomPropertiesSection.tsx`
+ * now two targets: the thin `inspector/sections/CustomPropertiesSection.tsx`
  * wrapper (the manifest's own entry, `forceOpen` always on — Law 2 never
  * collapses a section behind a search this composer doesn't have), plus
- * `StyleRuleComposer.tsx` (ambient/global-selector) and
- * `MultiInlineStyleComposer.tsx` (multi-select), both of which call this
- * directly now that `StyleSectionsEditor.tsx` (their old intermediary) is
- * deleted — for those two, `forceOpen` stays `undefined`, preserving the
- * pre-existing `defaultOpen`-driven collapse.
+ * `StyleRuleComposer.tsx` (ambient/global-selector), which calls this
+ * directly now that `StyleSectionsEditor.tsx` (its old intermediary) is
+ * deleted — there, `forceOpen` stays `undefined`, preserving the
+ * pre-existing `defaultOpen`-driven collapse. The third caller,
+ * `MultiInlineStyleComposer.tsx`, is gone: S5 widened `useSelectionModel()`
+ * to N nodes, so the manifest wrapper serves a multi-selection too.
  */
 import { useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -139,8 +140,8 @@ export function CustomPropertiesSection({
       <div className={sectionStyles.sectionBody}>
         {customKeys.map((key) => {
           const rawValue = storedStyles[key]
-          // W8-3 — `MultiInlineStyleComposer.tsx` (a multi-select) hands this
-          // row `MIXED` for an uncurated property its members disagree on
+          // W8-3 — a multi-selection's collapsed bag (`useSelectionModel`)
+          // hands this row `MIXED` for an uncurated property members disagree on
           // (`STATE.md` `panel-25`'s Section 11 work order). Normalized here,
           // the same one place `ClassPropertyRow` does it for every curated
           // row — an un-normalized `String(MIXED)` prints the Symbol's own

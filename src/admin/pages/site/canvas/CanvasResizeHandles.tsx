@@ -68,7 +68,19 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
   // `ownerDocument` rather than the iframe's `contentDocument`: this element IS
   // in the iframe document, so the two can never disagree, and it arrives
   // exactly when the document is ready.
-  useElementResizeDrag({ frame, iframeDoc: sizeable ? iframeDoc : null, nodeId })
+  // `K4` — with the scale tool (`K`) armed the handles keep the element's
+  // aspect ratio and write both dimensions. Read from the store here rather
+  // than inside the drag hook so the effect that binds the handles re-runs
+  // when the tool changes mid-session; the drag itself captures the flag at
+  // pointerdown, so toggling `K` never changes a gesture already in flight.
+  const proportional = useEditorStore((s) => s.canvasTool === 'scale')
+
+  useElementResizeDrag({
+    frame,
+    iframeDoc: sizeable ? iframeDoc : null,
+    nodeId,
+    proportional,
+  })
 
   // Rendering nothing is the honest answer in every case `canOfferResize`
   // refuses — see that module for which three they are. The alternative is

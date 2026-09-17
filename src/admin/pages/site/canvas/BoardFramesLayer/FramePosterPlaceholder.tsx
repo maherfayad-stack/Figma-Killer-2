@@ -16,6 +16,7 @@
  * shallow-prop comparison is exact, not an approximation.
  */
 import { memo } from 'react'
+import { cn } from '@ui/cn'
 import styles from './BoardFramesLayer.module.css'
 
 interface FramePosterPlaceholderProps {
@@ -23,15 +24,25 @@ interface FramePosterPlaceholderProps {
   posterUrl: string | undefined
 }
 
+/**
+ * `overlay` (S1) — the same poster, painted ON TOP of a live iframe whose
+ * staged mount has not reached its node tree yet, rather than INSTEAD of an
+ * iframe that isn't there. It carries its own testids so a count of "frames
+ * standing in for a live iframe" stays honest: an overlay is never a
+ * substitute for a frame, it is a frame that has not finished arriving.
+ */
+type FramePosterPlaceholderRenderProps = FramePosterPlaceholderProps & { overlay?: boolean }
+
 export const FramePosterPlaceholder = memo(function FramePosterPlaceholder({
   title,
   posterUrl,
-}: FramePosterPlaceholderProps) {
+  overlay = false,
+}: FramePosterPlaceholderRenderProps) {
   if (posterUrl) {
     return (
       <img
-        className={styles.offscreenPlaceholderImage}
-        data-testid="board-frame-poster"
+        className={cn(styles.offscreenPlaceholderImage, overlay && styles.mountOverlay)}
+        data-testid={overlay ? 'board-frame-poster-overlay' : 'board-frame-poster'}
         src={posterUrl}
         alt=""
         draggable={false}
@@ -39,7 +50,10 @@ export const FramePosterPlaceholder = memo(function FramePosterPlaceholder({
     )
   }
   return (
-    <div className={styles.offscreenPlaceholder} data-testid="board-frame-placeholder">
+    <div
+      className={cn(styles.offscreenPlaceholder, overlay && styles.mountOverlay)}
+      data-testid={overlay ? 'board-frame-placeholder-overlay' : 'board-frame-placeholder'}
+    >
       <span className={styles.offscreenPlaceholderTitle}>{title}</span>
     </div>
   )

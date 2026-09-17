@@ -358,7 +358,7 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   edit skips the refusing node and still lands on the rest, because leaving
   N-1 nodes half-written is worse than skipping one. The panel names the
   skipped properties instead of leaving the refusal silent
-  (`MultiInlineStyleComposer`), and each row states how far its own edit
+  (`MultiSelectTargetBar`), and each row states how far its own edit
   reaches ("writes to 3 of 5") through the three-state
   `StyleWriteLockContext`. A class target is reachable too, once the user
   clears the "used by N other elements" gate — but a class edit is an

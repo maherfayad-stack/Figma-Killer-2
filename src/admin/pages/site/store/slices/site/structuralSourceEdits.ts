@@ -44,6 +44,7 @@
 import {
   describeStructuralRefusal,
   isSourceDerivedNodeId,
+  previewStructuralGroup,
   previewStructuralMove,
   refuseStructuralEdit,
   resolveContainerAnchor,
@@ -215,6 +216,105 @@ export function planSourceDuplicate(
   return { ok: true, commit: commit.length > 0 ? commit : null }
 }
 
+/** Where an Alt-dragged COPY is written: inside which container, beside which existing child. */
+export interface SourceDuplicateToCommit {
+  /** The element being copied. */
+  nodeId: string
+  /** The container the copy lands in — a real source node, never the synthetic page root. */
+  parentNodeId: string
+  /** The existing child the copy is written next to, or `null` to append as the last child. */
+  anchorNodeId: string | null
+  position: 'before' | 'after'
+}
+
+/**
+ * K2 — whether ONE element may be copied into `newParentId` at `newIndex`
+ * (Alt+drag), and if so where the copy is written.
+ *
+ * **Two questions, each answered by the function that already owns it**, so
+ * Alt+drag cannot disagree with either of the gestures it is made of:
+ *
+ *  1. *May this element be copied at all?* — `refuseStructuralEdit`'s
+ *     `duplicate`, the identical question ⌘D asks.
+ *  2. *May it land THERE?* — `previewStructuralMove`, the identical question a
+ *     plain drag asks. This is what makes an Alt+drag refuse with the same
+ *     sentence (`list-row`, `shared-component`, `cross-file`, a container that
+ *     is not an ordinary element) the same drag without Alt would have.
+ *
+ * The COMMIT, though, is an insert's, not a move's. `previewStructuralMove`
+ * resolves its anchor from the child list with the dragged node REMOVED,
+ * because that is what a move does to it; a copy removes nothing, so the same
+ * `newIndex` names a different neighbour. `resolveContainerAnchor` — the
+ * function `planSourceInsert` uses, for exactly the question "where in this
+ * container does a NEW element go" — is the honest resolver here, and a
+ * duplicate-to is precisely an insert of markup that already exists.
+ *
+ * ONE NODE ONLY. The drag session resolves one drop target; N copies dropped
+ * at one position would have to be ordered against each other inside a child
+ * list each of them is shifting, which is the same reason a multi-node
+ * reorder refuses. Refused as `multi-select`, with the remedy that is actually
+ * true — drag them one at a time.
+ */
+export function planSourceDuplicateTo(
+  tree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+  newParentId: string,
+  newIndex: number,
+): StructuralPlan<SourceDuplicateToCommit> {
+  const nodeId = nodeIds[0]
+  if (nodeId === undefined) return { ok: true, commit: null }
+  const node = tree.nodes[nodeId]
+  // A stale drop source — the mutation itself already no-ops on this;
+  // inventing a refusal for it would explain the wrong thing.
+  if (!node) return { ok: true, commit: null }
+
+  if (nodeIds.length > 1) {
+    return {
+      ok: false,
+      constraint: describeStructuralRefusal({
+        refusal: {
+          reason: 'multi-select',
+          message:
+            'Studio copies one element at a time: each copy changes the line numbers the next one would be written against, and several copies dropped at one position have no single order in the code. Alt-drag them one by one.',
+        },
+        node,
+      }),
+      nodeId,
+    }
+  }
+
+  const copyRefusal = refuseStructuralEdit({ kind: 'duplicate', node })
+  if (copyRefusal) {
+    return { ok: false, constraint: describeStructuralRefusal({ refusal: copyRefusal, node }), nodeId }
+  }
+
+  const landing = previewStructuralMove(tree, [nodeId], newParentId, newIndex)
+  if (!landing.ok) {
+    return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node }), nodeId }
+  }
+
+  if (!isSourceDerivedNodeId(nodeId)) return { ok: true, commit: null }
+
+  const container = resolveSourceContainer(tree, newParentId)
+  if (!container.ok) {
+    return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
+  }
+
+  return {
+    ok: true,
+    commit: {
+      nodeId,
+      parentNodeId: container.node.id,
+      // `newIndex` counts the DROP PARENT's children. When the container had
+      // to be re-resolved (the page root became the page's root element), that
+      // index names a position in a different list, so it is dropped rather
+      // than applied to the wrong one — appending is an honest position.
+      // Identical reasoning to `previewStructuralMove`'s reparent branch.
+      ...resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined),
+    },
+  }
+}
+
 /**
  * Whether `nodeIds` may be wrapped in a new container, and if so which node the
  * SOURCE writes the wrapper around (W4-1).
@@ -242,6 +342,64 @@ export function planSourceWrap(
   return { ok: true, commit: only !== undefined && isSourceDerivedNodeId(only) ? only : null }
 }
 
+/**
+ * Whether `nodeIds` may be GROUPED into one new container, and if so around
+ * which run of source nodes (K3, ⌘G).
+ *
+ * A thin wrapper over `previewStructuralGroup` (`@core/page-tree`), for the
+ * same reason `planSourceMove` is one over `previewStructuralMove`: the rule —
+ * same parent, no gap, every member writable on its own — is pure and belongs
+ * next to the other structural rules, and the only thing the store adds is the
+ * `EditConstraint` dressing, which needs the NODE in hand to derive `origin`.
+ *
+ * `commit` is the run in SOURCE order. One id in it is an ordinary single
+ * `wrap`; several are `wrapJsxElements`' one-container-around-a-span. `null`
+ * means an ordinary CMS tree — mutate it and do not write.
+ */
+export function planSourceGroup(
+  tree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+): StructuralPlan<string[]> {
+  const preview = previewStructuralGroup(tree, nodeIds)
+  if (preview.ok) return { ok: true, commit: preview.commit }
+  // The member the refusal is about when it is about one (a `.map` row inside
+  // an otherwise fine run) — that node is where `origin` and the retry closure
+  // come from. A refusal about the SELECTION (a gap, two parents) names none,
+  // and falls back to the first node so the constraint still carries a file.
+  const refusedId = preview.nodeId
+  const node = refusedId === undefined
+    ? nodeIds.map((id) => tree.nodes[id]).find((candidate) => candidate !== undefined)
+    : tree.nodes[refusedId]
+  return {
+    ok: false,
+    constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
+    ...(node ? { nodeId: node.id } : {}),
+  }
+}
+
+/**
+ * Whether the container `nodeId` may be DISSOLVED (K3, ⌘⇧G).
+ *
+ * One node, so this asks `refuseStructuralEdit` directly rather than through a
+ * tree preview — `unwrapJsxElement` replaces the container's own range with its
+ * children, in the same file and the same scope, so an ordinary element at a
+ * known location is the whole requirement here. The question only the AST can
+ * answer — is this container ONLY a container, or does it carry a handler, a
+ * ref, a `key`, a spread — arrives at save time as `has-behaviour`.
+ */
+export function planSourceUngroup(
+  tree: NodeTree<PageNode>,
+  nodeId: string,
+): StructuralPlan<string> {
+  const node = tree.nodes[nodeId]
+  if (!node) return { ok: true, commit: null }
+  const refusal = refuseStructuralEdit({ kind: 'ungroup', node })
+  if (refusal) {
+    return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
+  }
+  return { ok: true, commit: isSourceDerivedNodeId(node.id) ? node.id : null }
+}
+
 /** Titles the refusal toasts use, one per gesture. Matches the `Detach refused` / `Swap refused` vocabulary. */
 export const STRUCTURAL_REFUSAL_TITLE = {
   move: 'Move refused',
@@ -249,6 +407,15 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   insert: 'Cannot add this to imported code',
   duplicate: 'Duplicate refused',
   wrap: 'Wrap refused',
+  group: 'Group refused',
+  ungroup: 'Ungroup refused',
+  /**
+   * K6 — a ⌘-drag that asked to place an element by coordinates. The only
+   * entry here that is not a source-writability refusal: the file would take
+   * the write, the CSS would not do what the user pointed at. Same channel
+   * regardless, so one refusal vocabulary reaches the user.
+   */
+  freeMove: 'Cannot place this by hand',
 } as const
 
 /**

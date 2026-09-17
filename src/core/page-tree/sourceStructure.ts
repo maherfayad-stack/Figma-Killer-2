@@ -83,13 +83,23 @@ import {
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
-  isStudioPageRootId,
 } from './sourceNodeId'
-import type { PageNode } from './pageNode'
-import type { NodeTree } from './treeSchema'
 
 /** The structural gestures the editor offers. One refusal vocabulary for all of them. */
-export type StructuralEditKind = 'reorder' | 'reparent' | 'delete' | 'insert' | 'duplicate' | 'wrap'
+export type StructuralEditKind =
+  | 'reorder'
+  | 'reparent'
+  | 'delete'
+  | 'insert'
+  | 'duplicate'
+  | 'wrap'
+  // K3 — ⌘G and ⌘⇧G. `group` is `wrap` widened to a CONTIGUOUS RUN of
+  // siblings (one container around one span, `wrapJsxElements`); `ungroup`
+  // is its inverse (`unwrapJsxElement`). The contiguity half of the rule
+  // needs a live tree and lives in `sourceStructureGroup.ts`; what stays
+  // here is the per-node half every gesture shares.
+  | 'group'
+  | 'ungroup'
 
 /** Why a structural edit has no single honest target in the user's source. */
 export type StructuralRefusalReason =
@@ -101,6 +111,14 @@ export type StructuralRefusalReason =
   | 'insert'
   | 'duplicate'
   | 'wrap'
+  | 'group'
+  | 'ungroup'
+  // K3 — the wrapper is doing more than holding its children (a handler, a
+  // ref, a `key`, a spread, or a component tag), so dissolving it would drop
+  // behaviour the code relies on. Decided by the AST alone
+  // (`unwrapJsxElement`), which is why it arrives at save time like
+  // `out-of-scope` rather than from the id.
+  | 'has-behaviour'
   | 'multi-select'
   | 'cross-file'
   | 'no-sibling-anchor'
@@ -127,6 +145,8 @@ const GESTURE: Record<StructuralEditKind, string> = {
   insert: 'Added into',
   duplicate: 'Duplicated',
   wrap: 'Wrapped',
+  group: 'Grouped',
+  ungroup: 'Ungrouped',
 }
 
 /**
@@ -210,6 +230,21 @@ export function refuseStructuralEdit(input: {
       // inside a container it writes. The wrapper is REAL DOM once it is in the
       // file — Studio's "no wrapper divs" rule is about the CANVAS inventing
       // elements the source does not contain, which is the opposite of this.
+      return null
+    case 'group':
+      // K3 — one container around a RUN of siblings (`wrapJsxElements`). Per
+      // node this asks exactly what `wrap` asks, which `refusePlacement` has
+      // already answered; what group adds is a question about the RUN — are
+      // these siblings, and is anything unnamed between them — which needs the
+      // tree and is answered by `previewStructuralGroup`
+      // (`sourceStructureGroup.ts`) before this is ever reached.
+      return null
+    case 'ungroup':
+      // K3 — the container goes and its children take its place
+      // (`unwrapJsxElement`). An ordinary element at a known location is the
+      // whole requirement here; whether the wrapper is ONLY a wrapper is a
+      // question about its attributes, which only the AST can answer
+      // (`has-behaviour`).
       return null
     case 'reparent': {
       if (!destination) {
@@ -325,285 +360,6 @@ export function refusePlacement(node: SourceStructureNode, gesture: string): Str
 }
 
 /**
- * Where a moved element is written.
- *
- * A REORDER names a sibling: "put this immediately before/after that one",
- * never an index, because the editor's child list and the JSX child list are
- * not the same list. A REPARENT (W4-1) additionally names the container it
- * lands in — `destinationParentNodeId` — because the sibling alone does not
- * say which element it is now a child of, and because a destination with no
- * addressable child of its own still has an honest answer: append.
- */
-export interface StructuralMoveCommit {
-  nodeId: string
-  /** The new parent, for a cross-parent move. Absent for a same-parent reorder. */
-  destinationParentNodeId?: string
-  /** The existing child to land beside, or `null` to append as the last child (reparent only). */
-  anchorNodeId: string | null
-  position: 'before' | 'after'
-}
-
-/**
- * A gesture that may proceed. `commit` is the source write to issue AFTER the
- * tree mutation lands, or `null` when there is nothing to write (an ordinary
- * CMS tree, or a move that turned out to change no order).
- */
-export type StructuralMovePreview =
-  | { ok: true; commit: StructuralMoveCommit | null }
-  | { ok: false; refusal: StructuralRefusal }
-
-/**
- * Whether a move of `nodeIds` into `newParentId` at `newIndex` would be
- * written back to source, and if so, against which sibling — PURE, tree-only.
- *
- * **Published contract (D2 → F2, `STUDIO-FIGMA-PARITY-PLAN.md` §D2/G5).**
- * Extracted from the store's `structuralSourceEdits.ts`'s `planSourceMove` so
- * a DROP RESOLVER (`core/page-tree/dnd.ts`, and anything F2 builds on top of
- * it) can ask "would this move actually write?" WHILE THE POINTER IS STILL
- * DOWN, not just after `pointerup`. Before this, `core/page-tree/dnd.ts` only
- * checked tree SHAPE (root, locked, cycle, VC-ref/slot rules) — never source
- * writability — so a confident drop-line preview would render right up to the
- * moment of a post-hoc refusal toast. Per `STATE.md`'s `shared-component`
- * refusal-rate finding, that was true for roughly HALF of all real drags.
- *
- * **`structuralSourceEdits.ts`'s `planSourceMove` is now a thin wrapper over
- * this function** (W4-1 collapsed the disclosed duplication its predecessor
- * documented). The store adds exactly one thing this pure module cannot: the
- * `EditConstraint` dressing (`describeStructuralRefusal`), which needs the NODE
- * to derive `origin` from. Keeping one copy of the rule is what makes a lifted
- * refusal — reparent, here — impossible to lift in the drag preview and forget
- * in the committed gesture, which is precisely how the two copies would have
- * disagreed.
- *
- * **What a caller gets:** the exact same 4 structural-source reasons
- * `refuseStructuralEdit`/`refusePlacement` already answer
- * (`list-row`/`shared-component`/`route-chrome`/`code-placed`), plus
- * `reparent`/`no-sibling-anchor`/`cross-file`/`multi-select` for the
- * move-specific questions "is the container it lands in an ordinary element in
- * the same file" and "is there an ordinary sibling to write the move
- * against". A tree-shape
- * rejection (locked node, cycle, dropping into a non-container) is NOT this
- * function's job — `resolvePageTreeDropTarget` already answers that and
- * returns `null` before a caller should even reach this. Call this ONLY
- * after `resolvePageTreeDropTarget` returns a non-null target, with that
- * target's own `parentId`/`index`.
- *
- * **What F2 gets for free by depending on this instead of re-deriving it:**
- * the identical refusal vocabulary a failed mouse-drag already shows, so a
- * differently-triggered move (agent, plugin, future command) refuses with the
- * same sentence a human sees for the same underlying reason.
- */
-export function previewStructuralMove(
-  tree: NodeTree<PageNode>,
-  nodeIds: readonly string[],
-  newParentId: string,
-  newIndex: number,
-): StructuralMovePreview {
-  const nodeId = nodeIds[0]
-  if (nodeId === undefined) return { ok: true, commit: null }
-  const node = tree.nodes[nodeId]
-  const newParent = tree.nodes[newParentId]
-  // A stale drop target — the mutation itself already throws or no-ops on
-  // this; inventing a refusal for it would explain the wrong thing.
-  if (!node || !newParent) return { ok: true, commit: null }
-
-  const multi = nodeIds.length > 1
-
-  // "Same parent?" read off the child list rather than the denormalised
-  // `parentId` pointer: the list is the thing the move is actually about, and
-  // it cannot be stale relative to itself.
-  if (!newParent.children.includes(nodeId)) {
-    // Dragging a node that is NOT source-derived into a studio tree. Unlike a
-    // reparent — which relocates markup the file already contains — this node
-    // exists only on the canvas, so there is nothing to relocate. Asked first
-    // because it is about the node's ORIGIN, not about the destination.
-    const canvasOnly = isSourceDerivedNodeId(nodeId)
-      ? null
-      : previewCanvasOnlyNodeIntoSourceRefusal(tree, newParent)
-    if (canvasOnly) return { ok: false, refusal: canvasOnly }
-    if (!isSourceDerivedNodeId(nodeId)) return { ok: true, commit: null }
-
-    // The synthetic page root is a container the same way it is for an insert:
-    // resolved to the page's own returned root element before it is judged.
-    const container = resolveSourceContainer(tree, newParentId)
-    if (!container.ok) return { ok: false, refusal: container.refusal }
-
-    const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node, multi })
-    if (refusal) return { ok: false, refusal }
-    return {
-      ok: true,
-      commit: {
-        nodeId,
-        destinationParentNodeId: container.node.id,
-        // `newIndex` counts the DROP PARENT's children. When the container had
-        // to be re-resolved (the page root became the page's root element), that
-        // index names a position in a different list, so it is dropped rather
-        // than applied to the wrong one — appending is an honest position, and
-        // the user can drag within the new parent, which already writes.
-        ...resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined),
-      },
-    }
-  }
-
-  const reordered = simulateStructuralReorder(newParent.children, nodeIds, newIndex)
-  if (reordered === null) return { ok: true, commit: null }
-
-  const index = reordered.indexOf(nodeId)
-  // A reorder always names a real sibling — `anchorNodeId` is only nullable for
-  // the reparent case above, where appending is a position of its own.
-  const candidates: { anchorNodeId: string; position: 'before' | 'after' }[] = []
-  const previous = reordered[index - 1]
-  if (previous !== undefined) candidates.push({ anchorNodeId: previous, position: 'after' })
-  const next = reordered[index + 1]
-  if (next !== undefined) candidates.push({ anchorNodeId: next, position: 'before' })
-
-  let firstRefusal: StructuralRefusal | null = null
-  for (const candidate of candidates) {
-    const refusal = refuseStructuralEdit({
-      kind: 'reorder',
-      node,
-      anchor: tree.nodes[candidate.anchorNodeId] ?? { id: candidate.anchorNodeId },
-      multi,
-    })
-    if (!refusal) return { ok: true, commit: isSourceDerivedNodeId(nodeId) ? { nodeId, ...candidate } : null }
-    firstRefusal ??= refusal
-  }
-
-  const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null, multi })
-  return refusal ? { ok: false, refusal } : { ok: true, commit: null }
-}
-
-/**
- * The container a write into `parentId` really targets, or why there isn't one.
- *
- * **The synthetic page root becomes the page's returned root element.**
- * `<pageId>:body` is not a source location — nothing was written at it — so it
- * can never be a container. A page's JSX returns exactly one root element, and
- * that element is what "put this in the page" means. When the root has anything
- * other than exactly one source-derived child (an empty imported page, or a
- * route composed entirely from layout chrome), there is no single honest answer
- * and it refuses with what the user can do about it.
- *
- * Shared by every write that names a container: `planSourceInsert` (which
- * dresses these refusals as `EditConstraint`s) and `previewStructuralMove`'s
- * reparent branch. One resolution, so dropping a node on a page's background
- * and adding one from the picker cannot disagree about which element that means.
- */
-export function resolveSourceContainer(
-  tree: NodeTree<PageNode>,
-  parentId: string,
-): { ok: true; node: PageNode } | { ok: false; refusal: StructuralRefusal } {
-  const parent = tree.nodes[parentId]
-  if (!parent) {
-    // No node to point at: the whole refusal is that there ISN'T one any more.
-    return {
-      ok: false,
-      refusal: {
-        reason: 'insert',
-        message: 'The element this would go inside is no longer on the board. Reload the project and try again.',
-      },
-    }
-  }
-  if (parentId !== tree.rootNodeId || !isStudioPageRootId(tree.rootNodeId)) return { ok: true, node: parent }
-
-  const sourceChildren = parent.children.filter((id) => isSourceDerivedNodeId(id))
-  const only = sourceChildren.length === 1 ? tree.nodes[sourceChildren[0]!] : undefined
-  if (!only) {
-    // Same "no single node to point at" case: the page root is synthetic, and
-    // the several real candidates are exactly what makes this ambiguous.
-    return {
-      ok: false,
-      refusal: {
-        reason: 'insert',
-        message:
-          sourceChildren.length === 0
-            ? 'This page has no element in its code to put anything inside. Add a root element to the file first.'
-            : 'This page has several top-level elements, so Studio cannot tell which one this belongs inside. Select the container you want, then try again.',
-      },
-    }
-  }
-  return { ok: true, node: only }
-}
-
-/**
- * The existing child a written element is placed beside, resolved from a canvas
- * child index — shared by an insert and by a reparent, because "which neighbour
- * does this land next to" is the same question for both.
- *
- * `index` names a position among the CANVAS's children, which is not the
- * source's child list. When the neighbour it points at is an ordinary element,
- * the write is made against it; when it is not (a `.map` row, an inlined
- * component, an expression child), the element is appended as the last child
- * instead. Appending is a real position, not a silent no-op — and the user can
- * then drag it within its new parent, which already writes.
- */
-export function resolveContainerAnchor(
-  tree: NodeTree<PageNode>,
-  container: PageNode,
-  index: number | undefined,
-): { anchorNodeId: string | null; position: 'before' | 'after' } {
-  const children = container.children
-  if (index === undefined || index >= children.length) return { anchorNodeId: null, position: 'after' }
-
-  const addressable = (id: string | undefined): boolean =>
-    id !== undefined && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }, 'Moved') === null
-
-  const previous = children[index - 1]
-  if (addressable(previous)) return { anchorNodeId: previous!, position: 'after' }
-  const next = children[index]
-  if (addressable(next)) return { anchorNodeId: next!, position: 'before' }
-  return { anchorNodeId: null, position: 'after' }
-}
-
-/**
- * Reason-only counterpart of `structuralSourceEdits.ts`'s
- * `refuseCanvasOnlyNodeIntoSource` — see `previewStructuralMove`'s doc for why
- * the two aren't the same function. `reason: 'insert'` matches what
- * `refuseStructuralEdit`'s own `insert` case would say for the same
- * situation (a write with no addressable source target), since "a canvas-only
- * node has nothing to move into a studio file" is the insert refusal's
- * question asked about a drag instead of the picker.
- */
-function previewCanvasOnlyNodeIntoSourceRefusal(
-  tree: NodeTree<PageNode>,
-  newParent: PageNode,
-): StructuralRefusal | null {
-  const intoStudioTree = isSourceDerivedNodeId(newParent.id) || isStudioPageRootId(tree.rootNodeId)
-  if (!intoStudioTree) return null
-  return {
-    reason: 'insert',
-    message:
-      'This element exists only on the canvas — there is no markup for it in the code, so Studio has nothing to move into the file. Add the component from the picker instead, which writes it to the source.',
-  }
-}
-
-/**
- * The parent's child order AFTER a move would run, or `null` when the order
- * does not actually change (dropping a row back where it started). Mirrors
- * `moveNode`/`moveNodes`'s own arithmetic exactly (`mutations.ts`: remove
- * every dragged id first, then splice at a clamped index) — an anchor derived
- * from different arithmetic than the mutation uses would preview a different
- * order than the one that actually lands.
- */
-function simulateStructuralReorder(
-  children: readonly string[],
-  nodeIds: readonly string[],
-  newIndex: number,
-): string[] | null {
-  const moving = nodeIds.filter((id) => children.includes(id))
-  if (moving.length === 0) return null
-  const without = children.filter((id) => !moving.includes(id))
-  const at = Math.max(0, Math.min(newIndex, without.length))
-  const next = [...without.slice(0, at), ...moving, ...without.slice(at)]
-  return next.every((id, i) => id === children[i]) ? null : next
-}
-
-/** Lower-cases the first character so a refusal can be quoted mid-sentence. */
-function lowerFirst(text: string): string {
-  return text.length > 0 ? text[0]!.toLowerCase() + text.slice(1) : text
-}
-
-/**
  * The refusal for adding an ALREADY-MINTED node to a studio-imported tree, or
  * `null` when the destination is an ordinary CMS tree.
  *
@@ -658,14 +414,14 @@ export function refuseMintedNodeInsert(input: {
  * they meant.
  */
 export function refuseMintedNodeCopy(input: {
-  kind: 'duplicate' | 'wrap' | 'reparent'
+  kind: 'duplicate' | 'wrap' | 'reparent' | 'group' | 'ungroup'
   node: SourceStructureNode
 }): StructuralRefusal | null {
   if (!isSourceDerivedNodeId(input.node.id)) return null
-  const verb = input.kind === 'duplicate' ? 'duplicate' : input.kind === 'wrap' ? 'wrap' : 'move'
+  const noun = input.kind === 'reparent' ? 'move' : input.kind
   return {
     reason: input.kind,
-    message: `Studio ${verb}s imported markup by editing your project's source and re-reading it. This path changes the canvas tree only, so the ${input.kind === 'reparent' ? 'move' : input.kind} would never reach the file — do it from the editor, which writes it.`,
+    message: `Studio ${noun}s imported markup by editing your project's source and re-reading it. This path changes the canvas tree only, so the ${noun} would never reach the file — do it from the editor, which writes it.`,
   }
 }
 
@@ -684,4 +440,9 @@ export class SourceStructureError extends Error {
     this.name = 'SourceStructureError'
     this.reason = refusal.reason
   }
+}
+
+/** Lower-cases the first character so a refusal can be quoted mid-sentence. */
+function lowerFirst(text: string): string {
+  return text.length > 0 ? text[0]!.toLowerCase() + text.slice(1) : text
 }

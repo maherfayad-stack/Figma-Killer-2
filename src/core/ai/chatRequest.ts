@@ -87,6 +87,21 @@ export const AiChatRequestBodySchema = Type.Object(
       Type.Literal('default'), Type.Literal('acceptEdits'), Type.Literal('plan'), Type.Literal('bypassPermissions'),
     ])),
     /**
+     * Z3 — per-turn overrides of the two loop ceilings, on the same session-
+     * controls wire as `effort`. Both are OVERRIDES of a default that already
+     * bounds the turn, so omitting them is the normal case and a caller can
+     * never remove a ceiling by leaving one out.
+     *
+     * Bounded at the schema rather than clamped in a driver: a caller that
+     * asks for a thousand rounds or a week-long turn is asking for the thing
+     * these ceilings exist to prevent, and a validation refusal says so
+     * instead of quietly substituting a different number.
+     *   - `maxToolRounds` — provider rounds in the shared HTTP tool loop.
+     *   - `turnCapMs` — total wall time for one `claude` CLI turn.
+     */
+    maxToolRounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+    turnCapMs: Type.Optional(Type.Integer({ minimum: 60_000, maximum: 2 * 60 * 60_000 })),
+    /**
      * W9-2 — how strictly this turn is meant to match the design, and how
      * much invention it is allowed. Tier 3 of `resolveFidelityMode`'s
      * precedence (`server/handlers/studio/fidelityMode.ts`): an explicit
@@ -103,6 +118,24 @@ export const AiChatRequestBodySchema = Type.Object(
      */
     fidelityMode: Type.Optional(Type.Union([
       Type.Literal('creative'), Type.Literal('balanced'), Type.Literal('strict'),
+    ])),
+    /**
+     * A12 — how much of the project's OWN design system this turn is held to,
+     * which is a genuinely different question from `fidelityMode` above.
+     * Fidelity grades against a reference; this grades against the project's
+     * tokens and components. Tier 2 of `resolveDesignPolicy`'s precedence
+     * (`server/handlers/studio/designPolicy.ts`): an explicit tool argument
+     * outranks it, the persisted per-project default sits below it.
+     *
+     * Consumed server-side in two places, both Studio-only: the system
+     * prompt's static prefix gains this policy's block (its own prompt-cache
+     * partition, exactly as the fidelity block is), and
+     * `studio_quality_check` reads it to decide which findings are errors,
+     * which are warnings, and which are not produced at all. Every driver
+     * ignores it as a model knob, because it is not one.
+     */
+    designPolicy: Type.Optional(Type.Union([
+      Type.Literal('follow'), Type.Literal('balanced'), Type.Literal('free'),
     ])),
   },
   { additionalProperties: false },

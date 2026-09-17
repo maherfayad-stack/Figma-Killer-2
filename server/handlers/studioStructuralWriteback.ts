@@ -1,8 +1,9 @@
 /**
  * studioStructuralWriteback — the studio edit kinds that change WHERE markup is
  * rather than what it says: `move`, `delete`, `insert` (`struct-01`,
- * `struct-02`) and, since W4-1, `duplicate`, `wrap` and `reparent`. Their
- * schemas and their dispatch into `@core/ast-codemods`, in one place.
+ * `struct-02`), `duplicate`, `wrap` and `reparent` (W4-1), and `group` /
+ * `ungroup` (K3). Their schemas and their dispatch into `@core/ast-codemods`,
+ * in one place.
  *
  * Split out of `studioWriteback.ts` for the same reason `studioCssWriteback.ts`
  * was: that module owns the VALUE edits, which all share one shape — decode a
@@ -32,7 +33,9 @@ import {
   duplicateJsxElement,
   insertJsxElement,
   moveJsxElement,
+  unwrapJsxElement,
   wrapJsxElement,
+  wrapJsxElements,
 } from '@core/ast-codemods'
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -192,14 +195,28 @@ const InsertEditSchema = Type.Object({
 })
 
 /**
- * One element copied in place (W4-1) — `duplicateJsxElement`. `nodeId` is the
- * element being copied, and it is the ONLY field: the copy lands as its own next
- * sibling, in the same scope, so there is no anchor to resolve and no import to
- * reconcile (every binding the markup reads was already in scope one line up).
+ * One element copied (W4-1, extended by K2) — `duplicateJsxElement`. `nodeId`
+ * is the element being copied.
+ *
+ * With no `parentNodeId` the copy lands as its own next sibling, in the same
+ * scope — the ⌘D / toolbar gesture, and the only form that existed before K2.
+ * With one, the copy lands INSIDE that container instead (Alt+drag), and the
+ * optional `anchorNodeId`/`position` name an existing child of it to land
+ * beside, for the same reason `move` uses an anchor rather than an index.
+ * Without them the copy is appended as the last child, which is a real
+ * position — the same reading `insert` and `reparent` already give.
+ *
+ * Cross-FILE is refused before it reaches here, exactly as it is for
+ * `reparent`: `applyStudioEdit` drops a `parentNodeId` that decodes to another
+ * file, and the store refuses the gesture with `cross-file` from the two ids
+ * alone.
  */
 const DuplicateEditSchema = Type.Object({
   kind: Type.Literal('duplicate'),
   nodeId: Type.String(),
+  parentNodeId: Type.Optional(Type.String()),
+  anchorNodeId: Type.Optional(Type.String()),
+  position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
 })
 
 /**
@@ -218,6 +235,48 @@ const WrapEditSchema = Type.Object({
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
   designSystemImport: Type.Optional(DesignSystemImportSchema),
+})
+
+/**
+ * One container written around a RUN of siblings (K3) — `wrapJsxElements`, the
+ * write behind ⌘G on a multi-selection.
+ *
+ * `nodeId` is the FIRST element of the run and `siblingNodeIds` are the rest,
+ * in source order — not one `nodeIds` array, because every other part of the
+ * save route (bottom-to-top ordering, the touched-file set, the containment
+ * guard) is keyed on `nodeId` and a group must sort by the topmost position it
+ * changes. The codemod re-derives the run from the AST and refuses
+ * (`not-contiguous`) if anything unnamed sits between the ends, so a
+ * hand-crafted batch cannot widen the span.
+ *
+ * ⌘G on ONE element is not this kind: it is the existing `wrap`, unchanged.
+ *
+ * `name`/`importSpecifier`/`designSystemImport` spell the container exactly as
+ * `wrap` and `insert` spell theirs.
+ */
+const GroupEditSchema = Type.Object({
+  kind: Type.Literal('group'),
+  nodeId: Type.String(),
+  siblingNodeIds: Type.Array(Type.String(), { minItems: 1 }),
+  name: Type.String(),
+  importSpecifier: Type.Optional(Type.String()),
+  designSystemImport: Type.Optional(DesignSystemImportSchema),
+})
+
+/**
+ * One container dissolved (K3) — `unwrapJsxElement`, the write behind ⌘⇧G. Its
+ * children take its place at its own index, and the container's own bytes go.
+ *
+ * `nodeId` is the container, and it is the only field: everything else is
+ * decided by what is written at that location. The codemod refuses
+ * (`has-behaviour`) when the container carries anything but
+ * `className`/`style`/`id`/`data-*`, because deleting an element that also
+ * carries a handler, a ref, a `key` or a spread would drop behaviour no undo
+ * in the editor can explain.
+ */
+const UngroupEditSchema = Type.Object({
+  kind: Type.Literal('ungroup'),
+  nodeId: Type.String(),
 })
 
 /**
@@ -247,6 +306,8 @@ export const StructuralEditSchemas = [
   InsertEditSchema,
   DuplicateEditSchema,
   WrapEditSchema,
+  GroupEditSchema,
+  UngroupEditSchema,
   ReparentEditSchema,
 ] as const
 
@@ -335,6 +396,8 @@ export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind
     kind === 'insert' ||
     kind === 'duplicate' ||
     kind === 'wrap' ||
+    kind === 'group' ||
+    kind === 'ungroup' ||
     kind === 'reparent'
   )
 }
@@ -362,6 +425,10 @@ export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind
  * and path-guarded by the caller's `studioEditLocation`, and the one input a
  * `designSystemImport` needs to become a real specifier
  * (see {@link resolveNodeImport}).
+ *
+ * `siblings` (K3) is a `group`'s remaining run members, decoded through that
+ * same guard and filtered to the SAME FILE — a shorter list than the edit
+ * named is a cross-file group, which refuses. Empty for every other kind.
  */
 export function applyStructuralEdit(
   loc: JsxLocation,
@@ -369,6 +436,7 @@ export function applyStructuralEdit(
   anchor: { line: number; col: number } | null,
   destination: { line: number; col: number } | null,
   targetRel: string,
+  siblings: readonly { line: number; col: number }[] = [],
 ): StructuralEditOutcome {
   switch (edit.kind) {
     case 'move': {
@@ -414,7 +482,25 @@ export function applyStructuralEdit(
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'duplicate': {
-      const result = duplicateJsxElement(loc)
+      // K2 — `parentNodeId` present means Alt+drag: the copy goes INTO that
+      // container, not beside the original. A `parentNodeId` that decoded to
+      // another file arrives here as `null` (the caller's cross-file guard),
+      // which must refuse rather than silently fall back to an in-place copy:
+      // the user asked for the copy to land somewhere else, and quietly
+      // putting it next to the original is a different edit.
+      if (edit.parentNodeId !== undefined && !destination) {
+        return {
+          ok: false,
+          reason: 'cross-file',
+          message:
+            'The container this copy would go into is in a different file. Studio can copy an element into a new parent within one file; across files the markup would land where the values it reads do not exist.',
+        }
+      }
+      const result = duplicateJsxElement({
+        ...loc,
+        ...(destination ? { destinationLine: destination.line, destinationCol: destination.col } : {}),
+        ...(destination && anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
+      })
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'wrap': {
@@ -424,6 +510,33 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
+      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+    }
+    case 'group': {
+      // The run's REST arrive as their own decoded locations (`siblings`) —
+      // the caller ran every one of them through `studioEditLocation`, so a
+      // hand-crafted id cannot name a file outside the workspace, and one
+      // naming a DIFFERENT file was dropped there rather than reaching a
+      // codemod that would need an AST to notice.
+      if (siblings.length !== edit.siblingNodeIds.length) {
+        return {
+          ok: false,
+          reason: 'cross-file',
+          message:
+            'Some of the elements in this group are written in a different file, so there is no single place to write one container around them.',
+        }
+      }
+      const wrapperSpecifier = resolveNodeImport(edit, targetRel)
+      const result = wrapJsxElements({
+        file: loc.file,
+        targets: [{ line: loc.line, col: loc.col }, ...siblings],
+        name: edit.name,
+        ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
+      })
+      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+    }
+    case 'ungroup': {
+      const result = unwrapJsxElement(loc)
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'reparent': {

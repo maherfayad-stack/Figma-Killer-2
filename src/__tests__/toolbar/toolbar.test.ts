@@ -242,12 +242,17 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
   })
 
   it('delegates that routing decision to pendingTextEdit, with no editable-target check of its own', () => {
+    // `K1` — the handler moved off this component into
+    // `useEditorHistoryShortcuts` (the `global` rung of the editor key
+    // ladder), so the shortcut survives the notch being hidden and — the real
+    // reason — stands down during a canvas inline text edit like every other
+    // canvas shortcut. The RULE is unchanged; only its address is.
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/useEditorHistoryShortcuts.ts', import.meta.url),
       'utf-8',
     )
-    expect(src).toContain('hasPendingTextEdit(e.target)')
+    expect(src).toContain('hasPendingTextEdit(event.target)')
     // A reintroduced blanket check here would silently restore the bug the
     // rewrite above describes, and the behaviour test cannot see it — this
     // half is what makes the refusal single-sourced.
@@ -256,14 +261,15 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
     expect(src).not.toContain('isContentEditable')
   })
 
-  it('keyboard handler registers on document (global scope, not canvas-local)', () => {
+  it('the button component carries no keyboard listener of its own', () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
       new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
       'utf-8',
     )
-    expect(src).toContain('document.addEventListener')
-    expect(src).toContain('document.removeEventListener')
+    // One listener for the whole editor (`K1`) — a second one here would be a
+    // second ⌘Z, unguarded against inline edits.
+    expect(src).not.toContain("addEventListener('keydown'")
   })
 
   it('handler supports both Cmd+Z (undo) and Cmd+Shift+Z / Cmd+Y (redo)', () => {
@@ -276,11 +282,11 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
     // both keystrokes as redo) rather than grepping for a literal that moved.
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/useEditorHistoryShortcuts.ts', import.meta.url),
       'utf-8',
     )
-    expect(src).toContain('kbUndo?.match(e)')
-    expect(src).toContain('kbRedo?.match(e)')
+    expect(src).toContain("getKeybindingForCommand('editor.undo')?.match(event)")
+    expect(src).toContain("getKeybindingForCommand('editor.redo')?.match(event)")
     expect(src).not.toContain("e.key === 'y'")
 
     const kbRedo = getKeybindingForCommand('editor.redo')

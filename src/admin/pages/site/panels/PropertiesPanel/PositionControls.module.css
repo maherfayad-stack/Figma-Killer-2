@@ -23,16 +23,27 @@
     gap: var(--inspector-space-xs);
 }
 
+/* One axis: the constraint dropdown, then one field per pinned edge. A
+ * constraint that pins BOTH edges (stretch, Scale) puts its second field on a
+ * second line under the first rather than halving both — two 45px inputs are
+ * narrower than the values they hold. */
 .constraintCell {
-    position: relative;
     display: grid;
-    grid-template-columns: 56px 1fr;
+    grid-template-columns: 68px minmax(0, 1fr);
     align-items: center;
     gap: var(--inspector-space-3xs);
     color: var(--text);
 }
 
 .constraintSelect {
+    min-width: 0;
+}
+
+/* The clear button anchors to its own field, not to the row — with two fields
+ * a row-level anchor would stack both buttons on the same edge. */
+.constraintField {
+    position: relative;
+    grid-column: 2;
     min-width: 0;
 }
 
@@ -61,8 +72,8 @@
         color 100ms ease;
 }
 
-.constraintCell:hover .constraintClearBtn,
-.constraintCell:focus-within .constraintClearBtn {
+.constraintField:hover .constraintClearBtn,
+.constraintField:focus-within .constraintClearBtn {
     opacity: 1;
     pointer-events: auto;
 }

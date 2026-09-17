@@ -24,6 +24,7 @@
  */
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal } from '@core/ai'
 import {
   resizeFrame,
   type Board,
@@ -39,7 +40,7 @@ import {
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import {
-  applyStudioEditBatch,
+  applyStudioEditBatchLocked,
   StudioEditSchema,
   studioEditLocation,
   type StudioEdit,
@@ -67,6 +68,22 @@ const ApplyEditsInputSchema = Type.Object(
   { additionalProperties: false },
 )
 
+/**
+ * A codemod's own refusal, rendered as the shared tool refusal.
+ *
+ * The codemods have their own `reason` vocabulary (`DetachRefusalReason` and
+ * friends) — far too specific to fold into the shared code table, and far too
+ * useful to drop. So `code` is the one thing every caller branches on
+ * (`codemod-refused`, never retryable) and `reason` rides along as a detail,
+ * which is exactly the split `studio_git_commit` uses for git's own codes.
+ */
+function codemodRefusal(refusal: { reason: string; message: string }) {
+  return toolRefusal('codemod-refused', refusal.message, {
+    remedy: 'This edit has no single honest target. Change the source it is generated from, or use the named escape hatch — never retry the same verb on the same node.',
+    details: { reason: refusal.reason },
+  })
+}
+
 const applyEditsTool: AiTool = {
   name: 'studio_apply_edits',
   scope: 'shared',
@@ -79,7 +96,7 @@ const applyEditsTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, edits } = input as { dir?: string; edits: StudioEdit[] }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const { touchedFiles, ...result } = applyStudioEditBatch(dir, edits)
+    const { touchedFiles, ...result } = await applyStudioEditBatchLocked(dir, edits)
     const pageIds = touchedFilesToPageIds(dir, touchedFiles)
     // Best-effort — a failed/absent bridge never affects this tool's own result.
     pushStudioLiveReload(ctx.userId, { dir, pageIds })
@@ -190,7 +207,7 @@ const codemodTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Dispatch one of the higher-level structural codemods by verb: "rename-tag" (setJsxTagName), "set-import-specifier" (setImportSpecifier), "detach" (inline a LOCAL component\'s own JSX at its call site — refuses with a specific reason for hooks/data-driven/undestructured-props bodies or a package component; see detachComponentInstance), "extract-component" (the detach-refusal escape hatch — duplicate the component under a fresh name and repoint just this call site; see extractComponentCopy), "swap" (retarget an instance at a DIFFERENT component, diffing props — requires newComponentName/newComponentSource/newComponentFile; see swapComponentInstance). detach/swap/extract-component return { ok:false, code:"refused", reason, message } on refusal — never a silent no-op — and { ok:true, shifted:true, pageIds, ... } on success (node ids downstream of this file are now stale — re-call studio_list_pages/studio_find_nodes; pageIds names the touched page and, if the caller has the project open in a browser tab, nudges its canvas to re-read it, best-effort). Requires studio.write.',
+    'Dispatch one of the higher-level structural codemods by verb: "rename-tag" (setJsxTagName), "set-import-specifier" (setImportSpecifier), "detach" (inline a LOCAL component\'s own JSX at its call site — refuses with a specific reason for hooks/data-driven/undestructured-props bodies or a package component; see detachComponentInstance), "extract-component" (the detach-refusal escape hatch — duplicate the component under a fresh name and repoint just this call site; see extractComponentCopy), "swap" (retarget an instance at a DIFFERENT component, diffing props — requires newComponentName/newComponentSource/newComponentFile; see swapComponentInstance). detach/swap/extract-component return { ok:false, code:"codemod-refused", reason, message, remedy, retryable:false } on refusal — never a silent no-op — and { ok:true, shifted:true, pageIds, ... } on success (node ids downstream of this file are now stale — re-call studio_list_pages/studio_find_nodes; pageIds names the touched page and, if the caller has the project open in a browser tab, nudges its canvas to re-read it, best-effort). Requires studio.write.',
   inputSchema: CodemodInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, verb, nodeId, tag, specifier, newComponentName, newComponentSource, newComponentFile } = input as {
@@ -207,11 +224,11 @@ const codemodTool: AiTool = {
 
     const loc = studioEditLocation(nodeId)
     if (!loc) {
-      return {
-        ok: false,
-        code: 'no-writable-location',
-        message: `Node "${nodeId}" has no single writable source location (synthetic node or a \`.map\` iteration).`,
-      }
+      return toolRefusal(
+        'no-writable-location',
+        `Node "${nodeId}" has no single writable source location (synthetic node or a \`.map\` iteration).`,
+        { remedy: 'Edit the source the node is generated FROM — the component or the array literal — not the generated node.' },
+      )
     }
     const target = { file: join(dir, ...loc.rel.split('/')), line: loc.line, col: loc.col }
     // Every verb's call-site target is this one file — computed once, reused
@@ -221,14 +238,14 @@ const codemodTool: AiTool = {
     const notifyReload = (): void => pushStudioLiveReload(ctx.userId, { dir, pageIds })
 
     if (verb === 'rename-tag') {
-      if (!tag) return { ok: false, code: 'missing-param', message: 'rename-tag requires "tag".' }
+      if (!tag) return toolRefusal('missing-param', 'rename-tag requires "tag".')
       setJsxTagName({ ...target, tag })
       notifyReload()
       return { ok: true, verb, nodeId, pageIds }
     }
 
     if (verb === 'set-import-specifier') {
-      if (!specifier) return { ok: false, code: 'missing-param', message: 'set-import-specifier requires "specifier".' }
+      if (!specifier) return toolRefusal('missing-param', 'set-import-specifier requires "specifier".')
       setImportSpecifier({ ...target, specifier })
       notifyReload()
       return { ok: true, verb, nodeId, pageIds }
@@ -236,24 +253,24 @@ const codemodTool: AiTool = {
 
     if (verb === 'detach') {
       const result = detachComponentInstance({ ...target, workspaceRoot: dir })
-      if (!result.ok) return { ok: false, code: 'refused', reason: result.refusal.reason, message: result.refusal.message }
+      if (!result.ok) return codemodRefusal(result.refusal)
       notifyReload()
       return { ok: true, verb, nodeId, shifted: true, branchNote: result.branchNote, pageIds }
     }
 
     if (verb === 'extract-component') {
       const result = extractComponentCopy({ ...target, workspaceRoot: dir })
-      if (!result.ok) return { ok: false, code: 'refused', reason: result.refusal.reason, message: result.refusal.message }
+      if (!result.ok) return codemodRefusal(result.refusal)
       notifyReload()
       return { ok: true, verb, nodeId, shifted: true, newFile: result.newFile, newComponentName: result.newComponentName, pageIds }
     }
 
     if (verb === 'swap') {
       if (!newComponentName || !newComponentSource || !newComponentFile) {
-        return { ok: false, code: 'missing-param', message: 'swap requires newComponentName, newComponentSource, and newComponentFile.' }
+        return toolRefusal('missing-param', 'swap requires newComponentName, newComponentSource, and newComponentFile.')
       }
       const result = swapComponentInstance({ ...target, workspaceRoot: dir, newComponentName, newComponentSource, newComponentFile })
-      if (!result.ok) return { ok: false, code: 'refused', reason: result.refusal.reason, message: result.refusal.message }
+      if (!result.ok) return codemodRefusal(result.refusal)
       notifyReload()
       return {
         ok: true,
@@ -266,7 +283,9 @@ const codemodTool: AiTool = {
       }
     }
 
-    return { ok: false, code: 'unknown-verb', message: `Unknown codemod verb: ${verb}` }
+    return toolRefusal('unknown-verb', `Unknown codemod verb: ${verb}`, {
+      remedy: 'Use one of: rename-tag, set-import-specifier, detach, extract-component, swap.',
+    })
   },
 }
 

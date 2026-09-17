@@ -32,6 +32,7 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
+import type { RuntimeErrorKind } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -81,6 +82,17 @@ export type FrameRuntimeEvent =
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
     }
   | { type: 'text:edit'; nodeId: string; text: string }
+  /**
+   * Z5 — the frame's own runtime reported a failure (an uncaught exception, an
+   * unhandled rejection, a `console.error`, a resource that would not load, or
+   * a failed `fetch`). Bridge mode only in practice: a portal frame's
+   * equivalent taps are installed by `CanvasDiagnosticsInjector` INSIDE the
+   * frame, which already has the `Window` and does not need an adapter event
+   * to carry the finding back out. `PortalFrameAdapter` therefore never emits
+   * this — honestly, rather than by faking a second collection path that would
+   * double-count every portal diagnostic.
+   */
+  | { type: 'error'; kind: RuntimeErrorKind; message: string; stack?: string; source?: string }
 
 export type Unsubscribe = () => void
 

@@ -38,8 +38,15 @@
  * shortcut listeners can see them. They are cloned onto the parent `document`
  * instead. See `onKeyDown` for the inline-edit stand-down that makes this safe.
  *
- * All of it is canvas-only: live frames pan nothing, host no cross-frame drag,
- * and scroll natively.
+ * All of that is canvas-only: live frames pan nothing, host no cross-frame
+ * drag, and scroll natively.
+ *
+ * Prototype `key` triggers
+ * ────────────────────────
+ * The one thing a LIVE frame forwards, and by direct call rather than by a
+ * clone — see the effect's own comment. A running prototype's form fields are
+ * real, and cloning what the user types in them onto the parent document would
+ * hand every keystroke to the editor's shortcut layer.
  *
  * Portal mode only (`live-05`, STATE.md, Batch 3) — reads the frame's native
  * `Document` through `PortalFrameAdapter`'s escape hatch (`getPortalWindow`).
@@ -62,6 +69,7 @@ import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPoint
 import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { followPrototypeKeyFromFrame } from './usePrototypePlayTriggers'
 
 export function useIframeEventForwarding(
   iframeRef: RefObject<HTMLIFrameElement | null>,
@@ -333,4 +341,27 @@ export function useIframeEventForwarding(
       iframeDoc.removeEventListener('pointercancel', maybeForward)
     }
   }, [adapter, iframeRef, isLive])
+
+  // ── A `key` prototype trigger, raised inside a LIVE frame ────────────────
+  //
+  // The only keyboard this hook carries into a live frame, and it is
+  // deliberately NOT the clone-onto-the-parent-document mechanism the design
+  // canvas uses above. A live frame is the page as a visitor gets it: the user
+  // may well be typing into an authored form field, and cloning those
+  // keystrokes onto `document` would hand every one of them to the editor's
+  // undo, save, spotlight and panel-rail shortcuts.
+  //
+  // So the keystroke is offered to exactly one consumer, by direct call.
+  // `followPrototypeKeyFromFrame` stands down unless the player is armed, the
+  // event carries no modifier, and the target is not a text input — so an
+  // unarmed live frame pays one function call per keystroke and nothing else.
+  useEffect(() => {
+    if (!isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
+    if (!iframeDoc) return
+    const onKeyDown = (e: KeyboardEvent) => followPrototypeKeyFromFrame(e)
+    iframeDoc.addEventListener('keydown', onKeyDown)
+    return () => iframeDoc.removeEventListener('keydown', onKeyDown)
+  }, [adapter, isLive])
 }

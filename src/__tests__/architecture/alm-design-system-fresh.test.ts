@@ -26,6 +26,7 @@
 import { describe, it, expect } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readCommittedArtefact } from '../../../scripts/lib/generatedArtefact'
 import {
   BUILD_HASH_FILE,
   VENDOR_DIST_DIR,
@@ -41,7 +42,7 @@ const STALE = 'stale — run `bun run alm:sync`'
 describe('vendored design-system artefacts', () => {
   it('dist/ was built from the current vendor/alm-design-system/src/', () => {
     expect(existsSync(BUILD_HASH_FILE), 'missing dist/BUILD_HASH').toBe(true)
-    const recorded = readFileSync(BUILD_HASH_FILE, 'utf8').trim()
+    const recorded = readCommittedArtefact(BUILD_HASH_FILE).trim()
     expect(recorded, `dist/BUILD_HASH is ${STALE}`).toBe(computeLibInputHash())
   })
 
@@ -55,11 +56,13 @@ describe('vendored design-system artefacts', () => {
 
   it('dist/tokens.generated.json matches a fresh extraction', () => {
     expect(existsSync(TOKENS_FILE), 'missing dist/tokens.generated.json').toBe(true)
-    expect(readFileSync(TOKENS_FILE, 'utf8') === renderTokensJson(), `tokens.generated.json is ${STALE}`).toBe(true)
+    // EOL-normalised, not weakened: see `readCommittedArtefact`'s own note.
+    expect(readCommittedArtefact(TOKENS_FILE) === renderTokensJson(), `tokens.generated.json is ${STALE}`).toBe(true)
   })
 
   it('src/modules/alm/manifest.generated.json matches a fresh build', () => {
     expect(existsSync(MANIFEST_FILE), 'missing manifest.generated.json').toBe(true)
-    expect(readFileSync(MANIFEST_FILE, 'utf8') === renderManifestJson(), `manifest.generated.json is ${STALE}`).toBe(true)
+    // EOL-normalised, not weakened: see `readCommittedArtefact`'s own note.
+    expect(readCommittedArtefact(MANIFEST_FILE) === renderManifestJson(), `manifest.generated.json is ${STALE}`).toBe(true)
   })
 })

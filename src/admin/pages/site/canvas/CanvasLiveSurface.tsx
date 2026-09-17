@@ -44,6 +44,7 @@ import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import {
   CanvasBreakpointContext,
+  CanvasDiagnosticsScopeContext,
   CanvasPageContext,
   CanvasTemplateContext,
 } from './CanvasContexts'
@@ -51,6 +52,8 @@ import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrame
 import { DeviceMockup } from './DeviceMockup'
 import { PrototypeOverlay } from './PrototypeOverlay'
 import { PrototypeScreenStack } from './PrototypeScreenStack'
+import { PlayCrashCard } from './PlayCrashCard'
+import { liveScreenDiagnosticsScope } from './liveScreenDiagnosticsScope'
 import { DeviceScrollbarInjector } from './DeviceScrollbarInjector'
 import { DEVICE_BEZEL_PX, resolveDeviceKind, type DeviceKind } from './deviceKind'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -195,6 +198,12 @@ export function CanvasLiveSurface({
    * measures against that iframe, and the player has no selection.
    */
   const renderScreen = (screenPage: Page, iframeRef?: typeof handleIframeRef): ReactNode => (
+    // P8 — this screen's diagnostics scope. Per SCREEN, not per surface: the
+    // player keeps two slots mounted and an overlay on top of them, and a card
+    // saying "this screen crashed" has to mean the one you are looking at.
+    // Deliberately not `CanvasFrameContext` — that scopes SELECTION, and these
+    // frames have no board frame id. See `CanvasDiagnosticsScopeContext`.
+    <CanvasDiagnosticsScopeContext.Provider value={liveScreenDiagnosticsScope(screenPage.id)}>
     <IframeFrameSurface
       ref={iframeRef}
       interaction="live"
@@ -227,6 +236,7 @@ export function CanvasLiveSurface({
         </CanvasTemplateContext.Provider>
       </CanvasPageContext.Provider>
     </IframeFrameSurface>
+    </CanvasDiagnosticsScopeContext.Provider>
   )
 
   return (
@@ -301,6 +311,16 @@ export function CanvasLiveSurface({
                 leaveTransition={overlayLeaveTransition}
                 renderScreen={renderScreen}
               />
+
+              {/*
+                P8 — the screen ON TOP is the one whose crash the user is
+                looking at: an overlay presented over a working screen is what
+                they see, and a working screen under a crashed overlay is not
+                the thing to report. Covers the frame in BOTH play and edit
+                mode: a blank live frame is exactly as unexplained while you
+                are editing it.
+              */}
+              <PlayCrashCard scopeKey={liveScreenDiagnosticsScope((overlayPage ?? page).id)} />
             </div>
           </DeviceMockup>
 

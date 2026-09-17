@@ -132,8 +132,31 @@ Studio is a filesystem workspace (a project on disk), not a DB-backed site docum
 | Capability             | Grants                                                              | Roles         |
 |------------------------|-----------------------------------------------------------------------|---------------|
 | `studio.write`         | Install dependencies, apply source edits, run codemods, and rearrange board frames in a Studio project. Gates the Studio agent's write tools (`studio_create_page`, `studio_apply_edits`, `studio_codemod`, `studio_set_frames`, …). | Owner, Admin |
-| `studio.run.project`   | Boot the open project's own dev server and screenshot it for visual comparison — Tier 2, executes the user's code. **Never granted by default**, including to Admin. | Owner |
-| `studio.git.write`     | Let the AI record a commit in the project's own git repository, under the user's git identity. **Never granted by default**, including to Admin — a human using the Version control panel is gated by `site.structure.edit` instead, not by this capability. Never implies push, branch, or repository creation. | Owner |
+| `studio.run.project`   | Boot the open project's own dev server and screenshot it for visual comparison — Tier 2, executes the user's code. **Half of a two-part gate:** the target project's own `.studio/meta.json` trust tier must ALSO be exactly `run-project`, checked per call by `checkTrustTier` (`server/handlers/studio/trustGate.ts`). Holding the capability authorises nothing on a project that is not at that tier — see the note below for what that does and does not prove. | Owner, Admin |
+| `studio.git.write`     | Let the AI record a commit in the project's own git repository, under the user's git identity. **Never granted by default**, including to Admin — unlike `studio.run.project`, there is no second per-project gate behind it. A human using the Version control panel is gated by `site.structure.edit` instead, not by this capability. Never implies push, branch, or repository creation. | Owner |
+
+#### What the Tier-2 second gate proves — and what it does not
+
+`checkTrustTier(dir, 'run-project')` proves the **project** is at Tier 2. Read
+that literally, because two things it is often taken to mean are not implied:
+
+- **It is not per-invocation human consent.** Under §6 decision 2 of
+  `STUDIO-FIGMA-FEEL-PLAN.md`, a Vite project with a lockfile is promoted to
+  Tier 2 on **first open**, with a notice and an undo rather than a prompt. For
+  those projects the tier records the project's shape, not a decision anyone
+  made about this call. Anything that genuinely needs the user in the loop has
+  to ask at the point of use.
+- **It does prove no agent promoted itself.** `.studio/` is Studio's consent
+  record and lives inside the directory the CLI driver's native `Write`/`Edit`
+  can reach, so the tier would otherwise be a file the caller it gates can
+  edit. The generated `PreToolUse` hook refuses those writes —
+  `server/handlers/studio/agentWriteScope.ts`. Do not remove that hook while
+  leaving the capability on Admin; the pair is what makes the grant defensible.
+
+This is a single-operator posture. In a multi-user deployment the capability
+would need a per-project authorisation of its own (who may run *which*
+project), because "Admin holds it" x "the project is Vite" is not an
+authorisation decision about a specific user and a specific repository.
 
 ---
 
@@ -143,12 +166,12 @@ Four built-in `SYSTEM_ROLES`:
 
 | Role     | id        | Capabilities                                                                 | Boot behaviour |
 |----------|-----------|------------------------------------------------------------------------------|----------------|
-| Owner    | `owner`   | All 41 (`CORE_CAPABILITIES`)                                                 | Force-resynced on every boot. Owner-only `roles.manage`, `studio.run.project`, `studio.git.write`. |
-| Admin    | `admin`   | 38 — all except `roles.manage`, `studio.run.project`, `studio.git.write`     | **Force-resynced on every boot** (changed from previous "seeded once"). Hand-edits restored at boot. |
+| Owner    | `owner`   | All 41 (`CORE_CAPABILITIES`)                                                 | Force-resynced on every boot. Owner-only `roles.manage`, `studio.git.write`. |
+| Admin    | `admin`   | 39 — all except `roles.manage`, `studio.git.write`                           | **Force-resynced on every boot** (changed from previous "seeded once"). Hand-edits restored at boot. |
 | Client   | `client`  | `dashboard.read`, `site.read`, `site.content.edit`, `media.read`, `data.custom.tables.read` | Seeded once; freely editable. Sees custom tables only — never the system tables. |
 | Member   | `member`  | (none)                                                                       | Seeded once; freely editable. |
 
-A new capability appears on Owner automatically on the next boot (Owner force-syncs from `CORE_CAPABILITIES` wholesale). Admin's list is a hand-written literal (`adminCapabilities` in `server/auth/capabilities.ts`), also force-synced — but a new capability only reaches Admin if someone adds it to that literal in the same change; `studio.run.project` and `studio.git.write` are deliberate, permanent exceptions kept off Admin by design, not an oversight to fix. Client and Member don't auto-update — users grant the new capability via the Roles admin page if they want it. Existing **custom** roles also don't auto-update — same reason.
+A new capability appears on Owner automatically on the next boot (Owner force-syncs from `CORE_CAPABILITIES` wholesale). Admin's list is a hand-written literal (`adminCapabilities` in `server/auth/capabilities.ts`), also force-synced — but a new capability only reaches Admin if someone adds it to that literal in the same change; `studio.git.write` is a deliberate exception kept off Admin by design, not an oversight to fix. `studio.run.project` used to be a second such exception and no longer is (A10): it became safe to grant once every Tier-2 tool started checking the *project's* own trust tier as an independent second gate, which is also what closed `sec-05` finding 1 — until then the MCP tool was strictly weaker than the HTTP route doing the same spawn. Client and Member don't auto-update — users grant the new capability via the Roles admin page if they want it. Existing **custom** roles also don't auto-update — same reason.
 
 The trade-off for Admin force-sync: an operator who hand-removes a capability from Admin through the UI gets it back at next boot. That's intentional — capability grants for built-in roles are a code-level decision. Operators who need a "limited admin" persona should create a custom role.
 

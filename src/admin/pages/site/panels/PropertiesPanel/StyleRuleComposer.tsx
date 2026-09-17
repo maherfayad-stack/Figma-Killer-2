@@ -1,8 +1,9 @@
 /**
  * StyleRuleComposer — CSS section content renderer for a single style rule
  * (any selector, not just a class) — the ambient/global-selector surface
- * `SelectorInspector.tsx` mounts, and the class half of `MultiSelectionStyleArea.tsx`'s
- * multi-select composer.
+ * `SelectorInspector.tsx` mounts. (Its second caller, the class half of the
+ * old multi-select composer, is gone — S5 routes a class-target bulk edit
+ * through the ordinary `INSPECTOR_SECTIONS` render instead.)
  *
  * P3 is complete (`STATE.md` `panel-25`, item 11 — Studio extras): every
  * curated CSS category this file used to render through

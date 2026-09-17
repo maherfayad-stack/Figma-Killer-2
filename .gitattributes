@@ -1,1 +1,34 @@
 src/admin/ai/ModelPicker/ModelPicker.tsx diff
+
+# --- line endings -----------------------------------------------------------
+# Windows checkouts default to `core.autocrlf=true`, which rewrites every text
+# file to CRLF in the working tree. Three things in this repo read bytes, not
+# lines, and all three were silently broken by that (STUDIO-FIGMA-FEEL-PLAN.md
+# §0 "repo health", work order Z7):
+#
+#  1. `src/core/design-system-manifest/vendorDocs.ts` parses the vendored
+#     design system's markdown with `/^(#{1,6})\s+(.*)$/`. JavaScript's `.`
+#     does not match `\r` (it is a line terminator) and a non-multiline `$`
+#     only matches end-of-input, so on a CRLF checkout NOT ONE heading in
+#     `design.md` or `CLAUDE.md` matches. `buildDesignSystemManifest()` then
+#     emits 39 components with `props: []` and a placeholder description —
+#     and `bun run alm:sync` WRITES that over the real manifest.
+#  2. `alm:check` / `studio-runtime:check` / `bootstrap:check` compare the
+#     committed artefact's bytes against a freshly generated LF string, so a
+#     CRLF checkout reports permanent, unfixable drift.
+#  3. `dist/BUILD_HASH` is a SHA-256 over the vendored sources' bytes.
+#
+# Forcing LF in the working tree for exactly those trees fixes all three at the
+# source. The repository content is unchanged — it is already LF in the index.
+#
+# `text=auto` (not a bare `text`) is load-bearing on the vendored tree: it also
+# holds PNGs, and a bare `text` would push those through the eol filter too.
+vendor/** text=auto eol=lf
+src/modules/alm/manifest.generated.json text eol=lf
+src/core/studio-runtime/generated/** text eol=lf
+server/plugins/quickjs/bootstrap/** text eol=lf
+
+# `studio-workspace/<project>/` is a USER'S OWN repository (see `.gitignore`).
+# Studio's codemods rewrite those files byte-for-byte and its tests compare the
+# result, so git must never convert anything in there in either direction.
+studio-workspace/** -text

@@ -11,6 +11,10 @@
  * every page — so they are fetched independently and a failure in either is
  * reported on its own. Coupling them would mean an unreadable page file blanks
  * the links the user drew, which have nothing to do with it.
+ *
+ * ONE ROUND TRIP IS NOT HERE: the page-delete prune (`./prototypePrune.ts`).
+ * Its caller is inside the editor store, and this file imports the store, so it
+ * would close an import cycle. That module's own doc has the full reason.
  */
 import { useEditorStore } from '@site/store/store'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
@@ -20,12 +24,14 @@ import { captureNodeHint } from '@core/studio-anchor'
 import type { NodeTree } from '@core/page-tree'
 import { DEFAULT_PAGE_KIND, type PageKind } from '@core/studio-board'
 import {
+  CLICK_TRIGGER,
   actionTakesTarget,
   defaultLinkPresentation,
   transitionsForAction,
   type PrototypeAction,
   type PrototypeLink,
   type PrototypeTransition,
+  type PrototypeTrigger,
 } from '@core/studio-prototype'
 import { applyPrototypeOp, fetchCodeFlow, fetchPrototype, type PrototypeOp } from './prototypeApi'
 
@@ -85,6 +91,8 @@ export interface LinkDraft {
   /** Ignored for `back`/`close`, which are defined by the history stack. */
   targetPageId: string | null
   transition?: PrototypeTransition
+  /** What makes it fire. A link authored without one clicks. */
+  trigger?: PrototypeTrigger
 }
 
 /**
@@ -119,7 +127,7 @@ export async function saveLink(draft: LinkDraft, tree: NodeTree): Promise<boolea
   const link: PrototypeLink = {
     id: draft.id ?? crypto.randomUUID(),
     source: { pageId: draft.pageId, node },
-    trigger: 'click',
+    trigger: draft.trigger ?? CLICK_TRIGGER,
     action: draft.action,
     targetPageId: takesTarget ? draft.targetPageId : null,
     ...(transition ? { transition } : {}),
@@ -169,7 +177,10 @@ export async function commitLinkDraft(
   const link: PrototypeLink = {
     id: crypto.randomUUID(),
     source: { pageId: draft.sourcePageId, node: hint },
-    trigger: 'click',
+    // A drag says WHERE, never WHEN. The trigger is the one question the drop
+    // cannot answer, so it takes the default and the inspector — open on the
+    // new link the moment it lands — is where it gets changed.
+    trigger: CLICK_TRIGGER,
     action,
     targetPageId,
     transition,

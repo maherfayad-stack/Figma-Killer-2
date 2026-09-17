@@ -1,24 +1,32 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './helpers/canvasPerf'
 
 /**
  * Real-browser perf measurement for `perf-01` (WS-5.3 / WS-5.4).
  *
- * `scripts/bench/studioBoard.bench.ts` is the synthetic 50-frame gate, but it
- * **cannot run on this platform**: Playwright drives Chromium over
- * `--remote-debugging-pipe`, and Bun on Windows does not wire the extra
- * stdio fds that transport needs, so `chromium.launch()` hangs until its
- * timeout (verified: the identical launch returns in 72 ms under Node,
- * hangs for 180 s under Bun; `connectOverCDP` over a TCP port hangs in
- * Bun's WebSocket client too). The bench then took its own "skip
- * gracefully" branch and reported success — a perf gate that structurally
- * could not fail. See `scripts/bench/lib/browser.ts` and the `perf-01`
- * `STATE.md` entry.
+ * **This file owns the canvas budgets.** `bun run bench:studio-board`
+ * (`scripts/bench/studioBoard.bench.ts`) does not measure anything of its own
+ * any more — it spawns Playwright's Node runner on THIS spec and republishes
+ * the `perf` annotations below, so a budget ratcheted here is the only place
+ * it needs ratcheting. It used to drive a synthetic 50-frame board in-process
+ * under Bun, which could never work: Playwright talks to Chromium over
+ * `--remote-debugging-pipe`, and Bun on Windows does not wire the extra stdio
+ * fds that transport needs, so `chromium.launch()` hung until its timeout
+ * (verified: the identical launch returns in 72 ms under Node, hangs for 180 s
+ * under Bun; `connectOverCDP` over a TCP port hangs in Bun's WebSocket client
+ * too). The bench caught the hang, reported `skipped`, and passed — a perf
+ * gate that structurally could not fail. See `scripts/bench/lib/browser.ts`
+ * and the `perf-01` `STATE.md` entry.
  *
- * The Playwright **test runner** spawns Node, not Bun, so this file is the
- * one place in the repo that can actually measure canvas frame time. It runs
- * against the REAL corpus (`studio-workspace/maherfayad-stack-eSIM`, 15
- * pages / ~803 nodes) and read-only — it pans, zooms and counts, and never
- * writes to the project.
+ * The Playwright **test runner** spawns Node, not Bun, so this file is where
+ * canvas frame time is actually measurable. It runs against the REAL corpus
+ * (`studio-workspace/maherfayad-stack-eSIM`, 15 pages / ~803 nodes) and
+ * read-only — it pans, zooms and counts, and never writes to the project.
+ *
+ * The frame-timing instrumentation (`profileGesture`, `readBoardCounts`) AND
+ * the zoom budgets live in `helpers/canvasPerf.ts`, so `studio-feel.e2e.ts`
+ * measures a zoom the same way this spec does and ratchets against the same
+ * number. Read `BUDGET_ZOOM_WORST_FRAME_MS` there before loosening it.
  *
  * What each assertion is actually evidence of:
  *
@@ -52,20 +60,6 @@ const BUDGET_PAN_WORST_FRAME_MS = 40
 /** Observed 0 in every run. A handful would be unrelated chrome; a re-render storm is hundreds. */
 const BUDGET_PAN_LAYER_MUTATIONS = 10
 
-/**
- * **This one records a known defect, and is a ratchet rather than a target.**
- *
- * A zoom-out that crosses virtualization boundaries mounts live iframes, and
- * a single board-frame mount on this corpus costs ~100-140 ms of synchronous
- * work (iframe + `srcDoc` + injector chain + node tree). Measured worst frame
- * for a 6 → 15 mount sweep: **290 ms**. Two fixes were tried and neither
- * helped — see the `perf-01` `STATE.md` entry for both, and for why the real
- * fix is making an individual mount cheaper, not rescheduling the batch.
- *
- * So this number is deliberately NOT 40 ms. It is set where it is so the
- * defect cannot silently get worse while the honest fix is outstanding.
- */
-const BUDGET_ZOOM_WORST_FRAME_MS = 600
 
 interface StudioProjectSummary {
   dir: string
@@ -118,115 +112,6 @@ async function readFrameStates(page: Page): Promise<Record<string, FrameState>> 
       else states[id] = 'empty'
     }
     return states
-  })
-}
-
-/** Live (mounted) canvas iframes, board frames on the board, and rendered posters. */
-async function readBoardCounts(page: Page): Promise<{
-  liveIframes: number
-  boardFrames: number
-  posters: number
-  placeholders: number
-  domNodes: number
-}> {
-  return page.evaluate(() => ({
-    liveIframes: document.querySelectorAll('iframe[title^="Canvas frame"]').length,
-    boardFrames: document.querySelectorAll('[data-testid="board-frame-body"]').length,
-    posters: document.querySelectorAll('[data-testid="board-frame-poster"]').length,
-    placeholders: document.querySelectorAll('[data-testid="board-frame-placeholder"]').length,
-    domNodes: document.getElementsByTagName('*').length,
-  }))
-}
-
-interface GestureProfile {
-  frames: number
-  worstFrameMs: number
-  meanFrameMs: number
-  framesOver20ms: number
-  /** Mutations observed INSIDE the frames layer — the React re-render signal. */
-  layerMutations: number
-  /** `style` writes on the transform layer — the intended rAF transform commits. */
-  transformWrites: number
-}
-
-/**
- * Samples `requestAnimationFrame` intervals and DOM mutations while
- * `gesture` runs. Both observers are installed in the page, the gesture is
- * driven from the test side with real `page.mouse` input, then the sample is
- * read back and torn down.
- */
-async function profileGesture(page: Page, gesture: () => Promise<void>): Promise<GestureProfile> {
-  await page.evaluate(() => {
-    const layer = document.querySelector('[data-testid="board-frames-layer"]')
-    const transformLayer = document.querySelector('[data-testid="canvas-transform-layer"]')
-    const state = {
-      intervals: [] as number[],
-      layerMutations: 0,
-      transformWrites: 0,
-      rafHandle: 0,
-      last: performance.now(),
-      layerObserver: null as MutationObserver | null,
-      transformObserver: null as MutationObserver | null,
-    }
-    window.__studioPerfSample = state
-
-    const tick = () => {
-      const now = performance.now()
-      state.intervals.push(now - state.last)
-      state.last = now
-      state.rafHandle = requestAnimationFrame(tick)
-    }
-    state.rafHandle = requestAnimationFrame(tick)
-
-    if (layer) {
-      state.layerObserver = new MutationObserver((records) => {
-        state.layerMutations += records.length
-      })
-      state.layerObserver.observe(layer, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        characterData: false,
-      })
-    }
-    if (transformLayer) {
-      state.transformObserver = new MutationObserver((records) => {
-        state.transformWrites += records.length
-      })
-      // Attributes on the transform layer ITSELF only (no subtree) — this is
-      // the `style.transform` write `useCanvas.ts` makes once per rAF.
-      state.transformObserver.observe(transformLayer, {
-        subtree: false,
-        childList: false,
-        attributes: true,
-        attributeFilter: ['style'],
-      })
-    }
-  })
-
-  await gesture()
-
-  return page.evaluate(() => {
-    const state = window.__studioPerfSample
-    if (!state) throw new Error('perf sample was never installed')
-    cancelAnimationFrame(state.rafHandle)
-    state.layerObserver?.disconnect()
-    state.transformObserver?.disconnect()
-    delete window.__studioPerfSample
-
-    // Drop the first interval: it spans the gap between installing the
-    // sampler and the gesture's first input, which is idle time, not a
-    // rendered frame.
-    const intervals = state.intervals.slice(1)
-    const total = intervals.reduce((sum, n) => sum + n, 0)
-    return {
-      frames: intervals.length,
-      worstFrameMs: intervals.length > 0 ? Math.max(...intervals) : 0,
-      meanFrameMs: intervals.length > 0 ? total / intervals.length : 0,
-      framesOver20ms: intervals.filter((n) => n > 20).length,
-      layerMutations: state.layerMutations,
-      transformWrites: state.transformWrites,
-    }
   })
 }
 
@@ -342,8 +227,10 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
       }
       await page.keyboard.up('Control')
     })
-    // Frames are admitted a few per animation frame (`useStaggeredFrameMounts`),
-    // so the live set finishes filling shortly after the gesture stops.
+    // A frame's node tree lands one commit after its injectors (S1's staged
+    // mount, `IframeFrameSurface`), so the live set finishes filling shortly
+    // after the gesture stops. (This used to credit a `useStaggeredFrameMounts`
+    // that `perf-01` reverted and never existed in the tree afterwards.)
     await page.waitForTimeout(800)
     const liveAfterZoom = (await readBoardCounts(page)).liveIframes
     annotate('live iframes across zoom', `${liveBeforeZoom} -> ${liveAfterZoom}`)
@@ -381,8 +268,14 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
       departed.map((id) => `${id}=${afterPan[id]}`).join(', ') || '(none departed)',
     )
 
+    // Posters are rasterized by `framePosterQueue`, which holds every capture
+    // until the board has been quiet — the pan above is exactly the kind of
+    // gesture it refuses to work under, so the wait has to outlast its quiet
+    // period plus a serial capture or two.
+    await page.waitForTimeout(3000)
+    const afterSettle = await readFrameStates(page)
     if (departed.length > 0) {
-      const withPoster = departed.filter((id) => afterPan[id] === 'poster')
+      const withPoster = departed.filter((id) => afterSettle[id] === 'poster')
       annotate('of those, showing a frozen poster', `${withPoster.length}/${departed.length}`)
       // The WS-5.3 acceptance criterion.
       expect(withPoster.length).toBeGreaterThan(0)
@@ -428,17 +321,3 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     annotate('pan frames-layer mutations @ all mounted', String(panAllMounted.layerMutations))
   })
 })
-
-declare global {
-  interface Window {
-    __studioPerfSample?: {
-      intervals: number[]
-      layerMutations: number
-      transformWrites: number
-      rafHandle: number
-      last: number
-      layerObserver: MutationObserver | null
-      transformObserver: MutationObserver | null
-    }
-  }
-}

@@ -41,9 +41,49 @@ is in the tree.
 | Gate | Result | Why |
 |---|---|---|
 | `tsc -b` | clean | — |
-| `vite build` | **fails** | `alm-design-system` unresolvable from `src/modules/alm/register.tsx` — the design system was vendored today as a `file:` dependency and `bun install` has not been run on this checkout. Not a code bug; it is a fresh-checkout trap (Z7). |
-| `bun test` | **10,755 pass · 281 fail · 198 errors** in 433 s (1,197 files) — `standing-01` still says 34 | Buckets, by file: `agentPanel.test.tsx` 48 errors (an unmocked `GET /admin/api/ai/studio-session` fetch — the session-controls route was added without a test seam); `canonicalCheck.test.ts` 25 + `canonicalPageCheck.test.ts` 1 (`studio-workspace/__canonical-fixture/src/screens/*.tsx` is missing on disk — the fixture is incomplete); `buildDesignSystemManifest.test.ts` 16 and `alm-design-system-fresh` 3 + `studio-runtime-bundle-fresh` 1 (generated-artefact drift → `bun run alm:sync` / `studio-runtime:sync`); 13 `Cannot find package 'alm-design-system'` cascading into `authoredCssInjector`, `fontFamilyWriteback`, `studioSaveRequests`, `localizedPageWriteback`, `originBackedPropWriteback` (the missing `bun install`); `editorLayoutPersistence.test.tsx` 22 (the `AdminCanvasLayout` Windows bucket); plugin QuickJS/worker 10; `liveOrigin` WebSocket 12; `useDevServerReadiness` 2; singles: `no-core-barrel-deep-imports`, `publish-html-filter-context`, `lintCli`, `PropertyControlRenderer`, `chatSnapshotValidation`, `mcpServerSecretStore`, `saveNarrowResync`, `fsCodemodAdapter` 2, `liveReloadPush` 3. |
-| `bun run lint` | 6 errors | all `'os' is defined but never used` in `server/handlers/__tests__/*.test.ts` and `referenceUpload.test.ts` — the pre-existing set `store-11` recorded; a one-line fix each |
+| `vite build` | **passes** | It failed on the original checkout because `alm-design-system` is a `file:` dependency and `bun install` had not been run. Z7 (#138) made `bun run dev` preflight exactly that, so the trap reports itself instead of surfacing as an unresolvable import. |
+| `bun test` | **13,041 pass · 33 fail · 0 errors** in 713 s (1,199 files) — re-measured by `test-05` (#158), which replaces every number this row used to carry | The 281/198 reading was mostly ONE cause: `mock.module` is process-wide and PERMANENT (`mock.restore()` does not undo it), so a single unrestored mock in `server/liveOrigin.test.ts` stopped **129 later files LOADING at all**. Plus a real store leak in the canvas cluster (`useEditorStore` is a module singleton, now reset per test) and the CRLF cause above. The 33 that remain are named one by one in `standing-01`; 2 of them are the `useDevServerReadiness` pair #139 fixes. Runtime is LONGER than the old 477 s precisely because 129 more files now execute. |
+| `bun run lint` | **clean** | The 6 `'os' is defined but never used` errors were deleted by `test-05` (#158). |
+
+---
+
+### Wave 1 — landed
+
+Twenty-two work orders plus four security reviews, merged into
+`integration/figma-feel-wave-1` on 2026-09-17. Each row links the work order to the PR
+that carried it and the STATE.md entry that explains it.
+
+| Work order | PR | Branch | STATE |
+|---|---|---|---|
+| Z9 + Z7 | #138 | `chore/workspace-gitignore-and-dev-preflight` | `server-24` |
+| V2 | #158 | `test/windows-bucket-closed` | `test-05` |
+| Z4 | #136 | `fix/dev-server-supervisor` | `dev-04` |
+| Z10 + truth pass | #137 | `docs/plan-truth-pass` | `docs-14` |
+| Z3 | #139 | `fix/bounded-tool-loops` | `mcp-21` |
+| Z1 · Z2 · Z6 | #145 | `fix/zero-noise-toasts-boundaries-savechip` | `store-12` |
+| Z8 | #143 | `feat/css-destination-open-page` | `style-06` |
+| S3 · S4 | #140 | `perf/sandbox-selectors-event-driven-overlay` | `canvas-17` |
+| K5 | #142 | `feat/alt-hover-measure` | `canvas-18` |
+| S2 · K2 · K6 | #153 | `feat/drag-session-alt-duplicate-free-move` | `canvas-19` |
+| S1 | #155 | `perf/cheap-frame-mount-iframe-pool` | `perf-07` |
+| S6 · V1 · V3(CI) | #152 | `test/browser-perf-gate` | `verify-01` |
+| K1 · K4 · K7 | #148 | `feat/one-key-dispatcher-bindings` | `keys-01` |
+| K3 | #146 | `feat/group-ungroup` | `struct-10` |
+| S5 | #144 | `feat/inspector-fits-900-multiselect-model` | `panel-36` |
+| P9 | #141 | `feat/inspector-figma-parity-sections` | `panel-35` |
+| P7 | #147 | `feat/prototype-triggers-smart-animate` | `proto-07` |
+| Z5 · P8 | #150 | `feat/live-frame-errors-and-auto-promote` | `live-09` |
+| — security review of #150 | #156 | `review/pr-150` | `sec-10` |
+| A9 · A12 · A13 | #149 | `feat/agent-budget-design-policy-composition` | `mcp-22` |
+| A10 · A11 · A14 | #154 | `fix/agent-tool-truth-and-gates` | `mcp-23` |
+| — security review of #154 | #159 | `review/pr-154` | `sec-12` |
+| G1 · G2 | #151 | `feat/github-connect-and-signin` | `git-21` |
+| — security review of #151 | #157 | `review/pr-151` | `sec-11` |
+| G3 · G4 · G5 · G6 · G7 | #160 | `feat/branches-pull-pr` (contains #151 + #157) | `git-22` |
+| — security review of #160 | #161 | `review/pr-160` | — |
+
+Not yet landed: **G8** (the dogfood against a real private repository) and the Phase 0
+exit dogfood, both of which need a human at a browser.
 
 ---
 
@@ -590,13 +630,13 @@ Ranked by how likely they are to hit you on an ordinary day. Each maps to a work
 
 | # | What happens | Where | Fix |
 |---|---|---|---|
-| 1 | The dev server restarts mid-session when Studio writes into a workspace; on Windows the watcher has panicked and wedged the port | `scripts/dev.ts:245`, incident in `docs/state-archive/2026-Q3.md:3454` | Z4 |
+| 1 | ~~The dev server restarts mid-session when Studio writes into a workspace~~ — **the premise was wrong, and Z4 measured it.** Bun's `--watch` keys on the entry's transitive MODULE GRAPH, per file: 300 files written into `studio-workspace/` produced zero restarts. The real defect was **Vite**, which watches the repo root as a TREE and full-reloads on any watched `.html` change that maps to no module — and every Vite-template app Studio imports ships a root `index.html`, so importing a project reloaded the editor out from under the user | `vite.config.ts` `server.watch.ignored` (was `scripts/dev.ts:245`) | Z4 · #136 · `dev-04` |
 | 2 | Identical toasts stack (139 call sites, 3 use `dedupeKey`) | `toastBus.ts:51-109` | Z1 |
 | 3 | Any render crash outside a single node produces a red "Render failed" toast | `ErrorBoundary.tsx:128-153` | Z2 |
 | 4 | A non-CLI provider can loop on the same mutating tool forever; the CLI turn has no total cap | `toolLoop.ts:173`, `claudeCliSpawn.ts:115` | Z3 |
 | 5 | A crash inside a Tier-2 live frame reaches nothing in Studio — no badge, no diagnostics | `studio-runtime/messages.ts:260-387` | Z5 |
 | 6 | A fresh checkout does not build until `bun install`; four generated-artefact gates are red today | this checkout | Z7 |
-| 7 | Zoom-out mounts frames at 290–337 ms per frame | `studio-board-perf.e2e.ts:58-68` | S1 |
+| 7 | Zoom-out stalls 290–337 ms — but **not on the mount, which `perf-01` had blamed.** A CPU profile found the long animation frames admit ZERO new iframes: creating one is ~12 ms, while `useFramePosterCapture` rasterizing the frames that had *just arrived*, inside the gesture that brought them, was ~85–350 ms per poster in a burst. Fixed by queueing the posters until the board is quiet, caching the per-frame `:hover` CSSOM walk, and staging the mount — worst frame 350→195 ms, mean 41→22 ms | `useFramePosterCapture.ts`, `CanvasHoverSuppressionInjector` (was `studio-board-perf.e2e.ts:58-68`) | S1 · #155 · `perf-07` |
 | 8 | Element drag re-renders React and forces layout twice per pointer move | `useCanvasReorderDrag.ts:266-295` | S2 |
 | 9 | The selection overlay polls at 60 fps forever while anything is selected | `BreakpointSelectionOverlay.tsx:536-553` | S4 |
 | 10 | The text-node inspector is ~1400 px tall against a 900 px budget | STATE.md `panel-27` | S5 |
@@ -622,6 +662,34 @@ Ranked by how likely they are to hit you on an ordinary day. Each maps to a work
 - **Per-request capability gating on every Studio route** (§6 decision 7, `sec-05` finding 2):
   `requireCapability` in `tryServeStudio`'s dispatch, one sub-router at a time, before any
   multi-user deployment.
+- **`insertImportedNodes` writes nodes no source write follows** (`mcp-21`): `site_insert_html` /
+  `site_replace_node_html` merge nanoid nodes into a studio-imported tree with no source write,
+  and the next parse deletes them. Route through a source insert, or refuse on a studio tree.
+- **CRLF-safe parsing for USERS' repos** (`server-24`): `.gitattributes` removed the exposure for
+  Studio's own vendored tree, but Studio parses other people's repositories, which can be CRLF.
+  Every structural codemod also still writes `\n`, so a CRLF file loses `\r` on rewritten lines
+  (`struct-10` landmine 7).
+- **Playwright cannot start the stack on Windows** (`verify-01` finding 3): `webServer` spawns
+  `bun run e2e:dev` and Vite never binds on 5174 (4/4); by hand it comes up in ~25 s. Workaround
+  today is `E2E_REUSE_SERVER=1` against a hand-started server.
+- **The perf spec has no corpus on a clean checkout** (`verify-01` finding 1):
+  `studio-workspace/maherfayad-stack-eSIM` is untracked, so `studio-board-perf.e2e.ts` self-skips.
+  Repoint it at a tracked board of **at least 9 frames** — below that the mount pool keeps every
+  frame mounted and there is no mount left to measure.
+- **e2e dirties `test4`** (`verify-01` finding 4): `auth.setup.ts` rewrites `lastOpenedAt` and
+  `prototype/*`. Point the setup at a throwaway copy.
+- **Select a source-backed duplicate/insert after resync** (`keys-01` K7 follow-up): needs
+  `commitStructural` to report the created node ids; ⌘D selects on the in-memory path only.
+- **`FillSection` Mixed re-wiring** (`panel-36`): the section dropped its `isMixed` handling on a
+  then-true premise. It under-states rather than lying; the row-by-row table is
+  `docs/features/inspector.md` §9.3.
+- **`compare.test.ts:370`** carries the stale arity `readPassingCompare(dir, pageId)` — missing
+  `userKey` (`mcp-22`).
+- **`parityMatrix` gap** (`test-05`): `studio_plan_variants` and `studio_import_figma_frame` have
+  no canvas-parity row. A real content gap, not a test bug.
+- **`deploy.ts` reads the trust tier off the APP ROOT** while `devServer.ts` and
+  `referenceRender.ts` read the project dir, so a monorepo can never deploy (`sec-12`,
+  fail-closed, pre-existing).
 
 ## 8. Definition of done for the plan
 

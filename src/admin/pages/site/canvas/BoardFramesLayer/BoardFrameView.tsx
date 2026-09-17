@@ -37,7 +37,6 @@ import {
 import { createPortal } from 'react-dom'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Breakpoint, Page } from '@core/page-tree'
 import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
@@ -46,16 +45,17 @@ import { useInlineRename } from '@site/hooks/useInlineRename'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
-import { CanvasFrameContext, CanvasPageContext } from '../CanvasContexts'
+import { CanvasDiagnosticsScopeContext, CanvasFrameContext, CanvasPageContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { CanvasEmptyPageHint } from '../CanvasEmptyPageHint'
 import { pageHasNoContent } from '../canvasEmptyPage'
 import { resizeRect, RESIZE_HANDLES, type ResizeRect, type ResizeHandle } from '../rectResize'
-import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
+import { useBoardFrameMoveDrag } from './useBoardFrameMoveDrag'
 import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
+import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
   getColorSchemeCapability,
@@ -128,14 +128,6 @@ function buildStudioBreakpoint(width: number): Breakpoint {
   return breakpoint
 }
 
-interface DragState {
-  pointerId: number
-  startClientX: number
-  startClientY: number
-  frameX: number
-  frameY: number
-}
-
 interface ResizeDragState {
   pointerId: number
   handle: ResizeHandle
@@ -166,7 +158,26 @@ interface BoardFrameViewProps {
   isActive: boolean
   /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
   isSelected: boolean
+  /**
+   * Whether this frame's board rect intersects the viewport (plus margin). It
+   * drives the frozen-poster CAPTURE only — the picture has to be taken while
+   * the frame is genuinely on screen and settled.
+   */
   isOnScreen: boolean
+  /**
+   * Whether this frame holds a live iframe. A superset of `isOnScreen`: the
+   * mount pool (S1, `frameMountPool.ts`) keeps recently-departed frames
+   * mounted so panning back to them costs nothing. A mounted-but-offscreen
+   * frame is simply outside the visible area — it renders exactly as it did
+   * on screen, it just isn't being looked at.
+   *
+   * Optional, defaulting to `isOnScreen`: a caller that does not take part
+   * in the pool — a unit test, or any future surface rendering one frame
+   * outside `BoardFramesLayer` — means "mounted exactly while visible",
+   * which is the pre-S1 behaviour and the only honest default. Required
+   * here once, it silently unmounted every such caller.
+   */
+  isMounted?: boolean
   /**
    * L8 Phase B (`perf-06`, STATE.md) — the live-frame pool's hot-set
    * membership flag, computed by `BoardFramesLayer.tsx` via
@@ -177,10 +188,10 @@ interface BoardFrameViewProps {
    * doesn't have to re-boot the moment the user pans back. Only meaningful
    * for a Tier-2 (`trust === 'run-project'`) frame's `LiveBoardFrame` branch
    * below — Tier 0/1's portal `BreakpointFrame` is same-origin and cheap, so
-   * it stays gated on `isOnScreen` alone via `liveMounted`'s own fallback.
-   * Optional and defaults to `isOnScreen` so any test or call site that
-   * omits it (a Tier 0/1 board, or a unit test exercising this component in
-   * isolation) reproduces the pre-pool mount/unmount behavior byte-for-byte.
+   * it stays gated on S1's `isMounted` alone.
+   * Optional and defaults to the pooled flag above so any test or call site
+   * that omits it (a Tier 0/1 board, or a unit test exercising this
+   * component in isolation) reproduces S1's mount-pool behaviour.
    */
   isLiveMounted?: boolean
 }
@@ -206,14 +217,18 @@ function BoardFrameViewImpl({
   isActive,
   isSelected,
   isOnScreen,
+  isMounted,
   isLiveMounted,
 }: BoardFrameViewProps) {
-  // See `isLiveMounted`'s own doc — Phase A's every caller omits it, so this
-  // reproduces `isOnScreen`-gated mounting exactly until Phase B's pool
-  // starts passing a real, decoupled hot-set flag.
-  const liveMounted = isLiveMounted ?? isOnScreen
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  const dragRef = useRef<DragState | null>(null)
+  // Two pools decide this, and which one applies depends on the tier.
+  // S1's mount pool (`frameMountPool.ts`) governs every portal frame: an
+  // iframe that has just left the viewport stays mounted so panning back
+  // is free. A Tier-2 frame costs a real dev-server-backed process, so L8
+  // Phase B's narrower, capped hot set (`liveFramePool.ts`) governs that
+  // one instead. `isLiveMounted` is `undefined` on every Tier 0/1 board.
+  const pooled = isMounted ?? isOnScreen
+  const mounted = trust === 'run-project' ? (isLiveMounted ?? pooled) : pooled
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
@@ -265,6 +280,15 @@ function BoardFrameViewImpl({
   // second offscreen frame to do this.
   const frameBodyRef = useRef<HTMLDivElement>(null)
   useFramePosterCapture(frameBodyRef, page, width, isOnScreen)
+  // S1 — the frame's mount is staged (iframe -> injectors -> node tree; see
+  // `IframeFrameSurface`'s header), so between entering the viewport and the
+  // tree's commit the iframe is a real but EMPTY document. The poster stays
+  // painted on top of it until then, which is what makes a zoom-out read as
+  // "these frames were always there" instead of a wave of white boxes.
+  // `setContentReady` is passed down raw: a `useState` setter's identity is
+  // stable by React's own contract, so it cannot defeat `BreakpointFrame`'s
+  // `memo()` bailout the way a fresh closure would.
+  const [contentReady, setContentReady] = useState(false)
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -275,58 +299,15 @@ function BoardFrameViewImpl({
     if (!isActive) activatePage()
   }
 
-  const handleHeaderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    // Only the primary (left) button starts a move-drag — a right-click's
-    // pointerdown must fall through to `onContextMenu` untouched, never
-    // arming drag state (see the module doc's "Drag-to-reposition" note).
-    if (e.button !== 0) return
-    // WS-7.1 — select on pointerDOWN (not click/mouseup), matching Figma:
-    // pressing a frame's header selects it immediately, and a drag that
-    // follows moves the now-selected frame. Plain click replaces the
-    // selection; Shift-click extends it (toggle-add).
-    useEditorStore.getState().selectFrame(page.id, e.shiftKey ? 'toggle' : 'replace')
-    e.currentTarget.setPointerCapture(e.pointerId)
-    dragRef.current = {
-      pointerId: e.pointerId,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      frameX: x,
-      frameY: y,
-    }
-  }
+  // The header move-drag, end to end (press, snap, Alt-copy, Escape,
+  // release) — its own hook so this view keeps owning what a frame LOOKS
+  // like. See `useBoardFrameMoveDrag`.
+  const moveDrag = useBoardFrameMoveDrag({ frameId: frame.id, pageId: page.id, x, y, width, height })
 
   const handleHeaderContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
     setContextMenu({ x: e.clientX, y: e.clientY })
-  }
-
-  const handleHeaderPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== e.pointerId) return
-    const zoom = useEditorStore.getState().zoom
-    const dx = (e.clientX - drag.startClientX) / zoom
-    const dy = (e.clientY - drag.startClientY) / zoom
-    const rawX = drag.frameX + dx
-    const rawY = drag.frameY + dy
-
-    // Snap to the OTHER furniture on the board (Phase 6B) — every other
-    // frame, note, and doc, excluding this frame's own page.
-    const board = selectActiveBoard(useEditorStore.getState())
-    const peers = board ? collectPeerRects(board, { kind: 'frame', pageId: page.id }) : []
-    const snapped = computeSnap({ x: rawX, y: rawY, width, height }, peers, SNAP_THRESHOLD_BOARD_UNITS)
-    useEditorStore.getState().setBoardSnapGuides(snapped.guides)
-    useEditorStore.getState().setFramePosition(frame.id, snapped.x, snapped.y)
-  }
-
-  const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) {
-      dragRef.current = null
-      useEditorStore.getState().setBoardSnapGuides([])
-      // `store-09` — close the undo-coalescing burst this drag opened, so a
-      // second drag of the SAME frame is its own ⌘Z step.
-      useEditorStore.getState().endBoardGesture()
-    }
   }
 
   // Resize handles — same pointer-capture + screenDelta/zoom pattern as the
@@ -417,10 +398,10 @@ function BoardFrameViewImpl({
       <div
         className={styles.header}
         data-testid="board-frame-header"
-        onPointerDown={handleHeaderPointerDown}
-        onPointerMove={handleHeaderPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        onPointerDown={moveDrag.onPointerDown}
+        onPointerMove={moveDrag.onPointerMove}
+        onPointerUp={moveDrag.onPointerUp}
+        onPointerCancel={moveDrag.onPointerUp}
         onContextMenu={handleHeaderContextMenu}
         onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); rename.start(page.title) }}
       >
@@ -461,6 +442,13 @@ function BoardFrameViewImpl({
             {pinnedAxesLabel}
           </span>
         )}
+        {/* Z5 — this frame's runtime said something went wrong. Renders
+            nothing at all until it did; never a toast. Both tiers publish
+            under this frame's id (a Tier-0 portal frame through
+            `CanvasDiagnosticsInjector`, a Tier-2 live one through
+            `useBridgeFrameDiagnostics`), so the badge does not branch on
+            trust. */}
+        <FrameDiagnosticsBadge scopeKey={frame.id} />
       </div>
 
       {contextMenu && createPortal(
@@ -551,67 +539,81 @@ function BoardFrameViewImpl({
           UNLESS the frame has never been manually resized, in which case
           `data-frame-auto-height` (canvas-04) lets the box grow to wrap its
           already-correctly-fitted iframe instead (see
-          `BoardFramesLayer.module.css`). Gated on `isOnScreen` too: an
-          offscreen frame has no live iframe to size against, so it keeps the
-          fixed fallback box the placeholder needs — same as before. */}
+          `BoardFramesLayer.module.css`). Gated on `mounted` too: a
+          frame with no live iframe has nothing to size against, so it keeps
+          the fixed fallback box the placeholder needs — same as before. */}
       <div
         ref={frameBodyRef}
         className={styles.frameBody}
         data-testid="board-frame-body"
-        data-frame-auto-height={!hasManualHeight && isOnScreen ? 'true' : undefined}
+        data-frame-auto-height={!hasManualHeight && mounted ? 'true' : undefined}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
-        {liveMounted ? (
-          <CanvasPageContext.Provider value={page.id}>
-            {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
-                every selection/hover it originates with the frame it came
-                from (`selectedNodeFrameId`/`hoveredFrameId`). Without this a
-                "duplicate as variant" sibling of this page — sharing every
-                node id (trap #2) — would light up from a selection made in
-                THIS frame. See `CanvasFrameContext`'s doc. */}
-            <CanvasFrameContext.Provider value={frame.id}>
-              {trust === 'run-project' ? (
-                // L8 Phase A (`perf-06`, STATE.md) — the ONE Tier-2 branch
-                // this whole work order adds. Tier 0/1 boards never reach
-                // this line: `trust` only ever reads `'run-project'` for a
-                // project explicitly promoted to Tier 2.
-                <LiveBoardFrame
-                  page={page}
-                  breakpoint={buildStudioBreakpoint(width)}
-                  isActive={isActive}
-                  onActivate={activatePage}
-                  frameId={frame.id}
-                  axesOverride={frame.axes}
-                  width={width}
-                />
-              ) : (
-                // Byte-for-byte the SAME call this branch has always made —
-                // no new prop, no new behavior, for every Tier 0/1 board.
-                <BreakpointFrame
-                  page={page}
-                  breakpoint={buildStudioBreakpoint(width)}
-                  isActive={isActive}
-                  onActivate={activatePage}
-                  frameId={frame.id}
-                  axesOverride={frame.axes}
-                  // The board frame carries its own header (title, rename,
-                  // context menu, drag handle) and its own size in the
-                  // Properties panel, so `BreakpointFrame`'s breakpoint row
-                  // would be a second, board-global chrome strip on top of it.
-                  // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
-                  showBreakpointChrome={false}
-                />
-              )}
-            </CanvasFrameContext.Provider>
-          </CanvasPageContext.Provider>
+        {/* `CanvasDiagnosticsScopeContext` (Z5) is where this frame's runtime
+            diagnostics are published, so the header badge above can subscribe
+            to them. Separate from `CanvasFrameContext` on purpose — see that
+            context's own doc. */}
+        {mounted ? (
+          <CanvasDiagnosticsScopeContext.Provider value={frame.id}>
+            <CanvasPageContext.Provider value={page.id}>
+              {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
+                  every selection/hover it originates with the frame it came
+                  from (`selectedNodeFrameId`/`hoveredFrameId`). Without this a
+                  "duplicate as variant" sibling of this page — sharing every
+                  node id (trap #2) — would light up from a selection made in
+                  THIS frame. See `CanvasFrameContext`'s doc. */}
+              <CanvasFrameContext.Provider value={frame.id}>
+                {trust === 'run-project' ? (
+                  // L8 Phase A (`perf-06`, STATE.md) — the ONE Tier-2 branch
+                  // this whole work order adds. Tier 0/1 boards never reach
+                  // this line: `trust` only ever reads `'run-project'` for a
+                  // project explicitly promoted to Tier 2.
+                  <LiveBoardFrame
+                    page={page}
+                    breakpoint={buildStudioBreakpoint(width)}
+                    isActive={isActive}
+                    onActivate={activatePage}
+                    frameId={frame.id}
+                    axesOverride={frame.axes}
+                    width={width}
+                  />
+                ) : (
+                  // Byte-for-byte the SAME call this branch has always made —
+                  // no new prop, no new behavior, for every Tier 0/1 board.
+                  <BreakpointFrame
+                    page={page}
+                    breakpoint={buildStudioBreakpoint(width)}
+                    isActive={isActive}
+                    onActivate={activatePage}
+                    frameId={frame.id}
+                    axesOverride={frame.axes}
+                    // The board frame carries its own header (title, rename,
+                    // context menu, drag handle) and its own size in the
+                    // Properties panel, so `BreakpointFrame`'s breakpoint row
+                    // would be a second, board-global chrome strip on top of it.
+                    // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
+                    showBreakpointChrome={false}
+                    onContentReadyChange={setContentReady}
+                  />
+                )}
+              </CanvasFrameContext.Provider>
+            </CanvasPageContext.Provider>
+          </CanvasDiagnosticsScopeContext.Provider>
         ) : (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
+        )}
+        {/* The poster stays painted over a portal frame until its tree has
+            committed. A Tier-2 frame reports no such readiness — it draws its
+            own boot and crash chrome (`LiveBoardFrame`) — so an overlay there
+            would be a poster that never lifts. */}
+        {mounted && trust !== 'run-project' && !contentReady && (
+          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} overlay />
         )}
         {/* A page with nothing on it renders as a blank rectangle, which reads
             as "it did not load". Only for a frame that is actually drawing its
             iframe: an offscreen frame is showing a poster, and a caption over
             that would be about a page nobody can see. */}
-        {isOnScreen && pageHasNoContent(page) && <CanvasEmptyPageHint />}
+        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint />}
       </div>
       {/* Resize handles — SELECTED frames only, not merely active.
           `activePageId` is the edit target: it is set by a capture-phase click

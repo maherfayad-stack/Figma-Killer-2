@@ -1,6 +1,7 @@
 /**
  * studioStructuralCommits — the one-shot commits behind a STRUCTURAL gesture on
- * a studio-imported board: move, reparent, duplicate, wrap, delete and insert.
+ * a studio-imported board: move, reparent, duplicate, wrap, group, ungroup,
+ * delete and insert.
  *
  * Split out of `studioSaveRequests.ts` (W4-1, at the module-size gate's own
  * prompting) because these six are one thing and the rest of that module is
@@ -57,8 +58,8 @@ export async function commitStudioMove(
  * `store-11` — true from the moment a structural commit starts posting until
  * its resync (or refusal) has fully resolved.
  *
- * `insert`/`duplicate`/`wrap` (`studioSourceWrites.ts`) are the three
- * structural gestures with NOTHING optimistic to show: the new/copied/wrapped
+ * `insert`/`duplicate`/`wrap`/`group`/`ungroup` (`studioSourceWrites.ts`) are
+ * the structural gestures with NOTHING optimistic to show: the new/copied/wrapped
  * element does not exist in the client's tree at all until the commit's
  * resync brings it in as a freshly-parsed node (see `writeDuplicateToSource`'s
  * own doc — "nothing is minted on the canvas first"). Nothing on the client
@@ -95,9 +96,32 @@ export async function commitStudioMove(
  * two of its five members.
  */
 let structuralCommitInFlight = false
+const inFlightListeners = new Set<() => void>()
 
 export function isStructuralCommitInFlight(): boolean {
   return structuralCommitInFlight
+}
+
+/**
+ * Subscribe to in-flight transitions. Returns an unsubscribe fn.
+ *
+ * Exists so the toolbar's save-status chip can say "Saving…" while a
+ * structural write is on the wire (Z6) — a structural commit bypasses the
+ * autosave path entirely, so without this the chip would read "Saved" during
+ * the one write most likely to be slow. Read through `useSyncExternalStore`;
+ * the flag itself stays the single source of truth.
+ */
+export function subscribeStructuralCommitInFlight(listener: () => void): () => void {
+  inFlightListeners.add(listener)
+  return () => {
+    inFlightListeners.delete(listener)
+  }
+}
+
+function setStructuralCommitInFlight(next: boolean): void {
+  if (structuralCommitInFlight === next) return
+  structuralCommitInFlight = next
+  for (const listener of inFlightListeners) listener()
 }
 
 /**
@@ -168,10 +192,40 @@ export async function commitStudioReparent(reparent: {
  * bottom-to-top, so a copy written lower in the file cannot move the line of one
  * still pending above it.
  */
-export async function commitStudioDuplicate(nodeIds: readonly string[]): Promise<void> {
+export async function commitStudioDuplicate(
+  nodeIds: readonly string[],
+  /**
+   * K2 — Alt+drag. Where the copy lands, when it is not beside the original:
+   * the container, and optionally the existing child to write it next to
+   * (`null` appends, which is a real position). Omitted entirely for ⌘D and
+   * the toolbar button, which copy in place.
+   *
+   * Single-node only by construction: the Alt+drag session resolves ONE drop
+   * target, and a multi-selection Alt-dragged to one place would need N copies
+   * ordered against each other inside a container whose child list is shifting
+   * under them. `planSourceDuplicateTo` refuses that as `multi-select` rather
+   * than copying the first and pretending.
+   */
+  destination?: {
+    parentNodeId: string
+    anchorNodeId: string | null
+    position: 'before' | 'after'
+  },
+): Promise<void> {
   if (nodeIds.length === 0) return
   await commitStructural(
-    nodeIds.map((nodeId) => ({ kind: 'duplicate', nodeId })),
+    nodeIds.map((nodeId) => ({
+      kind: 'duplicate',
+      nodeId,
+      ...(destination
+        ? {
+            parentNodeId: destination.parentNodeId,
+            ...(destination.anchorNodeId
+              ? { anchorNodeId: destination.anchorNodeId, position: destination.position }
+              : {}),
+          }
+        : {}),
+    })),
     'Duplicate refused',
     {
       title: nodeIds.length === 1 ? 'Duplicated' : `Duplicated ${nodeIds.length} elements`,
@@ -209,6 +263,63 @@ export async function commitStudioWrap(wrap: {
     'Wrap refused',
     { title: `Wrapped in <${wrap.name}>`, body: 'Written to your project source.' },
   )
+}
+
+/**
+ * K3 — ONE container written around a run of siblings in the user's `.tsx`
+ * (⌘G on a multi-selection).
+ *
+ * `nodeIds` is the run in SOURCE order. The first is the edit's `nodeId` — the
+ * position the save route sorts and path-guards on, and the topmost byte this
+ * write changes — and the rest ride as `siblingNodeIds` through the identical
+ * decoder. The server re-derives the run from the AST and refuses if anything
+ * unnamed sits between the ends, so this request cannot widen its own span.
+ *
+ * ⌘G on ONE element never reaches here: `writeGroupToSource` commits that as
+ * the existing single-element `wrap`, which is the same write that shipped in
+ * W4-1.
+ *
+ * Nothing is minted on the canvas first, for the reason `commitStudioInsert`
+ * spells out — which is also why the success toast is pushed here.
+ */
+export async function commitStudioGroup(group: {
+  nodeIds: readonly string[]
+  name: string
+  importSpecifier?: string
+  designSystemImport?: true
+}): Promise<void> {
+  const [nodeId, ...siblingNodeIds] = group.nodeIds
+  if (nodeId === undefined || siblingNodeIds.length === 0) return
+  await commitStructural(
+    [
+      {
+        kind: 'group',
+        nodeId,
+        siblingNodeIds,
+        name: group.name,
+        ...(group.importSpecifier === undefined ? {} : { importSpecifier: group.importSpecifier }),
+        ...(group.designSystemImport === undefined ? {} : { designSystemImport: group.designSystemImport }),
+      },
+    ],
+    'Group refused',
+    { title: `Grouped ${group.nodeIds.length} elements`, body: 'Written to your project source.' },
+  )
+}
+
+/**
+ * K3 — a container dissolved in the user's `.tsx` (⌘⇧G): its children take its
+ * place and the container's own bytes go.
+ *
+ * The board is NOT mutated first. Unlike a delete — which removes a subtree the
+ * canvas can take back — an ungroup re-parents every child, and the ids those
+ * children get afterwards are the `line:col`s the write produces. The commit's
+ * own resync is what brings them in.
+ */
+export async function commitStudioUngroup(nodeId: string): Promise<void> {
+  await commitStructural([{ kind: 'ungroup', nodeId }], 'Ungroup refused', {
+    title: 'Ungrouped',
+    body: 'Written to your project source.',
+  })
 }
 
 /**
@@ -344,11 +455,11 @@ async function commitStructural(
   // Held for the whole body, including the resync at the bottom — see
   // `guardAgainstConcurrentStructuralCommit`'s doc for why the window has to
   // extend past the POST itself.
-  structuralCommitInFlight = true
+  setStructuralCommitInFlight(true)
   try {
     await commitStructuralBody(edits, refusalTitle, success)
   } finally {
-    structuralCommitInFlight = false
+    setStructuralCommitInFlight(false)
   }
 }
 

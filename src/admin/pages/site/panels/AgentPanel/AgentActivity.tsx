@@ -27,17 +27,17 @@ import styles from './AgentPanel.module.css'
 
 export function AgentActivity({ message }: { message: AgentMessage | null }) {
   const elapsed = useElapsedSeconds(message?.timestamp)
-  const { headline, steps, completedCount } = summarizeAgentActivity(message)
-
-  const progress = steps.length > 0
-    ? `${completedCount} of ${steps.length} step${steps.length === 1 ? '' : 's'} done`
-    : null
+  // A9 — `progress` is the turn's step budget made visible: the model's own
+  // "step k/N" when it reported one, the tool ledger when it did not, and the
+  // round count against the ceiling once the turn is close to it. Composed in
+  // `activitySummary`/`@core/ai`, never phrased here.
+  const { headline, steps, progress } = summarizeAgentActivity(message)
 
   return (
     // `aria-live` on the wrapper, not the summary: the headline rewrites
     // itself every few seconds, and a live region is the one place that is
     // announced without stealing focus or renaming a control mid-interaction.
-    <div role="status" aria-live="polite" aria-label={`Working. ${headline}.`}>
+    <div role="status" aria-live="polite" aria-label={`Working. ${headline}.${progress ? ` ${progress}.` : ''}`}>
       <details className={styles.activity}>
         <summary className={styles.activitySummary}>
           <span className={styles.activitySpinner} aria-hidden="true">

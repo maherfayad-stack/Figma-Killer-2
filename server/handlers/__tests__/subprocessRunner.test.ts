@@ -102,6 +102,62 @@ describe('captureSubprocess', () => {
     expect(wasKilled()).toBe(true)
     expect(result.timedOut).toBe(true)
   })
+
+  /**
+   * The shape that used to hang forever: the child is killed and `exited`
+   * resolves, but a grandchild still holds the write end of the pipe, so the
+   * stream never reaches EOF and `pumpCapped` never settles.
+   *
+   * Before the drain grace this promise simply never resolved — and since G7
+   * that is not one stranded job, it is the project write lock held for the
+   * life of the process, with every canvas save (which waits unbounded) queued
+   * behind it and every git verb answering `busy` forever.
+   */
+  it('gives up on a pipe nobody closes, and still reports what it captured', async () => {
+    let emit!: (chunk: string) => void
+    const neverEnding = new ReadableStream<Uint8Array>({
+      start(controller) {
+        emit = (chunk) => controller.enqueue(new TextEncoder().encode(chunk))
+      },
+      // No `close()` anywhere: this is the grandchild that outlived the kill.
+    })
+    const proc: SpawnedProcessLike = {
+      stdout: neverEnding,
+      stderr: streamFromString(''),
+      exited: Promise.resolve(0),
+      kill: () => {},
+    }
+    emit('partial output before the hang')
+
+    const { setTimeoutImpl, clearTimeoutImpl } = makeImmediateTimer()
+    const result = await captureSubprocess(proc, {
+      timeoutMs: 20_000,
+      maxStdoutBytes: 1000,
+      maxStderrBytes: 1000,
+      setTimeoutImpl,
+      clearTimeoutImpl,
+      drainGraceMs: 20,
+    })
+
+    expect(result.timedOut).toBe(true)
+    // Partial output is worth more than none when diagnosing a hang.
+    expect(result.stdout).toBe('partial output before the hang')
+  })
+
+  it('does not abandon a process that exits normally, even after a long drain', async () => {
+    const { proc } = makeFakeProcess({ stdout: 'complete', exitCode: 0 })
+    const result = await captureSubprocess(proc, {
+      timeoutMs: 20_000,
+      maxStdoutBytes: 1000,
+      maxStderrBytes: 1000,
+      ...makeInertTimer(),
+      drainGraceMs: 1,
+    })
+
+    expect(result.stdout).toBe('complete')
+    expect(result.exitCode).toBe(0)
+    expect(result.timedOut).toBe(false)
+  })
 })
 
 describe('runCappedSubprocess', () => {

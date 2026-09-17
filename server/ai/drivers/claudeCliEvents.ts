@@ -238,10 +238,18 @@ export interface ClaudeCliTranslateResult {
  */
 export interface ClaudeCliTurnState {
   readonly toolNames: Map<string, string>
+  /**
+   * The most recent tool the CLI announced this turn, or `null` before it has
+   * called one. Read only by the turn-cap error message (Z3): "we stopped this
+   * turn" is half an answer, and the other half is what it was doing when we
+   * did. A `Map` has no cheap "last inserted" read, so this records it as it
+   * goes rather than reconstructing it.
+   */
+  lastToolName: string | null
 }
 
 export function createClaudeCliTurnState(): ClaudeCliTurnState {
-  return { toolNames: new Map() }
+  return { toolNames: new Map(), lastToolName: null }
 }
 
 /**
@@ -296,6 +304,7 @@ export function translateClaudeCliLine(
         if (block.type !== 'tool_use') continue
         const toolUse = block as Static<typeof ClaudeCliToolUseBlockSchema>
         state.toolNames.set(toolUse.id, toolUse.name)
+        state.lastToolName = toolUse.name
         events.push({
           type: 'toolCall',
           toolCallId: toolUse.id,
@@ -428,6 +437,13 @@ export async function* translateClaudeCliStream(
   // Turn-scoped, never module-scoped — see `ClaudeCliTurnState`.
   const turnState = createClaudeCliTurnState()
   for await (const event of raw) {
+    if (event.kind === 'turnCapped') {
+      // Always an error, even if a `result` line somehow already landed: the
+      // cap is a fact about this turn the user has to be told, and the cap
+      // path only reaches here when the turn did NOT end on its own.
+      yield { type: 'error', message: claudeCliTurnCapErrorMessage(event.capMs, turnState.lastToolName) }
+      return
+    }
     if (event.kind === 'exit') {
       if (!sawTerminalEvent) {
         yield { type: 'error', message: claudeCliExitErrorMessage(event.exitCode, event.stderr, event.timedOut) }
@@ -455,4 +471,22 @@ export function claudeCliExitErrorMessage(exitCode: number | null, stderr: strin
   // `pumpCapped`'s cap already).
   if (trimmedStderr) return `Claude CLI crashed (exit ${exitCode ?? 'unknown'}): ${trimmedStderr}`
   return `Claude CLI exited (${exitCode ?? 'unknown'}) without a result. Run "claude auth status" to check you're logged in.`
+}
+
+/**
+ * The user-facing sentence for a turn this driver stopped at its total cap
+ * (Z3) — a different fact from the idle timeout above, and worded so it cannot
+ * be read as one. It names the last tool the turn was on, because "it ran too
+ * long" on its own tells the user nothing they can act on, and because a turn
+ * that ends here is usually stuck repeating that one tool.
+ *
+ * Kept in sync with `TOTAL_TURN_CAP_MS` in `claudeCliSpawn.ts`.
+ */
+export function claudeCliTurnCapErrorMessage(capMs: number, lastToolName: string | null): string {
+  const minutes = Math.round(capMs / 60_000)
+  const onTool = lastToolName ? ` It was last running ${lastToolName}.` : ''
+  return (
+    `This turn reached its ${minutes}-minute limit and was stopped.${onTool} ` +
+    'Anything already written to your project is saved — send another message to carry on.'
+  )
 }

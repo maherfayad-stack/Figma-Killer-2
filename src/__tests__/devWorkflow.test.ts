@@ -1,6 +1,16 @@
-import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { bunCommand, bunRunCommand, viteCommand } from '../../scripts/lib/bunCommand'
+import {
+  GENERATED_ARTEFACTS,
+  INSTALL_STAMP_FILENAME,
+  installReason,
+  localFileDependencies,
+  type DependencyPaths,
+} from '../../scripts/lib/devPreflight'
 
 const root = new URL('../../', import.meta.url)
 
@@ -102,6 +112,20 @@ describe('development workflow', () => {
     expect(viteConfig).toContain('proxyPublicSiteRequest')
   })
 
+  it('Vite ignores every runtime-written path, including the user workspaces', () => {
+    const viteConfig = readSiteFile('vite.config.ts')
+
+    // Vite's watcher is rooted at the project root, so it sees paths the client
+    // module graph never references. It full-reloads on any watched `.html`
+    // change that maps to no module, and every React app Studio imports ships
+    // its own root `index.html` — so an unignored `studio-workspace/` reloads
+    // the editor out from under the user on import and on save.
+    expect(viteConfig).toContain("'**/studio-workspace/**'")
+    expect(viteConfig).toContain("'**/.tmp/**'")
+    expect(viteConfig).toContain("'**/uploads/**'")
+    expect(viteConfig).toContain("'**/dist/**'")
+  })
+
   it('Vite forwards published runtime assets to the CMS server in local dev', () => {
     const viteConfig = readSiteFile('vite.config.ts')
 
@@ -117,5 +141,103 @@ describe('development workflow', () => {
     // lives in compose.prod.yml — not in the dev-only compose file.
     expect(compose).toContain('"5433:5432"')
     expect(compose).toContain('image: postgres:16')
+  })
+})
+
+/**
+ * `scripts/lib/devPreflight.ts` (work order Z7). Every case below is a
+ * REJECTION — a checkout state that must trigger an install or a drift line.
+ * The happy path is the boring one: silence.
+ */
+describe('dev preflight', () => {
+  const tempRoots: string[] = []
+
+  function fixture(options: {
+    nodeModules?: boolean
+    fileDeps?: Record<string, string>
+    linked?: string[]
+    stamp?: boolean
+    lockfile?: boolean
+  }): DependencyPaths {
+    const root = mkdtempSync(join(tmpdir(), 'studio-preflight-'))
+    tempRoots.push(root)
+
+    const dependencies: Record<string, string> = { react: '^19.2.5', ...options.fileDeps }
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'x', dependencies }))
+
+    const lockfile = join(root, 'bun.lock')
+    if (options.lockfile !== false) writeFileSync(lockfile, '{}')
+
+    // The stamp is written AFTER the lockfile, exactly as a real install does:
+    // `bun install` rewrites `bun.lock` and only then is the install complete.
+    const nodeModules = join(root, 'node_modules')
+    if (options.nodeModules !== false) {
+      mkdirSync(nodeModules)
+      for (const name of options.linked ?? []) mkdirSync(join(nodeModules, name), { recursive: true })
+      if (options.stamp !== false) writeFileSync(join(nodeModules, INSTALL_STAMP_FILENAME), 'stamped\n')
+    }
+
+    return { packageJson: join(root, 'package.json'), nodeModules, lockfile }
+  }
+
+  afterEach(() => {
+    while (tempRoots.length > 0) rmSync(tempRoots.pop()!, { recursive: true, force: true })
+  })
+
+  it('says nothing when the checkout is already installed', () => {
+    const paths = fixture({ fileDeps: { 'alm-design-system': 'file:./vendor/alm-design-system' }, linked: ['alm-design-system'] })
+    expect(installReason(paths)).toBeNull()
+  })
+
+  it('installs when node_modules/ is absent', () => {
+    expect(installReason(fixture({ nodeModules: false }))).toContain('node_modules/')
+  })
+
+  it('installs when a `file:` dependency was never linked — the fresh-checkout trap', () => {
+    // The real symptom this exists for: `vite build` reports that
+    // `alm-design-system` cannot be resolved from src/modules/alm/register.tsx,
+    // which reads as a code bug even though the source is vendored in-tree.
+    const reason = installReason(
+      fixture({ fileDeps: { 'alm-design-system': 'file:./vendor/alm-design-system' }, linked: [] }),
+    )
+    expect(reason).toContain('alm-design-system')
+    expect(reason).toContain('file:')
+  })
+
+  it('installs when nothing recorded a completed install in this checkout', () => {
+    expect(installReason(fixture({ stamp: false }))).toContain('no record')
+  })
+
+  it('installs when bun.lock moved after the last install', () => {
+    const paths = fixture({})
+    const future = new Date(Date.now() + 60_000)
+    utimesSync(paths.lockfile, future, future)
+    expect(installReason(paths)).toContain('bun.lock')
+  })
+
+  it('does not install on a lockfile-less checkout that is otherwise stamped', () => {
+    expect(installReason(fixture({ lockfile: false }))).toBeNull()
+  })
+
+  it('reads every `file:` dependency out of package.json, not a hardcoded list', () => {
+    const paths = fixture({
+      fileDeps: { 'alm-design-system': 'file:./vendor/alm-design-system', 'pixel-art-icons': 'file:./vendor/pixel-art-icons' },
+    })
+    expect(localFileDependencies(paths.packageJson).sort()).toEqual(['alm-design-system', 'pixel-art-icons'])
+  })
+
+  it('names four generated artefacts whose check and sync scripts both exist', () => {
+    const pkg = JSON.parse(readSiteFile('package.json')) as { scripts: Record<string, string> }
+    expect(GENERATED_ARTEFACTS).toHaveLength(4)
+    for (const artefact of GENERATED_ARTEFACTS) {
+      expect(pkg.scripts[artefact.check]).toBeDefined()
+      expect(pkg.scripts[artefact.sync]).toBeDefined()
+    }
+  })
+
+  it('runs from `bun run dev` before anything is spawned', () => {
+    const script = readSiteFile('scripts/dev.ts')
+    expect(script).toContain('runDevPreflight(log, fail)')
+    expect(script.indexOf('runDevPreflight(log, fail)')).toBeLessThan(script.indexOf('Bun.spawn(cfg.command'))
   })
 })

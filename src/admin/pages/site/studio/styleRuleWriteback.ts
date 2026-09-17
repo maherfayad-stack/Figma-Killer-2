@@ -126,6 +126,9 @@ import {
   getStudioStyleRuleSources,
   isEditorAuthoredRuleId,
   resolveCssInsertDestination,
+  resolveOpenPageFile,
+  setOpenPageFile,
+  type CssDestinationRefusal,
   type UnmappedStyleRule,
 } from './cssInsertDestination'
 import { collectKeyframesEdits, type CssKeyframeEditPayload } from './keyframesWriteback'
@@ -160,10 +163,15 @@ export {
  */
 export {
   buildClassPageIndex,
+  getOpenPageFile,
   getStudioStyleRuleSources,
+  pinCssInsertDestination,
   recordCreatedStylesheet,
   resolveCssInsertDestination,
+  resolveOpenPageFile,
+  setOpenPageFile,
   StyleRuleSourceSchema,
+  type CssDestinationRefusal,
   type CssInsertDestination,
   type StyleRuleSource,
   type UnmappedStyleRule,
@@ -279,6 +287,12 @@ export interface StyleRuleEditPlan {
    */
   unmapped: UnmappedStyleRule[]
   /**
+   * Brand-new classes whose DESTINATION was refused — see
+   * `CssDestinationRefusal`. The caller presents these as a choice, and must
+   * hold their baselines back so the choice still has something to write.
+   */
+  destinationRefusals: CssDestinationRefusal[]
+  /**
    * Selectors the user changed under a REAL breakpoint/condition. Writing one
    * needs `setDeclarationAtMedia` plus the condition's query, which the
    * `kind: 'css'` edit does not carry yet — so these are reported, never
@@ -393,12 +407,27 @@ export function collectStyleRuleEdits(
   styleRules: Record<string, StyleRule>,
   pages: readonly Page[] = [],
   contexts: StyleRuleContexts = {},
+  activePageId: string | null = null,
 ): StyleRuleEditPlan {
   const edits: StyleEditPayload[] = []
   const unmapped: UnmappedStyleRule[] = []
+  const destinationRefusals: CssDestinationRefusal[] = []
   const unwritableContexts: string[] = []
   const ruleIdsByNodeId: Record<string, string[]> = {}
   const pageIndex = buildClassPageIndex(pages)
+  // Z8 — the page the user is looking at is the co-location anchor for a class
+  // that is on no element yet. PUBLISHED rather than passed down because every
+  // other surface that asks `resolveCssInsertDestination` the same question
+  // (the `StyleTargetChip` preview, the class-token speller, the baseline's
+  // source synthesis) must get the same answer, or the panel greys out a row
+  // for a write that lands. See `cssInsertDestination.ts`'s `openPageFile`.
+  //
+  // Republished HERE, and not only from `openPageWatch.ts`'s subscription, so
+  // a write never depends on a store listener having fired. The `null`
+  // default means "I am not telling you" — not "no page is open" — which is
+  // what lets a test (and this module's own unit suite) state the anchor
+  // directly with `setOpenPageFile` and call this without clobbering it.
+  if (activePageId !== null) setOpenPageFile(resolveOpenPageFile(pages, activePageId))
 
   /** Records which rule an emitted edit's join key belongs to — see `StyleRuleEditPlan.ruleIdsByNodeId`. */
   const claim = (nodeId: string, ruleId: string): void => {
@@ -523,10 +552,18 @@ export function collectStyleRuleEdits(
       }
       const destination = resolveCssInsertDestination(rule, pageIndex)
       if (!destination.ok) {
-        // The destination refusal has its own specific sentence, carried
-        // whole — see `UnmappedStyleRule`'s doc for why it is no longer
-        // concatenated into the label.
-        unmapped.push({ label, reason: destination.message })
+        // Z8 — NOT `unmapped`. This class is perfectly writable the moment a
+        // file is named, and `ambiguous-stylesheet` names every file it could
+        // be. Reported as its own kind so the caller can ask the question
+        // instead of toasting a dead end, and so this rule's baseline is held
+        // back until the answer lands.
+        destinationRefusals.push({
+          ruleId,
+          label,
+          reason: destination.reason,
+          message: destination.message,
+          candidates: destination.candidates,
+        })
         continue
       }
       // A brand-new rule has nothing on disk to REMOVE a property from, so
@@ -566,7 +603,7 @@ export function collectStyleRuleEdits(
     pushScopedEdits(changes, undefined)
   }
 
-  return { edits, unmapped, unwritableContexts, ruleIdsByNodeId }
+  return { edits, unmapped, destinationRefusals, unwritableContexts, ruleIdsByNodeId }
 }
 
 /**

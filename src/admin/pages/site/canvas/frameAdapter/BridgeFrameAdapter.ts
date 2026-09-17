@@ -278,6 +278,22 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
       case 'frame:resize':
         this.emit({ type: 'frame:resize', height: message.height })
         return
+      // Z5 — a pure pass-through: every field was already bounded by
+      // `ErrorMessageSchema` in the check above, and none of them is a node id,
+      // so this is the one outbound message that needs no wire->canonical
+      // translation at all. Routing it into `canvasDiagnosticsBuffer.ts` (and
+      // the per-frame badge) is `useBridgeFrameDiagnostics`'s job, not this
+      // class's — an adapter reports what the frame said; it does not decide
+      // where findings are stored.
+      case 'error':
+        this.emit({
+          type: 'error',
+          kind: message.kind,
+          message: message.message,
+          ...(message.stack === undefined ? {} : { stack: message.stack }),
+          ...(message.source === undefined ? {} : { source: message.source }),
+        })
+        return
       case 'pointer':
         this.emit({
           type: 'pointer',

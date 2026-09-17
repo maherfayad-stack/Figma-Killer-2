@@ -90,3 +90,58 @@ describe('resizeStylePatch', () => {
     expect(resizeStylePatch('s', start, next)).toEqual({ height: '120px' })
   })
 })
+
+/**
+ * `K4`'s scale tool (`K`). The point of the lock is that the dimension the
+ * handle does NOT own moves too, and that the shape is still the same shape
+ * afterwards — so both halves (the size, and what gets written) are pinned.
+ */
+describe('proportional (the scale tool)', () => {
+  it('drives the un-owned dimension from the start aspect ratio', () => {
+    // 200×100 dragged 100px wider is 300×150, not 300×100.
+    expect(resizeElementSize('e', start, 100, 0, MIN_ELEMENT_SIZE, true)).toEqual({
+      width: 300,
+      height: 150,
+    })
+    // And the same in the other direction, from a north/south handle.
+    expect(resizeElementSize('s', start, 0, 50, MIN_ELEMENT_SIZE, true)).toEqual({
+      width: 300,
+      height: 150,
+    })
+  })
+
+  it('follows the larger relative movement from a corner', () => {
+    // dx=+100 is +50% of width; dy=+10 is only +10% of height. The pointer
+    // went sideways, so the box follows width.
+    expect(resizeElementSize('se', start, 100, 10, MIN_ELEMENT_SIZE, true)).toEqual({
+      width: 300,
+      height: 150,
+    })
+  })
+
+  it('inverts for a west/north handle exactly as the free resize does', () => {
+    expect(resizeElementSize('w', start, -100, 0, MIN_ELEMENT_SIZE, true)).toEqual({
+      width: 300,
+      height: 150,
+    })
+  })
+
+  it('degrades to a free resize when there is no ratio to preserve', () => {
+    // A `display: contents` host or an empty inline element measures 0 — there
+    // is no shape to lock, and dividing by it would produce NaN.
+    const flat = { width: 0, height: 0 }
+    expect(resizeElementSize('e', flat, 40, 0, MIN_ELEMENT_SIZE, true)).toEqual({
+      width: 40,
+      height: 0,
+    })
+  })
+
+  it('commits the dimension the handle does not own', () => {
+    const next = resizeElementSize('e', start, 100, 0, MIN_ELEMENT_SIZE, true)
+    expect(resizeStylePatch('e', start, next, true)).toEqual({ width: '300px', height: '150px' })
+  })
+
+  it('still writes nothing when the size did not actually change', () => {
+    expect(resizeStylePatch('e', start, start, true)).toBeNull()
+  })
+})

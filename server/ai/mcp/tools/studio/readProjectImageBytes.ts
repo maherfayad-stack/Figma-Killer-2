@@ -12,7 +12,7 @@
  */
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
-import { DESIGN_REFERENCE_MAX_BYTES } from '@core/ai'
+import { DESIGN_REFERENCE_MAX_BYTES, toolRefusal, type ToolRefusal } from '@core/ai'
 import { assertPathWithin } from '../../../../util/pathWithin'
 import { listDesignReferences } from '../../../../handlers/studio/designReferenceStore'
 import { CHAT_ATTACHMENT_REFERENCE_SOURCE } from '../../../../handlers/studio/designReferenceSchema'
@@ -71,7 +71,12 @@ export function outsideProjectMessage(dir: string, filePath: string): string {
  * is the project root, so its tools naturally hand back absolute paths — but
  * it is subject to exactly the same containment check.
  */
-export type ReadProjectImageResult = { ok: true; bytes: Uint8Array } | { ok: false; error: string }
+/**
+ * A14: the failure arm is the canonical `ToolRefusal`, not a bare string, so
+ * the three tools that consume this can forward it verbatim instead of each
+ * inventing a code for the same four causes.
+ */
+export type ReadProjectImageResult = { ok: true; bytes: Uint8Array } | ToolRefusal
 
 export async function readProjectImageBytes(
   dir: string,
@@ -85,22 +90,25 @@ export async function readProjectImageBytes(
     realRoot = await realpath(dir)
     realTarget = await realpath(candidate)
   } catch {
-    return { ok: false, error: `No file at "${filePath}" inside this project. Download the export first, then pass the path it was written to.` }
+    return toolRefusal('no-such-file', `No file at "${filePath}" inside this project.`, {
+      remedy: 'Download the export first, then pass the path it was written to.',
+    })
   }
 
   try {
     assertPathWithin(realRoot, realTarget)
   } catch {
-    return { ok: false, error: outsideProjectMessage(dir, filePath) }
+    return toolRefusal('path-outside-project', outsideProjectMessage(dir, filePath))
   }
 
   const info = await stat(realTarget)
-  if (!info.isFile()) return { ok: false, error: `"${filePath}" is not a file.` }
+  if (!info.isFile()) return toolRefusal('not-a-file', `"${filePath}" is not a file.`)
   if (info.size > DESIGN_REFERENCE_MAX_BYTES) {
-    return {
-      ok: false,
-      error: `"${filePath}" is ${info.size} bytes, over the ${DESIGN_REFERENCE_MAX_BYTES}-byte design-reference limit.`,
-    }
+    return toolRefusal(
+      'no-such-file',
+      `"${filePath}" is ${info.size} bytes, over the ${DESIGN_REFERENCE_MAX_BYTES}-byte design-reference limit.`,
+      { remedy: 'Export or downscale it below that limit, then pass the smaller file.' },
+    )
   }
 
   return { ok: true, bytes: new Uint8Array(await readFile(realTarget)) }
