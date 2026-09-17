@@ -1,7 +1,7 @@
 /**
  * GET/POST /admin/api/ai/studio-session — WS-12 §5.1's per-project
- * persistence for reasoning effort, and W9-2's for fidelity mode
- * (`.studio/meta.json`'s `agentSession`).
+ * persistence for reasoning effort, W9-2's for fidelity mode and A12's for
+ * design policy (`.studio/meta.json`'s `agentSession`).
  *
  * Lives under `server/ai/handlers/` (not `server/handlers/studio/`, where
  * `trustTier.ts`'s equivalent route lives) specifically so it can be wired
@@ -33,12 +33,14 @@ import type { DbClient } from '../../db/client'
 import { resolveProjectDir } from '../../handlers/studioProjects'
 import {
   mergeStudioMeta,
+  readAgentSessionDesignPolicy,
   readAgentSessionEffort,
   readAgentSessionFidelityMode,
   readStudioMeta,
   withAgentSessionControls,
 } from '../../handlers/studio/studioMeta'
 import { FIDELITY_MODES } from '../../handlers/studio/fidelityMode'
+import { DESIGN_POLICIES } from '../../handlers/studio/designPolicy'
 import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 
 const ROUTE_PATH = '/admin/api/ai/studio-session'
@@ -48,17 +50,20 @@ const EffortSchema = Type.Union([
 ])
 
 const FidelityModeSchema = Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)))
+const DesignPolicySchema = Type.Union(DESIGN_POLICIES.map((p) => Type.Literal(p)))
 
 /**
- * Both controls are OPTIONAL and nullable, and the distinction is load-bearing:
- * omitted leaves that control alone, `null` clears it. The two pickers save
- * independently, so a fidelity-mode save that carried no `effort` would
+ * Every control is OPTIONAL and nullable, and the distinction is load-bearing:
+ * omitted leaves that control alone, `null` clears it. The three pickers save
+ * independently, so a design-policy save that carried no `effort` would
  * otherwise wipe the effort this account chose.
  */
 const PostBodySchema = Type.Object({
   dir: Type.String({ minLength: 1 }),
   effort: Type.Optional(Type.Union([EffortSchema, Type.Null()])),
   fidelityMode: Type.Optional(Type.Union([FidelityModeSchema, Type.Null()])),
+  /** A12's design policy — `follow` / `balanced` / `free`. Safe on this route for the same reason fidelity mode is: clearing it lands on `balanced`, never on something looser than the user chose. */
+  designPolicy: Type.Optional(Type.Union([DesignPolicySchema, Type.Null()])),
 })
 
 export function tryHandleAiStudioAgentSession(
@@ -85,6 +90,7 @@ async function handleStudioAgentSession(req: Request, db: DbClient): Promise<Res
     return jsonResponse({
       effort: readAgentSessionEffort(meta, userKey),
       fidelityMode: readAgentSessionFidelityMode(meta, userKey),
+      designPolicy: readAgentSessionDesignPolicy(meta, userKey),
     })
   }
 
@@ -99,11 +105,13 @@ async function handleStudioAgentSession(req: Request, db: DbClient): Promise<Res
       agentSession: withAgentSessionControls(readStudioMeta(dir), userKey, {
         ...('effort' in body ? { effort: body.effort ?? null } : {}),
         ...('fidelityMode' in body ? { fidelityMode: body.fidelityMode ?? null } : {}),
+        ...('designPolicy' in body ? { designPolicy: body.designPolicy ?? null } : {}),
       }),
     })
     return jsonResponse({
       effort: readAgentSessionEffort(meta, userKey),
       fidelityMode: readAgentSessionFidelityMode(meta, userKey),
+      designPolicy: readAgentSessionDesignPolicy(meta, userKey),
     })
   }
 
