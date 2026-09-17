@@ -471,7 +471,6 @@ Why this matters: selection rings and the floating selection toolbar are portale
 | LeftSidebar, RightSidebar             | 85      | `sidebars/{Left,Right}Sidebar/` |
 | CodeEditorPanel (floats over sidebars)| 95      | `code-editor/CodeEditorPanel.module.css` |
 | Toolbar popovers / dropdowns          | 201     | `toolbar/Toolbar.module.css` |
-| PreviewOverlay                        | 400–401 | `preview/PreviewOverlay.module.css` |
 
 **Canvas-internal z-index table** (all confined inside the `z-index: 0` canvas context):
 

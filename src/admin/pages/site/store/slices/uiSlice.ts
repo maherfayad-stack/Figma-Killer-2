@@ -136,9 +136,6 @@ interface UiSlice {
   // but the duplication was vestigial. Use `state.isSettingsOpen` /
   // `state.activeSection` / `state.openSettings` / `state.closeSettings`.
 
-  // Preview overlay — toggle from toolbar (Phase 7)
-  previewOpen: boolean
-
   // Editor-only form state preview, keyed by base.form node id.
   formPreviewStates: Record<string, FormPreviewState>
 
@@ -203,9 +200,6 @@ interface UiSlice {
   setFocusedPanel: (panel: FocusedPanel) => void
   cycleFocusedPanel: () => void
 
-
-  openPreview: () => void
-  closePreview: () => void
   setFormPreviewState: (formNodeId: string, state: FormPreviewState) => void
 
   openComponentizeEditor: (nodeId: string) => void
@@ -370,7 +364,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   propertiesPanelAutoOpenSuppressed: false,
   leftSidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
   focusedPanel: 'canvas',
-  previewOpen: false,
   formPreviewStates: {},
   componentizeEditorRequest: null,
   layoutNameDialogRequest: null,
@@ -452,9 +445,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
     const next = PANEL_FOCUS_ORDER[(idx + 1) % PANEL_FOCUS_ORDER.length]
     set({ focusedPanel: next })
   },
-
-  openPreview: () => set({ previewOpen: true }),
-  closePreview: () => set({ previewOpen: false }),
 
   setFormPreviewState: (formNodeId, previewState) =>
     set((state) => {

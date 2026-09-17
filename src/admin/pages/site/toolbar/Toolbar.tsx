@@ -14,9 +14,6 @@
  *     keeps the toolbar usable from `AdminPageLayout` (Plugins / Users /
  *     Account / plugin admin pages) without pulling the editor store into
  *     the non-editor admin bundle.
- *   - The editor-specific overlay (preview iframe) is passed in by the canvas
- *     layout via `overlay`. AdminPageLayout passes no overlay and the toolbar
- *     shows nothing in that position.
  *   - The `rightSlot` is owned by the caller — `AdminCanvasLayout` builds
  *     zoom / publish / settings buttons; `AdminPageLayout` builds its own
  *     toolbar right slot + settings button.
@@ -54,14 +51,6 @@ interface ToolbarProps {
   /** Active admin section — the studio-only shell uses it to decide whether
    *  to show the "Open live page" link (CMS-only). */
   section?: AdminWorkspace
-  /**
-   * Full-screen overlay siblings rendered before the toolbar header. Used by
-   * AdminCanvasLayout to mount the preview overlay (also editor-only and
-   * lazy-loaded). The overlay is a sibling rather than a child so it can
-   * cover the whole viewport instead of being clipped by the toolbar's
-   * stacking context.
-   */
-  overlay?: ReactNode
   /**
    * Content rendered immediately before the account menu. Both layouts
    * own this region: AdminCanvasLayout fills it with zoom / publish /
@@ -161,7 +150,6 @@ export function Toolbar({
   siteName = null,
   faviconUrl = null,
   section = 'site',
-  overlay,
   rightSlot,
 }: ToolbarProps) {
   const [pluginButtons, setPluginButtons] = useState<RegisteredPluginToolbarButton[]>(() =>
@@ -232,7 +220,6 @@ export function Toolbar({
 
   return (
     <>
-      {overlay}
       <header
         aria-label="Editor toolbar"
         data-testid="toolbar"

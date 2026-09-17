@@ -1,9 +1,15 @@
 /**
- * Preview commands — §4.2 (canvas mode / preview) of the master plan.
+ * Canvas view commands — §4.2 of the master plan: switch canvas mode (select /
+ * pan) and control zoom. All gated to workspace: ['site'] and capability
+ * `site.read` — these are pure viewing affordances against the canvas.
  *
- * Toggle preview overlay, switch canvas mode, control zoom.
- * All gated to workspace: ['site'] and capability `site.read` — these are
- * pure viewing affordances against the canvas.
+ * The `preview.toggle` command that used to head this list is GONE (P8): it
+ * opened `PreviewOverlay`, a third preview that rendered the CMS publisher's
+ * static HTML into a sandboxed iframe — neither the canvas nor the real app,
+ * and the one most likely to look broken on a Studio page. The two real
+ * previews are the Live canvas view and, at Tier 2, the project's own dev
+ * server. The `preview.` id prefix is kept: these ids are user-facing (recent
+ * commands, keybindings) and renaming them would strand both for no gain.
  */
 
 import type { Command } from '../types'
@@ -12,32 +18,6 @@ const PREVIEW_CAPABILITY = 'site.read'
 
 export function getPreviewCommands(): Command[] {
   return [
-    // ── Toggle preview ───────────────────────────────────────────────────────
-    {
-      id: 'preview.toggle',
-      title: 'Toggle preview',
-      subtitle: 'Switch between edit and preview mode',
-      group: 'preview',
-      iconName: 'eye-solid',
-      keywords: ['preview', 'toggle', 'view', 'live', 'read-only'],
-      workspaces: ['site'],
-      capability: PREVIEW_CAPABILITY,
-      run: async (ctx) => {
-        ctx.closeSpotlight()
-        try {
-          const { useEditorStore } = await import('@site/store/store')
-          const store = useEditorStore.getState()
-          if (store.previewOpen) {
-            store.closePreview()
-          } else {
-            store.openPreview()
-          }
-        } catch (err) {
-          console.error('[spotlight] togglePreview failed:', err)
-        }
-      },
-    },
-
     // ── Select mode ──────────────────────────────────────────────────────────
     {
       id: 'preview.modeSelect',
