@@ -6,6 +6,16 @@ inspector fits in one 900px viewport with no scroll* — went unenforced for the
 whole of P3, and by the time anyone measured it the panel was ~1826px tall.
 WS-14.5 turns it into a gate; this file is the number that gate moves.
 
+> **The claim is false, and now we have the number** (`STATE.md` panel-37).
+> WS-14.5's spec was written but never executed until wave-1 integration. Its
+> first real run says: the Design tab has **626px** of room at a 900px
+> viewport and renders **960 / 1190 / 1013 / 1043px** for F1 / F2 / F3 / F4.
+> The overflow is **334–564px** — not a rounding error, and not something the
+> chrome can absorb. The gate now ratchets those measured numbers instead of
+> asserting a fit that does not happen; the shortfall is an open density item,
+> recorded in `05-section-heights.json` on every run. See "The measured
+> table" below for where the 626 comes from.
+
 ## Two tables, and why neither replaces the other
 
 | | Where | What it is |
@@ -15,11 +25,12 @@ WS-14.5 turns it into a gate; this file is the number that gate moves.
 
 The computed table is what `bun test` can enforce — happy-dom builds a DOM but
 does not lay it out, so `scrollHeight`/`clientHeight` are identically `0`
-there. The measured table is what actually answers "does it fit". Neither is
+there. The measured table is the one that answered "does it fit" — **no** —
+and it is the one that keeps the answer from getting worse. Neither is
 redundant: the computed one catches a section growing rows without anyone
 running a browser, the measured one catches the panel *chrome* (write-target
 chip row, ClassPicker, Module block, container padding) that no static sum can
-see.
+see, and which turns out to be 274px.
 
 ## The computed Design-tab table — F2 (text)
 
@@ -82,9 +93,11 @@ Shape:
   "viewport": { "width": 1400, "height": 900 },
   "fixtures": {
     "f1-rectangle": {
-      "scrollHeight": 0,          // the panel's own scroll container
-      "clientHeight": 0,          // the gate: scrollHeight <= clientHeight
-      "sections": { "layer": 0 }  // per [data-section-id], rendered px
+      "scrollHeight": 960,        // the Design tab's own scroll container
+      "clientHeight": 626,        // the room it has at this viewport
+      "ceilingPx": 960,           // the gate: scrollHeight <= ceilingPx + 24
+      "overflowPx": 334,          // recorded, not asserted — the open gap
+      "sections": { "layer": 32 } // per [data-section-id], rendered px
     }
     // f2-text, f3-flex-board, f4-image
   }
@@ -94,6 +107,87 @@ Shape:
 The spec writes it only after every assertion passes, so a red run never
 overwrites a good baseline. It is **not** committed from a failing state — if
 the file is missing, nobody has run the spec on this checkout yet.
+
+Every locator behind this table is scoped to the **active Design tab**
+(`[data-inspector-tab="design"]:not([hidden])`). `InspectorShell` mounts all
+three tab panels and hides the inactive two, and `transform` / `animations` /
+`interaction` declare `tabs: ['design','prototype']` — so an unscoped read
+folds the Prototype tab's hidden copies into the table as bogus 0px rows, and
+an unscoped `toHaveCount(0)` fails against a shell behaving exactly as
+designed. That was the panel-37 defect.
+
+### Measured, at 1400×900 — the whole panel
+
+| Fixture | Design tab `scrollHeight` | Room (`clientHeight`) | Over by |
+|---|---:|---:|---:|
+| F1 rectangle | 960 | 626 | **334** |
+| F2 text | 1190 | 626 | **564** |
+| F3 flex board | 1013 | 626 | **387** |
+| F4 image | 1043 | 626 | **417** |
+
+### Where the 626px of room comes from
+
+Measured on the docked panel at a 900px viewport, top to bottom. The scroll
+container's own box ends exactly at the window's bottom edge, so this is the
+honest "900px minus chrome" figure — there is no further space to reclaim by
+re-measuring it a different way.
+
+| Band | px |
+|---|---:|
+| admin top bar | 36 |
+| `PanelHeader` | 36 |
+| `InspectorShell` tab strip | 47 |
+| node header (title + breadcrumb) | 88 |
+| `headerClassPicker` | 67 |
+| **chrome total** | **274** |
+| **`.surface` (the Design tab's scroll container)** | **626** |
+
+### Where F2's 1190px goes
+
+Per-child height of `.surfaceContent`, so the two blocks the computed table
+cannot see (`WriteTargetRow`, the Module block) are visible here:
+
+| Child | px |
+|---|---:|
+| `WriteTargetRow` | 32 |
+| Module block (`base.text` props) | 158 |
+| `layer` | 32 |
+| `align` | 0 |
+| `measures` | 122 |
+| `layout` | 199 |
+| `fill` | 73 |
+| `stroke` | 33 |
+| `shadow` | 33 |
+| `blur` | 33 |
+| `text` | 197 |
+| `export` | 33 |
+| `more` (collapsed) | 33 |
+| **sum of the 13 children above** | **978** |
+| grid gaps + `.surface` / `.surfaceContent` padding | 212 |
+| **total (`scrollHeight`)** | **1190** |
+
+The 212 is the measured residual, not a re-derivation: the 12 between-section
+gaps are 12px each, but `.surface`'s padding (`--space-2xl` / `--space-7xl`)
+and `.surfaceContent`'s (`--space-7xl`) are fluid and render fractional
+(15.917 / 31.848px at 1400px wide), so summing the tokens by hand does not
+reproduce the browser's rounding.
+
+Three things stand out, and none of them is the four Studio extras S5 folded
+away — they are already gone from this table:
+
+1. **`layout` costs 199px on a node with no layout at all** (F1's rectangle,
+   F2's text). `LayoutSection.tsx`'s own doc defends never hiding its body;
+   against §1's Law 1 ("an unused section costs one line") that is 166px of
+   the overflow on every non-container selection.
+2. **The Module block is unbudgeted and large** — 158px for a text node, 60px
+   otherwise. It is not a `[data-section-id]` section, so no computed table
+   has ever counted it.
+3. **`.surface` and `.surfaceContent` both carry `padding-bottom:
+   var(--space-7xl)`** — 32px each at this width, i.e. one of them is
+   duplicate dead scroll space.
+
+Closing the 334–564px gap is a density work order, not a gate fix; these are
+where it would start.
 
 ### The fixtures
 

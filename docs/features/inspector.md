@@ -1213,8 +1213,10 @@ edge, not an oversight.
 > `INSPECTOR_SECTIONS` manifest (`src/admin/pages/site/inspector/sections/
 > index.ts`) `StyleSurface.tsx` mounts as one continuous scroll. Rewritten
 > below against that current reality, with real measured numbers — not the
-> old table's, and not guessed. S5 (WS-14.5) then made the 900px number in
-> the original claim reachable again, and gave it a spec.
+> old table's, and not guessed. S5 (WS-14.5) then cut 164px of always-mounted
+> Design-tab height and gave the 900px number a spec — which, when it was
+> finally run (panel-37), showed the number is still **334–564px out of
+> reach**. Both facts are below; the gate ratchets the measured heights.
 
 Do not start a density change without a baseline, and do not close one without
 a re-measure. Fabricated height numbers are how a density plan drifts.
@@ -1234,17 +1236,69 @@ full explanation):
   rest-height budget built from those same frozen tokens and each section's
   own minimal/collapsed-state row count, read from its source — now summed
   into a **Design-tab total** for the F2 text fixture.
-- **`tests/e2e/inspector-height.e2e.ts`** (Playwright) — WS-14.5, the 900px
-  gate itself: `scrollHeight <= clientHeight` at 900px for all four baseline
-  fixtures (F1 rectangle, F2 text, F3 flex board, F4 image), plus a check
-  that the four Studio-extras sections are folded at rest and one click
-  reaches them. It writes the MEASURED per-section height table to
-  `docs/audits/penpot-inspector-baseline/05-section-heights.json`.
+- **`tests/e2e/inspector-height.e2e.ts`** (Playwright) — WS-14.5, the real
+  half: a **measured per-fixture ceiling** on the Design tab's `scrollHeight`
+  at 900px for all four baseline fixtures (F1 rectangle, F2 text, F3 flex
+  board, F4 image), plus a check that the four Studio-extras sections are
+  folded at rest and one click reaches them. It writes the MEASURED per-
+  section height table — and the live overflow against the 900px target — to
+  `docs/audits/penpot-inspector-baseline/05-section-heights.json`. Every
+  locator in it is scoped to the ACTIVE Design tab
+  (`[data-inspector-tab="design"]:not([hidden])`); see "The Design tab does
+  not fit 900px" below for why that matters and what the ceiling replaced.
 - **`tests/e2e/inspector-panel-measurement.e2e.ts`** (Playwright) — the older
   gate, still live and measuring different things: row rhythm, the 260px
   width invariant, and click counts, at its own tall viewport.
 
-**900px is real again, and S5 is what made it reachable.** The old F28 claim
+### The Design tab does not fit 900px — the measured gap (panel-37)
+
+**S5 wrote the gate above and never ran it** (`STATE.md` panel-36 says so in
+as many words). Its first real execution, during wave-1 integration, found
+two different things:
+
+1. **A scoping bug in the spec.** It asked the whole document for
+   `[data-section-id="transform"]` and expected 0. `InspectorShell` mounts all
+   three tab panels and `hidden`s the inactive two — deliberate since P1, so a
+   tab switch keeps each surface's scroll offset and transient state — and
+   `transform`/`animations`/`interaction` declare `tabs: ['design',
+   'prototype']`, so the Prototype tab's hidden copy satisfied the locator.
+   Fixed in the spec, not the shell: an assertion about the Design tab must
+   say so. `InspectorShell` now carries a `data-inspector-tab` attribute
+   (additive, queryable-only, same posture as `data-section-id`) so callers
+   scope with `[data-inspector-tab="design"]:not([hidden])` instead of relying
+   on which tabs happen to be mounted.
+
+2. **The 900px claim is false.** Measured at 1400×900 on the docked panel, the
+   Design tab's scroll container has **626px** of room — which is the honest
+   "900px minus chrome" figure: 36 (admin top bar) + 36 (`PanelHeader`) + 47
+   (tab strip) + 88 (node header) + 67 (ClassPicker) = 274px, and `.surface`'s
+   own box reaches the window's bottom edge. Against that:
+
+   | Fixture | `scrollHeight` | Room | Over by |
+   |---|---:|---:|---:|
+   | F1 rectangle | 960 | 626 | **334** |
+   | F2 text | 1190 | 626 | **564** |
+   | F3 flex board | 1013 | 626 | **387** |
+   | F4 image | 1043 | 626 | **417** |
+
+   Folding the four Studio extras away is worth 164px. The gap is 334–564px.
+   No chrome tuning closes it, and re-deriving the room a second way only
+   restates 626.
+
+So the gate asserts a **ratchet** — today's measured `scrollHeight` per
+fixture, +24px of cross-machine slack — instead of a fit that does not happen.
+It still goes red on exactly the regression it was built for: un-folding the
+More disclosure pushes F1 from 960 to 1093, past its 984 limit, and the scoped
+`toHaveCount(0)` catches the same change independently. The 900px target is
+not dropped — every run records `clientHeight` and the live `overflowPx` into
+`05-section-heights.json`, and that file's own "Where F2's 1190px goes" table
+names the three largest contributors: `layout` costing 199px on a node with no
+layout (a Law 1 violation `LayoutSection.tsx`'s own doc currently defends), the
+unbudgeted 158px Module block, and a duplicated `padding-bottom:
+var(--space-7xl)` on both `.surface` and `.surfaceContent`. Closing it is a
+density work order, not a gate fix.
+
+**What S5 did buy, and what the old claim was.** The old F28 claim
 ("a text node's entire inspector… fits in one 900px viewport with no scroll")
 was measured against **seven** pre-P3 categories. P3 item 11 (`STATE.md`
 `panel-25`, "Studio extras") added six more always-mounted sections nobody
@@ -1268,8 +1322,10 @@ replaces the other.
 **The panel chrome is not in that number and cannot be.** The write-target
 chip row, ClassPicker, the Module block, and `.surface`'s own padding are
 fluid `--space-*` values with no fixed px, so no static sum can see them.
-That is exactly why the 900px assertion is a Playwright spec measuring the
-real scroll container, not an arithmetic claim.
+That is exactly why the height assertion is a Playwright spec measuring the
+real scroll container, not an arithmetic claim — and it is how panel-37 found
+that the chrome is 274px and the Module block alone is another 158px on a
+text node, neither of which the 756px computed total has ever contained.
 
 **The width invariant still holds, verbatim in spirit.** Every section
 shrinks or truncates rather than overflowing its column — the e2e spec

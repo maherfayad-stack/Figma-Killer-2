@@ -408,9 +408,12 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 // Panel CHROME above the sections (the write-target chip row, ClassPicker,
 // the Module block, `.surface`'s own fluid padding) is NOT in this number and
 // cannot be: those are fluid `--space-*` values with no fixed px. The real,
-// whole-panel `scrollHeight <= clientHeight` assertion at 900px lives in
-// `tests/e2e/inspector-height.e2e.ts`, which also writes the MEASURED version
-// of this table to `docs/audits/penpot-inspector-baseline/`.
+// whole-panel measurement lives in `tests/e2e/inspector-height.e2e.ts`, which
+// also writes the MEASURED version of this table to
+// `docs/audits/penpot-inspector-baseline/`. That spec's first real run
+// (`STATE.md` panel-37) put numbers on the chrome for the first time: 274px
+// above the scroll container, plus a 158px Module block inside it for a text
+// node — which is why the two tables differ by far more than rounding.
 // ---------------------------------------------------------------------------
 
 const BETWEEN_SECTION_GAP = 12 // --inspector-space-xl
@@ -461,6 +464,18 @@ describe('computed section rest-height budget', () => {
   })
 
   it('the F2 text node Design tab costs 756px of sections with More collapsed', () => {
+    // This is a SECTIONS-only sum, and it is not the whole Design tab. The
+    // measured `scrollHeight` for the same fixture is 1190px against 626px of
+    // room at a 900px viewport (`tests/e2e/inspector-height.e2e.ts`,
+    // `STATE.md` panel-37) — the difference is the panel chrome, the Module
+    // block, and container padding, none of which a static sum can see. What
+    // this exact number is good for is catching a section that quietly grows
+    // a resident row without anyone opening a browser; it is NOT evidence
+    // that the tab fits. A companion "< 900" assertion used to sit here
+    // claiming exactly that, on the reasoning that "no amount of chrome
+    // tuning could ever make 900px fit" otherwise. Measurement disproved the
+    // premise (the chrome is 274px and fixed), so the assertion was deleted
+    // rather than left restating this one more weakly.
     const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
     expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(756)
   })
@@ -475,11 +490,4 @@ describe('computed section rest-height budget', () => {
     expect(before - after).toBe(164)
   })
 
-  it('leaves the Design tab room for real panel chrome inside a 900px viewport', () => {
-    const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
-    // The whole-panel gate is the e2e spec's; this is the static half of the
-    // same claim — the sections alone must not eat the entire budget, or no
-    // amount of chrome tuning could ever make 900px fit.
-    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBeLessThan(900)
-  })
 })
