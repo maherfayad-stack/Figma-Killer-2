@@ -41,8 +41,9 @@
  *
  * WHY EVERY CONTROL SAVES ON CHANGE
  * ─────────────────────────────────
- * There is no Apply button. A link is three enum choices, each one a complete
- * statement on its own, and the server merges op-by-op — so a form-and-submit
+ * There is no Apply button. A link is a handful of enum choices, each one a
+ * complete statement on its own, and the server merges op-by-op — so a
+ * form-and-submit
  * would add a state ("edited but not saved") that has no meaning here and one
  * more way to lose work by clicking away. Same posture `commentActions` takes:
  * write through immediately, adopt the server's merged file.
@@ -66,6 +67,9 @@
  */
 import { useEditorStore, selectActivePage } from '@site/store/store'
 import {
+  CLICK_TRIGGER,
+  DEFAULT_TRIGGER_DELAY_MS,
+  TRIGGER_DELAY_PRESETS_MS,
   actionTakesTarget,
   linksFromPage,
   resolveLinkSource,
@@ -73,9 +77,13 @@ import {
   type PrototypeAction,
   type PrototypeLink,
   type PrototypeTransition,
+  type PrototypeTrigger,
+  type PrototypeTriggerKind,
 } from '@core/studio-prototype'
 import { findLink, linkSource } from '@site/store/slices/prototypeSelectors'
 import { Select } from '@ui/components/Select'
+import { Input } from '@ui/components/Input'
+import { Switch } from '@ui/components/Switch'
 import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
@@ -114,8 +122,127 @@ const TRANSITION_LABELS: Readonly<Record<PrototypeTransition, string>> = {
   sheet: 'Bottom sheet',
 }
 
+const TRIGGER_OPTIONS: ReadonlyArray<{ value: PrototypeTriggerKind; label: string }> = [
+  { value: 'click', label: 'On click' },
+  { value: 'hover', label: 'On hover' },
+  { value: 'press', label: 'While pressing' },
+  { value: 'after-delay', label: 'After delay' },
+  { value: 'key', label: 'On key press' },
+]
+
 type Page = NonNullable<ReturnType<typeof selectActivePage>>
 type PageOption = { value: string; label: string }
+
+/**
+ * The trigger picker: which gesture, plus whatever that gesture needs said
+ * about it.
+ *
+ * ONE COMPONENT FOR BOTH ENTRY POINTS. The element inspector and the connector
+ * inspector ask the same question and must not drift into two spellings of it —
+ * they differ only in how the answer is written back (`saveLink` re-anchors to
+ * the selected element, `updateLink` writes the whole link), which is the
+ * caller's job and stays in the caller.
+ *
+ * Switching KIND supplies that kind's default rather than carrying the old
+ * one's payload: a delay is not a key, so there is nothing to carry.
+ */
+function TriggerFields({
+  trigger,
+  onChange,
+  idPrefix,
+}: {
+  trigger: PrototypeTrigger
+  onChange: (next: PrototypeTrigger) => void
+  /** Distinguishes the two inspectors' test ids — they never mount together. */
+  idPrefix: string
+}) {
+  const changeKind = (kind: PrototypeTriggerKind) => {
+    switch (kind) {
+      case 'hover':
+        return onChange({ kind: 'hover' })
+      case 'press':
+        return onChange({ kind: 'press', reverseOnRelease: true })
+      case 'after-delay':
+        return onChange({ kind: 'after-delay', ms: DEFAULT_TRIGGER_DELAY_MS })
+      case 'key':
+        // An empty key would be a link that can never fire, and the reader
+        // repairs one back to a click. Enter is the key a prototype's primary
+        // action is reached by anyway.
+        return onChange({ kind: 'key', key: 'Enter' })
+      case 'click':
+        return onChange(CLICK_TRIGGER)
+    }
+  }
+
+  return (
+    <>
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>Trigger</span>
+        <Select
+          fieldSize="sm"
+          value={trigger.kind}
+          options={[...TRIGGER_OPTIONS]}
+          onChange={(event) => changeKind(event.target.value as PrototypeTriggerKind)}
+          aria-label="Interaction trigger"
+          data-testid={`${idPrefix}-trigger-select`}
+        />
+      </label>
+
+      {trigger.kind === 'after-delay' && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Delay</span>
+          <Select
+            fieldSize="sm"
+            value={String(trigger.ms)}
+            options={TRIGGER_DELAY_PRESETS_MS.map((ms) => ({
+              value: String(ms),
+              label: ms < 1000 ? `${ms} ms` : `${ms / 1000} s`,
+            }))}
+            onChange={(event) => onChange({ kind: 'after-delay', ms: Number(event.target.value) })}
+            aria-label="Delay before the link follows"
+            data-testid={`${idPrefix}-trigger-delay`}
+          />
+        </label>
+      )}
+
+      {trigger.kind === 'key' && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Key</span>
+          {/* Captured, never typed. What is stored is a `KeyboardEvent.key`
+              value — `ArrowRight`, `Escape`, ` ` — and asking someone to spell
+              those correctly in a text box is asking them to author a trigger
+              that silently never fires. */}
+          <Input
+            fieldSize="sm"
+            readOnly
+            value={trigger.key}
+            placeholder="Press a key…"
+            onKeyDown={(event) => {
+              if (event.key === 'Tab') return
+              event.preventDefault()
+              onChange({ kind: 'key', key: event.key })
+            }}
+            aria-label="Key that follows this link"
+            data-testid={`${idPrefix}-trigger-key`}
+          />
+        </label>
+      )}
+
+      {trigger.kind === 'press' && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Back on release</span>
+          <Switch
+            switchSize="sm"
+            checked={trigger.reverseOnRelease}
+            onCheckedChange={(checked) => onChange({ kind: 'press', reverseOnRelease: checked })}
+            aria-label="Return to this screen when the press is released"
+            data-testid={`${idPrefix}-trigger-reverse`}
+          />
+        </label>
+      )}
+    </>
+  )
+}
 
 export function PrototypePanel() {
   const page = useEditorStore(selectActivePage)
@@ -230,11 +357,13 @@ function InteractionSection({
   // Only the target page is missing when nothing has been authored yet, so a
   // fresh element opens on `navigate` with the target as the one open question.
   const targetPageId = existing?.targetPageId ?? ''
+  const trigger = existing?.trigger ?? CLICK_TRIGGER
 
   const commit = (next: {
     action?: PrototypeAction
     targetPageId?: string | null
     transition?: PrototypeTransition
+    trigger?: PrototypeTrigger
   }) => {
     void saveLink(
       {
@@ -244,6 +373,7 @@ function InteractionSection({
         action: next.action ?? action,
         targetPageId: next.targetPageId ?? targetPageId,
         transition: next.transition ?? existing?.transition,
+        trigger: next.trigger ?? trigger,
       },
       page,
     )
@@ -251,7 +381,13 @@ function InteractionSection({
 
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>On click</h3>
+      <h3 className={styles.sectionTitle}>Interaction</h3>
+
+      <TriggerFields
+        trigger={trigger}
+        onChange={(next) => commit({ trigger: next })}
+        idPrefix="prototype"
+      />
 
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Action</span>
@@ -417,8 +553,14 @@ function LinkInspector({
         </p>
       )}
 
+      <TriggerFields
+        trigger={link.trigger}
+        onChange={(trigger) => void updateLink({ ...link, trigger })}
+        idPrefix="prototype-link"
+      />
+
       <label className={styles.field}>
-        <span className={styles.fieldLabel}>On click</span>
+        <span className={styles.fieldLabel}>Action</span>
         <Select
           fieldSize="sm"
           value={link.action}

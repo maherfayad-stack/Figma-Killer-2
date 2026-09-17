@@ -264,6 +264,59 @@ visitor clicking through a prototype should see the component's own hover state
 and nothing of ours — so `setPlayMode` clears whatever was lit and
 `useCanvasNodeInteraction` stops writing it.
 
+### Five triggers, and where each one is delivered
+
+A link says WHERE it goes and HOW it gets there. The trigger says **what makes
+it fire**, and it is a tagged union rather than a string enum because two of the
+five carry data — a parallel `triggerMs`/`triggerKey` pair beside a string would
+let a `click` link hold a duration nothing reads.
+
+| Trigger | Fires on | Delivered by |
+|---|---|---|
+| `click` | press **and** release on the node | `useCanvasNodeInteraction`'s press/release pair |
+| `hover` | the pointer ARRIVING (never leaving) | the one branch of `onNodeHover` an armed player does not stand down |
+| `press { reverseOnRelease }` | the pointer going DOWN | `onNodePointerDown` — and the release reverses it: a `navigate` comes back, an `overlay` closes |
+| `after-delay { ms }` | nothing — the screen arrived | `usePrototypePlayTriggers`' timers, from the pure `delayTriggersForScreen` |
+| `key { key }` | a keystroke, case-insensitively | a parent-document listener, plus the live-frame bridge below |
+
+Triggers are matched **exactly**: a click never falls back to a hover link on
+the same element. Two triggers on one element are two statements the user made
+separately, and collapsing them would fire the wrong one on the gesture the
+other was for — which is also what lets a card carry "hover to peek" and "click
+to open" at once.
+
+Every trigger is legal for every action. There is deliberately no
+`ACTION_TRIGGERS` table beside `ACTION_TRANSITIONS`: a transition describes how
+two screens move, which an action can genuinely make meaningless; a trigger only
+describes what the user did, and "go back after 3 seconds" is a real screen.
+
+**A timer is a side effect, so the machine does not own one.**
+`delayTriggersForScreen` answers what arriving on a screen OWES — the links and
+their delays — and the hook owns the `setTimeout` that pays it. Same split
+`applyPlayAction` already makes with the store, and it is what keeps the rule
+unit-testable without fake timers.
+
+**A `key` trigger needs its own bridge out of the live frame.** A keystroke
+inside a play iframe never reaches the parent document, and clicking into the
+running prototype focuses that iframe on the first press. It is bridged in
+`useIframeEventForwarding` by **calling the one consumer directly**, never by
+cloning a `KeyboardEvent` onto the parent document the way the design canvas
+does: a live frame is the page as a visitor gets it, so the user may be typing
+into a real form field, and a clone would hand every one of those keystrokes to
+the editor's undo, save, spotlight and panel-rail shortcuts. A modifier held, or
+a text input under the cursor, stands the trigger down for the same reason.
+
+**A press that is never released is bounded, not guarded.** A pointer-up outside
+any node — or outside the frame entirely — never reaches the canvas, so the
+reverse is applied at the START of the next gesture instead of from a
+window-level listener that would silently never run. The peek stays until you
+touch something else, which is a claim the code can actually keep.
+
+A repaired trigger never costs the link. Anything unreadable — the bare
+`"click"` string Phase 1 wrote, a kind from a newer build, a `key` naming no key
+— becomes a plain click: the destination is what the user drew, and what makes
+it fire is one pick in the inspector.
+
 ### The gesture, and why it is not a `click`
 
 A linked element usually has interactions of its OWN — a hover state, a pressed
@@ -411,6 +464,7 @@ indistinguishable from a caller that failed to load its pages.
 | `src/admin/pages/site/canvas/PrototypeOverlay.tsx` | a sheet or popup over the screen that opened it |
 | `src/admin/pages/site/canvas/usePrototypePlayback.ts` | which page the live frame shows while armed |
 | `src/admin/pages/site/canvas/usePrototypeLinkKeyboard.ts` | Delete removes a link, Escape deselects |
+| `src/admin/pages/site/canvas/usePrototypePlayTriggers.ts` | the two screen-scoped triggers: `after-delay` timers and `key` |
 | `src/admin/pages/site/studio/playNavigation.ts` | a click in the armed frame → the machine |
 | `src/admin/pages/site/canvas/useCanvasNodeInteraction.ts` | what a pointer gesture on a node does, armed or not |
 | `src/admin/pages/site/canvas/canvasNodeGestureLatch.ts` | one press = one activation, across every event it raises |
@@ -428,5 +482,3 @@ Tracked in [`STUDIO-PROTOTYPE-PLAN.md`](../../STUDIO-PROTOTYPE-PLAN.md).
 - **Pruning on page delete.** `prunePrototypeLinks` and the `prune` op exist;
   nothing calls them yet. A link to a deleted page simply draws nothing, and
   the inspector's list shows it pointing at "Deleted page".
-- **A trigger other than `click`.** The schema has one, and the reader repairs
-  anything else to it.

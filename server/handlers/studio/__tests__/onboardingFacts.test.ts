@@ -132,7 +132,7 @@ describe('readOnboardingFacts', () => {
               pageId: 'p1',
               node: { nodeId: 'n1', indexPath: [0], moduleId: 'base.text', textSnippet: 'Go' },
             },
-            trigger: 'click',
+            trigger: { kind: 'click' },
             action: 'navigate',
             targetPageId: 'p2',
             transition: 'instant',

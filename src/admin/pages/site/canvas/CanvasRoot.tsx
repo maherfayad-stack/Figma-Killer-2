@@ -57,6 +57,7 @@ import { useCanvasKeyboardShortcuts } from './useCanvasKeyboardShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
 import { usePrototypeLinkKeyboard } from './usePrototypeLinkKeyboard'
+import { usePrototypePlayTriggers } from './usePrototypePlayTriggers'
 import { usePrototypePlayback } from './usePrototypePlayback'
 import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
@@ -106,6 +107,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     overlayTransition: playOverlayTransition,
     overlayLeaveTransition: playOverlayLeaveTransition,
     playMode,
+    stackDepth: playStackDepth,
   } = usePrototypePlayback(editingPage)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
@@ -410,6 +412,18 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // Prototype mode: Delete removes the selected connector, Escape deselects it.
   // Board-only — a link is a thing on the board, and live mode is the player.
   usePrototypeLinkKeyboard(editable && !isLive)
+
+  // The two screen-scoped prototype triggers — `after-delay` and `key`. The
+  // other three arrive as pointer events on a node and belong to
+  // `useCanvasNodeInteraction`; these have no element under them when they
+  // fire. Mounted here because this is where the player's current screen and
+  // overlay are already derived.
+  usePrototypePlayTriggers({
+    playMode,
+    screenPageId: canvasPage?.id ?? null,
+    overlayPageId: overlayPage?.id ?? null,
+    stackDepth: playStackDepth,
+  })
 
   // Board frames: arrow-key nudge. Mounted AFTER the annotation hook on
   // purpose — see `useBoardFrameNudge`'s doc for the mixed-selection rule.

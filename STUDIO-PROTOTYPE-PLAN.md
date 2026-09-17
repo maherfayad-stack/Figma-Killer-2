@@ -86,7 +86,15 @@ visibly broken connector rather than disappearing.
 | `back` | pops the history stack | reverses whatever brought you here |
 | `close` | dismisses the top overlay | reverses its presentation |
 
-Trigger is `click` in Phase 1. The overlay transitions line up with the existing
+Trigger was `click` in Phase 1. It is now one of five — `click`, `hover`,
+`press { reverseOnRelease }`, `after-delay { ms }`, `key { key }` — a tagged
+union rather than a string enum, because two of them carry data. Every trigger
+is legal for every action; the table above is about what a link DOES, and that
+is a separate question from what makes it fire. See
+`docs/features/studio-prototype.md` → "Five triggers, and where each one is
+delivered".
+
+The overlay transitions line up with the existing
 `PageKind` vocabulary (`screen | popup | sheet-small | sheet-large`,
 `@core/studio-board/pageKinds.ts`), so a link to a sheet page can default its
 transition from the target's kind instead of asking.
