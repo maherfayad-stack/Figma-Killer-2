@@ -255,6 +255,32 @@ describe('POST git/commit-and-switch', () => {
     // Nothing was committed: the refusal came first.
     expect((await git(dir, ['log', '--format=%s'])).out.trim()).toBe('Initial commit')
   })
+
+  /**
+   * These pass the argv-safety check and are rejected by git's own
+   * `check-ref-format`. That half used to run inside `switchBranch`, i.e.
+   * AFTER the commit — so the commit landed and the switch then refused,
+   * leaving the user with a commit that existed only to enable a switch that
+   * never happened.
+   */
+  it('refuses a name git itself rejects before it commits anything either', async () => {
+    for (const branch of ['feat..sidebar', 'feat/sidebar.lock', 'feat/sidebar~1', 'feat/sidebar:x']) {
+      fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), `changed for ${branch}\n`)
+      const res = await call(
+        '/admin/api/studio/git/commit-and-switch',
+        post({ dir, message: 'x', files: ['pages/Home.tsx'], switch: branch }),
+      )
+      expect({ branch, status: res.status }).toEqual({ branch, status: 409 })
+      expect({ branch, ...((await res.json()) as { code: string }) }).toMatchObject({
+        branch,
+        code: 'invalid-branch-name',
+      })
+      expect({ branch, log: (await git(dir, ['log', '--format=%s'])).out.trim() }).toEqual({
+        branch,
+        log: 'Initial commit',
+      })
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------

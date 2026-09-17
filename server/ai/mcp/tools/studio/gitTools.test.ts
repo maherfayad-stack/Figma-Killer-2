@@ -430,4 +430,21 @@ describe('studio_git_open_pr', () => {
     const result = (await openPrTool.handler({ dir: bare }, context(bare))) as { ok: boolean; code: string }
     expect(result).toMatchObject({ ok: false, code: 'not-a-repository' })
   })
+
+  /**
+   * `base` reaches an argv token (`origin/<base>..<head>` in
+   * `readBranchCommitSubjects`). The `origin/` prefix stops it posing as a
+   * flag, but the HTTP route puts it through `isArgvSafeBranchName` anyway and
+   * this path must make the same judgement — a tool argument is no more
+   * trusted than a request body just because an agent wrote it.
+   */
+  it('refuses a base branch the argv guard rejects — same judgement the HTTP route makes', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    await git(dir, ['switch', '--create', 'feat/sidebar'])
+
+    for (const base of ['--force', '-x', 'main\nnot-main', 'a'.repeat(256)]) {
+      const result = (await openPrTool.handler({ dir, base }, context(dir))) as { ok: boolean; code: string }
+      expect({ base, ...result }).toMatchObject({ base, ok: false, code: 'invalid-branch-name' })
+    }
+  })
 })

@@ -79,6 +79,7 @@ import {
 } from '../../../../handlers/studio/gitSyncOperations'
 import {
   isAcceptableCommitMessage,
+  isArgvSafeBranchName,
   parseGithubRemoteUrl,
   resolveWorkspaceRelativePath,
 } from '../../../../handlers/studio/gitPaths'
@@ -379,6 +380,20 @@ const studioGitOpenPrTool: AiTool = {
     }
 
     const base = (baseInput ?? '').trim() || context.defaultBranch || 'main'
+    // The same judgement `POST git/pull-request` makes on the same field, and
+    // for the same reason: `base` becomes an argv token in
+    // `readBranchCommitSubjects` (`origin/<base>..<head>`). The `origin/`
+    // prefix stops it posing as a flag, but nothing else bounds its length or
+    // rejects the control characters that would corrupt the NUL/line-delimited
+    // output this feature parses. An agent's argument is no more trusted than
+    // a browser's.
+    if (!isArgvSafeBranchName(base)) {
+      return {
+        ok: false,
+        code: 'invalid-branch-name',
+        error: `"${base}" is not a usable base branch name.`,
+      }
+    }
     if (base === context.branch) {
       return {
         ok: false,

@@ -418,11 +418,23 @@ export function switchBranch(
   return withGitWriteLock(dir, () => runSwitchBranch(dir, name, mode))
 }
 
-async function runSwitchBranch(
+/**
+ * Both halves of "is this a usable branch name", as a reusable refusal:
+ * argv-safety first (`gitPaths.ts` — a leading `-` would be read as a flag by
+ * the very command that is about to receive it), then git's own
+ * `check-ref-format`, which is the authority on what a ref may be called
+ * (`feat..x`, `x.lock`, `x~1` all fail here and nowhere else).
+ *
+ * Exported because `commitAndSwitchBranch` has to ask BEFORE it commits.
+ * Leaving the second half inside `switchBranch` meant a name that passed
+ * argv-safety but failed `check-ref-format` produced a commit that existed
+ * only to enable a switch that then refused — the outcome that function's
+ * own doc calls the worst of both.
+ */
+export async function assertUsableBranchName(
   dir: string,
   name: string,
-  mode: 'create' | 'switch',
-): Promise<GitBranchResult | GitOperationFailure> {
+): Promise<GitOperationFailure | null> {
   if (!isArgvSafeBranchName(name)) {
     return gitFailure('invalid-branch-name', `"${name}" is not a usable branch name.`)
   }
@@ -430,6 +442,16 @@ async function runSwitchBranch(
   if (!refCheck.ok) {
     return gitFailure('invalid-branch-name', `git rejected "${name}" as a branch name.`)
   }
+  return null
+}
+
+async function runSwitchBranch(
+  dir: string,
+  name: string,
+  mode: 'create' | 'switch',
+): Promise<GitBranchResult | GitOperationFailure> {
+  const unusable = await assertUsableBranchName(dir, name)
+  if (unusable) return unusable
 
   if (mode === 'switch') {
     const dirty = await dirtyPaths(dir)

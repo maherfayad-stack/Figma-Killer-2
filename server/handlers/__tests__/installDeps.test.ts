@@ -30,6 +30,7 @@ import { detectPackageManager } from '../studio/packageManager'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from '../studio/installJobStore'
 import { projectsRootDir } from '../studioProjects'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { isProjectWriteLocked } from '../studio/projectWriteLock'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
@@ -736,5 +737,66 @@ describe('tryServeStudioInstall', () => {
     const res = await tryServeStudioInstall(req, url, pathname)
     expect(res).not.toBeNull()
     expect(res!.status).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The project write lock (G7)
+// ---------------------------------------------------------------------------
+
+describe('startInstallJob — the project write lock', () => {
+  let projectDir: string
+
+  beforeEach(() => {
+    const root = projectsRootDir()
+    fs.mkdirSync(root, { recursive: true })
+    projectDir = fs.mkdtempSync(path.join(root, '__installdeps_lock_test_'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(projectDir, { recursive: true, force: true })
+  })
+
+  it('holds the lock for the duration of the subprocess, and releases it after', async () => {
+    fs.writeFileSync(path.join(projectDir, 'package.json'), '{"name":"flat"}')
+    const { proc } = makeFakeProcess({ hangUntilKilled: true })
+    const { spawn } = makeSpawnSpy(() => proc)
+
+    expect(isProjectWriteLocked(projectDir)).toBe(false)
+    const jobId = startInstallJob(projectDir, { spawn, ...makeInertTimer() })
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    expect(isProjectWriteLocked(projectDir)).toBe(true)
+
+    proc.kill()
+    await waitForSettle(jobId)
+    expect(isProjectWriteLocked(projectDir)).toBe(false)
+  })
+
+  /**
+   * The app root is where the package manager RUNS; the project directory is
+   * what every other writer — a canvas save, a page scaffold, a git verb —
+   * locks on. For a monorepo those are different directories, so keying the
+   * install on the app root would give it a lock of its own and serialize it
+   * against nothing, leaving the `git add` → install → `git commit` race wide
+   * open on exactly the projects whose installs take longest.
+   */
+  it('locks the PROJECT even when the app root is a subdirectory of it', async () => {
+    const appRoot = path.join(projectDir, 'apps', 'web')
+    fs.mkdirSync(appRoot, { recursive: true })
+    fs.writeFileSync(path.join(appRoot, 'package.json'), '{"name":"web"}')
+
+    const { proc } = makeFakeProcess({ hangUntilKilled: true })
+    const { spawn, calls } = makeSpawnSpy(() => proc)
+    const jobId = startInstallJob(projectDir, { spawn, ...makeInertTimer() })
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+
+    // The subprocess really did run in the nested app root — otherwise this
+    // test would pass for the wrong reason.
+    expect(normalize(calls[0]!.cwd)).toBe(normalize(appRoot))
+    expect(isProjectWriteLocked(projectDir)).toBe(true)
+
+    proc.kill()
+    await waitForSettle(jobId)
+    expect(isProjectWriteLocked(projectDir)).toBe(false)
   })
 })
