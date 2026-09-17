@@ -12,53 +12,17 @@
  */
 
 /* --------------------------------------------------------------------------
-   Branch
+   Push
+
+   The branch identity, dropdown and create/switch controls moved to
+   BranchSection.module.css when the free-text field became a dropdown (G3).
    -------------------------------------------------------------------------- */
 
 .branchBar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-s);
-}
-
-.branchName {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-xs);
-  min-width: 0;
-  font-size: var(--text-m);
-  color: var(--text);
-}
-
-.branchName strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.branchLabel {
-  color: var(--text-subtle);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.divergence {
-  color: var(--text-muted);
-  font-size: var(--text-s);
-  white-space: nowrap;
-}
-
-.branchControls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.branchControls > :first-child {
-  flex: 1;
-  min-width: 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -71,15 +35,6 @@
   border-radius: var(--radius);
   background: var(--danger-10);
   color: var(--danger-text);
-  font-size: var(--text-m);
-}
-
-.warning {
-  margin: 0;
-  padding: var(--space-s);
-  border-radius: var(--radius);
-  background: var(--bg-surface-2);
-  color: var(--text-muted);
   font-size: var(--text-m);
 }
 

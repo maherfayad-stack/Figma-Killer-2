@@ -275,3 +275,69 @@ export async function restoreGitFile(dir: string | undefined, sha: string, file:
 export function isGitStateRefusal(err: unknown): boolean {
   return err instanceof ApiError && err.status === 409
 }
+
+// ---------------------------------------------------------------------------
+// Branches, sync, and pull requests (G3–G5)
+//
+// Appended rather than interleaved above so the v1 contract stays readable as
+// one block. These call `server/handlers/studio/gitSyncRoutes.ts`, a sibling
+// sub-router of `git.ts` — same base path, same `{ error, code }` refusal
+// envelope, same `isGitStateRefusal` test.
+// ---------------------------------------------------------------------------
+
+const GitBranchSummarySchema = Type.Object({
+  /** `main` for a local branch, `origin/main` for a remote-tracking one. */
+  name: Type.String(),
+  remote: Type.Boolean(),
+  current: Type.Boolean(),
+  upstream: Type.Union([Type.String(), Type.Null()]),
+  ahead: Type.Union([Type.Number(), Type.Null()]),
+  behind: Type.Union([Type.Number(), Type.Null()]),
+  /** The upstream is configured but gone from the remote — git's own `gone`. */
+  upstreamGone: Type.Boolean(),
+})
+
+const GitBranchListSchema = Type.Object({
+  branches: Type.Array(GitBranchSummarySchema),
+  current: Type.Union([Type.String(), Type.Null()]),
+  /** What `origin/HEAD` points at. `null` when there is no origin, or nobody ever ran `git remote set-head`. */
+  defaultBranch: Type.Union([Type.String(), Type.Null()]),
+})
+
+const GitCommitAndSwitchResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  sha: Type.String(),
+  shortSha: Type.String(),
+  files: Type.Array(Type.String()),
+  branch: Type.String(),
+})
+
+export type GitBranchSummary = Static<typeof GitBranchSummarySchema>
+export type GitBranchList = Static<typeof GitBranchListSchema>
+export type GitCommitAndSwitchResult = Static<typeof GitCommitAndSwitchResponseSchema>
+
+/** Every local and remote-tracking branch, with per-branch divergence. A read — it never answers `busy`. */
+export async function getGitBranches(dir: string | undefined, signal?: AbortSignal): Promise<GitBranchList> {
+  return apiRequest(`${BASE}/branches`, { schema: GitBranchListSchema, query: { dir }, signal })
+}
+
+/**
+ * Commit exactly `files`, then switch to `branch` — one server action, one
+ * hold of the project write lock. This is what the panel offers instead of a
+ * stash when someone picks a different branch with uncommitted work on screen.
+ *
+ * Refuses with `code: 'dirty-tree'` when files the user did NOT tick are still
+ * uncommitted: the commit stands, the switch does not.
+ */
+export async function commitAndSwitchGitBranch(
+  dir: string | undefined,
+  message: string,
+  files: readonly string[],
+  branch: string,
+): Promise<GitCommitAndSwitchResult> {
+  return apiRequest(`${BASE}/commit-and-switch`, {
+    method: 'POST',
+    body: { dir, message, files: [...files], switch: branch },
+    schema: GitCommitAndSwitchResponseSchema,
+  })
+}

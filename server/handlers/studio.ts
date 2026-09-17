@@ -312,6 +312,7 @@ import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
 import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
+import { tryServeStudioGitSync } from './studio/gitSyncRoutes'
 import { tryServeStudioDeploy } from './studio/deploy'
 import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
@@ -361,6 +362,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
+  tryServeStudioGitSync,
   tryServeStudioDeploy,
   tryServeStudioDevServer,
   tryServeStudioStories,

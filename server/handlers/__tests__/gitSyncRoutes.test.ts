@@ -1,0 +1,341 @@
+/**
+ * gitSyncRoutes — branches, fetch, pull, conflict resolution and pull requests,
+ * end-to-end against REAL `git`, in a real project directory inside
+ * `projectsRootDir()` so the containment guard passes.
+ *
+ * Everything that touches a remote runs against a **local bare repository**
+ * created by the test. That is a real push/fetch/pull over git's own transport
+ * with no network, no credentials, and no GitHub — which is the only honest
+ * way to test "did the divergence actually change" without making the suite
+ * depend on someone's account.
+ *
+ * The rejections are tested harder than the happy path, because they are the
+ * security control: a `dir` outside the workspace, a project with no `.git` of
+ * its own (which without the guard would resolve to **Studio's own
+ * repository**), unusable paths in every path-taking route, and the rule that
+ * no error body ever names a filesystem path.
+ */
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProjects'
+import { tryServeStudioGitSync } from '../studio/gitSyncRoutes'
+import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
+
+async function git(cwd: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const proc = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' })
+  const out = await new Response(proc.stdout).text()
+  const err = await new Response(proc.stderr).text()
+  return { code: await proc.exited, out, err }
+}
+
+function post(body: unknown): RequestInit {
+  return { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
+}
+
+async function call(pathAndQuery: string, init?: RequestInit): Promise<Response> {
+  const url = new URL(`http://localhost${pathAndQuery}`)
+  const res = await tryServeStudioGitSync(new Request(url, init), url, url.pathname)
+  if (!res) throw new Error(`no route matched ${pathAndQuery}`)
+  return res
+}
+
+const created: string[] = []
+
+function makeProjectDir(): string {
+  const root = projectsRootDir()
+  fs.mkdirSync(root, { recursive: true })
+  const dir = fs.mkdtempSync(path.join(root, '__git_sync_test_'))
+  created.push(dir)
+  return dir
+}
+
+async function configure(dir: string): Promise<void> {
+  await git(dir, ['config', 'user.email', 'studio-test@example.com'])
+  await git(dir, ['config', 'user.name', 'Studio Test'])
+  await git(dir, ['config', 'commit.gpgsign', 'false'])
+}
+
+async function makeRepo(dir: string): Promise<void> {
+  await git(dir, ['init', '--initial-branch=main'])
+  await configure(dir)
+  fs.mkdirSync(path.join(dir, 'pages'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'export default function Home() { return null }\n')
+  await git(dir, ['add', '-A'])
+  await git(dir, ['commit', '-m', 'Initial commit'])
+}
+
+/** A bare repository on disk, wired up as `origin` with `main` pushed. Real transport, no network. */
+async function makeBareRemote(dir: string): Promise<string> {
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-sync-remote-'))
+  created.push(remote)
+  await git(remote, ['init', '--bare', '--initial-branch=main'])
+  await git(dir, ['remote', 'add', 'origin', remote])
+  await git(dir, ['push', '--set-upstream', 'origin', 'main'])
+  return remote
+}
+
+afterAll(() => {
+  for (const dir of created) fs.rmSync(dir, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------------------
+// GET branches
+// ---------------------------------------------------------------------------
+
+interface BranchesBody {
+  branches: Array<{
+    name: string
+    remote: boolean
+    current: boolean
+    upstream: string | null
+    ahead: number | null
+    behind: number | null
+    upstreamGone: boolean
+  }>
+  current: string | null
+  defaultBranch: string | null
+}
+
+describe('GET git/branches', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+  })
+
+  it('lists local branches, names the current one, and reports no upstream when there is none', async () => {
+    await git(dir, ['branch', 'feat/sidebar'])
+
+    const res = await call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(dir)}`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as BranchesBody
+
+    expect(body.current).toBe('main')
+    expect(body.branches.map((b) => b.name).sort()).toEqual(['feat/sidebar', 'main'])
+    expect(body.branches.every((b) => !b.remote)).toBe(true)
+    expect(body.branches.find((b) => b.name === 'main')?.current).toBe(true)
+    expect(body.branches.find((b) => b.name === 'main')?.upstream).toBeNull()
+    expect(body.defaultBranch).toBeNull()
+  })
+
+  it('reports the upstream and the real ahead/behind against a local bare remote', async () => {
+    await makeBareRemote(dir)
+
+    // One commit here that the remote does not have.
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'export default function Home() { return <main /> }\n')
+    await git(dir, ['commit', '-am', 'Local work'])
+
+    const body = (await (await call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(dir)}`)).json()) as BranchesBody
+    const main = body.branches.find((b) => b.name === 'main' && !b.remote)
+    expect(main?.upstream).toBe('origin/main')
+    expect(main?.ahead).toBe(1)
+    expect(main?.behind).toBe(0)
+
+    // The remote-tracking ref is listed too, and never carries an upstream of
+    // its own — it IS one.
+    const tracking = body.branches.find((b) => b.remote)
+    expect(tracking?.name).toBe('origin/main')
+    expect(tracking?.upstream).toBeNull()
+  })
+
+  it('reports a branch whose upstream was deleted as gone, not as up to date', async () => {
+    const remote = await makeBareRemote(dir)
+    await git(dir, ['switch', '--create', 'feat/temporary'])
+    await git(dir, ['push', '--set-upstream', 'origin', 'feat/temporary'])
+    // Someone deleted the branch on the remote.
+    await git(remote, ['branch', '-D', 'feat/temporary'])
+    await git(dir, ['fetch', '--prune', 'origin'])
+
+    const body = (await (await call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(dir)}`)).json()) as BranchesBody
+    const gone = body.branches.find((b) => b.name === 'feat/temporary')
+    expect(gone?.upstreamGone).toBe(true)
+    expect(gone?.ahead).toBeNull()
+    expect(gone?.behind).toBeNull()
+  })
+
+  it('never lists origin/HEAD as a branch — it is a symbolic ref, not something to check out', async () => {
+    const remote = await makeBareRemote(dir)
+    await git(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main'])
+    await git(dir, ['remote', 'set-head', 'origin', '--auto'])
+
+    const body = (await (await call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(dir)}`)).json()) as BranchesBody
+    expect(body.branches.map((b) => b.name)).not.toContain('origin/HEAD')
+    expect(body.defaultBranch).toBe('main')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// POST commit-and-switch
+// ---------------------------------------------------------------------------
+
+describe('POST git/commit-and-switch', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+    await git(dir, ['branch', 'feat/next'])
+  })
+
+  it('commits exactly the named files and lands on the other branch', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'export default function Home() { return <main /> }\n')
+
+    const res = await call(
+      '/admin/api/studio/git/commit-and-switch',
+      post({ dir, message: 'Draft the home page', files: ['pages/Home.tsx'], switch: 'feat/next' }),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; branch: string; files: string[]; shortSha: string }
+    expect(body).toMatchObject({ ok: true, branch: 'feat/next', files: ['pages/Home.tsx'] })
+
+    expect((await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim()).toBe('feat/next')
+    // The commit landed on `main`, where the work was done — not on the branch
+    // that was switched to.
+    expect((await git(dir, ['log', '--format=%s', 'main'])).out).toContain('Draft the home page')
+  })
+
+  it('keeps the commit but refuses the switch when files the user did not tick are still dirty', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'export default function Home() { return <main /> }\n')
+    fs.writeFileSync(path.join(dir, 'pages', 'About.tsx'), 'export default function About() { return null }\n')
+
+    const res = await call(
+      '/admin/api/studio/git/commit-and-switch',
+      post({ dir, message: 'Only the home page', files: ['pages/Home.tsx'], switch: 'feat/next' }),
+    )
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; dirtyFiles: string[]; error: string }
+    expect(body.code).toBe('dirty-tree')
+    expect(body.dirtyFiles).toContain('pages/About.tsx')
+    // The commit stands — silently rolling it back would be the surprise.
+    expect((await git(dir, ['log', '--format=%s', 'main'])).out).toContain('Only the home page')
+    expect((await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim()).toBe('main')
+    expect(body.error).not.toContain(dir)
+  })
+
+  it('refuses a branch name that would be read as a flag BEFORE it commits anything', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'changed\n')
+
+    const res = await call(
+      '/admin/api/studio/git/commit-and-switch',
+      post({ dir, message: 'x', files: ['pages/Home.tsx'], switch: '--force' }),
+    )
+    expect(res.status).toBe(409)
+    expect((await res.json()) as { code: string }).toMatchObject({ code: 'invalid-branch-name' })
+    // Nothing was committed: the refusal came first.
+    expect((await git(dir, ['log', '--format=%s'])).out.trim()).toBe('Initial commit')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Rejections — the security control
+// ---------------------------------------------------------------------------
+
+describe('gitSyncRoutes — rejections', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+  })
+
+  it('refuses every route for a dir outside the workspace, before any git runs', async () => {
+    // `resolveProjectDir` throws; `rethrowProjectDirRefusal` lets it past this
+    // sub-router so the top-level router answers with its single bare 404 —
+    // the same contract `git.ts` has. Asserting the throw is asserting that
+    // contract, not bypassing it.
+    await withOutsideWorkspaceDir('git-sync-outside', async (outside) => {
+      await makeRepo(outside)
+      const refused = (pending: Promise<unknown>) =>
+        expect(pending).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+
+      await refused(call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(outside)}`))
+      await refused(
+        call(
+          '/admin/api/studio/git/commit-and-switch',
+          post({ dir: outside, message: 'x', files: ['a.tsx'], switch: 'main' }),
+        ),
+      )
+    })
+  })
+
+  it('404s a project with no repository of its own — the guard that stops git finding Studio\'s own repo', async () => {
+    const bare = makeProjectDir()
+    fs.writeFileSync(path.join(bare, 'App.tsx'), 'export const App = () => null\n')
+    expect(fs.existsSync(path.join(bare, '.git'))).toBe(false)
+
+    expect((await call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(bare)}`)).status).toBe(404)
+    expect(
+      (
+        await call(
+          '/admin/api/studio/git/commit-and-switch',
+          post({ dir: bare, message: 'x', files: ['App.tsx'], switch: 'main' }),
+        )
+      ).status,
+    ).toBe(404)
+  })
+
+  it('404s the workspace root itself', async () => {
+    const root = projectsRootDir()
+    expect((await call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(root)}`)).status).toBe(404)
+  })
+
+  it('404s an unusable path in commit-and-switch — traversal on either separator, absolute, excluded', async () => {
+    for (const file of [
+      '../escape.tsx',
+      '..\\escape.tsx',
+      'pages/../../escape.tsx',
+      '/etc/passwd',
+      'C:/Windows/system.ini',
+      'node_modules/left-pad/index.js',
+      '.studio/meta.json',
+      '.git/config',
+    ]) {
+      const res = await call(
+        '/admin/api/studio/git/commit-and-switch',
+        post({ dir, message: 'x', files: [file], switch: 'main' }),
+      )
+      expect({ file, status: res.status }).toEqual({ file, status: 404 })
+    }
+  })
+
+  it('rejects a body the schema does not accept rather than guessing', async () => {
+    // Empty file list — there is no "commit everything" shape on this wire.
+    expect(
+      (await call('/admin/api/studio/git/commit-and-switch', post({ dir, message: 'x', files: [], switch: 'main' })))
+        .status,
+    ).toBe(400)
+    // No message.
+    expect(
+      (await call('/admin/api/studio/git/commit-and-switch', post({ dir, files: ['pages/Home.tsx'], switch: 'main' })))
+        .status,
+    ).toBe(400)
+    // Blank message.
+    expect(
+      (
+        await call(
+          '/admin/api/studio/git/commit-and-switch',
+          post({ dir, message: '   ', files: ['pages/Home.tsx'], switch: 'main' }),
+        )
+      ).status,
+    ).toBe(400)
+    // No branch to switch to.
+    expect(
+      (
+        await call(
+          '/admin/api/studio/git/commit-and-switch',
+          post({ dir, message: 'x', files: ['pages/Home.tsx'], switch: '  ' }),
+        )
+      ).status,
+    ).toBe(400)
+  })
+
+  it('does not answer a method or action it does not own', async () => {
+    const url = new URL('http://localhost/admin/api/studio/git/branches')
+    expect(await tryServeStudioGitSync(new Request(url, { method: 'POST' }), url, url.pathname)).toBeNull()
+    const other = new URL('http://localhost/admin/api/studio/git/status')
+    expect(await tryServeStudioGitSync(new Request(other), other, other.pathname)).toBeNull()
+  })
+})

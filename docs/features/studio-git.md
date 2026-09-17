@@ -20,7 +20,8 @@ same panel.
 
 | Layer | Module | Owns |
 |---|---|---|
-| Route | `server/handlers/studio/git.ts` | Dir resolution, body validation, refusal → HTTP status. **No argv is built here.** |
+| Route | `server/handlers/studio/git.ts` | The local verbs: status, diff, log, branch, commit, push, init, restore |
+| Route | `server/handlers/studio/gitSyncRoutes.ts` | Branches and commit-and-switch — a sibling sub-router. Both files are routing only: dir resolution, body validation, refusal → HTTP status. **No argv is built in either.** |
 | Operations | `server/handlers/studio/gitOperations.ts` | The eight things Studio may ask git to do |
 | Subprocess + guard | `server/handlers/studio/gitRunner.ts` | `Bun.spawn` discipline, env allowlist, the "is this the project's own repository" guard |
 | Write lock | `server/handlers/studio/projectWriteLock.ts` | One writer per project — saves, scaffolds, installs and git verbs |
@@ -28,6 +29,7 @@ same panel.
 | Input judgement | `server/handlers/studio/gitPaths.ts` | Every caller-supplied path, branch name, sha, message |
 | Wire contract | `src/admin/pages/site/studio/gitRequests.ts` | TypeBox schemas + `apiRequest` calls |
 | Panel | `src/admin/pages/site/panels/GitPanel/` | The rail panel: branch, changes, diff, commit, push, history |
+| Panel — branch | `.../GitPanel/BranchSection.tsx` | The branch dropdown, “New branch from current”, the commit-and-switch dialog |
 | Agent tool | `server/ai/mcp/tools/studio/gitTools.ts` | `studio_git_commit`, gated by `studio.git.write` |
 
 ---
@@ -47,6 +49,8 @@ All under `/admin/api/studio/git/`. Bodies are validated with
 | POST | `push` | `{ dir? }` | `{ ok, branch, output }` |
 | POST | `init` | `{ dir?, confirm: true, message? }` | `{ ok, branch, sha, filesCommitted }` |
 | POST | `restore` | `{ dir?, sha, file }` | `{ ok, file, sha }` |
+| GET | `branches` | `?dir` | `{ branches: [{ name, remote, current, upstream, ahead, behind, upstreamGone }], current, defaultBranch }` |
+| POST | `commit-and-switch` | `{ dir?, message, files, switch }` | `{ ok, sha, shortSha, files, branch }` |
 
 `isRepo: false` is a **normal 200**, not an error — it is what makes the panel
 offer "Create a repository" rather than showing a failure for a project nobody
@@ -96,10 +100,17 @@ one.
 - **No reset, no clean, no stash.** Studio never stashes on a user's behalf: a
   stash is an invisible place a designer's screen went.
 - **Switching branches over a dirty tree refuses**, returning the dirty file
-  list. Creating a branch does *not* — `git switch -c` at HEAD moves a pointer
-  and cannot change a byte in the working tree. That asymmetry is what makes
-  the intended flow (edit on the canvas → branch → commit) work without a
-  stash.
+  list. The panel turns that into a choice rather than a dead end: a dialog
+  with exactly two ways out — **Commit and switch** (the `commit-and-switch`
+  route: commit the ticked files, then switch, both inside ONE hold of the
+  project write lock) or **Cancel**. Still no stash, ever. Creating a branch is
+  *not* gated on a clean tree — `git switch -c` at HEAD moves a pointer and
+  cannot change a byte in the working tree. That asymmetry is what makes the
+  intended flow (edit on the canvas → branch → commit) work without a stash.
+- **`commit-and-switch` never rolls a commit back.** If files the user did not
+  tick are still dirty afterwards, the switch refuses and names them; the
+  commit stands, because it is what the user asked for and undoing it silently
+  would be the surprising option.
 - **A commit stages exactly the named files.** `git add -A` and `git commit -a`
   are unreachable from any route. In a tool where an AI agent also writes
   files, "everything" is not a set the user has reviewed.
@@ -205,6 +216,24 @@ easy to get wrong) and the rendering is plain rows. Revisit only if syntax
 highlighting *inside* hunks becomes necessary, and widen the gate deliberately
 if so.
 
+### Branches
+
+The branch control is a **dropdown of the branches that exist**, not a
+free-text field — v1 asked a designer to type a name they had no way to look
+up and then guess whether “Create” or “Switch” was the right button.
+
+`GET branches` is one `for-each-ref` over `refs/heads` and `refs/remotes` with
+`%(upstream:track)` for per-branch divergence. It is a **read**, so it takes no
+write lock and can never answer `busy`. Divergence is as current as the last
+fetch and no more — that is what the Fetch button is for.
+
+A remote-tracking ref is offered by its **local** name (`origin/feature` reads
+as `feature (from origin)`) and switched with `git switch feature`, which git
+resolves to “create a local branch tracking origin/feature”. Offering
+`origin/feature` literally would detach HEAD, which is the state this panel
+exists to keep people out of. `origin/HEAD` is never listed: it is a symbolic
+ref, not a branch — it is reported separately as `defaultBranch`.
+
 ### Agent-authored labelling
 
 `status` entries carry `agentAuthored`, paired server-side with
@@ -256,6 +285,7 @@ in-canvas turn loop is a product call that has not been made.
 |---|---|
 | `server/handlers/__tests__/gitStatusParse.test.ts` | The porcelain-v2 parser against real captured output: renames spanning two NUL fields, paths with spaces, initial/detached/diverged branch headers, unmerged records, unknown record types |
 | `server/handlers/__tests__/gitPaths.test.ts` | Every rejection: traversal on both separators, absolute/UNC/drive-letter paths, excluded directories, **symlink escape** (leaf and parent), flag-looking branch names, revision expressions where a sha is required |
+| `server/handlers/__tests__/gitSyncRoutes.test.ts` | The branch list against a local bare remote (upstream, ahead/behind, a `gone` upstream, `origin/HEAD` excluded), commit-and-switch and its dirty-remainder refusal, a flag-looking branch name refused before anything is committed, and the same rejection set as `git.test.ts` |
 | `server/handlers/__tests__/projectWriteLock.test.ts` | Ordering (a save and a commit resolve in arrival order, FIFO), the `busy` refusal and its path-free message, per-project isolation, the symlink key, reentrancy across a subprocess wait |
 | `server/handlers/__tests__/git.test.ts` | End-to-end against real git: edit → status → diff → branch → commit → **push to a local bare remote**. Plus the rejections: dir outside the workspace, a project with no `.git` (never Studio's own repo), the workspace root itself, unusable paths in every path-taking route, dirty-tree switch refusal, empty commit, push with no origin, no filesystem path in an error body |
 | `server/ai/mcp/tools/studio/gitTools.test.ts` | The capability declaration (invisible with `studio.write` alone, invisible without `ai.tools.write`) and the tool's own refusals |

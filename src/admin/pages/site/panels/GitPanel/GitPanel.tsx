@@ -23,18 +23,14 @@
  *   button, because in a tool where an AI agent also writes files, "all" is not
  *   a set the user has reviewed. Select-all exists as a row action — an
  *   explicit click, not a default.
- * - **Switching branches over uncommitted work is refused by the server**, and
- *   the panel turns that refusal into the obvious next step rather than a dead
- *   end: it says so inline and leaves the commit box right there, primed. It
- *   never stashes. A stash is an invisible place a designer's screen went.
- * - **Creating a branch is allowed with a dirty tree**, because it cannot lose
- *   anything — that IS the intended flow: edit on the canvas, then put the work
- *   on a branch, then commit it.
+ * - **Branch is a dropdown of the branches that exist**, not a free-text field
+ *   — `BranchSection` owns it, along with "New branch from current" and the
+ *   commit-and-switch dialog a dirty tree needs. The panel never stashes; see
+ *   that module's doc for the three decisions behind it.
  * - **Switching branches reloads the board.** The `.tsx` files under the canvas
  *   are about to be different files; leaving the board showing a parse of the
  *   old ones would be the "shows something the files do not say" failure this
- *   codebase has been bitten by before. The panel warns inline before the
- *   switch rather than after.
+ *   codebase has been bitten by before.
  * - **Push shows git's own output.** The remote's "create a pull request" URL
  *   lives there, and an auth failure's real message is the only useful thing to
  *   show. Studio holds no git credentials: authentication is the user's own
@@ -45,7 +41,7 @@ import { Panel, useAutoFocusPanel } from '@admin/shared/Panel'
 import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
 import { Checkbox } from '@ui/components/Checkbox'
-import { Input, Textarea } from '@ui/components/Input'
+import { Textarea } from '@ui/components/Input'
 import { EmptyState } from '@ui/components/EmptyState'
 import { Section } from '@ui/components/Section'
 import { pushToast } from '@ui/components/Toast'
@@ -56,15 +52,14 @@ import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import {
   commitGitFiles,
-  createGitBranch,
   getGitFileDiff,
   initGitRepository,
   isGitStateRefusal,
   pushGitBranch,
-  switchGitBranch,
   type GitFileDiff,
   type GitStatusEntry,
 } from '@site/studio/gitRequests'
+import { BranchSection } from './BranchSection'
 import { DeploySection } from './DeploySection'
 import { GitDiffView } from './GitDiffView'
 import { GitHistorySection } from './GitHistorySection'
@@ -88,11 +83,12 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
   const [openFile, setOpenFile] = useState<string | null>(null)
   const [diff, setDiff] = useState<GitFileDiff | null>(null)
   const [message, setMessage] = useState('')
-  const [branchName, setBranchName] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  const [switchWarning, setSwitchWarning] = useState<string | null>(null)
   const [pushOutput, setPushOutput] = useState<string | null>(null)
   const [historyNonce, setHistoryNonce] = useState(0)
+  // Bumped by anything that changes the ref list, so the branch dropdown
+  // re-reads without this panel knowing which action did it.
+  const [refsNonce, setRefsNonce] = useState(0)
 
   if (!isOpen || variant !== 'docked') return null
 
@@ -161,24 +157,6 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
       setHistoryNonce((n) => n + 1)
     })
 
-  const createBranch = () =>
-    run('Create branch', async () => {
-      const result = await createGitBranch(dir, branchName.trim())
-      pushToast({ kind: 'success', title: `On branch ${result.branch}`, body: 'Your uncommitted work came with you.' })
-      setBranchName('')
-      setSwitchWarning(null)
-    })
-
-  const doSwitch = () =>
-    run('Switch branch', async () => {
-      const result = await switchGitBranch(dir, branchName.trim())
-      setBranchName('')
-      setSwitchWarning(null)
-      pushToast({ kind: 'success', title: `Switched to ${result.branch}`, body: 'Reloading the board from disk.' })
-      // The files under every frame are different files now.
-      requestCmsSiteReload()
-    })
-
   const push = () =>
     run('Push', async () => {
       const result = await pushGitBranch(dir)
@@ -226,23 +204,30 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
       {isRepo && status ? (
         <>
           {/* ---------------------------------------------------------------
-              Branch
+              Branch — which one you are on, and how you get to another.
+              Owns the dropdown, "New branch from current", and the
+              commit-and-switch dialog a dirty tree needs. See BranchSection.
           --------------------------------------------------------------- */}
+          <BranchSection
+            dir={dir}
+            branch={branch}
+            entries={entries}
+            selectedFiles={[...selected]}
+            active={isOpen}
+            refsNonce={refsNonce}
+            onRefsChanged={() => setRefsNonce((n) => n + 1)}
+            onSwitched={() => {
+              // The files under every frame are different files now.
+              setSelected(new Set())
+              setOpenFile(null)
+              setDiff(null)
+              requestCmsSiteReload()
+            }}
+            busy={busy}
+            run={run}
+          />
+
           <div className={styles.branchBar}>
-            <div className={styles.branchName}>
-              <span className={styles.branchLabel}>Branch</span>
-              <strong>{branch?.branch ?? (branch?.detached ? 'detached HEAD' : '—')}</strong>
-              {branch?.upstream ? (
-                <span className={styles.divergence}>
-                  {branch.ahead ? `${branch.ahead} ahead` : null}
-                  {branch.ahead && branch.behind ? ' · ' : null}
-                  {branch.behind ? `${branch.behind} behind` : null}
-                  {!branch.ahead && !branch.behind ? 'up to date' : null}
-                </span>
-              ) : (
-                <span className={styles.divergence}>no upstream</span>
-              )}
-            </div>
             <Button
               variant="secondary"
               size="sm"
@@ -253,38 +238,6 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
               {busy === 'Push' ? 'Pushing…' : 'Push'}
             </Button>
           </div>
-
-          <div className={styles.branchControls}>
-            <Input
-              fieldSize="sm"
-              value={branchName}
-              placeholder="new-branch-name"
-              aria-label="Branch name"
-              onChange={(e) => setBranchName(e.target.value)}
-            />
-            <Button variant="secondary" size="sm" disabled={busy !== null || !branchName.trim()} onClick={createBranch}>
-              Create
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy !== null || !branchName.trim()}
-              onClick={() => {
-                // Switching checks out different files under the canvas, so
-                // say so BEFORE it happens rather than reloading the board out
-                // from under someone mid-thought.
-                if (switchWarning) void doSwitch()
-                else setSwitchWarning(`Switching to "${branchName.trim()}" reloads the board from disk. Click Switch again to continue.`)
-              }}
-            >
-              Switch
-            </Button>
-          </div>
-          {switchWarning ? (
-            <p className={styles.warning} role="status">
-              {switchWarning}
-            </p>
-          ) : null}
           {pushOutput ? <pre className={styles.pushOutput}>{pushOutput}</pre> : null}
 
           {/* ---------------------------------------------------------------

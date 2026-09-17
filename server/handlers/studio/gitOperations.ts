@@ -212,6 +212,110 @@ async function isUntracked(dir: string, relPath: string): Promise<boolean> {
   return !result.ok
 }
 
+export interface GitBranchSummary {
+  /** Short name — `main` for a local branch, `origin/main` for a remote-tracking one. */
+  name: string
+  /** `true` for a `refs/remotes/…` ref. The panel offers these as "check out a copy of", never as a thing to commit onto. */
+  remote: boolean
+  /** The one branch HEAD points at. Always exactly one, or none on a detached HEAD. */
+  current: boolean
+  /** Configured upstream (`origin/main`), or `null`. Always `null` for a remote-tracking ref. */
+  upstream: string | null
+  /** Commits on this branch not on its upstream. `null` when there is no upstream to compare against. */
+  ahead: number | null
+  behind: number | null
+  /** The upstream is configured but no longer exists on the remote — git's own `gone`. */
+  upstreamGone: boolean
+}
+
+export interface GitBranchList {
+  branches: GitBranchSummary[]
+  /** The checked-out branch, or `null` on a detached HEAD. */
+  current: string | null
+  /**
+   * What `origin/HEAD` points at, short form (`main`). This is the remote's
+   * own answer to "what is the default branch", and it is what a pull request
+   * targets and what "you are on a non-default branch" is measured against.
+   * `null` when there is no origin, or when nobody has ever run
+   * `git remote set-head`.
+   */
+  defaultBranch: string | null
+}
+
+/** `%xx` in a `for-each-ref` format is a raw byte — 0x1F separates fields, and no ref name may contain a control character. */
+const REF_FIELD_SEP = ''
+
+const BRANCH_REF_FORMAT = [
+  '%(refname)',
+  '%(refname:short)',
+  '%(upstream:short)',
+  '%(upstream:track,nobracket)',
+  '%(HEAD)',
+].join('%1f')
+
+/** `ahead 2, behind 1` / `ahead 3` / `behind 4` / `gone` / empty — git's `%(upstream:track,nobracket)`. */
+function parseUpstreamTrack(track: string): { ahead: number | null; behind: number | null; gone: boolean } {
+  if (track === 'gone') return { ahead: null, behind: null, gone: true }
+  const ahead = /ahead (\d+)/.exec(track)
+  const behind = /behind (\d+)/.exec(track)
+  if (!ahead && !behind) return { ahead: null, behind: null, gone: false }
+  return { ahead: ahead ? Number(ahead[1]) : 0, behind: behind ? Number(behind[1]) : 0, gone: false }
+}
+
+/**
+ * Every branch this repository knows about — local and remote-tracking — with
+ * per-branch divergence, in ONE `for-each-ref`.
+ *
+ * A read: it takes no write lock (see `withGitWriteLock`). The panel replaced
+ * a free-text branch field with a dropdown built from this, so it runs
+ * whenever the Version control panel opens; one subprocess that answers the
+ * whole question is the difference between that being free and being a
+ * per-branch `rev-list` storm.
+ *
+ * `%(upstream:track)` is git's own ahead/behind, computed against whatever
+ * each branch's upstream is — it is NOT a fetch, so it is as current as the
+ * last fetch and no more. That is exactly what the panel should show: G4's
+ * Fetch button is what makes it fresher.
+ */
+export async function listGitBranches(dir: string): Promise<GitBranchList | GitOperationFailure> {
+  const result = await runGit(dir, ['for-each-ref', `--format=${BRANCH_REF_FORMAT}`, 'refs/heads', 'refs/remotes'])
+  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not list branches'))
+
+  const branches: GitBranchSummary[] = []
+  let current: string | null = null
+  for (const line of result.stdout.split('\n')) {
+    if (!line.trim()) continue
+    const [refname, short, upstream, track, head] = line.split(REF_FIELD_SEP)
+    if (!refname || !short) continue
+    // `origin/HEAD` is a symbolic ref to another entry in this same list, not
+    // a branch anyone can check out. It is read separately, below.
+    if (refname.endsWith('/HEAD')) continue
+    const remote = refname.startsWith('refs/remotes/')
+    const isCurrent = head === '*'
+    if (isCurrent) current = short
+    const { ahead, behind, gone } = parseUpstreamTrack((track ?? '').trim())
+    branches.push({
+      name: short,
+      remote,
+      current: isCurrent,
+      upstream: remote ? null : upstream || null,
+      ahead,
+      behind,
+      upstreamGone: gone,
+    })
+  }
+
+  return { branches, current, defaultBranch: await readDefaultBranch(dir) }
+}
+
+/** `origin/HEAD` → `main`. Absent on a repository nobody has cloned (git only writes it on clone or an explicit `set-head`), which is a normal `null`, not a failure. */
+async function readDefaultBranch(dir: string): Promise<string | null> {
+  const result = await runGit(dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+  if (!result.ok) return null
+  const value = result.stdout.trim()
+  return value.startsWith('origin/') ? value.slice('origin/'.length) : value || null
+}
+
 export interface GitLogEntry {
   sha: string
   shortSha: string
@@ -379,6 +483,63 @@ async function runCommitFiles(
   const head = await runGit(dir, ['rev-parse', 'HEAD'])
   const sha = head.ok ? head.stdout.trim() : ''
   return { ok: true, sha, shortSha: sha.slice(0, 7), files: [...files] }
+}
+
+export interface GitCommitAndSwitchResult extends GitCommitResult {
+  /** The branch now checked out. */
+  branch: string
+}
+
+/**
+ * Commit the named files, then switch — the one action the panel offers when
+ * someone picks a different branch with uncommitted work on screen.
+ *
+ * This exists as a single operation rather than two client calls because the
+ * two halves have to be atomic against every other writer: between a commit
+ * and a switch, a canvas save can dirty the tree again and turn the switch
+ * into a refusal the user did nothing to cause. Both halves run inside ONE
+ * hold of the project write lock — `commitFiles` and `switchBranch` acquire it
+ * reentrantly, so composing them here costs nothing and cannot deadlock.
+ *
+ * Studio still never stashes. If the tree is STILL dirty after the commit
+ * (files the user did not tick), the switch refuses and says so, naming what
+ * is left. The commit stands — it is what the user asked for, it is
+ * recoverable, and silently rolling it back would be the surprising option.
+ */
+export function commitAndSwitchBranch(
+  dir: string,
+  message: string,
+  files: readonly string[],
+  branch: string,
+): Promise<GitCommitAndSwitchResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runCommitAndSwitch(dir, message, files, branch))
+}
+
+async function runCommitAndSwitch(
+  dir: string,
+  message: string,
+  files: readonly string[],
+  branch: string,
+): Promise<GitCommitAndSwitchResult | GitOperationFailure> {
+  // Validate the branch name BEFORE committing: refusing after a commit that
+  // only existed to enable the switch would be the worst of both.
+  if (!isArgvSafeBranchName(branch)) {
+    return failure('invalid-branch-name', `"${branch}" is not a usable branch name.`)
+  }
+
+  const committed = await commitFiles(dir, message, files)
+  if (isGitFailure(committed)) return committed
+
+  const switched = await switchBranch(dir, branch, 'switch')
+  if (isGitFailure(switched)) {
+    if (switched.code !== 'dirty-tree') return switched
+    return {
+      ...switched,
+      message: `Committed ${committed.shortSha}, but these files are still uncommitted, so the branch was not switched. Commit or discard them, then switch.`,
+    }
+  }
+
+  return { ...committed, branch: switched.branch }
 }
 
 export interface GitPushResult {
