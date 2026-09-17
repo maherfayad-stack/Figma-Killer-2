@@ -321,9 +321,15 @@ describe('primitives carry the inspector skin', () => {
 //     widthHeightRow=180, xyRow=216, rotationRadiusRow=252 — three
 //     consecutive 32px+4px rows following Layer's own row, exactly this
 //     count).
-//   - layout (headered "Layout"; per its own doc, never collapses to empty):
-//     for a plain block (not itself a flex/grid container) — LayoutModeRow +
-//     PaddingCluster + the margin row = 3 rows.
+//   - layout (headered "Layout"): 0 rows for a plain block. panel-39 made
+//     this section a COLLAPSED disclosure whenever no layout exists —
+//     `display` unset or `none`-equivalent — so its rest state is the header
+//     alone plus an "Add auto layout" `+`, exactly like every other empty
+//     section here. Its body (LayoutModeRow + PaddingCluster + the margin row
+//     + clip content) is one click away and unchanged; a flex/grid container
+//     still renders it `forceOpen`, which is why this row is the REST state
+//     and not the section's typical size. Measured saving: 167px on every
+//     selection that is not itself a container.
 //   - fill / stroke / shadow / blur / export / transform / animations /
 //     interaction (headered, all use `Section`'s `empty` prop — Law 1's
 //     "nothing set anywhere and the user hasn't clicked '+' yet" state,
@@ -358,7 +364,7 @@ const SECTION_MINIMAL_STATE: Record<(typeof EXPECTED_SECTION_IDS)[number], { has
   layer: { hasHeader: false, rowCount: 1 },
   align: { hasHeader: false, rowCount: 0 },
   measures: { hasHeader: false, rowCount: 3 },
-  layout: { hasHeader: true, rowCount: 3 },
+  layout: { hasHeader: true, rowCount: 0 },
   fill: { hasHeader: true, rowCount: 0 },
   // Multi-select only, so it never mounts for the single-node F1/F2/F3/F4
   // fixtures below. Its floor is `Section`'s `empty` header — a selection
@@ -380,7 +386,7 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
   layer: 32, // 0 + 1*32 + 0*4
   align: 0, // 0 + 0 + 0 — renders null, no flex/grid parent
   measures: 104, // 0 + 3*32 + 2*4
-  layout: 136, // 32 + 3*32 + 2*4
+  layout: 32, // 32 + 0 + 0 — collapsed until a layout exists (panel-39)
   fill: 32, // 32 + 0 + 0
   selectionColors: 32, // multi-select only — see SECTION_MINIMAL_STATE
   stroke: 32,
@@ -411,9 +417,12 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 // whole-panel measurement lives in `tests/e2e/inspector-height.e2e.ts`, which
 // also writes the MEASURED version of this table to
 // `docs/audits/penpot-inspector-baseline/`. That spec's first real run
-// (`STATE.md` panel-37) put numbers on the chrome for the first time: 274px
-// above the scroll container, plus a 158px Module block inside it for a text
-// node — which is why the two tables differ by far more than rounding.
+// (`STATE.md` panel-37) put numbers on the chrome for the first time — 274px,
+// of which panel-39 reclaimed 92 by moving `FrameSizePanel` out of every node
+// selection and trimming the tab strip — and on the Module block, which is
+// now measured as a `data-section-id="module"` row in the same artefact
+// (158px on a text node, 252px on an image) rather than being invisible to
+// both tables.
 // ---------------------------------------------------------------------------
 
 const BETWEEN_SECTION_GAP = 8 // --inspector-space-m
@@ -463,19 +472,21 @@ describe('computed section rest-height budget', () => {
     expect(rotationRadiusRow - xyRow).toBeLessThanOrEqual(ROW_H + WITHIN_GROUP_GAP)
   })
 
-  it('the F2 text node Design tab costs 716px of sections with More collapsed', () => {
+  it('the F2 text node Design tab costs 612px of sections with More collapsed', () => {
     // This is a SECTIONS-only sum, and it is not the whole Design tab. The
-    // measured height for the same fixture is far larger
-    // (`tests/e2e/inspector-height.e2e.ts`) — the difference is the
-    // write-target row, the Module block and container padding, none of which
-    // a static row count can see. What this exact number is good for is catching a section that
+    // measured `contentHeight` for the same fixture is 916px against 718px of
+    // room at a 900px viewport (`tests/e2e/inspector-height.e2e.ts`,
+    // `STATE.md` panel-39) — the difference is the write-target row, the
+    // Module block and container padding, none of which a static row count
+    // can see. What this exact number is good for is catching a section that
     // quietly grows a resident row without anyone opening a browser; it is
     // NOT evidence that the tab fits.
     //
-    // 756 -> 716 is the between-section gap moving from 12px to Figma's and
-    // Penpot's own measured 8px, across ten gaps.
+    // 756 -> 612 is panel-39: Layout's rest state dropped from 3 rows to a
+    // collapsed header (-104), and the between-section gap moved from 12px to
+    // Figma's measured 8px (-40 across ten gaps).
     const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
-    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(716)
+    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(612)
   })
 
   it('the More disclosure buys back 152px that used to be always-mounted', () => {
@@ -490,4 +501,14 @@ describe('computed section rest-height budget', () => {
     expect(before - after).toBe(152)
   })
 
+  it('collapsing Layout until a layout exists is worth 104px of section column', () => {
+    // The static half of panel-39's largest single cut. The MEASURED saving is
+    // larger (167px — `05-section-heights.md`), because the real body carries
+    // a flex/grid block and a settings row this row-count model does not try
+    // to predict. What this pins is that Layout's REST state is a header and
+    // nothing else, the same shape every other unused section here has.
+    const openLayout = computedRestHeight(true, 3)
+    expect(openLayout - EXPECTED_REST_HEIGHT_PX.layout).toBe(104)
+    expect(EXPECTED_REST_HEIGHT_PX.layout).toBe(EXPECTED_REST_HEIGHT_PX.fill)
+  })
 })

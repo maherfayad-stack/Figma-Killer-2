@@ -17,29 +17,36 @@
  * (a bare rectangle, no layout at all) shows "LAYOUT" collapsed to the
  * Title-plus-trailing-`+` convention every other empty section uses.
  *
- * ## A deliberate divergence from Penpot's literal collapsed-empty gesture
+ * ## One row until a layout exists — a disclosure, not a deletion (panel-39)
  *
- * This section does NOT use `Section`'s `empty` prop to hide its body the
- * way Penpot's own "+" convention would suggest. `PaddingCluster.tsx`'s own
- * doc already makes this exact argument for padding — Figma/Penpot only
- * show padding once Auto Layout is on, which is an ENGINE fact, not a CSS
- * one, and hiding it for a plain block element would be a real capability
- * loss the plan's own intro explicitly rules out ("without removing a
- * single capability"). The same reasoning applies unchanged to this
- * section's OTHER always-useful controls: `overflow` ("Clip content"),
- * and the item-level `flex`/`gridColumn`/`gridRow` reachable through
- * `LayoutSettingsButton` — all real, working CSS on ANY element regardless
- * of whether ITS OWN `display` is flex/grid. Collapsing them behind an
- * empty "+" whenever no layout mode is chosen would silently take away
- * controls Studio has always exposed. So this section renders `forceOpen`
- * with NO `empty` state at all: `LayoutModeRow` (which already visually
- * communicates "no auto layout" via its own pressed segment) plus the
- * mode-conditional flex/grid block sit above the ALWAYS-resident
- * padding/margin/clip-content rows, exactly as the pre-migration
- * `LayoutSection.tsx` already rendered them. The header's trailing "remove
- * layout" (−) button is the one piece of Penpot's populated-state chrome
- * this section keeps (shown only once a mode is active) — the ⋮ settings
- * menu and the separate "FLEX BOARD" sub-header are skipped because P0
+ * This section used to render `forceOpen` unconditionally, on the argument
+ * that `overflow`, padding, margin and the item-level `flex`/`gridColumn`/
+ * `gridRow` are real, working CSS on ANY element, so hiding them behind
+ * Penpot's empty-"+" gesture would be a capability loss. The measurement
+ * that followed (`docs/audits/penpot-inspector-baseline/05-section-heights.
+ * md`) priced that argument: **199px on every selection with no layout at
+ * all**, 167px of which is body for controls nobody on a plain block had
+ * asked for — the single largest line item in the Design tab's overflow of
+ * the 900px budget, on three of the four baseline fixtures.
+ *
+ * The argument was right about the capability and wrong about the
+ * mechanism. `Section`'s `empty` prop would indeed delete the body; a
+ * COLLAPSED `Section` does not. So the rule is now:
+ *
+ *   - `display` is flex/grid (or set to a keyword the mode buttons cannot
+ *     represent, or Mixed) → `forceOpen`, exactly as before. Nothing about a
+ *     laid-out container changed.
+ *   - otherwise → a collapsible `Section`, closed at rest: ONE 32px row,
+ *     with a trailing `+` that turns on vertical auto layout (Figma's own
+ *     gesture for this row) and a chevron that discloses the full body —
+ *     mode row, padding, margin, clip content, settings — unchanged, in one
+ *     click. Nothing is removed and nothing moved; `indicator` lights when
+ *     any property this section claims is actually set, so a collapsed
+ *     header never hides a value silently.
+ *
+ * The header's trailing "remove layout" (−) button stays the one piece of
+ * Penpot's populated-state chrome this section keeps — the ⋮ settings menu
+ * and the separate "FLEX BOARD" sub-header are still skipped because P0
  * never decoded what they write, matching `MeasuresSection`'s own posture
  * of not inventing undecoded icon behavior.
  *
@@ -81,6 +88,7 @@ import { Section } from '@ui/components/Section'
 import { Button } from '@ui/components/Button'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { MinusIcon } from 'pixel-art-icons/icons/minus'
+import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { AlignGrid } from '@ui/components/AlignGrid'
 import { useSpacingTokens } from '@site/property-controls/tokenUtils'
@@ -267,13 +275,27 @@ export function LayoutSection() {
     />
   )
 
+  // A layout EXISTS when `display` resolves to one of the four modes, when
+  // it holds a keyword the mode buttons cannot represent (`inline-block`,
+  // `table`, …  — still a real, load-bearing value the mode row is the only
+  // place to see), or when the selection disagrees. Those are the states
+  // whose body must be open at rest; everything else is a plain block, and
+  // gets the one-row disclosure this section's own doc describes.
+  const hasLayout = (layoutMode != null && layoutMode !== 'none') || hasStyleValue(storedStyles.display)
+  // Something in this section is set even though no layout is — padding on a
+  // plain block, a margin, `overflow: hidden`. The collapsed header shows the
+  // dot so a stored value is never silently behind a closed disclosure.
+  const hasStoredValue = LAYOUT_PROPERTIES.some((property) => hasStyleValue(storedStyles[property]))
+
   return (
     <Section
       title="Layout"
-      forceOpen
+      forceOpen={hasLayout}
+      indicator={!hasLayout && hasStoredValue}
+      indicatorTestId="inspector-layout-indicator"
       flush
       actions={
-        layoutMode != null && layoutMode !== 'none' && !isMixed(layoutMode) ? (
+        hasLayout && layoutMode != null && layoutMode !== 'none' && !isMixed(layoutMode) ? (
           <Button
             variant="ghost"
             size="xs"
@@ -284,6 +306,21 @@ export function LayoutSection() {
             data-testid="inspector-layout-remove"
           >
             <MinusIcon size={12} aria-hidden="true" />
+          </Button>
+        ) : !hasLayout ? (
+          // Figma's own gesture for this row: `+` adds a vertical stack. The
+          // chevron beside the title is what opens the body for padding /
+          // margin / clip content without adding a layout at all.
+          <Button
+            variant="ghost"
+            size="xs"
+            iconOnly
+            aria-label="Add auto layout"
+            tooltip="Add auto layout"
+            onClick={() => applyLayoutMode('vertical')}
+            data-testid="inspector-layout-add"
+          >
+            <PlusIcon size={12} aria-hidden="true" />
           </Button>
         ) : undefined
       }
