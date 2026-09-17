@@ -21,6 +21,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProjects'
 import { tryServeStudioGitSync } from '../studio/gitSyncRoutes'
+import { originAcceptsStoredGithubToken } from '../studio/gitOperations'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 async function git(cwd: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -68,6 +69,12 @@ async function configure(dir: string): Promise<void> {
   await git(dir, ['config', 'user.email', 'studio-test@example.com'])
   await git(dir, ['config', 'user.name', 'Studio Test'])
   await git(dir, ['config', 'commit.gpgsign', 'false'])
+  // An empty value CLEARS the helper list. Without it, a network verb with no
+  // credential invokes the host's helper — on Windows that is Git Credential
+  // Manager, which opens a GUI dialog and blocks for the full
+  // `GIT_NETWORK_TIMEOUT_MS`. Every remote below is a local bare repository
+  // reached by path, so no helper has anything to contribute anyway.
+  await git(dir, ['config', 'credential.helper', ''])
 }
 
 async function makeRepo(dir: string): Promise<void> {
@@ -344,6 +351,56 @@ describe('POST git/fetch and git/pull', () => {
     await makeRepo(solo)
     expect((await call('/admin/api/studio/git/fetch', post({ dir: solo }))).status).toBe(409)
     expect((await call('/admin/api/studio/git/pull', post({ dir: solo }))).status).toBe(409)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The credential gate the network verbs share
+// ---------------------------------------------------------------------------
+
+/**
+ * `GIT_ASKPASS` answers whatever host git dialled — it is handed a prompt
+ * string, not a destination it can refuse. So a stored GitHub token passed to
+ * an invocation whose `origin` is somebody else's server hands that server a
+ * `repo`-scoped token for the whole account. `push` learned this in the
+ * security review of PR #151; `fetch` and `pull` dial the same remote and go
+ * through the same gate rather than re-deriving it, which is what these assert.
+ */
+describe('originAcceptsStoredGithubToken — the gate fetch and pull share with push', () => {
+  it('refuses a local bare remote — exactly the shape every test above uses', async () => {
+    const dir = makeProjectDir()
+    await makeRepo(dir)
+    await makeBareRemote(dir)
+    expect(await originAcceptsStoredGithubToken(dir)).toBe(false)
+  })
+
+  it('refuses a project with no origin at all', async () => {
+    const dir = makeProjectDir()
+    await makeRepo(dir)
+    expect(await originAcceptsStoredGithubToken(dir)).toBe(false)
+  })
+
+  it('accepts a github.com origin, in either URL shape', async () => {
+    for (const url of ['https://github.com/acme/storefront.git', 'git@github.com:acme/storefront.git']) {
+      const dir = makeProjectDir()
+      await makeRepo(dir)
+      await git(dir, ['remote', 'add', 'origin', url])
+      expect({ url, accepted: await originAcceptsStoredGithubToken(dir) }).toEqual({ url, accepted: true })
+    }
+  })
+
+  it('refuses a look-alike host and an executing transport', async () => {
+    for (const url of [
+      'https://github.com.evil.example/acme/storefront.git',
+      'https://gitlab.com/acme/storefront.git',
+      'ext::sh -c "curl evil.example"',
+      'file:///tmp/somewhere',
+    ]) {
+      const dir = makeProjectDir()
+      await makeRepo(dir)
+      await git(dir, ['remote', 'add', 'origin', url])
+      expect({ url, accepted: await originAcceptsStoredGithubToken(dir) }).toEqual({ url, accepted: false })
+    }
   })
 })
 

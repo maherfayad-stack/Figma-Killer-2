@@ -31,6 +31,11 @@
  *   one by deleting a project would be deleting user data to satisfy a button.
  *   A project that is already here is reported as a refusal the user can act
  *   on, and their bytes stay where they are.
+ * - **A target another job owns refuses too.** `git clone` is what creates the
+ *   directory, so "it does not exist yet" is not a lock — two jobs for one
+ *   repository would both pass that check. `inFlightTargets` holds the name for
+ *   the life of the job, which is what makes the failure cleanup below safe:
+ *   nothing at `target` can have come from anywhere but this job.
  * - **Containment is checked on the real path** after the clone, before the
  *   directory is reported back — a `.git` arriving from a hostile repository
  *   cannot relocate the target, but the check costs nothing and it is the rule.
@@ -86,6 +91,22 @@ export type CloneJob = Static<typeof CloneJobSchema>
 
 const jobs = new Map<string, CloneJob>()
 
+/**
+ * Targets a clone job currently owns.
+ *
+ * `existsSync(target)` alone is not a lock: `git clone` creates the directory,
+ * not Studio, so two jobs for the SAME repository both see a free target, both
+ * spawn git into it, and the loser's failure handler then deletes the winner's
+ * work — including a clone that had already finished and been reported as a
+ * project. (Two clicks on Connect, or a client that retried, is enough.)
+ *
+ * Holding the name for the life of the job makes "nothing at `target` existed
+ * when this job started, and nothing else may put anything there" true, which
+ * is exactly the premise the cleanup below relies on before it removes
+ * anything.
+ */
+const inFlightTargets = new Set<string>()
+
 /** How long a finished job stays pollable — long enough for a client that navigated away, short enough that nothing accumulates. */
 const FINISHED_JOB_TTL_MS = 10 * 60 * 1000
 
@@ -130,7 +151,8 @@ async function runCloneJob(
   const target = cloneTargetDir(remote)
   // Flipped once this job is the thing that may have put bytes at `target`.
   // Guards the cleanup below: a refusal raised BEFORE this point was caused by
-  // something already on disk, and must never delete it.
+  // something already on disk, and must never delete it. Sound only because
+  // this job holds `target` in `inFlightTargets` — see that set's doc.
   let mayHaveWritten = false
   try {
     // Re-checked here as well as at the route: the route's check and this one
@@ -209,6 +231,10 @@ async function runCloneJob(
     job.phase = 'failed'
     job.error = err instanceof Error ? err.message : 'The clone failed.'
     job.finishedAt = Date.now()
+  } finally {
+    // Released only now: while the job runs, the name belongs to it, and a
+    // second request for the same repository is a refusal rather than a race.
+    inFlightTargets.delete(target)
   }
 }
 
@@ -224,6 +250,7 @@ export function startGitCloneJob(
 ): CloneJob {
   const now = Date.now()
   pruneFinishedJobs(now)
+  const target = cloneTargetDir(remote)
   const job: CloneJob = {
     id: randomUUID(),
     phase: 'cloning',
@@ -233,6 +260,20 @@ export function startGitCloneJob(
     error: null,
   }
   jobs.set(job.id, job)
+
+  // Refused here too, not only at the route: a second job for a target another
+  // job owns would spawn git into a directory git is already filling, fail
+  // with "already exists and is not an empty directory", and then take the
+  // FIRST job's clone with it on cleanup. Everything from here to the `add` is
+  // synchronous, so no request can interleave.
+  if (inFlightTargets.has(target)) {
+    job.phase = 'failed'
+    job.error = `A clone into "${githubProjectFolderName(remote)}" is already running. Wait for it to finish.`
+    job.finishedAt = now
+    return job
+  }
+  inFlightTargets.add(target)
+
   // Deliberately not awaited — the route answers with the id immediately, and
   // `runCloneJob` catches everything, so there is no unhandled rejection.
   void runCloneJob(job, remote, credential, deps)
@@ -244,12 +285,22 @@ export function readGitCloneJob(id: string): CloneJob | null {
   return jobs.get(id) ?? null
 }
 
-/** Refuses up front when a project with the derived name is already on disk, so the client is told before a job exists. */
+/**
+ * Refuses up front when a project with the derived name is already on disk —
+ * or when another clone job is already filling that name — so the client is
+ * told before a job exists rather than through a poll.
+ *
+ * The second half is the one that is easy to miss: `git clone` is what creates
+ * the directory, so between "the target is free" and "git has made it" there
+ * is a window in which a second request also sees it free.
+ */
 export function cloneTargetIsFree(remote: GithubRemote): boolean {
-  return !existsSync(cloneTargetDir(remote))
+  const target = cloneTargetDir(remote)
+  return !inFlightTargets.has(target) && !existsSync(target)
 }
 
 /** Test-only: empties the registry between cases so a leaked job cannot make a later assertion pass. */
 export function clearGitCloneJobsForTest(): void {
   jobs.clear()
+  inFlightTargets.clear()
 }

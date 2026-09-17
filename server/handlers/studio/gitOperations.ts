@@ -64,11 +64,19 @@
  * token is never read from the environment, never accepted as a request
  * field, and never placed in argv or a remote URL — `gitRunner.ts` hands it to
  * a one-shot askpass script instead.
+ *
+ * **The token is only offered to a github.com remote.** An askpass program
+ * answers whatever host git dialled — it is handed a prompt string, not a
+ * destination it can refuse — so every network verb (`push`, `fetch`, `pull`)
+ * reads `origin`'s push URL through `originAcceptsStoredGithubToken` and drops
+ * the credential unless `parseGithubRemoteUrl` accepts it. `origin` is not
+ * always Studio's: `setOriginRemote` only ever writes an allowlisted URL, but a
+ * project can arrive with a `.git` pointing anywhere.
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-import { isArgvSafeBranchName } from './gitPaths'
+import { isArgvSafeBranchName, parseGithubRemoteUrl } from './gitPaths'
 import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
 import {
   clientSafeGitError,
@@ -173,6 +181,36 @@ async function hasOriginRemote(dir: string): Promise<boolean> {
   const result = await runGit(dir, ['remote'])
   if (!result.ok) return false
   return result.stdout.split('\n').some((line) => line.trim() === 'origin')
+}
+
+/**
+ * True when `origin`'s push URL is a repository on github.com — the ONLY
+ * remote a stored GitHub token may be offered to.
+ *
+ * This is not belt-and-braces, it is the guard. `GIT_ASKPASS` answers whatever
+ * host git is talking to: the script `gitAskpass.ts` writes prints the token
+ * for every "Password for '…'" prompt, because an askpass program is not told
+ * which credential the caller intended. So the decision "is this remote
+ * allowed to see this token" has to be made HERE, before the script exists.
+ *
+ * `origin` is not always Studio's: `setOriginRemote` writes only URLs that
+ * passed `parseGithubRemoteUrl`, but a project can arrive with a `.git` whose
+ * `origin` the user set in their own terminal — a company GitLab, a mirror, an
+ * `ext::` transport. Without this check the first push after signing in hands
+ * that host a token with the `repo` scope over the whole account.
+ *
+ * A non-GitHub origin is NOT an error: the push proceeds with no credential
+ * from Studio, which is exactly the pre-G2 behaviour (the host's own helper or
+ * ssh-agent answers, or git reports why it could not).
+ *
+ * Exported because it IS the guard — it gets its own rejection tests rather
+ * than being reachable only through a push that needs a network.
+ */
+export async function originAcceptsStoredGithubToken(dir: string): Promise<boolean> {
+  const result = await runGit(dir, ['remote', 'get-url', '--push', 'origin'])
+  if (!result.ok) return false
+  const url = result.stdout.trim().split('\n')[0]?.trim() ?? ''
+  return parseGithubRemoteUrl(url) !== null
 }
 
 export interface GitRemote {
@@ -643,6 +681,10 @@ export interface GitPushResult {
  * own credential helper or ssh-agent exactly as it did before, and a failure
  * passes git's real message through, because "Support for password
  * authentication was removed" is exactly what the user needs to read.
+ *
+ * It is also DROPPED when `origin` is not a github.com repository — see
+ * `originAcceptsStoredGithubToken`. An askpass program answers whatever host
+ * git dialled, so "which remote may see this token" is decided here.
  */
 export function pushCurrentBranch(
   dir: string,
@@ -668,9 +710,13 @@ async function runPushCurrentBranch(
   }
 
   const branch = status.branch.branch
+  // Resolved BEFORE the token is written anywhere: a non-GitHub origin never
+  // causes an askpass script carrying the token to exist at all.
+  const credential =
+    options.credential && (await originAcceptsStoredGithubToken(dir)) ? options.credential : undefined
   const result = await runGit(dir, ['push', '--set-upstream', 'origin', branch], {
     timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-    credential: options.credential,
+    credential,
   })
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Push failed'))
   return { ok: true, branch, output: clientSafeGitError(result, '') || result.stdout.trim() }
@@ -732,6 +778,27 @@ export interface GitConflictAbortResult {
  */
 export type GitConflictSide = 'mine' | 'theirs'
 
+/**
+ * The credential a NETWORK verb may actually hand to git, which is `undefined`
+ * unless `origin` is a github.com repository.
+ *
+ * `GIT_ASKPASS` answers whatever host git dialled — the script is handed a
+ * prompt string, not a destination it can refuse — so passing a stored GitHub
+ * token to an invocation whose `origin` is somebody else's server gives that
+ * server a `repo`-scoped token for the whole account. `push` learned this the
+ * hard way (the security review of PR #151, proven against a local 401
+ * listener); `fetch` and `pull` dial exactly the same remote and go through
+ * the same gate rather than re-deriving it.
+ *
+ * A non-GitHub origin is NOT an error: the verb proceeds with no credential
+ * from Studio, which is the pre-G2 behaviour — the host's own helper or
+ * ssh-agent answers, or git reports why it could not.
+ */
+async function credentialForOrigin(dir: string, credential: string | undefined): Promise<string | undefined> {
+  if (!credential) return undefined
+  return (await originAcceptsStoredGithubToken(dir)) ? credential : undefined
+}
+
 /** `git fetch --prune origin`. A network verb, so it takes the long timeout; `--prune` is what makes a deleted upstream report as `gone` rather than silently lingering. */
 export function fetchRemote(
   dir: string,
@@ -746,7 +813,7 @@ async function runFetchRemote(dir: string, credential: string | undefined): Prom
   }
   const result = await runGit(dir, ['fetch', '--prune', 'origin'], {
     timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-    credential,
+    credential: await credentialForOrigin(dir, credential),
   })
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Fetch failed'))
   return { ok: true, output: clientSafeGitError(result, '') || result.stdout.trim() }
@@ -812,7 +879,7 @@ async function runPullRemote(
 
   const result = await runGit(dir, ['-c', 'core.editor=true', ...strategyArgs], {
     timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-    credential,
+    credential: await credentialForOrigin(dir, credential),
   })
   if (result.ok) return { ok: true, strategy, output: clientSafeGitError(result, '') || result.stdout.trim() }
 

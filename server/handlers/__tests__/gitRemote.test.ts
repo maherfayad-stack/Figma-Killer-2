@@ -26,11 +26,13 @@ import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProje
 import { tryServeStudioGitRemote } from '../studio/gitRemoteRoutes'
 import {
   cloneTargetDir,
+  cloneTargetIsFree,
   clearGitCloneJobsForTest,
   readGitCloneJob,
   startGitCloneJob,
 } from '../studio/gitClone'
 import { githubProjectFolderName, parseGithubRemoteUrl } from '../studio/gitPaths'
+import { isGitFailure, originAcceptsStoredGithubToken, pushCurrentBranch } from '../studio/gitOperations'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
@@ -350,6 +352,47 @@ describe('git clone', () => {
     expect(remotes.stdout.toString().trim()).toBe('origin')
   })
 
+  it('refuses a second clone into a target a running job owns, and does not touch its work', async () => {
+    const source = makeProjectDir()
+    await makeRepo(source)
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-clone-origin-race-'))
+    created.push(bare)
+    await git(bare, ['init', '--bare', '--initial-branch=main'])
+    await git(source, ['remote', 'add', 'origin', bare])
+    await git(source, ['push', '--set-upstream', 'origin', 'main'])
+
+    const remote = { owner: 'studio-test', repo: 'raced', url: bare, protocol: 'https' as const }
+    const target = cloneTargetDir(remote)
+    created.push(target)
+
+    expect(cloneTargetIsFree(remote)).toBe(true)
+    const first = startGitCloneJob(remote, undefined)
+
+    // `git clone` is what creates the directory, so the target does not exist
+    // yet — "is it free?" has to answer no on the RESERVATION, not on disk.
+    expect(fs.existsSync(target)).toBe(false)
+    expect(cloneTargetIsFree(remote)).toBe(false)
+
+    // …and a caller that starts one anyway is refused rather than racing into
+    // the same directory and deleting the winner's clone on its own cleanup.
+    const second = startGitCloneJob(remote, undefined)
+    expect(second.phase).toBe('failed')
+    expect(second.error).toMatch(/already running/)
+
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      const current = readGitCloneJob(first.id)
+      if (current && (current.phase === 'done' || current.phase === 'failed')) break
+      await Bun.sleep(50)
+    }
+
+    const finished = readGitCloneJob(first.id)!
+    expect(finished.error).toBeNull()
+    expect(finished.phase).toBe('done')
+    // The loser's cleanup did not take the winner's project with it.
+    expect(fs.existsSync(path.join(target, '.git'))).toBe(true)
+  }, 90_000)
+
   it('leaves no partial project behind when the clone fails', async () => {
     const remote = {
       owner: 'studio-test',
@@ -372,4 +415,69 @@ describe('git clone', () => {
     expect(finished.error).toBeTruthy()
     expect(fs.existsSync(target)).toBe(false)
   })
+})
+
+// ---------------------------------------------------------------------------
+// Which remote may see the stored token
+//
+// `GIT_ASKPASS` answers whatever host git dialled — the script is handed a
+// prompt string, not a destination it can refuse. So "may this remote see the
+// token" has to be decided BEFORE the script exists, and `origin` is not
+// always Studio's: a project can arrive with a `.git` the user pointed at a
+// company host, a mirror, or an `ext::` transport in their own terminal.
+// ---------------------------------------------------------------------------
+
+describe('a stored GitHub token is only ever offered to github.com', () => {
+  /**
+   * A value `isEmbeddableGitToken` refuses, used as a TRACER. `runGit` writes
+   * the askpass script before it spawns anything, so reaching that write
+   * throws — which makes "was the credential forwarded?" observable without a
+   * network, a real token, or a stub.
+   */
+  const UNUSABLE_TRACER = "not-a-token'; id #"
+
+  async function repoWithOrigin(url: string): Promise<string> {
+    const dir = makeProjectDir()
+    await makeRepo(dir)
+    await git(dir, ['remote', 'add', 'origin', url])
+    return dir
+  }
+
+  it('accepts a github.com origin and refuses every other one', async () => {
+    expect(await originAcceptsStoredGithubToken(await repoWithOrigin('https://github.com/octocat/hello-world.git'))).toBe(true)
+    expect(await originAcceptsStoredGithubToken(await repoWithOrigin('git@github.com:octocat/hello-world.git'))).toBe(true)
+
+    for (const hostile of [
+      'https://gitlab.example.com/octocat/hello-world.git',
+      'https://github.com.evil.test/octocat/hello-world.git',
+      'http://github.com/octocat/hello-world.git',
+      'https://user:pass@github.com/octocat/hello-world.git',
+      'ssh://git@evil.test/octocat/hello-world.git',
+      path.join(os.tmpdir(), 'some-local-mirror.git'),
+    ]) {
+      expect(await originAcceptsStoredGithubToken(await repoWithOrigin(hostile))).toBe(false)
+    }
+
+    // No `origin` at all is also "no".
+    const bare = makeProjectDir()
+    await makeRepo(bare)
+    expect(await originAcceptsStoredGithubToken(bare)).toBe(false)
+  }, 120_000)
+
+  it('forwards the credential for a github.com origin', async () => {
+    const dir = await repoWithOrigin('https://github.com/octocat/hello-world.git')
+    await expect(pushCurrentBranch(dir, { credential: UNUSABLE_TRACER })).rejects.toThrow(
+      /not in a format Studio can use/,
+    )
+  }, 60_000)
+
+  it('drops it for an origin Studio did not write, and never mentions it in the failure', async () => {
+    const dir = await repoWithOrigin(path.join(os.tmpdir(), 'studio-review-not-a-repository'))
+
+    // No throw: the tracer never reached `writeAskpassScript`, so no script
+    // carrying a credential was ever created for this remote.
+    const result = await pushCurrentBranch(dir, { credential: UNUSABLE_TRACER })
+    expect(isGitFailure(result)).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('not-a-token')
+  }, 60_000)
 })

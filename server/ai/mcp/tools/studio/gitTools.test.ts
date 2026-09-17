@@ -65,6 +65,11 @@ async function makeRepo(dir: string): Promise<void> {
   await git(dir, ['config', 'user.email', 'agent-test@example.com'])
   await git(dir, ['config', 'user.name', 'Agent Test'])
   await git(dir, ['config', 'commit.gpgsign', 'false'])
+  // Clears the helper list. Without it, `studio_git_push`'s network call
+  // invokes the host's credential helper — Git Credential Manager on Windows,
+  // which opens a GUI dialog and blocks for the full network timeout. The
+  // remote below is a local bare repository, so no helper is needed.
+  await git(dir, ['config', 'credential.helper', ''])
   fs.mkdirSync(path.join(dir, 'pages'), { recursive: true })
   fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'export default function Home() { return null }\n')
   await git(dir, ['add', '-A'])

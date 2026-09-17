@@ -28,7 +28,11 @@ import { createUser } from '../../repositories/users'
 import { createSession } from '../../auth/sessions'
 import { SESSION_COOKIE_NAME, createSessionToken, hashSessionToken, sessionExpiry } from '../../auth/tokens'
 import { clearGithubDeviceFlowsForTest } from '../studio/githubDeviceFlow'
-import { clearGithubIdentityCacheForTest, tryServeStudioGithubAuth } from '../studio/githubAuthRoutes'
+import {
+  clearGithubIdentityCacheForTest,
+  githubIdentityCacheSizeForTest,
+  tryServeStudioGithubAuth,
+} from '../studio/githubAuthRoutes'
 import { readGithubToken } from '../studio/githubCredentialStore'
 
 const TOKEN = 'ghp_0123456789abcdefABCDEF0123456789abcd'
@@ -91,6 +95,8 @@ interface CallOptions {
   cookie?: string
   body?: unknown
   fetchImpl?: typeof fetch
+  /** Sent as the `Origin` header. Absent means no header at all, which `originAllowed` trusts (curl, server-to-server). */
+  origin?: string
   /** Epoch ms the flow store should believe it is. Lets the poll pacing be asserted without sleeping. */
   now?: number
 }
@@ -103,8 +109,10 @@ async function call(pathAndQuery: string, options: CallOptions = {}): Promise<Re
     init.body = JSON.stringify(options.body)
   }
   const req = new Request(url, init)
-  // `cookie` is a forbidden header in the Request constructor — set it after.
+  // `cookie` and `origin` are forbidden headers in the Request constructor —
+  // set them after.
   if (options.cookie) req.headers.set('cookie', options.cookie)
+  if (options.origin) req.headers.set('origin', options.origin)
 
   const res = await tryServeStudioGithubAuth(req, { db }, url, url.pathname, {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
@@ -423,6 +431,48 @@ describe('github auth — rejections', () => {
     expect(pasted.status).toBe(200)
   })
 
+  /**
+   * These are the only Studio routes that write a credential, so they carry
+   * the same CSRF origin check the CMS and AI route families do. A safe method
+   * is deliberately not checked — a GET does not mutate anything here.
+   */
+  it('rejects a state-changing request from a foreign origin, before it reaches the session', async () => {
+    for (const [pathAndQuery, method, body] of [
+      ['/admin/api/studio/github/token', 'POST', { token: TOKEN }],
+      ['/admin/api/studio/github/token', 'DELETE', undefined],
+      ['/admin/api/studio/github/device/start', 'POST', undefined],
+    ] as const) {
+      const res = await call(pathAndQuery, {
+        method,
+        cookie: cookieA,
+        body,
+        origin: 'https://evil.test',
+        fetchImpl: githubStub(),
+      })
+      expect(res.status).toBe(403)
+    }
+
+    // The read side is untouched.
+    const account = await call('/admin/api/studio/github/account', {
+      cookie: cookieA,
+      origin: 'https://evil.test',
+      fetchImpl: githubStub(),
+    })
+    expect(account.status).toBe(200)
+    expect(await readGithubToken(db, 'user-a')).toBeNull()
+
+    // …and the panel's own request, which carries the request's own origin,
+    // still goes through. A check that rejected this would break sign-in.
+    const ours = await call('/admin/api/studio/github/token', {
+      method: 'POST',
+      cookie: cookieA,
+      body: { token: TOKEN },
+      origin: 'http://localhost',
+      fetchImpl: githubStub(),
+    })
+    expect(ours.status).toBe(200)
+  })
+
   it('answers 404 for a flowId that was never issued', async () => {
     const res = await call('/admin/api/studio/github/device/poll?flowId=made-up', {
       cookie: cookieA,
@@ -439,6 +489,55 @@ describe('github auth — rejections', () => {
   it('refuses to list repositories for a user who has not signed in', async () => {
     const res = await call('/admin/api/studio/github/repos', { cookie: cookieA, fetchImpl: githubStub() })
     expect(res.status).toBe(409)
+  })
+
+  /**
+   * `device/start` is the one route here that allocates without a database
+   * write, and nothing else bounds how often an authenticated caller may ask.
+   * The cap is per USER and evicts only that user's own oldest flow — a global
+   * one would let a single account's loop cancel everyone else's sign-in.
+   */
+  it('bounds how many pending sign-ins one account may hold, without touching another account’s', async () => {
+    const otherUsersFlow = await (
+      await call('/admin/api/studio/github/device/start', {
+        method: 'POST',
+        cookie: cookieB,
+        fetchImpl: githubStub(),
+      })
+    ).json()
+
+    const mine: string[] = []
+    for (let i = 0; i < 6; i++) {
+      const started = await (
+        await call('/admin/api/studio/github/device/start', {
+          method: 'POST',
+          cookie: cookieA,
+          fetchImpl: githubStub(),
+        })
+      ).json()
+      mine.push(started.flowId)
+    }
+
+    // The earliest ones were dropped to make room…
+    const oldest = await call(`/admin/api/studio/github/device/poll?flowId=${mine[0]}`, {
+      cookie: cookieA,
+      fetchImpl: githubStub(),
+    })
+    expect(oldest.status).toBe(404)
+
+    // …the most recent still works…
+    const newest = await call(`/admin/api/studio/github/device/poll?flowId=${mine[mine.length - 1]}`, {
+      cookie: cookieA,
+      fetchImpl: githubStub(),
+    })
+    expect(newest.status).toBe(200)
+
+    // …and the other account's flow was never a candidate for eviction.
+    const other = await call(`/admin/api/studio/github/device/poll?flowId=${otherUsersFlow.flowId}`, {
+      cookie: cookieB,
+      fetchImpl: githubStub(),
+    })
+    expect(other.status).toBe(200)
   })
 })
 
@@ -513,6 +612,10 @@ describe('github auth — account and sign-out', () => {
     expect(await readGithubToken(db, 'user-a')).toBe(OTHER_TOKEN)
     const { rows } = await db<{ n: number }>`select count(*) as n from git_credentials where user_id = 'user-a'`
     expect(Number(rows[0]!.n)).toBe(1)
+    // The in-memory identity does not accumulate either. It is keyed by user
+    // id; keyed by CREDENTIAL id it would gain an orphaned entry per sign-in,
+    // because each sign-in inserts a row with a new one.
+    expect(githubIdentityCacheSizeForTest()).toBe(1)
   })
 
   it('drops the credential when GitHub stops recognising it', async () => {

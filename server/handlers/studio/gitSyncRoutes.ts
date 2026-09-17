@@ -78,6 +78,13 @@
  * discipline and the repository guard in `gitRunner.ts`, and every judgement
  * of a caller-supplied string in `gitPaths.ts`.
  *
+ * Every POST here goes through `originAllowed`, the same CSRF check the
+ * credential-writing GitHub routes and `handleCmsRequest` apply. `SameSite=Lax`
+ * already stops a cross-SITE POST from carrying the session cookie; this closes
+ * the same-site-different-subdomain case, which matters because a forged `pull`
+ * rewrites a working tree and a forged `pull-request` publishes under the
+ * user's GitHub identity.
+ *
  * Refusals follow the same contract as `git.ts`: a state-based refusal is a
  * **409** with `{ error, code, … }`, a git invocation that actually failed is
  * a **500**, and anything a guard rejected — a `dir` outside the workspace, a
@@ -86,6 +93,7 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { isStateChangingMethod, originAllowed } from '../../auth/security'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import {
   isAcceptableCommitMessage,
@@ -114,6 +122,27 @@ import { getGithubTokenForRequest } from './githubToken'
 const ROUTE_PREFIX = '/admin/api/studio/git/'
 
 const NOT_FOUND = () => new Response('Not found', { status: 404 })
+
+/**
+ * Exactly the actions this sub-router answers.
+ *
+ * Declared as a set rather than inferred from the `if` ladder so the CSRF
+ * check below can run BEFORE the dispatch: a route table that decides "is this
+ * mine?" only by falling through its handlers cannot apply a guard to all of
+ * them at once.
+ */
+const OWNED_ACTIONS = new Set([
+  'branches',
+  'commit-and-switch',
+  'fetch',
+  'pull',
+  'conflicts',
+  'conflict/resolve',
+  'conflict/continue',
+  'conflict/abort',
+  'pull-request',
+  'pull-request/context',
+])
 
 /**
  * Body of `POST /admin/api/studio/git/commit-and-switch`. `files` is required
@@ -190,6 +219,18 @@ function failureResponse(failure: GitOperationFailure): Response {
 export async function tryServeStudioGitSync(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (!pathname.startsWith(ROUTE_PREFIX)) return null
   const action = pathname.slice(ROUTE_PREFIX.length)
+  if (!OWNED_ACTIONS.has(action)) return null
+
+  // CSRF defence in depth, matching `githubAuthRoutes.ts`, `handleCmsRequest`
+  // and the AI routes. `SameSite=Lax` on the session cookie already stops a
+  // cross-SITE POST from carrying it; this closes the
+  // same-site-different-subdomain case it does not cover. Every POST below
+  // changes the user's repository — a forged `pull` could rewrite their
+  // working tree, a forged `pull-request` could publish a proposal under their
+  // GitHub identity — so the check is worth the line.
+  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
+    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
+  }
 
   try {
     if (action === 'branches' && req.method === 'GET') return await serveBranches(url)

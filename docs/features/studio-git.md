@@ -24,7 +24,7 @@ same panel.
 | Route | `server/handlers/studio/gitSyncRoutes.ts` | Branches and commit-and-switch — a sibling sub-router. Both files are routing only: dir resolution, body validation, refusal → HTTP status. **No argv is built in either.** |
 | Operations | `server/handlers/studio/gitOperations.ts` | The eight things Studio may ask git to do |
 | Subprocess + guard | `server/handlers/studio/gitRunner.ts` | `Bun.spawn` discipline, env allowlist, the "is this the project's own repository" guard, the one-shot credential handover |
-| Credential handover | `server/handlers/studio/gitAskpass.ts` | The 0600 one-shot `GIT_ASKPASS` script and the token charset it refuses |
+| Credential handover | `server/handlers/studio/gitAskpass.ts` | The one-shot `GIT_ASKPASS` script and the token charset it refuses |
 | Write lock | `server/handlers/studio/projectWriteLock.ts` | One writer per project — saves, scaffolds, installs and git verbs |
 | Parser | `server/handlers/studio/gitStatusParse.ts` | `--porcelain=v2 --branch -z` → typed status. Pure. |
 | Input judgement | `server/handlers/studio/gitPaths.ts` | Every caller-supplied path, branch name, sha, message, **remote URL** |
@@ -129,7 +129,13 @@ show forty screens. Its guards:
 
 A second namespace, `/admin/api/studio/github/`. **Every route here requires a
 session** — unlike the rest of `/admin/api/studio/*` — because a credential
-belongs to an account, and `git_credentials` is keyed by user id.
+belongs to an account, and `git_credentials` is keyed by user id. The three
+state-changing ones (`POST device/start`, `POST token`, `DELETE token`)
+additionally go through `originAllowed`, the same CSRF origin check the CMS and
+AI route families apply: `SameSite=Lax` stops a cross-site POST from carrying
+the session cookie, and this closes the same-site-different-subdomain case,
+which matters more here than anywhere else on this surface because a forged
+`POST token` would plant an attacker's credential under the operator's account.
 
 | Method | Path | Body / query | Success |
 |---|---|---|---|
@@ -280,11 +286,21 @@ the token they sign in with is stored per user, encrypted.
   subprocess env is inherited by everything it spawns and is readable from
   `/proc/<pid>/environ`), and not the remote URL (that is argv, world-readable
   in the process table, and git echoes remote URLs into its own error
-  messages). Instead `runGit`'s `credential` option writes a **0600 one-shot
-  `sh` script** to a fresh 0700 temp directory, points `GIT_ASKPASS` at it, and
-  deletes the directory in a `finally` — so the token cannot outlive the single
+  messages). Instead `runGit`'s `credential` option writes a **one-shot `sh`
+  script** to a fresh temp directory, points `GIT_ASKPASS` at it, and deletes
+  the directory in a `finally` — so the token cannot outlive the single
   invocation it was written for. The script answers `x-access-token` to the
-  Username prompt and the token to anything else.
+  Username prompt and the token to anything else. The `#!` line is what makes
+  one script work on all three platforms: Git for Windows resolves the
+  interpreter itself and runs the file through its own bundled `sh`.
+- **The 0600/0700 modes are a POSIX guarantee only.** On Windows Node maps
+  `mode` onto the read-only attribute and nothing else — the script and its
+  directory report `666` however they were asked for. What keeps the token
+  private there is `%TEMP%`'s ACL (`C:\Users\<user>\AppData\Local\Temp` admits
+  only that account), which is an assumption about the host rather than
+  something Studio enforces: an operator who points `TMP`/`TEMP` at a shared
+  directory makes the script readable to other local accounts for the length of
+  one git invocation. `dispose()` is what bounds that window.
 - **The token is embedded in single quotes, and a token that could escape them
   is refused** (`isEmbeddableGitToken`: `[A-Za-z0-9_]{8,255}`, which every
   GitHub token format satisfies). Refused, not escaped — an escaping bug there
@@ -293,17 +309,44 @@ the token they sign in with is stored per user, encrypted.
 - **`-c credential.helper=` is prepended** when a credential is supplied, so a
   stale cached helper credential cannot answer first and make the sign-in the
   user just performed appear to have done nothing.
-- **Which routes use it.** Only the ones that cross the network. `push`
-  resolves it from the **session** (`getGithubTokenForRequest`) — there is
-  deliberately no `token` field on that wire, so no request and no proxy log can
-  carry one. Nobody signed in is a normal state: git then falls back to the
-  host's own credential helper or ssh-agent, exactly as before.
+- **Which routes use it.** Only the ones that cross the network: `clone`,
+  `push`, `fetch`, `pull`, and the pull-request call. Each resolves it from the
+  **session** (`getGithubTokenForRequest`) — there is deliberately no `token`
+  field on any of those wires, so no request and no proxy log can carry one.
+  Nobody signed in is a normal state: git then falls back to the host's own
+  credential helper or ssh-agent, exactly as before.
+- **Only a github.com remote is ever offered the token.** An askpass program is
+  handed a *prompt*, not a destination it can refuse — the script answers
+  whatever host git dialled. So the decision is made before the script exists:
+  `gitClone.ts` only ever has a `parseGithubRemoteUrl`-allowlisted URL, and
+  **every** verb that dials `origin` — `push`, `fetch` and `pull` — reads
+  `origin`'s push URL through that same allowlist
+  (`originAcceptsStoredGithubToken`, imported, never re-derived) and drops the
+  credential when it does not pass. This matters because `origin` is not always
+  Studio's: `setOriginRemote` writes only allowlisted URLs, but a project can
+  arrive with a `.git` the user pointed at a company host, a mirror, or an
+  `ext::` transport in their own terminal. A non-GitHub origin is not an
+  error — the verb simply proceeds with the pre-G2 fallback.
 - **`GIT_TERMINAL_PROMPT=0` stays**, credential or not — the askpass script
   answers without a terminal, and without the flag a remote needing a password
   would block on a read nobody will answer.
 - **Nothing is logged.** `clientSafeGitError` additionally elides the host's
   temp root now, so a failure to exec the askpass script cannot name a
   filesystem path in a browser message.
+- **Every state-changing route on this surface runs `originAllowed`** — the
+  credential-writing GitHub routes, and `gitSyncRoutes.ts`'s POSTs (`fetch`,
+  `pull`, `commit-and-switch`, the conflict verbs, `pull-request`).
+  `SameSite=Lax` already stops a cross-SITE POST from carrying the session
+  cookie; this closes the same-site-different-subdomain case it does not cover,
+  which matters because a forged `pull` rewrites a working tree and a forged
+  `pull-request` publishes a proposal under the user's GitHub identity.
+
+**A note for anyone writing a test here.** A network git call with **no**
+credential invokes the host's credential helper, and on Windows that is Git
+Credential Manager — which opens a GUI dialog and blocks for the full
+`GIT_NETWORK_TIMEOUT_MS`. Every fixture that pushes, fetches or pulls must set
+`credential.helper=` (an empty value clears the list) and use a **local bare
+repository reached by path**, as `git.test.ts` and `gitSyncRoutes.test.ts` do.
 
 The **scope requested is `repo` and nothing else** — never `workflow`, which
 would let a token rewrite `.github/workflows/*` and is arbitrary code execution
