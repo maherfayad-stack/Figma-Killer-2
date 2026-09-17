@@ -1,0 +1,750 @@
+/* self-contained box model — don't rely on a consumer's global reset */
+.footer,
+.footer *,
+.footer *::before,
+.footer *::after {
+  box-sizing: border-box;
+}
+
+.footer {
+  /* desktop-first web footer; fluid horizontal gutter collapses from 120px */
+  --footer-gutter: clamp(16px, 8.33vw, 120px);
+  /* the app card is a fixed brand gradient (Almosafer navy → aqua) — it does not
+     flip in dark mode, so its content + dividers stay static white. */
+  --footer-app-gradient: linear-gradient(90deg, var(--color-almosafer) 0%, var(--color-aqua-100) 100%);
+  --footer-divider-on-dark: color-mix(in srgb, var(--color-white-static) 24%, transparent);
+
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--background-base-default);
+  color: var(--text-base-default);
+  font-family: var(--font-body);
+}
+
+/* ── App-promo band ─────────────────────────────────────────────────────── */
+.footer__app-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2xl) var(--footer-gutter) 0;
+  background: var(--background-primary-subtle);
+}
+
+.footer__app-card {
+  width: 100%;
+  box-sizing: border-box;
+  /* overlaps the white section below; .footer__main compensates with padding-top */
+  margin-bottom: -120px;
+  padding: var(--space-4xl);
+  border-radius: var(--rounded);
+  background: var(--footer-app-gradient);
+  color: var(--text-base-inverted-static);
+  overflow: hidden;
+}
+
+.footer__app-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2xl);
+}
+
+.footer__promo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.footer__promo-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-width: 541px;
+}
+
+.footer__promo-title {
+  font-family: var(--type-display-family);
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  line-height: var(--type-display-lh);
+  letter-spacing: var(--type-display-ls);
+}
+
+.footer__promo-desc {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+}
+
+/* barcode + stats/badges */
+.footer__download {
+  display: flex;
+  gap: var(--space-lg);
+  align-items: center;
+}
+
+.footer__barcode {
+  width: 90px;
+  height: 90px;
+  border-radius: var(--rounded-xs);
+  flex-shrink: 0;
+}
+
+.footer__app-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+}
+
+.footer__stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}
+
+.footer__stat-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}
+
+.footer__stat-value,
+.footer__rating-score {
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-bold-weight);
+  line-height: var(--type-title-lh);
+}
+
+.footer__stat-label {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+}
+
+.footer__divider {
+  width: 1px;
+  height: 40px;
+  background: var(--footer-divider-on-dark);
+  flex-shrink: 0;
+}
+
+.footer__divider--sm {
+  height: 26px;
+  background: var(--border-base-default);
+}
+
+.footer__ratings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.footer__rating {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.footer__rating-score {
+  font-size: var(--type-subtitle-size);
+}
+
+.footer__rating-store {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-semibold-weight);
+  line-height: var(--type-caption-lh);
+}
+
+.footer__stars {
+  display: inline-flex;
+  align-items: center;
+}
+
+.footer__star {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  color: var(--icon-caution-default);
+}
+
+.footer__star svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* filled gold star — the DS star line-icon is an outline, so paint the fill too */
+.footer__star svg path {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.footer__badges {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.footer__badge {
+  display: inline-flex;
+}
+
+.footer__badge img {
+  height: 26px;
+  width: auto;
+  display: block;
+}
+
+/* Contact column */
+.footer__contact {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2xl);
+  align-self: stretch;
+}
+
+.footer__contact-divider {
+  width: 1px;
+  background: var(--footer-divider-on-dark);
+  flex-shrink: 0;
+}
+
+.footer__contact-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-lg);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.footer__contact-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}
+
+.footer__contact-icon {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  color: var(--icon-base-inverted-static);
+  flex-shrink: 0;
+}
+
+.footer__contact-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.footer__contact-link {
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+  text-decoration: none;
+}
+
+.footer__contact-title {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+}
+
+.footer__contact-value {
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  line-height: var(--type-title-lh);
+  letter-spacing: var(--type-title-ls);
+}
+
+/* ── Links + brand footer ───────────────────────────────────────────────── */
+.footer__main {
+  display: flex;
+  flex-direction: column;
+  padding: 176px var(--footer-gutter) var(--space-3xl);
+}
+
+.footer__columns {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-xl);
+  flex-wrap: wrap;
+}
+
+.footer__column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+}
+
+.footer__column-title {
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  line-height: var(--type-title-lh);
+  letter-spacing: var(--type-title-ls);
+  color: var(--text-base-default);
+}
+
+.footer__links {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.footer__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-link-default);
+  text-decoration: none;
+  font-size: var(--type-subtitle-size);
+  font-weight: var(--type-subtitle-weight);
+  line-height: var(--type-subtitle-lh);
+}
+
+.footer__link:hover {
+  color: var(--text-link-hover);
+  text-decoration: underline;
+}
+
+.footer__link-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.footer__social-icon,
+.footer__flag {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.footer__flag {
+  width: 24px;
+  height: 24px;
+}
+
+.footer__flag--globe {
+  display: inline-flex;
+  color: var(--icon-secondary-default);
+}
+
+.footer__flag--globe svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Bottom brand rows */
+.footer__bottom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xl);
+  padding-top: var(--space-2xl);
+}
+
+.footer__bottom-row,
+.footer__legal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.footer__legal-row {
+  align-items: flex-end;
+}
+
+.footer__awards {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.footer__awards-logo {
+  height: 35px;
+  width: auto;
+  display: block;
+}
+
+.footer__taglines,
+.footer__licenses {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.footer__tagline-group,
+.footer__license-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.footer__tagline {
+  /* matches the Figma ~120px cells so a 4-word tagline wraps to two lines;
+     balance evens the two lines ("Leading Online" / "Travel Agency") */
+  max-width: 124px;
+  text-wrap: balance;
+  font-size: var(--type-meta-size);
+  font-weight: var(--type-meta-regular-weight);
+  line-height: var(--type-meta-lh);
+  text-align: center;
+  color: var(--text-base-default);
+}
+
+.footer__payments {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.footer__payment {
+  width: 32px;
+  height: 32px;
+  display: block;
+}
+
+.footer__license {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  text-align: start;
+  color: var(--text-base-default);
+}
+
+.footer__license-label {
+  font-size: var(--type-meta-size);
+  font-weight: var(--type-meta-regular-weight);
+  line-height: var(--type-meta-lh);
+}
+
+.footer__license-value {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+}
+
+.footer__copyright {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  text-align: center;
+  color: var(--text-base-default);
+}
+
+/* ── RTL ─────────────────────────────────────────────────────────────────── */
+.footer[dir='rtl'] {
+  text-align: right;
+}
+
+/* ── Responsive: stack the app card + wrap contact below a tablet width ──── */
+@media (max-width: 900px) {
+  .footer__app-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer__contact {
+    align-self: stretch;
+  }
+
+  .footer__contact-divider {
+    display: none;
+  }
+
+  .footer__app-card {
+    margin-bottom: -160px;
+  }
+
+  .footer__main {
+    padding-top: 216px;
+  }
+}
+
+@media (max-width: 560px) {
+  .footer__download {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer__stats {
+    flex-wrap: wrap;
+  }
+}
+
+/* ══ PWA layout — stacked cards for a mobile web-app screen ═══════════════════ */
+.footer--pwa {
+  gap: var(--space-xl);
+  padding: var(--space) var(--space) var(--space-3xl);
+}
+
+/* keep every flex column constrained to the viewport so wide content wraps
+   instead of expanding the layout past the screen (flexbox min-content fix) */
+.footer--pwa .footer__pwa-stack,
+.footer--pwa .footer__pwa-bottom,
+.footer--pwa .footer__pwa-app,
+.footer--pwa .footer__pwa-card,
+.footer--pwa .footer__pwa-intro,
+.footer--pwa .footer__pwa-metrics,
+.footer--pwa .footer__pwa-metric,
+.footer--pwa .footer__pwa-contacts,
+.footer--pwa .footer__pwa-contact,
+.footer--pwa .footer__pwa-contact-text,
+.footer--pwa .footer__pwa-linkgroup,
+.footer--pwa .footer__pwa-linkgroup-list {
+  min-width: 0;
+}
+
+.footer__pwa-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+}
+
+/* app-promo card */
+.footer__pwa-app {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space);
+  border-radius: var(--rounded);
+  background: var(--footer-app-gradient);
+  color: var(--text-base-inverted-static);
+  overflow: hidden;
+}
+
+.footer__pwa-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space);
+  text-align: center;
+}
+
+.footer__pwa-app-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.footer__pwa-app-title {
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  line-height: var(--type-title-lh);
+  letter-spacing: var(--type-title-ls);
+}
+
+.footer__pwa-app-tagline {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+}
+
+.footer__pwa-cta {
+  width: 100%;
+}
+
+.footer__pwa-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space);
+  width: 100%;
+}
+
+.footer__pwa-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+
+/* vertical rule between metric groups (mirrors in RTL via logical border) */
+.footer__pwa-metric + .footer__pwa-metric {
+  border-inline-start: 1px solid var(--footer-divider-on-dark);
+}
+
+.footer__pwa-metric-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  line-height: var(--type-title-lh);
+  letter-spacing: var(--type-title-ls);
+}
+
+.footer__pwa-metric-label {
+  font-size: var(--type-meta-size);
+  font-weight: var(--type-meta-regular-weight);
+  line-height: var(--type-meta-lh);
+  text-align: center;
+}
+
+/* ghost cards (contact / links / awards) */
+.footer__pwa-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  padding: var(--space-lg) var(--space);
+  border-radius: var(--rounded);
+  background: var(--background-base-subtle);
+}
+
+.footer__pwa-card-title {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+.footer__pwa-contacts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.footer__pwa-contact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.footer__pwa-contact-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  color: var(--icon-secondary-default);
+}
+
+.footer__pwa-contact-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.footer__pwa-contact-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.footer__pwa-contact-title {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+.footer__pwa-contact-value {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-bold-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-link-default);
+  text-decoration: none;
+}
+
+/* inline link groups */
+.footer__pwa-linkgroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.footer__pwa-linkgroup-title {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+.footer__pwa-linkgroup-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.footer__pwa-link {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-link-default);
+  text-decoration: none;
+}
+
+.footer__pwa-link:hover {
+  text-decoration: underline;
+}
+
+.footer__pwa-awards {
+  align-items: center;
+}
+
+/* bottom block */
+.footer__pwa-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.footer__pwa-social {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.footer__pwa-social-link {
+  display: inline-flex;
+}
+
+.footer__pwa-social .footer__social-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.footer__pwa-copyright {
+  text-align: start;
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+}
+
+.footer__pwa-licenses {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+}
+
+.footer__pwa-license {
+  align-items: flex-start;
+  text-align: start;
+  gap: var(--space-xs);
+}
+
+.footer__pwa-license-label {
+  font-size: var(--type-meta-size);
+  font-weight: var(--type-meta-semibold-weight);
+  line-height: var(--type-meta-lh);
+}
+
+.footer__pwa-license .footer__license-value {
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-lh);
+}

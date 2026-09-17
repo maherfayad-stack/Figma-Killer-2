@@ -1,0 +1,141 @@
+/* ── base ── */
+.tabbar {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ── pill wrapper — shared ── */
+.tabbar__pill {
+  display: flex;
+  flex: 1;
+}
+
+/* ── iOS — transparent outer, liquid glass pill ── */
+.tabbar--ios {
+  padding: var(--space) var(--space) 20px;
+}
+
+.tabbar--ios .tabbar__pill {
+  border-radius: var(--rounded-full);
+  background: var(--liquid-glass-bg);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  box-shadow: var(--liquid-glass-shadow);
+  padding: 4px;
+}
+
+/* ── Android — solid full-width bar with top divider ── */
+.tabbar--android {
+  padding: 0 0 var(--space);
+  background: var(--background-base-default);
+  border-top: 1px solid var(--border-base-subtle);
+}
+
+/* ── tab item ── */
+.tabbar__item {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tabbar--ios .tabbar__item {
+  padding: 4px var(--space-sm) 6px;
+  gap: var(--space-2xs);
+}
+
+.tabbar--android .tabbar__item {
+  padding: 6px 0;
+}
+
+/* ── iOS selection pill — subtle full-radius capsule behind active icon+label ──
+   A subtle neutral fill (alice), not white or glass. The semantic token flips
+   automatically in dark mode. */
+.tabbar--ios .tabbar__selection {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--rounded-full);
+  background: var(--background-neutral-subtle);
+  pointer-events: none;
+}
+
+/* ── icon wrapper ── */
+.tabbar__icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+
+.tabbar--ios .tabbar__icon-wrap {
+  width: 32px;
+  height: 32px;
+}
+
+/* Android: wide pill container — filled with aqua tint when active */
+.tabbar--android .tabbar__icon-wrap {
+  width: 56px;
+  height: 32px;
+  border-radius: var(--rounded-lg);
+  transition: background 0.15s ease;
+}
+
+.tabbar--android .tabbar__item--active .tabbar__icon-wrap {
+  background: var(--background-base-selected);
+}
+
+/* ── icon ── */
+.tabbar__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--icon-base-default);
+}
+
+.tabbar__item--active .tabbar__icon {
+  color: var(--icon-secondary-default);
+}
+
+/* ── label ── */
+.tabbar__label {
+  font-family: var(--font-body);
+  color: var(--text-base-default);
+  text-align: center;
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+
+/* iOS-native label: SF Pro Medium 10/12 — hardcoded by design. SF Pro is the
+   Apple system font (matches Dialog's iOS text), and 10px sits below the smallest
+   DS type scale (meta 11px), so neither family nor size maps to a token here.
+   The active rule below bumps the weight to semibold for the selected tab. */
+.tabbar--ios .tabbar__label {
+  font-family: -apple-system, 'SF Pro Text', 'SF Pro', system-ui, sans-serif;
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 500;
+}
+
+.tabbar--android .tabbar__label {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: var(--type-caption-semibold-weight);
+}
+
+.tabbar__item--active .tabbar__label {
+  font-weight: var(--type-caption-semibold-weight);
+  color: var(--text-link-default);
+}
+

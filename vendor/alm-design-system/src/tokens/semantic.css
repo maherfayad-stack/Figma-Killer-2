@@ -1,0 +1,172 @@
+/* ALM 2.0 — semantic / component tokens (reference raw palette) */
+:root {
+  /* ── Background ── */
+  --background-base-default:        var(--color-light);
+  --background-base-subtle:         var(--color-ghost);
+  --background-base-hover:          var(--color-ghost);
+  --background-base-pressed:        var(--color-alice);
+  --background-base-active:         var(--color-alice);
+  --background-base-disabled:       var(--color-ghost);
+  --background-base-inverted:       var(--color-metal);
+  --background-base-selected:       var(--color-aqua-10);
+  --background-base-default-static: var(--color-white-static);
+
+  --background-primary-default:  var(--color-aqua-100);
+  --background-primary-subtle:   var(--color-aqua-10);
+  --background-primary-hover:    var(--color-aqua-200);
+  --background-primary-pressed:  var(--color-aqua-200);
+  --background-primary-selected: var(--color-aqua-100);
+  --background-primary-disabled: var(--color-aqua-30);
+
+  --background-warning-default:  var(--color-coral-100);
+  --background-warning-subtle:   var(--color-coral-10);
+  --background-warning-hover:    var(--color-coral-200);
+  --background-warning-pressed:  var(--color-coral-200);
+  --background-warning-selected: var(--color-coral-100);
+
+  --background-success-default:  var(--color-forest-100);
+  --background-success-subtle:   var(--color-forest-10);
+  --background-success-hover:    var(--color-forest-200);
+  --background-success-pressed:  var(--color-forest-200);
+  --background-success-selected: var(--color-forest-100);
+
+  --background-caution-default: var(--color-butter-100);
+  --background-caution-subtle:  var(--color-butter-10);
+
+  --background-neutral-default:  var(--color-chateau);
+  --background-neutral-subtle:   var(--color-alice);
+  --background-neutral-selected: var(--color-gainsboro);
+  --background-neutral-disabled: var(--color-alice);
+
+  /* ── Brand backgrounds ── */
+  --background-brand-apple:            var(--color-apple);
+  --background-brand-almosafer:        var(--color-almosafer);
+  --background-brand-whatsapp:         var(--color-whatsapp);
+  --background-brand-facebook:         var(--color-facebook);
+  --background-brand-shukran:          var(--color-shukran);
+  --background-brand-shukran-contrast: var(--color-shukran-contrast);
+  --background-brand-qitaf:            var(--color-qitaf);
+  --background-brand-mokafaa:          var(--color-mokafaa);
+  --background-brand-emkan:            var(--color-emkan);
+  --background-brand-alfursan:         var(--color-alfursan);
+
+  /* ── Text ── */
+  --text-base-default:          var(--color-metal);
+  --text-base-subtext:          var(--color-chateau);
+  --text-base-inverted:         var(--color-light);
+  --text-base-disabled:         var(--color-montreal);
+  --text-base-inverted-static:  var(--color-white-static);
+  --text-base-default-static:   var(--color-metal-static);
+  --text-link-default:     var(--color-aqua-100);
+  --text-link-hover:       var(--color-aqua-200);
+  --text-link-pressed:     var(--color-aqua-200);
+  --text-warning-default:  var(--color-coral-100);
+  --text-warning-hover:    var(--color-coral-200);
+  --text-warning-pressed:  var(--color-coral-200);
+  --text-success-default:  var(--color-forest-100);
+  --text-success-hover:    var(--color-forest-200);
+  --text-success-pressed:  var(--color-forest-200);
+
+  /* ── Border ── */
+  --border-base-default:  var(--color-gainsboro);
+  --border-base-subtle:   var(--color-alice);
+  --border-base-hover:    var(--color-aqua-30);
+  --border-base-pressed:  var(--color-aqua-50);
+  --border-base-selected: var(--color-aqua-50);
+  --border-base-focused:  var(--color-aqua-100);
+  --border-base-disabled: var(--color-gainsboro);
+  --border-base-inverted: var(--color-chateau);
+
+  /* primary = warning/destructive (Coral) */
+  --border-primary-default:  var(--color-coral-100);
+  --border-primary-hover:    var(--color-coral-200);
+  --border-primary-pressed:  var(--color-coral-200);
+  --border-primary-selected: var(--color-coral-100);
+  --border-primary-active:   var(--color-coral-100);
+
+  /* secondary = brand/interactive (Aqua) */
+  --border-secondary-default:  var(--color-aqua-100);
+  --border-secondary-hover:    var(--color-aqua-200);
+  --border-secondary-pressed:  var(--color-aqua-200);
+  --border-secondary-selected: var(--color-aqua-100);
+  --border-secondary-disabled: var(--color-aqua-30);
+
+  --border-success-default: var(--color-forest-100);
+  --border-caution-default: var(--color-butter-100);
+
+  /* ── Icon ── */
+  --icon-base-default:         var(--color-metal);
+  --icon-base-subtle:          var(--color-chateau);
+  --icon-base-inverted:        var(--color-light);
+  --icon-base-disabled:        var(--color-montreal);
+  --icon-base-inverted-static: var(--color-white-static);
+  --icon-base-default-static:  var(--color-metal-static);
+
+  /* primary = warning/destructive (Coral) */
+  --icon-primary-default: var(--color-coral-100);
+  --icon-primary-hover:   var(--color-coral-200);
+  --icon-primary-pressed: var(--color-coral-200);
+  --icon-primary-subtle:  var(--color-coral-10);
+
+  /* secondary = brand/interactive (Aqua) */
+  --icon-secondary-default: var(--color-aqua-100);
+  --icon-secondary-hover:   var(--color-aqua-200);
+  --icon-secondary-pressed: var(--color-aqua-200);
+  --icon-secondary-subtle:  var(--color-aqua-30);
+
+  --icon-success-default: var(--color-forest-100);
+  --icon-success-subtle:  var(--color-forest-10);
+
+  --icon-caution-default: var(--color-butter-100);
+  --icon-caution-subtle:  var(--color-butter-10);
+
+  /* ── AI ── */
+  --ai-background:       var(--color-lavender);
+  --ai-text-default:     var(--color-amethyst);
+  --ai-text-highlight:   var(--gradient-purple-blue);
+  --ai-border-default:   var(--color-iris);
+  --ai-border-highlight: var(--gradient-purple-blue);
+  --ai-icon:             var(--gradient-purple-blue);
+
+  /* ── Overlay ── */
+  --overlay-default: var(--color-black-50);
+  --overlay-surface: var(--color-light-40);
+  --overlay-navbar:  var(--color-light-92);
+
+  /* ── Gradient ── (image scrims — dark → transparent) */
+  --gradient-horizontal:      var(--gradient-black-leading);
+  --gradient-vertical-bottom: var(--gradient-black-bottom);
+  --gradient-vertical-top:    var(--gradient-black-top);
+
+  /* ── Banner ── */
+  --banner-neutral:  var(--gradient-grey-leading);
+  --banner-info:     var(--gradient-blue-leading);
+  --banner-promo:    var(--gradient-green-leading);
+  --banner-featured: var(--gradient-purple-leading);
+
+  /* ── Highlight ── */
+  --highlight-title:    var(--gradient-aqua-green);
+  --highlight-accolade: var(--gradient-purple-blue);
+  --highlight-benefit:  var(--gradient-neon-green);
+
+  /* ── Button backgrounds ── */
+  --button-primary-default: var(--color-aqua-100);
+  --button-primary-hover:   var(--color-aqua-200);
+  --button-primary-pressed: var(--color-aqua-200);
+
+  --button-secondary-default: var(--color-alice);
+  --button-secondary-hover:   var(--color-ghost);
+  --button-secondary-pressed: var(--color-alice);
+
+  --button-destructive-default: var(--color-light);
+  --button-destructive-hover:   var(--color-coral-10);
+  --button-destructive-pressed: var(--color-coral-10);
+
+  --button-payment-default: var(--color-forest-100);
+  --button-payment-hover:   var(--color-forest-200);
+  --button-payment-pressed: var(--color-forest-200);
+
+  --button-inverted-default: var(--color-light);
+  --button-inverted-hover:   var(--color-ghost);
+  --button-inverted-pressed: var(--color-alice);
+}
