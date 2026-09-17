@@ -42,6 +42,7 @@ import { getStudioProjectKey, subscribeStudioProjectKey } from '@site/studio/stu
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { getFramePoster } from './frameSnapshotCache'
 import { useAdapterReady } from './useAdapterReady'
+import { useBridgeFrameDiagnostics } from '../useBridgeFrameDiagnostics'
 
 interface LiveBoardFrameProps {
   page: Page
@@ -71,6 +72,13 @@ export function LiveBoardFrame({
 
   const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
   const ready = useAdapterReady(adapter)
+
+  // Z5 — a crash inside this cross-origin frame is posted over the bridge as
+  // an `error` message and reaches nothing unless somebody records it. The
+  // scope key is this board frame's own id, which is what `BoardFrameView`'s
+  // badge subscribes to; the same call also makes the findings visible to
+  // `studio_page_diagnostics`, which reads this iframe's `contentWindow`.
+  useBridgeFrameDiagnostics(adapter, frameId)
 
   // `server/liveOrigin.ts` (L2) routes on the `/p/<projectKey>` path
   // segment — `useLiveOrigin` only knows the bare server-topology origin

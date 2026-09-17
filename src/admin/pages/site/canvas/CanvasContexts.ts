@@ -100,3 +100,24 @@ export const CanvasFrameElementContext = createContext<HTMLIFrameElement | null>
  * behaviour it has always had.
  */
 export const CanvasInteractionContext = createContext<IframeInteraction>('canvas')
+/**
+ * Z5/P8 — the key under which this frame's runtime diagnostics are published,
+ * so a component OUTSIDE the frame (the board frame's badge, the Play
+ * surface's crash card) can subscribe to them.
+ *
+ * Deliberately NOT `CanvasFrameContext` (the board-frame id), even though a
+ * board frame passes exactly that value: the Play surface has no board frame
+ * and provides `live:<pageId>` instead, and `CanvasFrameContext` is read by
+ * `NodeRenderer` to scope SELECTION — giving the player's frames one would
+ * change what a selection means, to make a badge work. Two different
+ * questions, two contexts.
+ *
+ * `null` (the default) means "collect for the agent, notify no UI" — which is
+ * the right answer for a capture frame and an agent snapshot frame, neither of
+ * which any human is looking at.
+ *
+ * Crosses the `createPortal` boundary like every other context here: a portal
+ * is a DOM relocation, not a fiber-tree one, so a provider outside
+ * `IframeFrameSurface` still reaches the injectors rendered inside the frame.
+ */
+export const CanvasDiagnosticsScopeContext = createContext<string | null>(null)

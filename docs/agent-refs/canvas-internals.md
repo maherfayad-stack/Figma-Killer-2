@@ -659,6 +659,67 @@ of the gesture a component cannot break. See `useCanvasNodeInteraction`'s
 
 ---
 
+## Runtime diagnostics — what a frame says went wrong (Z5)
+
+A frame whose component throws paints a blank rectangle, and a screenshot of
+that is indistinguishable from an empty screen, a collapsed layout, or a capture
+taken too early. So every canvas frame collects what its own runtime reported,
+into one buffer, with **two collectors and no third**:
+
+| | portal frame (Tier 0/1) | bridge frame (Tier 2) |
+|---|---|---|
+| Who installs the taps | `CanvasDiagnosticsInjector`, reaching into the frame's `Window` | `@core/studio-runtime`'s `runtime.ts`, inside the frame |
+| How a finding gets out | a direct call to `recordFrameDiagnostic` | the outbound `error` postMessage → `useBridgeFrameDiagnostics` |
+| Where it lands | `canvasDiagnosticsBuffer.ts`, keyed by the iframe's `Window` | the same buffer, the same key |
+
+The four taps are identical on both sides — capture-phase `error` (**capture is
+mandatory**: a failed `<img>`/`<script>`/`<link>` load does not bubble),
+`unhandledrejection`, a pass-through `console.error` patch (React reports a
+failed render, an invalid hook call and a hydration mismatch through this
+channel and **nowhere else**), and a `fetch` wrapper that records only
+failures. The predicates that turn a raw value into a classified finding live in
+ONE place, `@core/studio-runtime`'s `runtimeErrorRules.ts`, shared by both — the
+same "one implementation each" arrangement hover suppression, scroll unroll and
+animation freeze already use. Two copies would mean a live frame and a design
+frame classifying the same exception differently.
+
+Keying the buffer by the iframe's own `contentWindow` is what makes
+`studio_page_diagnostics` (`agent/studioPageDiagnostics.ts`) see a Tier-2 frame
+**with no change to the tool at all**: it finds a page's frame in the DOM and
+reads `iframe.contentWindow`, which is obtainable from the parent even
+cross-origin.
+
+**Two surfaces read it, neither of them a toast.** A `--warning` dot on the
+board frame's header (`FrameDiagnosticsBadge`), and a "this screen crashed" card
+over the Play surface (`PlayCrashCard`). Both subscribe by **scope key** — a
+string the mounting component supplies through `CanvasDiagnosticsScopeContext`
+(`BoardFrameView` passes the board frame id; the Play surface passes
+`live:<pageId>`). Deliberately not `CanvasFrameContext`: that one scopes
+SELECTION, and the player's frames have no board frame id. A frame with no scope
+key still collects for the agent and simply notifies no UI — the right answer
+for a capture frame nobody is looking at.
+
+**It is never a toast, and that is a rule, not a preference.** A React render
+loop emits the identical error hundreds of times a second; `pushToast` would
+stack that into a wall of red boxes for a frame the author may not even be
+looking at. The buffer aggregates by `(kind, code, message, url, nodeId)`, so a
+repeated failure is one entry with a count.
+
+**Bounded at the sender, not only at the receiver.** `runtime.ts` posts at most
+10 errors per second and 50 per document — the FIRST 50, not a ring of the last
+50, because the first error is usually the cause and the rest are its
+consequences. The wire message's `message`/`stack`/`source` carry
+`maxLength` bounds matching the buffer's own truncation, so an honest sender is
+never rejected and a same-realm forger (`sec-06`) cannot post an unbounded
+string into the parent's trusted document.
+
+Vite's own error overlay inside a live frame is **left on** — it is the user's
+app telling the truth in the user's own words. Studio adds a quiet badge beside
+it; it does not replace it. The generated `vite.config.js` template says so in a
+comment (`server/handlers/studio/prototypeShell/shellFiles.ts`).
+
+---
+
 ## Inline text editing
 
 The **element itself** becomes the editor — `contentEditable="plaintext-only"`,

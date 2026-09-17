@@ -360,6 +360,95 @@ export const FrameResizeMessageSchema = Type.Object({
   height: Type.Number({ minimum: 0, maximum: 1_000_000 }),
 })
 
+/**
+ * Upper bounds on the three free-text fields {@link ErrorMessageSchema}
+ * carries. They match `canvasDiagnosticsBuffer.ts`'s own `MAX_MESSAGE_LENGTH`/
+ * `MAX_STACK_LENGTH` deliberately: a value that passes validation here is
+ * stored verbatim on the parent rather than truncated a second time to a
+ * different length, so what the badge shows and what
+ * `studio_page_diagnostics` returns are the same string.
+ *
+ * They are also the `sec-06` bound. The honest sender (`runtime.ts`) already
+ * truncates to exactly these, so the schema never rejects a real message — the
+ * `maxLength` exists for the FORGED one. `sec-06`'s "same-realm spoofing"
+ * finding applies here with more force than to any other outbound message: a
+ * script co-resident with `runtime.ts` in the live frame's document can post a
+ * `to-parent` envelope directly, and this message's whole payload is
+ * attacker-chosen text that the parent then renders in its own trusted
+ * document. Unbounded, that is a memory-exhaustion and UI-wrecking primitive.
+ * Bounded, the worst case is 1.3 KB of nonsense in a popover.
+ */
+export const RUNTIME_ERROR_MESSAGE_MAX = 400
+export const RUNTIME_ERROR_STACK_MAX = 600
+export const RUNTIME_ERROR_SOURCE_MAX = 300
+
+/**
+ * Which tap produced an {@link ErrorMessageSchema}. One literal per tap
+ * `runtime.ts` installs, matching the four `CanvasDiagnosticsInjector.tsx`
+ * has always installed for portal mode, plus `network`:
+ *
+ *   - `exception`          — an `ErrorEvent` reached `window.onerror`.
+ *   - `unhandledrejection` — an async failure that never reaches `onerror`.
+ *   - `resource`           — an `<img>`/`<script>`/`<link>`/… failed to load.
+ *   - `console`            — `console.error`, which is the ONLY channel React
+ *                            reports a failed render/invalid hook call/
+ *                            hydration mismatch through.
+ *   - `network`            — a `fetch()` from inside the frame rejected or
+ *                            answered non-2xx.
+ *
+ * `network` is deliberately its own kind rather than folded into `resource`,
+ * even though both are "something did not load": the parent maps these
+ * one-to-one onto the FROZEN `PageDiagnosticCode` vocabulary
+ * (`@core/ai`'s `pageDiagnostics.ts`), where `asset-load-failed` and
+ * `network-request-failed` are separate codes with separate severities and
+ * separate fixes. Collapsing them on the wire would mean a Tier-2 frame's
+ * findings could never reach `network-request-failed` at all, while a Tier-0
+ * frame's do — the same failure classified differently depending on which
+ * canvas mode you happened to be in.
+ */
+export const RuntimeErrorKindSchema = Type.Union([
+  Type.Literal('exception'),
+  Type.Literal('unhandledrejection'),
+  Type.Literal('resource'),
+  Type.Literal('console'),
+  Type.Literal('network'),
+])
+export type RuntimeErrorKind = Static<typeof RuntimeErrorKindSchema>
+
+/**
+ * Z5 — something went wrong inside the live frame, reported once, passively.
+ *
+ * A crash in a Tier-2 frame used to reach nothing in Studio: the frame painted
+ * a blank rectangle, its own console said exactly what happened to nobody, and
+ * the board offered no way to tell "this screen is empty" from "this screen
+ * threw". This message is the channel that was missing. The parent routes it
+ * into `canvasDiagnosticsBuffer.ts` (so `studio_page_diagnostics` sees Tier-2
+ * frames, not only portal ones) and into a passive per-frame badge. **Never a
+ * toast** — a render loop emits the same error hundreds of times a second, and
+ * the whole point of the buffer is that a repeated failure is one entry with a
+ * count.
+ *
+ * `message`/`stack`/`source` are the only payload, all `maxLength`-bounded
+ * above. Deliberately NO node id: `runtime.ts` speaks stamped ids and the
+ * parent would have to translate, and a stack with a `file:line` already
+ * answers "where" for every kind here. Deliberately no HTTP status either —
+ * the status is in the `message` text, and one fewer structured field is one
+ * fewer thing a forged message can lie about in a way the parent branches on.
+ *
+ * Capped and rate-limited at the SENDER (`runtime.ts`: 10 posts/second, 50 per
+ * document) rather than only at the receiver, because the cost being bounded is
+ * the postMessage traffic itself, not the storage.
+ */
+export const ErrorMessageSchema = Type.Object({
+  type: Type.Literal('error'),
+  kind: RuntimeErrorKindSchema,
+  message: Type.String({ minLength: 1, maxLength: RUNTIME_ERROR_MESSAGE_MAX }),
+  /** First frames of a stack, when the thrown/rejected value carried one. */
+  stack: Type.Optional(Type.String({ maxLength: RUNTIME_ERROR_STACK_MAX })),
+  /** Where it came from: a script `file:line:col` for an exception, the requested URL for a resource/network failure. */
+  source: Type.Optional(Type.String({ maxLength: RUNTIME_ERROR_SOURCE_MAX })),
+})
+
 export const OutboundRuntimeMessageSchema = Type.Union([
   ReadyMessageSchema,
   HmrBeforeMessageSchema,
@@ -368,6 +457,7 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   TextEditMessageSchema,
   MeasureResultMessageSchema,
   FrameResizeMessageSchema,
+  ErrorMessageSchema,
 ])
 export type OutboundRuntimeMessage = Static<typeof OutboundRuntimeMessageSchema>
 
