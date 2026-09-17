@@ -34,6 +34,21 @@
     min-width: 0;
 }
 
+/* ── Per-layer blend mode — the fill row's own trailing control ── */
+
+/* Same guard shape as `.colorFieldGuard`: the row underneath is clickable, so
+ * the select swallows its own clicks and keys. Narrow on purpose — it shares
+ * the row with the layer's swatch and summary. */
+.layerBlendGuard {
+    display: flex;
+    min-width: 0;
+}
+
+.layerBlendSelect {
+    min-width: 0;
+    max-width: 92px;
+}
+
 /* ── Inline opacity field — the "% opacity" cell of the Color field chrome ── */
 
 .opacityFieldGuard {

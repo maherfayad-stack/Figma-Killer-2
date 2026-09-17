@@ -18,12 +18,23 @@
  *
  * `linked` — the cluster's own "are all four sides equal" flag — is derived
  * here from the four stored values, never duplicated by the cluster itself.
+ *
+ * ## Three states, because Figma's padding box has a link (P9)
+ *
+ * The toggle cycles **all sides -> horizontal/vertical -> four sides**. The
+ * H/V pair was the whole collapsed state before P9, which meant the most
+ * common padding gesture of all — one number on every side — took two edits.
+ * The `all` state writes the four longhands in ONE patch (`LinkedSidesField`),
+ * not the `padding` shorthand: see that file for why the shorthand belongs to
+ * corner radius and not here.
  */
 import { hasStyleValue, readString } from '../../../panels/PropertiesPanel/styleValueUtils'
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { Token } from '@site/property-controls/tokenUtils'
 import { ExpandableFieldCluster } from '@ui/components/ExpandableFieldCluster'
+import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { LinkedAxisField } from './LinkedAxisField'
+import { LinkedSidesField } from './LinkedSidesField'
 import { SingleSideField } from './SingleSideField'
 
 interface PaddingClusterProps {
@@ -31,6 +42,8 @@ interface PaddingClusterProps {
   currentStyles: Record<string, unknown>
   tokens: ReadonlyArray<Token>
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
+  /** Patch-shaped commit — the all-sides field links four longhands in one history entry. */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
 }
@@ -47,6 +60,7 @@ export function PaddingCluster({
   currentStyles,
   tokens,
   onChange,
+  onChangeMany,
   onPreview,
   onClearPreview,
 }: PaddingClusterProps) {
@@ -61,8 +75,25 @@ export function PaddingCluster({
     <ExpandableFieldCluster
       id="padding"
       linked={linked}
+      allLabel="Split padding into horizontal and vertical"
       expandLabel="Expand to individual padding sides"
-      collapseLabel="Collapse to horizontal and vertical padding"
+      collapseLabel="Link every padding side to one value"
+      allIcon={<LinkIcon size={14} aria-hidden="true" />}
+      all={[
+        <LinkedSidesField
+          key="all"
+          ariaLabel="Padding, all sides"
+          prefix="A"
+          properties={SIDES}
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          tokens={tokens}
+          onChangeMany={onChangeMany}
+          onPreview={onPreview}
+          onClearPreview={onClearPreview}
+          data-testid="css-padding-all"
+        />,
+      ]}
       collapsed={[
         <LinkedAxisField
           key="horizontal"

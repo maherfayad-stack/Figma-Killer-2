@@ -22,10 +22,13 @@
  *      the element's OWN replaced content (an `<img>`'s picture), which
  *      paints above the background entirely.
  *   3. **Background layer 1…N** — one row per `background-image` layer, in
- *      CSS paint order. Each layer's six satellites (`background-size`,
- *      `-position`, `-repeat`, `-attachment`, `-origin`, `-clip`) plus its
- *      `background-blend-mode` are edited INSIDE that row's popover, per
- *      layer. Layers add, remove and reorder like Effects' shadow layers,
+ *      CSS paint order. Each layer's six positioning satellites
+ *      (`background-size`, `-position`, `-repeat`, `-attachment`, `-origin`,
+ *      `-clip`) are edited INSIDE that row's popover, per layer. The layer's
+ *      `background-blend-mode` sits on the ROW itself instead, where Figma
+ *      puts a fill's blend mode — see `LayerBlendSelect` for why that
+ *      property, and not `mix-blend-mode`, is the honest per-fill target.
+ *      Layers add, remove and reorder like Effects' shadow layers,
  *      over the same `PropertyList` gestures (click to edit, `−` to remove,
  *      `Alt+↑/↓` to reorder).
  *   4. **Solid fill** — `backgroundColor`, when set. Pinned BOTTOM-most among
@@ -158,6 +161,7 @@ import {
   BackgroundLayerPopoverBody,
   ContentFitPopoverBody,
   ImageSwatch,
+  LayerBlendSelect,
   OrphanSatellitesBody,
   ShorthandEscapeHatchBody,
 } from './FillSectionParts'
@@ -423,7 +427,9 @@ export function FillSection() {
         label: described.label,
         leading: described.leading,
         summary: described.summary,
-        value: described.value,
+        // Figma shows a fill's blend mode ON the fill row. `LayerBlendSelect`
+        // explains why `background-blend-mode` is the only honest target.
+        value: <LayerBlendSelect model={parsedModel} index={index} onModelChange={write} />,
         data: { kind: 'layer', index },
       })
     })
@@ -653,7 +659,7 @@ function describeLayer(
   image: string,
   index: number,
   total: number,
-): { label: string; summary: ReactNode; value?: ReactNode; leading: ReactNode } {
+): { label: string; summary: ReactNode; leading: ReactNode } {
   const suffix = total > 1 ? ` ${index + 1}` : ''
 
   if (image.trim().toLowerCase() === 'none') {
@@ -677,8 +683,9 @@ function describeLayer(
     const kindLabel = parsed.gradient.kind === 'linear' ? 'Linear gradient' : 'Radial gradient'
     return {
       label: `${kindLabel} fill${suffix}`,
-      summary: kindLabel,
-      value: `${parsed.gradient.stops.length} stops`,
+      // The stop count used to live in the row's trailing `value` slot, which
+      // the layer's blend select now occupies.
+      summary: `${kindLabel} · ${parsed.gradient.stops.length} stops`,
       leading: <ImageSwatch image={image} />,
     }
   }

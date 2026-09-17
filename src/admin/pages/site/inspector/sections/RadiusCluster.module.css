@@ -17,3 +17,9 @@
     flex: 1 1 0;
     min-width: 0;
 }
+
+/* Each expanded corner field sits in its own box so a refused shorthand can
+ * hang its reason on a `title` without the field losing the cell's width. */
+.cornerField {
+    min-width: 0;
+}

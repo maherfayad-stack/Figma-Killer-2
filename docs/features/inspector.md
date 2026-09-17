@@ -260,6 +260,11 @@ stroke sides cannot drift apart.
 - The toggle carries `pressed` while expanded and is persisted in
   `editorPreferences` per cluster id, because the panel remounts on every
   selection change.
+- `collapsedIcon` / `expandedIcon` override the default 2×2 grid glyph per
+  state. Radius passes a chain link while collapsed and the grid while
+  expanded, because for radius the toggle really is Figma's **link** — it
+  decides which declaration is written, not only how many fields are drawn
+  (G5).
 
 ### §3.4 `AddablePropertyField` — used by G2
 
@@ -366,6 +371,22 @@ section's height — plus split-axis `rowGap`/`columnGap` and
 rename only; the CSS written stays `overflow`), and the wrap toggle moves to the
 cluster header.
 
+**G3.4 — one direction control, not two (P9).** `FlexDirectionControl`'s
+`row | column | row-reverse | column-reverse` segments duplicated a choice the
+mode row above already makes (*Horizontal stack* writes `flex-direction: row`),
+so the same fact had two pickers with different glyphs on adjacent rows. It and
+`WrapToggleButton` are replaced by `FlexFlowControl` — a **reverse** toggle
+whose glyph follows the current axis, beside the **wrap** toggle, as one
+cluster. Nothing became unreachable: `row`/`column` are the mode row and
+`wrap-reverse` is still the Layout settings `⚙`. The wrap toggle clears
+`flex-wrap` when switched off (`nowrap` is the initial value); the reverse
+toggle writes the plain axis instead, because clearing `column-reverse` would
+fall back to `row` and silently turn a column into a row.
+
+The two gap fields now carry their own marks (`RowGapIcon` / `GapIcon`) rather
+than sharing one — a picture of a column gap over a field writing `row-gap` is
+the same small lie the panel refuses everywhere else.
+
 *Shipped correction:* the `⚙` is **resident on the Clip-content row**, not
 anchored to the gap field, so `alignSelf`/`justifySelf`/`flex`/`gridColumn`/
 `gridRow` stay reachable on a node that is not a container
@@ -378,11 +399,17 @@ Two captioned linear alignment rows (~56px) become one uncaptioned 3×3 pad
 instead of two — keeping the linear controls as its keyboard model. Grid mode
 maps to `alignItems` + `justifyItems`.
 
-### G4 — Spacing: padding as two fields (F4/F9)
+### G4 — Spacing: padding as a linked box (F4/F9)
 
-Padding collapses to horizontal/vertical fields with an expand toggle to four,
-and **moves into the Layout section**: padding is a layout property of a
-container, margin is a relationship with siblings. The `SpacingBoxControl`
+Padding **moves into the Layout section**: padding is a layout property of a
+container, margin is a relationship with siblings. Its toggle cycles three
+states — **all sides -> horizontal/vertical -> four sides** (P9). The `all`
+state is Figma's link: one field, writing the four longhands in a single
+history entry (`LinkedSidesField.tsx`). It is not the `padding` shorthand —
+here the link is about how many fields are drawn, unlike corner radius (G5.5),
+where the shorthand is what a human writes and the link picks the declaration.
+Before P9 the H/V pair was the whole collapsed state, so the most common
+padding gesture of all — one number on every side — took two edits. The `SpacingBoxControl`
 diagram — the tallest single block in the panel — survives as an opt-in behind
 the Spacing `⚙` (*Box model*), because it is the best control for "which side is
 which" and only the wrong *default*.
@@ -400,6 +427,22 @@ an `ExpandableFieldCluster`, a droplet button in the header opening a grouped
 `display: none`, which is the layer tree's different hide (**G5.4**). Corner
 smoothing is skipped, and its icon left out rather than filled with an
 invention.
+
+- **G5.5 — The radius link writes the shorthand (P9).** The cluster's toggle is
+  a chain link, and it chooses the *declaration*: **linked** writes
+  `border-radius: 12px` and clears the four longhands, **unlinked** writes the
+  four longhands and clears the shorthand. Never both — a shorthand and a
+  longhand in one rule resolve by source order, which a property bag does not
+  model. Before P9 the linked field wrote four longhands regardless, so a
+  hand-written `border-radius: 12px` came back as four lines the first time
+  anything touched it.
+
+  Unlinking converts from the parsed shorthand (`borderRadiusShorthand.ts`,
+  CSS's own 1/2/3/4-component expansion), in one patch, so no corner is
+  invented and no measurement is needed. That module **refuses** three shapes
+  — the elliptical `/` form, a value containing a function call, and more than
+  four components — and a refused shorthand keeps its text in the collapsed
+  field while the four corner fields disable with the reason.
 
 ### G6 — Fill: a real colour picker and a fill list (F13–F15)
 
@@ -447,7 +490,7 @@ element with no image is the exact defect this page exists to prevent.
   same gestures Effects' shadow layers use.
   - `backgroundColor` is **pinned bottom-most**, not treated as layer N+1 — CSS
     paints it below every layer and it has no per-layer satellites of its own.
-  - The six satellites plus `background-blend-mode` became **per-layer**, edited
+  - The six positioning satellites became **per-layer**, edited
     inside each row's popover, following CSS Backgrounds 3 §2.1: a shorter list
     repeats cyclically (the control is labelled "(all layers)" so the edit that
     splits the list is not a surprise), and a list with
@@ -465,6 +508,25 @@ element with no image is the exact defect this page exists to prevent.
   - The visibility eye stays omitted — §8 decision 1 is unchanged by this. What
     changed is the layer list, not the fact that CSS has no honest way to store
     a hidden-but-present paint.
+
+- **G6.7 — Blend mode on a fill layer (P9).** Figma shows a fill's blend mode on
+  the fill row itself, so `background-blend-mode` moved out of the layer
+  popover's satellite list onto the row (`LayerBlendSelect`, a `Select`).
+  **`mix-blend-mode` is NOT what a per-fill blend maps onto** — that is the
+  element's blend against what is behind it, and it already has one control, in
+  the Layer section. CSS has no general "blend one fill of an element against
+  another fill of the same element"; what it has is `background-blend-mode`,
+  a per-layer list composited within the element's own background stack. So the
+  control exists on `background-image` layer rows ONLY: the Text, Content-fit
+  and Solid-fill rows get no blend control rather than a decorative one that
+  writes the element-level property behind the user's back.
+
+  Writing one layer's blend emits the whole list, the untouched layers at their
+  CSS initial — there is no "leave the others alone" syntax. A declaration
+  `backgroundLayers.ts` refused to split per layer keeps the row's select
+  disabled with the reason, and the popover keeps its whole-property raw field.
+  The gradient row's stop count moved into its summary, where the blend select
+  now sits.
 
 - **G6.6 — Image fill, from the project's own files.** The Fill header has two
   "add a layer" buttons: a paint bucket (gradient) and an image. The image one
@@ -614,9 +676,10 @@ there is no genuinely empty state to collapse to (see that file's own doc).
 `AlignBar` mounts at the top of the Position section for single-node selection,
 with a 7th overflow button carrying *Tidy up* / *Distribute vertical spacing* /
 *Distribute horizontal spacing*. F29's constraint dropdowns appear in absolute
-mode — they choose *which* of left/right and top/bottom the offsets are written
-to, a real and frequently-wanted choice previously expressible only by which of
-four fields the user typed in. `rotate` is now **resident** on the section's
+mode — one per axis, offering Figma's five constraints (Left / Right / Left and
+right / Centre / Scale) and reading back the one the edited bag declares. Each
+constraint's inset fields follow it: one field per pinned edge, two for the
+constraints that pin both (see G10.3). `rotate` is now **resident** on the section's
 third row (`RotationRow.tsx`, paired with `ZIndexSettingsRow` on the same row)
 rather than tucked behind a popover — it writes the standalone `rotate`
 property and refuses, with a reason, when `transform` already contains a
@@ -635,19 +698,27 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
   the collisions are independent. An unflipped element gets no `scale`
   declaration at all, never a no-op `scale: 1 1`.
 
-- **G10.3 — The constraints crosshair (W8-4).** Figma's constraints widget now
-  sits beside the side pickers in absolute/fixed mode
-  (`ConstraintsDiagram.tsx`) — four edge bars plus a centring line per axis,
-  over a square standing for the containing block. It is **presentation over
-  the pickers, not a replacement**: the pickers still own "which property does
-  the value land on", and both surfaces write through the same per-property
-  commit channel. What the crosshair adds is the two constraints a pair of
-  side pickers cannot express, and a read-back of which edges the element is
-  pinned to.
+- **G10.3 — The constraints crosshair (W8-4, completed P9).** Figma's
+  constraints widget sits beside the per-axis constraint dropdowns in
+  absolute/fixed mode (`ConstraintsDiagram.tsx`) — four edge bars plus a
+  centring line per axis, over a square standing for the containing block.
+
+  **Crosshair and dropdown are two faces of one model.** P9 replaced the old
+  two-option `Left ▾ / Right ▾` side picker — which only chose *which inset
+  property the value field wrote to*, leaving stretch, Centre and Scale
+  reachable by crosshair clicks alone — with a dropdown over the same five
+  constraints. Both surfaces read and write through `useConstraintAxes`, so
+  they cannot disagree about which constraint an axis is in, and a refused
+  constraint is a **disabled option carrying its reason** rather than a choice
+  that silently does nothing. The inset fields stay: one per pinned edge, two
+  for the constraints that pin both.
 
   Every mapping and every refusal lives in one pure module,
-  `constraintMapping.ts` (unit-tested in `constraintMapping.test.ts`) — the
-  component owns pixels and pointer events only:
+  `constraintMapping.ts` (unit-tested in `constraintMapping.test.ts`);
+  `useConstraintAxes.ts` supplies it the three things it cannot compute — the
+  element's live insets, its parent's padding box, and whether that parent
+  really is the containing block. The components own pixels and pointer events
+  only:
 
   | Constraint | The CSS it actually is |
   |---|---|
@@ -683,11 +754,18 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
   Normal-flow positions never reach the cluster at all (Law 5 already keeps
   the constraints shape absolute-only).
 
-  Known limitation, inherited not introduced: one crosshair click can produce
-  two or three property writes (stretch sets both insets and clears the size),
-  which lands as that many undo entries — the panel's commit channel is
-  per-property. Same limitation `PositionConstraints` already documents for
-  moving a value between sides.
+  **One constraint change is one undo entry.** The multi-write limitation W8-4
+  recorded (stretch sets both insets and clears the size, landing as three
+  history entries because the crosshair replayed its plan property by
+  property) is gone: `useConstraintAxes` commits the whole plan through
+  `commitStyleMany`.
+
+  The cluster's gate is stricter than the old side picker was, deliberately.
+  A side picker moving a value from `left` to `right` needed no measurement;
+  a *constraint* is a claim about the element's relationship to its parent, so
+  with no frame rendering that parent the dropdown is disabled with the
+  "can't verify" reason. The inset fields beside it stay editable throughout —
+  they are ordinary declarations, not claims.
 
 ### G11 — Export (W8-4)
 
@@ -1419,8 +1497,8 @@ stored — the placeholder layer). Every section is wired:
 
 | Section | Mixed surface |
 |---|---|
-| Spacing, Layout padding | `SingleSideField` / `LinkedAxisField` → `ScrubTokenField`'s new `mixed` |
-| Layout | mode row (`data-mode="mixed"`), flex direction, gap, grid tracks |
+| Spacing, Layout padding | `SingleSideField` / `LinkedAxisField` / `LinkedSidesField` → `ScrubTokenField`'s new `mixed` |
+| Layout | mode row (`data-mode="mixed"`), the reverse toggle (disabled — no single axis to flip), gap, grid tracks |
 | Position | the `position` switcher (`data-position-value="mixed"`) and each TRBL offset |
 | Size | W/H and every revealed constraint (`AddablePropertyField` already took `MIXED`) |
 | Typography | text-align and vertical-align groups; every other row via `StackedPropertyGrid` |

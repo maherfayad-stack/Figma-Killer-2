@@ -32,7 +32,7 @@
  */
 import type { CSSPropertyBag } from '@core/page-tree'
 import { useSpacingTokens } from '@site/property-controls/tokenUtils'
-import { GapIcon } from '@ui/components/InspectorIcons'
+import { GapIcon, RowGapIcon } from '@ui/components/InspectorIcons'
 import { LabeledControl } from './LabeledControl'
 import { ScrubTokenField } from './ScrubTokenField'
 import styles from '../LayoutSection.module.css'
@@ -79,7 +79,7 @@ export function GapRow({
             placeholder="0px"
             mixed={rowGapMixed}
             inherited={!rowGapIsSet && rowGapValue !== undefined && rowGapValue !== ''}
-            prefix={<GapIcon size={13} aria-hidden="true" />}
+            prefix={<RowGapIcon size={13} aria-hidden="true" />}
             tokens={tokens}
             min={0}
             disabled={rowGapDisabledReason != null}

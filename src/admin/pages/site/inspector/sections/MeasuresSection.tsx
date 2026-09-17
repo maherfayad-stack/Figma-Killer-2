@@ -32,9 +32,11 @@
  * ELEMENT hug/fill buttons; this design does not duplicate that control into
  * a second face — see "Hug/Fill" below); `position`, `top`, `right`,
  * `bottom`, `left`, `rotate`, `scale`, `zIndex` (ported from the retired
- * `PositionSection.tsx`, restructured — see below); the 4 `border*Radius`
- * longhands (ported from the retired `AppearanceSection.tsx`, now
- * `RadiusCluster.tsx`, a sibling file in this same folder).
+ * `PositionSection.tsx`, restructured — see below); the `borderRadius`
+ * shorthand and its 4 `border*Radius` longhands (ported from the retired
+ * `AppearanceSection.tsx`, now `RadiusCluster.tsx`, a sibling file in this
+ * same folder — which of the two it writes is the link toggle's own
+ * decision, see that file).
  *
  * ## The Constraints-vs-Flex-element identity swap
  *
@@ -55,7 +57,8 @@
  * child at all (`01-fixtures.md`'s own "what's deliberately not a fixture"
  * note), so there is no evidenced CONSTRAINTS header shape to build against
  * either — Studio's existing `PositionConstraints`/`ConstraintsDiagram`
- * (F29's side pickers + crosshair) already cover that honestly.
+ * (F29's per-axis constraint dropdowns + crosshair) already cover that
+ * honestly.
  *
  * This section therefore reproduces the ONE evidenced difference — a header
  * label — and keeps the CONTENT identical between the two faces (the
@@ -161,6 +164,7 @@ const MEASURES_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
   'rotate',
   'scale',
   'zIndex',
+  'borderRadius',
   'borderTopLeftRadius',
   'borderTopRightRadius',
   'borderBottomRightRadius',
@@ -354,6 +358,7 @@ export function MeasuresSection() {
           tokens={spacingTokens}
           onChange={onChange}
           onClear={onClearProperty}
+          onChangeMany={onChangeMany}
           onPreview={previewProperty}
           onClearPreview={onClearPreview}
         />
@@ -431,6 +436,7 @@ export function MeasuresSection() {
             storedStyles={storedStyles}
             currentStyles={currentStyles}
             onChange={onChange}
+            onChangeMany={onChangeMany}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
           />

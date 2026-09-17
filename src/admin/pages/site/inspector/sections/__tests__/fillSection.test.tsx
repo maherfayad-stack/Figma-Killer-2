@@ -365,7 +365,9 @@ describe('FillSection — background layers', () => {
     selectNode({ inlineStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` } })
     render(<FillSection />)
 
-    fireEvent.click(screen.getByText('Radial gradient'))
+    // The row summary now carries the stop count too — the trailing slot it
+    // used to sit in belongs to the layer's blend select.
+    fireEvent.click(screen.getByText(/^Radial gradient · \d+ stops$/))
     const popover = screen.getByRole('dialog', { name: 'Radial gradient fill 2' })
     const stopInput = within(popover).getByRole('textbox', { name: 'Stop 1 colour' })
     fireEvent.change(stopInput, { target: { value: '#123456' } })
@@ -374,6 +376,65 @@ describe('FillSection — background layers', () => {
     const written = String(currentNode()?.inlineStyles?.backgroundImage)
     expect(written.startsWith(GRADIENT)).toBe(true)
     expect(written).toContain('#123456')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3b. Per-layer blend mode — on the row, `background-blend-mode` only
+// ---------------------------------------------------------------------------
+
+describe('FillSection — per-layer blend mode', () => {
+  function pickBlend(index: number, option: string) {
+    const combobox = screen.getByRole('combobox', { name: `Blend mode, layer ${index + 1}` })
+    fireEvent.click(combobox.nextElementSibling as HTMLElement)
+    fireEvent.click(screen.getByRole('option', { name: option }))
+  }
+
+  it('puts a blend select on every background-image layer row', () => {
+    selectNode({ inlineStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` } })
+    render(<FillSection />)
+
+    expect(screen.getByTestId('fill-layer-0-blend')).toBeTruthy()
+    expect(screen.getByTestId('fill-layer-1-blend')).toBeTruthy()
+  })
+
+  it('writes the WHOLE background-blend-mode list, the untouched layers at their initial', () => {
+    selectNode({ inlineStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}` } })
+    render(<FillSection />)
+
+    pickBlend(1, 'multiply')
+
+    // CSS has no "leave the other layers alone" syntax, so layer 1 is written
+    // with the initial the browser was already using.
+    expect(currentNode()?.inlineStyles?.backgroundBlendMode).toBe('normal, multiply')
+    // And nothing about the paint stack itself moved.
+    expect(currentNode()?.inlineStyles?.backgroundImage).toBe(`${GRADIENT}, ${GRADIENT_B}`)
+  })
+
+  it('never opens the layer popover — the select swallows its own click', () => {
+    selectNode({ inlineStyles: { backgroundImage: GRADIENT } })
+    render(<FillSection />)
+
+    const combobox = screen.getByRole('combobox', { name: 'Blend mode, layer 1' })
+    fireEvent.click(combobox.nextElementSibling as HTMLElement)
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('leaves the blend row in the popover when the declaration cannot be split per layer', () => {
+    selectNode({
+      inlineStyles: { backgroundImage: `${GRADIENT}, ${GRADIENT_B}`, backgroundBlendMode: 'normal, multiply, screen' },
+    })
+    render(<FillSection />)
+
+    // More values than layers: editing per layer would delete part of the
+    // user's declaration, so the row's select refuses...
+    expect((screen.getByRole('combobox', { name: 'Blend mode, layer 1' }) as HTMLInputElement).disabled).toBe(true)
+
+    // ...and the whole-property raw field is still reachable in the popover.
+    fireEvent.click(screen.getByText(/^Linear gradient · \d+ stops$/))
+    const popover = screen.getByRole('dialog', { name: 'Linear gradient fill 1' })
+    expect(within(popover).getByRole('textbox', { name: 'Blend, raw CSS' })).toBeTruthy()
   })
 })
 

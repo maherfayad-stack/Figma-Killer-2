@@ -54,14 +54,21 @@ import styles from './ExpandableFieldCluster.module.css'
 // Sticky expand/collapse state — module-level, keyed by cluster id.
 // ---------------------------------------------------------------------------
 
-const stickyExpandedByClusterId = new Map<string, boolean>()
+/**
+ * Which layout a cluster is showing. `all` is the OPTIONAL most-collapsed
+ * state — one field standing for every side at once, Figma's link toggle —
+ * and only exists for a cluster that supplies an `all` array.
+ */
+type ClusterState = 'all' | 'collapsed' | 'expanded'
 
-function readStickyExpanded(id: string): boolean | undefined {
-  return stickyExpandedByClusterId.get(id)
+const stickyStateByClusterId = new Map<string, ClusterState>()
+
+function readStickyState(id: string): ClusterState | undefined {
+  return stickyStateByClusterId.get(id)
 }
 
-function writeStickyExpanded(id: string, value: boolean): void {
-  stickyExpandedByClusterId.set(id, value)
+function writeStickyState(id: string, value: ClusterState): void {
+  stickyStateByClusterId.set(id, value)
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +83,13 @@ export interface ExpandableFieldClusterProps {
    * selection". Give unrelated clusters distinct ids.
    */
   id: string
+  /**
+   * OPTIONAL most-collapsed state: ONE field standing for every side at once.
+   * Supplying it turns the toggle into a three-way cycle
+   * (`all` -> `collapsed` -> `expanded` -> `all`); omitting it leaves the
+   * original two-way behaviour untouched.
+   */
+  all?: ReactNode[]
   /** Field nodes rendered while collapsed — usually 1 (radius) or 2 (padding H/V). */
   collapsed: ReactNode[]
   /** Field nodes rendered while expanded — usually 4, one per side/corner. */
@@ -91,19 +105,46 @@ export interface ExpandableFieldClusterProps {
   expandLabel: string
   /** Toggle's aria-label while expanded — names the collapse action, e.g. "Collapse to horizontal and vertical padding". */
   collapseLabel: string
+  /** Toggle's aria-label while in the `all` state — names the action that leaves it. Required when `all` is supplied. */
+  allLabel?: string
+  /**
+   * Toggle glyph while COLLAPSED. Defaults to the 2×2 grid mark ("split this
+   * into cells"). A cluster whose collapsed state is genuinely one value for
+   * every side — corner radius — passes a chain link instead, so the button
+   * reads as Figma's link toggle rather than as a generic expander.
+   */
+  collapsedIcon?: ReactNode
+  /** Toggle glyph while EXPANDED. Defaults to the same 2×2 grid mark. */
+  expandedIcon?: ReactNode
+  /** Toggle glyph while in the `all` state. Defaults to `collapsedIcon`. */
+  allIcon?: ReactNode
   className?: string
 }
 
 export function ExpandableFieldCluster({
   id,
+  all,
   collapsed,
   expanded,
   linked,
   expandLabel,
   collapseLabel,
+  allLabel,
+  collapsedIcon,
+  expandedIcon,
+  allIcon,
   className,
 }: ExpandableFieldClusterProps) {
-  const [isExpanded, setIsExpanded] = useState<boolean>(() => readStickyExpanded(id) ?? !linked)
+  /** The linked resting state: the `all` field when there is one, else the collapsed pair. */
+  const restingState: ClusterState = all ? 'all' : 'collapsed'
+  const [state, setStateRaw] = useState<ClusterState>(
+    () => normalizeState(readStickyState(id), all) ?? (linked ? restingState : 'expanded'),
+  )
+
+  const setState = (next: ClusterState) => {
+    setStateRaw(next)
+    writeStickyState(id, next)
+  }
 
   // Auto-relink: React-19 render-time "adjust state when a prop changes"
   // idiom (no effect — see file doc). `prevLinked` only tracks transitions
@@ -114,25 +155,22 @@ export function ExpandableFieldCluster({
   const [prevLinked, setPrevLinked] = useState(linked)
   if (linked !== prevLinked) {
     setPrevLinked(linked)
-    if (linked && isExpanded) {
-      setIsExpanded(false)
-      writeStickyExpanded(id, false)
-    }
+    if (linked && state === 'expanded') setState(restingState)
   }
 
-  const handleToggle = () => {
-    const next = !isExpanded
-    setIsExpanded(next)
-    writeStickyExpanded(id, next)
-  }
+  const handleToggle = () => setState(nextState(state, all != null))
 
-  const fields = isExpanded ? expanded : collapsed
-  const label = isExpanded ? collapseLabel : expandLabel
+  const isExpanded = state === 'expanded'
+  const fields = state === 'expanded' ? expanded : state === 'all' ? all! : collapsed
+  const label = state === 'expanded' ? collapseLabel : state === 'all' ? (allLabel ?? expandLabel) : expandLabel
+  const stateIcon = state === 'expanded' ? expandedIcon : state === 'all' ? (allIcon ?? collapsedIcon) : collapsedIcon
+  const icon = stateIcon ?? <Grid2x22SolidIcon size={14} aria-hidden="true" />
 
   return (
     <div className={cn(styles.root, className)} data-testid={`expandable-field-cluster-${id}`}>
       <div
         className={isExpanded ? styles.grid : styles.row}
+        data-cluster-state={state}
         data-testid={`expandable-field-cluster-${id}-fields`}
       >
         {fields.map((field, index) => (
@@ -154,8 +192,22 @@ export function ExpandableFieldCluster({
         data-testid={`expandable-field-cluster-${id}-toggle`}
         onClick={handleToggle}
       >
-        <Grid2x22SolidIcon size={14} aria-hidden="true" />
+        {icon}
       </Button>
     </div>
   )
+}
+
+/** The cycle the toggle walks: all -> collapsed -> expanded -> all. */
+function nextState(current: ClusterState, hasAll: boolean): ClusterState {
+  if (current === 'expanded') return hasAll ? 'all' : 'collapsed'
+  if (current === 'all') return 'collapsed'
+  return 'expanded'
+}
+
+/** A sticky `all` from a previous mount is meaningless for a cluster with no `all` slot. */
+function normalizeState(sticky: ClusterState | undefined, all: ReactNode[] | undefined): ClusterState | undefined {
+  if (sticky === undefined) return undefined
+  if (sticky === 'all' && !all) return 'collapsed'
+  return sticky
 }
