@@ -157,7 +157,20 @@ interface BoardFrameViewProps {
   isActive: boolean
   /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
   isSelected: boolean
+  /**
+   * Whether this frame's board rect intersects the viewport (plus margin). It
+   * drives the frozen-poster CAPTURE only — the picture has to be taken while
+   * the frame is genuinely on screen and settled.
+   */
   isOnScreen: boolean
+  /**
+   * Whether this frame holds a live iframe. A superset of `isOnScreen`: the
+   * mount pool (S1, `frameMountPool.ts`) keeps recently-departed frames
+   * mounted so panning back to them costs nothing. A mounted-but-offscreen
+   * frame is simply outside the visible area — it renders exactly as it did
+   * on screen, it just isn't being looked at.
+   */
+  isMounted: boolean
   /**
    * L8 Phase B (`perf-06`, STATE.md) — the live-frame pool's hot-set
    * membership flag, computed by `BoardFramesLayer.tsx` via
@@ -168,10 +181,10 @@ interface BoardFrameViewProps {
    * doesn't have to re-boot the moment the user pans back. Only meaningful
    * for a Tier-2 (`trust === 'run-project'`) frame's `LiveBoardFrame` branch
    * below — Tier 0/1's portal `BreakpointFrame` is same-origin and cheap, so
-   * it stays gated on `isOnScreen` alone via `liveMounted`'s own fallback.
-   * Optional and defaults to `isOnScreen` so any test or call site that
+   * it stays gated on S1's `isMounted` alone.
+   * Optional and defaults to `isMounted` so any test or call site that
    * omits it (a Tier 0/1 board, or a unit test exercising this component in
-   * isolation) reproduces the pre-pool mount/unmount behavior byte-for-byte.
+   * isolation) reproduces S1's mount-pool behaviour byte-for-byte.
    */
   isLiveMounted?: boolean
 }
@@ -197,13 +210,17 @@ function BoardFrameViewImpl({
   isActive,
   isSelected,
   isOnScreen,
+  isMounted,
   isLiveMounted,
 }: BoardFrameViewProps) {
-  // See `isLiveMounted`'s own doc — Phase A's every caller omits it, so this
-  // reproduces `isOnScreen`-gated mounting exactly until Phase B's pool
-  // starts passing a real, decoupled hot-set flag.
-  const liveMounted = isLiveMounted ?? isOnScreen
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
+  // Two pools decide this, and which one applies depends on the tier.
+  // S1's mount pool (`frameMountPool.ts`) governs every portal frame: an
+  // iframe that has just left the viewport stays mounted so panning back
+  // is free. A Tier-2 frame costs a real dev-server-backed process, so L8
+  // Phase B's narrower, capped hot set (`liveFramePool.ts`) governs that
+  // one instead. `isLiveMounted` is `undefined` on every Tier 0/1 board.
+  const mounted = trust === 'run-project' ? (isLiveMounted ?? isMounted) : isMounted
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
@@ -255,6 +272,15 @@ function BoardFrameViewImpl({
   // second offscreen frame to do this.
   const frameBodyRef = useRef<HTMLDivElement>(null)
   useFramePosterCapture(frameBodyRef, page, width, isOnScreen)
+  // S1 — the frame's mount is staged (iframe -> injectors -> node tree; see
+  // `IframeFrameSurface`'s header), so between entering the viewport and the
+  // tree's commit the iframe is a real but EMPTY document. The poster stays
+  // painted on top of it until then, which is what makes a zoom-out read as
+  // "these frames were always there" instead of a wave of white boxes.
+  // `setContentReady` is passed down raw: a `useState` setter's identity is
+  // stable by React's own contract, so it cannot defeat `BreakpointFrame`'s
+  // `memo()` bailout the way a fresh closure would.
+  const [contentReady, setContentReady] = useState(false)
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -498,17 +524,17 @@ function BoardFrameViewImpl({
           UNLESS the frame has never been manually resized, in which case
           `data-frame-auto-height` (canvas-04) lets the box grow to wrap its
           already-correctly-fitted iframe instead (see
-          `BoardFramesLayer.module.css`). Gated on `isOnScreen` too: an
-          offscreen frame has no live iframe to size against, so it keeps the
-          fixed fallback box the placeholder needs — same as before. */}
+          `BoardFramesLayer.module.css`). Gated on `mounted` too: a
+          frame with no live iframe has nothing to size against, so it keeps
+          the fixed fallback box the placeholder needs — same as before. */}
       <div
         ref={frameBodyRef}
         className={styles.frameBody}
         data-testid="board-frame-body"
-        data-frame-auto-height={!hasManualHeight && isOnScreen ? 'true' : undefined}
+        data-frame-auto-height={!hasManualHeight && mounted ? 'true' : undefined}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
-        {liveMounted ? (
+        {mounted ? (
           <CanvasPageContext.Provider value={page.id}>
             {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
                 every selection/hover it originates with the frame it came
@@ -547,6 +573,7 @@ function BoardFrameViewImpl({
                   // would be a second, board-global chrome strip on top of it.
                   // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
                   showBreakpointChrome={false}
+                  onContentReadyChange={setContentReady}
                 />
               )}
             </CanvasFrameContext.Provider>
@@ -554,11 +581,18 @@ function BoardFrameViewImpl({
         ) : (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
         )}
+        {/* The poster stays painted over a portal frame until its tree has
+            committed. A Tier-2 frame reports no such readiness — it draws its
+            own boot and crash chrome (`LiveBoardFrame`) — so an overlay there
+            would be a poster that never lifts. */}
+        {mounted && trust !== 'run-project' && !contentReady && (
+          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} overlay />
+        )}
         {/* A page with nothing on it renders as a blank rectangle, which reads
             as "it did not load". Only for a frame that is actually drawing its
             iframe: an offscreen frame is showing a poster, and a caption over
             that would be about a page nobody can see. */}
-        {isOnScreen && pageHasNoContent(page) && <CanvasEmptyPageHint />}
+        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint />}
       </div>
       {/* Resize handles — SELECTED frames only, not merely active.
           `activePageId` is the edit target: it is set by a capture-phase click

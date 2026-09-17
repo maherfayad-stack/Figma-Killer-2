@@ -69,8 +69,13 @@
  * tree) is only mounted for frames whose board-space rect intersects the
  * current viewport, inflated by `FRAME_VIEWPORT_MARGIN` (see
  * `frameVirtualization.ts`) so scrolling/panning doesn't pop iframes in and
- * out right at the edge. Offscreen frames render a static placeholder body
- * instead — no iframe, no animation. Only the BODY is swapped: the outer
+ * out right at the edge, PLUS the recently-departed frames the mount pool
+ * still holds (`frameMountPool.ts`, S1) — leaving the viewport no longer
+ * throws a document away, so panning back to where you just were costs
+ * nothing at all. The pool is capped at `max(8, onScreen + 4)` and evicts
+ * least-recently-on-screen, because each live frame is a whole document with
+ * its own copy of every stylesheet. Frames outside both sets render a static
+ * placeholder body instead — no iframe, no animation. Only the BODY is swapped: the outer
  * `.frame` div, its position (`--frame-x/--frame-y`), the drag header, and
  * its title/rename/context-menu all stay mounted and functional on
  * placeholders too, so position, activation, drag, rename, and removal work
@@ -144,6 +149,7 @@ import { AddPagePicker } from './AddPagePicker'
 import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from '@core/studio-board'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
 import { computeHotFrameIds, LIVE_FRAME_POOL_SIZE } from './liveFramePool'
+import { nextFrameRetention, sameFrameRetention } from './frameMountPool'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
 import { useMarqueeSelection } from './useMarqueeSelection'
@@ -161,6 +167,23 @@ function sameFrameIdOrder(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false
   return a.every((id, i) => id === b[i])
 }
+
+/** Stable empty retention, for the same "never a fresh literal" reason. */
+const EMPTY_RETENTION: string[] = []
+
+/**
+ * The mount pool's retention order, tagged with the on-screen set it was
+ * derived from. The tag is what lets the derivation happen during render
+ * without looping — see the `useState` below.
+ */
+interface FrameRetention {
+  /** The `onScreenKey` this order was computed for. */
+  key: string
+  /** Most-recently-on-screen first. See `frameMountPool.ts`. */
+  ids: string[]
+}
+
+const INITIAL_RETENTION: FrameRetention = { key: '\u0000', ids: EMPTY_RETENTION }
 
 export function BoardFramesLayer() {
   // C3 (this change) — subscribe to `board.frames` alone, not the whole
@@ -213,6 +236,54 @@ export function BoardFramesLayer() {
     return () => observer.disconnect()
   }, [viewportActions])
 
+  // S1 — the mount pool's retention order (most-recently-on-screen first).
+  // See `frameMountPool.ts`; the derivation itself is below, next to the
+  // on-screen set it needs.
+  const [retention, setRetention] = useState<FrameRetention>(INITIAL_RETENTION)
+
+  // Resolved frames + the viewport intersection test, hoisted ABOVE this
+  // component's `hasActiveBoard` early return because the retention effect
+  // below is a hook and hooks cannot live after one. Both are cheap array
+  // passes over this board's own frames — never a whole-site scan.
+  const framesWithPages = resolveFramesWithPages(frames, relevantPages)
+  const onScreenFrameIds = framesWithPages
+    .filter(({ frame }) =>
+      isFrameOnScreen(
+        {
+          x: frame.x,
+          y: frame.y,
+          width: frame.width ?? FRAME_WIDTH,
+          height: (frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
+        },
+        { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height },
+        FRAME_VIEWPORT_MARGIN,
+      ),
+    )
+    .map(({ frame }) => frame.id)
+  const onScreenKey = onScreenFrameIds.join('|')
+
+  // Advance the retention DURING render, React's documented "adjusting state
+  // when something changes" pattern, rather than from an effect.
+  //
+  // An effect would commit twice per membership change — once with the old
+  // pool, once with the new — and `boardFramesLayerRenderScope.test.tsx` and
+  // `boardLayerNarrowSelectorsScope.test.tsx` both count commits precisely so
+  // this layer cannot quietly start doing that. Setting state during a
+  // component's own render makes React discard the in-progress pass and
+  // re-run it immediately: one commit, no effect, nothing to tear.
+  //
+  // `key` is the guard that stops it looping. It is the JOINED on-screen ids,
+  // not the array, because a fresh array identity every render would make
+  // "did membership change?" always true — and the whole point is that a pan
+  // which moved no frame across the margin changes nothing at all.
+  let retainedFrameIds = retention.ids
+  if (retention.key !== onScreenKey) {
+    const known = new Set(framesWithPages.map(({ frame }) => frame.id))
+    const next = nextFrameRetention(retention.ids, onScreenFrameIds, known)
+    retainedFrameIds = sameFrameRetention(retention.ids, next) ? retention.ids : next
+    setRetention({ key: onScreenKey, ids: retainedFrameIds })
+  }
+
   // Marquee drag (WS-7.1) — screen-space rect, portaled outside the
   // transformed layer below. Gesture wiring + arbitration lives in
   // `useMarqueeSelection.ts` (own module, see its doc comment). `layerRef` is
@@ -225,39 +296,30 @@ export function BoardFramesLayer() {
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
 
   // Live-frame pool (L8 Phase B) — see the module doc's "Live-frame pool"
-  // note. `framesWithPages`/`visibleFrameIds` are computed here (BEFORE the
-  // `!hasActiveBoard` early return below) purely so this `useEffect` can run
-  // unconditionally on every render, same as every other hook above —
-  // `hasActiveBoard === false` just means both lists are empty and the pool
-  // computation below is a no-op.
-  const framesWithPages = resolveFramesWithPages(frames, relevantPages)
-  const visibleFrameIds = framesWithPages
-    .filter(({ frame }) => {
-      // Same per-frame size fallback as the render `.map()` below (Phase 6E
-      // — a frame without a saved width/height uses the shared default).
-      const width = frame.width ?? FRAME_WIDTH
-      const height = frame.height ?? FRAME_HEIGHT
-      return isFrameOnScreen(
-        { x: frame.x, y: frame.y, width, height: height + FRAME_HEADER_HEIGHT },
-        { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height },
-        FRAME_VIEWPORT_MARGIN,
-      )
-    })
-    .map(({ frame }) => frame.id)
+  // note. It reads the SAME `onScreenFrameIds` S1's mount pool derived above:
+  // both pools answer "which frames are on screen, plus which recently were",
+  // and computing the viewport intersection twice per render would be two
+  // passes that can disagree. S1's retention governs every portal frame;
+  // this capped hot set governs a Tier-2 frame, which costs a process.
   const [previousHotFrameIds, setPreviousHotFrameIds] = useState<string[]>([])
-  const hotFrameIds = computeHotFrameIds(visibleFrameIds, previousHotFrameIds, LIVE_FRAME_POOL_SIZE)
+  const hotFrameIds = computeHotFrameIds(onScreenFrameIds, previousHotFrameIds, LIVE_FRAME_POOL_SIZE)
   // "Adjust state during rendering" (react.dev) — only calls `setState` when
   // the computed hot-set actually differs in content from what's stored, so
   // this terminates in one extra render rather than looping: the next call
   // to `computeHotFrameIds` with `previousHotFrameIds === hotFrameIds`'s
   // content produces the SAME `hotFrameIds` again (deterministic given the
-  // same `visibleFrameIds`), which then compares equal and skips the call.
+  // same `onScreenFrameIds`), which then compares equal and skips the call.
   if (!sameFrameIdOrder(hotFrameIds, previousHotFrameIds)) {
     setPreviousHotFrameIds(hotFrameIds)
   }
   const hotFrameIdSet = new Set(hotFrameIds)
 
   if (!hasActiveBoard) return null
+
+  const onScreenFrameIdSet = new Set(onScreenFrameIds)
+  // Live = on screen, plus whatever the pool still holds. A retained frame is
+  // invisible; it is mounted purely so coming back is free.
+  const liveFrameIds = new Set([...onScreenFrameIds, ...retainedFrameIds])
 
   // One bounding box around the whole multi-selection (board-space, so it
   // lives inside `.layer` and pans/zooms with the frames it encloses).
@@ -303,11 +365,6 @@ export function BoardFramesLayer() {
           // files render unchanged.
           const width = frame.width ?? FRAME_WIDTH
           const height = frame.height ?? FRAME_HEIGHT
-          const isOnScreen = isFrameOnScreen(
-            { x: frame.x, y: frame.y, width, height: height + FRAME_HEADER_HEIGHT },
-            { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height },
-            FRAME_VIEWPORT_MARGIN,
-          )
           return (
             <BoardFrameView
               key={frame.id}
@@ -320,7 +377,8 @@ export function BoardFramesLayer() {
               hasManualHeight={frame.height !== undefined}
               isActive={page.id === activePageId}
               isSelected={selectedFrameIds.includes(page.id)}
-              isOnScreen={isOnScreen}
+              isOnScreen={onScreenFrameIdSet.has(frame.id)}
+              isMounted={liveFrameIds.has(frame.id)}
               isLiveMounted={trust === 'run-project' ? hotFrameIdSet.has(frame.id) : undefined}
             />
           )

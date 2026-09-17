@@ -104,6 +104,8 @@ export {
   disableHoverInSelector,
   suppressHoverInDocument,
   startHoverSuppression,
+  planHoverRewrites,
+  type HoverRewrite,
   type HoverSuppressionController,
 } from './hoverSuppressionRules'
 

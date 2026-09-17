@@ -110,6 +110,96 @@ export function disableHoverInSelector(selector: string): string {
 }
 
 /**
+ * One rule that needs rewriting: where it sits in the sheet's rule tree, and
+ * what its selector becomes. `path` is a chain of `cssRules` indices — `[3]`
+ * is the sheet's fourth rule, `[3, 1]` the second rule inside it.
+ */
+export interface HoverRewrite {
+  path: number[]
+  selector: string
+}
+
+/** Distinct sheet texts to remember plans for. See {@link planHoverRewrites}. */
+const PLAN_CACHE_LIMIT = 24
+const plansBySheetText = new Map<string, HoverRewrite[]>()
+
+/** The full `O(rules)` walk, recorded as a plan. Runs once per distinct sheet text. */
+function collectRewrites(rules: CSSRuleList, prefix: number[], out: HoverRewrite[]): void {
+  for (let i = 0; i < rules.length; i += 1) {
+    const rule = rules[i]
+    if (!rule) continue
+    const path = [...prefix, i]
+    const styleRule = rule as CSSStyleRule
+    if (typeof styleRule.selectorText === 'string') {
+      const next = disableHoverInSelector(styleRule.selectorText)
+      if (next !== styleRule.selectorText) out.push({ path, selector: next })
+    }
+    const nested = (rule as CSSGroupingRule).cssRules
+    if (nested) collectRewrites(nested, path, out)
+  }
+}
+
+/**
+ * The rewrite plan for `sheet`, built from — and cached against — the exact
+ * `text` it was parsed from (S1, `perf-07`).
+ *
+ * `CanvasHoverSuppressionInjector` used to walk every rule of all four
+ * page-content stylesheets in every mounting frame. On an 18-frame board that
+ * was ~100 ms of a single 255 ms animation frame during a zoom-out — and it is
+ * frame-INVARIANT work, since every frame receives byte-identical CSS.
+ *
+ * **Why an index path is a valid address in another document.** Identical
+ * input text through the same parser yields an identical rule tree, so a path
+ * built against one document names the same rule in every other one. That is
+ * the whole correctness argument, and `hoverSuppressionPlanCache.test.tsx`
+ * pins it by planning against one document and resolving every path in a
+ * second.
+ *
+ * The cache is bounded: a board settles on a handful of distinct texts
+ * (`mc-classes` and `mc-user-styles` resolve viewport units per frame WIDTH),
+ * but an edit produces a new one on every keystroke, so the map is cleared
+ * wholesale once it passes its cap rather than left to grow with a typing
+ * session.
+ *
+ * This is also the module's testable seam: happy-dom exposes
+ * `CSSStyleRule.selectorText` as a readonly getter, so the WRITE half throws
+ * under `bun test`. Planning only reads.
+ */
+export function planHoverRewrites(sheet: CSSStyleSheet, text: string): HoverRewrite[] {
+  const cached = plansBySheetText.get(text)
+  if (cached) return cached
+  const plan: HoverRewrite[] = []
+  collectRewrites(sheet.cssRules, [], plan)
+  if (plansBySheetText.size >= PLAN_CACHE_LIMIT) plansBySheetText.clear()
+  plansBySheetText.set(text, plan)
+  return plan
+}
+
+/**
+ * Applying a plan is indexed access only — `O(rewritten rules × nesting
+ * depth)` instead of `O(all rules)`, and a page's `:hover` rules are a small
+ * fraction of its rules.
+ */
+function applyHoverPlan(sheet: CSSStyleSheet, plan: readonly HoverRewrite[]): void {
+  for (const { path, selector } of plan) {
+    let rules: CSSRuleList | undefined = sheet.cssRules
+    let rule: CSSRule | undefined
+    for (const index of path) {
+      rule = rules?.[index] ?? undefined
+      if (!rule) break
+      rules = (rule as CSSGroupingRule).cssRules
+    }
+    if (!rule) continue
+    const styleRule = rule as CSSStyleRule
+    // An invalid selector makes the setter a silent no-op, so only write when
+    // there is a real change to make. A rule already carrying the rewritten
+    // selector — this pass re-running over a sheet nothing reparsed — short
+    // circuits here too.
+    if (styleRule.selectorText !== selector) styleRule.selectorText = selector
+  }
+}
+
+/**
  * Rewrites every rule in `rules`, recursing into grouping rules (`@media`,
  * `@supports`, `@layer`, `@container`) and nested style rules (native CSS
  * nesting gives a `CSSStyleRule` its own `cssRules`, so the two checks below
@@ -153,7 +243,12 @@ export function suppressHoverInDocument(doc: Document, shouldRewrite: (owner: El
     const owner = sheet.ownerNode as Element | null
     if (owner?.nodeType !== 1 || !shouldRewrite(owner)) continue
     try {
-      rewriteHoverInRuleList(sheet.cssRules)
+      // The text the injector wrote IS what the parser consumed, so it keys
+      // the plan exactly. A sheet with no text of its own (a `<link>`) has
+      // nothing to key on and takes the uncached walk.
+      const text = owner.textContent
+      if (text) applyHoverPlan(sheet, planHoverRewrites(sheet, text))
+      else rewriteHoverInRuleList(sheet.cssRules)
     } catch (_err) {
       // A stylesheet the document cannot read (cross-origin `@import`). There
       // is nothing to rewrite and nothing to report — the browser refusing to

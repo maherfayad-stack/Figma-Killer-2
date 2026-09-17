@@ -17,12 +17,18 @@
  * Fires once per settled `(page, width)` pair: the effect re-runs whenever
  * `page` (a new object reference on any edit — see `frameSnapshotCache.ts`),
  * `width`, or `isOnScreen` changes, and skips scheduling work when a fresh
- * poster is already cached or a capture for the exact same pair is already
- * in flight. A short settle delay (plain `setTimeout`, not an rAF/idle
- * staging chain — `STATE.md`'s perf-hunter landmine explicitly warns against
- * reintroducing that) lets images/fonts/layout finish before rasterizing;
- * capture is skipped entirely once the frame goes back offscreen or
- * unmounts before the timer fires.
+ * poster is already cached or a capture for the exact same pair is already in
+ * flight.
+ *
+ * WHEN it fires is `framePosterQueue`'s decision, not this hook's (S1). Each
+ * frame used to arm its own settle timer, so a zoom-out that admitted a dozen
+ * frames rasterized a dozen documents inside the gesture — ~100 ms of a single
+ * 354 ms animation frame, spent on pictures that are only ever looked at once
+ * the frame has LEFT the viewport. The queue holds every request until the
+ * board has been quiet, then runs them one per macrotask; read its header for
+ * the measurement and for why it is a `setTimeout` rather than an rAF/idle
+ * chain. Requests are withdrawn when the frame goes back offscreen or
+ * unmounts before its turn comes.
  *
  * L8 Phase B (`perf-06`, STATE.md) — called unconditionally by
  * `BoardFrameView` regardless of trust tier, so on a Tier-2
@@ -48,9 +54,7 @@ import { useEffect, useRef, type RefObject } from 'react'
 import type { Page } from '@core/page-tree'
 import { resolvePortalDocument } from '../frameAdapter/resolvePortalDocument'
 import { getFramePoster, setFramePoster } from './frameSnapshotCache'
-
-/** Let images/fonts/layout settle before rasterizing a freshly on-screen frame. */
-const POSTER_SETTLE_DELAY_MS = 700
+import { cancelFramePoster, requestFramePoster } from './framePosterQueue'
 
 /** Longest edge of a captured poster, in device pixels — a placeholder is shown small while panned/zoomed out, so it never needs full frame resolution. */
 const POSTER_MAX_EDGE = 480
@@ -78,15 +82,17 @@ export function useFramePosterCapture(
   isOnScreen: boolean,
 ): void {
   const inFlightRef = useRef<{ page: Page; width: number } | null>(null)
+  // This frame's identity in the shared queue, so a re-request replaces its
+  // own pending entry instead of queueing a second one.
+  const tokenRef = useRef<object>({})
 
   useEffect(() => {
     if (!isOnScreen) return
     if (getFramePoster(page, width)) return
     if (inFlightRef.current?.page === page && inFlightRef.current.width === width) return
 
-    let cancelled = false
-    const timer = setTimeout(() => {
-      if (cancelled) return
+    const token = tokenRef.current
+    requestFramePoster(token, async () => {
       const iframe = frameBodyRef.current && findVisibleIframe(frameBodyRef.current)
       // Portal-mode only: `html-to-image` needs a real, same-origin
       // `documentElement` to rasterize — a bridge-registered iframe (or an
@@ -95,13 +101,10 @@ export function useFramePosterCapture(
       // migration has logged (`live-05`, STATE.md).
       if (!iframe || !resolvePortalDocument(iframe)?.documentElement) return
       inFlightRef.current = { page, width }
-      void capturePoster(iframe, page, width)
-    }, POSTER_SETTLE_DELAY_MS)
+      await capturePoster(iframe, page, width)
+    })
 
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
+    return () => cancelFramePoster(token)
   }, [frameBodyRef, page, width, isOnScreen])
 }
 

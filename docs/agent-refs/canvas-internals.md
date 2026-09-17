@@ -793,6 +793,63 @@ formula deliberately omits `CanvasTransformLayer`'s 80px `top`/`left` offset**
 anything that needs to be pixel-exact (a ruler tick, a measurement HUD); see
 `CanvasRulers/rulerGeometry.ts` for the corrected formula and why.
 
+### Mounting a frame (S1) — what a mount actually costs, measured
+
+`perf-01` recorded "a zoom that mounts frames costs 290–337 ms in one frame"
+and blamed "one `BreakpointFrame` mount is 100–140 ms". **A CPU profile of the
+same gesture says otherwise**, and the difference is the whole point: the long
+animation frames during a zoom-out admit **zero** new iframes. Creating an
+iframe is ~12 ms. What costs is everything that happens to a document *after*
+it exists, and two of the three biggest items were not the node tree at all:
+
+| Cost, per mounting frame | Where | What it is now |
+|---|---|---|
+| ~85–350 ms per **poster**, in a burst | `useFramePosterCapture` → `html-to-image` | queued: `framePosterQueue.ts` holds every capture until the board is quiet, then runs them one per macrotask |
+| ~10 ms | `CanvasHoverSuppressionInjector` walking all four content sheets' CSSOM | a per-sheet-text rewrite **plan**, built once and applied by index in every other frame |
+| ~7 ms | `ProjectCssInjector` assigning `textContent` — the browser parsing vendor CSS into a new document | unchanged; only an iframe **pool** can avoid it, see below |
+| ~5 ms | `collectScrollDeficits` (`resolveFrameFitHeight.ts`) forced layout | unchanged |
+| ~5 ms | `CanvasScrollUnrollInjector`'s `snapshotAuthoredStyles` + unroll pass | unchanged |
+
+`IframeFrameSurface` therefore mounts in **three commits**: the `<iframe
+srcDoc>` alone, then the injector chain once `contentDocument` exists, then the
+node tree in a `startTransition`. `onContentReadyChange` reports the third, and
+`BoardFrameView` keeps the frozen poster painted over the iframe until it
+lands, so a frame arriving never flashes an empty document.
+
+**`startTransition`, never an rAF/`setTimeout`/`requestIdleCallback` chain.**
+That distinction is why this is not the staging chain a predecessor removed: a
+transition always runs (it may only yield to a higher-priority update), whereas
+`rAF` never fires in a backgrounded tab or a headless runner and could strand a
+frame as a skeleton forever.
+
+**`frameMountPool.ts` — leaving the viewport no longer throws a document
+away.** A departed frame stays mounted while the pool has room
+(`max(8, onScreen + 4)`, evicted least-recently-on-screen), so panning back to
+where you just were costs nothing. The cap is a memory ceiling, not a target:
+each live frame is a whole document with its own copy of every stylesheet.
+`BoardFrameView` takes `isOnScreen` (drives poster CAPTURE — the picture has to
+be taken while the frame is genuinely visible) and `isMounted` (drives the live
+frame) as two separate props for this reason.
+
+Measured, 18-frame stand-in board, dev build, same Playwright runner
+`tests/e2e/studio-board-perf.e2e.ts` uses:
+
+| | before | after |
+|---|---|---|
+| zoom-out admitting 12–14 frames — worst animation frame | 350 / 354 / 375 ms | 195 / 198 / 200 ms |
+| the same gesture — mean frame | 41 / 46 / 44 ms | 22 / 21 / 21 ms |
+| pan churning 3–6 frames out and back — worst frame | 148 ms | 50 / 92 / 53 ms |
+| the same pan — frames over 50 ms | 13 | 5 / 1 / 2 |
+
+**Two known, deliberately-unshipped levers**, both in the S1 `STATE.md` entry:
+a *literal* iframe pool that re-points a parked document at a new frame (needs
+the CSS injectors to stop removing their `<style>` element on cleanup and to
+skip an identical `textContent` write — otherwise a reused document re-parses
+everything and the pool buys nothing), and zoom-aware virtualization (do not
+mount a live document for a frame rendering 100 px wide). The second is a
+product decision, not a perf one: a poster is a stale picture, so a frame whose
+page was just edited would show a blank title card instead of live content.
+
 **Never** add a full-site scan inside a `useEditorStore(selector)` callback.
 
 ### The selection overlay measures on events, not every frame (S4)

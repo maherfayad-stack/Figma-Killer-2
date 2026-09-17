@@ -98,6 +98,7 @@ describe('BreakpointFrame memo() bailout inside a board frame', () => {
             isActive={false}
             isSelected={false}
             isOnScreen
+            isMounted
           />
         </>
       )
@@ -155,6 +156,7 @@ describe('BreakpointFrame memo() bailout inside a board frame', () => {
             isActive={false}
             isSelected={false}
             isOnScreen
+            isMounted
           />
         </>
       )

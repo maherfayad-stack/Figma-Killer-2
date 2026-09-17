@@ -53,19 +53,72 @@ const BUDGET_PAN_WORST_FRAME_MS = 40
 const BUDGET_PAN_LAYER_MUTATIONS = 10
 
 /**
- * **This one records a known defect, and is a ratchet rather than a target.**
+ * **A ratchet on a defect that is now half fixed, not a 60fps target.**
  *
- * A zoom-out that crosses virtualization boundaries mounts live iframes, and
- * a single board-frame mount on this corpus costs ~100-140 ms of synchronous
- * work (iframe + `srcDoc` + injector chain + node tree). Measured worst frame
- * for a 6 → 15 mount sweep: **290 ms**. Two fixes were tried and neither
- * helped — see the `perf-01` `STATE.md` entry for both, and for why the real
- * fix is making an individual mount cheaper, not rescheduling the batch.
+ * A zoom-out that crosses virtualization boundaries mounts live iframes, which
+ * `perf-01` measured at **290-337 ms** for a 6 → 15 sweep on this corpus and
+ * left the budget at 600 ms, because the two fixes it tried (`useDeferredValue`
+ * and staggering) both failed. S1 then made one mount cheap instead of
+ * rescheduling the batch, and measured the result.
  *
- * So this number is deliberately NOT 40 ms. It is set where it is so the
- * defect cannot silently get worse while the honest fix is outstanding.
+ * ## Where 250 comes from, and what it cannot claim
+ *
+ * `studio-workspace/maherfayad-stack-eSIM` — the corpus every number in this
+ * file was taken against — **is no longer on any machine here**, so this spec
+ * skips and S1 could not re-measure it. The stand-in was an 18-frame board of
+ * the same shape (three ~50-node mobile screens repeated, 865 DOM nodes vs the
+ * eSIM board's 946), driven by the same scripted zoom-out through the same
+ * Playwright runner, on the same machine, in a dev build:
+ *
+ * | 4 → 18 frame mount sweep | before S1 | after S1 |
+ * |---|---|---|
+ * | worst animation frame | 350 / 354 / 375 ms | 195 / 198 / 200 ms |
+ * | mean animation frame | 41 / 46 / 44 ms | 22 / 21 / 21 ms |
+ * | frames over 50 ms | 13 / 14 / 13 | 7 / 7 / 7 |
+ *
+ * The three fixes, each measured on its own: the poster-capture burst was ~100
+ * ms of the worst frame (`framePosterQueue.ts`), the per-frame `:hover` CSSOM
+ * walk another ~100 ms (`CanvasHoverSuppressionInjector`'s plan cache), and
+ * splitting the mount into three commits halved the mean
+ * (`IframeFrameSurface`'s staged mount). A separate churn pan — frames leaving
+ * and re-entering — went from a 148 ms worst frame and 13 frames over 50 ms to
+ * ~50-92 ms and 1-5, via the mount pool (`frameMountPool.ts`).
+ *
+ * 250 ms is ~1.25x the measured worst frame and comfortably BELOW every
+ * pre-S1 measurement on either corpus, so the original defect would fail it.
+ * It is deliberately not 50 ms: admitting a dozen frames at once still creates
+ * a dozen documents and parses the vendor/authored/class/user stylesheets into
+ * each, which nothing here removes — see the S1 `STATE.md` entry for the two
+ * remaining levers (a literal iframe pool that re-points a parked document,
+ * and zoom-aware virtualization) and why neither was in scope.
+ *
+ * **Re-measure this against the real corpus before tightening further.** A
+ * budget calibrated on a stand-in is a ratchet, not a target.
+ *
+ * ## There is a SECOND copy of this number, and a trap under it
+ *
+ * `tests/e2e/studio-feel.e2e.ts` (PR #152, branch `test/browser-perf-gate`,
+ * not yet on this base) carries its own `BUDGET_ZOOM_WORST_FRAME_MS = 600`
+ * plus a `BUDGET_ZOOM_MEAN_FRAME_MS = 45`, measured against the TRACKED
+ * `studio-workspace/test4`. Whoever integrates the two branches should hoist
+ * the constants into `tests/e2e/helpers/canvasPerf.ts` and import them from
+ * both specs, rather than ratcheting two copies forever.
+ *
+ * The trap, measured on this machine with S1's own copy of that spec's zoom
+ * test: **`test4`'s three frames all fit inside the viewport margin at the
+ * opening zoom**, so its scripted zoom-out mounts nothing at all — 3 live
+ * iframes before, 3 after, in three runs on the PRE-S1 tree and three runs
+ * on the post-S1 tree alike (worst frame 18.6-21.1 ms before, 18.1-29.8 ms
+ * after; a mean of 16.7 ms either way, i.e. 60fps). That spec's zoom budget
+ * is therefore a smoothness gate, not a mount gate, and the 260-520 ms it
+ * records having observed cannot be reproduced here.
+ *
+ * S1's mount pool sharpens that: it holds at least `MIN_FRAME_POOL` (8) live
+ * frames, so on any board of 8 frames or fewer EVERY frame stays mounted and
+ * there is no mount left to measure. **A gate on the mount path needs a board
+ * of at least 9 frames.**
  */
-const BUDGET_ZOOM_WORST_FRAME_MS = 600
+const BUDGET_ZOOM_WORST_FRAME_MS = 250
 
 interface StudioProjectSummary {
   dir: string
@@ -342,8 +395,10 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
       }
       await page.keyboard.up('Control')
     })
-    // Frames are admitted a few per animation frame (`useStaggeredFrameMounts`),
-    // so the live set finishes filling shortly after the gesture stops.
+    // A frame's node tree lands one commit after its injectors (S1's staged
+    // mount, `IframeFrameSurface`), so the live set finishes filling shortly
+    // after the gesture stops. (This used to credit a `useStaggeredFrameMounts`
+    // that `perf-01` reverted and never existed in the tree afterwards.)
     await page.waitForTimeout(800)
     const liveAfterZoom = (await readBoardCounts(page)).liveIframes
     annotate('live iframes across zoom', `${liveBeforeZoom} -> ${liveAfterZoom}`)
@@ -381,8 +436,14 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
       departed.map((id) => `${id}=${afterPan[id]}`).join(', ') || '(none departed)',
     )
 
+    // Posters are rasterized by `framePosterQueue`, which holds every capture
+    // until the board has been quiet — the pan above is exactly the kind of
+    // gesture it refuses to work under, so the wait has to outlast its quiet
+    // period plus a serial capture or two.
+    await page.waitForTimeout(3000)
+    const afterSettle = await readFrameStates(page)
     if (departed.length > 0) {
-      const withPoster = departed.filter((id) => afterPan[id] === 'poster')
+      const withPoster = departed.filter((id) => afterSettle[id] === 'poster')
       annotate('of those, showing a frozen poster', `${withPoster.length}/${departed.length}`)
       // The WS-5.3 acceptance criterion.
       expect(withPoster.length).toBeGreaterThan(0)
