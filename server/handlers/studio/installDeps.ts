@@ -291,7 +291,21 @@ export interface InstallJobOverrides {
 
 interface JobRecord {
   id: string
+  /**
+   * The APP ROOT — where the package manager runs and what the persisted
+   * record reports. For a monorepo project this is a subdirectory of the
+   * project (`apps/web/`), which is why it is not the lock key; see
+   * {@link JobRecord.projectDir}.
+   */
   dir: string
+  /**
+   * The PROJECT directory, and the only correct key for the project write
+   * lock. Every other writer — a canvas save, a page scaffold, a git verb —
+   * locks on the project, so locking an install on `dir` would key a monorepo
+   * install differently from all of them and serialize it against nothing.
+   * Not persisted: the job record's `dir` is what a poller cares about.
+   */
+  projectDir: string
   packageManager: PackageManager
   status: InstallJobStatus
   log: string
@@ -326,6 +340,13 @@ function toPersistedRecord(job: JobRecord): PersistedInstallJob {
  * own `index.lock` error, which is the honest answer: the project genuinely
  * is being written to.
  *
+ * The key is `job.projectDir`, NOT `job.dir`. Those are the same string only
+ * when the app root is the project directory itself; for a monorepo project
+ * `job.dir` is `<project>/apps/web` while every other writer locks on
+ * `<project>`, so keying on it would put the install on a lock of its own and
+ * serialize it against nothing — exactly the race this exists to stop, still
+ * open on precisely the projects most likely to have a long install.
+ *
  * The spawn happens INSIDE the lock rather than before it, because a
  * subprocess that is already running is not something a lock acquired
  * afterwards can serialize.
@@ -335,7 +356,7 @@ async function runInstallJob(
   spawnProcess: () => InstallSpawnedProcess,
   opts: { timeoutMs: number; maxLogBytes: number; setTimeoutImpl: typeof setTimeout; clearTimeoutImpl: typeof clearTimeout },
 ): Promise<void> {
-  const result = await withProjectWriteLock(job.dir, async () => {
+  const result = await withProjectWriteLock(job.projectDir, async () => {
     const proc = spawnProcess()
     job.pid = proc.pid ?? null
     return captureSubprocess(proc, {
@@ -418,6 +439,7 @@ export function startInstallJob(
   const job: JobRecord = {
     id,
     dir: cwd,
+    projectDir,
     packageManager,
     status: 'running',
     log: '',
