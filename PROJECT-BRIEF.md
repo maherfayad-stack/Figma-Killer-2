@@ -488,6 +488,37 @@ background, so it never delays the server.
 (`build`, `test`, `lint`) once, at the end. Pre-existing failures from parallel
 sessions are not yours — triage with `git status` / `git diff` and say so.
 
+### What watches what in `bun run dev`
+
+The two dev processes watch on opposite principles. Knowing which is which is
+the difference between debugging a phantom and debugging a real restart.
+
+| Process | Watcher | Scope | Reacts to a `studio-workspace/` write? |
+|---|---|---|---|
+| cms (`bun --watch server/index.ts`) | Bun, **module-graph**, per file | exactly the 630 modules `server/index.ts` transitively imports — 567 `server/`, 55 `src/modules/base`, 3 `src/core/data`, 3 `src/modules/studio`, 2 `src/core/persistence` | **No.** Nothing under `studio-workspace/`, `uploads/`, `.tmp/`, `.data/` or `dist/` is in that graph, and nothing in it is a test file. |
+| vite | chokidar, **directory tree**, rooted at the repo root | everything under the root except `server.watch.ignored` (`.tmp`, `uploads`, `dist`, `studio-workspace`) and Vite's own defaults | **No — since the `studio-workspace` ignore was added.** Before that it did: Vite full-reloads on any watched `.html` change that maps to no module, and every React app Studio imports ships a root `index.html`. |
+
+Measured 2026-09-17 (`dev-04`), not inferred. Bun's `--watch` restarts **only**
+for files in the entry's module graph: a new file in a sibling directory, a
+modified file in a sibling directory, 300 files written into a `studio-workspace/`
+under the cwd, and an unimported file dropped into the very directory holding an
+imported module all produced zero restarts; touching the imported module
+restarted every time. Bun holds no OS handle on a directory containing no graph
+module, so the Windows `EBUSY` watcher panic in `server-14` cannot come from a
+workspace write.
+
+Consequences:
+
+- **Do not replace `--watch` with a hand-maintained directory allowlist.** Any
+  such list drifts from the real graph the moment an import changes — a plausible
+  guess at it (`server/**`, `src/core/**`, `vendor/**`) was already wrong in two
+  directions: it misses all 55 `src/modules/base` modules and watches `vendor/`,
+  of which the server imports none.
+- **When you add a runtime-written directory at the repo root, add it to
+  `vite.config.ts` `server.watch.ignored`** in the same change.
+  `src/__tests__/devWorkflow.test.ts` is the gate.
+- `bun run dev:server` runs the server alone, same watcher.
+
 ---
 
 ## 8. Definition of done for any change here
