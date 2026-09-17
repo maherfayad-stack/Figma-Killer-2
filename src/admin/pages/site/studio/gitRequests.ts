@@ -691,3 +691,63 @@ function clonePollDelay(signal?: AbortSignal): Promise<void> {
     )
   })
 }
+// ---------------------------------------------------------------------------
+// Pull requests (G5) — `/admin/api/studio/git/pull-request*`
+//
+// Two calls, and the split between them is the point: the GET answers "should
+// this panel offer to open a PR at all, and what would it compare?", so the
+// browser never parses a remote URL and never digs a field out of an error
+// body. The POST is then one click with defaults the server read out of the
+// repository.
+// ---------------------------------------------------------------------------
+
+const GitPullRequestContextSchema = Type.Object({
+  /** `false` for a project with no origin, or an origin that is not GitHub. A normal 200, like `isRepo: false`. */
+  supported: Type.Boolean(),
+  /** The branch a PR would merge INTO — `origin/HEAD`, or `main` when nobody ever set one. */
+  base: Type.Union([Type.String(), Type.Null()]),
+  /** The current branch. */
+  head: Type.Union([Type.String(), Type.Null()]),
+  /** GitHub's pre-filled compare page. Offered as a link whether or not a token exists. */
+  compareUrl: Type.Union([Type.String(), Type.Null()]),
+  /** You are standing on the base branch; a PR from it to itself has no meaning. */
+  isDefaultBranch: Type.Boolean(),
+})
+
+const GitPullRequestResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  url: Type.String(),
+  number: Type.Number(),
+  compareUrl: Type.String(),
+})
+
+export type GitPullRequestContext = Static<typeof GitPullRequestContextSchema>
+export type GitPullRequestResult = Static<typeof GitPullRequestResponseSchema>
+
+/** Whether this project can have a pull request opened from it, and the compare URL if so. A read. */
+export async function getGitPullRequestContext(
+  dir: string | undefined,
+  signal?: AbortSignal,
+): Promise<GitPullRequestContext> {
+  return apiRequest(`${BASE}/pull-request/context`, { schema: GitPullRequestContextSchema, query: { dir }, signal })
+}
+
+/**
+ * Opens a pull request for the current branch.
+ *
+ * Every field is optional: the server defaults `base` from `origin/HEAD`,
+ * `title` from the last commit subject and `body` from the commit list, so the
+ * ordinary case is one click. With no connected GitHub account the server
+ * refuses with `no-github-token` and the panel falls back to the compare link
+ * it already has from `getGitPullRequestContext`.
+ */
+export async function openGitPullRequest(
+  dir: string | undefined,
+  options: { title?: string; body?: string; base?: string } = {},
+): Promise<GitPullRequestResult> {
+  return apiRequest(`${BASE}/pull-request`, {
+    method: 'POST',
+    body: { dir, ...options },
+    schema: GitPullRequestResponseSchema,
+  })
+}

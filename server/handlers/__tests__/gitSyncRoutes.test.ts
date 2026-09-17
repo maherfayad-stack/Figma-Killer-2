@@ -488,6 +488,137 @@ describe('conflicts', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Pull requests
+// ---------------------------------------------------------------------------
+
+interface PrContextBody {
+  supported: boolean
+  base: string | null
+  head: string | null
+  compareUrl: string | null
+  isDefaultBranch: boolean
+}
+
+describe('pull requests', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+  })
+
+  it('reports supported: false for a project with no origin — a state, not a failure', async () => {
+    const res = await call(`/admin/api/studio/git/pull-request/context?dir=${encodeURIComponent(dir)}`)
+    expect(res.status).toBe(200)
+    expect((await res.json()) as PrContextBody).toMatchObject({ supported: false, compareUrl: null })
+  })
+
+  it('reports supported: false for an origin that is not GitHub, without saying what it is', async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-not-github-'))
+    created.push(remote)
+    await git(remote, ['init', '--bare', '--initial-branch=main'])
+    await git(dir, ['remote', 'add', 'origin', remote])
+
+    const res = await call(`/admin/api/studio/git/pull-request/context?dir=${encodeURIComponent(dir)}`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as PrContextBody
+    expect(body.supported).toBe(false)
+    expect(JSON.stringify(body)).not.toContain(remote)
+  })
+
+  it('builds the compare URL from a GitHub origin, on either URL shape', async () => {
+    for (const [url, label] of [
+      ['https://github.com/acme/storefront.git', 'https'],
+      ['git@github.com:acme/storefront.git', 'ssh'],
+    ] as const) {
+      const project = makeProjectDir()
+      await makeRepo(project)
+      await git(project, ['remote', 'add', 'origin', url])
+      await git(project, ['switch', '--create', 'feat/sidebar'])
+
+      const body = (await (
+        await call(`/admin/api/studio/git/pull-request/context?dir=${encodeURIComponent(project)}`)
+      ).json()) as PrContextBody
+      expect({ label, ...body }).toMatchObject({
+        label,
+        supported: true,
+        // No `origin/HEAD` on a remote nobody cloned from, so `main` is the default.
+        base: 'main',
+        head: 'feat/sidebar',
+        compareUrl: 'https://github.com/acme/storefront/compare/main...feat/sidebar?expand=1',
+        isDefaultBranch: false,
+      })
+    }
+  })
+
+  it('reports isDefaultBranch when you are standing on the base — a PR from it to itself has no meaning', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    const body = (await (
+      await call(`/admin/api/studio/git/pull-request/context?dir=${encodeURIComponent(dir)}`)
+    ).json()) as PrContextBody
+    expect(body).toMatchObject({ supported: true, head: 'main', base: 'main', isDefaultBranch: true })
+  })
+
+  it('refuses to open a PR against a non-GitHub origin', async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-not-github-post-'))
+    created.push(remote)
+    await git(remote, ['init', '--bare', '--initial-branch=main'])
+    await git(dir, ['remote', 'add', 'origin', remote])
+
+    const res = await call('/admin/api/studio/git/pull-request', post({ dir }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; error: string }
+    expect(body.code).toBe('not-a-github-remote')
+    expect(body.error).not.toContain(remote)
+    expect(body.error).not.toContain(dir)
+  })
+
+  it('refuses a PR from the base branch onto itself, and still offers the compare link', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    const res = await call('/admin/api/studio/git/pull-request', post({ dir }))
+    expect(res.status).toBe(409)
+    expect((await res.json()) as { code: string; compareUrl: string }).toMatchObject({
+      code: 'same-branch',
+      compareUrl: 'https://github.com/acme/storefront/compare/main...main?expand=1',
+    })
+  })
+
+  it('answers no-github-token WITH the compare URL — nobody is signed in on this server', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    await git(dir, ['switch', '--create', 'feat/sidebar'])
+
+    const res = await call('/admin/api/studio/git/pull-request', post({ dir }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; compareUrl: string; error: string }
+    expect(body.code).toBe('no-github-token')
+    expect(body.compareUrl).toBe('https://github.com/acme/storefront/compare/main...feat/sidebar?expand=1')
+    expect(body.error).not.toContain(dir)
+  })
+
+  it('refuses a base branch that would be read as a flag', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    await git(dir, ['switch', '--create', 'feat/sidebar'])
+    expect((await call('/admin/api/studio/git/pull-request', post({ dir, base: '--force' }))).status).toBe(400)
+  })
+
+  it('refuses a PR on a detached HEAD, and reports the context as unsupported there', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    const head = (await git(dir, ['rev-parse', 'HEAD'])).out.trim()
+    await git(dir, ['checkout', '--detach', head])
+
+    expect(
+      ((await (
+        await call(`/admin/api/studio/git/pull-request/context?dir=${encodeURIComponent(dir)}`)
+      ).json()) as PrContextBody).supported,
+    ).toBe(false)
+
+    const res = await call('/admin/api/studio/git/pull-request', post({ dir }))
+    expect(res.status).toBe(409)
+    expect((await res.json()) as { code: string }).toMatchObject({ code: 'detached-head' })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Rejections — the security control
 // ---------------------------------------------------------------------------
 
@@ -524,6 +655,8 @@ describe('gitSyncRoutes — rejections', () => {
       )
       await refused(call('/admin/api/studio/git/conflict/continue', post({ dir: outside })))
       await refused(call('/admin/api/studio/git/conflict/abort', post({ dir: outside, confirm: true })))
+      await refused(call(`/admin/api/studio/git/pull-request/context?dir=${encodeURIComponent(outside)}`))
+      await refused(call('/admin/api/studio/git/pull-request', post({ dir: outside })))
     })
   })
 
@@ -545,6 +678,8 @@ describe('gitSyncRoutes — rejections', () => {
     expect((await call('/admin/api/studio/git/pull', post({ dir: bare }))).status).toBe(404)
     expect((await call(`/admin/api/studio/git/conflicts?dir=${encodeURIComponent(bare)}`)).status).toBe(404)
     expect((await call('/admin/api/studio/git/conflict/continue', post({ dir: bare }))).status).toBe(404)
+    expect((await call(`/admin/api/studio/git/pull-request/context?dir=${encodeURIComponent(bare)}`)).status).toBe(404)
+    expect((await call('/admin/api/studio/git/pull-request', post({ dir: bare }))).status).toBe(404)
   })
 
   it('404s the workspace root itself', async () => {

@@ -23,6 +23,12 @@
  *   two-step danger confirmation `restore` uses. It is narrower than it looks:
  *   a pull refuses to start over a dirty tree, so abort has no uncommitted
  *   work to discard.
+ * - **"Open PR" appears once the branch has been pushed and is not the default
+ *   branch**, and the compare link sits beside it *whether or not* a GitHub
+ *   account is connected. Without a token the server refuses by name and the
+ *   panel says "Sign in to GitHub to open a PR" — with the link still there.
+ *   A link is a worse product than a button and a much better one than a dead
+ *   end.
  *
  * Studio holds no git credentials of its own beyond a GitHub token the user
  * deliberately connected; a push or fetch that needs a password fails fast
@@ -38,11 +44,13 @@ import {
   abortGitConflict,
   continueGitConflict,
   fetchGitRemote,
+  openGitPullRequest,
   pullGitRemote,
   pushGitBranch,
   resolveGitConflict,
 } from '@site/studio/gitRequests'
 import { useGitConflicts } from './useGitConflicts'
+import { useGitPullRequestContext } from './useGitPullRequestContext'
 import styles from './SyncSection.module.css'
 
 interface SyncSectionProps {
@@ -73,6 +81,7 @@ export function SyncSection({
   run,
 }: SyncSectionProps) {
   const conflicts = useGitConflicts(dir, active, refsNonce)
+  const pullRequest = useGitPullRequestContext(dir, active, refsNonce)
   const [output, setOutput] = useState<string | null>(null)
   const [confirmAbort, setConfirmAbort] = useState(false)
 
@@ -104,6 +113,17 @@ export function SyncSection({
       setOutput(result.output || `origin is up to date with ${result.branch}.`)
       onRefsChanged()
       pushToast({ kind: 'success', title: `Pushed ${result.branch}`, body: 'origin is up to date with this branch.' })
+    })
+
+  const openPullRequest = () =>
+    run('Open PR', async () => {
+      const result = await openGitPullRequest(dir)
+      setOutput(`Pull request #${result.number} \u2014 ${result.url}`)
+      pushToast({
+        kind: 'success',
+        title: `Opened pull request #${result.number}`,
+        body: result.url,
+      })
     })
 
   const keep = (file: string, side: GitConflictSide) =>
@@ -175,6 +195,33 @@ export function SyncSection({
           {busy === 'Push' ? 'Pushing…' : 'Push'}
         </Button>
       </div>
+
+      {/* Open PR — only once there is something to propose: the branch has an
+          upstream (it has been pushed) and it is not the base branch itself.
+          The compare link is offered either way. */}
+      {pullRequest.context?.supported && !pullRequest.context.isDefaultBranch && branch?.upstream ? (
+        <div className={styles.actions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy !== null || conflict !== null}
+            tooltip={`Propose ${pullRequest.context.head} into ${pullRequest.context.base} on GitHub`}
+            onClick={openPullRequest}
+          >
+            {busy === 'Open PR' ? 'Opening…' : 'Open PR'}
+          </Button>
+          {pullRequest.context.compareUrl ? (
+            <a
+              className={styles.compareLink}
+              href={pullRequest.context.compareUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              Compare on GitHub
+            </a>
+          ) : null}
+        </div>
+      ) : null}
 
       {diverged && !conflict ? (
         <div className={styles.choice} role="group" aria-label="Reconcile with origin">

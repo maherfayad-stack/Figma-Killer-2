@@ -71,6 +71,7 @@ All under `/admin/api/studio/git/`. Bodies are validated with
 | POST | `conflict/resolve` | `{ dir?, file, side: 'mine' \| 'theirs' }` | `{ ok, file, side }` |
 | POST | `conflict/continue` | `{ dir? }` | `{ ok, kind }` |
 | POST | `conflict/abort` | `{ dir?, confirm: true }` | `{ ok, kind }` |
+| GET | `pull-request/context` | `?dir` | `{ supported, base, head, compareUrl, isDefaultBranch }` |
 | POST | `pull-request` | `{ dir?, title?, body?, base? }` | `{ ok, url, number, compareUrl }` |
 
 `isRepo: false` is a **normal 200**, not an error — it is what makes the panel
@@ -416,6 +417,43 @@ unmerged paths with **Keep mine / Keep theirs / Open in code** each, then one
 after a rebase completes successfully, so testing it would make a repository
 report itself conflicted forever. (Verified against real git, not assumed.)
 
+### Opening a pull request
+
+The last step of the publish sentence, and the only place Studio asks GitHub to
+create something. It is two routes, and the split is the point:
+
+- **`GET pull-request/context`** answers "should this panel offer to open a PR
+  at all, and what would it compare?" — `{ supported, base, head, compareUrl,
+  isDefaultBranch }`. `supported: false` is a normal 200 for a project with no
+  `origin`, an `origin` that is not GitHub, or a detached HEAD; the same
+  posture `status`'s `isRepo: false` takes. Because the compare URL comes from
+  here, **no browser code parses a remote URL and none reads a field off an
+  error body**.
+- **`POST pull-request`** is then one click. `base` defaults to `origin/HEAD`,
+  `title` to the last commit subject, `body` to the commit list
+  (`origin/<base>..<head>`, so it lists what the reviewer does not already
+  have). A designer who has just pushed a branch should not have to compose
+  anything.
+
+The button appears once the branch **has an upstream** (it has been pushed) and
+**is not the base branch**. The compare link sits beside it either way.
+
+**With no connected GitHub account the answer is `409 { code:
+'no-github-token', compareUrl }`**, and the panel says "Sign in to GitHub to
+open a PR" with the link still there. A link is a worse product than a button
+and a much better one than a dead end. Nothing is attempted anonymously — the
+request is not sent at all.
+
+`owner`/`repo` come from `gitPaths.parseGithubRemoteUrl`, the same re-composing
+allowlist `POST git/remote` validates a URL with; there is one definition of
+"is this a GitHub remote" in this feature. The token comes from
+`getGithubTokenForRequest` — the requesting user's session and nothing else —
+appears only in an `Authorization` header, and is in no message, no URL and no
+log. GitHub's own refusal ("A pull request already exists", "No commits between
+main and feat/x") is passed through verbatim: it names a repository, never this
+server's filesystem. A GitHub that answered 5xx or could not be reached is a
+**502**, not a refusal, because retrying is the right next action.
+
 ### Agent-authored labelling
 
 `status` entries carry `agentAuthored`, paired server-side with
@@ -467,7 +505,8 @@ in-canvas turn loop is a product call that has not been made.
 |---|---|
 | `server/handlers/__tests__/gitStatusParse.test.ts` | The porcelain-v2 parser against real captured output: renames spanning two NUL fields, paths with spaces, initial/detached/diverged branch headers, unmerged records, unknown record types |
 | `server/handlers/__tests__/gitPaths.test.ts` | Every rejection: traversal on both separators, absolute/UNC/drive-letter paths, excluded directories, **symlink escape** (leaf and parent), flag-looking branch names, revision expressions where a sha is required |
-| `server/handlers/__tests__/gitSyncRoutes.test.ts` | The branch list against a local bare remote (upstream, ahead/behind, a `gone` upstream, `origin/HEAD` excluded), commit-and-switch and its dirty-remainder refusal, fetch/pull against a second working copy of the same bare remote, the `diverged` and `dirty-tree` refusals, a REAL conflicted rebase and merge — including that “Keep mine” keeps the user's bytes in BOTH — continue/abort, and the same rejection set as `git.test.ts` |
+| `server/handlers/__tests__/githubPullRequest.test.ts` | The GitHub call with an injected `fetch`: the token reaches the `Authorization` header and no other field, no token means a named refusal carrying the compare URL and NO request at all, GitHub's own message passes through, and 4xx/5xx map to different codes |
+| `server/handlers/__tests__/gitSyncRoutes.test.ts` | The branch list against a local bare remote (upstream, ahead/behind, a `gone` upstream, `origin/HEAD` excluded), commit-and-switch and its dirty-remainder refusal, fetch/pull against a second working copy of the same bare remote, the pull-request context on both remote URL shapes and its `supported: false` states, the `diverged` and `dirty-tree` refusals, a REAL conflicted rebase and merge — including that “Keep mine” keeps the user's bytes in BOTH — continue/abort, and the same rejection set as `git.test.ts` |
 | `server/handlers/__tests__/projectWriteLock.test.ts` | Ordering (a save and a commit resolve in arrival order, FIFO), the `busy` refusal and its path-free message, per-project isolation, the symlink key, reentrancy across a subprocess wait |
 | `server/handlers/__tests__/git.test.ts` | End-to-end against real git: edit → status → diff → branch → commit → **push to a local bare remote**. Plus the rejections: dir outside the workspace, a project with no `.git` (never Studio's own repo), the workspace root itself, unusable paths in every path-taking route, dirty-tree switch refusal, empty commit, push with no origin, no filesystem path in an error body |
 | `server/ai/mcp/tools/studio/gitTools.test.ts` | The capability declaration (invisible with `studio.write` alone, invisible without `ai.tools.write`) and the tool's own refusals |

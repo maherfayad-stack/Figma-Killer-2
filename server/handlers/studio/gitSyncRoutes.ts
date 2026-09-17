@@ -40,6 +40,14 @@
  *       TypeBox `Type.Literal(true)` — the consent is in the wire contract
  *       rather than in a handler branch, exactly as `init` does it.
  *
+ *   GET  /admin/api/studio/git/pull-request/context?dir=<abs>
+ *       → `{ supported, base, head, compareUrl, isDefaultBranch }`.
+ *       `supported: false` is a NORMAL 200 (no origin, or an origin that is
+ *       not GitHub) — the same posture `status`'s `isRepo: false` takes. It is
+ *       what lets the panel decide whether to offer "Open PR" at all, and it
+ *       is where the compare URL comes from, so no browser code ever parses a
+ *       remote URL or reads a field off an error body.
+ *
  *   POST /admin/api/studio/git/pull-request { dir?, title?, body?, base? }
  *       → `{ ok, url, number, compareUrl }`. Every field defaults from the
  *       repository: `base` from `origin/HEAD`, `title` from the last commit
@@ -192,6 +200,7 @@ export async function tryServeStudioGitSync(req: Request, url: URL, pathname: st
     if (action === 'conflict/resolve' && req.method === 'POST') return await serveResolveConflict(req)
     if (action === 'conflict/continue' && req.method === 'POST') return await serveContinueConflict(req)
     if (action === 'conflict/abort' && req.method === 'POST') return await serveAbortConflict(req)
+    if (action === 'pull-request/context' && req.method === 'GET') return await servePullRequestContext(url)
     if (action === 'pull-request' && req.method === 'POST') return await servePullRequest(req)
   } catch (err) {
     rethrowProjectDirRefusal(err)
@@ -317,6 +326,43 @@ async function serveAbortConflict(req: Request): Promise<Response> {
  */
 async function githubCredential(req: Request): Promise<string | undefined> {
   return (await getGithubTokenForRequest(req)) ?? undefined
+}
+
+/**
+ * What the panel needs to decide whether to offer "Open PR", and the compare
+ * URL to offer beside it.
+ *
+ * A read, and a `supported: false` answer rather than a refusal: a project
+ * with no origin, or an origin that is not GitHub, is an ordinary state the
+ * panel renders around — not an error. This route exists so the browser never
+ * has to parse a remote URL or dig a field out of an error body.
+ */
+async function servePullRequestContext(url: URL): Promise<Response> {
+  const guard = assertOwnGitRepo(resolveProjectDir(url.searchParams.get('dir')))
+  if (!guard.ok) return NOT_FOUND()
+
+  const unsupported = { supported: false, base: null, head: null, compareUrl: null, isDefaultBranch: false }
+
+  const context = await readPullRequestContext(guard.dir)
+  if (isGitFailure(context)) {
+    // No origin / detached HEAD are states, not failures, for THIS question.
+    if (context.code === 'no-origin-remote' || context.code === 'detached-head') return jsonResponse(unsupported)
+    return failureResponse(context)
+  }
+
+  const target = parseGithubRemoteUrl(context.originUrl)
+  if (!target) return jsonResponse(unsupported)
+
+  const base = context.defaultBranch || 'main'
+  return jsonResponse({
+    supported: true,
+    base,
+    head: context.branch,
+    compareUrl: githubCompareUrl(target, base, context.branch),
+    // A PR from the default branch onto itself has no meaning; the panel hides
+    // the button rather than offering one that would refuse.
+    isDefaultBranch: base === context.branch,
+  })
 }
 
 /**

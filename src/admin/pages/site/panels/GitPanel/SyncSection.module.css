@@ -116,3 +116,15 @@
   white-space: pre-wrap;
   overflow-x: auto;
 }
+
+/* The compare link beside "Open PR" — plain text, because it is an escape
+   hatch rather than a primary action, and it is a real external link. */
+.compareLink {
+  color: var(--text-muted);
+  font-size: var(--text-s);
+  text-decoration: underline;
+}
+
+.compareLink:hover {
+  color: var(--text);
+}
