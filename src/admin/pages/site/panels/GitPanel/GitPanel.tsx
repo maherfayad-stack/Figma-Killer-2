@@ -31,10 +31,9 @@
  *   are about to be different files; leaving the board showing a parse of the
  *   old ones would be the "shows something the files do not say" failure this
  *   codebase has been bitten by before.
- * - **Push shows git's own output.** The remote's "create a pull request" URL
- *   lives there, and an auth failure's real message is the only useful thing to
- *   show. Studio holds no git credentials: authentication is the user's own
- *   credential helper's job.
+ * - **Fetch, pull, push and conflicts live in `SyncSection`**, which shows
+ *   git's own output — the remote's "create a pull request" URL lives there,
+ *   and an auth failure's real message is the only useful thing to show.
  */
 import { useRef, useState } from 'react'
 import { Panel, useAutoFocusPanel } from '@admin/shared/Panel'
@@ -55,7 +54,6 @@ import {
   getGitFileDiff,
   initGitRepository,
   isGitStateRefusal,
-  pushGitBranch,
   type GitFileDiff,
   type GitStatusEntry,
 } from '@site/studio/gitRequests'
@@ -63,6 +61,7 @@ import { BranchSection } from './BranchSection'
 import { DeploySection } from './DeploySection'
 import { GitDiffView } from './GitDiffView'
 import { GitHistorySection } from './GitHistorySection'
+import { SyncSection } from './SyncSection'
 import { useGitStatus } from './useGitStatus'
 import styles from './GitPanel.module.css'
 
@@ -84,7 +83,6 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
   const [diff, setDiff] = useState<GitFileDiff | null>(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  const [pushOutput, setPushOutput] = useState<string | null>(null)
   const [historyNonce, setHistoryNonce] = useState(0)
   // Bumped by anything that changes the ref list, so the branch dropdown
   // re-reads without this panel knowing which action did it.
@@ -157,13 +155,6 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
       setHistoryNonce((n) => n + 1)
     })
 
-  const push = () =>
-    run('Push', async () => {
-      const result = await pushGitBranch(dir)
-      setPushOutput(result.output || null)
-      pushToast({ kind: 'success', title: `Pushed ${result.branch}`, body: 'origin is up to date with this branch.' })
-    })
-
   const init = () =>
     run('Initialise repository', async () => {
       const result = await initGitRepository(dir)
@@ -227,18 +218,28 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
             run={run}
           />
 
-          <div className={styles.branchBar}>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy !== null || !status.hasOrigin || branch?.detached}
-              tooltip={status.hasOrigin ? 'git push --set-upstream origin' : 'This project has no origin remote.'}
-              onClick={push}
-            >
-              {busy === 'Push' ? 'Pushing…' : 'Push'}
-            </Button>
-          </div>
-          {pushOutput ? <pre className={styles.pushOutput}>{pushOutput}</pre> : null}
+          {/* ---------------------------------------------------------------
+              Sync — fetch, pull, push, and the conflict a pull can leave.
+              Owns the rebase-or-merge choice and the per-file resolution.
+              See SyncSection.
+          --------------------------------------------------------------- */}
+          <SyncSection
+            dir={dir}
+            branch={branch}
+            hasOrigin={status.hasOrigin}
+            active={isOpen}
+            refsNonce={refsNonce}
+            onRefsChanged={() => setRefsNonce((n) => n + 1)}
+            onWorkingTreeChanged={() => {
+              setSelected(new Set())
+              setOpenFile(null)
+              setDiff(null)
+              setHistoryNonce((n) => n + 1)
+              requestCmsSiteReload()
+            }}
+            busy={busy}
+            run={run}
+          />
 
           {/* ---------------------------------------------------------------
               Changes

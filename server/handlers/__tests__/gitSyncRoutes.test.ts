@@ -21,6 +21,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProjects'
 import { tryServeStudioGitSync } from '../studio/gitSyncRoutes'
+import type { DbClient } from '../../db/client'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 async function git(cwd: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -34,11 +35,34 @@ function post(body: unknown): RequestInit {
   return { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
 }
 
+/**
+ * The sub-router takes a `DbClient` only to look up the requesting user's
+ * GitHub credential, and that lookup is short-circuited before it touches the
+ * database when the request carries no session cookie — which none of these
+ * do. So an empty runtime is honest here, not a mock standing in for
+ * behaviour: any query at all would be a bug this stub would surface as a
+ * crash.
+ */
+const NO_SESSION_RUNTIME = { db: {} as DbClient }
+
 async function call(pathAndQuery: string, init?: RequestInit): Promise<Response> {
   const url = new URL(`http://localhost${pathAndQuery}`)
-  const res = await tryServeStudioGitSync(new Request(url, init), url, url.pathname)
+  const res = await tryServeStudioGitSync(new Request(url, init), NO_SESSION_RUNTIME, url, url.pathname)
   if (!res) throw new Error(`no route matched ${pathAndQuery}`)
   return res
+}
+
+/**
+ * Read a working-tree file with line endings normalised.
+ *
+ * `core.autocrlf` is on by default on Windows, so a file git CHECKED OUT (a
+ * pull, a `checkout --ours`) comes back with CRLF while one this test wrote
+ * has LF. Comparing raw bytes would make every assertion below pass or fail on
+ * the developer's git config rather than on Studio's behaviour, which is not
+ * what any of them are about.
+ */
+function readTree(dir: string, rel: string): string {
+  return fs.readFileSync(path.join(dir, rel), 'utf8').replace(/\r\n/g, '\n')
 }
 
 const created: string[] = []
@@ -230,6 +254,243 @@ describe('POST git/commit-and-switch', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Fetch and pull
+// ---------------------------------------------------------------------------
+
+/**
+ * A second working copy of the same bare remote, standing in for "somebody
+ * else pushed". Every remote interaction below is real git over its own local
+ * transport — no network, no credentials, no GitHub.
+ */
+async function makeCollaborator(remote: string): Promise<string> {
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-other-'))
+  created.push(other)
+  await git(other, ['clone', remote, '.'])
+  await configure(other)
+  return other
+}
+
+describe('POST git/fetch and git/pull', () => {
+  let dir: string
+  let remote: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+    remote = await makeBareRemote(dir)
+  })
+
+  it('fetch makes a collaborator\'s commit visible as "behind" without touching the working tree', async () => {
+    const other = await makeCollaborator(remote)
+    fs.writeFileSync(path.join(other, 'pages', 'Home.tsx'), 'export default function Home() { return <b /> }\n')
+    await git(other, ['commit', '-am', 'Their work'])
+    await git(other, ['push', 'origin', 'main'])
+
+    const before = readTree(dir, 'pages/Home.tsx')
+    const res = await call('/admin/api/studio/git/fetch', post({ dir }))
+    expect(res.status).toBe(200)
+    // A fetch changes refs, never files.
+    expect(readTree(dir, 'pages/Home.tsx')).toBe(before)
+
+    const body = (await (await call(`/admin/api/studio/git/branches?dir=${encodeURIComponent(dir)}`)).json()) as BranchesBody
+    expect(body.branches.find((b) => b.name === 'main' && !b.remote)?.behind).toBe(1)
+  })
+
+  it('a ff-only pull fast-forwards and the working tree really changes', async () => {
+    const other = await makeCollaborator(remote)
+    fs.writeFileSync(path.join(other, 'pages', 'Home.tsx'), 'THEIRS\n')
+    await git(other, ['commit', '-am', 'Their work'])
+    await git(other, ['push', 'origin', 'main'])
+
+    const res = await call('/admin/api/studio/git/pull', post({ dir }))
+    expect(res.status).toBe(200)
+    expect((await res.json()) as { strategy: string }).toMatchObject({ ok: true, strategy: 'ff-only' })
+    expect(readTree(dir, 'pages/Home.tsx')).toBe('THEIRS\n')
+  })
+
+  it('refuses a pull over uncommitted work and names the files — Studio never stashes', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'my unsaved screen\n')
+
+    const res = await call('/admin/api/studio/git/pull', post({ dir }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; dirtyFiles: string[]; error: string }
+    expect(body.code).toBe('dirty-tree')
+    expect(body.dirtyFiles).toContain('pages/Home.tsx')
+    expect(body.error).not.toContain(dir)
+    // Untouched.
+    expect(readTree(dir, 'pages/Home.tsx')).toBe('my unsaved screen\n')
+  })
+
+  it('reports divergence as `diverged` rather than picking rebase or merge', async () => {
+    const other = await makeCollaborator(remote)
+    fs.writeFileSync(path.join(other, 'pages', 'About.tsx'), 'theirs\n')
+    await git(other, ['add', '-A'])
+    await git(other, ['commit', '-m', 'Their work'])
+    await git(other, ['push', 'origin', 'main'])
+
+    fs.writeFileSync(path.join(dir, 'pages', 'Mine.tsx'), 'mine\n')
+    await git(dir, ['add', '-A'])
+    await git(dir, ['commit', '-m', 'My work'])
+
+    const res = await call('/admin/api/studio/git/pull', post({ dir }))
+    expect(res.status).toBe(409)
+    expect((await res.json()) as { code: string }).toMatchObject({ code: 'diverged' })
+  })
+
+  it('rejects a strategy the schema does not know', async () => {
+    expect((await call('/admin/api/studio/git/pull', post({ dir, strategy: 'octopus' }))).status).toBe(400)
+    expect((await call('/admin/api/studio/git/pull', post({ dir, strategy: '--force' }))).status).toBe(400)
+  })
+
+  it('refuses fetch and pull with no origin remote', async () => {
+    const solo = makeProjectDir()
+    await makeRepo(solo)
+    expect((await call('/admin/api/studio/git/fetch', post({ dir: solo }))).status).toBe(409)
+    expect((await call('/admin/api/studio/git/pull', post({ dir: solo }))).status).toBe(409)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Conflicts
+// ---------------------------------------------------------------------------
+
+/**
+ * Puts `dir` and the remote in genuine conflict on the same line of the same
+ * file, then pulls with `strategy` so the repository is really stopped
+ * mid-rebase or mid-merge. Everything below asserts against that real state,
+ * never a simulated one.
+ */
+async function provokeConflict(dir: string, remote: string, strategy: 'rebase' | 'merge'): Promise<Response> {
+  const other = await makeCollaborator(remote)
+  fs.writeFileSync(path.join(other, 'pages', 'Home.tsx'), 'THEIRS\n')
+  await git(other, ['commit', '-am', 'Their version'])
+  await git(other, ['push', 'origin', 'main'])
+
+  fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'MINE\n')
+  await git(dir, ['commit', '-am', 'My version'])
+
+  return call('/admin/api/studio/git/pull', post({ dir, strategy }))
+}
+
+describe('conflicts', () => {
+  let dir: string
+  let remote: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+    remote = await makeBareRemote(dir)
+  })
+
+  it('a conflicted rebase answers 409 with the unmerged files, and the state survives a fresh read', async () => {
+    const res = await provokeConflict(dir, remote, 'rebase')
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; files: string[]; error: string }
+    expect(body.code).toBe('conflict')
+    expect(body.files).toEqual(['pages/Home.tsx'])
+    expect(body.error).not.toContain(dir)
+
+    // Read back from the repository, not remembered — this is what makes the
+    // panel able to show a conflict after a page reload.
+    const state = (await (await call(`/admin/api/studio/git/conflicts?dir=${encodeURIComponent(dir)}`)).json()) as {
+      kind: string | null
+      files: string[]
+    }
+    expect(state.kind).toBe('rebase')
+    expect(state.files).toEqual(['pages/Home.tsx'])
+  })
+
+  it('"Keep mine" during a REBASE keeps the user\'s version — git\'s --ours/--theirs invert there', async () => {
+    await provokeConflict(dir, remote, 'rebase')
+
+    const res = await call(
+      '/admin/api/studio/git/conflict/resolve',
+      post({ dir, file: 'pages/Home.tsx', side: 'mine' }),
+    )
+    expect(res.status).toBe(200)
+    // THE assertion this whole translation exists for: during a rebase the
+    // user's own commit is git's `--theirs`, so a naive `--ours` would have
+    // silently kept the remote's version here.
+    expect(readTree(dir, 'pages/Home.tsx')).toBe('MINE\n')
+  })
+
+  it('"Keep theirs" during a REBASE keeps the remote version', async () => {
+    await provokeConflict(dir, remote, 'rebase')
+    await call('/admin/api/studio/git/conflict/resolve', post({ dir, file: 'pages/Home.tsx', side: 'theirs' }))
+    expect(readTree(dir, 'pages/Home.tsx')).toBe('THEIRS\n')
+  })
+
+  it('"Keep mine" during a MERGE keeps the user\'s version too — same word, opposite git flag', async () => {
+    await provokeConflict(dir, remote, 'merge')
+    await call('/admin/api/studio/git/conflict/resolve', post({ dir, file: 'pages/Home.tsx', side: 'mine' }))
+    expect(readTree(dir, 'pages/Home.tsx')).toBe('MINE\n')
+  })
+
+  it('continue finishes the rebase once every file is resolved', async () => {
+    await provokeConflict(dir, remote, 'rebase')
+    await call('/admin/api/studio/git/conflict/resolve', post({ dir, file: 'pages/Home.tsx', side: 'mine' }))
+
+    const res = await call('/admin/api/studio/git/conflict/continue', post({ dir }))
+    expect(res.status).toBe(200)
+    expect((await res.json()) as { kind: string }).toMatchObject({ ok: true, kind: 'rebase' })
+
+    const state = (await (await call(`/admin/api/studio/git/conflicts?dir=${encodeURIComponent(dir)}`)).json()) as {
+      kind: string | null
+    }
+    expect(state.kind).toBeNull()
+  })
+
+  it('refuses continue while a file is still unmerged, and names it', async () => {
+    await provokeConflict(dir, remote, 'rebase')
+
+    const res = await call('/admin/api/studio/git/conflict/continue', post({ dir }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; files: string[] }
+    expect(body.code).toBe('unresolved-conflicts')
+    expect(body.files).toEqual(['pages/Home.tsx'])
+  })
+
+  it('abort puts the branch back and requires the literal confirm', async () => {
+    await provokeConflict(dir, remote, 'rebase')
+
+    // The schema, not a handler branch, rejects an unconfirmed abort.
+    expect((await call('/admin/api/studio/git/conflict/abort', post({ dir }))).status).toBe(400)
+    expect((await call('/admin/api/studio/git/conflict/abort', post({ dir, confirm: false }))).status).toBe(400)
+
+    const res = await call('/admin/api/studio/git/conflict/abort', post({ dir, confirm: true }))
+    expect(res.status).toBe(200)
+    expect(readTree(dir, 'pages/Home.tsx')).toBe('MINE\n')
+    expect((await git(dir, ['log', '--format=%s', '-1'])).out.trim()).toBe('My version')
+  })
+
+  it('refuses resolve/continue/abort when nothing is in progress', async () => {
+    for (const [route, body] of [
+      ['/admin/api/studio/git/conflict/resolve', { dir, file: 'pages/Home.tsx', side: 'mine' }],
+      ['/admin/api/studio/git/conflict/continue', { dir }],
+      ['/admin/api/studio/git/conflict/abort', { dir, confirm: true }],
+    ] as const) {
+      const res = await call(route, post(body))
+      expect({ route, status: res.status }).toEqual({ route, status: 409 })
+      expect((await res.json()) as { code: string }).toMatchObject({ code: 'nothing-in-progress' })
+    }
+  })
+
+  it('404s an unusable path in conflict/resolve', async () => {
+    for (const file of ['../escape.tsx', '..\\escape.tsx', '/etc/passwd', 'node_modules/x.js', '.git/config']) {
+      const res = await call('/admin/api/studio/git/conflict/resolve', post({ dir, file, side: 'mine' }))
+      expect({ file, status: res.status }).toEqual({ file, status: 404 })
+    }
+  })
+
+  it('rejects a side the schema does not know', async () => {
+    expect(
+      (await call('/admin/api/studio/git/conflict/resolve', post({ dir, file: 'pages/Home.tsx', side: 'ours' })))
+        .status,
+    ).toBe(400)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Rejections — the security control
 // ---------------------------------------------------------------------------
 
@@ -258,6 +519,14 @@ describe('gitSyncRoutes — rejections', () => {
           post({ dir: outside, message: 'x', files: ['a.tsx'], switch: 'main' }),
         ),
       )
+      await refused(call('/admin/api/studio/git/fetch', post({ dir: outside })))
+      await refused(call('/admin/api/studio/git/pull', post({ dir: outside })))
+      await refused(call(`/admin/api/studio/git/conflicts?dir=${encodeURIComponent(outside)}`))
+      await refused(
+        call('/admin/api/studio/git/conflict/resolve', post({ dir: outside, file: 'a.tsx', side: 'mine' })),
+      )
+      await refused(call('/admin/api/studio/git/conflict/continue', post({ dir: outside })))
+      await refused(call('/admin/api/studio/git/conflict/abort', post({ dir: outside, confirm: true })))
     })
   })
 
@@ -275,6 +544,10 @@ describe('gitSyncRoutes — rejections', () => {
         )
       ).status,
     ).toBe(404)
+    expect((await call('/admin/api/studio/git/fetch', post({ dir: bare }))).status).toBe(404)
+    expect((await call('/admin/api/studio/git/pull', post({ dir: bare }))).status).toBe(404)
+    expect((await call(`/admin/api/studio/git/conflicts?dir=${encodeURIComponent(bare)}`)).status).toBe(404)
+    expect((await call('/admin/api/studio/git/conflict/continue', post({ dir: bare }))).status).toBe(404)
   })
 
   it('404s the workspace root itself', async () => {
@@ -334,8 +607,8 @@ describe('gitSyncRoutes — rejections', () => {
 
   it('does not answer a method or action it does not own', async () => {
     const url = new URL('http://localhost/admin/api/studio/git/branches')
-    expect(await tryServeStudioGitSync(new Request(url, { method: 'POST' }), url, url.pathname)).toBeNull()
+    expect(await tryServeStudioGitSync(new Request(url, { method: 'POST' }), NO_SESSION_RUNTIME, url, url.pathname)).toBeNull()
     const other = new URL('http://localhost/admin/api/studio/git/status')
-    expect(await tryServeStudioGitSync(new Request(other), other, other.pathname)).toBeNull()
+    expect(await tryServeStudioGitSync(new Request(other), NO_SESSION_RUNTIME, other, other.pathname)).toBeNull()
   })
 })

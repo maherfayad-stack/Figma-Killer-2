@@ -341,3 +341,107 @@ export async function commitAndSwitchGitBranch(
     schema: GitCommitAndSwitchResponseSchema,
   })
 }
+
+const GitFetchResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  /** git's own fetch output. Empty when there was nothing new — which is itself the answer. */
+  output: Type.String(),
+})
+
+const GitPullStrategySchema = Type.Union([
+  Type.Literal('ff-only'),
+  Type.Literal('rebase'),
+  Type.Literal('merge'),
+])
+
+const GitPullResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  strategy: GitPullStrategySchema,
+  output: Type.String(),
+})
+
+const GitConflictStateSchema = Type.Object({
+  /** `null` when nothing is stopped on a conflict. */
+  kind: Type.Union([Type.Literal('rebase'), Type.Literal('merge'), Type.Null()]),
+  files: Type.Array(Type.String()),
+})
+
+const GitConflictSideSchema = Type.Union([Type.Literal('mine'), Type.Literal('theirs')])
+
+const GitConflictResolveResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  file: Type.String(),
+  side: GitConflictSideSchema,
+})
+
+const GitConflictFinishResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  kind: Type.Union([Type.Literal('rebase'), Type.Literal('merge')]),
+})
+
+export type GitPullStrategy = Static<typeof GitPullStrategySchema>
+export type GitConflictState = Static<typeof GitConflictStateSchema>
+export type GitConflictSide = Static<typeof GitConflictSideSchema>
+
+/** `git fetch --prune origin`. Changes no file in the working tree — what it changes is that ahead/behind becomes true again. */
+export async function fetchGitRemote(dir: string | undefined) {
+  return apiRequest(`${BASE}/fetch`, { method: 'POST', body: { dir }, schema: GitFetchResponseSchema })
+}
+
+/**
+ * `git pull` with the named strategy, defaulting to `ff-only`.
+ *
+ * `ff-only` refusing on divergence is the point, not a failure: it is the
+ * moment the panel offers rebase or merge instead of writing history the user
+ * never chose. Read the code back with `gitRefusalCode` — `diverged`,
+ * `conflict`, or `dirty-tree`.
+ */
+export async function pullGitRemote(dir: string | undefined, strategy: GitPullStrategy = 'ff-only') {
+  return apiRequest(`${BASE}/pull`, { method: 'POST', body: { dir, strategy }, schema: GitPullResponseSchema })
+}
+
+/** Whether a rebase or merge is stopped on a conflict, and which files. A read — it survives a page reload. */
+export async function getGitConflicts(dir: string | undefined, signal?: AbortSignal): Promise<GitConflictState> {
+  return apiRequest(`${BASE}/conflicts`, { schema: GitConflictStateSchema, query: { dir }, signal })
+}
+
+/**
+ * Keep one side of one conflicted file, and stage it.
+ *
+ * `side` is `mine`/`theirs` in the USER's terms. The `--ours`/`--theirs`
+ * translation — which INVERTS during a rebase — happens on the server, so no
+ * browser code has to know that rule.
+ */
+export async function resolveGitConflict(dir: string | undefined, file: string, side: GitConflictSide) {
+  return apiRequest(`${BASE}/conflict/resolve`, {
+    method: 'POST',
+    body: { dir, file, side },
+    schema: GitConflictResolveResponseSchema,
+  })
+}
+
+/** Finish the stopped rebase or merge. Refuses with `unresolved-conflicts` while anything is still unmerged, and reports a fresh `conflict` when the next replayed commit conflicts too. */
+export async function continueGitConflict(dir: string | undefined) {
+  return apiRequest(`${BASE}/conflict/continue`, {
+    method: 'POST',
+    body: { dir },
+    schema: GitConflictFinishResponseSchema,
+  })
+}
+
+/** `git rebase --abort` / `git merge --abort`. Destructive, so `confirm` is a required literal on the wire and the panel puts a danger-styled confirmation in front of it. */
+export async function abortGitConflict(dir: string | undefined) {
+  return apiRequest(`${BASE}/conflict/abort`, {
+    method: 'POST',
+    body: { dir, confirm: true },
+    schema: GitConflictFinishResponseSchema,
+  })
+}
+
+// A pull refusal carries a `code` and, for a conflict, the unmerged paths —
+// and the browser still deliberately does not read either, for the reason the
+// `isGitStateRefusal` doc above gives. After a refused pull the panel asks the
+// REPOSITORY what state it is in (`getGitConflicts`, plus the ahead/behind the
+// status it already has), which is both fresher than an error body computed a
+// request ago and impossible to get subtly wrong. The fields stay on the wire
+// for non-browser clients reading the same routes.

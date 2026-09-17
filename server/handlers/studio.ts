@@ -362,7 +362,6 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
-  tryServeStudioGitSync,
   tryServeStudioDeploy,
   tryServeStudioDevServer,
   tryServeStudioStories,
@@ -375,6 +374,7 @@ const STUDIO_SUB_ROUTERS = [
  */
 const STUDIO_SESSION_SUB_ROUTERS = [
   tryServeStudioComments,
+  tryServeStudioGitSync,
   tryServeStudioProjectRoutes,
   tryServeStudioTrashRoutes,
   tryServeStudioShares,

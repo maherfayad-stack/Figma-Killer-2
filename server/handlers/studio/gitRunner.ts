@@ -150,7 +150,26 @@ export interface GitRunResult extends CappedSubprocessResult {
 export async function runGit(
   dir: string,
   args: readonly string[],
-  options: { timeoutMs?: number; spawn?: SubprocessSpawnFn } = {},
+  options: {
+    timeoutMs?: number
+    spawn?: SubprocessSpawnFn
+    /**
+     * A GitHub token to authenticate this one invocation with, for the network
+     * verbs (`fetch`, `pull`, `push`) against an HTTPS remote.
+     *
+     * **MERGE POINT — owned by work order G2.** G2 provisions a one-shot
+     * `GIT_ASKPASS` script in a `0600` temp file that prints the token, points
+     * this invocation's env at it, and deletes it in a `finally`.
+     * `GIT_TERMINAL_PROMPT=0` stays; the token is never written into the
+     * project's git config, never logged, and never echoed in an error.
+     *
+     * Until that lands, the only producer is `githubToken.ts`'s stub, which
+     * always answers `null` — so this is always `undefined` and the option is
+     * never exercised. Callers pass it unconditionally so G2's implementation
+     * reaches every network verb without another change.
+     */
+    credential?: string
+  } = {},
 ): Promise<GitRunResult> {
   const result = await runCappedSubprocess(['git', ...args], {
     cwd: dir,

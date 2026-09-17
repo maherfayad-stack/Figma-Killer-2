@@ -30,6 +30,7 @@ same panel.
 | Wire contract | `src/admin/pages/site/studio/gitRequests.ts` | TypeBox schemas + `apiRequest` calls |
 | Panel | `src/admin/pages/site/panels/GitPanel/` | The rail panel: branch, changes, diff, commit, push, history |
 | Panel — branch | `.../GitPanel/BranchSection.tsx` | The branch dropdown, “New branch from current”, the commit-and-switch dialog |
+| Panel — sync | `.../GitPanel/SyncSection.tsx` | Fetch, pull, push, the rebase-or-merge choice, per-file conflict resolution |
 | Agent tool | `server/ai/mcp/tools/studio/gitTools.ts` | `studio_git_commit`, gated by `studio.git.write` |
 
 ---
@@ -51,6 +52,12 @@ All under `/admin/api/studio/git/`. Bodies are validated with
 | POST | `restore` | `{ dir?, sha, file }` | `{ ok, file, sha }` |
 | GET | `branches` | `?dir` | `{ branches: [{ name, remote, current, upstream, ahead, behind, upstreamGone }], current, defaultBranch }` |
 | POST | `commit-and-switch` | `{ dir?, message, files, switch }` | `{ ok, sha, shortSha, files, branch }` |
+| POST | `fetch` | `{ dir? }` | `{ ok, output }` |
+| POST | `pull` | `{ dir?, strategy?: 'ff-only' \| 'rebase' \| 'merge' }` | `{ ok, strategy, output }` |
+| GET | `conflicts` | `?dir` | `{ kind: 'rebase' \| 'merge' \| null, files }` |
+| POST | `conflict/resolve` | `{ dir?, file, side: 'mine' \| 'theirs' }` | `{ ok, file, side }` |
+| POST | `conflict/continue` | `{ dir? }` | `{ ok, kind }` |
+| POST | `conflict/abort` | `{ dir?, confirm: true }` | `{ ok, kind }` |
 
 `isRepo: false` is a **normal 200**, not an error — it is what makes the panel
 offer "Create a repository" rather than showing a failure for a project nobody
@@ -122,6 +129,16 @@ one.
   `@{-1}`.
 - **Errors never carry a filesystem path.** `clientSafeGitError` elides the
   workspace root and caps length.
+- **A pull over a dirty tree refuses**, naming the files. Same rule as a branch
+  switch, same reason: Studio does not stash, so it does not pull over work it
+  would have to hide somewhere first.
+- **A pull never chooses how to reconcile.** The default is `--ff-only`, which
+  cannot rewrite anything; rebase and merge are reachable only through an
+  explicit request the panel asked the user for.
+- **`rebase --abort` / `merge --abort` is the only new destructive verb**, and
+  it sits behind the same danger-styled confirmation `restore` uses. It is
+  narrower than it looks: the pull refused to start over a dirty tree, so there
+  is no uncommitted work for an abort to discard.
 - **One writer at a time, per project.** See below.
 
 ### The project write lock
@@ -234,6 +251,41 @@ resolves to “create a local branch tracking origin/feature”. Offering
 exists to keep people out of. `origin/HEAD` is never listed: it is a symbolic
 ref, not a branch — it is reported separately as `defaultBranch`.
 
+### Fetch, pull, and conflicts
+
+`fetch` is `git fetch --prune origin`: it changes refs, never files. What it
+buys is that ahead/behind becomes true again — the branch list's divergence is
+only ever as current as the last fetch.
+
+`pull` takes a closed `strategy` union and defaults to `ff-only`. When both
+sides have commits, `ff-only` fails and that failure is reported as its own
+code, `diverged` — it is the moment the panel says so and offers *Rebase onto
+origin* and *Merge* as two explicit buttons, because those write different
+history and which one a team wants is not a design tool's call.
+
+**Push is disabled while the branch is behind**, with "Pull first" on the
+tooltip. The remote would reject it anyway; saying so before the click is the
+difference between a tool and a terminal.
+
+A conflict answers `409 { code: 'conflict', files }`, and the panel renders the
+unmerged paths with **Keep mine / Keep theirs / Open in code** each, then one
+**Continue**. Two things about that are load-bearing:
+
+- **`mine`/`theirs` is the wire vocabulary, not `--ours`/`--theirs`.** Git's
+  flags INVERT during a rebase: your commits are replayed on top of the
+  upstream, so `--ours` is the upstream and `--theirs` is your own work.
+  Translating in the browser is how somebody destroys an afternoon with one
+  click, so the translation happens in `gitOperations.ts`, against the
+  operation actually in progress, and is covered by a test per direction.
+- **The conflict state is read from the repository, never remembered.**
+  `GET conflicts` exists so a conflict survives a page reload — someone can
+  pull, conflict, close the tab, and come back to the same list.
+
+"Is a rebase in progress" is `.git/rebase-merge` / `.git/rebase-apply` via
+`rev-parse --git-path`, **not** `REBASE_HEAD`: git leaves `REBASE_HEAD` behind
+after a rebase completes successfully, so testing it would make a repository
+report itself conflicted forever. (Verified against real git, not assumed.)
+
 ### Agent-authored labelling
 
 `status` entries carry `agentAuthored`, paired server-side with
@@ -285,7 +337,7 @@ in-canvas turn loop is a product call that has not been made.
 |---|---|
 | `server/handlers/__tests__/gitStatusParse.test.ts` | The porcelain-v2 parser against real captured output: renames spanning two NUL fields, paths with spaces, initial/detached/diverged branch headers, unmerged records, unknown record types |
 | `server/handlers/__tests__/gitPaths.test.ts` | Every rejection: traversal on both separators, absolute/UNC/drive-letter paths, excluded directories, **symlink escape** (leaf and parent), flag-looking branch names, revision expressions where a sha is required |
-| `server/handlers/__tests__/gitSyncRoutes.test.ts` | The branch list against a local bare remote (upstream, ahead/behind, a `gone` upstream, `origin/HEAD` excluded), commit-and-switch and its dirty-remainder refusal, a flag-looking branch name refused before anything is committed, and the same rejection set as `git.test.ts` |
+| `server/handlers/__tests__/gitSyncRoutes.test.ts` | The branch list against a local bare remote (upstream, ahead/behind, a `gone` upstream, `origin/HEAD` excluded), commit-and-switch and its dirty-remainder refusal, fetch/pull against a second working copy of the same bare remote, the `diverged` and `dirty-tree` refusals, a REAL conflicted rebase and merge — including that “Keep mine” keeps the user's bytes in BOTH — continue/abort, and the same rejection set as `git.test.ts` |
 | `server/handlers/__tests__/projectWriteLock.test.ts` | Ordering (a save and a commit resolve in arrival order, FIFO), the `busy` refusal and its path-free message, per-project isolation, the symlink key, reentrancy across a subprocess wait |
 | `server/handlers/__tests__/git.test.ts` | End-to-end against real git: edit → status → diff → branch → commit → **push to a local bare remote**. Plus the rejections: dir outside the workspace, a project with no `.git` (never Studio's own repo), the workspace root itself, unusable paths in every path-taking route, dirty-tree switch refusal, empty commit, push with no origin, no filesystem path in an error body |
 | `server/ai/mcp/tools/studio/gitTools.test.ts` | The capability declaration (invisible with `studio.write` alone, invisible without `ai.tools.write`) and the tool's own refusals |
@@ -293,11 +345,29 @@ in-canvas turn loop is a product call that has not been made.
 
 ---
 
-## Not in v1
+## Still not here
 
-- Pull / fetch / merge / rebase. A merge conflict has no UI here; the panel
-  reports `unmerged` entries and refuses to commit them.
-- Stage/unstage as separate actions. Commit stages what it commits.
-- Roll the whole project back to a commit. Restore is per-file, deliberately.
-- Any push a human did not click.
-- A durable per-file record of which changes an agent authored.
+Rewritten after G3–G6: fetch, pull, conflicts, the branch list and the agent's
+push/branch/status/PR tools all shipped, so the old list described a product
+that no longer exists. What remains out of scope, and why:
+
+- **Stage/unstage as separate actions.** A commit stages exactly what it
+  commits. A staging area the user can get out of sync with the tick-boxes on
+  screen is a second source of truth for "what am I about to commit".
+- **Rolling the whole project back to a commit.** Restore is per-file,
+  deliberately — a whole-tree reset is the one git operation whose blast radius
+  a designer cannot see on the canvas beforehand.
+- **`reset`, `clean`, `stash`, and any form of force push.** No route builds
+  them, and the route surface *is* the allowed command set.
+- **Cherry-pick, revert, tags, submodules, LFS.** Nobody has asked; each is a
+  new vocabulary rather than a new button.
+- **A three-way merge editor.** Conflict resolution is whole-file (*Keep
+  mine* / *Keep theirs* / *Open in code*). Hunk-level resolution needs a real
+  merge view, which is a feature of its own — see "Why the diff view is not
+  CodeMirror" for the constraint it would have to clear.
+- **A durable per-file record of which changes an agent authored.**
+  `agentAuthored` is still scoped to the most recent turn; see above.
+- **Any push a human did not click** — except the explicit agent tool
+  `studio_git_push`, which is gated behind `studio.git.write`, a capability
+  that is not granted to the built-in Admin role. Granting it *is* the human's
+  click, made once instead of every time.

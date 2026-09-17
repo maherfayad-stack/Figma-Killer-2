@@ -56,7 +56,7 @@
  * one from its environment, and never accepts one on this wire.
  */
 import { existsSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import { isArgvSafeBranchName } from './gitPaths'
 import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
@@ -87,10 +87,20 @@ export interface GitOperationFailure {
     | 'empty-file-list'
     | 'already-a-repository'
     | 'busy'
+    /** A pull stopped on a conflict, or `continue` found the next commit conflicts too. */
+    | 'conflict'
+    /** `ff-only` could not fast-forward: both sides have commits. The panel asks rebase or merge. */
+    | 'diverged'
+    /** `continue` was asked for while files are still unmerged. */
+    | 'unresolved-conflicts'
+    /** `continue`/`abort`/`resolve` with no rebase or merge stopped. */
+    | 'nothing-in-progress'
     | 'git-failed'
   message: string
   /** Present only for `dirty-tree` — the paths that must be dealt with first. */
   dirtyFiles?: string[]
+  /** Present only for `conflict`/`unresolved-conflicts` — the unmerged paths, so the panel can offer a choice per file. */
+  conflictFiles?: string[]
 }
 
 /**
@@ -581,6 +591,319 @@ async function runPushCurrentBranch(dir: string): Promise<GitPushResult | GitOpe
   })
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Push failed'))
   return { ok: true, branch, output: clientSafeGitError(result, '') || result.stdout.trim() }
+}
+
+// ---------------------------------------------------------------------------
+// Fetch, pull, and the conflicts they can produce (G4)
+// ---------------------------------------------------------------------------
+
+/**
+ * How a pull is allowed to reconcile divergence. There is no default beyond
+ * `ff-only` and no "just figure it out": rebase and merge write different
+ * history, and which one a team wants is not something a design tool may
+ * decide on their behalf. The panel asks, once, after `ff-only` reports the
+ * divergence.
+ */
+export type GitPullStrategy = 'ff-only' | 'rebase' | 'merge'
+
+export interface GitFetchResult {
+  ok: true
+  /** git's own fetch output, client-safe. Empty when there was nothing new, which is itself the answer. */
+  output: string
+}
+
+export interface GitPullResult {
+  ok: true
+  strategy: GitPullStrategy
+  output: string
+}
+
+export interface GitConflictState {
+  /** The operation that is mid-flight, or `null` when the tree is not in a conflicted state. */
+  kind: 'rebase' | 'merge' | null
+  /** Paths git reports as unmerged. Empty while `kind` is `null`. */
+  files: string[]
+}
+
+export interface GitConflictResolveResult {
+  ok: true
+  file: string
+  side: GitConflictSide
+}
+
+export interface GitConflictAbortResult {
+  ok: true
+  kind: 'rebase' | 'merge'
+}
+
+/**
+ * Whose version of a conflicted file to keep, in the user's terms rather than
+ * git's.
+ *
+ * `--ours`/`--theirs` INVERT between a merge and a rebase — during a rebase
+ * your commits are replayed on top of the upstream, so `--ours` is the
+ * upstream and `--theirs` is your own work. Asking a designer to know that is
+ * how people destroy an afternoon's work with one click, so this wire takes
+ * `mine`/`theirs` and the translation happens here, against the operation
+ * actually in progress.
+ */
+export type GitConflictSide = 'mine' | 'theirs'
+
+/** `git fetch --prune origin`. A network verb, so it takes the long timeout; `--prune` is what makes a deleted upstream report as `gone` rather than silently lingering. */
+export function fetchRemote(
+  dir: string,
+  options: { credential?: string } = {},
+): Promise<GitFetchResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runFetchRemote(dir, options.credential))
+}
+
+async function runFetchRemote(dir: string, credential: string | undefined): Promise<GitFetchResult | GitOperationFailure> {
+  if (!(await hasOriginRemote(dir))) {
+    return failure('no-origin-remote', 'This project has no "origin" remote, so there is nothing to fetch from.')
+  }
+  const result = await runGit(dir, ['fetch', '--prune', 'origin'], {
+    timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    credential,
+  })
+  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Fetch failed'))
+  return { ok: true, output: clientSafeGitError(result, '') || result.stdout.trim() }
+}
+
+/**
+ * `git pull` with the strategy the caller named, and nothing else.
+ *
+ * - **A dirty tree refuses**, naming the files. Studio never stashes, and a
+ *   pull over uncommitted work is how a designer loses a screen they never
+ *   saw git touch.
+ * - **`ff-only` is the default everywhere upstream**, and its failure on
+ *   divergence is a FEATURE: it is the moment the panel asks "rebase or
+ *   merge?" instead of picking one. That refusal is reported as `diverged`,
+ *   not as a git failure.
+ * - **A conflict is reported as `conflict` with the unmerged paths**, so the
+ *   panel can show them rather than leaving the repository in a state the user
+ *   can only understand from a terminal.
+ *
+ * `-c core.editor=true` is passed because a merge commit would otherwise open
+ * an editor no one is watching and hang until the timeout. It is an argv
+ * option, not an env var, so it applies to this one invocation only.
+ */
+export function pullRemote(
+  dir: string,
+  strategy: GitPullStrategy,
+  options: { credential?: string } = {},
+): Promise<GitPullResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runPullRemote(dir, strategy, options.credential))
+}
+
+async function runPullRemote(
+  dir: string,
+  strategy: GitPullStrategy,
+  credential: string | undefined,
+): Promise<GitPullResult | GitOperationFailure> {
+  const status = await readGitStatus(dir)
+  if ('ok' in status) return status
+  if (!status.hasOrigin) {
+    return failure('no-origin-remote', 'This project has no "origin" remote, so there is nothing to pull from.')
+  }
+  if (status.branch.detached || !status.branch.branch) {
+    return failure('detached-head', 'HEAD is detached, so there is no branch to pull into. Switch to a branch first.')
+  }
+  const dirty = status.entries.map((entry) => entry.path)
+  if (dirty.length > 0) {
+    return {
+      ok: false,
+      code: 'dirty-tree',
+      message:
+        'There are uncommitted changes in this project. Studio will not pull over them and will never stash them — commit them first.',
+      dirtyFiles: dirty,
+    }
+  }
+
+  const branch = status.branch.branch
+  const strategyArgs =
+    strategy === 'rebase'
+      ? ['pull', '--rebase', 'origin', branch]
+      : strategy === 'merge'
+        ? ['pull', '--no-rebase', '--no-edit', 'origin', branch]
+        : ['pull', '--ff-only', 'origin', branch]
+
+  const result = await runGit(dir, ['-c', 'core.editor=true', ...strategyArgs], {
+    timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    credential,
+  })
+  if (result.ok) return { ok: true, strategy, output: clientSafeGitError(result, '') || result.stdout.trim() }
+
+  const conflict = await readConflictState(dir)
+  if (conflict.kind) {
+    return {
+      ok: false,
+      code: 'conflict',
+      message:
+        conflict.kind === 'rebase'
+          ? 'Your commits could not be replayed on top of origin cleanly. Resolve each file, then continue.'
+          : 'The merge could not be completed cleanly. Resolve each file, then continue.',
+      conflictFiles: conflict.files,
+    }
+  }
+  if (strategy === 'ff-only' && /fast-forward|diverg/i.test(result.stderr + result.stdout)) {
+    return failure(
+      'diverged',
+      'origin has commits this branch does not, and this branch has commits origin does not. Choose how to reconcile them: rebase your work on top, or merge.',
+    )
+  }
+  return failure('git-failed', clientSafeGitError(result, 'Pull failed'))
+}
+
+/**
+ * Whether a rebase or merge is stopped on a conflict, and which paths are
+ * unmerged.
+ *
+ * A read: no write lock, so the panel can show the conflict list on a fresh
+ * page load without contending with anything.
+ *
+ * The in-progress markers are asked for with `rev-parse --git-path` rather
+ * than by assuming `<dir>/.git` is a directory — it is a FILE in a linked
+ * worktree or a submodule, and a hard-coded path probe would silently answer
+ * "no conflict" there.
+ *
+ * **`REBASE_HEAD` is deliberately NOT the rebase test**, even though it looks
+ * like the obvious one: git leaves it behind after a rebase completes
+ * successfully (verified against real git, not assumed), so a repository that
+ * finished a rebase an hour ago would report itself as still conflicted
+ * forever. `.git/rebase-merge` / `.git/rebase-apply` exist only while a rebase
+ * is actually in flight.
+ */
+export async function readConflictState(dir: string): Promise<GitConflictState> {
+  const kind = await conflictKind(dir)
+  if (!kind) return { kind: null, files: [] }
+  const result = await runGit(dir, ['diff', '--name-only', '--diff-filter=U', '-z'])
+  return { kind, files: result.ok ? result.stdout.split(' ').filter(Boolean) : [] }
+}
+
+async function conflictKind(dir: string): Promise<'rebase' | 'merge' | null> {
+  if (await gitPathExists(dir, 'rebase-merge')) return 'rebase'
+  if (await gitPathExists(dir, 'rebase-apply')) return 'rebase'
+  // MERGE_HEAD exists exactly while a merge is uncommitted, and is cleared by
+  // the merge commit. `--quiet` makes absence a silent exit 1.
+  if ((await runGit(dir, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).ok) return 'merge'
+  return null
+}
+
+/** `git rev-parse --git-path <name>` resolves to a path relative to the repository root, whatever shape `.git` has. */
+async function gitPathExists(dir: string, name: string): Promise<boolean> {
+  const result = await runGit(dir, ['rev-parse', '--git-path', name])
+  if (!result.ok) return false
+  const relative = result.stdout.trim()
+  return relative.length > 0 && existsSync(resolve(dir, relative))
+}
+
+/**
+ * Take one side of one conflicted file, and stage it.
+ *
+ * `relPath` must already have been through `resolveWorkspaceRelativePath` —
+ * this function does not re-validate, and its only caller is the route, which
+ * does. The `mine`/`theirs` → `--ours`/`--theirs` translation is the whole
+ * reason this is a named operation rather than two argv lines at the route;
+ * see {@link GitConflictSide}.
+ */
+export function resolveConflictFile(
+  dir: string,
+  relPath: string,
+  side: GitConflictSide,
+): Promise<GitConflictResolveResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runResolveConflictFile(dir, relPath, side))
+}
+
+async function runResolveConflictFile(
+  dir: string,
+  relPath: string,
+  side: GitConflictSide,
+): Promise<GitConflictResolveResult | GitOperationFailure> {
+  const kind = await conflictKind(dir)
+  if (!kind) {
+    return failure('nothing-in-progress', 'There is no merge or rebase in progress, so there is nothing to resolve.')
+  }
+  // During a rebase YOUR commit is `--theirs`: the upstream is checked out
+  // first and your work is replayed on top of it.
+  const flag = kind === 'rebase' ? (side === 'mine' ? '--theirs' : '--ours') : side === 'mine' ? '--ours' : '--theirs'
+
+  const checkout = await runGit(dir, ['checkout', flag, '--', relPath])
+  if (!checkout.ok) return failure('git-failed', clientSafeGitError(checkout, 'Could not take that version of the file'))
+  const staged = await runGit(dir, ['add', '--', relPath])
+  if (!staged.ok) return failure('git-failed', clientSafeGitError(staged, 'Could not stage the resolved file'))
+  return { ok: true, file: relPath, side }
+}
+
+/**
+ * Finish the rebase or merge that is stopped on a conflict.
+ *
+ * Refuses while anything is still unmerged, naming what — `rebase --continue`
+ * would otherwise fail with a message written for a terminal. A rebase can
+ * stop AGAIN on the next replayed commit, which is reported as a fresh
+ * `conflict` with the new file list rather than as a success that quietly
+ * left the repository mid-rebase.
+ */
+export function continueConflictResolution(dir: string): Promise<GitConflictAbortResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runContinueConflictResolution(dir))
+}
+
+async function runContinueConflictResolution(dir: string): Promise<GitConflictAbortResult | GitOperationFailure> {
+  const state = await readConflictState(dir)
+  if (!state.kind) {
+    return failure('nothing-in-progress', 'There is no merge or rebase in progress, so there is nothing to continue.')
+  }
+  if (state.files.length > 0) {
+    return {
+      ok: false,
+      code: 'unresolved-conflicts',
+      message: 'Some files are still unmerged. Choose a version for each one first.',
+      conflictFiles: state.files,
+    }
+  }
+
+  const args = state.kind === 'rebase' ? ['rebase', '--continue'] : ['commit', '--no-edit']
+  const result = await runGit(dir, ['-c', 'core.editor=true', ...args])
+  if (!result.ok) {
+    return failure(
+      'git-failed',
+      clientSafeGitError(result, state.kind === 'rebase' ? 'Could not continue the rebase' : 'Could not finish the merge'),
+    )
+  }
+
+  const after = await readConflictState(dir)
+  if (after.kind) {
+    return {
+      ok: false,
+      code: 'conflict',
+      message: 'The next commit conflicts too. Resolve each file, then continue again.',
+      conflictFiles: after.files,
+    }
+  }
+  return { ok: true, kind: state.kind }
+}
+
+/**
+ * `git rebase --abort` / `git merge --abort` — throw away the in-progress
+ * reconciliation and put the branch back where it was.
+ *
+ * The one destructive verb this work order adds, which is why the client puts
+ * the same danger-styled confirmation in front of it that `restore` has. It is
+ * still narrower than it looks: abort restores the pre-pull state, and the
+ * pull refused to start over a dirty tree, so there is no uncommitted work for
+ * it to discard.
+ */
+export function abortConflictResolution(dir: string): Promise<GitConflictAbortResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runAbortConflictResolution(dir))
+}
+
+async function runAbortConflictResolution(dir: string): Promise<GitConflictAbortResult | GitOperationFailure> {
+  const kind = await conflictKind(dir)
+  if (!kind) {
+    return failure('nothing-in-progress', 'There is no merge or rebase in progress, so there is nothing to abort.')
+  }
+  const result = await runGit(dir, [kind === 'rebase' ? 'rebase' : 'merge', '--abort'])
+  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not abort'))
+  return { ok: true, kind }
 }
 
 /** The `.gitignore` a fresh repository gets when the project has none — the same directories Studio already refuses to let git touch. */
