@@ -327,6 +327,12 @@ interface UiSlice {
    * never touches this field.
    */
   structuralRefusalDialog: StructuralRefusalDialogState | null
+  /**
+   * Open `RefusalDialog` on a refusal raised OUTSIDE the store's own
+   * structural gate — Z8's CSS destination question, reported from the save
+   * loop, which holds no `set` of its own the way `presentStructuralRefusal` does.
+   */
+  presentRefusalDialog: (dialog: StructuralRefusalDialogState) => void
   /** Dismiss the open `RefusalDialog` without running its `retry`, if any. */
   dismissStructuralRefusalDialog: () => void
 
@@ -664,6 +670,8 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   closeImportHtmlModal: () =>
     set({ importHtmlModalOpen: false, importHtmlModalParentId: null, importHtmlModalPrefill: '' }),
+
+  presentRefusalDialog: (dialog) => set({ structuralRefusalDialog: dialog }),
 
   dismissStructuralRefusalDialog: () => set({ structuralRefusalDialog: null }),
 

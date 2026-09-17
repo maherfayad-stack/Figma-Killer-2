@@ -71,12 +71,13 @@ import {
   type NodeValueDrop,
 } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
+import { watchOpenPageForCssDestination } from './openPageWatch'
 import {
   reportClassTokenRefusals,
   reportEditRefusals,
-  reportUnmappedStyleRules,
-  reportUnwritableContexts,
+  reportStyleRulePlanRefusals,
   resetRefusalToasts,
+  styleRulePlanTouchedSomething,
 } from './refusalToasts'
 import type { StudioEditPayload } from './studioEditPayload'
 import {
@@ -254,6 +255,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // `pages` feeds `buildClassPageIndex`, which is how a new class gets
     // co-located with the page it is used on (`style-02`).
     setStudioStyleRuleSources(loadedStyleRuleSources, styleRules, { pages, styledSources: loadedStyledRuleSources })
+    // Z8 — and which page is OPEN, the anchor for a class that is on no
+    // element yet. Idempotent; see `openPageWatch.ts`.
+    watchOpenPageForCssDestination(pages)
     // WS-10 §4.4 (Phase 4) — a fresh project load (or a `requestCmsSiteReload()`
     // re-load) must not carry a locale-variant page, or its writeback
     // baseline, over from whatever project was open before: `pageId` is only
@@ -518,30 +522,29 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
 
     // `panel-02` (WS-6.3) — CSS write-back, owned by `styleRuleWriteback.ts`:
     // it diffs each rule's BASE `styles` bag against the load-time baseline
-    // and reports both the edits to send and the classes the user changed
-    // that have NO hand-editable `.css` source. See that module's doc for why
-    // the second list exists — an unmapped rule used to be skipped silently,
-    // which meant a Tailwind project's style edits vanished on reload with
-    // nothing ever said about it.
+    // and reports both the edits to send and every change that had nowhere to
+    // go. See that module's doc for why those lists exist — an unmapped rule
+    // used to be skipped silently, so a Tailwind project's style edits
+    // vanished on reload with nothing ever said about it.
     //
-    // `style-02` — `site.pages` is passed so a brand-new class can be
-    // co-located with the page it is actually USED on. Without it, every
-    // project whose pages each own a stylesheet refused every new class as
-    // "N candidate stylesheets, will not guess".
-    //
-    // `style-03` — the document's own editing contexts are passed too, so a
-    // breakpoint/condition override resolves to a `@media` query and is
-    // written through `setDeclarationAtMedia` instead of being refused
-    // wholesale. `@container`/`@supports` contexts still refuse, by name.
-    const cssPlan = collectStyleRuleEdits(site.styleRules, site.pages, {
-      breakpoints: site.breakpoints,
-      conditions: site.conditions,
-    })
+    // Three facts about the DOCUMENT ride along, each answering a destination
+    // question this module must not answer itself: `site.pages` co-locates a
+    // new class with the page it is USED on (`style-02`); the editing contexts
+    // resolve a breakpoint override to its `@media` query (`style-03`;
+    // `@container`/`@supports` still refuse by name); and `activePageId` is
+    // Z8's last resort, for a class on no element for `buildClassPageIndex`.
+    const cssPlan = collectStyleRuleEdits(
+      site.styleRules,
+      site.pages,
+      { breakpoints: site.breakpoints, conditions: site.conditions },
+      useEditorStore.getState().activePageId,
+    )
     edits.push(...cssPlan.edits)
 
-    reportUnmappedStyleRules(cssPlan.unmapped)
-
-    reportUnwritableContexts(cssPlan.unwritableContexts)
+    // Every way that plan can decline, told to the user in the one shape each
+    // deserves — including Z8's destination question, which opens a dialog
+    // rather than a toast. `refusalToasts.ts` owns which is which.
+    reportStyleRulePlanRefusals(cssPlan, useEditorStore.getState().presentRefusalDialog)
 
     // WS-10 §4.4 (Phase 4) — a locale-variant board frame's text edits.
     // `localizedPages` lives OUTSIDE `site` (a parallel map, not part of
@@ -556,7 +559,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // `style-02` — the two baselines below must not advance past a REFUSED
     // write. Both lists start with the refusals this client already made
     // (a token/destination it will not guess) and grow with the server's.
-    const refusedRuleIds = new Set<string>()
+    // Z8 — a rule whose DESTINATION was refused starts in this set: nothing
+    // reached disk, and the held-back baseline is what leaves its
+    // declarations in the diff for the remedy's re-run to write.
+    const refusedRuleIds = new Set<string>(cssPlan.destinationRefusals.map((refusal) => refusal.ruleId))
     const refusedClassNodeIds = [...classPlan.refusedNodeIds]
 
     // The files a landed write touched, deferred to the END of this function:
@@ -673,7 +679,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     //
     // The class baseline (`commitClassIdsBaseline`) moved here from before
     // the POST for the same reason: it now has server refusals to honour.
-    if (cssPlan.edits.length > 0 || cssPlan.unmapped.length > 0 || cssPlan.unwritableContexts.length > 0) {
+    if (styleRulePlanTouchedSomething(cssPlan)) {
       commitStyleRuleBaseline(site.styleRules, { pages: site.pages, refusedRuleIds })
     }
     commitClassIdsBaseline(site.pages, refusedClassNodeIds)

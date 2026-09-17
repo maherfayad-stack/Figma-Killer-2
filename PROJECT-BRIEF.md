@@ -235,11 +235,16 @@ never silently no-ops.
   - `op: 'set'` — change a value on a rule the parser mapped to a real
     hand-authored `.css` file (`setDeclaration`).
   - `op: 'insert'` — a rule the user created in the editor that has no source
-    yet, written into the project's one editable stylesheet (`insertRule`).
-    `resolveCssInsertDestination` refuses by name when the destination is
-    ambiguous rather than guessing.
+    yet, written into the stylesheet co-located with its anchor page, or the
+    project's one editable stylesheet (`insertRule`). The anchor page is the
+    class's own page, or — for a class that is on no element yet — the page
+    the user has OPEN (Z8, `resolveOpenPageFile`). With several candidates and
+    none co-located, `resolveCssInsertDestination` still refuses rather than
+    guessing, but the refusal is a **choice**: a `RefusalDialog` with one
+    `choose-stylesheet` remedy per candidate file, which pins the destination
+    and re-runs the insert. Never a toast.
   - `op: 'create'` — no editable stylesheet exists at all: the server invents
-    one co-located with the page, wires the page's `import`
+    one co-located with the anchor page, wires the page's `import`
     (`ensureStylesheetImport`, a ts-morph edit — which is why it cannot happen
     client-side), and writes the rule into it.
 
