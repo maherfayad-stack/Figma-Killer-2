@@ -20,6 +20,7 @@ import {
 } from './canvasTreeLadder'
 import { escapeCssAttributeValue } from './canvasNodeLookup'
 import { measureCanvasElementRect } from './canvasOverlayGeometry'
+import { measurementWinsOverTreeLadder } from './canvasMeasureGeometry'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import styles from './BreakpointSelectionOverlay.module.css'
 
@@ -48,6 +49,13 @@ interface UseCanvasTreeLadderOverlayArgs {
   show: boolean
   hoveredNodeId: string | null
   hoveredBreakpointOrigin: string | null
+  /**
+   * This frame's selection. Used for ONE thing: deciding whether the OTHER
+   * Alt-hover gesture — K5's `MeasureLayer` — owns this hold instead. See
+   * `measurementWinsOverTreeLadder` for the rule and why it lives in one
+   * place rather than being re-derived here.
+   */
+  selectedNodeIds: readonly string[]
 }
 
 interface CanvasTreeLadderOverlayResult {
@@ -64,6 +72,7 @@ export function useCanvasTreeLadderOverlay({
   show,
   hoveredNodeId,
   hoveredBreakpointOrigin,
+  selectedNodeIds,
 }: UseCanvasTreeLadderOverlayArgs): CanvasTreeLadderOverlayResult {
   const activePage = useEditorStore(selectActiveCanvasPage)
   const styleRules = useEditorStore((s) => s.site?.styleRules ?? EMPTY_STYLE_RULES)
@@ -76,8 +85,14 @@ export function useCanvasTreeLadderOverlay({
 
   const treeLadderRows = buildCanvasTreeLadderRows(activePage, inspectAnchorNodeId)
   const treeLadderKey = treeLadderRows.map((row) => `${row.nodeId}:${row.depth}:${row.relation}`).join('|')
+  // K5: Alt+hover over a node OUTSIDE the selection is a measurement, not a
+  // ladder. Suppressing (rather than just hiding) matters — with the ladder
+  // off, releasing Alt commits nothing, so measuring can never reselect the
+  // thing being measured against.
+  const measurementOwnsAlt = measurementWinsOverTreeLadder(selectedNodeIds, hoveredNodeId)
   const showTreeLadder =
     show &&
+    !measurementOwnsAlt &&
     inspectActive &&
     !inspectSuppressed &&
     Boolean(inspectAnchorNodeId) &&

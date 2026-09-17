@@ -59,13 +59,7 @@
 import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
-import {
-  getNodeDisplayName,
-  getNodeHtmlTag,
-  styleRuleSelector,
-  type Page,
-} from '@core/page-tree'
-import { registry } from '@core/module-engine'
+import { styleRuleSelector } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useShallow } from 'zustand/react/shallow'
@@ -79,6 +73,7 @@ import { CanvasResizeHandles } from './CanvasResizeHandles'
 import { isCanvasGestureActive } from './canvasGesture'
 import { InPlaceInspector } from './InPlaceInspector'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
+import { MeasureLayer } from './MeasureLayer'
 import {
   createCanvasOverlayMeasureSession,
   measureIframeLocalRect,
@@ -95,6 +90,7 @@ import {
   positionOverlayElement,
   positionToolbar,
   publishSelectionAnchor,
+  resolveNodeBadgeLabel,
   syncSelectorHighlightRings,
 } from './canvasSelectionOverlayPositioning'
 import styles from './BreakpointSelectionOverlay.module.css'
@@ -119,22 +115,6 @@ function overlayRectIsFinite(rect: CanvasOverlayRect | null): boolean {
     Number.isFinite(rect.width) &&
     Number.isFinite(rect.height)
   )
-}
-
-/**
- * The node's tag or display name for the in-iframe node badge (WS-5.1) —
- * same fallback order the Alt-hover tree ladder rows already use
- * (`CanvasTreeLadderRowButton`).
- */
-function resolveNodeBadgeLabel(
-  page: Page | null,
-  nodeId: string,
-  visualComponents: ReadonlyArray<VisualComponent>,
-): string | null {
-  const node = page?.nodes[nodeId]
-  if (!node) return null
-  const definition = registry.get(node.moduleId)
-  return getNodeHtmlTag(node, definition) || getNodeDisplayName(node, definition, visualComponents) || null
 }
 
 interface BreakpointSelectionOverlayProps {
@@ -333,6 +313,10 @@ export function BreakpointSelectionOverlay({
     show: showRings,
     hoveredNodeId,
     hoveredBreakpointOrigin,
+    // K5 — the ladder stands down while Alt-hover MEASUREMENT owns the
+    // gesture. The rule lives in `measurementWinsOverTreeLadder`; the ladder
+    // applies it itself so the two can never drift apart.
+    selectedNodeIds,
   })
   // Hover only renders when the hovered node isn't already part of the
   // selection — otherwise the two rings would stack and the hover ring
@@ -691,6 +675,9 @@ export function BreakpointSelectionOverlay({
           drag, and the transform-scaled coordinate path is established for
           them. See `CanvasDropIndicators`. */}
       <CanvasDropIndicators target={reorderDrag.target} invalid={reorderDrag.invalid} />
+      {/* K5 — Alt-hover measurements. Owns its own Alt/visibility state and
+          renders nothing until the gesture is live; see `MeasureLayer`. */}
+      <MeasureLayer iframeElement={iframeElement} overlayRoot={overlayRoot} portalTarget={portalTarget} portalMode={toolbarMode} canvasRoot={portalCanvasRoot} selectedNodeIds={selectedNodeIds} hoveredNodeId={hoveredNodeId} enabled={showRings} />
       {canvasChrome && chromeTarget && createPortal(canvasChrome, chromeTarget)}
       {toolbar && portalTarget && createPortal(toolbar, portalTarget)}
       {inspector && portalTarget && createPortal(inspector, portalTarget)}

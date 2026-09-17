@@ -1,0 +1,70 @@
+/**
+ * MeasureLayer — PARENT-DOCUMENT fallback appearance only.
+ *
+ * In design mode the layer portals into the frame's own overlay root, where
+ * CSS Module class names do not exist and appearance comes from
+ * `selectionChromeCss.ts`'s injected `data-canvas-measure-*` rules instead.
+ * These classes are the live/bridge-frame path, plus the brief startup window
+ * before the in-frame injector's effect has run — exactly the split
+ * `BreakpointSelectionOverlay.module.css`'s `.ring` already documents, down
+ * to the scoped/fixed mode attribute. Keep the two in sync: every declaration
+ * here has a counterpart in the injected stylesheet.
+ */
+
+.line,
+.paddingBand,
+.contentBox,
+.label {
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 51;
+}
+
+.line[data-canvas-measure-mode="scoped"],
+.paddingBand[data-canvas-measure-mode="scoped"],
+.contentBox[data-canvas-measure-mode="scoped"],
+.label[data-canvas-measure-mode="scoped"] {
+    position: absolute;
+}
+
+.line[data-canvas-measure-mode="fixed"],
+.paddingBand[data-canvas-measure-mode="fixed"],
+.contentBox[data-canvas-measure-mode="fixed"],
+.label[data-canvas-measure-mode="fixed"] {
+    position: fixed;
+}
+
+.line {
+    background: var(--canvas-measure-line-color);
+}
+
+.paddingBand {
+    background: var(--canvas-measure-padding-fill);
+}
+
+.contentBox {
+    outline: 1px dashed var(--canvas-measure-padding-line);
+    outline-offset: -1px;
+}
+
+.label {
+    padding: var(--space-px) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.distanceLabel {
+    background: var(--canvas-measure-pill-bg);
+    color: var(--canvas-measure-pill-text);
+}
+
+.paddingLabel {
+    background: var(--canvas-measure-padding-line);
+    color: var(--canvas-measure-padding-text);
+}

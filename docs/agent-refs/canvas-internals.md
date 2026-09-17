@@ -701,6 +701,44 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
   is produced by layout, and writing an `x` would mean writing
   `position: absolute`, a much larger edit than the one a user asks for by
   grabbing an edge.
+- **Alt-hover measurement (K5).** `MeasureLayer.tsx` + `canvasMeasureGeometry.ts`.
+  With a selection and Alt held, hovering another node paints the distances
+  between the two boxes and the hovered node's padding bands/content box, into
+  the SAME in-frame overlay root the rings use (parent-document fallback for a
+  live/bridge frame, same `scoped`/`fixed` mode attribute the ring fallback
+  uses). Mounted from `BreakpointSelectionOverlay` with one line; it owns its
+  own Alt state and renders nothing until the gesture is live.
+  - **The rule, per axis:** disjoint → ONE segment, the gap between facing
+    edges; overlapping → TWO segments, the insets between same-side edges. So
+    a measurement is 2–4 segments, not always 4. Containment (the usual case)
+    gives all four. The distance is never negative — a selection that sticks
+    out past the hovered box just produces a segment that runs backwards.
+  - **Numbers are frame px, not screen px.** Segments are computed in the
+    frame's own coordinates and only PROJECTED for painting
+    (`CanvasOverlayMeasureSession.project`, the same arithmetic `measure`
+    applies), so a pill never shows `px × zoom`.
+  - **Geometry comes from `FrameDocumentAdapter.measure`** — one call per
+    pass, both nodes, plus the four `padding-*` properties; that is the only
+    measurement API a bridge frame has. ONE documented exception: in portal
+    mode the RECTS come from `measureIframeLocalRect`, because the adapter
+    returns body-relative rects while the in-frame rings are positioned from
+    iframe-viewport-relative ones and the two differ by `body`'s margin. A
+    measurement line that does not touch the ring it starts from reads as
+    broken, so the layer follows the ring.
+  - **Alt is shared with the tree ladder, and the split is one predicate.**
+    `measurementWinsOverTreeLadder(selectedNodeIds, hoveredNodeId)`, called by
+    BOTH `MeasureLayer` and `CanvasTreeLadderOverlay`: measurement wins while
+    the pointer is over a node OUTSIDE the selection; the ladder wins over the
+    selection itself and whenever nothing is selected (its behaviour there is
+    completely unchanged). Both gestures fire immediately — there is no delay
+    to sequence them with — so the split has to be by target, not by time.
+    The ladder is SUPPRESSED (not merely hidden) while measurement owns Alt,
+    which is what stops an Alt release from committing a new selection out
+    from under the thing being measured. Both stand down during an inline
+    text edit.
+  - Appearance lives in `selectionChromeCss.ts` (`data-canvas-measure-*`,
+    unlayered, tokens forwarded from the editor `:root`) for the in-frame
+    path and `MeasureLayer.module.css` for the fallback. Keep the two in sync.
 - **`canvasGesture.ts`** — a module-level "a pointer gesture is continuously
   mutating the page; hold every derived geometry until it ends" flag. Two
   subsystems recompute expensive geometry on layout change and are right to:
