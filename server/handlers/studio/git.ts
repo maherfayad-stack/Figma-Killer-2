@@ -71,9 +71,27 @@
  * A rejected path (`..`, absolute, `node_modules/…`) is also a 404 rather than
  * a 400 — it is indistinguishable from a file that does not exist, and saying
  * more would describe the server's layout.
+ *
+ * ## Every POST goes through `originAllowed`
+ *
+ * The same CSRF check `gitSyncRoutes.ts`, `gitRemoteRoutes.ts`,
+ * `githubAuthRoutes.ts` and `handleCmsRequest` apply, and it is not
+ * belt-and-braces here: these routes carry no per-request capability (the
+ * single-operator posture — see `docs/server.md`), so `SameSite=Lax` on a
+ * session cookie protects nothing that does not read one. `readValidatedBody`
+ * calls `req.json()` whatever the content type says, which means a page on an
+ * unrelated origin can reach these with a plain
+ * `<form enctype="text/plain">` — no preflight, no cookie needed. A forged
+ * `push` publishes to the user's remote under the GitHub token they signed in
+ * with; a forged `restore` overwrites a file they have open and never saved.
+ *
+ * A request with NO `Origin` header still passes, so a non-browser client
+ * (curl, a script) is unaffected — the header is only ever present when a
+ * browser is the one asking.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { isStateChangingMethod, originAllowed } from '../../auth/security'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { isCommitSha, isAcceptableCommitMessage, resolveWorkspaceRelativePath } from './gitPaths'
 import { getGithubTokenForRequest } from './githubToken'
@@ -95,6 +113,17 @@ import {
 const ROUTE_PREFIX = '/admin/api/studio/git/'
 
 const NOT_FOUND = () => new Response('Not found', { status: 404 })
+
+/**
+ * The state-changing actions this sub-router owns.
+ *
+ * Declared as a set rather than inferred from the `if` ladder — exactly as
+ * `gitSyncRoutes.ts` does it — so the CSRF check can run BEFORE the dispatch
+ * without also answering for a POST that belongs to a sibling sub-router
+ * under the same prefix (`pull`, `fetch`, `conflict/*`, `pull-request`,
+ * `remote`, `clone`), which must fall through untouched.
+ */
+const OWNED_POST_ACTIONS = new Set(['branch', 'commit', 'push', 'init', 'restore'])
 
 /**
  * Body of `POST /admin/api/studio/git/branch`. Exactly one of `create`/`switch`
@@ -164,6 +193,12 @@ function failureResponse(failure: GitOperationFailure): Response {
 export async function tryServeStudioGit(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (!pathname.startsWith(ROUTE_PREFIX)) return null
   const action = pathname.slice(ROUTE_PREFIX.length)
+
+  // CSRF, for the reason the module doc gives: nothing here reads a session,
+  // so a cookie's SameSite flag defends none of it.
+  if (isStateChangingMethod(req.method) && OWNED_POST_ACTIONS.has(action) && !originAllowed(req)) {
+    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
+  }
 
   try {
     if (action === 'status' && req.method === 'GET') return await serveStatus(url)

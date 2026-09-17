@@ -77,6 +77,27 @@ function post(body: unknown): RequestInit {
   return { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
 }
 
+/**
+ * A POST carrying an `Origin`. It has to be set AFTER construction — `Origin`
+ * is a forbidden header in the `Request` constructor, which is also why the
+ * check is worth anything: a page cannot forge it, only the browser writes it.
+ *
+ * `text/plain` is what a cross-origin `<form>` can send, and the body parser
+ * accepts it: the content type is not the control, the Origin check is.
+ */
+async function forged(pathAndQuery: string, body: unknown, origin: string): Promise<Response> {
+  const url = new URL(`http://localhost${pathAndQuery}`)
+  const req = new Request(url, {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain' },
+    body: JSON.stringify(body),
+  })
+  req.headers.set('origin', origin)
+  const res = await tryServeStudioGitRemote(req, url, url.pathname)
+  if (!res) throw new Error(`no route matched ${pathAndQuery}`)
+  return res
+}
+
 afterAll(() => {
   for (const dir of created) fs.rmSync(dir, { recursive: true, force: true })
 })
@@ -311,6 +332,53 @@ describe('git clone', () => {
   it('answers 404 for a clone status poll with an unknown job id, and 400 with none', async () => {
     expect((await call('/admin/api/studio/git/clone/status?jobId=made-up')).status).toBe(404)
     expect((await call('/admin/api/studio/git/clone/status')).status).toBe(400)
+  })
+
+  /**
+   * Neither route reads a session, so no cookie's SameSite flag defends them,
+   * and `readValidatedBody` calls `req.json()` whatever the content type says
+   * — a cross-origin `<form enctype="text/plain">` reaches both. A forged
+   * `remote` repoints `origin` at somebody else's repository (the next push
+   * then offers it the user's GitHub token); a forged `clone` makes this
+   * server fetch a repository into their workspace.
+   */
+  it('refuses a forged remote/clone from another origin, and leaves origin alone', async () => {
+    const dir = makeProjectDir()
+    await makeRepo(dir)
+
+    const forge = (pathAndQuery: string, body: unknown) => forged(pathAndQuery, body, 'https://evil.test')
+
+    const remote = await forge('/admin/api/studio/git/remote', {
+      dir,
+      set: { name: 'origin', url: 'https://github.com/evil/payload' },
+    })
+    expect(remote.status).toBe(403)
+    expect(((await remote.json()) as { error: string }).error).not.toContain(dir)
+
+    expect((await forge('/admin/api/studio/git/clone', { url: 'https://github.com/evil/payload' })).status).toBe(403)
+
+    // No remote was written, and no project directory was created for it.
+    const remotes = await call(`/admin/api/studio/git/remotes?dir=${encodeURIComponent(dir)}`)
+    expect(((await remotes.json()) as { remotes: unknown[] }).remotes).toEqual([])
+    expect(fs.existsSync(cloneTargetDir({ owner: 'evil', repo: 'payload', url: '', protocol: 'https' }))).toBe(false)
+  })
+
+  it('still admits the panel\'s own origin, and a client that sends none', async () => {
+    const dir = makeProjectDir()
+    await makeRepo(dir)
+
+    const fromPanel = await forged(
+      '/admin/api/studio/git/remote',
+      { dir, set: { name: 'origin', url: 'https://github.com/acme/storefront' } },
+      'http://localhost',
+    )
+    expect(fromPanel.status).toBe(200)
+
+    // No Origin header is not a browser, so it is not CSRF.
+    expect(
+      (await call('/admin/api/studio/git/remote', post({ dir, set: { name: 'origin', url: 'https://github.com/acme/other' } })))
+        .status,
+    ).toBe(200)
   })
 
   it('clones a real repository, keeping its history, and ends on an import summary', async () => {

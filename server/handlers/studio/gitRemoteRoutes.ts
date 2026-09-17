@@ -34,9 +34,21 @@
  * for a credential. The URL judgement is `gitPaths.ts`'s, the git invocations
  * are `gitOperations.ts`'s, and the clone job — target derivation, refusals,
  * cleanup — is `gitClone.ts`'s.
+ *
+ * ## Both POSTs go through `originAllowed`
+ *
+ * The same CSRF check `git.ts`, `gitSyncRoutes.ts` and `githubAuthRoutes.ts`
+ * apply, and these two are the reason it is not optional: nothing here reads a
+ * session, so no cookie's SameSite flag defends it, and `readValidatedBody`
+ * calls `req.json()` whatever the content type says — a page on an unrelated
+ * origin reaches both with a plain `<form enctype="text/plain">`. A forged
+ * `remote` repoints `origin` at a repository the user never chose (and the
+ * next push then offers it their GitHub token); a forged `clone` makes this
+ * server fetch a repository, with that token, into their workspace.
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { isStateChangingMethod, originAllowed } from '../../auth/security'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { isGitFailure, readRemotes, setOriginRemote, type GitOperationFailure } from './gitOperations'
 import { githubProjectFolderName, parseGithubRemoteUrl } from './gitPaths'
@@ -95,6 +107,17 @@ export async function tryServeStudioGitRemote(
   pathname: string,
   deps: GitCloneDeps = {},
 ): Promise<Response | null> {
+  // CSRF, for the reason the module doc gives. Scoped to the two paths this
+  // sub-router owns so a POST bound for a sibling under the same prefix falls
+  // through untouched.
+  if (
+    isStateChangingMethod(req.method)
+    && (pathname === '/admin/api/studio/git/remote' || pathname === '/admin/api/studio/git/clone')
+    && !originAllowed(req)
+  ) {
+    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
+  }
+
   try {
     if (pathname === '/admin/api/studio/git/remotes' && req.method === 'GET') return await serveRemotes(url)
     if (pathname === '/admin/api/studio/git/remote' && req.method === 'POST') return await serveSetRemote(req)
