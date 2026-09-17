@@ -490,7 +490,7 @@ element with no image is the exact defect this page exists to prevent.
   same gestures Effects' shadow layers use.
   - `backgroundColor` is **pinned bottom-most**, not treated as layer N+1 — CSS
     paints it below every layer and it has no per-layer satellites of its own.
-  - The six satellites plus `background-blend-mode` became **per-layer**, edited
+  - The six positioning satellites became **per-layer**, edited
     inside each row's popover, following CSS Backgrounds 3 §2.1: a shorter list
     repeats cyclically (the control is labelled "(all layers)" so the edit that
     splits the list is not a surprise), and a list with
@@ -508,6 +508,25 @@ element with no image is the exact defect this page exists to prevent.
   - The visibility eye stays omitted — §8 decision 1 is unchanged by this. What
     changed is the layer list, not the fact that CSS has no honest way to store
     a hidden-but-present paint.
+
+- **G6.7 — Blend mode on a fill layer (P9).** Figma shows a fill's blend mode on
+  the fill row itself, so `background-blend-mode` moved out of the layer
+  popover's satellite list onto the row (`LayerBlendSelect`, a `Select`).
+  **`mix-blend-mode` is NOT what a per-fill blend maps onto** — that is the
+  element's blend against what is behind it, and it already has one control, in
+  the Layer section. CSS has no general "blend one fill of an element against
+  another fill of the same element"; what it has is `background-blend-mode`,
+  a per-layer list composited within the element's own background stack. So the
+  control exists on `background-image` layer rows ONLY: the Text, Content-fit
+  and Solid-fill rows get no blend control rather than a decorative one that
+  writes the element-level property behind the user's back.
+
+  Writing one layer's blend emits the whole list, the untouched layers at their
+  CSS initial — there is no "leave the others alone" syntax. A declaration
+  `backgroundLayers.ts` refused to split per layer keeps the row's select
+  disabled with the reason, and the popover keeps its whole-property raw field.
+  The gradient row's stop count moved into its summary, where the blend select
+  now sits.
 
 - **G6.6 — Image fill, from the project's own files.** The Fill header has two
   "add a layer" buttons: a paint bucket (gradient) and an image. The image one
