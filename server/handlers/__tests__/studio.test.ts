@@ -12,13 +12,13 @@
  * directly against temp fixture files rather than through a full
  * Request/Response cycle.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { INLINE_ID_SEPARATOR, checkCanonicalJsx, parsePageFile } from '@core/page-parser'
-import { tryServeStudio } from '../studio'
+import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
 import { applyStudioEdit, dedupeStudioEdits, orderStudioEditsForApply } from '../studioWriteback'
 import { assignPageIds, pageIdFromRelPath } from '../studioPageIds'
 import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
@@ -26,6 +26,26 @@ import { collectWorkspaceFiles } from '../studioDownload'
 import { probeProject } from '../studio/projectProbe'
 import { mergeStudioMeta } from '../studio/studioMeta'
 import { clearGithubImportJobsForTest } from '../studio/githubImportRoutes'
+
+/**
+ * Every Studio route is capability-gated at dispatch, so these tests drive the
+ * surface as the signed-in Owner. See `helpers/studioRouteHarness.ts`.
+ */
+let studioRoutes: StudioRouteTestHarness
+
+beforeAll(async () => {
+  studioRoutes = await createStudioRouteTestHarness()
+})
+
+afterAll(async () => {
+  await studioRoutes.cleanup()
+})
+
+/** `tryServeStudio` with the Owner's session cookie attached. */
+function serveStudio(req: Request, url: URL): Promise<Response | null> {
+  return studioRoutes.serve(req, url)
+}
+
 
 describe('orderStudioEditsForApply', () => {
   it('sorts bottom-to-top: descending line, then descending column', () => {
@@ -641,7 +661,7 @@ describe('GET /admin/api/studio/projects', () => {
     // returning valid JSON without asserting exact repo state.
     const url = new URL('http://localhost/admin/api/studio/projects')
     const req = new Request(url)
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
 
     expect(res).not.toBeNull()
     expect(res!.status).toBe(200)
@@ -697,7 +717,7 @@ describe('DELETE /admin/api/studio/page', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
     expect(res).not.toBeNull()
     return res!
   }
@@ -760,7 +780,7 @@ describe('POST /admin/api/studio/page', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
     expect(res).not.toBeNull()
     return res!
   }
@@ -915,7 +935,7 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
 
     const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
     const req = new Request(url)
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
     expect(res).not.toBeNull()
 
     const body = (await res!.json()) as {
@@ -979,7 +999,7 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
   it('returns an empty page list and empty componentSources when the workspace has no pages/ dir', async () => {
     const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
     const req = new Request(url)
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
     const body = (await res!.json()) as { dir: string; pages: unknown[]; componentSources: Record<string, unknown> }
 
     expect(body.pages).toEqual([])
@@ -996,7 +1016,7 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
 
     const load = async () => {
       const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
-      const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+      const res = await serveStudio(new Request(url), url)
       // Probe the raw response text rather than a specific node field — this
       // test cares only about "did the served content change", not which
       // exact `PageNode` field carries a `<div>`'s literal text.
@@ -1029,13 +1049,13 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
     write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
 
     const plainUrl = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
-    const plainRes = await tryServeStudio(new Request(plainUrl), undefined, plainUrl, plainUrl.pathname)
+    const plainRes = await serveStudio(new Request(plainUrl), plainUrl)
     const plainBody = (await plainRes!.json()) as { dir: string; pages: Array<{ id: string }> }
 
     const streamUrl = new URL(
       `http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}&stream=1`,
     )
-    const streamRes = await tryServeStudio(new Request(streamUrl), undefined, streamUrl, streamUrl.pathname)
+    const streamRes = await serveStudio(new Request(streamUrl), streamUrl)
     expect(streamRes!.headers.get('content-type')).toBe('application/x-ndjson')
     const lines = (await streamRes!.text())
       .split('\n')
@@ -1086,7 +1106,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
 
     const url = loadUrl('')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     const raw = await res!.text()
     // JSON.stringify drops an undefined-valued key entirely — assert the key
     // is genuinely ABSENT from the wire bytes, not merely `undefined` once
@@ -1102,7 +1122,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
 
     const url = loadUrl('&pageIds=about')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     const body = (await res!.json()) as { pages: Array<{ id: string }>; missingPageIds: string[] }
 
     expect(body.pages.map((p) => p.id)).toEqual(['about'])
@@ -1115,7 +1135,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/Contact.tsx', 'export default function Contact() { return <p>Contact us</p> }')
 
     const url = loadUrl('&pageIds=home,contact')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     const body = (await res!.json()) as { pages: Array<{ id: string }> }
 
     expect(body.pages.map((p) => p.id).sort()).toEqual(['contact', 'home'])
@@ -1125,7 +1145,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
 
     const url = loadUrl('&pageIds=home,deleted-page')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     expect(res!.status).toBe(200)
     const body = (await res!.json()) as { pages: Array<{ id: string }>; missingPageIds: string[] }
 
@@ -1137,7 +1157,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
 
     const url = loadUrl('&pageIds=ghost-1,ghost-2')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     expect(res!.status).toBe(200)
     const body = (await res!.json()) as { pages: unknown[]; missingPageIds: string[] }
 
@@ -1152,7 +1172,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/Pricing.tsx', 'export default function Pricing() { return <p>Pricing</p> }')
 
     const url = loadUrl('&pageIds=pricing')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     const body = (await res!.json()) as { pages: Array<{ id: string }>; missingPageIds: string[] }
 
     expect(body.pages.map((p) => p.id)).toEqual(['pricing'])
@@ -1173,7 +1193,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     )
 
     const url = loadUrl('&pageIds=home')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     const body = (await res!.json()) as {
       pages: Array<{ id: string }>
       componentSources: Record<string, { kind: string; specifier?: string }>
@@ -1192,7 +1212,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
 
     const url = loadUrl('&pageIds=')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     expect(res!.status).toBe(400)
   })
 
@@ -1200,7 +1220,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
 
     const url = loadUrl(`&pageIds=${encodeURIComponent(' , , ')}`)
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     expect(res!.status).toBe(400)
   })
 
@@ -1209,7 +1229,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
 
     const url = loadUrl('&pageIds=home,ghost&stream=1')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
     expect(res!.headers.get('content-type')).toBe('application/x-ndjson')
     const lines = (await res!.text())
       .split('\n')
@@ -1257,7 +1277,7 @@ describe('GET /admin/api/studio/load — Next.js App Router (WS-1.3)', () => {
   }> {
     const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
     const req = new Request(url)
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
     expect(res).not.toBeNull()
     return res!.json()
   }
@@ -1351,7 +1371,7 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
   async function awaitJob(jobId: string) {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const url = new URL(`http://localhost/admin/api/studio/import-github/status?jobId=${jobId}`)
-      const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+      const res = await serveStudio(new Request(url), url)
       const body = (await res!.json()) as {
         job: { phase: string; error: string | null; summary: { dir: string; files: number; skipped: number; pageCount: number } | null }
       }
@@ -1374,7 +1394,7 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url: 'https://example.com/not/github' }),
     })
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
 
     expect(res!.status).toBe(400)
     const body = (await res!.json()) as { error: string }
@@ -1384,7 +1404,7 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
 
   it('answers 404 for a job id nobody started, rather than a phantom running job', async () => {
     const url = new URL('http://localhost/admin/api/studio/import-github/status?jobId=nope')
-    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const res = await serveStudio(new Request(url), url)
 
     expect(res!.status).toBe(404)
   })
@@ -1405,7 +1425,7 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url: 'https://github.com/acme/widgets', dir: tmpDir }),
     })
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
 
     expect(res!.status).toBe(200)
     const started = (await res!.json()) as { jobId: string }

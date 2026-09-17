@@ -256,6 +256,19 @@
  *       W8-4 — the inspector's Export section: a PNG of one node cut out of a
  *       capture of its page, and that node's own JSX read verbatim off disk.
  *
+ * ## Every route here is gated, once, before it is dispatched
+ *
+ * `tryServeStudio` runs `gateStudioRequest` (`studio/routeGate.ts`) first:
+ * declared-route lookup, CSRF `Origin` check on state-changing methods, then
+ * `requireCapability` with the capability `studio/routeCapabilities.ts`
+ * declares for that path and method class. A path under
+ * `/admin/api/studio/` that is not in that table answers 404 and never
+ * reaches a sub-router — so adding a route without declaring its capability
+ * produces a dead route, not an open one.
+ *
+ * The user the gate resolved is handed to `STUDIO_SESSION_SUB_ROUTERS` in
+ * `StudioSessionRuntime`; none of them authenticate again.
+ *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
  * work (Node/ts-morph, never the browser) lives in sibling modules by
@@ -320,6 +333,7 @@ import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
+import { gateStudioRequest, type StudioSessionRuntime } from './studio/routeGate'
 import type { DbClient } from '../db/client'
 
 /**
@@ -369,18 +383,22 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioDeploy,
   tryServeStudioDevServer,
   tryServeStudioStories,
+  tryServeStudioTrashRoutes,
 ] as const
 
 /**
- * The same, for sub-routers that additionally need the `DbClient` because
- * each acts ON BEHALF OF a signed-in user (a byline, a public share link, a
- * capture, a file's contents) rather than merely reading a project directory.
+ * The same, for sub-routers that additionally need the `DbClient` and the
+ * signed-in `AuthUser` because each acts ON BEHALF OF somebody (a byline, a
+ * share link's owner, a capture's fallback tab, a GitHub credential) rather
+ * than merely reading a project directory.
+ *
+ * The user arrives already authenticated: `gateStudioRequest` resolved it for
+ * the whole surface, so nothing in this list calls an auth helper of its own.
  */
 const STUDIO_SESSION_SUB_ROUTERS = [
   tryServeStudioGithubAuth,
   tryServeStudioComments,
   tryServeStudioProjectRoutes,
-  tryServeStudioTrashRoutes,
   tryServeStudioShares,
   tryServeStudioNodeExport,
 ] as const
@@ -401,13 +419,20 @@ export async function tryServeStudio(
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
+  // One gate, before any sub-router and before any filesystem work. See
+  // `studio/routeGate.ts` — an undeclared path never gets past this line.
+  const gate = await gateStudioRequest(req, runtime.db, pathname)
+  if (gate === null) return null
+  if (gate instanceof Response) return gate
+  const sessionRuntime: StudioSessionRuntime = { db: runtime.db, user: gate.user }
+
   for (const subRouter of STUDIO_SUB_ROUTERS) {
     const response = await subRouter(req, url, pathname)
     if (response) return response
   }
 
   for (const subRouter of STUDIO_SESSION_SUB_ROUTERS) {
-    const response = await subRouter(req, runtime, url, pathname)
+    const response = await subRouter(req, sessionRuntime, url, pathname)
     if (response) return response
   }
 
@@ -673,5 +698,15 @@ export async function tryServeStudio(
     }
   }
 
-  return null
+  // The gate already proved the path is a declared Studio route, so falling
+  // through here means the declared method class exists but no sub-router
+  // claimed this exact (path, method) pair. Answer 404 rather than returning
+  // `null`: letting an API path continue down the router table ends at
+  // `tryServeAdminApp`, which would hand an API caller the admin SPA's HTML.
+  return notFoundResponse()
+}
+
+/** The one 404 shape this module emits — matches `routeGate.ts`'s. */
+function notFoundResponse(): Response {
+  return jsonResponse({ error: 'Not found' }, { status: 404 })
 }

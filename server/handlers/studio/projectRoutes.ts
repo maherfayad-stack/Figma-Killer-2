@@ -99,8 +99,7 @@ import { join, relative, sep } from 'node:path'
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type } from '@core/utils/typeboxHelpers'
 import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
-import type { DbClient } from '../../db/client'
-import { requireAuthenticatedUser, requireCapability } from '../../auth/authz'
+import type { StudioSessionRuntime } from './routeGate'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { ProjectTrashError, trashStudioProject } from './projectTrash'
 import { ProjectDuplicateError, duplicateStudioProject } from './projectDuplicate'
@@ -214,14 +213,17 @@ const DuplicateProjectBodySchema = Type.Object({
 })
 
 /**
- * `runtime` is here for ONE route: `/delete` is capability-gated and needs the
- * `DbClient` to resolve the session. That is the same reason
- * `tryServeStudioComments` takes one, and it is why both are called outside
- * `STUDIO_SUB_ROUTERS`' plain `(req, url, pathname)` loop in `studio.ts`.
+ * `runtime` is here for ONE route: `/onboarding` reports facts about the
+ * SIGNED-IN user's own AI rows, so it needs both the `DbClient` and that
+ * user's id. `routeGate.ts` already resolved the user for the whole Studio
+ * surface and delivers it in `StudioSessionRuntime`; nothing in this module
+ * authenticates again. That is the same reason `tryServeStudioComments` takes
+ * one, and why both are called outside `STUDIO_SUB_ROUTERS`' plain
+ * `(req, url, pathname)` loop in `studio.ts`.
  */
 export async function tryServeStudioProjectRoutes(
   req: Request,
-  runtime: { db: DbClient },
+  runtime: StudioSessionRuntime,
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
@@ -240,8 +242,6 @@ export async function tryServeStudioProjectRoutes(
     // destructive thing this API can do, so it does not ship ungated — even
     // though its neighbours here still are, which is a real gap and not a
     // precedent this route is following.
-    const user = await requireCapability(req, runtime.db, 'studio.write')
-    if (user instanceof Response) return user
     try {
       const body = await readValidatedBody(req, DeleteProjectBodySchema)
       if (!body) return badRequest('invalid delete body')
@@ -263,8 +263,6 @@ export async function tryServeStudioProjectRoutes(
   // this one writes an entire second repository to the user's disk, and the
   // ungated neighbours below are a known gap, not a precedent.
   if (pathname === '/admin/api/studio/duplicate' && req.method === 'POST') {
-    const user = await requireCapability(req, runtime.db, 'studio.write')
-    if (user instanceof Response) return user
     try {
       const body = await readValidatedBody(req, DuplicateProjectBodySchema)
       if (!body) return badRequest('invalid duplicate body')
@@ -285,8 +283,6 @@ export async function tryServeStudioProjectRoutes(
   // Copy the checked-in sample repository in. Gated for the same reason
   // `/duplicate` is: it writes an entire repository to the user's disk.
   if (pathname === '/admin/api/studio/sample' && req.method === 'POST') {
-    const user = await requireCapability(req, runtime.db, 'studio.write')
-    if (user instanceof Response) return user
     try {
       const project = createSampleProject(projectsRootDir())
       return jsonResponse({ project })
@@ -305,9 +301,7 @@ export async function tryServeStudioProjectRoutes(
   // the session either way. `readOnboardingFacts` never throws — each probe
   // soft-fails to `false` — so there is no per-fact error path to map here.
   if (pathname === '/admin/api/studio/onboarding' && req.method === 'GET') {
-    const user = await requireAuthenticatedUser(req, runtime.db)
-    if (user instanceof Response) return user
-    return jsonResponse({ facts: await readOnboardingFacts(runtime.db, user.id) })
+    return jsonResponse({ facts: await readOnboardingFacts(runtime.db, runtime.user.id) })
   }
 
   // List every on-disk studio project for the Overview launcher. Read-only:

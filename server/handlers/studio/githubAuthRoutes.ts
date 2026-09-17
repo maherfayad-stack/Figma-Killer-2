@@ -50,8 +50,8 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { requireAuthenticatedUser } from '../../auth/authz'
 import { isStateChangingMethod, originAllowed } from '../../auth/security'
+import type { StudioSessionRuntime } from './routeGate'
 import type { DbClient } from '../../db/client'
 import {
   GithubApiError,
@@ -126,7 +126,7 @@ function githubFailure(err: unknown, fallback: string): Response {
 
 export async function tryServeStudioGithubAuth(
   req: Request,
-  runtime: { db: DbClient },
+  runtime: StudioSessionRuntime,
   url: URL,
   pathname: string,
   deps: GithubAuthRouteDeps = {},
@@ -153,9 +153,10 @@ export async function tryServeStudioGithubAuth(
     return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
   }
 
-  // Every route below is account-scoped — see the module doc.
-  const user = await requireAuthenticatedUser(req, runtime.db)
-  if (user instanceof Response) return user
+  // Every route below is account-scoped — see the module doc. The user was
+  // resolved once by `routeGate.ts`, which also required `studio.git.write`
+  // for the three state-changing actions.
+  const user = runtime.user
 
   try {
     if (action === 'device/start') return await serveDeviceStart(user.id, deps)
