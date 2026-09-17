@@ -214,6 +214,97 @@ describe('abort', () => {
   })
 })
 
+/**
+ * Z3. The idle window cannot see a turn that streams steadily forever — that
+ * is a healthy process by its own definition — so the total cap is what ends
+ * "twenty minutes on one page". It reuses the abort path's own mechanism
+ * (`interrupt`, then the terminating `result`) precisely because the spike
+ * proved that path leaves the session usable: a capped turn must cost the
+ * turn, not the process and its MCP handshakes.
+ */
+describe('the total turn cap', () => {
+  it('interrupts a turn that runs past the cap and KEEPS the session alive', async () => {
+    const proc = new FakeCliProcess()
+    const session = startSession(proc)
+
+    const turn = collect(session.runTurn('rebuild the page', new AbortController().signal, 80))
+    // Stream steadily for well past the cap — never once idle.
+    for (let i = 0; i < 12; i += 1) {
+      await Bun.sleep(15)
+      proc.emit({ type: 'assistant', message: { model: 'claude-x', content: [{ type: 'text', text: `chunk ${i}` }] } })
+    }
+    // The CLI answers the interrupt the way the spike recorded it.
+    proc.emit({ type: 'result', subtype: 'error_during_execution', is_error: true })
+
+    const events = await turn
+    expect(events.at(-1)).toEqual({ kind: 'turnCapped', capMs: 80 })
+    // Exactly one interrupt, and it was sent — not a kill.
+    const controls = proc.writes.slice(1).map((w) => JSON.parse(w))
+    expect(controls).toHaveLength(1)
+    expect(controls[0]).toMatchObject({ type: 'control_request', request: { subtype: 'interrupt' } })
+    expect(proc.killed).toBe(false)
+    expect(session.alive).toBe(true)
+
+    // And the session genuinely still serves the next turn.
+    const next = collect(session.runTurn('carry on', new AbortController().signal))
+    await Bun.sleep(10)
+    proc.emitTurn('recovered')
+    expect(await next).toHaveLength(3)
+    session.dispose()
+  })
+
+  it('does not forward the lines that arrive after the cap interrupt', async () => {
+    const proc = new FakeCliProcess()
+    const session = startSession(proc)
+
+    const turn = collect(session.runTurn('go', new AbortController().signal, 60))
+    await Bun.sleep(10)
+    proc.emit({ type: 'assistant', message: { model: 'claude-x', content: [{ type: 'text', text: 'before' }] } })
+    await Bun.sleep(90)
+    // Post-interrupt output belongs to a turn the user is about to be told
+    // ended; forwarding it would print text after the "stopped" message.
+    proc.emit({ type: 'assistant', message: { model: 'claude-x', content: [{ type: 'text', text: 'after' }] } })
+    proc.emit({ type: 'result', subtype: 'error_during_execution', is_error: true })
+
+    const events = await turn
+    expect(JSON.stringify(events)).toContain('before')
+    expect(JSON.stringify(events)).not.toContain('after')
+    expect(events.at(-1)).toEqual({ kind: 'turnCapped', capMs: 60 })
+    session.dispose()
+  })
+
+  it('disposes the session when the cap interrupt is never acknowledged', async () => {
+    const proc = new FakeCliProcess()
+    const session = startSession(proc)
+
+    const turn = collect(session.runTurn('go', new AbortController().signal, 60))
+    await Bun.sleep(10)
+    proc.emit({ type: 'assistant', message: { model: 'claude-x', content: [{ type: 'text', text: 'x' }] } })
+
+    // Nothing ever answers the interrupt — the 500ms grace expires. A wedged
+    // process is the one case the cap may not leave running.
+    const events = await turn
+    expect(events.at(-1)).toEqual({ kind: 'turnCapped', capMs: 60 })
+    expect(session.alive).toBe(false)
+  })
+
+  it('leaves a turn that finishes inside the cap untouched', async () => {
+    const proc = new FakeCliProcess()
+    const session = startSession(proc)
+
+    const turn = collect(session.runTurn('hello', new AbortController().signal, 5_000))
+    await Bun.sleep(10)
+    proc.emitTurn('hi there')
+
+    const events = await turn
+    expect(events).toHaveLength(3)
+    expect(events.every((e) => e.kind === 'line')).toBe(true)
+    // One write: the user line. No control request was ever sent.
+    expect(proc.writes).toHaveLength(1)
+    session.dispose()
+  })
+})
+
 describe('crash handling', () => {
   it('throws a dead-session error, before yielding anything, when the process is already gone', async () => {
     const proc = new FakeCliProcess()

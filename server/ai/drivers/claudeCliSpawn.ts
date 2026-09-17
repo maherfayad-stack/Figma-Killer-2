@@ -73,6 +73,28 @@ export interface ClaudeCliSpawnOptions {
    * a healthy child.
    */
   readonly idleTimeoutMs?: number
+  /**
+   * Z3 — the TOTAL wall time one turn may run, armed once when the process
+   * starts and never re-armed. The complement of `idleTimeoutMs`, not a
+   * replacement for it: idle asks "is this process still alive", this asks "is
+   * this turn ever going to end".
+   *
+   * A turn that streams steadily forever is, by the idle window's own
+   * definition, healthy — and that is exactly the shape of the failure this
+   * closes. A model looping over the same edit keeps producing output the
+   * whole time, so the idle timer re-arms on every chunk and nothing stops it;
+   * what the user sees is twenty or thirty minutes spent on one page.
+   *
+   * On the cold path the process is killed when this fires and the turn ends
+   * with a `turnCapped` event. (The warm session's own cap sends the CLI an
+   * `interrupt` instead and keeps the process — see `claudeCliWarmSession.ts`.
+   * A cold spawn has no control channel: its stdin already carried the prompt
+   * and closed.)
+   *
+   * Overridable per turn via the chat request's `turnCapMs`; production
+   * default is {@link TOTAL_TURN_CAP_MS}.
+   */
+  readonly totalTurnCapMs?: number
   readonly maxStderrBytes?: number
   /**
    * Bounds the final drain — `stderr` + `proc.exited` — that runs once the
@@ -102,6 +124,16 @@ export type ClaudeCliRawEvent =
   | { readonly kind: 'line'; readonly value: unknown }
   /** Terminal — always the last event yielded, exactly once. */
   | { readonly kind: 'exit'; readonly exitCode: number | null; readonly stderr: string; readonly timedOut: boolean }
+  /**
+   * Terminal — the turn hit {@link TOTAL_TURN_CAP_MS} and was ended by this
+   * driver rather than by the model or the process.
+   *
+   * A separate kind from `exit` because it is a different fact: `exit` says
+   * the process is gone, and on the warm path the process is deliberately
+   * still running and will serve the next turn. Collapsing the two would have
+   * meant reporting a live session as dead.
+   */
+  | { readonly kind: 'turnCapped'; readonly capMs: number }
 
 /**
  * Ten minutes of TOTAL SILENCE. Sized for the longest legitimate gap between
@@ -113,6 +145,22 @@ export type ClaudeCliRawEvent =
  * Kept in sync with the user-facing message in `claudeCliExitErrorMessage`.
  */
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * Twenty minutes of TOTAL turn time — the default `totalTurnCapMs`, and the
+ * bound the `no-unbounded-tool-loop` gate looks for in this file.
+ *
+ * Sized against the longest turn anyone here has wanted to keep: a full screen
+ * rebuilt from a design reference, screenshotted, corrected and type-checked,
+ * measured in single-digit minutes. Twice the longest good turn is a ceiling a
+ * working turn never touches. Past it the honest reading is not "this is a big
+ * job" but "this is not converging", and the user gets told that instead of
+ * watching a spinner.
+ *
+ * Kept in sync with the user-facing sentence in `claudeCliTurnCapErrorMessage`.
+ */
+export const TOTAL_TURN_CAP_MS = 20 * 60_000
+
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024
 
 /**
@@ -174,6 +222,7 @@ export async function* spawnClaudeCliNdjson(
 ): AsyncGenerator<ClaudeCliRawEvent, void, void> {
   const spawn = options.spawn ?? defaultSpawn
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
+  const totalTurnCapMs = options.totalTurnCapMs ?? TOTAL_TURN_CAP_MS
   const maxStderrBytes = options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES
   const posixKillGraceMs = options.posixKillGraceMs ?? DEFAULT_POSIX_KILL_GRACE_MS
 
@@ -194,6 +243,7 @@ export async function* spawnClaudeCliNdjson(
   }
 
   let timedOut = false
+  let turnCapped = false
   let killed = false
   const kill = (): void => {
     if (killed) return
@@ -228,6 +278,13 @@ export async function* spawnClaudeCliNdjson(
   }
   armIdleTimer()
 
+  // The total cap. Armed ONCE and never re-armed — that is the whole
+  // difference from the idle timer above, which every chunk resets.
+  const turnCapTimer = setTimeout(() => {
+    turnCapped = true
+    kill()
+  }, totalTurnCapMs)
+
   // Drain stderr concurrently and independently of stdout — a full stderr
   // pipe buffer must never block the child from writing more stdout (the
   // same "drain both streams concurrently" discipline `captureSubprocess`
@@ -254,6 +311,7 @@ export async function* spawnClaudeCliNdjson(
     drainedStdout = true
   } finally {
     clearTimeout(timer)
+    clearTimeout(turnCapTimer)
     options.signal.removeEventListener('abort', onAbort)
     // The leak this closes: a generator abandoned before stdout ran dry — the
     // consumer `break`s out of the `for await`, throws, or is garbage-collected
@@ -264,6 +322,14 @@ export async function* spawnClaudeCliNdjson(
     // socket open, which kept port 3001 bound after the server died and made
     // every restart fail with EADDRINUSE.
     if (!drainedStdout) kill()
+  }
+
+  // The cap is reported as itself rather than as the exit it caused. The
+  // process was killed above, so there is no stderr worth draining and no exit
+  // code that would mean anything — "we stopped it" is the whole fact.
+  if (turnCapped) {
+    yield { kind: 'turnCapped', capMs: totalTurnCapMs }
+    return
   }
 
   // Bounded so a `stderr` pipe (or, in principle, `exited`) that never settles

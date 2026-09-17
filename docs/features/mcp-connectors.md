@@ -329,6 +329,26 @@ buildMcpServer → getEditorBridgeForUser(userId, editorBridgeScope(boundWorkspa
 
 This is why an open editor (yours, or one the agent opens) unlocks the full editing surface without reimplementing any tool.
 
+### What a bridged write actually touches (Z3 audit)
+
+A bridge-routed write is not a second write path — it is the SAME store action a click on the canvas calls, which is what keeps `store-11`'s concurrent-structural-commit guard in force for an agent too. The full trace, verified rather than assumed:
+
+```
+editorBridge.callBrowser(name, input)
+  → NDJSON `toolRequest` (GET /admin/api/ai/editor-bridge)
+  → useMcpWorkspaceBridge → executeMcpBridgeRequest
+  → executeAgentTool  (src/admin/pages/site/agent/executor.ts)
+  → an EditorStore action, never a tree mutation of its own
+```
+
+Of every tool that can arrive down that pipe:
+
+- **`studio_*`** — none of them insert, duplicate or wrap a page-tree node. The only `execution: 'browser'` Studio tool is `studio_upload_asset`; `studio_computed_styles`, `studio_page_diagnostics`, `studio_export_frames` and `studio_live_reload` are `execution: 'server'` handlers that relay a READ (or a refresh push) over the same bridge. Board geometry (`studio_set_frames`, `studio_set_frame_axes`, `studio_duplicate_frame_as_variant`) is a `.studio/boards.json` file write, headless since W9-6 — it never enters the page tree.
+- **`site_duplicate_node`** (CMS toolset, offered only to an UNBOUND connector) → `store.duplicateNode` → `writeDuplicateToSource` → `guardAgainstConcurrentStructuralCommit()`. A second identical call while the first commit is still resyncing refuses out loud instead of posting a second real source write. Guarded.
+- **`site_insert_html` / `site_replace_node_html`** → `store.insertImportedNodes`, which consults `refuseInsertInto` (the structural-refusal gate) but not the concurrency guard, because it posts no source write at all — it merges the imported fragment into the in-memory tree. On a studio-imported tree that is a hole of its own shape, recorded in `STATE.md` rather than papered over here: adding the guard would not make an unwritten insert honest.
+
+The three source writes themselves (`writeInsertToSource` / `writeDuplicateToSource` / `writeWrapToSource`, `store/slices/site/studioSourceWrites.ts`) are the single chokepoint, and every bridged gesture that mints nothing locally goes through one of them.
+
 ---
 
 ## Headless capture
