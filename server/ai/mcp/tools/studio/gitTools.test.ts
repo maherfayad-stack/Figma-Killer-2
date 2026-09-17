@@ -14,7 +14,12 @@ import { toolAllowedForCapabilities } from '../../../tools/capabilityGate'
 import { studioGitMcpTools } from './gitTools'
 import type { ToolContext } from '../../../runtime/types'
 
-const tool = studioGitMcpTools[0]!
+/**
+ * Looked up BY NAME, not by index. The family grew from one tool to five in
+ * G6; an index would have silently re-pointed every assertion below at a
+ * different tool and still gone green on some of them.
+ */
+const tool = studioGitMcpTools.find((entry) => entry.name === 'studio_git_commit')!
 
 /**
  * The fixture projects live in a REAL temp workspace, not in the developer's
@@ -168,5 +173,256 @@ describe('studio_git_commit — behaviour', () => {
     )) as { ok: boolean; code: string }
     expect(result.ok).toBe(false)
     expect(result.code).toBe('invalid-message')
+  })
+})
+// ---------------------------------------------------------------------------
+// The rest of the family (G6)
+// ---------------------------------------------------------------------------
+
+function toolNamed(name: string) {
+  const found = studioGitMcpTools.find((entry) => entry.name === name)
+  if (!found) throw new Error(`no such git tool: ${name}`)
+  return found
+}
+
+const statusTool = toolNamed('studio_git_status')
+const branchTool = toolNamed('studio_git_branch')
+const pushTool = toolNamed('studio_git_push')
+const openPrTool = toolNamed('studio_git_open_pr')
+
+/**
+ * The capability declarations ARE the safety story for this family — a tool
+ * that quietly rode `studio.write` would be handed to every Admin and every
+ * connector that can edit a project at all. So each one is asserted, not
+ * assumed.
+ */
+describe('the git tool family — capability declarations', () => {
+  it('gates every MUTATING tool behind studio.git.write, never studio.write', () => {
+    for (const mutating of [branchTool, pushTool, openPrTool, toolNamed('studio_git_commit')]) {
+      expect({ name: mutating.name, caps: mutating.requiredCapabilities, mutates: mutating.mutates }).toEqual({
+        name: mutating.name,
+        caps: ['studio.git.write'],
+        mutates: true,
+      })
+      expect(toolAllowedForCapabilities(mutating, ['ai.chat', 'ai.tools.write', 'studio.write'])).toBe(false)
+      expect(toolAllowedForCapabilities(mutating, ['ai.chat', 'studio.git.write'])).toBe(false)
+      expect(toolAllowedForCapabilities(mutating, ['ai.chat', 'ai.tools.write', 'studio.git.write'])).toBe(true)
+    }
+  })
+
+  it('leaves studio_git_status as an ordinary read — reporting what you changed must not require permission to commit it', () => {
+    expect(statusTool.mutates).toBe(false)
+    expect(statusTool.requiredCapabilities ?? []).toEqual([])
+    expect(toolAllowedForCapabilities(statusTool, ['ai.chat'])).toBe(true)
+  })
+
+  it('offers no init, restore, pull or conflict tool — those are the ones only a human should drive', () => {
+    expect(studioGitMcpTools.map((entry) => entry.name).sort()).toEqual([
+      'studio_git_branch',
+      'studio_git_commit',
+      'studio_git_open_pr',
+      'studio_git_push',
+      'studio_git_status',
+    ])
+  })
+})
+
+describe('studio_git_status', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProject()
+    await makeRepo(dir)
+  })
+
+  it('reports the branch and the changed files, and withholds excluded paths', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'changed\n')
+    fs.mkdirSync(path.join(dir, 'node_modules', 'left-pad'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1\n')
+
+    const result = (await statusTool.handler({ dir }, context(dir))) as {
+      ok: boolean
+      isRepo: boolean
+      branch: { branch: string | null }
+      entries: Array<{ path: string }>
+      excludedCount: number
+      hasOrigin: boolean
+    }
+
+    expect(result.ok).toBe(true)
+    expect(result.isRepo).toBe(true)
+    expect(result.branch.branch).toBe('main')
+    expect(result.entries.map((entry) => entry.path)).toEqual(['pages/Home.tsx'])
+    expect(result.excludedCount).toBeGreaterThan(0)
+    expect(result.hasOrigin).toBe(false)
+  })
+
+  it('answers isRepo:false for a project with no repository — a state an agent can report, not a failure', async () => {
+    const bare = makeProject()
+    fs.writeFileSync(path.join(bare, 'App.tsx'), 'export const App = () => null\n')
+
+    const result = (await statusTool.handler({ dir: bare }, context(bare))) as { ok: boolean; isRepo: boolean }
+    expect(result).toEqual({ ok: true, isRepo: false })
+  })
+})
+
+describe('studio_git_branch', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProject()
+    await makeRepo(dir)
+  })
+
+  it('lists branches with the current one marked', async () => {
+    await git(dir, ['branch', 'feat/sidebar'])
+    const result = (await branchTool.handler({ dir, action: 'list' }, context(dir))) as {
+      ok: boolean
+      branches: Array<{ name: string; current: boolean }>
+      current: string | null
+    }
+    expect(result.ok).toBe(true)
+    expect(result.current).toBe('main')
+    expect(result.branches.map((b) => b.name).sort()).toEqual(['feat/sidebar', 'main'])
+  })
+
+  it('creates a branch at HEAD even with uncommitted work — moving a pointer cannot lose a byte', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'work in progress\n')
+
+    const result = (await branchTool.handler({ dir, action: 'create', name: 'feat/sidebar' }, context(dir))) as {
+      ok: boolean
+      branch: string
+      created: boolean
+    }
+    expect(result).toMatchObject({ ok: true, branch: 'feat/sidebar', created: true })
+    // The uncommitted work came with it.
+    expect(fs.readFileSync(path.join(dir, 'pages', 'Home.tsx'), 'utf8')).toContain('work in progress')
+  })
+
+  it('refuses to switch over a dirty tree and names the files — Studio never stashes', async () => {
+    await git(dir, ['branch', 'feat/other'])
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'uncommitted\n')
+
+    const result = (await branchTool.handler({ dir, action: 'switch', name: 'feat/other' }, context(dir))) as {
+      ok: boolean
+      code: string
+      dirtyFiles: string[]
+    }
+    expect(result.ok).toBe(false)
+    expect(result.code).toBe('dirty-tree')
+    expect(result.dirtyFiles).toContain('pages/Home.tsx')
+  })
+
+  it('refuses a branch name that would be read as a flag, and a missing one', async () => {
+    const flagLike = (await branchTool.handler({ dir, action: 'create', name: '--force' }, context(dir))) as {
+      ok: boolean
+      code: string
+    }
+    expect(flagLike).toMatchObject({ ok: false, code: 'invalid-branch-name' })
+
+    const missing = (await branchTool.handler({ dir, action: 'create' }, context(dir))) as {
+      ok: boolean
+      code: string
+    }
+    expect(missing).toMatchObject({ ok: false, code: 'invalid-branch-name' })
+  })
+
+  it('refuses a project with no repository rather than reaching Studio\'s own', async () => {
+    const bare = makeProject()
+    const result = (await branchTool.handler({ dir: bare, action: 'list' }, context(bare))) as {
+      ok: boolean
+      code: string
+    }
+    expect(result).toMatchObject({ ok: false, code: 'not-a-repository' })
+  })
+})
+
+describe('studio_git_push', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProject()
+    await makeRepo(dir)
+  })
+
+  it('pushes the current branch to a LOCAL BARE REMOTE — real transport, no network', async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-tool-remote-'))
+    try {
+      await git(remote, ['init', '--bare', '--initial-branch=main'])
+      await git(dir, ['remote', 'add', 'origin', remote])
+
+      const result = (await pushTool.handler({ dir }, context(dir))) as { ok: boolean; branch: string }
+      expect(result).toMatchObject({ ok: true, branch: 'main' })
+
+      const proc = Bun.spawn(['git', 'log', '--format=%s', 'main'], { cwd: remote, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' })
+      const log = await new Response(proc.stdout).text()
+      await proc.exited
+      expect(log).toContain('Initial commit')
+    } finally {
+      fs.rmSync(remote, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses with no origin rather than inventing one', async () => {
+    const result = (await pushTool.handler({ dir }, context(dir))) as { ok: boolean; code: string }
+    expect(result).toMatchObject({ ok: false, code: 'no-origin-remote' })
+  })
+})
+
+describe('studio_git_open_pr', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProject()
+    await makeRepo(dir)
+  })
+
+  it('refuses a non-GitHub origin without naming it', async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-git-tool-notgh-'))
+    try {
+      await git(remote, ['init', '--bare', '--initial-branch=main'])
+      await git(dir, ['remote', 'add', 'origin', remote])
+
+      const result = (await openPrTool.handler({ dir }, context(dir))) as { ok: boolean; code: string; error: string }
+      expect(result).toMatchObject({ ok: false, code: 'not-a-github-remote' })
+      expect(result.error).not.toContain(remote)
+    } finally {
+      fs.rmSync(remote, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a PR from the base branch onto itself and says how to fix it', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    const result = (await openPrTool.handler({ dir }, context(dir))) as {
+      ok: boolean
+      code: string
+      error: string
+      compareUrl: string
+    }
+    expect(result).toMatchObject({ ok: false, code: 'same-branch' })
+    expect(result.error).toContain('studio_git_branch')
+    expect(result.compareUrl).toContain('/compare/main...main')
+  })
+
+  it('answers no-github-token WITH the compare URL — nobody is signed in on this server', async () => {
+    await git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/storefront.git'])
+    await git(dir, ['switch', '--create', 'feat/sidebar'])
+
+    const result = (await openPrTool.handler({ dir }, context(dir))) as {
+      ok: boolean
+      code: string
+      compareUrl: string
+    }
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'no-github-token',
+      compareUrl: 'https://github.com/acme/storefront/compare/main...feat/sidebar?expand=1',
+    })
+  })
+
+  it('refuses a project with no repository', async () => {
+    const bare = makeProject()
+    const result = (await openPrTool.handler({ dir: bare }, context(bare))) as { ok: boolean; code: string }
+    expect(result).toMatchObject({ ok: false, code: 'not-a-repository' })
   })
 })

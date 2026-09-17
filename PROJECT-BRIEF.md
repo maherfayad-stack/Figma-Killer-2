@@ -129,6 +129,19 @@ never silently no-ops.
   `GIT_ASKPASS` script — never an env var, never a URL. Connect a repository
   (`git/remotes`, `git/remote`) with a two-shape URL allowlist. See
   [`docs/features/studio-git.md`](docs/features/studio-git.md)
+- **The whole git publish sentence in the Version control panel**: a branch
+  *dropdown* (list / create-from-current / commit-and-switch — never a stash),
+  fetch, `--ff-only` pull with an explicit rebase-or-merge choice on divergence,
+  per-file conflict resolution (*Keep mine / Keep theirs / Open in code* →
+  *Continue*, with `mine`/`theirs` translated server-side because git's
+  `--ours`/`--theirs` invert during a rebase), push disabled while behind, and
+  **Open PR** with base/title/body defaulted from the repository. The same five
+  verbs are MCP tools behind `studio.git.write` (`studio_git_status` is a read)
+- **One write lock per project** (`server/handlers/studio/projectWriteLock.ts`):
+  saves, page scaffolds, dependency installs and every mutating git verb take
+  an async mutex keyed by the real project path, so a canvas save can no longer
+  land between a `git add` and its `git commit`. A git verb waiting more than
+  5 s answers `409 { code: 'busy' }`; a save waits
 - Multi-file page discovery + `.studio/meta.json` (`displayName`, `pagesDir`, `previewAxes` — `direction`/`colorScheme`/`locale`)
 - ts-morph parse, local-component inlining through barrels, tsconfig `paths` aliases
 - Static value resolution Tiers A/B/C, `.map` expansion, multi-return/ternary/`&&`

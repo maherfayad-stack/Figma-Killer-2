@@ -40,7 +40,7 @@ same panel.
 | Panel | `src/admin/pages/site/panels/GitPanel/` | The rail panel: repository, branch, changes, diff, commit, push, history |
 | Panel — branch | `.../GitPanel/BranchSection.tsx` | The branch dropdown, “New branch from current”, the commit-and-switch dialog |
 | Panel — sync | `.../GitPanel/SyncSection.tsx` | Fetch, pull, push, the rebase-or-merge choice, per-file conflict resolution, “Open PR” |
-| Agent tool | `server/ai/mcp/tools/studio/gitTools.ts` | `studio_git_commit`, gated by `studio.git.write` |
+| Agent tools | `server/ai/mcp/tools/studio/gitTools.ts` | `studio_git_status` (a read) plus `studio_git_branch`/`commit`/`push`/`open_pr`, gated by `studio.git.write` |
 
 ---
 
@@ -468,15 +468,30 @@ a separate, much larger feature.
 
 ---
 
-## The agent tool
+## The agent tools
 
-`studio_git_commit` — commit an explicit file list with a message. That is the
-only git operation an agent gets in v1.
+Five, and together they are the whole publish sentence: **`studio_git_status`
+→ `studio_git_branch` → `studio_git_commit` → `studio_git_push` →
+`studio_git_open_pr`**.
 
-There is deliberately **no** `studio_git_push`, `studio_git_branch`, or
-`studio_git_init`. Committing is local and reversible and never leaves the
-user's machine; pushing publishes to a remote other people read, and stays a
-human's decision even when the human has delegated everything before it.
+v1 stopped at commit and said so: push "publishes to a remote other people
+read, and stays a human's decision". **That reasoning was about the wrong
+click.** The decision a human has to make is not "press push this one time" —
+it is "may this connector publish on my behalf at all", and that decision
+already exists, exactly once, as the `studio.git.write` grant below. Asking for
+it again per call bought no safety; it bought an agent that could build a
+branch and then not ship it. A pull request is where the sentence ends, which
+is the right shape: a proposal a human reviews.
+
+What an agent still does **not** get, and these are not oversights:
+
+- **`init`** — creating a repository is a one-time structural choice about the
+  user's project that an agent has no basis for making.
+- **`restore`, `pull`, `merge`, `rebase`, conflict resolution** — every one can
+  overwrite work the user has on screen and cannot see being overwritten. The
+  panel's conflict list exists precisely because a human has to look at those.
+- **Force push, reset, clean, stash** — no route builds them, so no tool can
+  reach them.
 
 ### The capability
 
@@ -492,10 +507,18 @@ true` additionally requires `ai.tools.write`, so both axes must be held.
 The human panel is unaffected — that surface is gated by `site.structure.edit`
 like every other editing panel.
 
-`studio_git_commit` is registered in the MCP registry but is **not** in
-`STUDIO_AGENT_TOOL_NAMES`, so the in-canvas agent is not offered it in v1.
-That list is documented as a deliberate decision each time; adding commit to the
-in-canvas turn loop is a product call that has not been made.
+None of the five is in `STUDIO_AGENT_TOOL_NAMES`, so the **in-canvas** agent is
+not offered them — they reach external MCP connectors (Claude Code, Codex, a
+remote agent) only. That list is documented as a deliberate decision each time;
+putting git into the in-canvas turn loop is a product call that has not been
+made.
+
+**`studio_git_status` is the one exception to the capability rule**, and
+deliberately so. It is a read: it mutates nothing and reports paths the caller
+can already list with `studio_list_files`. Gating it behind `studio.git.write`
+would mean an agent could not tell the user what it had changed without also
+being allowed to commit it, which is backwards. It declares no capability, like
+every other read in the Studio family.
 
 ---
 
@@ -509,7 +532,7 @@ in-canvas turn loop is a product call that has not been made.
 | `server/handlers/__tests__/gitSyncRoutes.test.ts` | The branch list against a local bare remote (upstream, ahead/behind, a `gone` upstream, `origin/HEAD` excluded), commit-and-switch and its dirty-remainder refusal, fetch/pull against a second working copy of the same bare remote, the pull-request context on both remote URL shapes and its `supported: false` states, the `diverged` and `dirty-tree` refusals, a REAL conflicted rebase and merge — including that “Keep mine” keeps the user's bytes in BOTH — continue/abort, and the same rejection set as `git.test.ts` |
 | `server/handlers/__tests__/projectWriteLock.test.ts` | Ordering (a save and a commit resolve in arrival order, FIFO), the `busy` refusal and its path-free message, per-project isolation, the symlink key, reentrancy across a subprocess wait |
 | `server/handlers/__tests__/git.test.ts` | End-to-end against real git: edit → status → diff → branch → commit → **push to a local bare remote**. Plus the rejections: dir outside the workspace, a project with no `.git` (never Studio's own repo), the workspace root itself, unusable paths in every path-taking route, dirty-tree switch refusal, empty commit, push with no origin, no filesystem path in an error body |
-| `server/ai/mcp/tools/studio/gitTools.test.ts` | The capability declaration (invisible with `studio.write` alone, invisible without `ai.tools.write`) and the tool's own refusals |
+| `server/ai/mcp/tools/studio/gitTools.test.ts` | Every tool's capability declaration (each mutating one invisible with `studio.write` alone and without `ai.tools.write`; `studio_git_status` visible as an ordinary read), the exact tool list (no init/restore/pull), and each tool's refusals — including a real push to a local bare remote |
 | `src/__tests__/studio/gitDiffLines.test.ts` | Unified-diff line numbering, `---`/`+++` not read as content, hunk-header counter resets, the no-newline marker |
 
 ---

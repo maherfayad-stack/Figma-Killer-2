@@ -414,8 +414,24 @@ Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "
 | `studio_delete_design_variable_set` | `studio.write` | Remove an ingested variable set; idempotent |
 | `studio_list_component_bindings` | read | The raw Figma Code Connect `*.figma.tsx` mapping data, including every per-value label pair |
 | `studio_read_package_doc` | read | A dependency's own markdown docs **by section** — `outline: true`, then `section: "<heading>"` |
-| `studio_git_commit` | `studio.git.write` | Commit an explicit file list. No push, no branch, no init — publishing is the user's decision |
+| `studio_git_status` | read | Branch, upstream divergence, and every changed path with its staged/unstaged/untracked state. `isRepo:false` is a normal answer. A read on purpose: reporting what you changed must not need permission to commit it |
+| `studio_git_branch` | `studio.git.write` | `list` / `create` (allowed with a dirty tree — a pointer move loses nothing) / `switch` (refuses over a dirty tree, naming the files; Studio never stashes) |
+| `studio_git_commit` | `studio.git.write` | Commit an explicit file list. Stages exactly those paths, never `add -A` |
+| `studio_git_push` | `studio.git.write` | `--set-upstream origin <branch>`. Never a force push — no parameter and no route could make it one. Authentication is the user's own connected GitHub account or host credential helper |
+| `studio_git_open_pr` | `studio.git.write` | Open a GitHub pull request for the current branch, with base/title/body defaulted from the repository. No token → a named refusal carrying the compare URL |
 | `studio_import_project` | `studio.write` | The GitHub-import engine, exposed headlessly |
+
+**The git family, and the line it does not cross.** The five `studio_git_*`
+tools are the whole publish sentence — *status → branch → commit → push → open a
+PR* — and all four mutating ones sit behind the single `studio.git.write`
+capability, which is **not** granted to the built-in Admin role. That grant is
+the human decision; requiring it again per call bought no safety and produced
+an agent that could build a branch and then not ship it. A pull request is
+where the sentence ends, because a proposal a human reviews is the right shape
+of consent for delegated work. There is deliberately **no** `init`, `restore`,
+`pull`, `merge`, `rebase` or conflict-resolution tool: each of those can
+overwrite work the user has on screen and cannot see being overwritten, which
+is exactly why the Version control panel shows them a list instead.
 
 **Non-Studio MCP tools.** `get_context` (`mcp/tools/contextTool.ts`) is the orientation call for the CMS half: it reports whether the Site editor is connected — every browser tool needs it — and which templates wrap pages, so an agent knows what its authored markup is *in addition to*. Headless; call it first when a browser tool answers "open the workspace". `mcp_list_project_servers` and `mcp_propose_server` (`mcpServerTool.ts`) cover external MCP servers: the first lists every project-declared (`.mcp.json`) and Studio-registered server with its approval state and its *secret field names* — never a secret value; the second registers a proposal that is saved **unapproved and cannot be approved by any tool or agent**, so the honest report to the user is "proposed, needs your review", never "set up". `site_read_styles` and `site_list_breakpoints` (`styleTools.ts`) are headless replacements for their snapshot-backed `site_*` siblings, which read a browser-posted snapshot that is `null` over MCP; `site_publish` (`publishTool.ts`) is the one explicitly capability-gated write that leaves draft state. The CMS `site_*` toolset itself is tabulated under [Tools](#tools) below.
 
