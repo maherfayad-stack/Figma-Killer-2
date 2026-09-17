@@ -313,6 +313,7 @@ import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
 import { tryServeStudioGithubAuth } from './studio/githubAuthRoutes'
+import { tryServeStudioGitRemote } from './studio/gitRemoteRoutes'
 import { tryServeStudioDeploy } from './studio/deploy'
 import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
@@ -362,6 +363,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
+  tryServeStudioGitRemote,
   tryServeStudioDeploy,
   tryServeStudioDevServer,
   tryServeStudioStories,

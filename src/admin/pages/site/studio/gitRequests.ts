@@ -26,6 +26,7 @@
  */
 import { apiRequest, ApiError } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { ImportSummarySchema, type ImportSummary } from './importSummary'
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -397,4 +398,126 @@ export async function listGithubRepositories(signal?: AbortSignal): Promise<Gith
     signal,
   })
   return repositories
+}
+
+// ---------------------------------------------------------------------------
+// Remotes and clone — `/admin/api/studio/git/{remotes,remote,clone}`
+// (`server/handlers/studio/gitRemoteRoutes.ts`)
+//
+// `connectGitRemote` is the only write here, and there is deliberately no
+// parameter for a remote NAME: v1 writes `origin`, the server's schema says so
+// with a `Type.Literal`, and this signature agrees.
+//
+// `cloneGithubProject` has no `dir` parameter for the same reason
+// `importGithubProject` does not: the target is derived server-side from the
+// parsed owner/repo. A caller-supplied directory for an operation that creates
+// a project is an arbitrary-write primitive.
+// ---------------------------------------------------------------------------
+
+const GitRemoteSchema = Type.Object({
+  name: Type.String(),
+  fetchUrl: Type.String(),
+  pushUrl: Type.String(),
+})
+
+const GitRemotesResponseSchema = Type.Object({ remotes: Type.Array(GitRemoteSchema) })
+const GitSetRemoteResponseSchema = Type.Object({ ok: Type.Boolean(), remote: GitRemoteSchema })
+
+const CloneStartResponseSchema = Type.Object({ jobId: Type.String() })
+
+const CloneJobResponseSchema = Type.Object({
+  job: Type.Object({
+    phase: Type.Union([
+      Type.Literal('cloning'),
+      Type.Literal('probing'),
+      Type.Literal('done'),
+      Type.Literal('failed'),
+    ]),
+    /** Present exactly when `phase === 'done'`. Validated by the import summary's own schema. */
+    summary: Type.Union([ImportSummarySchema, Type.Null()]),
+    error: Type.Union([Type.String(), Type.Null()]),
+  }),
+})
+
+export type GitRemote = Static<typeof GitRemoteSchema>
+/** Phases a clone reports. No percentage: git writes its progress to a tty this subprocess does not have, and a bar that lies is worse than none. */
+export type CloneProgressPhase = Static<typeof CloneJobResponseSchema>['job']['phase']
+
+/** Every remote this project has — all of them, not just `origin`. */
+export async function getGitRemotes(dir: string | undefined, signal?: AbortSignal): Promise<GitRemote[]> {
+  const { remotes } = await apiRequest(`${BASE}/remotes`, {
+    schema: GitRemotesResponseSchema,
+    query: { dir },
+    signal,
+  })
+  return remotes
+}
+
+/**
+ * Points `origin` at `url`, creating it or replacing it. The server validates
+ * the URL against a two-shape GitHub allowlist and re-composes it before it
+ * reaches git — a rejected URL comes back as a 400 with a message worth
+ * showing.
+ */
+export async function connectGitRemote(dir: string | undefined, url: string): Promise<GitRemote> {
+  const { remote } = await apiRequest(`${BASE}/remote`, {
+    method: 'POST',
+    body: { dir, set: { name: 'origin', url } },
+    schema: GitSetRemoteResponseSchema,
+  })
+  return remote
+}
+
+/** How often to ask a clone how it is doing. Matches the zipball import's cadence. */
+const CLONE_POLL_INTERVAL_MS = 800
+
+/**
+ * Clones a GitHub repository into a new workspace project, KEEPING its
+ * history, and resolves with the same `ImportSummary` the zipball import ends
+ * on — so both paths reach the same summary screen.
+ *
+ * Rejects with the server's message on a bad URL or an occupied project name
+ * (both answered before any job starts), or with the job's own error.
+ */
+export async function cloneGithubProject(input: {
+  url: string
+  onProgress?: (phase: CloneProgressPhase) => void
+  signal?: AbortSignal
+}): Promise<ImportSummary> {
+  const { jobId } = await apiRequest(`${BASE}/clone`, {
+    method: 'POST',
+    body: { url: input.url },
+    schema: CloneStartResponseSchema,
+    signal: input.signal,
+  })
+
+  for (;;) {
+    const { job } = await apiRequest(`${BASE}/clone/status`, {
+      schema: CloneJobResponseSchema,
+      query: { jobId },
+      signal: input.signal,
+    })
+    if (job.phase === 'done') {
+      if (!job.summary) throw new Error('The clone finished without reporting what it found.')
+      return job.summary
+    }
+    if (job.phase === 'failed') throw new Error(job.error ?? 'The clone failed.')
+
+    input.onProgress?.(job.phase)
+    await clonePollDelay(input.signal)
+  }
+}
+
+function clonePollDelay(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolveDelay, rejectDelay) => {
+    const timer = setTimeout(resolveDelay, CLONE_POLL_INTERVAL_MS)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        rejectDelay(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
 }

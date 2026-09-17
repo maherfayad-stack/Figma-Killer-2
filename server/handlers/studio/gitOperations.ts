@@ -1,5 +1,5 @@
 /**
- * gitOperations — the eight things Studio is allowed to ask git to do, and
+ * gitOperations — the ten things Studio is allowed to ask git to do, and
  * nothing else.
  *
  * Each exported function builds its own argv from already-validated pieces and
@@ -28,7 +28,13 @@
  *   never ride along in a commit the user thinks they understand.
  * - **Pushing without an `origin` remote refuses** rather than inventing one.
  *   Push always names the branch explicitly and always sets upstream; it is
- *   never `--force`, and there is no route that could make it so.
+ *   never `--force`, and there is no route that could make it so. Adding that
+ *   remote is a separate, explicit act (`setOriginRemote`).
+ * - **`origin` is the only remote name Studio writes.** `setOriginRemote` has
+ *   no name parameter, and the URL it takes has already been through
+ *   `parseGithubRemoteUrl`'s two-shape allowlist — git's URL grammar includes
+ *   transports that execute (`ext::`) and transports that point at this
+ *   server's own disk (`file://`).
  * - **Restoring a file requires a raw sha** (`gitPaths.isCommitSha`), not git's
  *   revision grammar — the only shas that exist in the UI are ones `git log`
  *   printed.
@@ -150,6 +156,70 @@ async function hasOriginRemote(dir: string): Promise<boolean> {
   const result = await runGit(dir, ['remote'])
   if (!result.ok) return false
   return result.stdout.split('\n').some((line) => line.trim() === 'origin')
+}
+
+export interface GitRemote {
+  name: string
+  fetchUrl: string
+  pushUrl: string
+}
+
+/**
+ * Every remote this repository has, as `git remote -v` reports them.
+ *
+ * Read-only and unfiltered: a project that already had three remotes when the
+ * user opened it should SEE three, even though Studio will only ever write
+ * `origin`. Hiding them would make the panel disagree with the user's
+ * terminal, which is the failure mode `excludedCount` exists to avoid
+ * elsewhere in this module.
+ */
+export async function readRemotes(dir: string): Promise<GitRemote[] | GitOperationFailure> {
+  const result = await runGit(dir, ['remote', '-v'])
+  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not read the remotes'))
+
+  const byName = new Map<string, GitRemote>()
+  for (const line of result.stdout.split('\n')) {
+    // `<name>\t<url> (fetch|push)` — tab-separated by git's own porcelain.
+    const match = /^(\S+)\t(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
+    if (!match) continue
+    const [, name, url, kind] = match
+    const existing = byName.get(name) ?? { name, fetchUrl: '', pushUrl: '' }
+    if (kind === 'fetch') existing.fetchUrl = url
+    else existing.pushUrl = url
+    byName.set(name, existing)
+  }
+  return [...byName.values()]
+}
+
+/**
+ * Points `origin` at `url`, creating it or replacing it.
+ *
+ * Two deliberate narrowings, both from the G1 work order:
+ *
+ *   - **`origin` is the only name.** There is no parameter for another one.
+ *     A designer who needs a second remote has a terminal; a UI that can
+ *     create arbitrarily-named remotes is a UI that can create one Studio's
+ *     own push path then silently disagrees with.
+ *   - **`url` must already have been through `parseGithubRemoteUrl`**, and
+ *     what is passed here is that function's RE-COMPOSED url, never the
+ *     caller's string. This function does not re-validate, and its only
+ *     callers are the route and the clone job, both of which do.
+ *
+ * `set-url` then `add` rather than `remove` then `add`: replacing a remote
+ * must not drop the remote-tracking refs a later fetch/pull depends on.
+ */
+export async function setOriginRemote(dir: string, url: string): Promise<GitRemote | GitOperationFailure> {
+  const setUrl = await runGit(dir, ['remote', 'set-url', 'origin', url])
+  if (!setUrl.ok) {
+    const add = await runGit(dir, ['remote', 'add', 'origin', url])
+    if (!add.ok) return failure('git-failed', clientSafeGitError(add, 'Could not set the origin remote'))
+  }
+
+  const remotes = await readRemotes(dir)
+  if (isGitFailure(remotes)) return remotes
+  const origin = remotes.find((remote) => remote.name === 'origin')
+  if (!origin) return failure('git-failed', 'git accepted the remote but did not report it back.')
+  return origin
 }
 
 export interface GitFileDiff {

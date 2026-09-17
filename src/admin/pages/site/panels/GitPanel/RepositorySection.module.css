@@ -87,3 +87,80 @@
   flex: 1;
   min-width: 0;
 }
+
+/* --------------------------------------------------------------------------
+   Remote
+   -------------------------------------------------------------------------- */
+
+.remote {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  margin-top: var(--space-s);
+}
+
+.originRow {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.originLabel {
+  flex: none;
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.originUrl {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-s);
+  color: var(--text);
+  /* The tail of a repo URL identifies it, so cut the front when it has to be cut. */
+  direction: rtl;
+  text-align: left;
+}
+
+.repoList {
+  align-self: stretch;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 14em;
+  overflow-y: auto;
+}
+
+.repoButton {
+  width: 100%;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+}
+
+.repoName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-s);
+}
+
+.repoTag {
+  flex: none;
+  padding: 0 var(--space-2xs);
+  border-radius: var(--radius-sm);
+  background: var(--overlay-10);
+  color: var(--text-subtle);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}

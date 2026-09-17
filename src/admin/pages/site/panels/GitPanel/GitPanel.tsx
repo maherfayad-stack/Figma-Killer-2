@@ -214,7 +214,7 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
           signing in is worth doing before `git init`, and a project with no
           repository yet is exactly the one about to need a remote.
       ----------------------------------------------------------------- */}
-      <RepositorySection active={isOpen} />
+      <RepositorySection active={isOpen} dir={dir} isRepo={isRepo} onRemoteChanged={refresh} />
 
       {error ? (
         <p className={styles.error} role="alert">

@@ -37,12 +37,17 @@ import { pushToast } from '@ui/components/Toast'
 import { ApiError, isAbortError } from '@core/http'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import {
+  connectGitRemote,
+  getGitRemotes,
   getGithubAccount,
+  listGithubRepositories,
   pollGithubDeviceLogin,
   saveGithubToken,
   signOutOfGithub,
   startGithubDeviceLogin,
+  type GitRemote,
   type GithubAccount,
+  type GithubRepository,
 } from '@site/studio/gitRequests'
 import styles from './RepositorySection.module.css'
 
@@ -62,9 +67,15 @@ const DEVICE_POLL_TIMEOUT_MS = 10 * 60_000
 interface RepositorySectionProps {
   /** Whether the panel is open. Polling stops when it is not — the component unmounts, but this also stops a poll left running behind a collapsed section. */
   active: boolean
+  /** The open project. `undefined` means "the server's default project", exactly as everywhere else in this panel. */
+  dir: string | undefined
+  /** Whether the project has a `.git` at all. Remotes are only readable — and only meaningful — when it does. */
+  isRepo: boolean
+  /** Re-read git status after connecting a remote: `hasOrigin` decides whether Push is enabled. */
+  onRemoteChanged: () => void
 }
 
-export function RepositorySection({ active }: RepositorySectionProps) {
+export function RepositorySection({ active, dir, isRepo, onRemoteChanged }: RepositorySectionProps) {
   const [account, setAccount] = useState<GithubAccount | null>(null)
   const [clientConfigured, setClientConfigured] = useState(true)
   /**
@@ -80,8 +91,17 @@ export function RepositorySection({ active }: RepositorySectionProps) {
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
 
+  // Remote state. `origin` is the only one this panel writes; the rest are
+  // shown so the panel never quietly disagrees with the user's terminal.
+  const [remotes, setRemotes] = useState<GitRemote[]>([])
+  const [remoteNonce, setRemoteNonce] = useState(0)
+  const [connecting, setConnecting] = useState(false)
+  const [remoteUrl, setRemoteUrl] = useState('')
+  const [pickerRepos, setPickerRepos] = useState<GithubRepository[] | null>(null)
+
   const readKey = active ? 'active' : 'idle'
   const loading = active && answeredKey !== readKey
+  const origin = remotes.find((remote) => remote.name === 'origin') ?? null
 
   // Who is signed in. Re-read whenever the panel becomes active: a sign-out
   // in another tab, or a token GitHub revoked, both show up here.
@@ -105,6 +125,21 @@ export function RepositorySection({ active }: RepositorySectionProps) {
       })
     return () => controller.abort()
   }, [active, readKey])
+
+  // The project's remotes. Only meaningful once a repository exists —
+  // `GET git/remotes` sits behind `assertOwnGitRepo` and would 404 for a
+  // project nobody has run `git init` in yet, which is a state, not a failure.
+  useEffect(() => {
+    if (!active || !isRepo) return undefined
+    const controller = new AbortController()
+    getGitRemotes(dir, controller.signal)
+      .then(setRemotes)
+      .catch((err) => {
+        if (isAbortError(err)) return
+        console.error('[RepositorySection] could not read the remotes:', err)
+      })
+    return () => controller.abort()
+  }, [active, isRepo, dir, remoteNonce])
 
   // Poll while — and only while — a device sign-in is actually pending. The
   // interval, the timeout, and the abort all live here so there is exactly
@@ -204,6 +239,47 @@ export function RepositorySection({ active }: RepositorySectionProps) {
     }
   }
 
+  async function handleConnect(url: string) {
+    const value = url.trim()
+    if (!value) return
+    setConnecting(true)
+    try {
+      const connected = await connectGitRemote(dir, value)
+      setRemoteUrl('')
+      setPickerRepos(null)
+      setRemoteNonce((n) => n + 1)
+      // `hasOrigin` is what enables Push, and it lives in the panel's status
+      // read — not this one.
+      onRemoteChanged()
+      pushToast({ kind: 'success', title: 'Connected to origin', body: connected.pushUrl || connected.fetchUrl })
+    } catch (err) {
+      console.error('[RepositorySection] could not connect the remote:', err)
+      pushToast({
+        kind: 'error',
+        title: 'Could not connect that repository',
+        body: getErrorMessage(err, 'Unknown git error'),
+      })
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  async function handleOpenPicker() {
+    setConnecting(true)
+    try {
+      setPickerRepos(await listGithubRepositories())
+    } catch (err) {
+      console.error('[RepositorySection] could not list repositories:', err)
+      pushToast({
+        kind: 'error',
+        title: 'Could not read your repositories',
+        body: getErrorMessage(err, 'Unknown GitHub error'),
+      })
+    } finally {
+      setConnecting(false)
+    }
+  }
+
   async function handleSignOut() {
     setBusy(true)
     try {
@@ -300,6 +376,89 @@ export function RepositorySection({ active }: RepositorySectionProps) {
           )}
         </div>
       )}
+
+      {/* -------------------------------------------------------------------
+          Where this project pushes. Shown only once the project HAS a
+          repository: `git remote` has nothing to say about a directory with no
+          `.git`, and the panel's own "Create a repository" offer is the step
+          before this one.
+      ------------------------------------------------------------------- */}
+      {isRepo ? (
+        <div className={styles.remote}>
+          {origin ? (
+            <div className={styles.originRow}>
+              <span className={styles.originLabel}>origin</span>
+              <span className={styles.originUrl}>{origin.pushUrl || origin.fetchUrl}</span>
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={connecting}
+                onClick={() => setRemoteUrl(origin.pushUrl || origin.fetchUrl)}
+              >
+                Change
+              </Button>
+            </div>
+          ) : (
+            <p className={styles.hint}>
+              This project has no <strong>origin</strong>, so there is nowhere to push yet.
+            </p>
+          )}
+
+          {!origin || remoteUrl ? (
+            <>
+              <div className={styles.tokenRow}>
+                <Input
+                  fieldSize="sm"
+                  value={remoteUrl}
+                  placeholder="https://github.com/owner/repo"
+                  aria-label="Repository URL"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={connecting}
+                  onChange={(event) => setRemoteUrl(event.target.value)}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={connecting || !remoteUrl.trim()}
+                  onClick={() => void handleConnect(remoteUrl)}
+                >
+                  Connect
+                </Button>
+              </div>
+
+              {account && pickerRepos === null ? (
+                <Button variant="ghost" size="sm" disabled={connecting} onClick={handleOpenPicker}>
+                  Pick from your repositories
+                </Button>
+              ) : null}
+
+              {pickerRepos !== null ? (
+                <ul className={styles.repoList}>
+                  {pickerRepos.length === 0 ? (
+                    <li className={styles.hint}>GitHub returned no repositories for this account.</li>
+                  ) : (
+                    pickerRepos.map((repo) => (
+                      <li key={repo.fullName}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={styles.repoButton}
+                          disabled={connecting}
+                          onClick={() => void handleConnect(repo.cloneUrl)}
+                        >
+                          <span className={styles.repoName}>{repo.fullName}</span>
+                          {repo.isPrivate ? <span className={styles.repoTag}>private</span> : null}
+                        </Button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </Section>
   )
 }

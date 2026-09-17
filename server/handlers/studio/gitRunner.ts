@@ -160,13 +160,6 @@ export interface RunGitOptions {
    * worse.
    */
   credential?: string
-  /**
-   * Overrides the spawn `cwd`, for the one operation that runs git somewhere
-   * other than a project it is operating on: `clone`, whose target does not
-   * exist yet, runs in the workspace root. Every other caller leaves this
-   * unset and `dir` is the cwd.
-   */
-  cwd?: string
 }
 
 /**
@@ -189,7 +182,7 @@ export async function runGit(
 
   try {
     const result = await runCappedSubprocess(['git', ...argv], {
-      cwd: options.cwd ?? dir,
+      cwd: dir,
       env: minimalSubprocessEnv(GIT_ENV_EXTRA_KEYS, {
         // Never block on an interactive credential prompt — fail fast with the
         // real error instead of sitting until the timeout. This stays true

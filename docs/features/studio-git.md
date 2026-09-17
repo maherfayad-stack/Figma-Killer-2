@@ -25,7 +25,9 @@ same panel.
 | Subprocess + guard | `server/handlers/studio/gitRunner.ts` | `Bun.spawn` discipline, env allowlist, the "is this the project's own repository" guard, the one-shot credential handover |
 | Credential handover | `server/handlers/studio/gitAskpass.ts` | The 0600 one-shot `GIT_ASKPASS` script and the token charset it refuses |
 | Parser | `server/handlers/studio/gitStatusParse.ts` | `--porcelain=v2 --branch -z` → typed status. Pure. |
-| Input judgement | `server/handlers/studio/gitPaths.ts` | Every caller-supplied path, branch name, sha, message |
+| Input judgement | `server/handlers/studio/gitPaths.ts` | Every caller-supplied path, branch name, sha, message, **remote URL** |
+| Remotes + clone | `server/handlers/studio/gitRemoteRoutes.ts` | `git/remotes`, `git/remote`, `git/clone` |
+| Clone job | `server/handlers/studio/gitClone.ts` | Target derivation, refusals, partial-clone cleanup, the polled job store |
 | GitHub sign-in | `server/handlers/studio/githubAuthRoutes.ts` | `/admin/api/studio/github/*` — device flow, PAT paste, account, sign-out, repo list |
 | Device grant | `server/handlers/studio/githubDeviceFlow.ts` | The OAuth device flow and its in-memory pending-flow store |
 | GitHub REST | `server/handlers/studio/githubApi.ts` | `GET /user`, `GET /user/repos`, validated with TypeBox |
@@ -52,6 +54,10 @@ All under `/admin/api/studio/git/`. Bodies are validated with
 | POST | `push` | `{ dir? }` | `{ ok, branch, output }` |
 | POST | `init` | `{ dir?, confirm: true, message? }` | `{ ok, branch, sha, filesCommitted }` |
 | POST | `restore` | `{ dir?, sha, file }` | `{ ok, file, sha }` |
+| GET | `remotes` | `?dir` | `{ remotes: [{ name, fetchUrl, pushUrl }] }` |
+| POST | `remote` | `{ dir?, set: { name: 'origin', url } }` | `{ ok, remote }` |
+| POST | `clone` | `{ url }` | `{ jobId }` |
+| GET | `clone/status` | `?jobId` | `{ job }` — phase + the terminal `ImportSummary` |
 
 `isRepo: false` is a **normal 200**, not an error — it is what makes the panel
 offer "Create a repository" rather than showing a failure for a project nobody
@@ -61,6 +67,47 @@ A refusal based on the repository's *state* (dirty tree, no `origin`, detached
 HEAD, repository already exists) answers **409** with
 `{ error, code, dirtyFiles? }`. A git invocation that actually failed answers
 **500**. Anything rejected by a guard answers a bare **404**.
+
+### Connecting a repository
+
+`POST git/remote` writes **`origin` and only `origin`** — `name` is a
+`Type.Literal('origin')` on the wire, so another name is refused by the schema
+rather than by a handler branch. `GET git/remotes` reports **all** of them,
+including ones Studio did not write: a panel that quietly disagrees with the
+user's terminal is the failure `excludedCount` exists to avoid elsewhere.
+
+**The URL is the widest-blast-radius input in this feature**, because git takes
+a *transport*, not an address: `ext::sh -c …` executes a shell command,
+`file://` and a bare path make a "remote" out of any directory on this server
+(Studio's own repository included), and `ssh://user@host/…` reaches wherever
+the host's keys reach. `parseGithubRemoteUrl` is therefore an allowlist of
+exactly two shapes — `https://github.com/<owner>/<repo>` and
+`git@github.com:<owner>/<repo>.git` — and the URL handed to git is
+**re-composed from the parsed owner/repo**, never the caller's string. Userinfo
+(`https://user:pass@…`) is refused: it would persist a credential in plaintext
+into `.git/config`.
+
+`POST git/clone` is the **Clone (keeps history)** alternative to the zipball
+import, as a polled job with the same shape and the same terminal
+`ImportSummary`. `git clone --filter=blob:none` — a partial clone, so a
+repository with a decade of large assets does not become a gigabyte on disk to
+show forty screens. Its guards:
+
+- the target is **`studio-workspace/<owner>-<repo>`, derived server-side** from
+  the parsed URL. The body schema is `additionalProperties: false` and has no
+  `dir`, so a request carrying one is *rejected*, not ignored;
+- containment is checked before the clone (on the deepest existing ancestor,
+  via `isRealpathContainedAllowingMissing`) **and again on the real path
+  afterwards** — a repository can carry git-stored symlinks;
+- **an occupied directory refuses (409 `project-exists`)**. Unlike the zipball
+  import, a clone never clears its target: `git clone` needs an empty
+  directory, and making one by deleting a project is deleting user data to
+  satisfy a button;
+- a clone that fails removes its own partial directory — but only when this job
+  is what created it, so a refusal caused by a pre-existing project can never
+  delete that project;
+- the credential is the signed-in user's, resolved from the session. There is
+  no `token` field on this wire either.
 
 ### Signing in to GitHub
 
@@ -218,7 +265,10 @@ send it.
   device flow is the default — a short code, a URL, and a poll keyed on a
   `waiting` state, the same shape `ProvidersTab.tsx` uses for the Claude login.
   "Paste a token instead" opens automatically when the server reports
-  `clientConfigured: false`, or when `device/start` answers 501.
+  `clientConfigured: false`, or when `device/start` answers 501. Below the
+  account it shows `origin` and offers **Connect** — paste a URL, or, once
+  signed in, **Pick from your repositories** (`GET github/repos`). Connecting
+  refreshes the panel's status read, because `hasOrigin` is what enables Push.
 - Nothing is selected for you; the commit acts on ticked files.
 - Switching branches warns inline first, then reloads the board
   (`requestCmsSiteReload`) — the `.tsx` files under every frame are about to be

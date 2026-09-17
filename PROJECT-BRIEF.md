@@ -120,7 +120,15 @@ never silently no-ops.
 
 ### What works today (do not rebuild)
 
-- GitHub zipball import with path-traversal / zip-bomb guards
+- GitHub zipball import with path-traversal / zip-bomb guards, plus a
+  **Keep history (clone)** alternative (`POST git/clone`) that lands the repo
+  with its history and `origin` set — target derived server-side, refuses an
+  existing project rather than clearing it
+- **Sign in to GitHub** (device flow + paste-a-PAT), token stored encrypted per
+  user in `git_credentials` and handed to git through a 0600 one-shot
+  `GIT_ASKPASS` script — never an env var, never a URL. Connect a repository
+  (`git/remotes`, `git/remote`) with a two-shape URL allowlist. See
+  [`docs/features/studio-git.md`](docs/features/studio-git.md)
 - Multi-file page discovery + `.studio/meta.json` (`displayName`, `pagesDir`, `previewAxes` — `direction`/`colorScheme`/`locale`)
 - ts-morph parse, local-component inlining through barrels, tsconfig `paths` aliases
 - Static value resolution Tiers A/B/C, `.map` expansion, multi-return/ternary/`&&`
