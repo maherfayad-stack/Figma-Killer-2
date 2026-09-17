@@ -102,20 +102,19 @@ import {
   resolveWorkspaceRelativePath,
 } from './gitPaths'
 import { assertOwnGitRepo } from './gitRunner'
+import { isGitFailure, type GitOperationFailure } from './gitOperations'
 import {
   abortConflictResolution,
   commitAndSwitchBranch,
   continueConflictResolution,
   fetchRemote,
-  isGitFailure,
   listGitBranches,
   pullRemote,
   readBranchCommitSubjects,
   readConflictState,
   readPullRequestContext,
   resolveConflictFile,
-  type GitOperationFailure,
-} from './gitOperations'
+} from './gitSyncOperations'
 import { githubCompareUrl, openGithubPullRequest } from './githubPullRequest'
 import { getGithubTokenForRequest } from './githubToken'
 
@@ -453,7 +452,7 @@ async function servePullRequest(req: Request): Promise<Response> {
 
   const subjects = await readBranchCommitSubjects(guard.dir, base, context.branch)
   const title = (body.title ?? '').trim() || subjects[0] || context.branch
-  const prBody = body.body ?? subjects.map((subject) => `- ${subject}`).join('\n')
+  const prBody = body.body ?? subjects.map((subject: string) => `- ${subject}`).join('\n')
 
   const result = await openGithubPullRequest({
     target,

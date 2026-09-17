@@ -21,8 +21,9 @@ same panel.
 | Layer | Module | Owns |
 |---|---|---|
 | Route | `server/handlers/studio/git.ts` | The local verbs: status, diff, log, branch, commit, push, init, restore |
-| Route | `server/handlers/studio/gitSyncRoutes.ts` | Branches and commit-and-switch — a sibling sub-router. Both files are routing only: dir resolution, body validation, refusal → HTTP status. **No argv is built in either.** |
-| Operations | `server/handlers/studio/gitOperations.ts` | The eight things Studio may ask git to do |
+| Route | `server/handlers/studio/gitSyncRoutes.ts` | Branches, commit-and-switch, fetch, pull, conflicts, pull requests — a sibling sub-router. Both files are routing only: dir resolution, body validation, refusal → HTTP status. **No argv is built in either.** |
+| Operations — local | `server/handlers/studio/gitOperations.ts` | status, diff, log, branch, commit, push, init, restore, remotes — and the shared vocabulary: `GitOperationFailure`/`gitFailure`, `withGitWriteLock`, `originAcceptsStoredGithubToken` |
+| Operations — remote | `server/handlers/studio/gitSyncOperations.ts` | The branch LIST, commit-and-switch, fetch, pull, conflicts, pull-request context. Split on responsibility: everything here is about reconciling with `origin`, or proposing the result to the people behind it |
 | Subprocess + guard | `server/handlers/studio/gitRunner.ts` | `Bun.spawn` discipline, env allowlist, the "is this the project's own repository" guard, the one-shot credential handover |
 | Credential handover | `server/handlers/studio/gitAskpass.ts` | The one-shot `GIT_ASKPASS` script and the token charset it refuses |
 | Write lock | `server/handlers/studio/projectWriteLock.ts` | One writer per project — saves, scaffolds, installs and git verbs |
@@ -36,7 +37,8 @@ same panel.
 | Pull requests | `server/handlers/studio/githubPullRequest.ts` | `POST /repos/{owner}/{repo}/pulls`, the compare URL, and the no-token answer |
 | Credential store | `server/handlers/studio/githubCredentialStore.ts` | The `git_credentials` table; encryption on write, decryption on read |
 | Token lookup | `server/handlers/studio/githubToken.ts` | `getGithubTokenForUser(userId)` / `getGithubTokenForRequest(req)` — the one shared entry every network verb calls |
-| Wire contract | `src/admin/pages/site/studio/gitRequests.ts` | TypeBox schemas + `apiRequest` calls, for both namespaces |
+| Wire contract — local | `src/admin/pages/site/studio/gitRequests.ts` | TypeBox schemas + `apiRequest` calls for the local verbs and the GitHub sign-in namespace |
+| Wire contract — remote | `src/admin/pages/site/studio/gitSyncRequests.ts` | The same, for branches, commit-and-switch, fetch, pull, conflicts and pull requests |
 | Panel | `src/admin/pages/site/panels/GitPanel/` | The rail panel: repository, branch, changes, diff, commit, push, history |
 | Panel — branch | `.../GitPanel/BranchSection.tsx` | The branch dropdown, “New branch from current”, the commit-and-switch dialog |
 | Panel — sync | `.../GitPanel/SyncSection.tsx` | Fetch, pull, push, the rebase-or-merge choice, per-file conflict resolution, “Open PR” |

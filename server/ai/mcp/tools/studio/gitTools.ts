@@ -67,13 +67,15 @@ import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
   commitFiles,
   isGitFailure,
-  listGitBranches,
   pushCurrentBranch,
-  readBranchCommitSubjects,
   readGitStatus,
-  readPullRequestContext,
   switchBranch,
 } from '../../../../handlers/studio/gitOperations'
+import {
+  listGitBranches,
+  readBranchCommitSubjects,
+  readPullRequestContext,
+} from '../../../../handlers/studio/gitSyncOperations'
 import {
   isAcceptableCommitMessage,
   parseGithubRemoteUrl,
@@ -367,7 +369,7 @@ const studioGitOpenPrTool: AiTool = {
     const result = await openGithubPullRequest({
       target,
       title: (title ?? '').trim() || subjects[0] || context.branch,
-      body: body ?? subjects.map((subject) => `- ${subject}`).join('\n'),
+      body: body ?? subjects.map((subject: string) => `- ${subject}`).join('\n'),
       base,
       head: context.branch,
       token: await getGithubTokenForUser(ctx.userId),

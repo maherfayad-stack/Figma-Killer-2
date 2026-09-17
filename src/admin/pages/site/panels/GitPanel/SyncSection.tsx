@@ -39,16 +39,16 @@ import { Button } from '@ui/components/Button'
 import { Section } from '@ui/components/Section'
 import { pushToast } from '@ui/components/Toast'
 import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
-import type { GitBranchStatus, GitConflictSide } from '@site/studio/gitRequests'
+import { pushGitBranch, type GitBranchStatus } from '@site/studio/gitRequests'
 import {
   abortGitConflict,
   continueGitConflict,
   fetchGitRemote,
   openGitPullRequest,
   pullGitRemote,
-  pushGitBranch,
   resolveGitConflict,
-} from '@site/studio/gitRequests'
+  type GitConflictSide,
+} from '@site/studio/gitSyncRequests'
 import { useGitConflicts } from './useGitConflicts'
 import { useGitPullRequestContext } from './useGitPullRequestContext'
 import styles from './SyncSection.module.css'

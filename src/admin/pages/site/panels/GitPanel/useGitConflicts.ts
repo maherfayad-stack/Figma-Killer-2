@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isAbortError } from '@core/http'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { getGitConflicts, type GitConflictState } from '@site/studio/gitRequests'
+import { getGitConflicts, type GitConflictState } from '@site/studio/gitSyncRequests'
 
 export interface GitConflictsState {
   loading: boolean

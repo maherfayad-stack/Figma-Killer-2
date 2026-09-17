@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isAbortError } from '@core/http'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { getGitPullRequestContext, type GitPullRequestContext } from '@site/studio/gitRequests'
+import { getGitPullRequestContext, type GitPullRequestContext } from '@site/studio/gitSyncRequests'
 
 export interface GitPullRequestContextState {
   loading: boolean

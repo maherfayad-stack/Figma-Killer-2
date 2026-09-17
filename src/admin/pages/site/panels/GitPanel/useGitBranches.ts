@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isAbortError } from '@core/http'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { getGitBranches, type GitBranchList } from '@site/studio/gitRequests'
+import { getGitBranches, type GitBranchList } from '@site/studio/gitSyncRequests'
 
 export interface GitBranchesState {
   loading: boolean
