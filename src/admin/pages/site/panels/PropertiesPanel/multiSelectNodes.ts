@@ -1,10 +1,10 @@
 /**
  * multiSelectNodes — resolve a multi-selection's ids to live nodes, once.
  *
- * Lifted out of `MultiInlineStyleComposer` when `MultiSelectionStyleArea`
- * (W8-3 phase 3) needed the same list to answer a different question
- * ("do these share a class?"). One resolution, one set of rules about where a
- * node may be found.
+ * One resolution, one set of rules about where a node may be found. Its
+ * caller is now `useSelectionModel` (S5), which resolves the selection once
+ * and hands the result to every `INSPECTOR_SECTIONS` entry — the two W8-3
+ * composers this was lifted out of are deleted.
  */
 import type { PageNode } from '@core/page-tree'
 

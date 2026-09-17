@@ -11,10 +11,12 @@
  *
  * Two bags, two different questions:
  *
- *   - **`storedStyles`** — "what does the EDITING TARGET hold?" For phase 1
- *     the target is always the nodes' own inline `style=""` bags (see
- *     `MultiInlineStyleComposer`'s doc for why class targets are out of
- *     scope here). A property lands in this bag when at least one selected
+ *   - **`storedStyles`** — "what does the EDITING TARGET hold?" The target is
+ *     the nodes' own inline `style=""` bags; a class target is one write
+ *     reaching every element with the class, so it needs no collapse (and is
+ *     gated separately, `docs/features/inspector.md` §9.4). Since S5 this is
+ *     what `useSelectionModel` puts on the collapsed anchor node it hands
+ *     every section. A property lands in this bag when at least one selected
  *     node sets it inline; its value is the shared value when every node
  *     agrees and `MIXED` otherwise. `hasStyleValue(MIXED)` is true, so a
  *     mixed property correctly counts as SET for section disclosure (Law 1,

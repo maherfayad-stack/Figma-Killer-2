@@ -46,7 +46,12 @@
  *
  * ## MULTI-SELECT
  *
- * Out of scope, structurally — see `TransformSection.tsx`'s own doc.
+ * Supported, with no code of its own (S5). `useSelectionModel()` describes
+ * N nodes now — it hands this section the anchor wearing the selection's
+ * COLLAPSED inline bag, `MIXED` wherever the layers disagree — so this file
+ * renders and commits for a multi-selection through exactly the same reads
+ * and `useInspectorCommit` calls it uses for one. See `selectionModel.ts`'s
+ * own "Multi-select" doc.
  */
 import { useRef, useState, type RefObject } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'

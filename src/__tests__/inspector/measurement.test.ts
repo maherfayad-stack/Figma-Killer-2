@@ -70,6 +70,14 @@
  *     intact", which is the `No dead code` rule's exact failure mode. The
  *     `htmlAttributes` PROP is untouched — the publisher, `htmlImport`, and
  *     every base module's renderer still read it.
+ *
+ * S5's second half adds a 16th entry, `selectionColors` (WS-14.4 / G6.4) —
+ * the only one with a MULTI-only `appliesTo`, since `SelectionModel` now
+ * describes N nodes and the parallel multi-selection surface that used to
+ * mount it (`MultiSelectionInspector`/`MultiSelectionStyleArea`/
+ * `MultiInlineStyleComposer`) is deleted. It never mounts for the
+ * single-node F1–F4 fixtures, so it adds nothing to the Design-tab total
+ * below.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -94,6 +102,7 @@ const EXPECTED_SECTION_IDS = [
   'measures',
   'layout',
   'fill',
+  'selectionColors',
   'stroke',
   'shadow',
   'blur',
@@ -118,17 +127,17 @@ const MORE_GROUP_SECTION_IDS = [
 ] as const
 
 describe('INSPECTOR_SECTIONS manifest shape', () => {
-  it('has exactly 15 entries', () => {
-    expect(INSPECTOR_SECTIONS.length).toBe(15)
+  it('has exactly 16 entries', () => {
+    expect(INSPECTOR_SECTIONS.length).toBe(16)
   })
 
   it('lists ids in the exact order sections/index.ts itself documents', () => {
     expect(INSPECTOR_SECTIONS.map((s) => s.id)).toEqual([...EXPECTED_SECTION_IDS])
   })
 
-  it('has order fields 0-14 with no gaps or dupes', () => {
+  it('has order fields 0-15 with no gaps or dupes', () => {
     const orders = INSPECTOR_SECTIONS.map((s) => s.order).sort((a, b) => a - b)
-    expect(orders).toEqual(Array.from({ length: 15 }, (_, i) => i))
+    expect(orders).toEqual(Array.from({ length: 16 }, (_, i) => i))
   })
 
   it('tags exactly the 3 dual-tab sections tabs: [design, prototype]; every other entry defaults to design-only', () => {
@@ -351,6 +360,10 @@ const SECTION_MINIMAL_STATE: Record<(typeof EXPECTED_SECTION_IDS)[number], { has
   measures: { hasHeader: false, rowCount: 3 },
   layout: { hasHeader: true, rowCount: 3 },
   fill: { hasHeader: true, rowCount: 0 },
+  // Multi-select only, so it never mounts for the single-node F1/F2/F3/F4
+  // fixtures below. Its floor is `Section`'s `empty` header — a selection
+  // whose colours all come from classes has no inline colour to offer.
+  selectionColors: { hasHeader: true, rowCount: 0 },
   stroke: { hasHeader: true, rowCount: 0 },
   shadow: { hasHeader: true, rowCount: 0 },
   blur: { hasHeader: true, rowCount: 0 },
@@ -369,6 +382,7 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
   measures: 104, // 0 + 3*32 + 2*4
   layout: 136, // 32 + 3*32 + 2*4
   fill: 32, // 32 + 0 + 0
+  selectionColors: 32, // multi-select only — see SECTION_MINIMAL_STATE
   stroke: 32,
   shadow: 32,
   blur: 32,

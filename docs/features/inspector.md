@@ -846,11 +846,11 @@ migrated section narrows its own bag to the handful of properties it claims;
 this one instead claims "every uncurated key" (`!isCuratedProperty`), the
 Webflow/Framer-style escape hatch `CustomPropertiesSection.tsx` (kept at its
 original path, widened with an additive `forceOpen` prop) has always been.
-It is genuinely shared by three call sites now — the manifest wrapper here
-(`forceOpen` always on), plus `StyleRuleComposer.tsx` (ambient/global-
-selector) and `MultiInlineStyleComposer.tsx` (multi-select), both of which
-call it directly now that `StyleSectionsEditor.tsx` — the registry-driven
-renderer every curated section (G1–G11) used to share — is deleted.
+It has two call sites — the manifest wrapper here (`forceOpen` always on,
+serving one node and N alike since S5), plus `StyleRuleComposer.tsx`
+(ambient/global-selector), which calls it directly now that
+`StyleSectionsEditor.tsx` — the registry-driven renderer every curated section
+(G1–G11) used to share — is deleted.
 
 **`StyleSectionsEditor.tsx` and `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`
 array are retired, not both deleted.** `StyleSectionsEditor.tsx` (the last
@@ -861,20 +861,16 @@ category" loop, now rendering zero buttons — a disclosed, by-construction
 narrowing, not a bug) and `cssControlTypes.ts` (`ALL_CURATED_CSS_PROPERTIES`)
 still import from that file.
 
-**Multi-select narrows with it — a further step, not a first one.** By the
-time P3 reached item 11, `CLASS_STYLE_SECTIONS` (and therefore what
-`MultiInlineStyleComposer.tsx`/`StyleRuleComposer.tsx` could still render
-across a multi-selection or an ambient selector) was already down to three
-entries — `transform`/`animations`/`interaction` — every OTHER curated
-category having already migrated to its own single-node
-`INSPECTOR_SECTIONS` entry in items 1–9 and become invisible to these two
-composers along the way. Item 11 finishes that migration for the last
-three, so both composers now render only `CustomPropertiesSection` — bulk-
-editing `transform`, an animation, or `cursor` across a multi-selection (or
-from the ambient/global-selector surface) is no longer possible; bulk-
-editing an uncurated property still is. `useSelectionModel()`, which every
-migrated section reads instead, is built for exactly one selected node, so
-there is no manifest-entry home for any of them to fall back to here.
+**Multi-select narrowed with it, and S5 reversed that.** By the time P3
+reached item 11, every curated category had migrated to a manifest entry
+reading `useSelectionModel()` — which was built for exactly one node — so the
+legacy composers were left rendering only `CustomPropertiesSection`, and a
+multi-selection lost every other section. That was never a design decision,
+just the far end of a migration. S5 widened the model to N (§9.0) and deleted
+the multi-select composer entirely; the ambient/global-selector surface
+(`StyleRuleComposer.tsx` + `StyleCategoryRail.tsx`) is the only caller of the
+now-empty `CLASS_STYLE_SECTIONS` left, and closing that one is its own
+ticket.
 
 ---
 
@@ -976,13 +972,13 @@ on a text layer, rather than one that is promoted to the top of a fixed list
 — by gating its `appliesTo` on this file's own `isTextNode`, reused (not
 duplicated) from `styleSectionOrder.ts`. `orderStyleSections`/
 `isTextSelection`/this section's own "Typography renders first" reordering
-stays live, unchanged, for the two surfaces this migration didn't touch:
-`MultiInlineStyleComposer.tsx` (multi-select) and `StyleRuleComposer.tsx`/
-`StyleCategoryRail.tsx` (`SelectorInspector.tsx`'s ambient global-selector
-surface) — both still render the legacy `CLASS_STYLE_SECTIONS` list directly
-and neither has a `typography` entry left to promote, so the reordering is
-now an inert no-op there, not a bug. It resolves for real when P6 deletes
-this whole mechanism alongside `classStyleSections.ts`.
+stays live, unchanged, for the one surface this migration didn't touch:
+`StyleRuleComposer.tsx`/`StyleCategoryRail.tsx` (`SelectorInspector.tsx`'s
+ambient global-selector surface), which still renders the legacy
+`CLASS_STYLE_SECTIONS` list directly and has no `typography` entry left to
+promote, so the reordering is now an inert no-op there, not a bug. (The other
+former caller, the multi-select composer, is deleted — see §9.0.) It resolves
+for real when the ambient surface joins the manifest too.
 
 ### §5.1 Commit coerces; it never writes what CSS rejects
 
@@ -1299,8 +1295,49 @@ kept because the alternatives are the part that does not survive in the diff.
 
 Select two or more layers and the inspector shows the same sections it shows
 for one, with **Mixed** wherever the selection disagrees; the first edit writes
-one value to all of them. Phase 1 of W8-3 shipped this for the **Element
-(inline)** target only.
+one value to all of them.
+
+**S5 made that literally true.** W8-3 shipped the contract on a parallel
+surface (`MultiSelectionInspector` → `MultiSelectionStyleArea` →
+`MultiInlineStyleComposer`), and by the time P3 finished, that surface could
+render exactly *one* editing section — Custom properties — because every other
+section had migrated to `INSPECTOR_SECTIONS`, which reads `useSelectionModel()`,
+which assumed one node. Selecting two layers therefore **lost** Fill, Stroke,
+Text, Measures and the rest. S5 widened the model instead of widening the
+parallel surface, and deleted all three files.
+
+### §9.0 One model, no second section tree
+
+`useSelectionModel()` describes N nodes. The widening is shaped so that **no
+section file changed**: every section already reads
+`selectedNode.inlineStyles` + `assignedClassRules` and builds its bags with
+`collapsedStyleBag.ts`, so the model hands it —
+
+| Field | For N nodes |
+|---|---|
+| `selectedNode` | the anchor, with `inlineStyles` replaced by the selection's collapsed bag (`MIXED` where layers disagree) |
+| `selectedNode.codeProps` | only the `style:<prop>` locks present on **every** node — a lock on one of five must not disable a control that works for four |
+| `computedValues` | `null`. `useFrameComputedStyleValues` reads ONE mounted element; showing the anchor's as the selection's placeholder would claim agreement nobody measured |
+| `assignedClassRules` | `[]` (Element/inline), or the one shared class once the user picks it and clears its gate — see §9.4 |
+| `selectedNodes`, `inlineWritableNodeIds`, `inlineUnwritableNodes`, `blockedPropertyCounts`, `sharedClassRules` | the N-node facts the target bar and its notices state |
+
+`commitApi.ts` is the other half: an inline write for N dispatches to
+`setNodesInlineStyles` instead of `setNodeInlineStyles`. A class write needs no
+branch — one class write already reaches everything carrying the class.
+
+`PropertiesPanelBody` has no multi-select branch any more. What it still gates
+on cardinality is the per-node CHROME above the sections — the
+component/slot/source notices and ClassPicker, each of which would otherwise
+tell the anchor's story as if it were the selection's, or edit one layer's
+`classIds` out of N. The panel header still reads "N layers selected".
+
+**What the deleted action bar took with it.** `MultiSelectionInspector` also
+carried Duplicate / Wrap… / Copy / Cut / Paste / Delete buttons and a
+removable list of the selected layers. Figma's right panel has no such bar;
+those actions live on the canvas context menu and the keyboard, which is where
+they stay. `commitProp` also stops at one node: a module prop belongs to one
+call site's schema, and fanning one key across N nodes of possibly different
+modules is a guess, not a Mixed collapse.
 
 ### §9.1 One patch, one undo step
 
@@ -1313,16 +1350,18 @@ shares its merge/clear semantics with the single-node `setNodeInlineStyles`
 through `applyInlineStylePatch`, so "clear this property" cannot mean two
 things. A node that individually refuses the write — a stale id, or a
 `style:<prop>` this node resolved from an expression in source — is skipped
-without aborting the rest; `MultiInlineStyleComposer` names those properties
+without aborting the rest; `MultiSelectTargetBar` names those properties
 above the sections so the refusal is never silent.
 
 ### §9.2 Two collapsed bags, no new section tree
 
-`StyleSectionsEditor` is already target-agnostic — it renders whatever
-`storedStyles` / `currentStyles` pair it is handed. Multi-select therefore adds
-no second copy of the section tree, only `buildMultiSelectStyleBags`
-(`multiSelectStyleBags.ts`), which collapses N nodes into that same pair using
-`collapseValues` from `@ui/components/MixedValue`:
+Every section is already target-agnostic — it builds its own bags from
+whatever `inlineStyles` + `assignedClassRules` the model hands it
+(`collapsedStyleBag.ts`). Multi-select therefore adds no second copy of the
+section tree, only `buildMultiSelectStyleBags` (`multiSelectStyleBags.ts`),
+which collapses N nodes using `collapseValues` from
+`@ui/components/MixedValue` and which `useSelectionModel` calls once per
+render:
 
 - **`storedStyles`** — the inline editing target. A property is present when at
   least one selected node sets it inline; its value is the shared value when
@@ -1337,6 +1376,16 @@ the editor asks that question — Law 1's disclosure, the indicator dot, the "N
 set" meta. There is no `getComputedStyle` layer here: that hook reads ONE
 mounted element, and provenance runs with `computedValue: undefined`, which
 means an ambiguous multi-class cascade crowns nobody rather than guessing.
+
+**Since S5 the model uses `storedStyles` only.** It is the bag that becomes
+the collapsed anchor's `inlineStyles`, and each section then derives its own
+`currentStyles` from that plus the class chain, exactly as it does for one
+node. The deliberate loss is the class-sourced placeholder layer for a
+multi-selection: a field whose value comes only from a class reads unset
+rather than showing that class's value muted. Under-stating is the safe
+direction — the alternative, feeding a `MIXED` Symbol through a
+`computedValues: Record<string, string>` channel, is exactly the "control that
+lies" bug class.
 
 ### §9.3 Mixed rendering
 
@@ -1455,6 +1504,16 @@ only** (a class-sourced colour's honest target is the class, and a swatch must
 not silently perform a class edit), and **literal text matching** — `#fff` and
 `rgb(255,255,255)` are separate swatches, because bucketing them would mean
 rewriting text the user never asked us to touch.
+
+**WS-14.4 closed it as a manifest section (S5).** `SelectionColorsSection`
+moved to `inspector/sections/` and became the `selectionColors` entry
+(`order: 5`, directly under Fill — the per-property answer to the same
+question), wearing Fill's own icon and `Section` chrome. It is the only entry
+with a multi-only `appliesTo`: for one node, Fill already says everything it
+would. Its field is `ColorValueInput`, the same one `ColorFieldRow`
+(`STATE.md` `panel-33`) wraps for Fill's rows, so the swatch opens the real
+picker on the FIRST click here too. A selection whose colours all come from
+classes renders Law 1's empty header rather than an empty list.
 
 ### §9.5 A multi-selection needs two members
 

@@ -31,10 +31,12 @@
  *
  * ## MULTI-SELECT
  *
- * Out of scope, structurally: `PropertiesPanelBody.tsx` early-returns
- * `<MultiSelectionInspector>` before `StyleSurface`/`INSPECTOR_SECTIONS`
- * ever mount when `isMultiSelect` is true — this section never renders
- * during a multi-select.
+ * Supported, with no code of its own (S5). `useSelectionModel()` describes
+ * N nodes now — it hands this section the anchor wearing the selection's
+ * COLLAPSED inline bag, `MIXED` wherever the layers disagree — so this file
+ * renders and commits for a multi-selection through exactly the same reads
+ * and `useInspectorCommit` calls it uses for one. See `selectionModel.ts`'s
+ * own "Multi-select" doc.
  */
 import { useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'

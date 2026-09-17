@@ -120,12 +120,21 @@
  *
  * MULTI-SELECT
  * ------------
- * Out of scope, structurally: `PropertiesPanelBody.tsx` early-returns
- * `<MultiSelectionInspector>` before `StyleSurface`/`INSPECTOR_SECTIONS` ever
- * mount when `isMultiSelect` is true (the same fact `AlignSection`'s own doc
- * already established) — this section never renders during a multi-select,
- * so it drops the old `FillSection.tsx`'s `isMixed`/`MIXED_PLACEHOLDER`
- * handling entirely rather than porting dead code.
+ * Mounts for N nodes as of S5: `useSelectionModel()` hands this section the
+ * anchor wearing the selection's COLLAPSED inline bag, so every read and
+ * every `useInspectorCommit` call below works unchanged, and a commit lands
+ * on all N. `SelectionColorsSection` (`selectionColors`, directly under this
+ * one in the manifest) is the multi-only companion that answers "what
+ * colours is this selection made of" across properties.
+ *
+ * KNOWN GAP, disclosed rather than silently shipped: this file dropped the
+ * pre-P3 `isMixed`/`MIXED_PLACEHOLDER` handling when it was written, on the
+ * then-true premise that it could never see a multi-selection. A disagreeing
+ * fill therefore renders this section's ordinary UNSET state rather than the
+ * word "Mixed" (`readString` returns `undefined` for the sentinel, so nothing
+ * stringifies a Symbol and nothing lies about a value — it just under-states
+ * the disagreement). Re-wiring it is `docs/features/inspector.md` §9.3's
+ * table, one row per field, and belongs with whoever next owns this file.
  *
  * LOCKED (CODE-VALUED) PROPERTIES
  * --------------------------------

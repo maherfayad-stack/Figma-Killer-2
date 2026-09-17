@@ -59,6 +59,7 @@ import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
 import { Section } from '@ui/components/Section'
 import { WriteTargetRow, type WriteTargetChipInfo } from '@site/inspector/WriteTargetRow'
+import { MultiSelectTargetBar } from '@site/inspector/MultiSelectTargetBar'
 import { useSelectionModel, type SelectionModel } from '@site/inspector/selectionModel'
 import {
   designMoreSections,
@@ -146,20 +147,30 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
     // build.
     <div className={styles.surface} data-testid="properties-panel-scroll">
       <div className={styles.surfaceContent}>
-        {nodeId != null && (
-          <WriteTargetRow
-            classChips={writeTargetChips}
-            inlineReachable={canToggleElement}
-            inlineLockReason={inlineLockReason}
-            defaultTargetKey={defaultTargetKey}
-          />
+        {/* One target row per cardinality. `WriteTargetRow` is informational
+            — it lists the targets ONE node's properties can resolve to. A
+            multi-selection's target is a CHOICE with a blast radius, so it
+            gets the interactive chip + gate instead, and the same row would
+            just be a second, weaker statement of the same fact. */}
+        {model.isMultiSelect ? (
+          <MultiSelectTargetBar model={model} />
+        ) : (
+          nodeId != null && (
+            <WriteTargetRow
+              classChips={writeTargetChips}
+              inlineReachable={canToggleElement}
+              inlineLockReason={inlineLockReason}
+              defaultTargetKey={defaultTargetKey}
+            />
+          )
         )}
 
         {/* Module section — P2 rule 2 ("everything is at rest"): a fixed
             block, not an accordion. `hasModuleContent` still hides it
             entirely when there is genuinely nothing to show (global
-            selector mode). */}
-        {hasModuleContent && (
+            selector mode), and for a multi-selection, whose module props
+            belong to one call site each (`commitApi.ts`). */}
+        {hasModuleContent && !model.isMultiSelect && (
           <div data-style-section="module">
             <div className={styles.moduleHeader}>
               {ModuleIcon && <ModuleIcon size={14} aria-hidden="true" />}
