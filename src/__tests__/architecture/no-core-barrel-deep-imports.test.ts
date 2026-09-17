@@ -28,7 +28,8 @@
 
 import { describe, it, expect } from 'bun:test'
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname } from 'path'
+import { join, extname, relative } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const ROOT = join(import.meta.dir, '../../..')
 
@@ -88,8 +89,44 @@ function collectFiles(dir: string): string[] {
 }
 
 const DEEP_IMPORT = new RegExp(
-  `(?:from|import\\()\\s*['"]@core/(?:${BARRELLED_MODULES.join('|')})/[^'"]+['"]`,
+  `(?:from|import\\()\\s*['"](@core/(?:${BARRELLED_MODULES.join('|')})/[^'"]+)['"]`,
 )
+
+/**
+ * ALLOWLIST — deep imports that are correct, each with the reason it is.
+ *
+ * Both entries reach `@core/studio-runtime/generated/*`, which is not module
+ * surface: those two files are ~2 MB committed STRING constants produced by
+ * `scripts/sync-studio-runtime.ts` and written verbatim into a scaffolded
+ * workspace by the prototype-shell generator. The barrel deliberately does
+ * NOT re-export them — its own header states the rule for `vitePlugin.ts`,
+ * and `babel-not-in-admin-bundle.test.ts` plus `bundle-size-budgets.test.ts`
+ * are the gates that would fail if it did, because every admin file that
+ * imports `@core/studio-runtime` for a rule module would then carry those
+ * 2 MB in its import graph.
+ *
+ * The risk this gate exists to stop — a second, drifted copy of a shared
+ * implementation reached past the barrel — cannot apply to a generated string
+ * constant with exactly one producer. Scoped to the exact file AND the exact
+ * specifier, so a deep import of any other `studio-runtime` file, or of
+ * `generated/*` from anywhere else, still fails.
+ */
+const ALLOWLIST: { file: string; specifier: string; reason: string }[] = [
+  {
+    file: 'server/handlers/studio/prototypeShell/runtimeBridgeShellFile.ts',
+    specifier: '@core/studio-runtime/generated/runtimeBridgeBundle',
+    reason: 'generated 2 MB string artefact; the barrel must not pull it into the admin graph',
+  },
+  {
+    file: 'server/handlers/studio/prototypeShell/studioRuntimeShellFile.ts',
+    specifier: '@core/studio-runtime/generated/vitePluginBundle',
+    reason: 'generated 2 MB string artefact; the barrel must not pull it into the admin graph',
+  },
+]
+
+function isAllowed(relPosixFile: string, specifier: string): boolean {
+  return ALLOWLIST.some((entry) => entry.file === relPosixFile && entry.specifier === specifier)
+}
 
 describe('Core barrel deep imports — external callers use the barrel, never a concrete file', () => {
   it('no external file deep-imports a barrelled @core module concrete file', () => {
@@ -99,23 +136,45 @@ describe('Core barrel deep imports — external callers use the barrel, never a 
       for (const filePath of collectFiles(root)) {
         if (OWN_MODULE_DIRS.some((dir) => filePath.startsWith(dir))) continue
 
+        // POSIX on both sides of every comparison — `path.relative` returns
+        // backslashes on win32, and the allowlist is written with `/`.
+        const relPosix = toPosixPath(relative(ROOT, filePath))
         const source = readFileSync(filePath, 'utf8')
         source.split('\n').forEach((line, i) => {
-          if (DEEP_IMPORT.test(line)) {
-            violations.push(`${filePath.replace(ROOT + '/', '')}:${i + 1}  ${line.trim()}`)
-          }
+          const match = DEEP_IMPORT.exec(line)
+          if (!match) return
+          if (isAllowed(relPosix, match[1]!)) return
+          violations.push(`${relPosix}:${i + 1}  ${line.trim()}`)
         })
       }
     }
 
     if (violations.length > 0) {
       throw new Error(
-        `Deep imports into a barrelled core module found.\n` +
-          `Import through the module barrel (e.g. '@core/publisher') instead of a concrete file.\n\n` +
-          violations.join('\n'),
+        `Deep imports into a barrelled core module found.\n\n` +
+          `FIX: import through the module barrel (e.g. '@core/publisher') instead of a\n` +
+          `concrete file. If the symbol is not exported from the barrel, export it there\n` +
+          `— that is the module's public surface, and adding to it is the point.\n\n` +
+          `If the target is genuinely NOT module surface (a generated artefact the barrel\n` +
+          `must not pull into the admin import graph), add an entry to this file's\n` +
+          `ALLOWLIST naming the importing file, the exact specifier, and the reason.\n\n` +
+          `Violations:\n${violations.join('\n')}`,
       )
     }
 
     expect(violations).toEqual([])
+  })
+
+  it('every ALLOWLIST entry still names a real file that still has that import', () => {
+    // An allowlist that outlives its violation silently widens the gate.
+    for (const entry of ALLOWLIST) {
+      const filePath = join(ROOT, ...entry.file.split('/'))
+      expect(existsSync(filePath), `ALLOWLIST names a file that no longer exists: ${entry.file}`).toBe(true)
+      const source = readFileSync(filePath, 'utf8')
+      expect(
+        source.includes(`'${entry.specifier}'`) || source.includes(`"${entry.specifier}"`),
+        `ALLOWLIST entry for ${entry.file} is stale — it no longer imports '${entry.specifier}'. Delete the entry.`,
+      ).toBe(true)
+    }
   })
 })

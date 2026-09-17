@@ -171,6 +171,46 @@ useEditorStore.subscribe(
 bindPluginRuntimeStoreApi(useEditorStore)
 
 // ---------------------------------------------------------------------------
+// Test-only: restore the store to the state it had when this module finished
+// loading.
+//
+// `bun test --parallel=4` gives each WORKER a process, not each FILE — one
+// worker runs hundreds of files back to back — and this store is a module
+// singleton. Whatever the last file left in it is what the next file starts
+// from. That is not theoretical: `boardFrameAxesOverride.test.tsx` and
+// `canvasContextSelectorBoardMode.test.tsx` both finish with a board loaded
+// and `activeBoardId` set (each resets on the way IN, neither on the way
+// out). `CanvasRoot` in the next canvas file then painted THAT board — frames
+// for a page the new file's site does not contain — so no `data-node-id`
+// element ever appeared and a dozen unrelated tests timed out in `waitFor`.
+// Every one of them passed in isolation. That cluster is what `standing-01`
+// has been calling "batch-isolation flake" for weeks.
+//
+// The snapshot is taken here, at the bottom of module evaluation, so it
+// includes the module-load-time layout hydration above and every action
+// binding — a `setState(snapshot, true)` therefore restores a genuinely
+// pristine store, actions included, not a stripped one.
+//
+// Published on `globalThis` instead of imported by `src/__tests__/setup.ts`:
+// the preload runs for all ~1,200 test files, and pulling the whole editor
+// store graph into every server/parser file would cost far more than the leak
+// it fixes. A file that never loads this module never pays for it — and never
+// needs the reset.
+// ---------------------------------------------------------------------------
+export const EDITOR_STORE_TEST_RESET_KEY = '__resetEditorStoreForTests'
+
+const PRISTINE_EDITOR_STATE = useEditorStore.getState()
+
+/** Restores the module-load state. Test-only — see the block comment above. */
+export function __resetEditorStoreForTests(): void {
+  useEditorStore.setState(PRISTINE_EDITOR_STATE, true)
+}
+
+if (process.env.NODE_ENV === 'test') {
+  ;(globalThis as Record<string, unknown>)[EDITOR_STORE_TEST_RESET_KEY] = __resetEditorStoreForTests
+}
+
+// ---------------------------------------------------------------------------
 // Convenience typed selectors — use these instead of accessing store directly
 // to keep component subscriptions granular and avoid unnecessary re-renders.
 // ---------------------------------------------------------------------------

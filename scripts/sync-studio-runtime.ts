@@ -50,8 +50,9 @@
  * substitutes, `env: 'disable'` stops anything ELSE from reading the calling
  * process's environment into the artifact.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { readCommittedArtefact } from './lib/generatedArtefact'
 
 const ROOT = resolve(import.meta.dir, '..')
 const GENERATED_DIR = join(ROOT, 'src/core/studio-runtime/generated')
@@ -169,8 +170,7 @@ async function main(): Promise<number> {
     let stale = false
     for (const built of artifacts) {
       const path = join(GENERATED_DIR, built.outFile)
-      const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
-      if (current !== built.content) {
+      if (readCommittedArtefact(path) !== built.content) {
         console.error(
           `[studio-runtime:check] generated/${built.outFile} is stale — run \`bun run studio-runtime:sync\` to regenerate.\n`,
         )

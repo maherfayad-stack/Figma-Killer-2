@@ -14,7 +14,7 @@
  * project directory, so this exercises the actual dpr math, diff engine and
  * mtime-based invalidation, not a re-description of them.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -29,7 +29,25 @@ import { clearCompareVerdictCache } from './compareVerdictCache'
 let bridgeCalls: Array<{ toolName: string; input: unknown }> = []
 let bridgeImpl: ((toolName: string, input: unknown) => Promise<AiToolOutput>) | null = null
 
+// Snapshotted as plain objects BEFORE mocking (a live namespace object is
+// itself rewritten by `mock.module`), and handed back in `afterAll` below.
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file.
+// Publishing every export keeps LINKING working for later files but still
+// hands them this file's stubs; only the restore gives them the real
+// functions back. Gated by `mock-module-must-restore.test.ts`.
+const realEditorBridge = { ...(await import('../../editorBridge')) }
+const realLiveReloadPush = { ...(await import('./liveReloadPush')) }
+const realHeadlessCapture = { ...(await import('../../capture/headlessCapture')) }
+
+afterAll(() => {
+  mock.module('../../editorBridge', () => realEditorBridge)
+  mock.module('./liveReloadPush', () => realLiveReloadPush)
+  mock.module('../../capture/headlessCapture', () => realHeadlessCapture)
+})
+
 mock.module('../../editorBridge', () => ({
+  ...realEditorBridge,
   // `mock.module` REPLACES the module, so every export anything in the import
   // graph reaches for has to be here — `captureFrames` derives a bridge scope
   // from the project dir, and without this the whole file fails at import.
@@ -51,6 +69,7 @@ mock.module('../../editorBridge', () => ({
 // `frameAxesTools.test.ts` imports the real `pushStudioLiveReload` through the
 // tool under test. Both exports, always.
 mock.module('./liveReloadPush', () => ({
+  ...realLiveReloadPush,
   awaitStudioLiveReload: async () => {},
   pushStudioLiveReload: () => {},
   STUDIO_LIVE_RELOAD_TOOL_NAME: 'studio_live_reload',
@@ -65,6 +84,7 @@ mock.module('./liveReloadPush', () => ({
  * `server/ai/mcp/capture/`.
  */
 mock.module('../../capture/headlessCapture', () => ({
+  ...realHeadlessCapture,
   captureFramesHeadless: async () => ({
     ok: false,
     code: 'headless-browser-unavailable',

@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   setMcpServerSecret,
   getMcpServerSecret,
@@ -88,9 +88,15 @@ describe('mcpServerSecretStore', () => {
     await expect(setMcpServerSecret('u', 'my.project', 's', 'f', 'v', dataRoot)).resolves.toBeUndefined()
   })
 
-  it('resolveMcpServerSecretsRoot honours MCP_SERVER_SECRETS_DATA_DIR', () => {
-    const root = resolveMcpServerSecretsRoot({ MCP_SERVER_SECRETS_DATA_DIR: '/tmp/custom-root' })
-    expect(root).toBe('/tmp/custom-root')
+  it('resolveMcpServerSecretsRoot honours MCP_SERVER_SECRETS_DATA_DIR, resolved to an absolute path', () => {
+    // Compared against `resolve(...)`, not the raw literal: the resolver runs
+    // the env value through `node:path.resolve`, and on win32 a rooted POSIX
+    // path resolves onto the current drive (`/tmp/custom-root` ->
+    // `C:\tmp\custom-root`). Pinning the literal asserted the OS's path
+    // syntax rather than the contract — "the env var wins, absolutised".
+    const override = '/tmp/custom-root'
+    const root = resolveMcpServerSecretsRoot({ MCP_SERVER_SECRETS_DATA_DIR: override })
+    expect(root).toBe(resolve(override))
   })
 
   it('resolveMcpServerSecretsRoot defaults under .data/, matching the git-ignored data root convention', () => {

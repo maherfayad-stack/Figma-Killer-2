@@ -60,6 +60,11 @@ const REFERENCING_EXTENSIONS = ['.tsx', '.jsx', '.ts', '.js', '.mjs', '.cjs', ..
  * `conflict` is: "there is no page with that id" is an ordinary answer the
  * route maps to 404, not an exception.
  */
+/** A project-relative path with `/` separators, whatever the OS used. */
+function toProjectRelative(dir: string, file: string): string {
+  return relative(dir, file).split(sep).join('/')
+}
+
 export type DeletePageResult =
   | { ok: true; pageId: string; removedFiles: string[]; removedFrames: number }
   | { ok: false; notFound: string }
@@ -175,13 +180,17 @@ export function deleteStudioPage(dir: string, pageId: string): DeletePageResult 
   // Read the page's stylesheet imports BEFORE deleting it — afterwards there
   // is nothing left to read them from.
   const stylesheets = importedStylesheets(dir, file)
-  const removedFiles = [relative(dir, file)]
+  // POSIX, like every other project-relative path this codebase reports
+  // (a node id's `rel`, `boards.json`, `resolvePageSourceFile`). `relative`
+  // returns the OS separator, so on win32 this answered `pages\Home.tsx` into
+  // a value the client compares against POSIX paths it already holds.
+  const removedFiles = [toProjectRelative(dir, file)]
   rmSync(file)
 
   for (const stylesheet of stylesheets) {
     if (stillReferenced(dir, stylesheet)) continue
     rmSync(stylesheet)
-    removedFiles.push(relative(dir, stylesheet))
+    removedFiles.push(toProjectRelative(dir, stylesheet))
   }
 
   const framework = readStudioMeta(dir).profile?.framework

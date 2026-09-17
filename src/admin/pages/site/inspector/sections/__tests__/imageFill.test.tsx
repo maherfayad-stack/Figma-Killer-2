@@ -15,20 +15,33 @@
  * so its `mock.module` of `studio/projectAssets` stays scoped to exactly the
  * tests that need it.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 
 const ASSETS = ['public/hero.png', 'src/assets/EN-2.png']
 
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file, so
+// "scoped to exactly the tests that need it" only holds with the `afterAll`
+// restore below. Snapshot the real namespace as a plain object BEFORE mocking
+// (the namespace object itself is live and gets rewritten). Gated by
+// `mock-module-must-restore.test.ts`.
+const realProjectAssets = { ...(await import('../../../studio/projectAssets')) }
+
 mock.module('../../../studio/projectAssets', () => ({
+  ...realProjectAssets,
   fetchProjectImageAssets: () => Promise.resolve(ASSETS),
   invalidateProjectImageAssets: () => {},
   studioAssetPreviewUrl: (relPath: string) => `/admin/api/studio/asset?path=${relPath}`,
   useProjectImageAssets: () => ASSETS,
   imageFillPreviewSrc: (cssUrl: string) => `/admin/api/studio/asset?url=${cssUrl}`,
 }))
+
+afterAll(() => {
+  mock.module('../../../studio/projectAssets', () => realProjectAssets)
+})
 
 const { FillSection } = await import('../FillSection')
 const { makeSite, makePage, makeNode } = await import('../../../../../../__tests__/fixtures')

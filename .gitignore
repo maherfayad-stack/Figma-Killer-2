@@ -191,3 +191,17 @@ studio-workspace/*/CLAUDE.md
 
 # Playwright/E2E run output — generated, not source
 test-results/
+
+# The Vite prototype shell `ensurePrototypeShell` scaffolds into a project.
+# Generated output, rewritten on demand — and, inside `__canonical-fixture/`,
+# a real hazard: that directory is BOTH a Studio project and the parser
+# suite's committed reference corpus, and the `prototypeShellBoards`-family
+# tests scaffold onto the checked-in copy rather than a tmp copy (the
+# `live-01` landmine in STATE.md). Without these rules one full `bun test`
+# leaves ~15 generated files inside the fixture and the next `git add` sweeps
+# them into the corpus — which is exactly what happened while this rule was
+# being written. Scoped to the fixture: a USER's project owns its own shell.
+studio-workspace/__canonical-fixture/prototype/
+studio-workspace/__canonical-fixture/index.html
+studio-workspace/__canonical-fixture/vite.config.js
+studio-workspace/__canonical-fixture/.studio/shell.json

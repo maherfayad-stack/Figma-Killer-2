@@ -31,7 +31,7 @@
  * can keep responses indefinitely.
  */
 import { existsSync } from 'node:fs'
-import { resolve as resolvePath } from 'node:path'
+import { isAbsolute, relative, resolve as resolvePath, sep } from 'node:path'
 import { nodeModulesDirForHash, sentinelPathForHash } from './dependencyCache'
 
 const RUNTIME_PACKAGE_PREFIX = '/_studio/runtime/cache/'
@@ -77,7 +77,16 @@ function resolveCacheFilePath(pathname: string): { hash: string; absPath: string
 
   // Final containment check — the resolved path must live inside
   // node_modules/. Any escape attempt returns null.
-  if (!absPath.startsWith(`${nodeModulesDir}/`)) return null
+  //
+  // Expressed with `path.relative`, not `startsWith(`${dir}/`)`: that literal
+  // `/` can never match a win32 path (`C:\…\node_modules\three\…` against
+  // `C:\…\node_modules/`), so on Windows this check rejected EVERY legitimate
+  // request and the runtime package route served nothing but 404s. `relative`
+  // is separator-agnostic and still refuses an escape: a path outside the root
+  // yields a `..` segment, and a path on another win32 drive yields an
+  // absolute result.
+  const rel = relative(nodeModulesDir, absPath)
+  if (rel.length === 0 || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null
 
   return { hash, absPath }
 }

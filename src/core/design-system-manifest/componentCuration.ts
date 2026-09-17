@@ -60,7 +60,10 @@ function stripMarkdown(text: string): string {
  */
 function firstProseParagraph(section: string | null): string | null {
   if (!section) return null
-  const lines = section.split('\n').slice(1)
+  // `/\r?\n/`, never a bare `'\n'`: a CRLF document leaves a trailing `\r` on
+  // every line and `.` does not match `\r` in a JS regex. See `vendorDocs.ts`'s
+  // `headingsOf` for the full failure that caused.
+  const lines = section.split(/\r?\n/).slice(1)
   const buffer: string[] = []
   let inFence = false
   for (const raw of lines) {
@@ -146,7 +149,8 @@ export function intentKeywordsByComponent(
 ): Map<string, string[]> {
   const known = new Set(componentNames)
   const byComponent = new Map<string, string[]>()
-  for (const line of docs.decisionMap().split('\n')) {
+  // `/\r?\n/` for the same reason as `firstProseParagraph` above.
+  for (const line of docs.decisionMap().split(/\r?\n/)) {
     if (!line.trim().startsWith('|')) continue
     const cells = line.split('|').slice(1, -1).map((cell) => cell.trim())
     if (cells.length < 2) continue

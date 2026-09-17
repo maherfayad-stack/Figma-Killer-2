@@ -32,10 +32,11 @@
  * `Bun.build` does.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { build } from 'vite'
+import { readCommittedArtefact } from './lib/generatedArtefact'
 import {
   buildDesignSystemManifest,
   extractColorTokens,
@@ -64,18 +65,38 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /**
+ * A source file's content with its checkout line endings normalised away.
+ *
+ * `core.autocrlf=true` is the Git-for-Windows default, so a Windows checkout
+ * holds every text file under `src/` with CRLF while CI holds it with LF.
+ * Hashing the raw bytes therefore produced a DIFFERENT `BUILD_HASH` per
+ * platform and `alm-design-system-fresh.test.ts` was red on every Windows
+ * clone for a reason that has nothing to do with whether `dist/` is stale.
+ *
+ * Binary inputs (the four `.png`s under `src/`) are detected the way git
+ * detects them — a NUL byte anywhere in the content — and hashed unchanged,
+ * so no image is ever misread as text.
+ */
+function canonicalContent(file: string): Buffer {
+  const raw = readFileSync(file)
+  if (raw.includes(0)) return raw
+  return Buffer.from(raw.toString('utf8').replace(/\r\n/g, '\n'), 'utf8')
+}
+
+/**
  * SHA-256 over every file under `vendor/alm-design-system/src/`, keyed by
- * relative path so a rename counts as a change. This is what `dist/` is built
- * from, and nothing else — `studio/*.json` and the markdown docs feed the
- * manifest and the tokens JSON, which the gate regenerates byte-for-byte
- * instead.
+ * relative path so a rename counts as a change, and over EOL-normalised
+ * content so the same source hashes the same on every platform. This is what
+ * `dist/` is built from, and nothing else — `studio/*.json` and the markdown
+ * docs feed the manifest and the tokens JSON, which the gate regenerates
+ * byte-for-byte instead.
  */
 export function computeLibInputHash(): string {
   const hash = createHash('sha256')
   for (const file of walk(VENDOR_SRC_DIR)) {
     hash.update(relative(VENDOR_DESIGN_SYSTEM_DIR, file).replace(/\\/g, '/'))
     hash.update('\0')
-    hash.update(readFileSync(file))
+    hash.update(canonicalContent(file))
     hash.update('\0')
   }
   return hash.digest('hex')
@@ -158,7 +179,7 @@ async function run(check: boolean): Promise<void> {
 
   if (check) {
     const expectedHash = computeLibInputHash()
-    const actualHash = existsSync(BUILD_HASH_FILE) ? readFileSync(BUILD_HASH_FILE, 'utf8').trim() : ''
+    const actualHash = readCommittedArtefact(BUILD_HASH_FILE).trim()
     if (expectedHash !== actualHash) drift.push({ path: 'dist/', reason: 'source changed since the last build' })
   } else {
     await buildLibArtifacts()
@@ -173,8 +194,7 @@ async function run(check: boolean): Promise<void> {
       writeFileSync(path, content)
       continue
     }
-    const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
-    if (current !== content) drift.push({ path: relative(ROOT, path), reason: 'stale' })
+    if (readCommittedArtefact(path) !== content) drift.push({ path: relative(ROOT, path), reason: 'stale' })
   }
 
   if (check && drift.length > 0) {

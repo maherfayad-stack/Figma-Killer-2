@@ -13,8 +13,9 @@
  * the vendored icon set. Run `bun run bootstrap:sync` to refresh.
  */
 import { describe, it, expect } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { readCommittedArtefact } from '../../../scripts/lib/generatedArtefact'
 import { buildBootstrapArtifacts } from '../../../scripts/sync-plugin-bootstrap'
 
 const GENERATED_DIR = resolve(
@@ -30,7 +31,8 @@ describe('generated plugin bootstrap artifacts', () => {
     for (const { outFile, content } of built) {
       const path = join(GENERATED_DIR, outFile)
       expect(existsSync(path), `missing generated/${outFile}`).toBe(true)
-      const current = readFileSync(path, 'utf8')
+      // EOL-normalised, not weakened: see `readCommittedArtefact`'s own note.
+      const current = readCommittedArtefact(path)
       expect(
         current === content,
         `generated/${outFile} is stale — run \`bun run bootstrap:sync\``,

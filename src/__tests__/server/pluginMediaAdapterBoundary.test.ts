@@ -1,10 +1,24 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test'
 
 let workerValue: unknown
 
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file. The
+// replacement below publishes exactly one of `workerPool`'s exports; every
+// later file in the worker that imports any other one would get `undefined`.
+// Snapshot the real namespace as a plain object BEFORE mocking (the namespace
+// object itself is live and gets rewritten). Gated by
+// `mock-module-must-restore.test.ts`.
+const realWorkerPool = { ...(await import('../../../server/plugins/host/workerPool')) }
+
 mock.module('../../../server/plugins/host/workerPool', () => ({
+  ...realWorkerPool,
   requestFromWorker: mock(async () => ({ ok: true, value: workerValue })),
 }))
+
+afterAll(() => {
+  mock.module('../../../server/plugins/host/workerPool', () => realWorkerPool)
+})
 
 const { buildAdapterShim } = await import('../../../server/plugins/host/media')
 

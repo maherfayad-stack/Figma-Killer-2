@@ -485,7 +485,37 @@ if (typeof (globalThis as { EventSource?: unknown }).EventSource === 'undefined'
     cleanup()
     __resetToastBusForTests()
     document.getElementById('toast-root')?.remove()
+    resetEditorStoreIfLoaded()
   })
+}
+
+// ---------------------------------------------------------------------------
+// Return the editor store to its module-load state after every test.
+//
+// `useEditorStore` is a module singleton and `bun test --parallel=4` gives
+// each WORKER a process, not each file — so a file that seeds the store and
+// does not clear it hands that state to every file that runs after it in the
+// same worker. The observed shape: two canvas files load a board and set
+// `activeBoardId` (both reset in `beforeEach`, neither in `afterEach`), and
+// the next file's `CanvasRoot` then paints THAT board — frames for a page its
+// own site does not contain — so no `data-node-id` element appears and a
+// dozen unrelated tests time out in `waitFor`. Each of them passes alone.
+// That is the cluster `standing-01` has been calling "batch-isolation flake".
+//
+// Reset per TEST, not per file: bun runs preload hooks at the process root
+// scope, so an `afterAll` here would fire once at the very end of the worker —
+// far too late. Per-test is also the stricter contract, and it matches the
+// `cleanup()` above: a test owns the state it sets up.
+//
+// `store.ts` publishes the reset on `globalThis` under
+// `EDITOR_STORE_TEST_RESET_KEY` when `NODE_ENV === 'test'`, so this preload
+// never has to import it. That matters: the preload runs for all ~1,200 test
+// files, and importing the whole editor-store graph into every server/parser
+// file would cost far more than the leak it fixes. A file that never loads
+// the store never pays for this, and never needs it.
+function resetEditorStoreIfLoaded(): void {
+  const reset = (globalThis as Record<string, unknown>)['__resetEditorStoreForTests']
+  if (typeof reset === 'function') (reset as () => void)()
 }
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { applyProjectSeed, resolveProjectSeedDir } from './projectSeed'
 import { readStudioMeta } from './studioMeta'
 import { isDesignSystemBacked } from './builtinDesignSystem'
@@ -179,7 +179,14 @@ describe('resolveProjectSeedDir', () => {
     expect(resolveProjectSeedDir({})).toBe(join(process.cwd(), '.data', 'studio-seed'))
   })
 
-  it('honours an explicit override', () => {
-    expect(resolveProjectSeedDir({ STUDIO_PROJECT_SEED_DIR: '/tmp/custom-seed' })).toBe('/tmp/custom-seed')
+  it('honours an explicit override, resolved to an absolute path', () => {
+    // Compared against `resolve(...)`, not the literal the env var carries:
+    // `resolveProjectSeedDir` deliberately runs the override through
+    // `node:path.resolve`, and on win32 a rooted POSIX path resolves onto the
+    // current drive (`/tmp/custom-seed` -> `C:\tmp\custom-seed`). Pinning the
+    // raw literal asserted the OS's path syntax, not the contract — which is
+    // "the override wins, absolutised" — and was red on every Windows run.
+    const override = '/tmp/custom-seed'
+    expect(resolveProjectSeedDir({ STUDIO_PROJECT_SEED_DIR: override })).toBe(resolve(override))
   })
 })

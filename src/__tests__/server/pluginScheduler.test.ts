@@ -19,7 +19,7 @@
  * exercised via the existing `cmsPlugins` integration suite. Here we
  * stub `runScheduleInWorker` so the focus stays on the engine logic.
  */
-import { describe, expect, it, mock } from 'bun:test'
+import { afterAll, describe, expect, it, mock } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +44,23 @@ import {
   selectDueSchedules,
 } from '../../../server/repositories/pluginSchedules'
 import type { DbClient } from '../../../server/db/client'
+
+// ---------------------------------------------------------------------------
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file. The
+// two module mocks of `host/rpc` inside the tests below override a SINGLE
+// export, so without this restore every later file in the worker that
+// imports anything else from `host/rpc` gets `undefined` — or, if it imports a
+// missing name, a link-time `SyntaxError` that takes the whole file down.
+// Snapshot the real namespace as a plain object up front (the namespace object
+// itself is live and gets rewritten). Gated by
+// `mock-module-must-restore.test.ts`.
+// ---------------------------------------------------------------------------
+const realPluginHostRpc = { ...(await import('../../../server/plugins/host/rpc')) }
+
+afterAll(() => {
+  mock.module('../../../server/plugins/host/rpc', () => realPluginHostRpc)
+})
 
 // ---------------------------------------------------------------------------
 // Cadence math — pure function, no DB needed
@@ -173,6 +190,7 @@ describe('plugin scheduler — DB', () => {
       // concurrent run-now calls — only ONE should win the claim.
       const dispatch = mock(async () => ({ status: 'ok' as const, durationMs: 1 }))
       mock.module('../../../server/plugins/host/rpc', () => ({
+        ...realPluginHostRpc,
         runScheduleInWorker: dispatch,
       }))
       const [first, second] = await Promise.all([
@@ -207,6 +225,7 @@ describe('plugin scheduler — DB', () => {
       `
       const dispatch = mock(async () => ({ status: 'ok' as const, durationMs: 1 }))
       mock.module('../../../server/plugins/host/rpc', () => ({
+        ...realPluginHostRpc,
         runScheduleInWorker: dispatch,
       }))
       await tickPluginScheduler(db)

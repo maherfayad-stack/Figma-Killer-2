@@ -16,8 +16,9 @@
  * gates the QuickJS bootstrap. Run `bun run studio-runtime:sync` to refresh.
  */
 import { describe, it, expect } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { readCommittedArtefact } from '../../../scripts/lib/generatedArtefact'
 import { buildStudioRuntimeArtifact } from '../../../scripts/sync-studio-runtime'
 
 const GENERATED_DIR = resolve(import.meta.dir, '../../core/studio-runtime/generated')
@@ -29,7 +30,8 @@ describe('generated studio-runtime bundles', () => {
     for (const artifact of built) {
       const path = join(GENERATED_DIR, artifact.outFile)
       expect(existsSync(path), `missing generated/${artifact.outFile}`).toBe(true)
-      const current = readFileSync(path, 'utf8')
+      // EOL-normalised, not weakened: see `readCommittedArtefact`'s own note.
+      const current = readCommittedArtefact(path)
       expect(
         current === artifact.content,
         `generated/${artifact.outFile} is stale — run \`bun run studio-runtime:sync\``,

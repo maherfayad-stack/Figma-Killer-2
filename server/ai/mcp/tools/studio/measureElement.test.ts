@@ -15,7 +15,7 @@
  * The reload-call assertion below pins that ZERO, which is the property that
  * would silently regress if someone re-added a bridge round trip here.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -59,7 +59,24 @@ let inspectCalls: AgentFrameInspectRequest[] = []
 let reloadCalls: Array<Record<string, unknown>> = []
 let headlessDown = false
 
+// Snapshotted as plain objects BEFORE mocking (a live namespace object is
+// itself rewritten by `mock.module`), and handed back in `afterAll` below.
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file.
+// Publishing every export (as the `liveReloadPush` note below says) keeps
+// LINKING working for later files but still hands them this file's stubs;
+// only the restore gives them the real functions back. Gated by
+// `mock-module-must-restore.test.ts`.
+const realHeadlessFrameInspect = { ...(await import('../../capture/headlessFrameInspect')) }
+const realLiveReloadPush = { ...(await import('./liveReloadPush')) }
+
+afterAll(() => {
+  mock.module('../../capture/headlessFrameInspect', () => realHeadlessFrameInspect)
+  mock.module('./liveReloadPush', () => realLiveReloadPush)
+})
+
 mock.module('../../capture/headlessFrameInspect', () => ({
+  ...realHeadlessFrameInspect,
   inspectFrameHeadless: async (input: { request: AgentFrameInspectRequest }) => {
     inspectCalls.push(input.request)
     if (headlessDown) {
@@ -74,6 +91,7 @@ mock.module('../../capture/headlessFrameInspect', () => ({
 // `frameAxesTools.test.ts` imports the real `pushStudioLiveReload` through the
 // tool under test. Both exports, always.
 mock.module('./liveReloadPush', () => ({
+  ...realLiveReloadPush,
   awaitStudioLiveReload: async (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
   pushStudioLiveReload: (_userId: string, push: Record<string, unknown>) => { reloadCalls.push(push) },
   STUDIO_LIVE_RELOAD_TOOL_NAME: 'studio_live_reload',

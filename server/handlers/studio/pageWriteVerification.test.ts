@@ -73,7 +73,10 @@ describe('computePageWriteVerification', () => {
     if (!registered.ok) throw new Error(registered.error)
 
     const t0 = Date.now()
-    recordPassingCompare(dir, USER, page.id, registered.reference.id, t0)
+    // `fidelityMode` is the 5th parameter (W9-2) and `atMs` the 6th. This call
+    // site was never updated when the mode was added, so `t0` was landing in
+    // `fidelityMode` and the timestamp defaulted to `Date.now()`.
+    recordPassingCompare(dir, USER, page.id, registered.reference.id, 'strict', t0)
     appendTurnWrite(dir, USER, path.join(dir, rel), t0 + 1000)
 
     const [entry] = computePageWriteVerification(dir, USER, [page])
@@ -88,7 +91,7 @@ describe('computePageWriteVerification', () => {
 
     const t0 = Date.now()
     appendTurnWrite(dir, USER, path.join(dir, rel), t0)
-    recordPassingCompare(dir, USER, page.id, registered.reference.id, t0 + 1000)
+    recordPassingCompare(dir, USER, page.id, registered.reference.id, 'strict', t0 + 1000)
 
     const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(true)
@@ -105,9 +108,10 @@ describe('computePageWriteVerification', () => {
       const registered = await registerDesignReference(dir, ONE_PIXEL_PNG, { pageId: page.id, label, role: 'spec' })
       if (!registered.ok) throw new Error(registered.error)
     }
-    appendTurnWrite(dir, path.join(dir, rel))
+    // `userKey` is the 2nd parameter; these two call sites predate it.
+    appendTurnWrite(dir, USER, path.join(dir, rel))
 
-    const [entry] = computePageWriteVerification(dir, [page])
+    const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(false)
     expect(entry!.referenceAmbiguity).toBeDefined()
     expect(entry!.referenceAmbiguity).toContain('referenceId')
@@ -127,9 +131,10 @@ describe('computePageWriteVerification', () => {
       source: CHAT_ATTACHMENT_REFERENCE_SOURCE,
     })
     if (!pasted.ok) throw new Error(pasted.error)
-    appendTurnWrite(dir, path.join(dir, rel))
+    // `userKey` is the 2nd parameter; these two call sites predate it.
+    appendTurnWrite(dir, USER, path.join(dir, rel))
 
-    const [entry] = computePageWriteVerification(dir, [page])
+    const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(true)
     expect(entry!.referenceId).toBe(spec.reference.id)
     expect(entry!.referenceAmbiguity).toBeUndefined()
