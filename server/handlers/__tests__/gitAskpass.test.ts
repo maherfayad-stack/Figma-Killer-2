@@ -18,7 +18,8 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { tmpdir } from 'node:os'
+import { dirname, resolve, sep } from 'node:path'
 import { GIT_TOKEN_USERNAME, isEmbeddableGitToken, writeAskpassScript } from '../studio/gitAskpass'
 
 const REAL_TOKEN = 'ghp_0123456789abcdefABCDEF0123456789abcd'
@@ -79,6 +80,22 @@ describe('writeAskpassScript', () => {
       // local account for the duration of the push.
       expect(statSync(script.path).mode & 0o777).toBe(0o700)
       expect(statSync(dirname(script.path)).mode & 0o077).toBe(0)
+    } finally {
+      script.dispose()
+    }
+  })
+
+  /**
+   * The case above is skipped on Windows because Node maps `mode` onto the
+   * read-only attribute there and nothing else — the script reports `666`
+   * however it was asked for. So on that platform the ONLY thing keeping the
+   * token out of another local account's reach is where the file lives, and
+   * that is worth asserting rather than assuming.
+   */
+  it('writes into the per-user temp directory — on Windows that is the whole protection', () => {
+    const script = writeAskpassScript(REAL_TOKEN)
+    try {
+      expect(resolve(script.path).startsWith(resolve(tmpdir()) + sep)).toBe(true)
     } finally {
       script.dispose()
     }

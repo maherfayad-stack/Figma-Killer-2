@@ -29,10 +29,23 @@
  *
  * Three details are load-bearing:
  *
- *   - **The file is created 0600 (directory 0700), before anything is written
- *     into it.** `mkdtempSync` already creates a directory only this user can
- *     enter; the `mode` on `writeFileSync` closes the window where another
- *     local account could read the file between creation and chmod.
+ *   - **On POSIX the file is created 0600 (directory 0700), before anything is
+ *     written into it.** `mkdtempSync` already creates a directory only this
+ *     user can enter; the `mode` on `writeFileSync` closes the window where
+ *     another local account could read the file between creation and chmod.
+ *
+ *     **On Windows none of that applies, and pretending otherwise would be a
+ *     lie in a security comment.** Node maps `mode` onto the read-only
+ *     attribute and nothing else — `statSync` on the script this function
+ *     writes reports `666`, for both the file and the directory, however it
+ *     was asked for. What keeps the token private there is the LOCATION:
+ *     `os.tmpdir()` is `%TEMP%`, normally `C:\Users\<user>\AppData\Local\Temp`,
+ *     whose ACL already admits only that account and administrators. That is
+ *     an assumption about the host, not something this code enforces, and an
+ *     operator who points `TMP`/`TEMP` at a shared directory (`C:\Temp`, a
+ *     service account's configured temp) makes the script world-readable for
+ *     the life of one git invocation. The exposure is bounded by `dispose()`,
+ *     not by a mode bit.
  *   - **The token is embedded inside single quotes, and a token that could
  *     escape them is REFUSED** (`isEmbeddableGitToken`). GitHub's token
  *     formats are `[A-Za-z0-9_]` and this rejects everything else, so the
@@ -96,7 +109,10 @@ export function writeAskpassScript(token: string): AskpassScript {
     throw new Error('The stored GitHub token is not in a format Studio can use. Sign in again.')
   }
 
-  // 0700 by mkdtemp's own semantics — no other local account can even list it.
+  // 0700 by mkdtemp's own semantics on POSIX — no other local account can even
+  // list it. On Windows the mode is not applied at all and privacy comes from
+  // `%TEMP%`'s ACL instead; see the module doc, which says so rather than
+  // letting these three calls imply a guarantee they do not make there.
   const dir = mkdtempSync(join(tmpdir(), 'studio-askpass-'))
   const path = join(dir, 'askpass.sh')
 
