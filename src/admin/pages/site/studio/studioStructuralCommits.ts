@@ -54,6 +54,72 @@ export async function commitStudioMove(
 }
 
 /**
+ * `store-11` — true from the moment a structural commit starts posting until
+ * its resync (or refusal) has fully resolved.
+ *
+ * `insert`/`duplicate`/`wrap` (`studioSourceWrites.ts`) are the three
+ * structural gestures with NOTHING optimistic to show: the new/copied/wrapped
+ * element does not exist in the client's tree at all until the commit's
+ * resync brings it in as a freshly-parsed node (see `writeDuplicateToSource`'s
+ * own doc — "nothing is minted on the canvas first"). Nothing on the client
+ * marks that a write is already pending for the SAME source position, so a
+ * second identical gesture fired before the first one's resync lands plans
+ * against the still-unshifted original and posts a SECOND real write — not a
+ * race on "who wins", both land.
+ *
+ * Concretely reproduced: two `duplicate` requests for the same node, fired
+ * before either's resync lands (a rapid double-click on the canvas toolbar's
+ * Duplicate button is enough — `Button`'s own `loading` prop exists for
+ * exactly "a second click must not land" but this button never wires it up),
+ * both succeed independently against the still-unshifted original and each
+ * pushes its own "Written to your project source" toast — two honest-looking
+ * successes that together look like one gesture duplicated itself.
+ *
+ * `guardAgainstConcurrentStructuralCommit` is what `writeInsertToSource` /
+ * `writeDuplicateToSource` / `writeWrapToSource` check BEFORE planning
+ * anything, so the second gesture never touches the network at all.
+ *
+ * **Deliberately NOT applied to `deleteNode(s)` / `moveNodes`.** Those two
+ * mutate the LOCAL tree immediately and optimistically (`struct-01`), which
+ * already makes a rapid double-fire of the SAME gesture a no-op the second
+ * time — the node is already gone from (or already moved in) the tree the
+ * second call reads, so there is nothing left to delete/move again. More
+ * importantly, `moveNodes` is also how UNDO of a move re-issues itself
+ * (`reissueStructuralMove`, `structuralHistory.ts`) — a user pressing ⌘Z the
+ * instant after a drag, well before that drag's own commit has resolved, is
+ * completely ordinary and MUST work; gating `moveNodes` on this flag would
+ * silently swallow that undo. `deleteNode(s)`'s undo already refuses outright
+ * (`refuseStructuralUndo`), so it never re-enters this way, but is left
+ * unguarded for the same "already idempotent" reason as the rest of its
+ * family — one guard mechanism for the family, not two different rules for
+ * two of its five members.
+ */
+let structuralCommitInFlight = false
+
+export function isStructuralCommitInFlight(): boolean {
+  return structuralCommitInFlight
+}
+
+/**
+ * Refuses (with a toast) when a structural commit is already in flight.
+ * Returns true when the caller must stop before planning anything. A no-op —
+ * never silent — because the alternative is a second insert/duplicate/wrap
+ * racing the first one's still-unconfirmed resync. See this module's own doc
+ * (above `structuralCommitInFlight`) for which gestures call this and why the
+ * other two structural actions deliberately do not.
+ */
+export function guardAgainstConcurrentStructuralCommit(): boolean {
+  if (!structuralCommitInFlight) return false
+  pushToast({
+    kind: 'warning',
+    title: 'Still writing your last change',
+    body: "Your previous edit to this project hasn't finished saving yet — try again in a moment.",
+    location: 'site-editor',
+  })
+  return true
+}
+
+/**
  * W4-1 — a move into a DIFFERENT parent, in the same file.
  *
  * A separate kind from `move` rather than an optional field on it, because the
@@ -271,6 +337,22 @@ export async function commitStudioInsert(insert: {
  * once the gate says one should happen.
  */
 async function commitStructural(
+  edits: readonly Record<string, unknown>[],
+  refusalTitle: string,
+  success?: { title: string; body: string },
+): Promise<void> {
+  // Held for the whole body, including the resync at the bottom — see
+  // `guardAgainstConcurrentStructuralCommit`'s doc for why the window has to
+  // extend past the POST itself.
+  structuralCommitInFlight = true
+  try {
+    await commitStructuralBody(edits, refusalTitle, success)
+  } finally {
+    structuralCommitInFlight = false
+  }
+}
+
+async function commitStructuralBody(
   edits: readonly Record<string, unknown>[],
   refusalTitle: string,
   success?: { title: string; body: string },

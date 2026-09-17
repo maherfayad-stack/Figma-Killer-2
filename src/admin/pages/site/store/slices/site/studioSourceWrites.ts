@@ -28,7 +28,12 @@
 import { registry } from '@core/module-engine'
 import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
 import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
-import { commitStudioDuplicate, commitStudioInsert, commitStudioWrap } from '@site/studio/studioStructuralCommits'
+import {
+  commitStudioDuplicate,
+  commitStudioInsert,
+  commitStudioWrap,
+  guardAgainstConcurrentStructuralCommit,
+} from '@site/studio/studioStructuralCommits'
 import {
   STRUCTURAL_REFUSAL_TITLE,
   planSourceDuplicate,
@@ -110,6 +115,9 @@ export function createStudioSourceWrites(
    * the optimistic mutation they can afford and this cannot.
    */
   const writeInsertToSource = (moduleId: string, defaults: Record<string, unknown> | undefined, parentId: string, index?: number): boolean => {
+    // `store-11` — refuse a second structural gesture while a prior one is
+    // still being written+resynced; see `guardAgainstConcurrentStructuralCommit`.
+    if (guardAgainstConcurrentStructuralCommit()) return true
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceInsert(tree, parentId, index)
@@ -203,6 +211,13 @@ export function createStudioSourceWrites(
    * minted here. Same shape as `writeInsertToSource`.
    */
   const writeDuplicateToSource = (nodeIds: readonly string[]): boolean => {
+    // `store-11` — this is the exact gesture the race was found on: a rapid
+    // double-click/keypress on Duplicate before the first click's resync
+    // lands used to plan a SECOND duplicate against the still-unshifted
+    // original, writing two real copies for one gesture and pushing two
+    // "Written to your project source" toasts. See
+    // `guardAgainstConcurrentStructuralCommit`'s doc for the full mechanism.
+    if (guardAgainstConcurrentStructuralCommit()) return true
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceDuplicate(tree, nodeIds)
@@ -233,6 +248,8 @@ export function createStudioSourceWrites(
    * block with no form in a user's repo, which refuses by saying exactly that.
    */
   const writeWrapToSource = (nodeIds: readonly string[], containerModuleId: string, defaults: Record<string, unknown>): boolean => {
+    // `store-11` — same re-entrancy guard as `writeDuplicateToSource`.
+    if (guardAgainstConcurrentStructuralCommit()) return true
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceWrap(tree, nodeIds)
