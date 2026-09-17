@@ -186,10 +186,28 @@ parsed first" decide whether any copy resolved.
 | **`tag` has its own edit kind + codemod** | Routing it through `setJsxProp` added a literal `tag="section"` attribute and left the element a `<div>` — 140 fake controls on one corpus |
 | **Path containment in the decoder** | `rel` arrives from the client inside `nodeId`; the save route builds `join(dir, rel)` |
 | **`loadSite` keeps the currently-open page** when the incoming site still has its id | Resetting to home mid-edit reads as the canvas moving on its own |
+| **A write keeps the file's line endings** | The user's repo may be a CRLF checkout (Git's Windows default). `EolPreservingFileSystem` (`@core/page-parser`) hands ts-morph LF-only text and re-applies the file's own ending on write; the CSS codemods do the same at their text boundary. Formatting-preserving includes `\r\n` |
 
 Codemods live in `src/core/ast-codemods/` and preserve the file's quote style
 and formatting. Edits apply **bottom-to-top** so earlier writes don't shift
 later line numbers.
+
+**Line endings are decided in exactly one place** (`parser-13`). Every
+disk-backed ts-morph `Project` Studio opens — `createProject()`
+(`ast-codemods/locateJsxElement.ts`), `createWorkspaceProject()` and
+`parsePageFile`'s default (`@core/page-parser`) — reads through
+`EolPreservingFileSystem` (`src/core/page-parser/eolFileSystem.ts`), which
+normalises to `\n` on the way in and restores the file's dominant ending on the
+way out. That is what makes a CRLF checkout parse to a **byte-identical page
+tree** — `line:col` is unaffected by `\r` either way (TypeScript counts `\r\n`
+as one terminator and the `\r` sits after every token on its line), but a
+resolved VALUE read out of a multi-line template or JSX text block would
+otherwise carry `\r` on Windows and not elsewhere. The pure-string primitives
+are `@core/utils/lineEndings` (`detectLineEnding`, `toLf`, `applyLineEnding`,
+`splitLines`); anything that reads a user file line-wise uses `splitLines`,
+never `text.split('\n')` — in a JS regex `.` does not match `\r` and a non-`m`
+`$` only matches end-of-input, which is how a CRLF markdown doc silently parses
+to zero headings.
 
 ---
 

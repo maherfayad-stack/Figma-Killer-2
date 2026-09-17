@@ -91,7 +91,12 @@ src/core/page-tree/
 └── sourceWritability.ts       — the ONE per-prop rule every edit surface asks (`codeProps`)
 
 src/core/ast-codemods/
-└── setJsxTagName.ts           — renames an HTML element; the writeback behind the `tag` property
+├── setJsxTagName.ts           — renames an HTML element; the writeback behind the `tag` property
+└── locateJsxElement.ts        — `createProject()`: the CRLF-preserving ts-morph project every codemod writes through
+
+src/core/utils/lineEndings.ts  — pure leaf: detect / normalise / restore a file's line ending, and
+                                  `splitLines` (never `text.split('\n')` — see "Line endings" below)
+src/core/page-parser/eolFileSystem.ts — the ts-morph FileSystemHost that applies it
 
 src/modules/alm/
 └── register.tsx               — design-system components as modules; revives `{ svg }` props into elements;
@@ -1362,6 +1367,108 @@ This is the same move `resolveViewportUnits` makes for `vh`: give authored CSS a
 ### Numeric style values get their unit
 
 `style={{ width: size, height: size }}` parses to real numbers. `width: 44` is not valid CSS — the browser drops the declaration, in the canvas and in published HTML alike — so a bare number has to become `44px`. `sanitiseCssValue` sees only the value and can only stringify it, so `cssValueForProperty(prop, value)` (in `@core/css-sanitize`) owns the unit rule and every style-bag emitter goes through it. The rule is React's `isUnitlessNumber` list, so the canvas, the publisher, and anyone who has written JSX all agree. Before this, every inline SVG icon rendered at its own intrinsic size: a 24px check painted 300px wide across its badge.
+
+---
+
+## Line endings — a CRLF repo parses the same and stays CRLF
+
+`parser-13`. Studio edits OTHER PEOPLE'S repositories, and a repository cloned
+on Windows with Git's default `core.autocrlf=true` has a **CRLF working tree**.
+Two separate failures follow from that, and one mechanism closes both.
+
+### The reading half
+
+In a JavaScript regex `.` does not match `\r` (it is a line terminator) and a
+non-`m` `$` matches only end-of-input. So `/^(#{1,6})\s+(.*)$/` matches **not
+one heading** in a CRLF markdown document. That is not hypothetical: it emptied
+Studio's own vendored design-system manifest, and `bun run alm:sync` then wrote
+the empty manifest over the real one (`STATE.md` `server-24`, `PROJECT-BRIEF.md`
+§6 trap 15). The same regex reads the design-system docs shipped inside a
+package in the **user's** `node_modules` (`server/handlers/studio/designSystemGuide.ts`),
+where a `.gitattributes` in Studio's own repo cannot help.
+
+**The rule: anything that reads a file line-wise uses `splitLines` from
+`@core/utils/lineEndings`, never `text.split('\n')`.**
+
+### The writing half
+
+Every codemod builds its inserted text with `'\n'` — the indent helpers in
+`jsxChildPlacement.ts`, the printed subtree in `jsxSubtree.ts`, postcss's
+`raws.before = '\n\n'`, the literal fragments in `buildRule`/`buildStep`.
+Before `parser-13`, editing one attribute in a CRLF file left a **mixed** file
+and a `git diff` showing the user lines they never touched
+(`STATE.md` `struct-10` landmine 7). Formatting-preserving has to include line
+endings or it is not formatting-preserving.
+
+### The one seam
+
+`src/core/page-parser/eolFileSystem.ts` — `EolPreservingFileSystem`, a ts-morph
+`FileSystemHost` that **normalises every read to `\n` and re-applies the file's
+own dominant ending on every write**. It is installed on every disk-backed
+`Project` Studio opens:
+
+| Factory | Where |
+|---|---|
+| `createProject()` | `src/core/ast-codemods/locateJsxElement.ts` — every single-file codemod |
+| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load AND every codemod handed that project |
+| `parsePageFile`'s default project | `src/core/page-parser/parsePageFile.ts` |
+| the probe projects | `packageManifest.ts`, `figmaCodeConnect.ts`, `prototypeCodeFlow.ts` |
+
+`manipulationSettings.newLineKind` is pinned to `LineFeed` on the two factories
+for the same reason: the printer must agree with the hand-built strings, and the
+file system stays the only place an ending is decided.
+
+The pure-text codemods cannot use a file system, so they carry the same contract
+themselves: `@core/css-codemods`' `preservingLineEndings` wraps `setDeclaration`,
+`setDeclarationAtMedia`, `removeDeclaration`, `insertRule`, `insertKeyframes`,
+`setDeclarationAtKeyframe` and `removeDeclarationAtKeyframe`, and
+`extractStringsToDictionary` / `translationWrite.ts` detect-and-restore around
+their own in-memory `Project`.
+
+### Why normalise rather than preserve through
+
+Node positions are unaffected either way — TypeScript counts `\r\n` as ONE
+terminator and the `\r` sits after every token on its line, so a node's 1-based
+`(line, col)`, and therefore its **node id**, is identical in both forms.
+Normalising changes absolute offsets, never `line:col`. What it buys is that no
+`\r` can reach a resolved VALUE: a multi-line template literal or JSX text
+block would otherwise carry `\r` into the page tree on Windows and not
+elsewhere, and two users would see different boards for the same repo. A CRLF
+project and its LF copy now produce a byte-identical `loadStudioPages` result.
+
+### What is deliberately NOT preserved
+
+- **A mixed file is rewritten to its dominant ending.** Per-line preservation
+  through an AST rewrite is not something we can promise, and a half-converted
+  file is a defect to repair. Ties go to CRLF — the only way a tie arises in
+  practice is a CRLF file a tool has partly converted.
+- **Consequently, a multi-line template literal inside a mixed file** has its
+  embedded endings normalised with everything else. In a uniform file it
+  round-trips byte-for-byte.
+- **The byte-order mark is a separate concern.** ts-morph strips it on read and
+  re-adds it on write, and `applyLineEnding` leaves a leading `\uFEFF` alone.
+  A BOM'd file still **refuses** every structural edit, because
+  `verbatimSourceText` compares the on-disk bytes (BOM included) against the
+  parsed text (BOM stripped) and a mismatch is `stale-source` — pre-existing,
+  unchanged by `parser-13`, and gated by a test so nobody "fixes" it into a
+  silent BOM-dropping write.
+
+### Tests
+
+`src/__tests__/utils/lineEndings.test.ts` (the primitives),
+`src/core/ast-codemods/__tests__/crlfSourceFiles.test.ts` (every structural
+codemod, twin LF/CRLF fixtures, plus the wrap→unwrap byte-identical round trip
+and the BOM refusal), `src/core/css-codemods/__tests__/crlfStylesheets.test.ts`,
+`src/core/page-parser/__tests__/crlfParse.test.ts` (identical page trees),
+`server/handlers/studio/__tests__/crlfProjectLoad.test.ts` (identical
+`loadStudioPages` result), and the CRLF package case in
+`server/handlers/studio/projectGuide.test.ts`.
+
+**Every one of those fixtures is written by the test, never committed** — this
+repository's own working tree is CRLF-converted by Git on checkout, so a
+committed CRLF fixture cannot be trusted to still be CRLF when the test opens
+it. None of them share anything with the eSIM corpus, per
+`genericRepoShapes.test.ts`'s discipline.
 
 ---
 
