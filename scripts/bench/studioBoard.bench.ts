@@ -75,6 +75,8 @@ const TestSchema = Type.Object({
 
 const SpecSchema = Type.Object({
   title: Type.String(),
+  /** Repo-relative, with the platform's separators. Used to tell the target spec from the `setup` project's. */
+  file: Type.Optional(Type.String()),
   ok: Type.Boolean(),
   tests: Type.Array(TestSchema),
 })
@@ -106,6 +108,26 @@ function flattenSpecs(suites: readonly Static<typeof SuiteSchema>[]): Static<typ
     if (suite.suites) out.push(...flattenSpecs(suite.suites))
   }
   return out
+}
+
+/**
+ * The specs from THIS spec file only.
+ *
+ * Load-bearing: the run also executes `playwright.config.ts`'s `setup` project
+ * (`auth.setup.ts`), which is an ordinary passing test. Reading the run's
+ * top-level `stats` instead would see `expected: 1` and call the run a pass
+ * while the only spec that measures anything had skipped itself — the exact
+ * "reported success having opened no browser" failure this module was rewritten
+ * to eliminate. A skip must never be able to hide behind the setup's pass.
+ *
+ * Path comparison is on POSIX-normalised suffixes: Playwright reports
+ * `tests\e2e\...` on Windows and `tests/e2e/...` elsewhere.
+ */
+function specsFromTargetFile(
+  specs: readonly Static<typeof SpecSchema>[],
+): Static<typeof SpecSchema>[] {
+  const suffix = SPEC_PATH.split('/').pop()!
+  return specs.filter((spec) => (spec.file ?? '').replace(/\\/g, '/').endsWith(suffix))
 }
 
 /**
@@ -212,13 +234,31 @@ export const studioBoardBench: BenchModule = {
     }
     const report = parsed.value
 
-    const specs = flattenSpecs(report.suites)
-    const rows = readPerfAnnotations(specs)
-    const { expected, unexpected, skipped, flaky } = report.stats
+    const allSpecs = flattenSpecs(report.suites)
+    const targetSpecs = specsFromTargetFile(allSpecs)
+    const rows = readPerfAnnotations(targetSpecs)
+    const { unexpected, flaky } = report.stats
 
-    // A skipped spec means the corpus project is not on this disk. That is "no
-    // signal" — the one thing this bench must never report as a pass.
-    if (unexpected === 0 && expected === 0 && skipped > 0) {
+    // Failures first — a failure anywhere in the run (including the `setup`
+    // project, without which nothing can be measured) is a failure.
+    if (exitCode !== 0 || unexpected > 0) {
+      const failures = readFailureMessages(allSpecs).map(plain)
+      const runnerErrors = (report.errors ?? []).map((e) => plain(e.message ?? '')).filter(Boolean)
+      throw new SpecFailedError(failures, runnerErrors, exitCode)
+    }
+
+    const targetTests = targetSpecs.flatMap((spec) => spec.tests)
+    if (targetTests.length === 0) {
+      throw new Error(
+        `studio-board: Playwright's report contains no result for ${SPEC_PATH} at all. ` +
+          'The run succeeded without ever executing the spec this bench exists to measure.',
+      )
+    }
+
+    // The spec ran and opted out — `studio-board-perf.e2e.ts` calls `test.skip`
+    // when the corpus project it measures is not on this disk. That is "no
+    // signal", and it is the one thing this bench must never report as a pass.
+    if (targetTests.every((t) => t.status === 'skipped')) {
       return skippedResult(
         this.name,
         this.title,
@@ -226,13 +266,9 @@ export const studioBoardBench: BenchModule = {
       )
     }
 
-    if (exitCode !== 0 || unexpected > 0) {
-      const failures = readFailureMessages(specs).map(plain)
-      const runnerErrors = (report.errors ?? []).map((e) => plain(e.message ?? '')).filter(Boolean)
-      throw new SpecFailedError([...failures, ...runnerErrors], exitCode)
-    }
-
-    log.ok(`${SPEC_PATH} passed in ${fmtMs(elapsedMs)} (${expected} test(s), ${flaky} flaky)`)
+    log.ok(
+      `${SPEC_PATH} passed in ${fmtMs(elapsedMs)} (${targetTests.length} test(s), ${flaky} flaky)`,
+    )
 
     const headlineFor = (label: string): string =>
       rows.find((r) => r.label === label)?.metrics.value ?? '—'
@@ -267,14 +303,34 @@ export const studioBoardBench: BenchModule = {
   },
 }
 
-/** Thrown when the spec fails — the orchestrator's catch-and-record path renders this as a FAILED bench (see `scripts/bench/index.ts`). */
+/**
+ * Thrown when the run fails — the orchestrator records it as a FAILED bench
+ * and exits non-zero (see `scripts/bench/index.ts`).
+ *
+ * The two causes are kept apart because they send you to different places. An
+ * *assertion* failure means a budget moved and the spec's own message names
+ * which one. A *runner* failure (webServer never came up, Chromium missing,
+ * config error) means nothing was measured at all — reporting that as "a
+ * budget was breached" would send someone hunting a perf regression that never
+ * happened.
+ */
 class SpecFailedError extends Error {
-  constructor(messages: readonly string[], exitCode: number) {
-    const detail =
-      messages.length > 0
-        ? messages.join('\n\n')
-        : `no assertion message was recorded (playwright exited ${exitCode})`
-    super(`${SPEC_PATH} failed — a canvas budget was breached:\n\n${detail}`)
+  constructor(
+    assertionFailures: readonly string[],
+    runnerErrors: readonly string[],
+    exitCode: number,
+  ) {
+    if (assertionFailures.length > 0) {
+      super(`${SPEC_PATH} failed — a canvas budget was breached:\n\n${assertionFailures.join('\n\n')}`)
+    } else if (runnerErrors.length > 0) {
+      super(
+        `${SPEC_PATH} never ran — the Playwright runner failed before any assertion:\n\n${runnerErrors.join('\n\n')}`,
+      )
+    } else {
+      super(
+        `${SPEC_PATH} failed with no recorded assertion or runner message (playwright exited ${exitCode}) — check the output above.`,
+      )
+    }
     this.name = 'SpecFailedError'
   }
 }

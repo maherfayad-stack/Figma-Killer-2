@@ -5,7 +5,7 @@ import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
 
 /**
  * `STUDIO-FIGMA-FEEL-PLAN.md` V1 — the browser gate for "does this feel like a
- * design tool", run in CI (`.github/workflows/e2e.yml`).
+ * design tool", run in CI as the `e2e-budgets` job (`.github/workflows/ci.yml`).
  *
  * Every claim here is about a **refusal or a ceiling**, not a happy path:
  *
@@ -97,8 +97,42 @@ async function openFixtureBoard(page: Page): Promise<Locator> {
   const canvasRoot = page.getByTestId('canvas-root')
   await expect(canvasRoot).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 90_000 })
-  await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 60_000 })
+  await bringAFrameOnScreen(page, canvasRoot)
   return canvasRoot
+}
+
+/**
+ * Get at least one board frame to mount a live iframe.
+ *
+ * Frames are virtualized: a frame outside the viewport renders a poster or a
+ * placeholder, never an iframe. `test4`'s frames sit around `y: 901`,
+ * `x: -422..423` on the board, so whether the default view contains one at all
+ * depends on the canvas's "center on open" pass having run — which, on a cold
+ * load, can race the arrival of the page documents it centres on. Waiting
+ * longer does not fix a view that is simply pointed elsewhere.
+ *
+ * So: reset the view with the product's own Ctrl+0, and if that still shows
+ * nothing, zoom out (sign-safe, unlike guessing a pan direction) until a frame
+ * is on screen. Failing after all of that is a real failure, and says so.
+ */
+async function bringAFrameOnScreen(page: Page, canvasRoot: Locator): Promise<void> {
+  const anyFrame = page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()
+  if (await anyFrame.isVisible({ timeout: 30_000 }).catch(() => false)) return
+
+  await canvasRoot.focus()
+  await page.keyboard.press('Control+0')
+  await page.waitForTimeout(600)
+
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    if (await anyFrame.isVisible({ timeout: 1_000 }).catch(() => false)) return
+    await page.keyboard.press('-')
+    await page.waitForTimeout(400)
+  }
+
+  throw new Error(
+    'no board frame ever mounted a live canvas iframe, even after resetting the view and zooming out — ' +
+      'the fixture board never rendered',
+  )
 }
 
 /** Same pan mechanism as `canvas-deselect.e2e.ts` / `frame-fit-height.e2e.ts`. */
@@ -233,8 +267,8 @@ function annotate(label: string, value: string): void {
  *
  * Measured here, against `test4`: a monotonic zoom-out mounts one more live
  * iframe mid-gesture (2 → 3), and that single `BreakpointFrame` mount costs
- * **~450-500 ms in one frame** — worst frame 515.8 ms / 444.1 ms across two
- * runs, against a mean of 20.3 / 19.8 ms. So the defect `perf-01` measured on the
+ * **260-520 ms in one frame** — worst frame 515.8 / 444.1 / 260.1 ms across
+ * three runs, against a mean of 20.3 / 19.8 / 18.6 ms. So the defect `perf-01` measured on the
  * 15-page eSIM corpus reproduces on a **three-frame** board: it is the cost of
  * ONE mount, not of mounting many.
  *
@@ -245,7 +279,7 @@ const BUDGET_ZOOM_WORST_FRAME_MS = 600
 
 /**
  * The frames that are NOT paying for a mount. Calibrated at ~2× the observed
- * mean (20.3 / 19.8 ms across two runs) — loose enough not to flake on machine
+ * mean (20.3 / 19.8 / 18.6 ms across three runs) — loose enough not to flake on machine
  * noise, tight enough that a re-render storm on every wheel tick fails even
  * while the single-mount spike above is still allowed.
  */
