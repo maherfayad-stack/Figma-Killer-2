@@ -1,9 +1,0 @@
-/* ALM 2.0 — border-radius tokens */
-:root {
-  --rounded-xs:      4px;
-  --rounded-sm:      8px;
-  --rounded:         12px;
-  --rounded-lg:      16px;
-  --rounded-popover: 34px;
-  --rounded-full:    100px;
-}

@@ -16,6 +16,10 @@
  *      otherwise hold port 3001 and block the local cms).
  *   4. Waits until postgres actually accepts connections.
  *
+ * Before any of that, `runDevPreflight` (scripts/lib/devPreflight.ts) installs
+ * dependencies when the checkout has none or the lockfile moved, and reports
+ * any drifted generated artefact in the background. See that module for why.
+ *
  * Either way, the script then:
  *
  *   - Pre-checks ports 3001 (cms) and 5173 (vite) and prints an
@@ -29,6 +33,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { isSqliteUrl } from '../server/db'
 import { bunCommand, viteCommand } from './lib/bunCommand'
+import { runDevPreflight } from './lib/devPreflight'
 import { ensurePortFree } from './lib/freePort'
 
 const CMS_PORT = Number(process.env.PORT ?? '3001')
@@ -206,6 +211,8 @@ async function waitForPostgresReady(timeoutMs = 60_000): Promise<void> {
 }
 
 // --- main -----------------------------------------------------------------
+
+runDevPreflight(log, fail)
 
 if (isSqliteUrl(DATABASE_URL)) {
   const dbPath = DATABASE_URL.replace(/^sqlite:|^file:/, '')

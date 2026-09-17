@@ -17,6 +17,10 @@
  * project) — into an ephemeral `studio-workspace/__bench-live-synth/`, then
  * flips the COPY's `.studio/meta.json` `trust` to `'run-project'`.
  *
+ * The source project is LOCAL dogfooding data and is not tracked in git
+ * (`.gitignore`, plan §6 decision 4) — a fresh clone has to supply it, and
+ * `createLiveFrameFixture()` says exactly that when it is absent.
+ *
  * Two invariants this file exists to get right, both landmines a previous
  * session already hit once:
  *
@@ -71,7 +75,7 @@ export interface LiveFrameFixtureHandle {
 export function createLiveFrameFixture(): LiveFrameFixtureHandle {
   if (!existsSync(LIVE_FRAME_FIXTURE_SOURCE_DIR)) {
     throw new Error(
-      `liveFrameFixture: source project not found at "${LIVE_FRAME_FIXTURE_SOURCE_DIR}" — has "studio-workspace/test4 copy" been removed or renamed?`,
+      `liveFrameFixture: source project not found at "${LIVE_FRAME_FIXTURE_SOURCE_DIR}" — "studio-workspace/test4 copy" is local dogfooding data, not tracked in git (see .gitignore, plan §6 decision 4), so a fresh clone will not have it. Copy a real Vite project there, or point this bench at one you already have.`,
     )
   }
 
