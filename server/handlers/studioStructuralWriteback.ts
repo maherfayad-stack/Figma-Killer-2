@@ -45,7 +45,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
  */
 export const DesignSystemImportSchema = Type.Literal(true, {
   description:
-    "The tag comes from Studio's built-in design system, reached through the project's own design-system/ folder. The server computes the relative specifier for the file being written ('../design-system' from pages/Home.tsx) — do NOT also send importSpecifier, and never guess the path yourself. Takes precedence if both are sent.",
+    "The tag comes from Studio's built-in design system, reached through the project's own design-system/ folder. The server computes the relative specifier for the file being written (a page at pages/Home.tsx gets '../design-system') — do NOT also send importSpecifier, and never guess the path yourself. Takes precedence if both are sent.",
 })
 
 /**
