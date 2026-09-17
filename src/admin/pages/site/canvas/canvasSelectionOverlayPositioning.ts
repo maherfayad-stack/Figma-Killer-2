@@ -1,4 +1,3 @@
-import type { CSSProperties } from 'react'
 import { registry } from '@core/module-engine'
 import { getNodeDisplayName, getNodeHtmlTag, type Page } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
