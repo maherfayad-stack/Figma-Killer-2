@@ -82,9 +82,10 @@ Merged as PRs #4–#33. Verified against the tree, not against the PR titles.
 **Carried forward from the earlier waves, still open:** Track D2's `dragSession`
 rewrite (G2, G3, G6, G7, G8, G15 and the `@dnd-kit` removal), Track G density's
 tail, A7 Figma discoverability, and E2.5's unverified panel-surface work. The
-`src/modules/alm/` deletion remains deliberately deferred under `standing-07`,
-and `scripts/bench/studioBoard.bench.ts` still carries uncalibrated budgets and
-has never run.
+`src/modules/alm/` deletion is CLOSED, not deferred — `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`
+made that pack Studio's own built-in design system and deleted the npm instead.
+`scripts/bench/studioBoard.bench.ts` still carries uncalibrated budgets and has
+never run.
 
 ### Waves 7–10 — updated 2026-09-06
 
@@ -1013,8 +1014,9 @@ fresh page. `ModulePicker.tsx:84` lists only already-registered modules.
 (`src/modules/alm/register.tsx:20`).
 
 **Fix.** Drive registration from E1's catalog + `ProjectProfile.componentPackages`
-rather than from board contents. This is the precondition for `standing-07`'s
-`@alm-design` deletion.
+rather than from board contents. (`standing-07`'s `@alm-design` deletion, which
+this used to be the precondition for, was closed a different way — the design
+system is built in and the npm is gone.)
 
 ---
 
