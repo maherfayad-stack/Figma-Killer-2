@@ -312,6 +312,7 @@ import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
 import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
+import { tryServeStudioGithubAuth } from './studio/githubAuthRoutes'
 import { tryServeStudioDeploy } from './studio/deploy'
 import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
@@ -372,6 +373,7 @@ const STUDIO_SUB_ROUTERS = [
  * capture, a file's contents) rather than merely reading a project directory.
  */
 const STUDIO_SESSION_SUB_ROUTERS = [
+  tryServeStudioGithubAuth,
   tryServeStudioComments,
   tryServeStudioProjectRoutes,
   tryServeStudioTrashRoutes,

@@ -37,8 +37,10 @@
  *   switch rather than after.
  * - **Push shows git's own output.** The remote's "create a pull request" URL
  *   lives there, and an auth failure's real message is the only useful thing to
- *   show. Studio holds no git credentials: authentication is the user's own
- *   credential helper's job.
+ *   show. Authentication is the GitHub account signed in at the top of this
+ *   panel (`RepositorySection`, G2) — resolved server-side from the session,
+ *   never sent on this wire — or, failing that, the host's own credential
+ *   helper.
  */
 import { useRef, useState } from 'react'
 import { Panel, useAutoFocusPanel } from '@admin/shared/Panel'
@@ -68,6 +70,7 @@ import {
 import { DeploySection } from './DeploySection'
 import { GitDiffView } from './GitDiffView'
 import { GitHistorySection } from './GitHistorySection'
+import { RepositorySection } from './RepositorySection'
 import { useGitStatus } from './useGitStatus'
 import styles from './GitPanel.module.css'
 
@@ -205,6 +208,14 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
       testId="git-panel"
       onClose={() => setGitPanelOpen(false)}
     >
+      {/* -----------------------------------------------------------------
+          Repository — who you are on GitHub, and where this project pushes.
+          Above everything, and deliberately OUTSIDE the `isRepo` branch:
+          signing in is worth doing before `git init`, and a project with no
+          repository yet is exactly the one about to need a remote.
+      ----------------------------------------------------------------- */}
+      <RepositorySection active={isOpen} />
+
       {error ? (
         <p className={styles.error} role="alert">
           {error}

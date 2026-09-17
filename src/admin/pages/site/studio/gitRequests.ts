@@ -275,3 +275,126 @@ export async function restoreGitFile(dir: string | undefined, sha: string, file:
 export function isGitStateRefusal(err: unknown): boolean {
   return err instanceof ApiError && err.status === 409
 }
+
+// ---------------------------------------------------------------------------
+// GitHub sign-in — `/admin/api/studio/github/*`
+// (`server/handlers/studio/githubAuthRoutes.ts`)
+//
+// A sibling namespace rather than a second module, because it is the same
+// sentence: a designer signs in so that the push at the bottom of this panel
+// works. Nothing here ever carries a token IN either direction except the one
+// paste call — the server validates that token against GitHub before storing
+// it, and no response body in this section contains one.
+// ---------------------------------------------------------------------------
+
+const GithubAccountSchema = Type.Object({
+  login: Type.String(),
+  avatarUrl: Type.Union([Type.String(), Type.Null()]),
+  /** Scopes the token actually carries, as GitHub reported them — not what was asked for. */
+  scopes: Type.Array(Type.String()),
+  expiresAt: Type.Union([Type.String(), Type.Null()]),
+  createdAt: Type.String(),
+})
+
+const GithubAccountResponseSchema = Type.Object({
+  /** `null` when this user has not signed in, or their stored token stopped working. */
+  account: Type.Union([GithubAccountSchema, Type.Null()]),
+  /**
+   * Whether this server has a GitHub OAuth App client id configured. `false`
+   * means the device flow is unavailable and the panel offers only the
+   * paste-a-token path — which needs no configuration at all.
+   */
+  clientConfigured: Type.Boolean(),
+})
+
+const GithubDeviceStartResponseSchema = Type.Object({
+  /** Opaque handle for this pending sign-in. The `device_code` itself never reaches the browser. */
+  flowId: Type.String(),
+  /** The short code the user types at `verificationUri`. */
+  userCode: Type.String(),
+  verificationUri: Type.String(),
+  expiresInSeconds: Type.Number(),
+  /** How often GitHub permits a poll. The server enforces it too — polling faster gets the whole flow rejected. */
+  intervalSeconds: Type.Number(),
+})
+
+const GithubDevicePollResponseSchema = Type.Object({
+  status: Type.Union([
+    Type.Literal('pending'),
+    Type.Literal('authorized'),
+    Type.Literal('denied'),
+    Type.Literal('expired'),
+  ]),
+  /** Seconds to wait before the next poll. `null` on every terminal status. */
+  retryInSeconds: Type.Union([Type.Number(), Type.Null()]),
+  /** Present exactly when `status === 'authorized'`. */
+  account: Type.Union([GithubAccountSchema, Type.Null()]),
+})
+
+const GithubTokenResponseSchema = Type.Object({ account: GithubAccountSchema })
+
+const GithubRepositorySchema = Type.Object({
+  fullName: Type.String(),
+  /** The HTTPS clone URL — exactly what `connectGitRemote` accepts. */
+  cloneUrl: Type.String(),
+  isPrivate: Type.Boolean(),
+  defaultBranch: Type.Union([Type.String(), Type.Null()]),
+  pushedAt: Type.Union([Type.String(), Type.Null()]),
+})
+
+const GithubReposResponseSchema = Type.Object({ repositories: Type.Array(GithubRepositorySchema) })
+
+export type GithubAccount = Static<typeof GithubAccountSchema>
+export type GithubAccountResponse = Static<typeof GithubAccountResponseSchema>
+export type GithubDeviceStart = Static<typeof GithubDeviceStartResponseSchema>
+export type GithubDevicePoll = Static<typeof GithubDevicePollResponseSchema>
+export type GithubRepository = Static<typeof GithubRepositorySchema>
+
+const GITHUB_BASE = '/admin/api/studio/github'
+
+/** Who is signed in, and whether this server can offer the device flow at all. */
+export async function getGithubAccount(signal?: AbortSignal): Promise<GithubAccountResponse> {
+  return apiRequest(`${GITHUB_BASE}/account`, { schema: GithubAccountResponseSchema, signal })
+}
+
+/** Starts a device sign-in. Throws with the server's own message (501) when no OAuth App client id is configured. */
+export async function startGithubDeviceLogin(): Promise<GithubDeviceStart> {
+  return apiRequest(`${GITHUB_BASE}/device/start`, { method: 'POST', schema: GithubDeviceStartResponseSchema })
+}
+
+/**
+ * One poll of a pending sign-in. The server paces itself to GitHub's
+ * `interval`, so a caller that polls early gets `pending` without a GitHub
+ * round-trip rather than getting the flow rejected.
+ */
+export async function pollGithubDeviceLogin(flowId: string, signal?: AbortSignal): Promise<GithubDevicePoll> {
+  return apiRequest(`${GITHUB_BASE}/device/poll`, {
+    schema: GithubDevicePollResponseSchema,
+    query: { flowId },
+    signal,
+  })
+}
+
+/** The paste-a-PAT fallback. The server validates the token against GitHub before storing it, so a typo fails here. */
+export async function saveGithubToken(token: string): Promise<GithubAccount> {
+  const { account } = await apiRequest(`${GITHUB_BASE}/token`, {
+    method: 'POST',
+    body: { token },
+    schema: GithubTokenResponseSchema,
+  })
+  return account
+}
+
+/** Signs out — deletes the stored credential. Idempotent. */
+export async function signOutOfGithub(): Promise<void> {
+  await apiRequest(`${GITHUB_BASE}/token`, { method: 'DELETE' })
+}
+
+/** The signed-in account's repositories, most recently pushed first. One page — a picker, not an inventory. */
+export async function listGithubRepositories(signal?: AbortSignal): Promise<GithubRepository[]> {
+  const { repositories } = await apiRequest(`${GITHUB_BASE}/repos`, {
+    schema: GithubReposResponseSchema,
+    signal,
+  })
+  return repositories
+}

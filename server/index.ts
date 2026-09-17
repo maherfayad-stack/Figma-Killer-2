@@ -5,6 +5,7 @@ import { readServerConfig } from './config'
 import { DEV_ORIGIN_ALLOWLIST, configurePublicOrigins, configureTrustedProxyCidrs, stampSocketIp } from './auth/security'
 import { applySecurityHeaders } from './securityHeaders'
 import { startConversationPurgeTick } from './ai/boot'
+import { provideGithubCredentialDb } from './handlers/studio/githubToken'
 
 await import('./richtextSanitizer')
 const { handleServerRequest } = await import('./router')
@@ -29,6 +30,12 @@ await activateInstalledServerPlugins(db, config.uploadsDir)
 // AI runtime: start the nightly conversation-purge tick. Operators add
 // their own provider credentials via Settings → AI → Providers on first install.
 startConversationPurgeTick(db)
+// Git's network verbs need the signed-in user's stored GitHub token, and they
+// are reached from sub-routers whose signature carries a user id but no
+// `DbClient`. Handing the client over once here is what lets
+// `getGithubTokenForUser(userId)` be the single-argument function those
+// callers share — see `server/handlers/studio/githubToken.ts`.
+provideGithubCredentialDb(db)
 
 /**
  * Build the CORS response headers for an incoming request.

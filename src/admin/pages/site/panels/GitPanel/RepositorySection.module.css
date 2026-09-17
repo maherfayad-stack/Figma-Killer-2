@@ -1,0 +1,89 @@
+/*
+ * RepositorySection — tokens only. Achromatic throughout: nothing in this
+ * block carries meaning that colour would add, so the only non-surface colour
+ * is the danger text on a sign-in refusal.
+ */
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  min-width: 0;
+}
+
+.avatar {
+  flex: none;
+  width: var(--space-l);
+  height: var(--space-l);
+  border-radius: var(--input-radius);
+}
+
+.accountText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  font-size: var(--text-m);
+  color: var(--text);
+}
+
+.accountText strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountMeta {
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signIn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.instruction {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-m);
+  line-height: 1.4;
+}
+
+.userCode {
+  align-self: stretch;
+  text-align: center;
+  font-size: var(--text-l);
+  letter-spacing: 0.2em;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: var(--text-s);
+  line-height: 1.4;
+}
+
+.failure {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--text-s);
+  line-height: 1.4;
+}
+
+.tokenRow {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.tokenRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}

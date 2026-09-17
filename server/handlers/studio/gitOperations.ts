@@ -45,10 +45,14 @@
  *
  * ## Credentials
  *
- * There are none here. `push` succeeds if the user's own git credential helper
- * or ssh-agent answers, and otherwise fails with git's real message passed
- * through (`clientSafeGitError`). Studio never stores a git token, never reads
- * one from its environment, and never accepts one on this wire.
+ * Nothing here reads one. `pushCurrentBranch` takes an OPTIONAL `credential`
+ * string that its route resolved from the signed-in session (G2's encrypted
+ * per-user token — `githubToken.ts`); without one, `push` succeeds exactly
+ * when the user's own credential helper or ssh-agent answers, and otherwise
+ * fails with git's real message passed through (`clientSafeGitError`). The
+ * token is never read from the environment, never accepted as a request
+ * field, and never placed in argv or a remote URL — `gitRunner.ts` hands it to
+ * a one-shot askpass script instead.
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -338,12 +342,17 @@ export interface GitPushResult {
  * `git push --set-upstream origin <branch>`. Never `--force`, never
  * `--force-with-lease`, and there is no route parameter that could add one.
  *
- * Authentication is entirely the user's own credential helper's or
- * ssh-agent's — see the module doc. A failure passes git's real message
- * through, because "Support for password authentication was removed" is
- * exactly what the user needs to read.
+ * `credential` is the signed-in user's GitHub token (G2), resolved by the
+ * route from the session — never from a request field and never from the
+ * environment. It is optional: without it the push falls back to the user's
+ * own credential helper or ssh-agent exactly as it did before, and a failure
+ * passes git's real message through, because "Support for password
+ * authentication was removed" is exactly what the user needs to read.
  */
-export async function pushCurrentBranch(dir: string): Promise<GitPushResult | GitOperationFailure> {
+export async function pushCurrentBranch(
+  dir: string,
+  options: { credential?: string } = {},
+): Promise<GitPushResult | GitOperationFailure> {
   const status = await readGitStatus(dir)
   if ('ok' in status) return status
   if (!status.hasOrigin) {
@@ -359,6 +368,7 @@ export async function pushCurrentBranch(dir: string): Promise<GitPushResult | Gi
   const branch = status.branch.branch
   const result = await runGit(dir, ['push', '--set-upstream', 'origin', branch], {
     timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    credential: options.credential,
   })
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Push failed'))
   return { ok: true, branch, output: clientSafeGitError(result, '') || result.stdout.trim() }

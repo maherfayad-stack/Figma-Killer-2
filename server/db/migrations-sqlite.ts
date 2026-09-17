@@ -1164,4 +1164,28 @@ export const sqliteMigrations: Migration[] = [
         on ai_conversations (user_id, project_key, updated_at desc);
     `,
   },
+  {
+    // G2 — see `migrations-pg.ts`'s copy of this migration for the full
+    // reasoning. The only dialect differences are storage types: `blob` for
+    // the AES-GCM ciphertext/iv (PG `bytea`) and `text` timestamps with the
+    // same `strftime` default every other table in this file uses.
+    id: '023_git_credentials',
+    sql: `
+      create table if not exists git_credentials (
+        id text primary key,
+        user_id text not null references users(id) on delete cascade,
+        provider text not null,
+        ciphertext blob not null,
+        iv blob not null,
+        scopes_json text not null default '[]',
+        created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        expires_at text,
+        constraint git_credentials_provider_check
+          check (provider in ('github'))
+      );
+
+      create unique index if not exists git_credentials_user_provider_idx
+        on git_credentials (user_id, provider);
+    `,
+  },
 ]
