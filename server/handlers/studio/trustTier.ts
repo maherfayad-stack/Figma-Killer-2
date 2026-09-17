@@ -45,12 +45,18 @@
  * (`run-project`) route refuses. That check is `./trustGate.ts`'s
  * `requireTrustTier`, shared by `deploy.ts` and `devServer.ts` (Track L,
  * `live-01`); it answers a 409, not the 200 this endpoint always returns.
+ *
+ * It does, however, ENFORCE a demotion on the process that tier was already
+ * authorising: a write that leaves the project below `run-project` stops its
+ * dev server before answering. See {@link enforceTierOnRunningProcesses} for
+ * why a demotion that only edits a file is not a demotion.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
+import { stopDevServer } from './devServer'
 import { resolveLiveCapability } from './liveCapability'
-import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta, TrustTierSchema } from './studioMeta'
+import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta, type TrustTier, TrustTierSchema } from './studioMeta'
 
 const ROUTE_PATH = '/admin/api/studio/trust-tier'
 
@@ -96,6 +102,34 @@ function refuseAutoPromotion(dir: string, trust: string): string | null {
   return null
 }
 
+/**
+ * A demotion has to STOP the project, not merely record that it should no
+ * longer be running.
+ *
+ * Writing `trust: 'static'` closes the two Tier-2 ROUTES (`devServer.ts`'s
+ * `status`/`start`, `deploy.ts`) and makes `/load` stop handing out a
+ * `projectKey`. It does nothing at all to a dev server that is ALREADY
+ * running, and `useDevServerPrewarm` starts one the instant a project reaches
+ * Tier 2 — so before this call existed, the board's "Undo" (and every explicit
+ * demotion) left the user's own dev server executing indefinitely: the
+ * browser-facing `startDevServer` never schedules an idle teardown, and
+ * `server/liveOrigin.ts` deliberately does not re-read `.studio/meta.json`
+ * ("a project only ever reaches `phase: 'ready'` in that registry if it was
+ * allowed to boot"), so the unauthenticated `/p/<projectKey>/` proxy kept
+ * serving it too. The undo was cosmetic with respect to the one property it
+ * exists to restore.
+ *
+ * Here rather than in the client's undo handler for the usual reason: this is
+ * the ONE write path to the field, so every demotion — the auto-promote
+ * notice's Undo, the pill's "Back to static", any future settings toggle —
+ * inherits it, and none of them can forget. Idempotent: `stopDevServer` is a
+ * no-op for a project that has no process in the registry.
+ */
+function enforceTierOnRunningProcesses(dir: string, trust: TrustTier): void {
+  if (trust === 'run-project') return
+  stopDevServer(dir)
+}
+
 /** `GET/POST /admin/api/studio/trust-tier` — see module doc for the full contract. */
 export async function tryServeStudioTrustTier(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (pathname !== ROUTE_PATH) return null
@@ -129,6 +163,7 @@ export async function tryServeStudioTrustTier(req: Request, url: URL, pathname: 
         const refusal = refuseAutoPromotion(dir, body.trust)
         if (refusal) return jsonResponse({ error: refusal }, { status: 409 })
         mergeStudioMeta(dir, { trust: body.trust, trustAutoPromoted: true, trustAutoPromotedAt: Date.now() })
+        enforceTierOnRunningProcesses(dir, body.trust)
         return jsonResponse({ ok: true, trust: body.trust })
       }
 
@@ -136,6 +171,7 @@ export async function tryServeStudioTrustTier(req: Request, url: URL, pathname: 
       // auto-promotion fields. That is what keeps the two origins — and the
       // once-per-project latch — distinguishable on disk afterwards.
       mergeStudioMeta(dir, { trust: body.trust })
+      enforceTierOnRunningProcesses(dir, body.trust)
       return jsonResponse({ ok: true, trust: body.trust })
     } catch (err) {
       rethrowProjectDirRefusal(err)
