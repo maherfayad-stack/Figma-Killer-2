@@ -30,6 +30,7 @@ export const OutletModule: ModuleDefinition<OutletStoredProps> = {
   id: 'base.outlet',
   name: 'Content Outlet',
   description: 'Where matched content (a page or the current entry body) flows in.',
+  keywords: ['content slot', 'template', 'page body', 'matched content'],
   category: 'CMS',
   version: '1.0.0',
   icon: TargetSolidIcon,

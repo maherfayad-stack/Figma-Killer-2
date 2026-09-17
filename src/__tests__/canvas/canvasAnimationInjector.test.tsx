@@ -4,7 +4,7 @@
  * are killed, media elements are paused, and reduced-motion is forced on.
  *
  * An imported app never settles on the canvas: the eSIM corpus has a radar ping
- * and an orbiting dot on `infinite`, and `@alm-design/design-system` ships an
+ * and an orbiting dot on `infinite`, and the vendored design system ships an
  * `infinite` shimmer on every skeleton variant. This injector forces
  * `animation-iteration-count: 1` and `animation-fill-mode: forwards` on
  * everything, including pseudo-elements.

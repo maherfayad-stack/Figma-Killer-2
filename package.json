@@ -37,6 +37,8 @@
     "test:bundle": "bun run build && bun test src/__tests__/architecture/bundle-size-budgets.test.ts",
     "test:coverage": "bun test --parallel=4 --coverage --coverage-reporter=lcov --coverage-dir=.coverage && bun run scripts/lcov-to-istanbul.ts",
     "fallow:health": "bun run test:coverage && npx fallow health --coverage .coverage/coverage-final.json",
+    "alm:sync": "bun run scripts/sync-alm-design-system.ts",
+    "alm:check": "bun run scripts/sync-alm-design-system.ts --check",
     "icons:sync": "bun run scripts/sync-icons.ts",
     "icons:check": "bun run scripts/sync-icons.ts --check",
     "bootstrap:sync": "bun run scripts/sync-plugin-bootstrap.ts",
@@ -61,7 +63,6 @@
     "doctor": "react-doctor"
   },
   "dependencies": {
-    "@alm-design/design-system": "^1.1.2",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",
     "@codemirror/lang-javascript": "^6.2.5",
@@ -75,6 +76,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@sinclair/typebox": "^0.34.49",
     "@use-gesture/react": "^10.3.1",
+    "alm-design-system": "file:./vendor/alm-design-system",
     "blurhash": "^2.0.5",
     "codemirror": "^6.0.2",
     "dompurify": "^3.4.2",

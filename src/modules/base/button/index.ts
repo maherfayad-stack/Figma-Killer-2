@@ -22,6 +22,7 @@ export const ButtonModule: ModuleDefinition<ButtonStoredProps> = {
   id: 'base.button',
   name: 'Button',
   description: 'A button or call-to-action link.',
+  keywords: ['cta', 'action', 'link button', 'submit', 'press', 'tap'],
   category: 'Interactive',
   version: '2.0.0',
   icon: CursorClickSolidIcon,

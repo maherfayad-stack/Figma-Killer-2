@@ -296,6 +296,12 @@ export interface ModuleDefinition<
   /** Optional description shown in the Module Library */
   description?: string
 
+  /**
+   * Search keywords the Assets panel matches in addition to `name` and
+   * `description` — purposes ("header"), synonyms ("pill"), variant names.
+   */
+  keywords?: string[]
+
   /** Category for grouping in the Module Library */
   category: string
 

@@ -3,7 +3,7 @@
  * JavaScript, not just its CSS.
  *
  * `dir` on the frame's `<html>` drives every `[dir=rtl]` CSS rule a package
- * ships (40 of them in `@alm-design/design-system` alone) and drives NOTHING
+ * ships (40 of them in the vendored design system alone) and drives NOTHING
  * that resolves direction in JS. ALM's components each call `useDir(prop)` —
  * explicit prop > `DesignSystemProvider` context > a built-in `'ltr'` — and
  * Studio wraps every design-system component in that provider. Wrapping it

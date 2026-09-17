@@ -1221,6 +1221,55 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### struct-08 — DS-1: vendor the design system into Studio (+ DS-6's data half)
+- **Agent:** studio-implementer (Opus 5)
+- **Stage:** done
+- **Updated:** 2026-09-17
+- **Branch/worktree:** `feat/ds-vendor` in `.tmp/wt-ds-vendor`, off `feat/alm-figma-killer-studio-shell` @ `0da8a84b`. Draft PR against that branch.
+- **Goal:** the ALM design system's SOURCE lives in this repo and is the only copy Studio renders from; the generated component manifest additionally carries the description / keywords / group that make the Assets panel findable.
+- **Scope:**
+  - `vendor/alm-design-system/**` (new — 674 files) · `.gitignore` (un-ignore its `dist/`)
+  - `scripts/sync-alm-design-system.ts` (new) · `scripts/gen-alm-manifest.mjs` (deleted) · `package.json` (`alm:sync`, `alm:check`, the `file:` dep) · `bun.lock`
+  - `src/core/design-system-manifest/{vendorRoot,vendorDocs,componentCuration,extractColorTokens,designSystemSchemas,types}.ts` (new) + `buildDesignSystemManifest.ts`, `index.ts`
+  - `src/core/module-engine/types.ts` (`ModuleDefinition.keywords`)
+  - `src/modules/alm/{register.tsx,inspectorSchema.ts(new),curatedDefaults.ts,manifest.generated.json}`
+  - `src/modules/base/**` (13 files — descriptions + keywords, data only)
+  - `src/admin/pages/site/canvas/canvasVendorCss.ts` · `src/admin/pages/site/module-picker/moduleInserterModel.ts` · `src/types/alm-design-system.d.ts`
+  - gates: `src/__tests__/architecture/{alm-design-system-fresh,assets-search-coverage}.test.ts` (new)
+  - docs: `docs/features/modules.md`, `docs/agent-refs/path-index.md`, `docs/reference/architecture-tests.md`, `vendor/alm-design-system/README.md`
+- **Done so far:**
+  - **The vendor folder.** `vendor/alm-design-system/` = `src/` (40 `.jsx` + 39 `.css`, `context/`, `tokens/`, 573 icon files), `CLAUDE.md`, `design.md`, `LICENSE`, `README.md`, `studio/{keywords,groups}.json`, `dist/{index.js,index.css,tokens.generated.json,BUILD_HASH}`. Copied from `~/Documents/Github/ALM-2.0` @ `c35fc3c`. No `mcp/` (its `zod` dep is banned), no `*.figma.tsx`, no demo app; `package.json` has no `dependencies`.
+  - **`dist/index.css` is BYTE-IDENTICAL to the npm's shipped `dist/index.css`** (121,756 bytes, `diff` clean). That is the fidelity evidence for DS-1: the canvas iframe receives exactly the bytes it did before.
+  - **One sync script** — `bun run alm:sync` (`scripts/sync-alm-design-system.ts:1`). Vite programmatic `build()` with `build.lib`, `@vitejs/plugin-react`, `rolldownOptions.external: ['react','react-dom','react/jsx-runtime']`, `assetsInlineLimit: 1MB`, `minify:false` + `cssMinify:true`. Emits `tokens.generated.json`, `BUILD_HASH`, and `src/modules/alm/manifest.generated.json`. `bun run alm:check` reports drift without writing. `scripts/gen-alm-manifest.mjs` deleted (absorbed).
+  - **`buildDesignSystemManifest` no longer reads `node_modules` or `mcp/catalog.js`.** `vendorDocs.ts` re-implements the catalog's markdown slicing over the vendored files and FIXES three components whose `design.md` heading spells their name differently (`## List / ListItem`, `## System Banner`, `## Marketing Card`) — those had no intent doc at all before. The 39 components' PROP specs are unchanged byte-for-byte apart from `file`.
+  - **DS-6 data half.** Every one of the 39 components now has a real `description` (first sentence of its `design.md` section — "Buttons trigger actions.", "Full-width 1px horizontal rule."), ≥ 6 `keywords`, and a `group`. Keywords = Decision-Map intents ∪ documented enum values ∪ heading aliases ∪ `studio/keywords.json`. Ten groups in `studio/groups.json`.
+  - **`register.tsx`** maps `spec.description`/`spec.keywords` onto the module and `spec.group` onto `category`; icons get `category: 'Icons'` + `['icon','glyph','symbol', …nameWords]`. `ALM_PACKAGE_SPECIFIER` and every `sourceImport` value left **untouched** for DS-3.
+  - **13 base modules** got a real description and ≥ 3 keywords (`src/modules/base/{container,text,image,button,link,list,svg,video,loop,outlet,forms}/index.ts`).
+  - **Two new gates.** `alm-design-system-fresh.test.ts` — `dist/` via `dist/BUILD_HASH` (a SHA-256 over every file under `src/`; a full Vite build is ~14 s and does not belong in `bun test`), `tokens.generated.json` + `manifest.generated.json` byte-for-byte. `assets-search-coverage.test.ts` — non-placeholder description + ≥ 3 keywords on every palette-visible `alm.*`/`base.*` module, a `group` on every manifest component, and the probe table `header→alm.Navbar · pill→alm.Chip · row→alm.Cell · toast→alm.Snackbar · switch→alm.Toggle · divider→alm.Separator · wrapper→base.container`, each asserted to be an unambiguous single best hit.
+- **Next step:** none for DS-1. DS-4 should point `rankAssets`'s own test at `EXPECTED_FIRST_HIT` in `src/__tests__/architecture/assets-search-coverage.test.ts:70` rather than writing a second table.
+- **Decisions:**
+  - **`DesignSystemComponentSpec extends ComponentSpec`** (`src/core/design-system-manifest/types.ts`) rather than making `description`/`keywords`/`group` required on the shared `ComponentSpec`. The work order asked for the latter; it would have forced `server/handlers/studio/componentSpecExtract.ts` and `src/core/component-manifest/extractManifest.ts` to invent a description and a group for arbitrary third-party components, and `server/**` is another agent's file. The subtype is assignable everywhere, so nothing else changed.
+  - **`moduleAvailability` now asks for `sourceImport`, not `category === 'Design System'`** (`moduleInserterModel.ts:180`). Unavoidable: giving `alm.*` modules their purpose group as `category` would otherwise have hidden all 39 from the palette. The rule's own doc comment already said "a component answers yes by being imported" — this makes the code say it too. `moduleAccentForCategory` gained the ten group names so a component's accent stays stable.
+  - **`register.tsx` split** — `src/modules/alm/inspectorSchema.ts` now owns `propKindFor` / `buildSchema` / `buildPropsSchema` / `buildDefaults` / `isSeedableDefault`. `register.tsx` hit 715 lines and `module-size-budgets` caps at 700; the schema builders are a different reason from "register these components".
+  - **`dist/` gated by hash, the two JSON files byte-for-byte.** Named explicitly because the work order asked which.
+  - **`ltr`/`rtl` are excluded from keywords** (`componentCuration.ts:enumKeywords`) — all 39 components document a `dir` enum, so they identify none.
+  - **Token values are RESOLVED.** `--background-base-default` records `#FFFFFF` light / `#1C1C1C` dark, not `var(--color-light)`, because a swatch cannot paint a `var()`. A raw token the dark block does not redeclare keeps its light value.
+- **Landmines:**
+  - **Rolldown writes each module id into a `//#region` comment and resolves it against its OWN cwd, not Vite's `root`.** Running the sync from anywhere but the repo root rewrote every comment in `dist/index.js`. Pinned with `rolldownOptions.cwd` (`sync-alm-design-system.ts:133`); verified by building from two different cwds and diffing.
+  - **`vendor/alm-design-system/dist/` needed a `.gitignore` un-ignore** — the root `dist` rule matches at any depth, exactly as `vendor/pixel-art-icons/dist/` already needed.
+  - **`base.container` must NOT carry the keyword `row`.** It ties with `alm.Cell` and the probe table becomes non-deterministic. It carries `flex row` / `flex column` instead, which is what a container actually makes.
+  - **The five palette-hidden overlays (Dialog, BottomSheet, ActionSheet, Snackbar, Tooltip) still need correct search data** — the probe table runs over every registered module, not the visible ones, because `toast → alm.Snackbar` would otherwise match nothing.
+  - **A fresh worktree has no `studio-workspace/__canonical-fixture`**, so `src/core/page-parser/__tests__/canonicalCheck.test.ts` fails 24× there. Nothing to do with this branch — it fails identically on the base commit.
+- **Verification:**
+  - `bun run build` (tsc -b && vite build) — **pass**, 14.19 s.
+  - `bun run lint` — 6 errors, all `'os' is defined but never used` in `server/handlers/__tests__/*` + `server/handlers/studio/referenceUpload.test.ts`. **Pre-existing**; `git status` shows zero changes under `server/`.
+  - `bun test` — **10994 pass / 217 fail**. Baseline measured on a scratch worktree at `0da8a84b` with the same `node_modules`: **10968 pass / 217 fail**. Failing-test-name sets diffed: identical except the baseline ALSO fails `generated studio-runtime bundles`, which passes here. **Zero new failures; +26 passing (the two new gates and the new manifest cases).**
+  - `bun test src/__tests__/architecture` — 3 fail: `no-core-barrel-deep-imports` (`server/handlers/studio/prototypeShell/*`) and `icon-catalog-integrity` (`chevron-left`), both named known-red in the work order, plus nothing else.
+  - `bun run alm:sync` run twice → `git status` clean; `bun run alm:check` exits 0.
+- **Human action needed:** **dogfood — the canvas render path changed source.** Open `/admin/site` on `test4` and confirm the design-system components on the board look exactly as before (the vendored `dist/index.css` is byte-identical to the npm's, so any difference is a bug in the JS bundle). Then open the insert popup (`+ Add`) and confirm all 39 design-system components are still listed — they now sit under purpose categories (Navigation, Actions, Inputs, …) instead of one flat "Design System", and the visibility rule that decides whether they appear at all was rewritten.
+- **For DS-3:** exact export names it may need — `VENDOR_DESIGN_SYSTEM_DIR`, `VENDOR_DESIGN_SYSTEM_SPECIFIER` (`'alm-design-system'`), `readVendorFile`, `readVendorFileOrNull`, `VendorDocs`, `extractColorTokens`, `DesignSystemColorTokensSchema`, all from `@core/design-system-manifest`. `iconCatalog.ts` can read `join(VENDOR_DESIGN_SYSTEM_DIR, 'src/icons')`; `tokenExtract`'s new `builtin-design-system` source can read `readVendorFile('dist/index.css')` or the tokens JSON. `register.tsx`'s `ALM_PACKAGE_SPECIFIER` and its `sourceImport` values are deliberately still the old npm string — DS-3 owns them.
+- **For DS-9:** still to delete/rename — `ALM_PACKAGE_SPECIFIER` in `src/modules/alm/register.tsx:50` (and its doc comment at :47), the root `design-system/` template folder, the `category: 'Design System'` literal that third-party `pkg.*` modules still carry in `src/admin/pages/site/studio/registerProjectModules.ts:467` (now a section NAME in the Assets panel, so "Design System" for a user's own npm package reads wrong — DS-4 should pick the real name), and the `@alm-design/design-system` fixture strings in `src/__tests__/property-controls/slotReplace.test.ts` / `src/__tests__/modules/slotCandidates.test.ts`.
+
 ### meta-11 — plan: built-in design system, Assets panel, live previews, Add page
 - **Agent:** orchestrator (plan only — no code written)
 - **Stage:** research complete · plan written · **owner confirmed all three §0 decisions (2026-09-17)** — ready for `studio-architect` to cut wave-1 and wave-2 work orders.

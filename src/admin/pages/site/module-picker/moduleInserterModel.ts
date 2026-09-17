@@ -35,6 +35,12 @@ export interface RegistryModuleForInserter {
    * typed as an opaque callable rather than restating the signature.
    */
   sourceIntrinsic?: (props: never) => unknown
+  /**
+   * Present when the module is spelled in a user's source as an IMPORT
+   * (`ModuleDefinition.sourceImport`) — a design-system or third-party package
+   * component. Only its presence matters here, same as `sourceIntrinsic`.
+   */
+  sourceImport?: { name: string }
 }
 
 interface BaseInserterItem {
@@ -93,19 +99,36 @@ const HIDDEN_MODULE_IDS = new Set([
   // WS-4.2 — auto-materialized by `inlineLocalComponents` expanding a call
   // site; a manual insert has no call site + inlined subtree to give it, so
   // there is nothing a picker entry could meaningfully create. (Also already
-  // covered by the Studio-mode `category !== 'Design System'` rule below,
-  // this closes the same gap for any future non-Studio surface.)
+  // covered by the "has an honest source spelling" rule below, this closes
+  // the same gap for any future non-Studio surface.)
   'studio.instance',
 ])
 
 export const DEFAULT_MODULE_INSERTER_FAVORITES =
   DEFAULT_MODULE_INSERTER_PREFERENCE.favorites
 
+/**
+ * Accent colour per category.
+ *
+ * The design-system components used to share one flat `'Design System'`
+ * category and so one accent; they now carry their PURPOSE group as their
+ * category (Navigation, Actions, Inputs, …, from
+ * `vendor/alm-design-system/studio/groups.json`). Mapping each group onto the
+ * same five accents keeps a component's colour stable — and makes it mean
+ * something, since a section now has one colour.
+ */
 export function moduleAccentForCategory(category: string): ModuleInserterAccent {
-  if (category === 'Forms') return 'mint'
-  if (category === 'Media') return 'sky'
-  if (category === 'Typography') return 'peach'
-  if (category === 'Interactive' || category === 'CMS') return 'rose'
+  if (category === 'Forms' || category === 'Inputs' || category === 'Selection') return 'mint'
+  if (category === 'Media' || category === 'Content & cards' || category === 'Icons') return 'sky'
+  if (category === 'Typography' || category === 'Feedback' || category === 'Progress') return 'peach'
+  if (
+    category === 'Interactive' ||
+    category === 'CMS' ||
+    category === 'Actions' ||
+    category === 'Overlays'
+  ) {
+    return 'rose'
+  }
   return 'lilac'
 }
 
@@ -123,9 +146,6 @@ export interface ModuleInsertionContext {
   /** The active document tree already contains a `base.outlet`. */
   hasOutlet: boolean
 }
-
-/** Category assigned to every code-backed design-system module (see `src/modules/alm/register.tsx`). */
-const DESIGN_SYSTEM_CATEGORY = 'Design System'
 
 type ModuleAvailability =
   | { kind: 'insertable' }
@@ -158,11 +178,18 @@ export function moduleAvailability(
   // computed per project by `registerProjectModules.ts`.
   if (getPaletteHiddenPackageModuleIds().has(mod.id)) return { kind: 'hidden' }
   // A module is insertable only if it has an honest spelling in the user's
-  // source — a design-system component (imported), or an intrinsic element
-  // (`sourceIntrinsic`: `base.container` is a `<div>`, `base.text` a `<p>`).
-  // Everything else is an editor construct with no JSX to write, and stays
-  // hidden rather than offering an insert that can only be refused.
-  if (mod.category !== DESIGN_SYSTEM_CATEGORY && mod.sourceIntrinsic === undefined) {
+  // source — an IMPORT (`sourceImport`: a design-system or package component),
+  // or an intrinsic element (`sourceIntrinsic`: `base.container` is a `<div>`,
+  // `base.text` a `<p>`). Everything else is an editor construct with no JSX
+  // to write, and stays hidden rather than offering an insert that can only be
+  // refused.
+  //
+  // This asks for the spelling directly. It used to ask whether the module's
+  // CATEGORY was the literal string `'Design System'`, which was the same
+  // answer only for as long as every importable module shared one flat
+  // category — design-system components now carry their purpose group instead
+  // (Navigation, Actions, …), and the string check would have hidden all 39.
+  if (mod.sourceImport === undefined && mod.sourceIntrinsic === undefined) {
     return { kind: 'hidden' }
   }
   if (mod.id === 'base.slot-outlet' && !context.isVCMode) return { kind: 'hidden' }

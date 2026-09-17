@@ -21,7 +21,8 @@ import { TextPropsSchema, type TextStoredProps } from './props'
 export const TextModule: ModuleDefinition<TextStoredProps> = {
   id: 'base.text',
   name: 'Text',
-  description: 'A semantic text element.',
+  description: 'A semantic text element — paragraph, heading, or inline copy.',
+  keywords: ['paragraph', 'label', 'heading', 'copy', 'title', 'words', 'type', 'span'],
   category: 'Typography',
   version: '2.0.0',
   icon: TextStartTIcon,

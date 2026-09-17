@@ -6,7 +6,7 @@ Catalog of every test in `src/__tests__/architecture/`. These are structural gat
 
 ## TL;DR
 
-- 105 gate files across structural domains: SQL, JSON columns, migrations, CSS, icons, primitives, page tree, sandbox, agent, Studio agent/MCP tools, router, content storage, boundary validation, module size, AI, auth, error handling, canvas/store performance, etc.
+- 107 gate files across structural domains: SQL, JSON columns, migrations, CSS, icons, primitives, page tree, sandbox, agent, Studio agent/MCP tools, router, content storage, boundary validation, module size, AI, auth, error handling, canvas/store performance, etc.
 - Naming convention: `<topic>.test.ts` (kebab-case) or `<group>-<topic>.test.ts`. A few legacy `task<N>-*` ids remain for live invariants; new gates should use topic names.
 - Run them all: `bun test src/__tests__/architecture/`.
 - Most are **import / source scans** — they parse the files in scope and assert / reject patterns. Some are unit-style (a small in-test database, a synthesized page tree).
@@ -107,6 +107,8 @@ See [docs/design.md](../design.md), [docs/reference/design-tokens.md](design-tok
 | `no-third-party-icons.test.ts`                | No `lucide-react`, `heroicons`, etc. Only `pixel-art-icons`.                     |
 | `direct-icon-imports.test.ts`                 | Icons imported deep (`pixel-art-icons/icons/<name>`), not from the package root. |
 | `vendor-icons-fresh.test.ts`                  | The vendored icon set is up-to-date (run `bun run icons:sync`).                  |
+| `alm-design-system-fresh.test.ts`             | The vendored design system's committed artefacts match `vendor/alm-design-system/src/` (run `bun run alm:sync`). `dist/` is compared through `dist/BUILD_HASH`; `dist/tokens.generated.json` and `src/modules/alm/manifest.generated.json` byte-for-byte. |
+| `assets-search-coverage.test.ts`              | Every palette-visible `alm.*`/`base.*` module has a non-placeholder `description` and ≥ 3 `keywords`, every manifest component has a `group`, and a query→module probe table resolves unambiguously (`header` → `alm.Navbar`, `pill` → `alm.Chip`, …). |
 | `icon-catalog-integrity.test.ts`              | Every icon import resolves; the vendored package's index is consistent.          |
 | `close-icon-correctness.test.ts`              | Close affordances use the standard close icon glyph.                             |
 | `no-plugin-tab-shells.test.ts`                | `role="tablist"` is only allowed inside `src/ui/components/Tabs/` and a small §T-allowlisted set of pre-existing custom controls. Every other tablist in `src/admin/` or `src/editor/` must use `<Tabs>` / `<TabList>` from `@ui/components/Tabs`. |

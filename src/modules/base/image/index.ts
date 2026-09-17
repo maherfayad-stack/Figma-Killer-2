@@ -124,7 +124,8 @@ function blurHashToCssBackground(hash: string): string | null {
 export const ImageModule: ModuleDefinition<ImageProps> = {
   id: 'base.image',
   name: 'Image',
-  description: 'A responsive image.',
+  description: 'A responsive image with sizing, focal point, and lazy loading.',
+  keywords: ['picture', 'photo', 'img', 'media', 'asset', 'graphic'],
   category: 'Media',
   version: '4.0.0',
   icon: ImageSolidIcon,
