@@ -116,6 +116,28 @@ export function measureIframeLocalRect(target: CanvasRectSource | null): CanvasO
   return { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
 }
 
+/** Two nullable rects are equal when every field matches (or both are null). */
+export function overlayRectsEqual(a: CanvasOverlayRect | null, b: CanvasOverlayRect | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+/**
+ * `null` (the frame doesn't own the node — legitimate) or every field a finite
+ * number. A layout read taken mid-reflow can come back non-finite, and
+ * `BreakpointSelectionOverlay` refuses to mark its anchor clean on one.
+ */
+export function overlayRectIsFinite(rect: CanvasOverlayRect | null): boolean {
+  if (!rect) return true
+  return (
+    Number.isFinite(rect.x) &&
+    Number.isFinite(rect.y) &&
+    Number.isFinite(rect.width) &&
+    Number.isFinite(rect.height)
+  )
+}
+
 /** Smallest rect containing both `a` (may be null) and `b`. */
 export function unionCanvasOverlayRects(
   a: CanvasOverlayRect | null,

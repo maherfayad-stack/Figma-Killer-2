@@ -743,6 +743,7 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
 |---|---|---|
 | O(pages × nodes) scan in a store selector, runs on **every** store change | `PropertiesPanelBody.tsx` (`sharedTextOriginCount`), `InPlaceInspector.tsx` (`findNodeById`) | precomputed indexes in the site slice |
 | Overlay coordinate conversion across zoom | `canvasSelectionOverlayPositioning.ts` | render rings inside the iframe |
+| A permanent rAF loop per mounted frame while anything is selected | `BreakpointSelectionOverlay.tsx` | **fixed (S4)** — `overlayMeasureScheduler.ts`, below |
 | Frames mount all iframes once the doc is in the store | `CanvasTransformLayer.tsx` | virtualize iframe mounting; frozen poster for offscreen frames |
 | React re-render per pointermove during pan | `useCanvas.ts` | write `transform` to a ref, commit on pointerup |
 
@@ -756,6 +757,57 @@ anything that needs to be pixel-exact (a ruler tick, a measurement HUD); see
 
 **Never** add a full-site scan inside a `useEditorStore(selector)` callback.
 
+### The selection overlay measures on events, not every frame (S4)
+
+`BreakpointSelectionOverlay` used to arm an uncapped rAF loop whenever
+`hasOverlayWork` was true — i.e. forever while anything was selected or
+hovered, **per mounted frame**. Eight frames and one selected node meant eight
+60 Hz loops over a canvas nobody was touching, which is enough to keep the main
+thread from ever sleeping and to undo what frame virtualization buys.
+
+`overlayMeasureScheduler.ts` now owns *when* the overlay measures. The component
+owns *what* a pass costs (unchanged: cheap in-iframe rects every pass, the
+zoom-converting parent-doc anchor only when `anchorDirtyRef` is set).
+
+A per-frame loop is armed **only** while something moves the geometry on every
+frame and no event can fire per frame:
+
+| Continuous reason | Signal |
+|---|---|
+| element resize drag | `canvasGesture.ts` → `onCanvasGestureChange` (new: the begin edge, not only `onCanvasGestureSettle`) |
+| reorder drag, animation replay | render state the component already holds (`reorderDrag.dragging`, `animationScrubStore`'s `'playing'`), passed in as `continuous` |
+| pan / zoom | `canvasViewportActivity.ts` → `onCanvasViewportActivityChange`, marked from `useCanvas`'s `applyTransformToDOM` |
+| a bridge frame's DOM swap | the adapter's `hmr:before` → `hmr:after`, capped at 2 s |
+
+Everything else schedules **one** coalesced pass: a `ResizeObserver` on the
+frame body/root **and on each tracked element** (a late-loading image resizes an
+element without mutating the DOM or the body), a `MutationObserver` over the
+frame document, capture-phase `scroll` inside the frame, the adapter's
+`frame:resize` (bridge mode's only signal — its document is unreachable), a
+parent-window resize (which also invalidates the anchor), and the component's
+own effects for selection change and the committed pan/zoom.
+
+Three things are easy to get wrong here:
+
+- **`transformRef` cannot tell you a pan STARTED.** It is mutated in place and
+  never changes identity, so the only way to learn from it is to poll — the
+  loop this work order deleted. That is why `canvasViewportActivity.ts` exists,
+  and why it is a *separate* flag from `canvasGesture.ts`: a pan mutates
+  nothing and must not freeze the auto-height refit the way a page-mutating
+  gesture does.
+- **The mutation observer must skip `overlayRoot`.** The overlay writes inline
+  styles onto its own rings inside the observed document; counting those as
+  "the page changed" makes every pass schedule another one.
+- **`BreakpointSelectionOverlay` is a SIBLING of the frame surface**, not a
+  descendant, so it cannot read `CanvasFrameAdapterContext`. It resolves the
+  adapter from the registry by iframe element and re-resolves on
+  `onFrameAdapterRegistryChange`, because either effect may run first.
+
+Gates: `overlayMeasureScheduler.test.ts` (fake rAF — idle board with a
+selection runs 0 passes) and `overlayRafDiscipline.test.ts` (source shape: the
+component keeps exactly one `requestAnimationFrame` call, the one-shot
+portal-root read).
+
 **Frame-invariant work belongs in a cross-frame memo, not in the injector.**
 Every mounted iframe runs its injectors in the same commit over the same store
 snapshot, so anything that does not depend on the frame is being paid N times
@@ -763,9 +815,26 @@ for one answer. The three that do this now, and the pattern to copy:
 
 | Module | Memo shape | What varies per frame |
 |---|---|---|
-| `canvasClassCss.ts` | single-slot identity memo over 9 inputs | nothing |
+| `canvasClassCss.ts` — `generateCanvasClassCSS` | single-slot identity memo over 9 inputs | nothing |
+| `canvasClassCss.ts` — `generateNodeClassCSS` / `nodeClassBackgroundImagePaths` | shared inputs identity-compared, then a `Map` keyed by the node's `classIds` signature | which NODE is asking |
 | `canvasVendorCss.ts` | single-slot memo on `projectVendorCss` | nothing |
 | `canvasUserStylesheetCss.ts` | two stages: `(site, scopeId, scopeTemplate)` → `Map` by viewport | the viewport-unit resolution, and only by frame **width** |
+
+The `generateNodeClassCSS` pair is the sandboxed-module path (S3):
+`ModuleSandboxFrame` renders each module into its own `srcdoc` iframe that no
+canvas injector reaches, so it needs a self-contained CSS string built from
+just its node's own rules. It used to select the whole `s.site` and run
+`collectSiteStyleBackgroundImagePaths` + `generateClassCSS` **in its render
+body**, per module instance, on every store change; it now subscribes to
+`s.site?.styleRules` / `.breakpoints` / `.conditions` and reads through these
+memos. The key is a `classIds` signature rather than a single slot because two
+sandboxed modules on one page is the common case, and a single slot would miss
+on every alternating call. **`styleRuleNeedsCanvasOverlay`'s filter does not
+apply here** — there is no `AuthoredCssInjector` raw text inside a sandbox
+document, so an unedited imported rule must be emitted or it is simply absent.
+`admin/pages/site/canvas/` is now in the covered set of
+`no-full-site-scan-in-selectors.test.ts`'s whole-`site` detector, so the old
+shape cannot come back.
 
 `canvasUserStylesheetCss.ts` also **reorders** the chain
 (`collect → rewritePrefersColorScheme → resolveViewportUnits`) so the
@@ -787,7 +856,11 @@ shared contract (`CanvasViewportActionsContext` carries it too, for consumers
 that aren't direct children of `CanvasRoot`): anything that must track
 pan/zoom live — `CanvasRulers`, D2's drag/drop, a future measurement HUD —
 reads this ref, never the store selector, during an active gesture. See
-`docs/features/canvas-rulers-and-guides.md`.
+`docs/features/canvas-rulers-and-guides.md`. **The ref answers "what is the
+transform"; it cannot answer "is a gesture running"** — it never changes
+identity, so detecting a gesture from it means polling. For that, subscribe to
+`canvasViewportActivity.ts` (S4), which `applyTransformToDOM` marks on every
+write.
 
 **Chrome outside `CanvasRoot` reaches the canvas through the store, not the
 context.** The toolbar is painted eagerly by `AdminCanvasLayout`, *above* the

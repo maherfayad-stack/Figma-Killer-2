@@ -187,17 +187,39 @@ function CanvasActionsTestProvider({
   )
 }
 
+/**
+ * A manual animation-frame queue.
+ *
+ * `cancelAnimationFrame` genuinely removes the callback — it used to be a
+ * no-op, which was fine only while the overlay ran one permanent loop that
+ * never cancelled anything. The overlay now creates a fresh measure scheduler
+ * whenever the iframe element or the in-iframe overlay root resolves (S4), and
+ * each teardown cancels its pending frame; against a no-op cancel those
+ * orphaned callbacks stayed in the queue and silently ate the `flushOne` calls
+ * below, so the assertions measured a torn-down scheduler instead of the live
+ * one. A fake that lies about `cancel` tests the fake, not the canvas.
+ */
 function installRafQueue() {
   const originalRaf = globalThis.requestAnimationFrame
   const originalCancel = globalThis.cancelAnimationFrame
-  const callbacks: FrameRequestCallback[] = []
+  const callbacks = new Map<number, FrameRequestCallback>()
+  let nextHandle = 1
   globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
-    callbacks.push(callback)
-    return callbacks.length
+    const handle = nextHandle++
+    callbacks.set(handle, callback)
+    return handle
   }) as typeof requestAnimationFrame
-  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+  globalThis.cancelAnimationFrame = ((handle: number) => {
+    callbacks.delete(handle)
+  }) as typeof cancelAnimationFrame
   return {
-    flushOne: () => callbacks.shift()?.(performance.now()),
+    flushOne: () => {
+      const next = callbacks.entries().next()
+      if (next.done) return
+      const [handle, callback] = next.value
+      callbacks.delete(handle)
+      callback(performance.now())
+    },
     restore: () => {
       globalThis.requestAnimationFrame = originalRaf
       globalThis.cancelAnimationFrame = originalCancel

@@ -1,19 +1,28 @@
 /**
- * Overlay RAF discipline (Phase 5B verification).
+ * Overlay RAF discipline (Phase 5B verification, tightened by S4).
  *
- * `BreakpointSelectionOverlay`'s per-frame measurement loop must only run
- * while there is visible overlay work (`hasOverlayWork`) — an always-on RAF
- * loop across N breakpoint frames would keep the main thread from idling and
- * defeat frame virtualization (Phase 5A). Board objects (sticky notes, doc
- * blocks, board frame drag headers) drag via pointer-capture handlers and
- * must NOT feed `hasOverlayWork` or run their own RAF loop that forces the
- * canvas to stay hot while otherwise idle.
+ * Phase 5B gated `BreakpointSelectionOverlay`'s measurement loop on
+ * `hasOverlayWork`, which stopped it running over an EMPTY canvas. S4 finished
+ * the job: the loop no longer runs over an idle canvas that merely has
+ * something selected either. Measurement is event-driven
+ * (`overlayMeasureScheduler.ts`) and a per-frame loop is armed only while
+ * something is genuinely moving the geometry every frame.
  *
- * This is a source-shape check (like the other architecture gates) rather
- * than a React-mount test: the invariant is about which effect governs the
- * loop and which files never reference it or `requestAnimationFrame`, which
- * a static read pins more directly and far more cheaply than mounting the
- * real canvas + iframes.
+ * So this file now pins two different things:
+ *
+ *  1. **Source shape** — the overlay owns no self-rescheduling rAF loop of its
+ *     own, and the scheduler's loop reschedules only while a hold is up. Board
+ *     objects (sticky notes, doc blocks, board frame drag headers) drag via
+ *     pointer-capture handlers and must never feed `hasOverlayWork` or grow a
+ *     loop that forces the canvas to stay hot while otherwise idle.
+ *  2. The BEHAVIOUR — "an idle board with a selection is 0 rAF/s" — which a
+ *     static read cannot express at all. That lives next door in
+ *     `overlayMeasureScheduler.test.ts`, against a fake rAF.
+ *
+ * A source-shape check is still the right tool for (1): the invariant is about
+ * which files reference `requestAnimationFrame` at all, which a static read
+ * pins more directly and far more cheaply than mounting the real canvas +
+ * iframes.
  */
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'fs'
@@ -30,23 +39,35 @@ function read(relPath: string): string {
 describe('BreakpointSelectionOverlay RAF loop', () => {
   const source = read('canvas/BreakpointSelectionOverlay.tsx')
 
-  it('gates its tick loop on hasOverlayWork, with exactly one kick-off + one reschedule + one teardown cancel', () => {
-    // Isolate the specific effect (there is an unrelated one-shot RAF
-    // elsewhere in this file, for portal-root detection on mount — scoping to
-    // this block keeps the count assertions below meaningful).
+  it('gates its measurement on hasOverlayWork and delegates the schedule to overlayMeasureScheduler', () => {
     const effectMatch = source.match(
-      /useEffect\(\(\) => \{\n\s*if \(!hasOverlayWork\) return[\s\S]*?\}, \[hasOverlayWork, iframeElement\]\)/,
+      /useEffect\(\(\) => \{\n\s*if \(!hasOverlayWork\) return[\s\S]*?\}, \[hasOverlayWork, iframeElement, overlayRoot, continuousGesture\]\)/,
     )
     expect(effectMatch).not.toBeNull()
     const effectBody = effectMatch![0]
 
-    // One kick-off call plus one recursive reschedule inside `tick`, paired
-    // with exactly one teardown cancel. Guards against a second, independent
-    // (ungated) RAF loop being folded into this effect.
-    const rafCallCount = (effectBody.match(/requestAnimationFrame\(/g) ?? []).length
-    const cancelCallCount = (effectBody.match(/cancelAnimationFrame\(/g) ?? []).length
-    expect(rafCallCount).toBe(2)
-    expect(cancelCallCount).toBe(1)
+    // The effect creates the scheduler and disposes it. It must NOT drive a
+    // loop of its own — that is precisely the shape S4 removed.
+    expect(effectBody).toMatch(/createOverlayMeasureScheduler\(/)
+    expect(effectBody).toMatch(/\.dispose\(\)/)
+    expect(effectBody).not.toMatch(/requestAnimationFrame\(/)
+  })
+
+  it('keeps exactly one requestAnimationFrame call in the whole component — the one-shot portal-root read', () => {
+    // The overlay used to own a self-rescheduling loop (one kick-off + one
+    // recursive reschedule). All that is left is the single mount-time frame
+    // that reads the canvas root ref, which cancels itself on cleanup.
+    expect((source.match(/requestAnimationFrame\(/g) ?? []).length).toBe(1)
+    expect((source.match(/cancelAnimationFrame\(/g) ?? []).length).toBe(1)
+  })
+
+  it('the scheduler reschedules only while a continuous hold is up', () => {
+    const scheduler = read('canvas/overlayMeasureScheduler.ts')
+    // The rAF pump's ONLY reschedule is guarded by the hold set. Without the
+    // guard this module would simply be the old permanent loop, relocated.
+    expect(scheduler).toMatch(/measure\(\)\n\s*if \(holds\.size > 0\) schedule\(\)/)
+    // And the pump is the only thing that requests a frame.
+    expect((scheduler.match(/requestAnimationFrame\(/g) ?? []).length).toBe(1)
   })
 
   it('hasOverlayWork is derived only from toolbar/ring/hover visibility, not board-object state', () => {
