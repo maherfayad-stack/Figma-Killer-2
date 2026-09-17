@@ -34,7 +34,7 @@
  * stronger.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError } from '@core/ai'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
@@ -105,8 +105,10 @@ const planVariantsTool: AiTool = {
     const dir = resolveToolProjectDir(dirInput, ctx)
 
     if (!PAGE_BASE_NAME_RE.test(baseName)) {
-      return aiToolError(
-        `"${baseName}" is not usable as a page base name — it becomes a real .tsx file name, so it must start with a letter and contain only letters and digits (no spaces, dashes, dots or extension). Pass "Home", not "home page" or "Home.tsx".`,
+      return toolRefusal(
+        'invalid-input',
+        `"${baseName}" is not usable as a page base name — it becomes a real .tsx file name, so it must start with a letter and contain only letters and digits (no spaces, dashes, dots or extension).`,
+        { remedy: 'Pass "Home", not "home page" or "Home.tsx".' },
       )
     }
 
@@ -176,11 +178,11 @@ const listVariantSetsTool: AiTool = {
       const set = getVariantSet(dir, setId)
       if (!set) {
         const known = listVariantSets(dir).map((s) => `${s.id} (${s.baseName})`).slice(0, MAX_SETS_RETURNED)
-        return aiToolError(
-          known.length > 0
-            ? `No variant set "${setId}" is recorded for this project. Recorded sets: ${known.join(', ')}.`
-            : `No variant set "${setId}" is recorded for this project, and no set has been recorded at all yet — call studio_plan_variants first.`,
-        )
+        return toolRefusal('no-such-variant-set', `No variant set "${setId}" is recorded for this project.`, {
+          remedy: known.length > 0
+            ? `Recorded sets: ${known.join(', ')}.`
+            : 'No set has been recorded at all yet — call studio_plan_variants first.',
+        })
       }
       return { ok: true, dir, sets: [set] }
     }

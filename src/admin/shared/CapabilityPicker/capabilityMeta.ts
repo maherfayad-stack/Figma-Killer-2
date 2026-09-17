@@ -193,7 +193,7 @@ export const CAPABILITY_META: Record<CoreCapability, CapabilityMeta> = {
   },
   'studio.run.project': {
     label: 'Run studio project code',
-    description: "Boot an imported project's own dev server and screenshot it for visual comparison. Executes the user's code — never granted by default.",
+    description: "Boot an imported project's own dev server and screenshot it for visual comparison. Executes the user's code, so it also requires that specific project to have been promoted to run-project trust.",
   },
   'studio.git.write': {
     label: 'Commit to a studio project',

@@ -12,6 +12,7 @@
  * Everything here is pure: no capture, no filesystem, no cache. `compare.ts`
  * hands in the resolved reference and the finished diff.
  */
+import { toolRefusal, type ToolRefusal } from '@core/ai'
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import {
   FIDELITY_THRESHOLDS,
@@ -76,7 +77,7 @@ export function resolvePageGrading(params: {
   readonly project?: FidelityMode
   readonly passScore?: number
   readonly maxRegionCoverage?: number
-}): { ok: true; grading: PageGrading } | { ok: false; error: string } {
+}): { ok: true; grading: PageGrading } | ToolRefusal {
   const { pageTitle, pageId, resolved } = params
   const mode = resolveFidelityMode({
     toolArg: params.toolArg,
@@ -87,7 +88,7 @@ export function resolvePageGrading(params: {
   }).mode
 
   if (mode === 'strict' && resolved.implicit && resolved.reference.pageId === undefined) {
-    return { ok: false, error: strictStandInRefusal(pageTitle, pageId, resolved.reference) }
+    return toolRefusal('strict-mode-stand-in-refused', strictStandInRefusal(pageTitle, pageId, resolved.reference))
   }
   return { ok: true, grading: resolveGrading(mode, params.passScore, params.maxRegionCoverage) }
 }

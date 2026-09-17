@@ -84,7 +84,7 @@
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError } from '@core/ai'
+import { toolRefusal } from '@core/ai'
 import { createWorkspaceProject, parsePageFile, unresolvedRawTextImports } from '@core/page-parser'
 import { collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
@@ -206,11 +206,13 @@ export const studioQualityCheckTool: AiTool = {
     const { ids, unmatched } = resolveRequestedPages(pages, requested, MAX_BATCH_PAGES)
     if (ids.length === 0) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return aiToolError(
-        unmatched.length > 0
-          ? `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`
-          : `This project has no screens to audit yet.`,
-      )
+      return unmatched.length > 0
+        ? toolRefusal('no-such-page', `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}.`, {
+            remedy: `This project has: ${known}.`,
+          })
+        : toolRefusal('no-such-page', 'This project has no screens to audit yet.', {
+            remedy: 'Create one with studio_create_page before auditing it.',
+          })
     }
 
     const pageById = new Map(pages.map((p) => [p.id, p]))

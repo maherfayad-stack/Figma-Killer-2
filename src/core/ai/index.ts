@@ -7,6 +7,14 @@ export {
   aiToolOk,
 } from './toolOutput'
 export type { AiToolImage, AiToolOutput } from './toolOutput'
+export {
+  TOOL_REFUSAL_CODES,
+  TOOL_REFUSAL_CODE_LIST,
+  ToolRefusalSchema,
+  isToolRefusal,
+  toolRefusal,
+} from './toolRefusal'
+export type { ToolRefusal, ToolRefusalCode, ToolRefusalOptions } from './toolRefusal'
 export { effectiveCaptureRatio } from './captureScale'
 export type { CapturePurpose } from './captureScale'
 export { PAGE_DIAGNOSTIC_CODES, PAGE_DIAGNOSTIC_CODE_LIST } from './pageDiagnostics'

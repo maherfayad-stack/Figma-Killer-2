@@ -10,7 +10,7 @@
  * says about that, and what happens when neither can.
  *
  * The old behaviour this pins against: the tool used to be
- * `execution: 'browser'` with no handler at all, so a project with no tab open
+ * `execution: 'bridge'` with no handler at all, so a project with no tab open
  * spent ~8s in the bridge and then refused.
  */
 import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test'
@@ -124,8 +124,12 @@ afterEach(() => {
 })
 
 describe('studio_computed_styles routing', () => {
-  it('is a SERVER tool now — a browser-executed tool has no handler to call at all', () => {
-    expect(tool.execution).toBe('server')
+  it('runs in-process with the tab as a FALLBACK — a relayed tool has no handler to call at all', () => {
+    // A11: the value says "headless first, open tab only if that cannot run",
+    // which is also what the system prompt's live-tab sentence is generated
+    // from. Reverting it to `bridge` would put this tool back on the prompt's
+    // "needs the open board" list, which is the exact claim `mcp-20` made false.
+    expect(tool.execution).toBe('server-with-bridge-fallback')
     expect(tool.handler).toBeDefined()
   })
 

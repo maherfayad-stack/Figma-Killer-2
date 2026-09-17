@@ -37,6 +37,7 @@
  * second, looser path for agents.
  */
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { commitFiles, isGitFailure } from '../../../../handlers/studio/gitOperations'
 import { isAcceptableCommitMessage, resolveWorkspaceRelativePath } from '../../../../handlers/studio/gitPaths'
@@ -96,19 +97,16 @@ const studioGitCommitTool: AiTool = {
 
     const guard = assertOwnGitRepo(projectDir)
     if (!guard.ok) {
-      return {
-        ok: false,
-        code: guard.reason === 'not-a-repository' ? 'not-a-repository' : 'outside-workspace',
-        error:
-          guard.reason === 'not-a-repository'
-            ? 'This project has no git repository of its own, so there is nothing to commit to. Ask the user to create one from the Version control panel — you may not create it yourself.'
-            : 'That directory is not a Studio project.',
-      }
+      return guard.reason === 'not-a-repository'
+        ? toolRefusal('not-a-repository', 'This project has no git repository of its own, so there is nothing to commit to.', {
+            remedy: 'Ask the user to create one from the Version control panel — you may not create it yourself, so this same call will keep refusing until they do.',
+          })
+        : toolRefusal('outside-workspace', 'That directory is not a Studio project.')
     }
 
     const trimmed = message.trim()
     if (!isAcceptableCommitMessage(trimmed)) {
-      return { ok: false, code: 'invalid-message', error: 'A commit needs a message of 1–4096 characters.' }
+      return toolRefusal('invalid-message', 'A commit needs a message of 1–4096 characters.')
     }
 
     // Re-derived server-side, exactly as the HTTP route does. One unusable
@@ -119,17 +117,24 @@ const studioGitCommitTool: AiTool = {
     for (const raw of files) {
       const relPath = resolveWorkspaceRelativePath(guard.dir, raw)
       if (relPath === null) {
-        return {
-          ok: false,
-          code: 'invalid-path',
-          error: `"${raw}" is not a committable path in this project. Use a project-relative path; build output, node_modules, .git and .studio are never committable.`,
-        }
+        return toolRefusal('invalid-path', `"${raw}" is not a committable path in this project.`, {
+          remedy: 'Use a project-relative path; build output, node_modules, .git and .studio are never committable.',
+        })
       }
       if (!resolved.includes(relPath)) resolved.push(relPath)
     }
 
     const result = await commitFiles(guard.dir, trimmed, resolved)
-    if (isGitFailure(result)) return { ok: false, code: result.code, error: result.message }
+    // git's own failure codes are a superset of this surface's; the two
+    // `commitFiles` can actually produce are named, and anything else is
+    // reported honestly as `git-failed` carrying git's original code rather
+    // than invented as a refusal code nobody documented.
+    if (isGitFailure(result)) {
+      const code = result.code === 'empty-file-list' ? 'empty-file-list' : 'git-failed'
+      return toolRefusal(code, result.message, {
+        details: code === 'git-failed' && result.code !== 'git-failed' ? { gitCode: result.code } : undefined,
+      })
+    }
     return { ok: true, sha: result.sha, shortSha: result.shortSha, files: result.files }
   },
 }

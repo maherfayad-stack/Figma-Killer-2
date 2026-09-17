@@ -13,7 +13,7 @@
  * headless Studio write tool (`studio_apply_edits`, `studio_create_page`,
  * `studio_install_deps`) already uses.
  */
-import { StudioFetchRemoteAssetInputSchema } from '@core/ai'
+import { StudioFetchRemoteAssetInputSchema, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { fetchRemoteAsset } from '../../../../handlers/studio/remoteAssetFetch'
@@ -31,7 +31,7 @@ const fetchRemoteAssetTool: AiTool = {
     const { dir: dirInput, url, targetDir } = input as { dir?: string; url: string; targetDir?: string }
     const dir = resolveToolProjectDir(dirInput, ctx)
     const result = await fetchRemoteAsset(dir, url, targetDir)
-    if (!result.ok) return { ok: false, error: result.error }
+    if (!result.ok) return toolRefusal('remote-fetch-failed', result.error)
     return { ok: true, dir, relPath: result.relPath, bytesWritten: result.bytesWritten }
   },
 }

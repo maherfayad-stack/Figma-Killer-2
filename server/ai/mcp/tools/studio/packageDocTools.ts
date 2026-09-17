@@ -40,6 +40,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { BUILTIN_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from '../../../../handlers/studio/builtinDesignSystem'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -198,17 +199,18 @@ const packageDocTool: AiTool = {
 
     const file = resolvePackageDoc(dir, packageName, doc)
     if (!file) {
-      return {
-        ok: false,
-        error: `"${packageName}/${doc}" is not a markdown doc reachable from this project.${packageName === BUILTIN_DESIGN_SYSTEM_NAME ? ' (This project does not carry the built-in design system — check studio_list_components\'s designSystems field.)' : ''}`,
-      }
+      return toolRefusal('no-such-file', `"${packageName}/${doc}" is not a markdown doc reachable from this project.`, {
+        remedy: packageName === BUILTIN_DESIGN_SYSTEM_NAME
+          ? "This project does not carry the built-in design system — check studio_list_components's designSystems field."
+          : 'Check the package is installed and the doc name is one it actually ships.',
+      })
     }
 
     let markdown: string
     try {
       markdown = readFileSync(file, 'utf8')
     } catch (err) {
-      return { ok: false, error: `Could not read "${packageName}/${doc}": ${err instanceof Error ? err.message : String(err)}` }
+      return toolRefusal('io-error', `Could not read "${packageName}/${doc}": ${err instanceof Error ? err.message : String(err)}`)
     }
 
     const sections = splitSections(markdown)

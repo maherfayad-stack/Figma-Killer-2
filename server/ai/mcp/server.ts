@@ -21,6 +21,7 @@ import type { CoreCapability } from '@core/capabilities'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import type { AiBrowserBridge, AiTool, AiToolOutput } from '../runtime/types'
 import { executeAiTool } from '../drivers/http/execTool'
+import { toolDispatchesInProcess } from '../runtime/toolExecution'
 import { mcpToolsForCapabilities, mcpToolsForStudioWorkspace } from './registry'
 import { MCP_RESOURCES, findMcpResource } from './resources'
 import {
@@ -128,10 +129,16 @@ export function buildMcpServer(ctx: McpServerContext): Server {
       return { isError: true, content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
     }
 
-    // Server-resolved tools run in-process; browser tools are relayed to the
-    // connector owner's matching open workspace. No workspace → a clear,
-    // actionable error. Browser tools currently belong only to Site; keep
-    // that invariant explicit instead of guessing a bridge.
+    // In-process tools run here; a RELAYED tool (`execution: 'bridge'` with no
+    // handler of its own — see `runtime/toolExecution.ts`) is forwarded whole
+    // to the connector owner's matching open workspace. No workspace → a
+    // clear, actionable error. Relayed tools currently belong only to Site;
+    // keep that invariant explicit instead of guessing a bridge.
+    //
+    // A `bridge` tool that DOES declare a handler (`studio_page_diagnostics`)
+    // is dispatched in-process and relays from inside that handler, where it
+    // also owns its own "no board is connected" message — so it deliberately
+    // does not take the branch below, and `scope` never has to be `'site'`.
     //
     // WHICH open workspace (W10): a connector bound to a Studio project
     // (`connectorWorkspace.ts` — the in-canvas agent, whose turn `chat.ts`
@@ -140,11 +147,11 @@ export function buildMcpServer(ctx: McpServerContext): Server {
     // tab of its own — has no project to name, so it keeps the pre-existing
     // "whatever this user has open" behaviour.
     let bridge = NOOP_BRIDGE
-    if (tool.execution === 'browser') {
+    if (!toolDispatchesInProcess(tool)) {
       if (tool.scope !== 'site') {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Browser tool "${tool.name}" has unsupported scope "${tool.scope}".` }],
+          content: [{ type: 'text', text: `Relayed tool "${tool.name}" has unsupported scope "${tool.scope}".` }],
         }
       }
       const boundWorkspace = getConnectorWorkspace(ctx.connectorId)

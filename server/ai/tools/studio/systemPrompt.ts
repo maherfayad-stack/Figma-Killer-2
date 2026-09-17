@@ -92,6 +92,7 @@ import type { FidelityMode } from '../../../handlers/studio/fidelityMode'
 import { DEFAULT_DESIGN_POLICY, type DesignPolicy } from '../../../handlers/studio/designPolicy'
 import { DESIGN_POLICY_BLOCK, MODE_BLOCK } from './promptSessionBlocks'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../../runtime/types'
+import { buildBoardRequirementParagraph } from './boardRequirementClaim'
 import type { AiTool } from '../types'
 import type { StudioLiveDigest } from './liveDigest'
 import { describePageForDigest } from '../../../handlers/studio/pageWriteVerification'
@@ -286,7 +287,12 @@ SHAPING A LOGO OUT OF CSS. A gradient is not a logo and a hand-written path is n
   WRONG:   .googleGlyph { background: conic-gradient(from -45deg, #ea4335 25%, …); }
   RIGHT:   download the real mark (Assets, step 2), or leave a neutral box and NAME it as a gap in your reply.
 
-TREATING A DISCONNECTED BOARD AS A DEAD END. studio_screenshot and studio_compare do NOT need the user's tab: they render the pages off disk in a server-side headless browser first, and only fall back to relaying to an open board when that cannot run. A result carrying capturedVia:"headless" never involved a tab at all. If one of them fails, read WHICH half failed — "capture-unavailable" names both, and a headless failure is usually a missing Chromium (bunx playwright install chromium), which is a thing to report, not a board problem. The tools that genuinely require the open board are studio_computed_styles and studio_page_diagnostics, because they read the live frames. Those wait for a reconnecting tab internally before answering — one reconnect window when a board was live moments ago, two when nothing is known to be reconnecting — so if one still reports no connected board, the project is genuinely not open. Say so in one sentence, and do not write a pile of files you have no way to verify. Do not call it again expecting a different answer when nothing else has changed.
+${buildBoardRequirementParagraph(tools)}
+
+RETRYING A REFUSAL THAT ALREADY TOLD YOU IT WILL NOT WORK. Every Studio tool refuses in one shape — ok:false with a stable code, a message, usually a remedy, and retryable — and prints [code=<code> retryable=<true|false>] at the end of the message. A retryable:false code returns the identical refusal for the identical arguments, every time: never retry one. Do what the remedy says, or say what you need from the user.
+  WRONG:   studio_typecheck -> [code=trust-tier-required retryable=false] -> studio_typecheck -> same refusal -> again
+  RIGHT:   studio_typecheck -> [code=trust-tier-required retryable=false] -> tell the user the project's trust tier has to be promoted before anything can run, and keep verifying with studio_compare meanwhile
+  RIGHT:   studio_compare pages:['Chekout'] -> [code=no-such-page retryable=false] listing the real names -> studio_compare pages:['Checkout']
 
 Others, without examples: surveying the repository before writing anything; re-reading a file you just wrote; asking a question the reference image already answers; reporting progress in place of a passing studio_compare; restyling a user's imported screen toward your own habits.
 

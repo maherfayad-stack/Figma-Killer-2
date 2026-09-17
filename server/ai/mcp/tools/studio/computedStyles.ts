@@ -11,7 +11,7 @@
  *
  * ## W9-6: it stopped needing an editor tab
  *
- * This shipped as `execution: 'browser'`, relayed to the user's open Site
+ * This shipped as `execution: 'bridge'`, relayed to the user's open Site
  * workspace, which meant ~8s of bridge timeout and then a refusal whenever no
  * tab was open — on a question whose entire subject matter is what is ON DISK.
  * The capture page renders exactly that (`headlessCapture.ts`'s doc explains
@@ -29,7 +29,7 @@
  * depend on which one answered, and a fidelity loop whose measurement moves is
  * not a measurement.
  */
-import { StudioComputedStylesInputSchema, aiToolError } from '@core/ai'
+import { StudioComputedStylesInputSchema, toolRefusal } from '@core/ai'
 import { safeParseValue } from '@core/utils/typeboxHelpers'
 import { AgentComputedStylesResultSchema, type AgentFrameInspectRequest } from '@core/studio-capture'
 import type { AiTool, ToolContext } from '../../../runtime/types'
@@ -40,7 +40,7 @@ import { resolveToolProjectDir } from './resolveToolProjectDir'
 const computedStylesTool: AiTool = {
   name: 'studio_computed_styles',
   scope: 'shared',
-  execution: 'server',
+  execution: 'server-with-bridge-fallback',
   description:
     'Read what a screen\'s CSS ACTUALLY resolved to: per node, the real font-size and line-height in px, the font-weight, the colour and background as rgb, and the font family the text is genuinely SET IN (not the declared stack — a stack whose first family never loaded looks identical to one that did, and that difference makes correct px look like the wrong size). Use it to close a design difference by arithmetic instead of guessing from a screenshot: compare these numbers against the design\'s own values (a Figma connector\'s variable-definitions tool gives exact tokens) and fix whatever disagrees. This is how you catch a component whose size/variant name resolves to a different token than you assumed, and a font-family naming a font the project never loaded — neither of which is visible in a picture, and the second of which no font-size edit can fix. Per NODE, so it covers buttons, inputs, labels and containers identically. Defaults to nodes with their own text (textOnly); pass textOnly:false for container padding/radius/background. It does NOT need a Studio browser tab open and never disturbs one that is — the screen is rendered in a headless browser on the server against what is on disk; the open tab is used only as a fallback when that browser cannot run. `readVia` in the result says which path answered.',
   inputSchema: StudioComputedStylesInputSchema,
@@ -71,11 +71,16 @@ const computedStylesTool: AiTool = {
     // Chromium, and the authoritative one for an unsaved in-progress edit.
     const bridge = await awaitEditorBridgeForUser(ctx.userId, editorBridgeScope(dir), ctx.signal)
     if (!bridge) {
-      return aiToolError(
-        // Names BOTH halves, the same rule `captureFrames.ts` follows: the old
-        // single message sent a reader to open a tab that was already open when
-        // the real cause was a browser that would not launch.
-        `computed-styles-unavailable: neither path could read this screen. Headless render: ${headless.error} Live editor tab: no Studio board is connected (open the project in a Studio browser tab, or make the headless path work — it needs a Chromium available to playwright-core, installed with \`bunx playwright install chromium\`).`,
+      // Names BOTH halves, the same rule `captureFrames.ts` follows: the old
+      // single message sent a reader to open a tab that was already open when
+      // the real cause was a browser that would not launch.
+      return toolRefusal(
+        'measure-unavailable',
+        `Neither path could read this screen. Headless render: ${headless.error} Live editor tab: no Studio board is connected.`,
+        {
+          remedy: 'Make the headless path work — it needs a Chromium available to playwright-core, installed with `bunx playwright install chromium` — or ask the user to open the project in a Studio browser tab. Report it rather than calling again unchanged.',
+          details: { headlessCode: headless.code },
+        },
       )
     }
     const relayed = await bridge.callBrowser('studio_computed_styles', {
@@ -91,8 +96,10 @@ const computedStylesTool: AiTool = {
     const parsed = safeParseValue(AgentComputedStylesResultSchema, relayed.data)
     if (!parsed.ok) {
       const detail = parsed.errors.map((e) => `${e.path}: ${e.message}`).join('; ')
-      return aiToolError(
+      return toolRefusal(
+        'measure-unavailable',
         `The open Studio tab answered with a computed-styles result this server could not validate: ${detail}`,
+        { remedy: 'The tab is running a different build than this server. Ask the user to reload it.' },
       )
     }
     return {

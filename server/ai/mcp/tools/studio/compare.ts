@@ -116,18 +116,19 @@ import { createWorkspaceProject, parsePageFile } from '@core/page-parser'
 import { collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { Page } from '@core/page-tree'
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk, type AiToolImage } from '@core/ai'
+import { aiToolOk, toolRefusal, type AiToolImage, type ToolRefusal, type ToolRefusalCode } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
-import { compareRegionLabel, recordCompareVerdict, recordPassingCompare } from '../../../../handlers/studio/pageVerificationStore'
+import { recordCompareVerdict, recordPassingCompare } from '../../../../handlers/studio/pageVerificationStore'
 import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { resolveDesignReference } from './referenceResolve'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
+import { labelRegions, pageFailure, type PageCompareResult, type PageCompareSuccess } from './comparePageResult'
 import {
   FIDELITY_MODES,
   FIDELITY_THRESHOLDS,
@@ -221,47 +222,6 @@ function captureDprFor(dir: string, pageId: string, referenceWidth: number): num
   return Math.round(Math.min(DPR_MAX, Math.max(DPR_MIN, ideal)) * 10_000) / 10_000
 }
 
-/** One differing region as the model sees it — the diff engine's rectangle plus the quotable label the Stop gate reads back. */
-type LabelledDiffRegion = CachedCompareVerdict['regions'][number] & { label: string }
-
-/** Attach `compareRegionLabel` to each region, worst first. Pure and one-liner-sized, but named because BOTH the cached and the freshly-computed path have to do exactly this — two inline maps would be two chances to number them differently. */
-function labelRegions(regions: CachedCompareVerdict['regions']): LabelledDiffRegion[] {
-  return regions.map((region, index) => ({ ...region, label: compareRegionLabel(index, region.y) }))
-}
-
-interface PageCompareSuccess {
-  ok: true
-  page: { id: string; title: string }
-  fromCache: boolean
-  pass: boolean
-  verdict: string
-  reference: { id: string; label?: string; width: number; height: number; autoSelected: boolean }
-  similarityScore: number
-  diffPercent: number
-  thresholds: { fidelityMode: FidelityMode; passScore: number; maxRegionCoverage: number; maxRegionPixels: number | null }
-  capture: CachedCompareVerdict['capture']
-  structuralRegionCount: number
-  /**
-   * Each differing region, worst first, carrying the stable `label`
-   * (`R1@y412`, `compareRegionLabel`) the balanced Stop gate looks for in the
-   * reply. The label is added here rather than stored on the cached verdict
-   * because it is derived from the region's own index and geometry — a cached
-   * verdict and a fresh one therefore produce identical labels, which is the
-   * property the gate depends on.
-   */
-  regions: LabelledDiffRegion[]
-  regionsTruncated: boolean
-  worstRegionNodeIds?: string[]
-  images?: { screen: number; reference: number; diff: number }
-}
-
-interface PageCompareFailure {
-  ok: false
-  page: { id: string; title: string }
-  error: string
-}
-
-type PageCompareResult = PageCompareSuccess | PageCompareFailure
 
 /**
  * The absolute files whose mtimes gate this page's cache entry, or `null`
@@ -298,7 +258,7 @@ function compareCacheDepFiles(
 export const studioCompareTool: AiTool = {
   name: 'studio_compare',
   scope: 'shared',
-  execution: 'server',
+  execution: 'server-with-bridge-fallback',
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
@@ -336,11 +296,13 @@ export const studioCompareTool: AiTool = {
     const { ids, unmatched } = resolveRequestedPages(pages, requested, MAX_BATCH_PAGES)
     if (ids.length === 0) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return aiToolError(
-        unmatched.length > 0
-          ? `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`
-          : `This project has no screens to compare yet.`,
-      )
+      return unmatched.length > 0
+        ? toolRefusal('no-such-page', `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}.`, {
+            remedy: `This project has: ${known}. Name one of those, or create the screen first.`,
+          })
+        : toolRefusal('no-such-page', 'This project has no screens to compare yet.', {
+            remedy: 'Create one with studio_create_page before trying to measure it.',
+          })
     }
 
     const pageById = new Map(pages.map((p) => [p.id, p]))
@@ -355,7 +317,8 @@ export const studioCompareTool: AiTool = {
     interface PlanEntry {
       pageId: string
       page: Page
-      referenceError?: string
+      /** The refusal that stopped this page before any capture — carried as the shared coded triple. */
+      referenceRefusal?: ToolRefusal
       reference?: DesignReference
       autoSelected?: boolean
       /** The resolved mode and the numbers it produced, per page — see the map below for why this is not one value for the batch. */
@@ -366,7 +329,7 @@ export const studioCompareTool: AiTool = {
     const plan: PlanEntry[] = ids.map((pageId) => {
       const page = pageById.get(pageId)!
       const resolved = resolveDesignReference(dir, pageId, referenceId)
-      if (!resolved.ok) return { pageId, page, referenceError: resolved.error }
+      if (!resolved.ok) return { pageId, page, referenceRefusal: resolved }
 
       // W9-2 — the bar is resolved PER PAGE (`compareGrading.ts`), and a
       // strict call against a project-wide stand-in is refused there rather
@@ -381,7 +344,7 @@ export const studioCompareTool: AiTool = {
         passScore,
         maxRegionCoverage,
       })
-      if (!graded.ok) return { pageId, page, referenceError: graded.error }
+      if (!graded.ok) return { pageId, page, referenceRefusal: graded }
       const { grading } = graded
       const cacheKey = buildCompareCacheKey(dir, pageId, resolved.reference.id, grading.mode, grading.requiredScore, grading.coverageLimit, cap)
       const cached = forceRecapture ? null : getCachedCompareVerdict(cacheKey)
@@ -399,7 +362,7 @@ export const studioCompareTool: AiTool = {
     // 3 + 4. Every cache-miss page is captured up front, batched — see
     // `captureMissedPages`. The per-page loop below only reads the results.
     const captureTargets = plan
-      .filter((p) => !p.referenceError && !p.cached)
+      .filter((p) => !p.referenceRefusal && !p.cached)
       .map((p) => ({ pageId: p.pageId, dpr: captureDprFor(dir, p.pageId, p.reference!.width) }))
     const dprByPageId = new Map(captureTargets.map((t) => [t.pageId, t.dpr]))
     let captures = new Map<string, PageCapture>()
@@ -453,8 +416,9 @@ export const studioCompareTool: AiTool = {
 
     for (const entry of plan) {
       const title = entry.page.title
-      if (entry.referenceError) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: entry.referenceError })
+      if (entry.referenceRefusal) {
+        const refusal = entry.referenceRefusal
+        results.push(pageFailure({ id: entry.pageId, title }, refusal.code as ToolRefusalCode, refusal.message, refusal.remedy))
         continue
       }
       const ref = entry.reference!
@@ -496,32 +460,33 @@ export const studioCompareTool: AiTool = {
       // MISS. The capture already happened, batched, above.
       const referenceBytes = readDesignReferenceBytes(dir, ref)
       if (!referenceBytes) {
-        results.push({
-          ok: false,
-          page: { id: entry.pageId, title },
-          error: `Design reference "${ref.id}" is registered but its file could not be read from disk — it may have been removed outside Studio.`,
-        })
+        results.push(pageFailure(
+          { id: entry.pageId, title },
+          'reference-unreadable',
+          `Design reference "${ref.id}" is registered but its file could not be read from disk — it may have been removed outside Studio.`,
+          'Register the export again with studio_register_design_reference.',
+        ))
         continue
       }
 
       const dpr = dprByPageId.get(entry.pageId) ?? null
       const capture = captures.get(entry.pageId)
       if (!capture) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: `Could not capture "${title}": the board returned no frame for it.` })
+        results.push(pageFailure({ id: entry.pageId, title }, 'no-board-frame', `Could not capture "${title}": the board returned no frame for it.`, 'Place the screen on the board with studio_set_frames, then measure again.'))
         continue
       }
       if (!capture.ok) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: capture.error })
+        results.push(pageFailure({ id: entry.pageId, title }, 'capture-unavailable', capture.error, 'A headless failure is usually a missing Chromium (`bunx playwright install chromium`) — report it rather than re-capturing.'))
         continue
       }
       const frame = capture.frame
       if (!frame.ok || frame.imageIndex === undefined) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: `Could not capture "${title}": ${frame.error ?? 'the frame did not render.'}` })
+        results.push(pageFailure({ id: entry.pageId, title }, 'capture-unavailable', `Could not capture "${title}": ${frame.error ?? 'the frame did not render.'}`))
         continue
       }
       const capturedImage = capture.images?.[frame.imageIndex]
       if (!capturedImage) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: `The capture of "${title}" returned no image data.` })
+        results.push(pageFailure({ id: entry.pageId, title }, 'capture-unavailable', `The capture of "${title}" returned no image data.`))
         continue
       }
 
@@ -530,13 +495,13 @@ export const studioCompareTool: AiTool = {
       try {
         baseline = decodePngBase64(capturedImage.data, 'captured screen')
       } catch (err) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: `Could not decode the captured screen: ${err instanceof Error ? err.message : String(err)}` })
+        results.push(pageFailure({ id: entry.pageId, title }, 'image-decode-failed', `Could not decode the captured screen: ${err instanceof Error ? err.message : String(err)}`))
         continue
       }
 
       const reconciled = await reconcileReference(referenceBytes, ref.width, ref.height, baseline.width, baseline.height)
       if (!reconciled.ok) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: reconciled.error })
+        results.push(pageFailure({ id: entry.pageId, title }, 'image-decode-failed', reconciled.error))
         continue
       }
 
@@ -544,7 +509,7 @@ export const studioCompareTool: AiTool = {
       try {
         referenceImage = decodePngBuffer(reconciled.result.pngBuffer, 'reference')
       } catch (err) {
-        results.push({ ok: false, page: { id: entry.pageId, title }, error: `Could not decode the design reference: ${err instanceof Error ? err.message : String(err)}` })
+        results.push(pageFailure({ id: entry.pageId, title }, 'image-decode-failed', `Could not decode the design reference: ${err instanceof Error ? err.message : String(err)}`))
         continue
       }
 

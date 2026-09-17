@@ -29,7 +29,7 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { decodeSourceNodeId, type Page } from '@core/page-tree'
-import { aiToolError } from '@core/ai'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
@@ -139,7 +139,9 @@ export const studioFidelityReportTool: AiTool = {
       targetPages = resolved.ids.map((id) => byId.get(id)!)
       if (targetPages.length === 0) {
         const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-        return aiToolError(`No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`)
+        return toolRefusal('no-such-page', `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}.`, {
+          remedy: `This project has: ${known}.`,
+        })
       }
     } else {
       targetPages = pages
