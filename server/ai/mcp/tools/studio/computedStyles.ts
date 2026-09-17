@@ -29,7 +29,7 @@
  * depend on which one answered, and a fidelity loop whose measurement moves is
  * not a measurement.
  */
-import { StudioComputedStylesInputSchema, aiToolError } from '@core/ai'
+import { StudioComputedStylesInputSchema, toolRefusal } from '@core/ai'
 import { safeParseValue } from '@core/utils/typeboxHelpers'
 import { AgentComputedStylesResultSchema, type AgentFrameInspectRequest } from '@core/studio-capture'
 import type { AiTool, ToolContext } from '../../../runtime/types'
@@ -71,11 +71,16 @@ const computedStylesTool: AiTool = {
     // Chromium, and the authoritative one for an unsaved in-progress edit.
     const bridge = await awaitEditorBridgeForUser(ctx.userId, editorBridgeScope(dir), ctx.signal)
     if (!bridge) {
-      return aiToolError(
-        // Names BOTH halves, the same rule `captureFrames.ts` follows: the old
-        // single message sent a reader to open a tab that was already open when
-        // the real cause was a browser that would not launch.
-        `computed-styles-unavailable: neither path could read this screen. Headless render: ${headless.error} Live editor tab: no Studio board is connected (open the project in a Studio browser tab, or make the headless path work — it needs a Chromium available to playwright-core, installed with \`bunx playwright install chromium\`).`,
+      // Names BOTH halves, the same rule `captureFrames.ts` follows: the old
+      // single message sent a reader to open a tab that was already open when
+      // the real cause was a browser that would not launch.
+      return toolRefusal(
+        'measure-unavailable',
+        `Neither path could read this screen. Headless render: ${headless.error} Live editor tab: no Studio board is connected.`,
+        {
+          remedy: 'Make the headless path work — it needs a Chromium available to playwright-core, installed with `bunx playwright install chromium` — or ask the user to open the project in a Studio browser tab. Report it rather than calling again unchanged.',
+          details: { headlessCode: headless.code },
+        },
       )
     }
     const relayed = await bridge.callBrowser('studio_computed_styles', {
@@ -91,8 +96,10 @@ const computedStylesTool: AiTool = {
     const parsed = safeParseValue(AgentComputedStylesResultSchema, relayed.data)
     if (!parsed.ok) {
       const detail = parsed.errors.map((e) => `${e.path}: ${e.message}`).join('; ')
-      return aiToolError(
+      return toolRefusal(
+        'measure-unavailable',
         `The open Studio tab answered with a computed-styles result this server could not validate: ${detail}`,
+        { remedy: 'The tab is running a different build than this server. Ask the user to reload it.' },
       )
     }
     return {

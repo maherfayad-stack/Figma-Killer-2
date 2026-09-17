@@ -45,7 +45,7 @@
  */
 import sharp from 'sharp'
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk } from '@core/ai'
+import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { landAssetBytes } from '../../../../handlers/studio/assetLanding'
@@ -109,16 +109,18 @@ export const studioExtractReferenceAssetTool: AiTool = {
     const match = resolvePageByName(pages, page)
     if (!match) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return aiToolError(`No screen matched "${page}". This project has: ${known}.`)
+      return toolRefusal('no-such-page', `No screen matched "${page}".`, { remedy: `This project has: ${known}.` })
     }
 
     const resolved = resolveDesignReference(dir, match.id, referenceId)
-    if (!resolved.ok) return aiToolError(resolved.error)
+    if (!resolved.ok) return resolved
     const { reference } = resolved
 
     const bytes = readDesignReferenceBytes(dir, reference)
     if (!bytes) {
-      return aiToolError(`Design reference "${reference.id}" is registered but its file could not be read from disk — it may have been removed outside Studio.`)
+      return toolRefusal('reference-unreadable', `Design reference "${reference.id}" is registered but its file could not be read from disk — it may have been removed outside Studio.`, {
+        remedy: 'Register the export again with studio_register_design_reference.',
+      })
     }
 
     // Refused rather than clamped, unlike `studio_measure_reference`. A
@@ -126,13 +128,17 @@ export const studioExtractReferenceAssetTool: AiTool = {
     // crop that is silently not the rectangle you asked for is a wrong image
     // written to disk under a name that says it is the right one.
     if (x >= reference.width || y >= reference.height) {
-      return aiToolError(
-        `The crop starts at (${x}, ${y}), which is outside this ${reference.width}x${reference.height} reference. Coordinates are in the reference image's own pixels.`,
+      return toolRefusal(
+        'crop-out-of-bounds',
+        `The crop starts at (${x}, ${y}), which is outside this ${reference.width}x${reference.height} reference.`,
+        { remedy: "Coordinates are in the reference image's own pixels — re-read its dimensions with studio_read_design_reference." },
       )
     }
     if (x + width > reference.width || y + height > reference.height) {
-      return aiToolError(
-        `The crop (${x}, ${y}, ${width}x${height}) runs past the edge of this ${reference.width}x${reference.height} reference. Shrink it to fit — a crop is never silently trimmed, because a file written under the name you chose has to be the rectangle you asked for.`,
+      return toolRefusal(
+        'crop-out-of-bounds',
+        `The crop (${x}, ${y}, ${width}x${height}) runs past the edge of this ${reference.width}x${reference.height} reference.`,
+        { remedy: 'Shrink it to fit — a crop is never silently trimmed, because a file written under the name you chose has to be the rectangle you asked for.' },
       )
     }
 
@@ -143,11 +149,11 @@ export const studioExtractReferenceAssetTool: AiTool = {
         .png()
         .toBuffer()
     } catch (err) {
-      return aiToolError(`Could not crop the reference: ${err instanceof Error ? err.message : String(err)}`)
+      return toolRefusal('image-decode-failed', `Could not crop the reference: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     const landed = landAssetBytes(dir, targetDir, png, name)
-    if (!landed.ok) return aiToolError(landed.error)
+    if (!landed.ok) return toolRefusal('asset-write-failed', landed.error)
 
     return aiToolOk({
       ok: true,

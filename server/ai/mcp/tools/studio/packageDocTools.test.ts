@@ -129,10 +129,11 @@ describe('studio_read_package_doc', () => {
       const result = await tool.handler!(
         { dir: projectDir, package: '@scope/not-installed' } as never,
         {} as never,
-      ) as { ok: boolean; error: string }
+      ) as { ok: boolean; error: string; code: string }
 
       expect(result.ok).toBe(false)
-      expect(result.error).toContain('not an installed markdown doc')
+      expect(result.code).toBe('no-such-file')
+      expect(result.error).toContain('is not a markdown doc reachable from this project')
     })
   })
 })

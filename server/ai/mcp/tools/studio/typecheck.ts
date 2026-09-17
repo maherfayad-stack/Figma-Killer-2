@@ -36,6 +36,7 @@
  * filter — never silently hiding them.
  */
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { runProjectTypecheck, type TypecheckRunResult } from '../../../../handlers/studio/typecheck'
@@ -131,7 +132,7 @@ const studioTypecheckTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Type-check the project with ITS OWN installed tsc (never Studio\'s) — the one verification studio_compare/studio_screenshot cannot give you: whether the code you just wrote actually compiles. Always type-checks the WHOLE project (tsc cannot check a subset without losing project config); pass `paths` to filter which diagnostics come BACK, not what gets checked — the response always names which mode ran (scope: "project" | "filtered") and, when filtered, how many diagnostics exist outside it, so nothing is silently hidden. Returns { ok:true, pass, scope, diagnostics:[{file,line,column,severity,code,message}], diagnosticCount, totalDiagnosticCount, truncated }, or a structured, non-throwing failure: trust-tier-required (Tier 0 projects refuse — ask the user to promote, never promote yourself), available:false with reason "typescript-not-installed"/"no-tsconfig" and a fix, or timedOut:true with whatever partial diagnostics tsc had already printed. Requires studio.write. Call this after every .ts/.tsx/.jsx write or edit — a passing studio_compare on code that does not compile is not verification.',
+    'Type-check the project with ITS OWN installed tsc (never Studio\'s) — the one verification studio_compare/studio_screenshot cannot give you: whether the code you just wrote actually compiles. Always type-checks the WHOLE project (tsc cannot check a subset without losing project config); pass `paths` to filter which diagnostics come BACK, not what gets checked — the response always names which mode ran (scope: "project" | "filtered") and, when filtered, how many diagnostics exist outside it, so nothing is silently hidden. Returns { ok:true, pass, scope, diagnostics:[{file,line,column,severity,code,message}], diagnosticCount, totalDiagnosticCount, truncated }, or a structured, non-throwing refusal carrying { code, message, remedy, retryable }: trust-tier-required (Tier 0 projects refuse — ask the user to promote, never promote yourself, so retrying unchanged returns the same answer), typescript-not-installed / no-tsconfig with the remedy to ask for, tsc-invocation-error for a broken toolchain, or typecheck-timed-out carrying whatever partial diagnostics tsc had already printed with pass forced false. Requires studio.write. Call this after every .ts/.tsx/.jsx write or edit — a passing studio_compare on code that does not compile is not verification.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, paths } = input as { dir?: string; paths?: string[] }
@@ -142,34 +143,39 @@ const studioTypecheckTool: AiTool = {
     // there is no permission mode this check could be asked to bypass.
     const trust = readStudioMeta(dir).trust ?? 'static'
     if (trust === 'static') {
-      return {
-        ok: false,
-        code: 'trust-tier-required',
-        error: 'This project is at Tier 0 (static) trust, which runs nothing. Ask the user to promote the project before type-checking it — you may not promote it yourself.',
-      }
+      return toolRefusal(
+        'trust-tier-required',
+        'This project is at Tier 0 (static) trust, which runs nothing.',
+        { remedy: 'Ask the user to promote the project before type-checking it — you may not promote it yourself, so this same call will keep refusing until they do.' },
+      )
     }
 
     const result: TypecheckRunResult = await runProjectTypecheck(dir)
 
     if (!result.ok) {
       if ('available' in result) {
-        // typescript-not-installed / no-tsconfig — clean, actionable, not a throw.
-        return result
+        // typescript-not-installed / no-tsconfig — clean, actionable, not a
+        // throw. A14: the reason was already a stable code; it just was not
+        // in the ONE field every driver forwards. `fix` becomes `remedy`.
+        return toolRefusal(result.reason, result.message, {
+          remedy: result.fix,
+          details: { available: false },
+        })
       }
       if ('timedOut' in result && result.timedOut) {
         // `pass` from buildDiagnosticsPayload reflects only what tsc printed
         // BEFORE it was killed — an incomplete run must never report pass:true
         // just because no error had surfaced yet in the files tsc had reached.
-        return {
-          ok: false,
-          timedOut: true,
-          message: result.message,
-          ...buildDiagnosticsPayload(result.partialDiagnostics, paths),
-          pass: false,
-        }
+        return toolRefusal('typecheck-timed-out', result.message, {
+          remedy: 'The diagnostics below are real but incomplete. Fix them, then run again — a timed-out run is never a pass.',
+          details: { timedOut: true, ...buildDiagnosticsPayload(result.partialDiagnostics, paths), pass: false },
+        })
       }
       // tsc-invocation-error — a broken toolchain/tsconfig, not a code error.
-      return result
+      return toolRefusal('tsc-invocation-error', result.message, {
+        remedy: 'This is the project\'s toolchain, not the code you wrote. Report it rather than editing files in response.',
+        details: { outputExcerpt: result.outputExcerpt, exitCode: result.exitCode },
+      })
     }
 
     return { ok: true, exitCode: result.exitCode, ...buildDiagnosticsPayload(result.diagnostics, paths) }

@@ -49,7 +49,7 @@
  * `pageDiagnostics.test.ts`.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { PAGE_DIAGNOSTIC_CODES, type PageDiagnosticCode } from '@core/ai'
+import { PAGE_DIAGNOSTIC_CODES, toolRefusal, type PageDiagnosticCode } from '@core/ai'
 import { decodeSourceNodeId } from '@core/page-tree'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
@@ -135,22 +135,28 @@ export const studioPageDiagnosticsTool: AiTool = {
 
     const bridge = await awaitEditorBridgeForUser(ctx.userId, editorBridgeScope(dir), ctx.signal)
     if (!bridge) {
-      return {
-        ok: false,
-        error: 'No Studio board is connected. Runtime diagnostics are collected inside the live canvas frames, so this needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once.',
-      }
+      // The one `retryable: true` refusal an agent meets in practice: the
+      // condition that fixes it is outside its arguments entirely (a tab
+      // reconnecting, or a human opening one), so calling again unchanged is
+      // the correct move here and is the wrong move for every other code.
+      return toolRefusal(
+        'no-board-connected',
+        'No Studio board is connected. Runtime diagnostics are collected inside the live canvas frames, so this needs the project open in a Studio browser tab.',
+        { remedy: 'If it IS open, the tab reconnects on its own within a few seconds — call this again once. If it is not, ask the user to open it; do not write files you have no way to verify.' },
+      )
     }
 
     const { pages } = await loadStudioPages(dir)
     const { ids, unmatched } = resolveRequestedPages(pages, requested, MAX_BATCH_PAGES)
     if (ids.length === 0) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return {
-        ok: false,
-        error: unmatched.length > 0
-          ? `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`
-          : 'This project has no screens to read diagnostics for yet.',
-      }
+      return unmatched.length > 0
+        ? toolRefusal('no-such-page', `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}.`, {
+            remedy: `This project has: ${known}.`,
+          })
+        : toolRefusal('no-such-page', 'This project has no screens to read diagnostics for yet.', {
+            remedy: 'Create one with studio_create_page first.',
+          })
     }
 
     const relayed = await bridge.callBrowser('studio_page_diagnostics', {

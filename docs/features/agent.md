@@ -354,6 +354,99 @@ What survives is what the filesystem cannot do: see the canvas (`studio_screensh
 
 **Deliberately withheld from every tool, no exceptions:** a shell, and trust promotion. An agent may *ask* the user to promote a project's trust tier; it may never perform the promotion itself.
 
+### How a Studio tool refuses
+
+Every `studio_*` tool answers a refusal in one shape, from one builder
+(`toolRefusal` in `src/core/ai/toolRefusal.ts`):
+
+```
+{ ok: false, code, message, remedy?, retryable, error }
+```
+
+Before A14 a refusal was whatever each tool felt like returning — a bare
+`aiToolError('No screen matched "Chekout"...')` in one file, an
+`{ ok: false, code }` in another, an `{ ok: false, error }` with no code in a
+third. The consumer is often a small model, and it paid for all three: nothing
+was machine-readable, so it pattern-matched on prose; nothing said whether a
+retry was pointless, which is the single largest source of wasted rounds in an
+observed turn; and nothing said what to do instead.
+
+**`retryable` means one specific thing:** *this identical call could succeed
+once some external condition changes, with no change to your arguments.* A
+disconnected board can reconnect; a transient IO error can clear. A page that
+does not exist will not start existing because you asked twice, and a project
+at Tier 0 will not promote itself. It is derived from the code, never passed in
+per call, so two call sites cannot disagree about the same code. The system
+prompt's failure list states the consequence as a rule: a `retryable: false`
+code is never retried with the same args.
+
+**The code is also rendered into `error`.** Every consumer path reduces a
+failed tool result to its `error` STRING and nothing else — `mcp/server.ts`'s
+`CallToolResult` builder, and the three `toolResultText` helpers in the
+drivers. So `error` ends with `[code=<code> retryable=<true|false>]`; a
+structured field the model never sees would be decoration.
+
+`studio_compare`'s per-page `results[]` entries carry the same
+`code`/`remedy`/`retryable` triple without the refusal envelope — the call
+itself succeeded, one page inside it did not.
+
+<!-- refusal-codes:start -->
+
+| Code | Retryable | Meaning |
+|---|---|---|
+| `ambiguous-reference` | no | Two or more equally-ranked design references could stand in for this page. Name one explicitly with referenceId. |
+| `asset-write-failed` | no | Bytes were obtained but could not be landed as a project file (validation, containment, or naming). |
+| `capture-unavailable` | no | Neither the headless browser nor a live tab could produce the capture. Usually a missing Chromium (`bunx playwright install chromium`) — report it, do not re-capture. |
+| `codemod-refused` | no | The AST edit has no single honest target, or would destroy a binding. The refusal names the reason. |
+| `crop-out-of-bounds` | no | The requested rectangle falls outside the source image. Deliberately refused rather than clamped — a silently clamped crop is a wrong asset that looks right. |
+| `dev-server-failed-to-boot` | no | The project's own dev script did not come up. The refusal carries the captured stdout/stderr tail — read it, fix the cause, then call again. |
+| `empty-body` | no | A comment reply needs a non-empty body. |
+| `empty-file-list` | no | The operation needs at least one file and none was usable. |
+| `git-failed` | no | git itself refused. The message is git's own — a missing git identity and an empty commit both land here. |
+| `image-decode-failed` | no | Image bytes were found but could not be decoded as a raster image. |
+| `invalid-input` | no | The arguments are self-contradictory or incomplete in a way the schema cannot express (e.g. exactly one of three fields required). |
+| `invalid-message` | no | A commit message outside the accepted length range. |
+| `invalid-path` | no | A named path is not usable for this operation — not project-relative, or in a never-committable area (build output, node_modules, .git, .studio). |
+| `io-error` | yes | An unexpected filesystem or subprocess error. The message carries the underlying cause. |
+| `measure-unavailable` | no | The headless browser could not render the screen to measure it. Same cause and same remedy as capture-unavailable. |
+| `missing-param` | no | A parameter this particular verb/mode requires was not supplied. |
+| `no-board-connected` | yes | This tool needs the project open in a Studio browser tab, and none is connected. The server already waited for a reconnecting tab before answering. |
+| `no-board-frame` | no | The page exists but has no frame placed on the board yet. |
+| `no-design-reference` | no | This page has no design to measure against — either nothing is registered for the project, or every registered reference belongs to a different screen. Register one, or say plainly that there is no design rather than guessing a score. |
+| `no-package-json` | no | This project has no package.json, so there is no dependency manifest to act on. |
+| `no-such-file` | no | No readable regular file at that project-relative path, or it exceeds the read cap. |
+| `no-such-job` | no | No background job with that id — it expired, or the id is wrong. |
+| `no-such-page` | no | No screen in this project matched the given name or page id. The refusal lists the names that do exist. |
+| `no-such-reference` | no | No design reference is registered under that id for this project. |
+| `no-such-thread` | no | No comment thread with that seq exists on the board. |
+| `no-such-variable-set` | no | No design-variable set is ingested under that id for this project. |
+| `no-such-variant-set` | no | No variant set is recorded under that id for this project. |
+| `no-tsconfig` | no | The project has no tsconfig.json, so there is no project config to type-check under. |
+| `no-writable-location` | no | The node has no single honest source location to write to — a synthetic node, or one produced inside a `.map` iteration. |
+| `not-a-file` | no | The path exists but is a directory or another non-regular file. |
+| `not-a-repository` | no | This project has no git repository of its own. Ask the user to create one from the Version control panel — you may not create it yourself. |
+| `outside-workspace` | no | The directory given is not a Studio project. |
+| `path-outside-project` | no | The path resolves outside the project directory. Containment is absolute. |
+| `reference-unreadable` | no | A registered design reference is on the books but its file could not be read from disk. |
+| `remote-fetch-failed` | no | A remote URL could not be fetched, was refused by the SSRF guard, or exceeded the size cap. |
+| `render-failed` | no | The dev server is up but the route could not be rendered or screenshotted. |
+| `stale-anchor` | no | A comment thread's anchored element has moved or gone, so resolving it would attach the reply to the wrong thing. |
+| `strict-mode-stand-in-refused` | no | Strict fidelity mode will not measure against a stand-in reference. Register the real design as a spec first. |
+| `trust-tier-required` | no | This project's trust tier is below what the operation needs. Ask the user to promote it — you may never promote it yourself, so the same call will keep refusing until they do. |
+| `tsc-invocation-error` | no | tsc itself could not run — a broken toolchain or tsconfig, not a code error. The refusal carries a capped output excerpt. |
+| `typecheck-timed-out` | no | tsc was killed before it finished. Any diagnostics it had already printed are returned and `pass` is forced false — an incomplete run never reports a pass. |
+| `typescript-not-installed` | no | The project has no TypeScript of its own to type-check with. Studio never substitutes its own — the refusal carries the install command to ask for. |
+| `unknown-verb` | no | The requested operation name is not one this tool implements. |
+| `write-conflict` | no | The write would collide with something already on disk, and overwriting it is not this tool's decision to make. |
+
+<!-- refusal-codes:end -->
+
+Gates: `src/core/ai/toolRefusal.test.ts` (the shape and the rendering) and
+`src/__tests__/architecture/studio-tool-refusals-are-coded.test.ts` (no
+code-less `aiToolError` under `server/ai/mcp/tools/studio/`, every produced
+code in the vocabulary, every code in this table and vice versa, and the
+Retryable column matching the source).
+
 ### Studio tool index
 
 Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "Gate" is the tool's own `requiredCapabilities` / `mutates` posture; a **read** row is reachable by any `ai.chat` caller. Prose for each group follows below.

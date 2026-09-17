@@ -27,10 +27,8 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { studioAgentTools } from '../../../server/ai/tools/studio'
-import {
-  buildBoardRequirementParagraph,
-  buildStudioAgentSystemPrompt,
-} from '../../../server/ai/tools/studio/systemPrompt'
+import { buildStudioAgentSystemPrompt } from '../../../server/ai/tools/studio/systemPrompt'
+import { buildBoardRequirementParagraph } from '../../../server/ai/tools/studio/boardRequirementClaim'
 import {
   toolDispatchesInProcess,
   toolRequiresOpenBoard,

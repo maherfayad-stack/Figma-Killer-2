@@ -23,6 +23,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
@@ -91,7 +92,7 @@ const tokensTool: AiTool = {
     try {
       raw = readFileSync(file, 'utf8')
     } catch (err) {
-      return { ok: false, error: `Could not read this project's tokens: ${err instanceof Error ? err.message : String(err)}` }
+      return toolRefusal('io-error', `Could not read this project's tokens: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     const framework = parseJsonWithFallback(raw, FrameworkSchema, {})

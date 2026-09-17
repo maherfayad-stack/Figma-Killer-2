@@ -43,8 +43,8 @@ import {
   StudioReadDesignReferenceInputSchema,
   StudioDeleteDesignReferenceInputSchema,
   StudioRecommendExportDprInputSchema,
-  aiToolError,
   aiToolOk,
+  toolRefusal,
 } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { readProjectImageBytes } from './readProjectImageBytes'
@@ -94,7 +94,7 @@ const registerDesignReferenceTool: AiTool = {
 
     const supplied = [url, filePath, imageBase64].filter((v) => v !== undefined).length
     if (supplied !== 1) {
-      return { ok: false, error: 'Provide exactly one of url, path or imageBase64.' }
+      return toolRefusal('invalid-input', 'Provide exactly one of url, path or imageBase64.')
     }
 
     const dir = resolveToolProjectDir(dirInput, ctx)
@@ -108,11 +108,11 @@ const registerDesignReferenceTool: AiTool = {
       // `FetchRemoteAssetDeps` for why this is per-caller and not one shared
       // constant.
       const fetched = await fetchRemoteBytes(url, { maxBytes: DESIGN_REFERENCE_MAX_BYTES })
-      if (!fetched.ok) return { ok: false, error: fetched.error }
+      if (!fetched.ok) return toolRefusal('remote-fetch-failed', fetched.error)
       bytes = fetched.bytes
     } else if (filePath !== undefined) {
       const read = await readProjectImageBytes(dir, filePath)
-      if (!read.ok) return { ok: false, error: read.error }
+      if (!read.ok) return read
       bytes = read.bytes
     } else {
       bytes = new Uint8Array(Buffer.from(imageBase64 as string, 'base64'))
@@ -131,7 +131,11 @@ const registerDesignReferenceTool: AiTool = {
       passScore,
       maxRegionCoverage,
     })
-    if (!result.ok) return { ok: false, error: result.error }
+    if (!result.ok) {
+      return toolRefusal('invalid-input', result.error, {
+        remedy: 'Registration validates the bytes themselves — raster only (PNG/JPEG/GIF/WEBP/AVIF), SVG refused, within the size and pixel caps.',
+      })
+    }
     return { ok: true, dir, reference: result.reference }
   },
 }
@@ -184,7 +188,9 @@ const readDesignReferenceTool: AiTool = {
     const dir = resolveToolProjectDir(dirInput, ctx)
     const reference = getDesignReference(dir, referenceId)
     if (!reference) {
-      return aiToolError(`No design reference "${referenceId}" found for this project — call studio_list_design_references to see what is registered.`)
+      return toolRefusal('no-such-reference', `No design reference "${referenceId}" found for this project.`, {
+        remedy: 'Call studio_list_design_references to see what is registered.',
+      })
     }
     // Same always-present `role` projection as the list tool — see its comment.
     const withRole = { ...reference, role: designReferenceRole(reference) }
@@ -193,7 +199,9 @@ const readDesignReferenceTool: AiTool = {
     }
     const bytes = readDesignReferenceBytes(dir, reference)
     if (!bytes) {
-      return aiToolError(`Design reference "${referenceId}" is registered but its file could not be read from disk — it may have been removed outside Studio.`)
+      return toolRefusal('reference-unreadable', `Design reference "${referenceId}" is registered but its file could not be read from disk — it may have been removed outside Studio.`, {
+        remedy: 'Register the export again with studio_register_design_reference.',
+      })
     }
     return aiToolOk(
       { ok: true, dir, reference: withRole },
@@ -243,12 +251,16 @@ const recommendExportDprTool: AiTool = {
 
     const frameWidth = authoredFrameWidth(dir, pageId)
     if (frameWidth === null) {
-      return { ok: false, error: `No board frame found for page "${pageId}" — call studio_list_pages first.` }
+      return toolRefusal('no-board-frame', `No board frame found for page "${pageId}".`, {
+        remedy: 'Call studio_list_pages to see which pages have frames, then place one with studio_set_frames.',
+      })
     }
 
     const reference = getDesignReference(dir, referenceId)
     if (!reference) {
-      return { ok: false, error: `No design reference "${referenceId}" found for this project — call studio_list_design_references to see what is registered.` }
+      return toolRefusal('no-such-reference', `No design reference "${referenceId}" found for this project.`, {
+        remedy: 'Call studio_list_design_references to see what is registered.',
+      })
     }
 
     const idealDpr = reference.width / frameWidth

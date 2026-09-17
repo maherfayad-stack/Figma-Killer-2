@@ -142,7 +142,7 @@ export function computePageWriteVerification(
       if (resolved.ok) {
         hasReference = true
         referenceId = resolved.reference.id
-      } else if (resolved.failure === 'ambiguous') {
+      } else if (resolved.code === 'ambiguous-reference') {
         referenceAmbiguity = resolved.error
       }
     } catch (err) {

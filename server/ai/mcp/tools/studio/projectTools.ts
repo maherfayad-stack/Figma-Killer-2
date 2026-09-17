@@ -31,6 +31,7 @@
 import { join, sep } from 'node:path'
 import { readFileSync, statSync } from 'node:fs'
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal } from '@core/ai'
 import { decodeSourceNodeId } from '@core/page-tree'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 import type { AiTool, ToolContext } from '../../../runtime/types'
@@ -142,15 +143,17 @@ const installDepsTool: AiTool = {
     // permission mode to widen).
     const trust = readStudioMeta(dir).trust ?? 'static'
     if (trust === 'static') {
-      return {
-        ok: false,
-        code: 'trust-tier-required',
-        error: 'This project is at Tier 0 (static) trust, which runs nothing. Ask the user to promote the project before installing dependencies — you may not promote it yourself.',
-      }
+      return toolRefusal(
+        'trust-tier-required',
+        'This project is at Tier 0 (static) trust, which runs nothing.',
+        { remedy: 'Ask the user to promote the project before installing dependencies — you may not promote it yourself, so this same call will keep refusing until they do.' },
+      )
     }
     const status = probeInstallStatus(dir)
     if (!status.hasPackageJson) {
-      return { ok: false, error: `No package.json found at ${dir}.` }
+      return toolRefusal('no-package-json', `No package.json found at ${dir}.`, {
+        remedy: 'There is nothing to install. Confirm this is the project you meant.',
+      })
     }
     if (status.hasNodeModules) {
       return { ok: true, jobId: null, alreadyInstalled: true, dependencyCount: status.dependencyCount }
@@ -174,7 +177,9 @@ const installStatusTool: AiTool = {
   handler: async (input) => {
     const { jobId } = input as { jobId: string }
     const job = getInstallJob(jobId)
-    if (!job) return { ok: false, error: `No install job found for id ${jobId}.` }
+    if (!job) return toolRefusal('no-such-job', `No install job found for id ${jobId}.`, {
+      remedy: 'It expired, or the id is wrong. Start a new one with studio_install_deps.',
+    })
     return { ok: true, job }
   },
 }
@@ -404,7 +409,11 @@ const createPageTool: AiTool = {
     const { dir: dirInput, name, kind } = input as { dir?: string; name?: string; kind?: PageKind }
     const dir = resolveToolProjectDir(dirInput, ctx)
     const result = createScaffoldedPage(dir, name ?? '', kind ?? DEFAULT_PAGE_KIND)
-    if (!result.ok) return { ok: false, error: result.conflict }
+    if (!result.ok) {
+      return toolRefusal('write-conflict', result.conflict, {
+        remedy: 'Pick a different name, or edit the existing file instead — this tool never overwrites.',
+      })
+    }
     // A scaffolded page always writes BOTH a new page file AND a new board
     // frame (`autoPlaceBoardFrame`, `pageScaffold.ts`'s own doc) — never one
     // without the other — so the live-reload push always carries both.
@@ -482,20 +491,27 @@ const readFileTool: AiTool = {
     const { dir: dirInput, path: rawPath } = input as { dir?: string; path: string }
     const dir = resolveToolProjectDir(dirInput, ctx)
     const resolved = resolveSafeWorkspaceFile(dir, rawPath)
-    if (!resolved) return { ok: false, error: `"${rawPath}" is not a readable path inside this project.` }
+    if (!resolved) {
+      return toolRefusal('path-outside-project', `"${rawPath}" is not a readable path inside this project.`, {
+        remedy: 'Pass a project-relative path — absolute paths, ".." segments, and symlinks escaping the project are all refused.',
+      })
+    }
     // Name the three cases apart. They were collapsed into one message, and a
     // caller with no directory-listing tool could not tell "wrong path" from
     // "this is a folder" — so it guessed again, and again. `studio_list_files`
     // is the answer to the folder case, so the error says so.
     if (statSafe(resolved)?.isDirectory()) {
-      return {
-        ok: false,
-        error: `"${rawPath}" is a directory, not a file. Call studio_list_files with path="${rawPath}" to see what is inside it.`,
-      }
+      return toolRefusal('not-a-file', `"${rawPath}" is a directory, not a file.`, {
+        remedy: `Call studio_list_files with path="${rawPath}" to see what is inside it.`,
+      })
     }
     const content = readTextCapped(resolved, READ_FILE_MAX_BYTES)
     if (content === undefined) {
-      return { ok: false, error: `"${rawPath}" does not exist, is not a regular file, or exceeds ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes. Call studio_list_files to see what paths actually exist rather than guessing another one.` }
+      return toolRefusal(
+        'no-such-file',
+        `"${rawPath}" does not exist, is not a regular file, or exceeds ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes.`,
+        { remedy: 'Call studio_list_files to see what paths actually exist rather than guessing another one.' },
+      )
     }
     const canonical = canonicalSummaryForFile(resolved, dir, rawPath)
     return { ok: true, dir, path: rawPath, content, ...(canonical ? { canonical } : {}) }
@@ -561,7 +577,7 @@ const listFilesTool: AiTool = {
     try {
       all = listWorkspaceFiles(dir)
     } catch (err) {
-      return { ok: false, error: `Could not list this project's files: ${err instanceof Error ? err.message : String(err)}` }
+      return toolRefusal('io-error', `Could not list this project's files: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     const prefix = (rawPath ?? '').replace(/^[./]+/, '').replace(/\/+$/, '')

@@ -66,7 +66,7 @@
  * tool's own concern and stays here.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk } from '@core/ai'
+import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveAppRoot } from '../../../../handlers/studio/appRoot'
@@ -157,30 +157,27 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
       // and a monorepo's nested app root has no meta file of its own.
       const trust = checkTrustTier(dir, 'run-project')
       if (!trust.ok) {
-        return {
-          ok: false,
-          code: TRUST_TIER_REQUIRED_CODE,
-          error: `This project is at "${trust.trust}" trust, and booting its dev server runs its own code — that needs the highest tier ("run-project"). Ask the user to promote the project in Studio, then call this again; you may not promote it yourself.`,
-          trust: trust.trust,
-          requiredTrust: trust.required,
-          dir,
-        }
+        return toolRefusal(
+          TRUST_TIER_REQUIRED_CODE,
+          `This project is at "${trust.trust}" trust, and booting its dev server runs its own code — that needs the highest tier ("run-project").`,
+          {
+            remedy: 'Ask the user to promote the project in Studio, then call this again; you may not promote it yourself, so this same call will keep refusing until they do.',
+            details: { trust: trust.trust, requiredTrust: trust.required, dir },
+          },
+        )
       }
 
       const server = await ensureDevServer(dir, overrides)
       if (!server.ok) {
-        // `error` is populated (not just `message`) so an MCP caller sees the
-        // real reason — `server.ts`'s CallToolResult builder only forwards
-        // `output.error` on an `ok:false` result, dropping any other field.
-        return {
-          ok: false,
-          error: server.error,
-          code: 'dev-server-failed-to-boot',
-          message: server.error,
-          log: server.log,
-          dir,
-          appRoot,
-        }
+        // `toolRefusal` renders the code into `error` for exactly the reason
+        // this branch used to hand-roll: `server.ts`'s CallToolResult builder
+        // only forwards `output.error` on an `ok:false` result, dropping every
+        // other field, so a code that lives only in a sibling property is a
+        // code the model never sees.
+        return toolRefusal('dev-server-failed-to-boot', server.error, {
+          remedy: 'Read the captured log, fix the cause in the project, then call again — the same call fails identically until the dev script comes up.',
+          details: { log: server.log, dir, appRoot },
+        })
       }
       scheduleDevServerIdleTeardown(dir, idleTimeoutMs)
 
@@ -210,9 +207,9 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
           await page.close()
         }
       } catch (err) {
-        return aiToolError(
-          `Could not render ${url}: ${err instanceof Error ? err.message : String(err)}`,
-        )
+        return toolRefusal('render-failed', `Could not render ${url}: ${err instanceof Error ? err.message : String(err)}`, {
+          remedy: 'The dev server is up, so confirm this is a route it actually serves before trying again.',
+        })
       } finally {
         if (browser) await browser.close()
       }

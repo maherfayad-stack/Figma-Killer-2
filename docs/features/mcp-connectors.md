@@ -94,6 +94,16 @@ Site writes deliberately do **not** call `site_publish` automatically. A multi-s
 
 ### Studio tools (WS-9) — let an agent audit and restructure a Studio project's board
 
+**Every tool in this family refuses in one shape** (A14):
+`{ ok: false, code, message, remedy?, retryable, error }`, built by
+`toolRefusal` (`src/core/ai/toolRefusal.ts`). `code` is stable and part of the
+interface an external client programs against; `retryable: false` means this
+identical call will return this identical refusal until something outside your
+arguments changes, so it is never worth repeating. The code is also rendered
+into `error` as `[code=<code> retryable=<true|false>]`, because the MCP
+`CallToolResult` builder forwards only `error` on a failed call. The full code
+table lives in [`agent.md`](agent.md) → "How a Studio tool refuses".
+
 `server/ai/mcp/tools/studio/` — a separate tool family for **Studio** projects
 (a real React repo under `studio-workspace/<project>/`, imported as a board of
 frames), distinct from the CMS `site` document family above. All headless
