@@ -76,7 +76,25 @@ const studioGitCommitTool: AiTool = {
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, message, files } = input as { dir?: string; message: string; files: string[] }
-    const guard = assertOwnGitRepo(resolveToolProjectDir(dirInput, ctx))
+
+    // `resolveToolProjectDir` THROWS for a dir outside `studio-workspace/`
+    // (`ProjectDirOutsideWorkspaceError`) — this tool's own description
+    // promises "a structured, non-throwing failure", and it already declares
+    // the `outside-workspace` code below, so letting that throw escape broke
+    // the contract the code was written for: the agent got an exception it
+    // could not read instead of a refusal it could act on.
+    let projectDir: string
+    try {
+      projectDir = resolveToolProjectDir(dirInput, ctx)
+    } catch {
+      return {
+        ok: false,
+        code: 'outside-workspace',
+        error: 'That directory is not a Studio project.',
+      }
+    }
+
+    const guard = assertOwnGitRepo(projectDir)
     if (!guard.ok) {
       return {
         ok: false,

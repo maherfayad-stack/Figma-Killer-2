@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PAGE_DIAGNOSTIC_CODES, PAGE_DIAGNOSTIC_CODE_LIST } from '@core/ai'
 import { studioPageDiagnosticsTool } from './pageDiagnostics'
@@ -57,7 +58,14 @@ describe('studio_page_diagnostics failure messages', () => {
       signal: AbortSignal.abort(),
     } as unknown as ToolContext
 
-    const out = await studioPageDiagnosticsTool.handler!({ dir: '/nonexistent' }, ctx)
+    // A project dir INSIDE the workspace root that simply has no board —
+    // which is what this test is about. The literal `'/nonexistent'` it used
+    // to pass is outside `projectsRootDir()` (pinned to `os.tmpdir()` for the
+    // whole suite by `src/__tests__/setup.ts`), so `resolveToolProjectDir`
+    // threw `ProjectDirOutsideWorkspaceError` before the tool ever reached the
+    // bridge check this test exists to pin. Containment is
+    // `resolveToolProjectDir`'s own concern and has its own tests.
+    const out = await studioPageDiagnosticsTool.handler!({ dir: join(tmpdir(), 'no-board-project') }, ctx)
     const result = out as { ok: boolean; error?: string }
     expect(result.ok).toBe(false)
     // The message must say WHERE the precondition lives and that it self-heals,
