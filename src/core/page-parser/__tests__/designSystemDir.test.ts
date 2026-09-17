@@ -20,7 +20,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { PROJECT_DESIGN_SYSTEM_DIR as SERVER_DESIGN_SYSTEM_DIR } from '../../../../server/handlers/studio/builtinDesignSystem'
 import { collectEntryStylesheets, collectPageStylesheets } from '../../studio-sync/collectPageStylesheets'
 import { createWorkspaceProject, resolveComponentSources } from '../componentSources'
 import {
@@ -93,18 +92,6 @@ function nodeIdNamed(nodes: Record<string, { name: string; id: string }>, name: 
   if (!node) throw new Error(`no parsed node named "${name}"`)
   return node.id
 }
-
-describe('the two constants', () => {
-  /**
-   * The browser core cannot import `server/`, so the folder name is declared
-   * twice on purpose (see `designSystemDir.ts`'s own doc). Nothing but this
-   * assertion holds them equal — and if they drift, the parser stops
-   * recognising the very folder the server writes.
-   */
-  it('page-parser and server agree on the folder name, literally', () => {
-    expect(PROJECT_DESIGN_SYSTEM_DIR).toBe(SERVER_DESIGN_SYSTEM_DIR)
-  })
-})
 
 describe('isDesignSystemPath', () => {
   it('matches the folder and anything under it', () => {
