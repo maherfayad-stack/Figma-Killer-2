@@ -1,16 +1,18 @@
 /**
  * Node mutation actions for the active document tree.
  *
- * The 11 named tree-mutation actions (`insertNode`, `deleteNode`,
+ * The 13 named tree-mutation actions (`insertNode`, `deleteNode`,
  * `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`,
  * `renameNode`, `toggleNodeLocked`, `toggleNodeHidden`, `moveNode`,
- * `duplicateNode`, `wrapNode`) all delegate to `mutateActiveTree(fn)` and
+ * `duplicateNode`, `wrapNode`, and K3's `groupNodes`/`ungroupNode` — the last
+ * two in `groupActions.ts`) all delegate to `mutateActiveTree(fn)` and
  * MUST NOT contain their own `kind === 'visualComponent'` branch — that
  * routing is the sole job of `mutateActiveTree`. Gated by
  * `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`.
  *
  * `struct-01` — the STRUCTURAL actions (`insertNode`, `deleteNode(s)`,
- * `moveNode(s)`, `duplicateNode(s)`, `wrapNode(s)`) additionally consult
+ * `moveNode(s)`, `duplicateNode(s)`, `wrapNode(s)`, `groupNodes`,
+ * `ungroupNode`) additionally consult
  * `structuralSourceEdits.ts` before mutating, so that on a studio-imported
  * tree they either write the user's `.tsx` or refuse with a readable reason.
  * They never do neither, which is what they used to do.
@@ -44,6 +46,7 @@ import { commitStudioDelete, commitStudioMove, commitStudioReparent } from '@sit
 import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
+import { createGroupActions } from './groupActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
@@ -79,6 +82,8 @@ type NodeActions = Pick<
   | 'duplicateNodes'
   | 'wrapNode'
   | 'wrapNodes'
+  | 'groupNodes'
+  | 'ungroupNode'
 >
 
 function recordPatchChanges(
@@ -147,8 +152,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
    */
   const readTree = (): NodeTree<PageNode> | null => resolveActiveTreeTarget(get())?.tree ?? null
 
-  const { refuseInsertInto, writeInsertToSource, writeDuplicateToSource, writeWrapToSource } =
-    createStudioSourceWrites(helpers, readTree)
+  const sourceWrites = createStudioSourceWrites(helpers, readTree)
+  const { refuseInsertInto, writeInsertToSource, writeDuplicateToSource, writeWrapToSource } = sourceWrites
 
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index) => {
@@ -681,6 +686,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return wrapperId
     },
 
+    // K3 — ⌘G / ⌘⇧G. Their own module for the reason `deleteNodes` has one:
+    // "this selection becomes one container" is a job of its own, with a
+    // stricter source rule than `wrapNodes`. See `groupActions.ts`.
+    ...createGroupActions(helpers, sourceWrites),
   }
 
   return actions

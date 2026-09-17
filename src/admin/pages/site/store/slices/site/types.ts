@@ -410,6 +410,20 @@ export interface SiteSlice {
    * semantics. Returns the new wrapper id, or `null` when the selection is empty.
    */
   wrapNodes: (nodeIds: string[], containerModuleId: string, defaults?: Record<string, unknown>) => string | null
+  /**
+   * K3 — ⌘G. The selection goes inside ONE new container: `wrapNodes` on a CMS
+   * tree, a SOURCE write (`wrapJsxElements`) on a studio-imported one, where it
+   * returns `null` because the container's id is the `line:col` that write
+   * produces. Refuses out loud unless the selection is a contiguous run of
+   * siblings in the code. See `groupActions.ts`.
+   */
+  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>) => string | null
+  /**
+   * K3 — ⌘⇧G. The container goes; its children take its place at its own index.
+   * On a studio tree that is `unwrapJsxElement`, which refuses a container
+   * carrying anything but `className`/`style`/`id`/`data-*`.
+   */
+  ungroupNode: (nodeId: string) => void
 
   // Breakpoint mutations
   addBreakpoint: (bp: Omit<Breakpoint, 'id'>) => Breakpoint

@@ -1,6 +1,7 @@
 /**
  * studioStructuralCommits — the one-shot commits behind a STRUCTURAL gesture on
- * a studio-imported board: move, reparent, duplicate, wrap, delete and insert.
+ * a studio-imported board: move, reparent, duplicate, wrap, group, ungroup,
+ * delete and insert.
  *
  * Split out of `studioSaveRequests.ts` (W4-1, at the module-size gate's own
  * prompting) because these six are one thing and the rest of that module is
@@ -57,8 +58,8 @@ export async function commitStudioMove(
  * `store-11` — true from the moment a structural commit starts posting until
  * its resync (or refusal) has fully resolved.
  *
- * `insert`/`duplicate`/`wrap` (`studioSourceWrites.ts`) are the three
- * structural gestures with NOTHING optimistic to show: the new/copied/wrapped
+ * `insert`/`duplicate`/`wrap`/`group`/`ungroup` (`studioSourceWrites.ts`) are
+ * the structural gestures with NOTHING optimistic to show: the new/copied/wrapped
  * element does not exist in the client's tree at all until the commit's
  * resync brings it in as a freshly-parsed node (see `writeDuplicateToSource`'s
  * own doc — "nothing is minted on the canvas first"). Nothing on the client
@@ -209,6 +210,63 @@ export async function commitStudioWrap(wrap: {
     'Wrap refused',
     { title: `Wrapped in <${wrap.name}>`, body: 'Written to your project source.' },
   )
+}
+
+/**
+ * K3 — ONE container written around a run of siblings in the user's `.tsx`
+ * (⌘G on a multi-selection).
+ *
+ * `nodeIds` is the run in SOURCE order. The first is the edit's `nodeId` — the
+ * position the save route sorts and path-guards on, and the topmost byte this
+ * write changes — and the rest ride as `siblingNodeIds` through the identical
+ * decoder. The server re-derives the run from the AST and refuses if anything
+ * unnamed sits between the ends, so this request cannot widen its own span.
+ *
+ * ⌘G on ONE element never reaches here: `writeGroupToSource` commits that as
+ * the existing single-element `wrap`, which is the same write that shipped in
+ * W4-1.
+ *
+ * Nothing is minted on the canvas first, for the reason `commitStudioInsert`
+ * spells out — which is also why the success toast is pushed here.
+ */
+export async function commitStudioGroup(group: {
+  nodeIds: readonly string[]
+  name: string
+  importSpecifier?: string
+  designSystemImport?: true
+}): Promise<void> {
+  const [nodeId, ...siblingNodeIds] = group.nodeIds
+  if (nodeId === undefined || siblingNodeIds.length === 0) return
+  await commitStructural(
+    [
+      {
+        kind: 'group',
+        nodeId,
+        siblingNodeIds,
+        name: group.name,
+        ...(group.importSpecifier === undefined ? {} : { importSpecifier: group.importSpecifier }),
+        ...(group.designSystemImport === undefined ? {} : { designSystemImport: group.designSystemImport }),
+      },
+    ],
+    'Group refused',
+    { title: `Grouped ${group.nodeIds.length} elements`, body: 'Written to your project source.' },
+  )
+}
+
+/**
+ * K3 — a container dissolved in the user's `.tsx` (⌘⇧G): its children take its
+ * place and the container's own bytes go.
+ *
+ * The board is NOT mutated first. Unlike a delete — which removes a subtree the
+ * canvas can take back — an ungroup re-parents every child, and the ids those
+ * children get afterwards are the `line:col`s the write produces. The commit's
+ * own resync is what brings them in.
+ */
+export async function commitStudioUngroup(nodeId: string): Promise<void> {
+  await commitStructural([{ kind: 'ungroup', nodeId }], 'Ungroup refused', {
+    title: 'Ungrouped',
+    body: 'Written to your project source.',
+  })
 }
 
 /**

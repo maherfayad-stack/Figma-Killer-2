@@ -8,7 +8,8 @@
  *
  * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
  * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'move' |
- * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'reparent' | 'insert-slot' |
+ * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
+ * 'reparent' | 'insert-slot' |
  * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
  * `studioEditSchemas.ts` (split out for the
  * `module-size-budgets` ceiling) and is re-exported below verbatim, so every
@@ -25,7 +26,8 @@
  *   - `studioCssWriteback.ts` — `css`. Its target is a FILE + SELECTOR rather
  *     than a decoded `line:col`, and it writes through a postcss CST.
  *   - `studioStructuralWriteback.ts` — `move` / `delete` / `insert` /
- *     `duplicate` / `wrap` / `reparent`. These change WHERE markup is: they
+ *     `duplicate` / `wrap` / `group` / `ungroup` / `reparent`. These change
+ *     WHERE markup is: they
  *     take a second and sometimes a third location (an anchor sibling, a
  *     destination parent), they change the file's line count (invalidating
  *     every id below them, which is why `isSharedSourceNodeId` always reports
@@ -277,7 +279,11 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * neither overwrites the span its nodeId points at, both ADD around it. Two
  * duplicates of one element in a batch are two copies the user asked for
  * (`⌘D ⌘D`), and two wraps are two nested containers — collapsing either to one
- * would silently drop work while `written` reported the truth.
+ * would silently drop work while `written` reported the truth. `group` (K3)
+ * joins them: two groups keyed on the same first element are two nested
+ * containers around two different runs. `ungroup` does NOT — it removes the
+ * span its nodeId points at, so a second one in the same batch is the same
+ * write twice.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(edits: readonly T[]): T[] {
   const byTarget = new Map<string, T>()
@@ -297,6 +303,7 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(ed
       edit.kind === 'insert-slot' ||
       edit.kind === 'duplicate' ||
       edit.kind === 'wrap' ||
+      edit.kind === 'group' ||
       edit.kind === 'styled'
     ) {
       passthrough.push(edit)
@@ -457,6 +464,8 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     case 'insert':
     case 'duplicate':
     case 'wrap':
+    case 'group':
+    case 'ungroup':
     case 'reparent': {
       // Every end decodes through the same guard, so a hand-crafted
       // `anchorNodeId`/`parentNodeId` cannot name a file outside the workspace
@@ -469,6 +478,14 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       const anchor = anchorId ? studioEditLocation(anchorId) : null
       const parentId = 'parentNodeId' in edit ? edit.parentNodeId : undefined
       const destination = parentId ? studioEditLocation(parentId) : null
+      // K3 — a `group` names the REST of its run. Same decoder, same guard,
+      // same same-file filter as the anchor above; `applyStructuralEdit`
+      // refuses when the filter dropped any of them, because a group that
+      // quietly wrapped the subset that happened to be in this file would be
+      // a write the user never asked for.
+      const siblings = ('siblingNodeIds' in edit ? edit.siblingNodeIds : [])
+        .map((nodeId) => studioEditLocation(nodeId))
+        .filter((location): location is StudioEditLocation => location !== null && location.rel === target.rel)
       const result = applyStructuralEdit(
         loc,
         edit,
@@ -479,6 +496,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         // comes from the SAME decoder every other path here goes through, so
         // it inherits `studioEditLocation`'s containment guard.
         target.rel,
+        siblings,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       return { applied: true }

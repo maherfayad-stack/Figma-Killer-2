@@ -63,7 +63,8 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
   one <iframe> per frame              IframeFrameSurface.tsx
         │
         │  user edits a prop / text / style / class / tag, or inserts,
-        │  reorders, reparents, duplicates, wraps or deletes an element
+        │  reorders, reparents, duplicates, wraps, groups, ungroups or
+        │  deletes an element
         ▼
   Typed StudioEdit batch              POST /admin/api/studio/save
         │
@@ -72,7 +73,8 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
         │                              setJsxClassName, setStringLiteral,
         │                              setJsxTagName, insertJsxElement,
         │                              moveJsxElement, deleteJsxElement,
-        │                              duplicateJsxElement, wrapJsxElement)
+        │                              duplicateJsxElement, wrapJsxElement,
+        │                              wrapJsxElements, unwrapJsxElement)
         │
         └──▶ postcss CST codemods     src/core/css-codemods/
              rewrite the user's .css  (setDeclaration, insertRule — routed by
@@ -333,10 +335,19 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
 - **Cross-FILE reparent refuses** — `refuseStructuralEdit` in
   `src/core/page-tree/sourceStructure.ts`. Every structural verb now writes
   within one file (W4-1: duplicate, wrap and same-file reparent joined reorder,
-  delete and insert), but moving markup into another module would land it where
-  the values it reads do not exist. A same-file move whose subtree captures a
-  binding that is not in scope at the destination refuses too, naming the
-  binding.
+  delete and insert; K3: group and ungroup), but moving markup into another
+  module would land it where the values it reads do not exist. A same-file move
+  whose subtree captures a binding that is not in scope at the destination
+  refuses too, naming the binding.
+- **⌘G groups a CONTIGUOUS RUN of siblings, and only that** (K3). One container
+  around one span (`wrapJsxElements`); a selection that crosses parents or has
+  a gap in it refuses with `multi-select` — "select siblings next to each
+  other" — because the wrapper would otherwise land around elements the user
+  never selected. ⌘G on one element is the existing single-element `wrap`.
+  **⌘⇧G refuses to dissolve a container that is doing anything but holding its
+  children** (`has-behaviour`): a handler, a `ref`, a `key`, a spread, or a
+  component tag rather than an intrinsic element. Only
+  `className`/`style`/`id`/`data-*` are inert enough to drop.
 - **JS-driven animation does not freeze.** `CanvasAnimationInjector` handles
   CSS animations/transitions, smooth scroll and media; it makes no attempt to
   intercept `requestAnimationFrame`, so framer-motion and GSAP keep running on
