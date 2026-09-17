@@ -95,6 +95,8 @@ interface CallOptions {
   cookie?: string
   body?: unknown
   fetchImpl?: typeof fetch
+  /** Sent as the `Origin` header. Absent means no header at all, which `originAllowed` trusts (curl, server-to-server). */
+  origin?: string
   /** Epoch ms the flow store should believe it is. Lets the poll pacing be asserted without sleeping. */
   now?: number
 }
@@ -107,8 +109,10 @@ async function call(pathAndQuery: string, options: CallOptions = {}): Promise<Re
     init.body = JSON.stringify(options.body)
   }
   const req = new Request(url, init)
-  // `cookie` is a forbidden header in the Request constructor — set it after.
+  // `cookie` and `origin` are forbidden headers in the Request constructor —
+  // set them after.
   if (options.cookie) req.headers.set('cookie', options.cookie)
+  if (options.origin) req.headers.set('origin', options.origin)
 
   const res = await tryServeStudioGithubAuth(req, { db }, url, url.pathname, {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
@@ -425,6 +429,48 @@ describe('github auth — rejections', () => {
       fetchImpl: githubStub(),
     })
     expect(pasted.status).toBe(200)
+  })
+
+  /**
+   * These are the only Studio routes that write a credential, so they carry
+   * the same CSRF origin check the CMS and AI route families do. A safe method
+   * is deliberately not checked — a GET does not mutate anything here.
+   */
+  it('rejects a state-changing request from a foreign origin, before it reaches the session', async () => {
+    for (const [pathAndQuery, method, body] of [
+      ['/admin/api/studio/github/token', 'POST', { token: TOKEN }],
+      ['/admin/api/studio/github/token', 'DELETE', undefined],
+      ['/admin/api/studio/github/device/start', 'POST', undefined],
+    ] as const) {
+      const res = await call(pathAndQuery, {
+        method,
+        cookie: cookieA,
+        body,
+        origin: 'https://evil.test',
+        fetchImpl: githubStub(),
+      })
+      expect(res.status).toBe(403)
+    }
+
+    // The read side is untouched.
+    const account = await call('/admin/api/studio/github/account', {
+      cookie: cookieA,
+      origin: 'https://evil.test',
+      fetchImpl: githubStub(),
+    })
+    expect(account.status).toBe(200)
+    expect(await readGithubToken(db, 'user-a')).toBeNull()
+
+    // …and the panel's own request, which carries the request's own origin,
+    // still goes through. A check that rejected this would break sign-in.
+    const ours = await call('/admin/api/studio/github/token', {
+      method: 'POST',
+      cookie: cookieA,
+      body: { token: TOKEN },
+      origin: 'http://localhost',
+      fetchImpl: githubStub(),
+    })
+    expect(ours.status).toBe(200)
   })
 
   it('answers 404 for a flowId that was never issued', async () => {

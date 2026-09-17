@@ -113,7 +113,13 @@ show forty screens. Its guards:
 
 A second namespace, `/admin/api/studio/github/`. **Every route here requires a
 session** — unlike the rest of `/admin/api/studio/*` — because a credential
-belongs to an account, and `git_credentials` is keyed by user id.
+belongs to an account, and `git_credentials` is keyed by user id. The three
+state-changing ones (`POST device/start`, `POST token`, `DELETE token`)
+additionally go through `originAllowed`, the same CSRF origin check the CMS and
+AI route families apply: `SameSite=Lax` stops a cross-site POST from carrying
+the session cookie, and this closes the same-site-different-subdomain case,
+which matters more here than anywhere else on this surface because a forged
+`POST token` would plant an attacker's credential under the operator's account.
 
 | Method | Path | Body / query | Success |
 |---|---|---|---|

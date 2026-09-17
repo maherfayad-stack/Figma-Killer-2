@@ -8,12 +8,19 @@
  *   DELETE github/token               → { ok: true }
  *   GET    github/repos               → { repositories: [ … ] }
  *
- * ## Every route here requires a session
+ * ## Every route here requires a session, and every write requires an origin
  *
  * Unlike most of `/admin/api/studio/*` (see `docs/server.md` on the
- * single-operator posture), these six do, because a credential belongs to an
- * ACCOUNT. There is no honest answer to "whose token is this?" without one,
- * and `readGithubToken` is keyed by user id.
+ * single-operator posture), these six require a session, because a credential
+ * belongs to an ACCOUNT. There is no honest answer to "whose token is this?"
+ * without one, and `readGithubToken` is keyed by user id.
+ *
+ * The three state-changing ones additionally go through `originAllowed`, the
+ * same CSRF check `handleCmsRequest` and the AI routes apply. `SameSite=Lax`
+ * already stops a cross-SITE POST from carrying the session cookie; this
+ * closes the same-site-different-subdomain case, which matters more here than
+ * anywhere else on this surface because a forged `POST github/token` would
+ * plant an attacker's credential under the operator's account.
  *
  * ## The two shapes, and why both exist
  *
@@ -44,6 +51,7 @@
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { requireAuthenticatedUser } from '../../auth/authz'
+import { isStateChangingMethod, originAllowed } from '../../auth/security'
 import type { DbClient } from '../../db/client'
 import {
   GithubApiError,
@@ -133,6 +141,17 @@ export async function tryServeStudioGithubAuth(
     (action === 'account' && req.method === 'GET') ||
     (action === 'repos' && req.method === 'GET')
   if (!routed) return null
+
+  // CSRF defence in depth, matching `handleCmsRequest` and the AI routes.
+  // `SameSite=Lax` on the session cookie already stops a cross-site POST from
+  // carrying it, but these three state-changing routes STORE AND DELETE A
+  // CREDENTIAL — the highest-value writes on the whole Studio surface — and
+  // the same-site-different-subdomain case is exactly the one SameSite does
+  // not cover. A forged `POST github/token` would plant an attacker's token
+  // under the operator's account, and a forged `DELETE` would sign them out.
+  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
+    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
+  }
 
   // Every route below is account-scoped — see the module doc.
   const user = await requireAuthenticatedUser(req, runtime.db)
