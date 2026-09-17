@@ -360,29 +360,45 @@ function shellQuote(value: string): string {
 }
 
 /**
- * The `PostToolUse`(`Write|Edit`)/`Stop` hooks that make "a screen written
- * this turn with no passing compare" a gate the CLI itself enforces, instead
- * of a rule living only in prose the model can talk its way past under
- * pressure (this feature's whole reason for existing — see
- * `hooks/stopGateCheck.ts`'s own doc for the verified hook contract and
- * `hooks/recordToolWrite.ts` for what feeds it).
+ * The three hooks the CLI itself enforces for a Studio turn.
  *
- * Both hook bodies are invoked as `<bun> <absolute-script-path>` — the exact
+ * `PostToolUse`(`Write|Edit`) + `Stop` make "a screen written this turn with
+ * no passing compare" a gate, instead of a rule living only in prose the
+ * model can talk its way past under pressure (that feature's whole reason for
+ * existing — see `hooks/stopGateCheck.ts`'s own doc for the verified hook
+ * contract and `hooks/recordToolWrite.ts` for what feeds it).
+ *
+ * `PreToolUse`(`Write|Edit`) is a different kind of gate and the only one
+ * here that is load-bearing for SECURITY: it refuses a native write into
+ * `.studio/`, `.claude/` or `.git/` — the control plane that happens to live
+ * inside the same directory `cwd` containment allows the subprocess to write.
+ * See `hooks/denyControlPlaneWrite.ts` and `agentWriteScope.ts` for the
+ * escalation it closes (an agent promoting its own project to Tier 2, or
+ * self-approving an MCP server whose command the next turn spawns). Hooks are
+ * evaluated independently of `--permission-mode`, which is what makes it hold
+ * under the panel's `bypassPermissions` default.
+ *
+ * Every hook body is invoked as `<bun> <absolute-script-path>` — the exact
  * `[process.execPath, WORKER_SCRIPT_PATH]` shape `styleCompileTier1.ts`
  * already spawns a sibling Studio-internal script with, proven to resolve
  * `@core/*`/`@ai/*` path aliases correctly regardless of the process's own
  * `cwd` (which here is the USER's project, not this repo). No secret of any
- * kind is embedded — both hooks read purely from the project's own
- * filesystem (`.studio/cache/*`), so unlike `--mcp-config` this file carries
- * nothing that would matter if the user later committed it by hand.
+ * kind is embedded — the hooks read purely from the project's own filesystem
+ * (`.studio/cache/*`) or from their own stdin, so unlike `--mcp-config` this
+ * file carries nothing that would matter if the user later committed it by
+ * hand.
  */
 function buildHooksSettings(): string {
   const bun = shellQuote(process.execPath)
+  const denyScript = shellQuote(join(import.meta.dir, 'hooks', 'denyControlPlaneWrite.ts'))
   const recordScript = shellQuote(join(import.meta.dir, 'hooks', 'recordToolWrite.ts'))
   const gateScript = shellQuote(join(import.meta.dir, 'hooks', 'stopGateCheck.ts'))
   return `${JSON.stringify(
     {
       hooks: {
+        PreToolUse: [
+          { matcher: 'Write|Edit', hooks: [{ type: 'command', command: `${bun} ${denyScript}` }] },
+        ],
         PostToolUse: [
           { matcher: 'Write|Edit', hooks: [{ type: 'command', command: `${bun} ${recordScript}` }] },
         ],
