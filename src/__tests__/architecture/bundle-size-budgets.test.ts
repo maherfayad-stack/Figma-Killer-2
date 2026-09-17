@@ -163,7 +163,16 @@ const BUDGETS: ChunkBudget[] = [
     // chunks (`plugin-sdk`, `plugin-host-ui`, `usePluginEventBridge`,
     // `pluginRuntimeBootstrap`, `plugin-host-hooks`) that a Studio session no
     // longer downloads — a ~105:1 trade. Measured 36,647 B.
-    maxBytes: 36_700,
+    //
+    // Raised 36.7 KB -> 39.4 KB for Z6's `SaveStatusChip`: always-visible
+    // toolbar chrome (a failed save has to be visible the moment it happens,
+    // so a lazy boundary would be both slower and larger than the component).
+    // Measured both ways on the same tree: 36,390 B without it, 38,193 B with
+    // — +1,803 B, all of it the chip's own compiled output. Audited: the
+    // `studioStructuralCommits` import it adds does NOT move that module,
+    // which already lives in the shared `store-*` chunk this route loads
+    // ("Still writing your last change" occurs 0 times in `SitePage-*.js`).
+    maxBytes: 39_400,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

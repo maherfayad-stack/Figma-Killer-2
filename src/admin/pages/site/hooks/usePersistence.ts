@@ -19,6 +19,12 @@
  *     writeback feels immediate. See `resolveAutoSaveDelayMs` below.
  *  3. MANUAL SAVE    — returned as a stable callback for toolbar Save and used
  *     by Cmd+S / Ctrl+S. Resets the unsaved-changes flag.
+ *  4. RETRY LADDER   — a failed save restores its dirty snapshot (nothing is
+ *     lost) and schedules up to three automatic retries on a 2s/4s/8s backoff
+ *     through the same single-flight queue, reporting `retrying` on the status
+ *     so the toolbar chip can say "Saving…" rather than "Unsaved" while the
+ *     ladder runs. No toast at any point — see `SAVE_RETRY_BACKOFF_MS` and
+ *     `toolbar/SaveStatusChip.tsx`.
  *
  * Constraint #230: raw adapter data is validated via `validateSite` before
  * being passed to `store.loadSite()`.
@@ -82,7 +88,28 @@ export interface PersistenceSaveStatus {
   state: 'loading' | 'saved' | 'unsaved' | 'saving' | 'error'
   message?: string
   lastSavedAt?: number
+  /**
+   * Only meaningful for `state: 'error'` — true while the automatic retry
+   * ladder (see `SAVE_RETRY_BACKOFF_MS`) still has a rung left. The toolbar's
+   * save-status chip reads "Saving…" while it is true and only admits
+   * "Unsaved — retry" once it is false, so a dev server that takes six
+   * seconds to come back never makes the editor claim work was lost.
+   */
+  retrying?: boolean
 }
+
+/**
+ * Delays before automatic save retry 1, 2 and 3; the length is the budget.
+ *
+ * A save fails for two reasons in practice — the dev server is restarting, or
+ * the target file is momentarily locked — and both usually clear inside ten
+ * seconds. Past three attempts the failure is not transient and the user has
+ * to be told, which is what "Unsaved — retry" is for. The ladder lives here
+ * rather than in the chip because retrying a save is the persistence layer's
+ * job: it already owns the single-flight queue and the dirty snapshot that a
+ * retry re-ships.
+ */
+export const SAVE_RETRY_BACKOFF_MS = [2000, 4000, 8000] as const
 
 interface PersistenceController {
   saveSite: () => Promise<void>
@@ -188,6 +215,17 @@ export function usePersistence(
   const inFlightSaveRef = useRef<Promise<void> | null>(null)
   /** The single queued follow-up save every mid-flight trigger coalesces into. */
   const queuedSaveRef = useRef<Promise<void> | null>(null)
+  /** Consecutive failed saves; reset by the first success. Drives the ladder. */
+  const consecutiveFailuresRef = useRef(0)
+  /** The armed automatic retry, so a success (or unmount) can cancel it. */
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  /**
+   * Indirection so `runSave`'s failure path can re-enter the single-flight
+   * queue without `runSave` depending on `saveCurrentSite`, which depends on
+   * it. A retry MUST go through the queue — firing `runSave` directly would
+   * be the one place two saves could interleave on the wire.
+   */
+  const saveCurrentSiteRef = useRef<(() => Promise<void>) | null>(null)
 
   // Exception #1: referenced in the useCallback dep array of saveCurrentSite,
   // so exhaustive-deps requires a stable identity here.
@@ -210,10 +248,28 @@ export function usePersistence(
       // queued follow-up save would be skipped, dropping the edit until the
       // next mutation re-set the flag).
       if (useEditorStore.getState().site === site) setHasUnsavedChanges(false)
+      // The ladder is per failure streak, not per session: one success means
+      // whatever was wrong has cleared, and the next failure starts at 2s.
+      consecutiveFailuresRef.current = 0
+      clearTimeout(retryTimerRef.current)
       setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
     } catch (err) {
       restoreDirtySaveSnapshot(dirty)
-      setSaveStatus({ state: 'error', message: errorMessage(err, 'Save failed') })
+      // The retry ladder. Silent by design — the toolbar chip renders
+      // `retrying`, and a toast per failed attempt is exactly the noise a
+      // restarting dev server used to produce.
+      consecutiveFailuresRef.current += 1
+      const failures = consecutiveFailuresRef.current
+      const retrying = failures <= SAVE_RETRY_BACKOFF_MS.length
+      setSaveStatus({ state: 'error', message: errorMessage(err, 'Save failed'), retrying })
+      if (retrying) {
+        clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = setTimeout(() => {
+          void saveCurrentSiteRef.current?.().catch((retryErr) => {
+            console.error('[persistence] Automatic save retry failed:', retryErr)
+          })
+        }, SAVE_RETRY_BACKOFF_MS[failures - 1])
+      }
       throw err
     }
   }, [])
@@ -260,6 +316,19 @@ export function usePersistence(
   // Expose the save to the MCP editor-bridge so a write tool relayed from an
   // external agent can flush to the DB before a follow-up headless read.
   useEffect(() => registerEditorSave(saveCurrentSite), [saveCurrentSite])
+
+  // The retry ladder's re-entry point.
+  useEffect(() => {
+    saveCurrentSiteRef.current = saveCurrentSite
+  }, [saveCurrentSite])
+
+  // Unmount only: an armed retry must not fire into an unmounted editor.
+  // Deliberately NOT keyed on `saveCurrentSite` — that would cancel a live
+  // ladder rung on an identity change rather than on a real teardown.
+  useEffect(() => () => {
+    saveCurrentSiteRef.current = null
+    clearTimeout(retryTimerRef.current)
+  }, [])
 
   // ─── 1. Load site document on mount ────────────────────────────────────────
   useEffect(() => {

@@ -95,9 +95,32 @@ export async function commitStudioMove(
  * two of its five members.
  */
 let structuralCommitInFlight = false
+const inFlightListeners = new Set<() => void>()
 
 export function isStructuralCommitInFlight(): boolean {
   return structuralCommitInFlight
+}
+
+/**
+ * Subscribe to in-flight transitions. Returns an unsubscribe fn.
+ *
+ * Exists so the toolbar's save-status chip can say "Saving…" while a
+ * structural write is on the wire (Z6) — a structural commit bypasses the
+ * autosave path entirely, so without this the chip would read "Saved" during
+ * the one write most likely to be slow. Read through `useSyncExternalStore`;
+ * the flag itself stays the single source of truth.
+ */
+export function subscribeStructuralCommitInFlight(listener: () => void): () => void {
+  inFlightListeners.add(listener)
+  return () => {
+    inFlightListeners.delete(listener)
+  }
+}
+
+function setStructuralCommitInFlight(next: boolean): void {
+  if (structuralCommitInFlight === next) return
+  structuralCommitInFlight = next
+  for (const listener of inFlightListeners) listener()
 }
 
 /**
@@ -344,11 +367,11 @@ async function commitStructural(
   // Held for the whole body, including the resync at the bottom — see
   // `guardAgainstConcurrentStructuralCommit`'s doc for why the window has to
   // extend past the POST itself.
-  structuralCommitInFlight = true
+  setStructuralCommitInFlight(true)
   try {
     await commitStructuralBody(edits, refusalTitle, success)
   } finally {
-    structuralCommitInFlight = false
+    setStructuralCommitInFlight(false)
   }
 }
 
