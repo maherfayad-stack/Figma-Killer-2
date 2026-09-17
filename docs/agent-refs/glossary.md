@@ -206,6 +206,14 @@ server-side (`trustTier.ts`'s `refuseAutoPromotion`,
 `liveCapability.ts`). Gates that only need "above Tier 0" read
 `trust !== 'static'`.
 
+**A demotion stops the process, not just the file.** A `trust-tier` write that
+leaves a project below `run-project` calls `stopDevServer` before answering —
+the routes alone are not enough, because `server/liveOrigin.ts`'s
+unauthenticated `/p/<projectKey>/` proxy trusts the dev-server registry rather
+than re-reading `.studio/meta.json`. The permanent way back to Tier 0 in the UI
+is `LiveRuntimePill`'s "Back to static"; `LiveAutoPromoteNotice`'s Undo only
+exists in the session that did the promoting.
+
 **Unroll** — neutralizing inner scroll containers on the design canvas so a whole
 app screen is visible in one frame (`canvasScrollUnroll.ts`,
 `CanvasScrollUnrollInjector.tsx`). Scoped to a CONFIRMED scroll region

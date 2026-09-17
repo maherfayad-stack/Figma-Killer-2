@@ -16,11 +16,18 @@
  *
  *   - it says what happened, in one line, in the board chrome — not a toast,
  *     which would be gone before anyone read it;
- *   - **Undo** writes `trust` back to `static` and reloads, and the project is
- *     never auto-promoted again (`.studio/meta.json`'s `trustAutoPromotedAt`
- *     is the latch, and the undo deliberately leaves it set);
+ *   - **Undo** writes `trust` back to `static` and reloads, which also stops
+ *     the project's dev server (`trustTier.ts` enforces a demotion on the
+ *     process, not just on the file), and the project is never auto-promoted
+ *     again (`.studio/meta.json`'s `trustAutoPromotedAt` is the latch, and the
+ *     undo deliberately leaves it set);
  *   - a project that is not Vite, or has never been installed, is never
  *     touched. The pill says "Live needs Vite" instead (§6 decision 5).
+ *
+ * This card only exists in the session that did the promoting, so it is the
+ * IMMEDIATE way back, not the only one: `LiveRuntimePill`'s "Back to static"
+ * is the permanent one, on every later load (`sec-10`). Consent to run a
+ * project's code has to stay revocable after the notice is gone.
  *
  * ## The promotion happens HERE, on purpose
  *
