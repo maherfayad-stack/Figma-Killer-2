@@ -76,19 +76,23 @@ export type {
 // surface renders: reason + human explanation + a way forward. See the
 // module's own doc for why this stays a read-only translation layer.
 export {
-  describeStructuralRefusal,
   explainClassNameConstraint,
   explainCssRuleConstraint,
   explainDetachConstraint,
-  explainGestureConstraint,
-  explainStaticParentConstraint,
-  explainMintedInsertConstraint,
   explainPropConstraint,
-  explainStructuralConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
   explainUnexplainedSkip,
 } from './editConstraint'
+// The structural half of the same translation layer — see
+// `structuralConstraint.ts`'s own doc for why it is a separate module.
+export {
+  describeStructuralRefusal,
+  explainGestureConstraint,
+  explainStaticParentConstraint,
+  explainMintedInsertConstraint,
+  explainStructuralConstraint,
+} from './structuralConstraint'
 export type {
   ConstraintPropSource,
   ConstraintReason,

@@ -205,3 +205,22 @@ export function isRouteChromeNodeId(nodeId: string): boolean {
   const basename = location.rel.split(/[/\\]/).pop() ?? ''
   return ROUTE_CHROME_FILE.test(basename)
 }
+
+/**
+ * Best-effort location for a `.map`-row id (`…:70:21#2`). `decodeSourceNodeId`
+ * deliberately refuses to match this shape at all (`hasWritableSourceLocation`
+ * is what that non-match means — see `sourceNodeId.ts`'s own doc), because
+ * there is no SINGLE honest writeback target for the row. But there IS a real
+ * `rel:line:col` sitting right there in the id — the row's own rendered
+ * position, one syntactic hop from the `.map()` call the taxonomy names as
+ * the real edit target. Not precise enough to claim as `origin` (this module
+ * only sets `origin` when a location is the honest single truth), but precise
+ * enough to open the right FILE near the right LINE — the R8 fix for a
+ * refusal family the audit otherwise correctly says has no jump-to-source at
+ * all today.
+ */
+export function bestEffortRowLocation(nodeId: string): { rel: string; line: number; col: number } | undefined {
+  const target = nodeId.split('~').pop() ?? nodeId
+  const match = /^(.+):(\d+):(\d+)(?:#\d+)+$/.exec(target)
+  return match ? { rel: match[1]!, line: Number(match[2]), col: Number(match[3]) } : undefined
+}

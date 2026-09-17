@@ -10,19 +10,21 @@
  */
 import { describe, expect, it } from 'bun:test'
 import {
-  describeStructuralRefusal,
   explainClassNameConstraint,
   explainCssRuleConstraint,
   explainDetachConstraint,
-  explainGestureConstraint,
-  explainMintedInsertConstraint,
   explainPropConstraint,
-  explainStructuralConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
   explainUnexplainedSkip,
   type EditConstraint,
 } from '../editConstraint'
+import {
+  describeStructuralRefusal,
+  explainGestureConstraint,
+  explainMintedInsertConstraint,
+  explainStructuralConstraint,
+} from '../structuralConstraint'
 import type { StructuralMovePreview, StructuralRefusalReason } from '../sourceStructure'
 
 /** Every non-null constraint must carry a real sentence and a real (possibly empty) actions array. */

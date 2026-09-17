@@ -78,11 +78,18 @@ describe('no unbounded driver loop', () => {
 
   it('both ceilings exist where the gate says they do', () => {
     const toolLoop = readFileSync(join(REPO_ROOT, 'server/ai/drivers/http/toolLoop.ts'), 'utf8')
+    const bounds = readFileSync(join(REPO_ROOT, 'server/ai/drivers/http/toolLoopBounds.ts'), 'utf8')
     const spawn = readFileSync(join(REPO_ROOT, 'server/ai/drivers/claudeCliSpawn.ts'), 'utf8')
 
     // Declared, not merely mentioned — a gate that passes on a comment naming
-    // the constant would be satisfied by a file that no longer has one.
-    expect(toolLoop).toContain('export const MAX_TOOL_ROUNDS')
+    // the constant would be satisfied by a file that no longer has one. The
+    // round cap is DECLARED in `toolLoopBounds.ts` (the loop passed the
+    // 700-line ceiling and its two bounds moved one file over) and READ by
+    // the loop, so both halves are asserted: a re-export with nothing behind
+    // it, or a loop that stopped importing it, each fail here.
+    expect(bounds).toContain('export const MAX_TOOL_ROUNDS')
+    expect(toolLoop).toContain("from './toolLoopBounds'")
+    expect(toolLoop).toContain('MAX_TOOL_ROUNDS')
     expect(spawn).toContain('export const TOTAL_TURN_CAP_MS')
   })
 

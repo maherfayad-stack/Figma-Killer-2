@@ -33,8 +33,7 @@ import {
   type CanvasTransform,
 } from '@site/canvas/math'
 import { panToCenterBreakpointFrame } from '@site/canvas/canvasDomGeometry'
-import { computeZoomToFitTransform, DEFAULT_ZOOM_FIT_PADDING_PX, type CanvasFitRect, type ZoomFitMode } from '@site/canvas/canvasZoomFit'
-import { measureCanvasFrameRects, measureCanvasSelectionRects } from '@site/canvas/canvasViewportCommands'
+import { useCanvasZoomToFit } from './useCanvasZoomToFit'
 import { markCanvasViewportActivity } from '@site/canvas/canvasViewportActivity'
 import {
   CANVAS_DRAG_PAN_BUTTONS,
@@ -324,71 +323,15 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     [canvasRootRef, transformLayerRef, applyTransformToDOM, setCanvasTransform],
   )
 
-  /**
-   * Zoom/pan so `targetRects` (screen-space, relative to the canvas root) are
-   * entirely visible (`contain`) or fill the viewport (`cover`), centered.
-   * Shared by `zoomToFit`, `zoomToFill` and `zoomToSelection` — the only
-   * differences between the three are which rects they measure and the mode.
-   * Returns `false` when there was nothing to fit (empty or fully-degenerate
-   * rect list — see `computeZoomToFitTransform`).
-   */
-  const applyZoomToFitRects = useCallback(
-    (targetRects: readonly CanvasFitRect[], mode: ZoomFitMode = 'contain'): boolean => {
-      const root = canvasRootRef.current
-      if (!root) return false
-      const rootRect = root.getBoundingClientRect()
-      const next = computeZoomToFitTransform(
-        { width: rootRect.width, height: rootRect.height },
-        targetRects,
-        transformRef.current,
-        DEFAULT_ZOOM_FIT_PADDING_PX,
-        mode,
-      )
-      if (!next) return false
-      transformRef.current = next
-      applyTransformToDOM(next, true)
-      setCanvasTransform(next.zoom, next.panX, next.panY)
-      return true
-    },
-    [canvasRootRef, applyTransformToDOM, setCanvasTransform],
-  )
-
-  /**
-   * `Shift+1` (`canvas.zoomToFit`) — fit every visible breakpoint frame on
-   * the board (or every viewport context frame outside board mode) into the
-   * viewport at once. D3, `STUDIO-FIGMA-PARITY-PLAN.md`: this used to be a
-   * "reset to 100%" alias; it is now the real Figma-style fit.
-   */
-  const zoomToFit = useCallback((): boolean => {
-    const root = canvasRootRef.current
-    const layer = transformLayerRef.current
-    if (!root || !layer) return false
-    return applyZoomToFitRects(measureCanvasFrameRects(root, layer))
-  }, [canvasRootRef, transformLayerRef, applyZoomToFitRects])
-
-  /**
-   * The toolbar zoom menu's "Fill" (viewport-01) — same frames as `zoomToFit`,
-   * scaled to COVER the viewport instead of fitting inside it. Keyboard-free
-   * on purpose: Figma has no default key for it either, and the registry only
-   * carries keys that exist.
-   */
-  const zoomToFill = useCallback((): boolean => {
-    const root = canvasRootRef.current
-    const layer = transformLayerRef.current
-    if (!root || !layer) return false
-    return applyZoomToFitRects(measureCanvasFrameRects(root, layer), 'cover')
-  }, [canvasRootRef, transformLayerRef, applyZoomToFitRects])
-
-  /**
-   * `Shift+2` (`canvas.zoomToSelection`) — fit the current selection, measured
-   * from the live selection rings (see `measureCanvasSelectionRects`).
-   * No-ops (`false`) when nothing is selected.
-   */
-  const zoomToSelection = useCallback((): boolean => {
-    const root = canvasRootRef.current
-    if (!root) return false
-    return applyZoomToFitRects(measureCanvasSelectionRects(root))
-  }, [canvasRootRef, applyZoomToFitRects])
+  // The three fit gestures and the transform they share — see
+  // `useCanvasZoomToFit`. They measure; the write stays on this hook.
+  const { zoomToFit, zoomToFill, zoomToSelection } = useCanvasZoomToFit({
+    canvasRootRef,
+    transformLayerRef,
+    transformRef,
+    applyTransformToDOM,
+    setCanvasTransform,
+  })
 
   // ─── Spacebar tracking (for Space+drag pan) ───────────────────────────────
 
