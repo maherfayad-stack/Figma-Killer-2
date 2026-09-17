@@ -130,8 +130,17 @@ export interface DeployJobOverrides {
 }
 
 interface JobRecord extends LastDeploy {
-  /** The app root the CLI actually ran in — also the directory whose `.studio/meta.json` holds this record. */
-  dir: string
+  /**
+   * The PROJECT directory — where `.studio/meta.json` (and therefore this
+   * record) lives. Carried separately from {@link JobRecord.appRoot} for the
+   * same reason `installJobStore.ts` carries both (`sec-13`): the two are the
+   * same path for a plain project and different for a monorepo import, and a
+   * sidecar written at the app root would be a SECOND `.studio/` directory
+   * inside the user's app that no reader ever looks at.
+   */
+  projectDir: string
+  /** The app root the CLI actually runs in — `vercel.json`/`netlify.toml` and `package.json` sit here, not necessarily at the project directory. */
+  appRoot: string
   phase: DeployPhase
   log: string
   truncated: boolean
@@ -167,8 +176,8 @@ function toPersisted(job: JobRecord): LastDeploy {
 }
 
 /** The last deploy this project recorded, or `null`. A plain read of `.studio/meta.json` — no subprocess, safe to call on every status poll. */
-function readLastDeploy(dir: string): LastDeploy | null {
-  return readStudioMeta(resolveAppRoot(dir)).lastDeploy ?? null
+function readLastDeploy(projectDir: string): LastDeploy | null {
+  return readStudioMeta(projectDir).lastDeploy ?? null
 }
 
 /**
@@ -179,9 +188,9 @@ function readLastDeploy(dir: string): LastDeploy | null {
  * finished days ago and lets the client re-attach its poll loop to one that is
  * still running.
  */
-export function resolveLatestDeployJob(dir: string): PublicDeployJob | null {
-  const last = readLastDeploy(dir)
-  return last ? resolveDeployJob(last.id, dir) : null
+export function resolveLatestDeployJob(projectDir: string): PublicDeployJob | null {
+  const last = readLastDeploy(projectDir)
+  return last ? resolveDeployJob(last.id, projectDir) : null
 }
 
 /**
@@ -191,12 +200,11 @@ export function resolveLatestDeployJob(dir: string): PublicDeployJob | null {
  * written back, so repeated polls do not recompute it and no client waits on a
  * job nobody is running.
  */
-export function resolveDeployJob(id: string, dir: string): PublicDeployJob | null {
+export function resolveDeployJob(id: string, projectDir: string): PublicDeployJob | null {
   const live = jobs.get(id)
   if (live) return toPublicJob(live)
 
-  const appRoot = resolveAppRoot(dir)
-  const persisted = readStudioMeta(appRoot).lastDeploy
+  const persisted = readStudioMeta(projectDir).lastDeploy
   if (!persisted || persisted.id !== id) return null
 
   if (persisted.status === 'running') {
@@ -207,7 +215,7 @@ export function resolveDeployJob(id: string, dir: string): PublicDeployJob | nul
       message:
         'The server restarted while this deploy was running, so its outcome could not be observed. Check the provider dashboard before deploying again.',
     }
-    mergeStudioMeta(appRoot, { lastDeploy: interrupted })
+    mergeStudioMeta(projectDir, { lastDeploy: interrupted })
     return fromPersisted(interrupted)
   }
   return fromPersisted(persisted)
@@ -241,25 +249,27 @@ async function readShippedState(dir: string): Promise<{ branch: string | null; d
 }
 
 /**
- * Starts a deploy and returns its id immediately. `dir` is the PROJECT
+ * Starts a deploy and returns its id immediately. `projectDir` is the PROJECT
  * directory, already resolved and containment-checked by the caller; the CLI
  * runs in its APP ROOT (`approot-01`), because that is where `package.json`,
- * `vercel.json`/`netlify.toml`, and the framework config actually live.
+ * `vercel.json`/`netlify.toml`, and the framework config actually live. The
+ * `lastDeploy` record goes back to the project directory, where every other
+ * `.studio/meta.json` reader looks for it.
  *
  * The trust-tier gate is the CALLER'S (see `deploy.ts`) — this function does
  * not re-check it, so a direct or test caller must not treat it as the
  * consent boundary.
  */
 export async function startDeployJob(
-  dir: string,
+  projectDir: string,
   provider: DeployProvider,
   overrides: DeployJobOverrides = {},
 ): Promise<string> {
-  const appRoot = resolveAppRoot(dir)
-  const shipped = await readShippedState(dir)
+  const shipped = await readShippedState(projectDir)
   const job: JobRecord = {
     id: crypto.randomUUID(),
-    dir: appRoot,
+    projectDir,
+    appRoot: resolveAppRoot(projectDir),
     provider,
     status: 'running',
     phase: 'checking',
@@ -276,7 +286,7 @@ export async function startDeployJob(
   // Initial write — if this process dies before the pipeline writes a terminal
   // record, the next status query still finds THIS record and resolves it to
   // 'interrupted' rather than to a job nobody has heard of.
-  mergeStudioMeta(appRoot, { lastDeploy: toPersisted(job) })
+  mergeStudioMeta(projectDir, { lastDeploy: toPersisted(job) })
 
   void runDeployPipeline(job, overrides).catch((err) => {
     console.error('[studio:deploy]', err)
@@ -299,7 +309,7 @@ function finish(job: JobRecord, status: LastDeploy['status'], message: string, u
   job.message = message
   job.url = url
   job.finishedAt = Date.now()
-  mergeStudioMeta(job.dir, { lastDeploy: toPersisted(job) })
+  mergeStudioMeta(job.projectDir, { lastDeploy: toPersisted(job) })
 }
 
 async function runDeployPipeline(job: JobRecord, overrides: DeployJobOverrides): Promise<void> {
@@ -308,7 +318,7 @@ async function runDeployPipeline(job: JobRecord, overrides: DeployJobOverrides):
 
   // 1 — check. Seconds, and it saves the user a five-minute build when the
   // answer is "you are not signed in".
-  const probe = await probeProvider(job.dir, job.provider, spawn)
+  const probe = await probeProvider(job.appRoot, job.provider, spawn)
   if (!probe.installed) {
     finish(
       job,
@@ -333,7 +343,7 @@ async function runDeployPipeline(job: JobRecord, overrides: DeployJobOverrides):
 
   // 2 — build. This is the step that runs the project's own code.
   job.phase = 'building'
-  const build = await runDeployCli(job.dir, commands.build, {
+  const build = await runDeployCli(job.appRoot, commands.build, {
     timeoutMs: overrides.buildTimeoutMs ?? DEPLOY_BUILD_TIMEOUT_MS,
     spawn,
   })
@@ -346,7 +356,7 @@ async function runDeployPipeline(job: JobRecord, overrides: DeployJobOverrides):
   // 3 — deploy. Preview only.
   job.phase = 'deploying'
   job.message = 'Build finished. Uploading…'
-  const deploy = await runDeployCli(job.dir, commands.deploy, {
+  const deploy = await runDeployCli(job.appRoot, commands.deploy, {
     timeoutMs: overrides.uploadTimeoutMs ?? DEPLOY_UPLOAD_TIMEOUT_MS,
     spawn,
   })

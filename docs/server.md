@@ -371,7 +371,21 @@ What does protect a Studio route:
 |---|---|---|
 | Path containment | `resolveProjectDir` → `isRealpathContainedAllowingMissing` (`server/handlers/studioProjects.ts:121-131`); `ProjectDirOutsideWorkspaceError` becomes one 404 in the router's top-level catch (`server/router.ts`) | Reading or writing any path outside `studio-workspace/` |
 | Cookie scope | The session cookie is issued `Path=/admin; HttpOnly; SameSite=Lax` (`server/handlers/cms/session.ts:37`) | A cross-site state-changing request carrying the cookie. It does **not** stop an unauthenticated request — nothing on these routes reads the cookie |
-| Trust tier | `requireTrustTier` (`server/handlers/studio/trustGate.ts:44`), called by `deploy.ts:170` and `devServer.ts:449,458` | Running the user's project below `trust === 'run-project'` — a 409, not a 401 |
+| Trust tier | `requireTrustTier` (`server/handlers/studio/trustGate.ts`), called by `deploy.ts` and `devServer.ts`; `checkTrustTier` is its transport-free half, used by `deploy.ts`'s status route and by `studio_render_reference` | Running the user's project below `trust === 'run-project'` — a 409, not a 401 |
+
+**The trust tier is read off the PROJECT directory, always.** `.studio/` is a
+project-directory sidecar — it is created where `resolveProjectDir` lands, it
+is in `EXCLUDED_WORKSPACE_DIR_NAMES`, and all ~60 `readStudioMeta` call sites
+key on it. A monorepo import whose real `package.json` sits at
+`<project>/apps/web` has `resolveAppRoot(dir) !== dir`, and
+`<project>/apps/web/.studio/meta.json` does not exist — so a gate keyed on the
+app root answers Tier 0 forever and the project can never be deployed. That was
+a live defect in `deploy.ts` (`sec-12`), fixed by giving `checkTrustTier` /
+`requireTrustTier` a `projectDir` parameter and moving `deployJobs.ts`'s
+`lastDeploy` record back to the project directory. The app root remains correct
+for everything that touches the project's **code** — the install cwd,
+`node_modules`, `vercel.json`/`netlify.toml` detection, the provider CLI's
+working directory — and is never correct for Studio's own sidecar.
 
 These Studio routes carry a real session guard. This is the whole list:
 
@@ -392,7 +406,6 @@ Everything else — `load`, `save`, `boards`, `framework`, `install`, `git`, `de
 - Do not deploy this server on a network where an untrusted client can reach `/admin/api/studio/*`. Path containment limits the blast radius to `studio-workspace/`; it does not limit *who* may write there.
 - A new Studio route matching its neighbours' posture is following a known gap, not a precedent. Say so in a comment if you add one, the way `projectRoutes.ts:239-242` does.
 - There is no gate for this. `src/__tests__/architecture/cms-handlers-capability-gated.test.ts` and `ai-handlers-capability-gated.test.ts` assert that every file under `server/handlers/cms/` and `server/ai/handlers/` calls an auth guard; no equivalent exists for `server/handlers/studio/`, which is why an ungated route cannot be caught by `bun test`.
-- The related weakness on the MCP side: `studio_render_reference` (`server/ai/mcp/tools/studio/referenceRender.ts`) is gated on the connector capability `studio.run.project` only and does not consult the target project's own `.studio/meta.json` trust tier.
 
 Per-request capability gating across the whole namespace is the first follow-up wave in `STUDIO-FIGMA-FEEL-PLAN.md` §9. Until it lands, the posture above is the contract.
 
