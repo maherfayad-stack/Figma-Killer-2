@@ -28,7 +28,11 @@ import { createUser } from '../../repositories/users'
 import { createSession } from '../../auth/sessions'
 import { SESSION_COOKIE_NAME, createSessionToken, hashSessionToken, sessionExpiry } from '../../auth/tokens'
 import { clearGithubDeviceFlowsForTest } from '../studio/githubDeviceFlow'
-import { clearGithubIdentityCacheForTest, tryServeStudioGithubAuth } from '../studio/githubAuthRoutes'
+import {
+  clearGithubIdentityCacheForTest,
+  githubIdentityCacheSizeForTest,
+  tryServeStudioGithubAuth,
+} from '../studio/githubAuthRoutes'
 import { readGithubToken } from '../studio/githubCredentialStore'
 
 const TOKEN = 'ghp_0123456789abcdefABCDEF0123456789abcd'
@@ -562,6 +566,10 @@ describe('github auth — account and sign-out', () => {
     expect(await readGithubToken(db, 'user-a')).toBe(OTHER_TOKEN)
     const { rows } = await db<{ n: number }>`select count(*) as n from git_credentials where user_id = 'user-a'`
     expect(Number(rows[0]!.n)).toBe(1)
+    // The in-memory identity does not accumulate either. It is keyed by user
+    // id; keyed by CREDENTIAL id it would gain an orphaned entry per sign-in,
+    // because each sign-in inserts a row with a new one.
+    expect(githubIdentityCacheSizeForTest()).toBe(1)
   })
 
   it('drops the credential when GitHub stops recognising it', async () => {

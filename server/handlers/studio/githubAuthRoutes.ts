@@ -38,7 +38,7 @@
  * panel does not put plaintext in memory and does not spend a GitHub API call.
  *
  * The one thing cached across requests is the IDENTITY (login + avatar) for a
- * credential id, in memory. It is derived from a GitHub call already made at
+ * user id, in memory. It is derived from a GitHub call already made at
  * sign-in; it is not a credential, and it is dropped on sign-out.
  */
 import { Type } from '@core/utils/typeboxHelpers'
@@ -80,10 +80,16 @@ const PasteTokenBodySchema = Type.Object({
 })
 
 /**
- * login + avatar for a stored credential id, so `GET account` can render the
+ * login + avatar for the signed-in account, so `GET account` can render the
  * panel without decrypting the token or calling GitHub on every panel open.
  * Not a credential; dropped on sign-out and on process restart (after which
  * the first `account` read re-derives it, once).
+ *
+ * Keyed by USER id, not by credential id. A credential id is new on every
+ * sign-in — `writeGithubCredential` deletes the row and inserts a fresh one —
+ * so a map keyed by it kept the previous id's entry forever and grew by one
+ * every time anyone signed in again. The user id is the stable identity, and
+ * there is exactly one credential per `(user, provider)` for it to describe.
  */
 const identityCache = new Map<string, { login: string; avatarUrl: string | null }>()
 
@@ -223,13 +229,12 @@ async function servePasteToken(
     // GitHub says otherwise", and a 401 later drops the row (see the store).
     expiresAt: null,
   })
-  identityCache.set(meta.id, { login: identity.login, avatarUrl: identity.avatarUrl })
+  identityCache.set(userId, { login: identity.login, avatarUrl: identity.avatarUrl })
   return jsonResponse({ account: accountView(meta, identity) })
 }
 
 async function serveSignOut(db: DbClient, userId: string): Promise<Response> {
-  const meta = await readGithubCredentialMeta(db, userId)
-  if (meta) identityCache.delete(meta.id)
+  identityCache.delete(userId)
   await deleteGithubCredential(db, userId)
   // Idempotent on purpose: signing out twice is not an error, and a 404 here
   // would make the panel show a failure for reaching the state it wanted.
@@ -242,7 +247,7 @@ async function serveAccount(db: DbClient, userId: string, deps: GithubAuthRouteD
     return jsonResponse({ account: null, clientConfigured: githubOAuthClientId() !== null })
   }
 
-  const identity = await resolveIdentity(db, userId, meta, deps)
+  const identity = await resolveIdentity(db, userId, deps)
   if (!identity) {
     // The stored token no longer identifies anyone — GitHub revoked it, or it
     // expired. `resolveIdentity` already dropped the row, so the honest
@@ -276,12 +281,13 @@ async function storeToken(
     scopes: scopes.length > 0 ? scopes : identity.scopes,
     expiresAt: null,
   })
-  identityCache.set(meta.id, { login: identity.login, avatarUrl: identity.avatarUrl })
+  identityCache.set(userId, { login: identity.login, avatarUrl: identity.avatarUrl })
   return accountView(meta, identity)
 }
 
 /**
- * The cached identity for this credential, or one freshly read from GitHub.
+ * The cached identity for this user's credential, or one freshly read from
+ * GitHub.
  * A read that GitHub refuses means the stored token is dead, so the row is
  * removed and `null` is returned — the panel then shows "signed out" rather
  * than an account that can no longer do anything.
@@ -289,10 +295,9 @@ async function storeToken(
 async function resolveIdentity(
   db: DbClient,
   userId: string,
-  meta: GithubCredentialMeta,
   deps: GithubAuthRouteDeps,
 ): Promise<{ login: string; avatarUrl: string | null } | null> {
-  const cached = identityCache.get(meta.id)
+  const cached = identityCache.get(userId)
   if (cached) return cached
 
   const token = await readGithubToken(db, userId)
@@ -300,11 +305,11 @@ async function resolveIdentity(
   try {
     const identity = await readGithubIdentity(token, deps)
     const resolved = { login: identity.login, avatarUrl: identity.avatarUrl }
-    identityCache.set(meta.id, resolved)
+    identityCache.set(userId, resolved)
     return resolved
   } catch (err) {
     if (err instanceof GithubApiError && (err.status === 401 || err.status === 403)) {
-      identityCache.delete(meta.id)
+      identityCache.delete(userId)
       await deleteGithubCredential(db, userId)
       return null
     }
@@ -315,4 +320,9 @@ async function resolveIdentity(
 /** Test-only: drops the identity cache so one case's sign-in cannot satisfy another's `account` read. */
 export function clearGithubIdentityCacheForTest(): void {
   identityCache.clear()
+}
+
+/** Test-only: how many identities are cached, so "signing in again does not add an entry" is assertable. */
+export function githubIdentityCacheSizeForTest(): number {
+  return identityCache.size
 }
