@@ -400,14 +400,14 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 //
 // Still computed, not measured (same happy-dom limitation as everything
 // above): the sum of the sections the F2 text node mounts in the Design tab,
-// plus `.surfaceContent`'s own `--inspector-space-xl` (12px) grid gap between
+// plus `.surfaceContent`'s own `--inspector-space-m` (8px) grid gap between
 // every mounted wrapper. `align` renders `null` for this fixture but still
 // occupies a grid item, so it contributes 0px of height and one full gap —
 // counted honestly rather than skipped.
 //
 // Panel CHROME above the sections (the write-target chip row, ClassPicker,
-// the Module block, `.surface`'s own fluid padding) is NOT in this number and
-// cannot be: those are fluid `--space-*` values with no fixed px. The real,
+// `.surface`'s own padding) is NOT in this number: none of it is an
+// `INSPECTOR_SECTIONS` entry with a row count to compute. The real,
 // whole-panel measurement lives in `tests/e2e/inspector-height.e2e.ts`, which
 // also writes the MEASURED version of this table to
 // `docs/audits/penpot-inspector-baseline/`. That spec's first real run
@@ -416,7 +416,7 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 // node — which is why the two tables differ by far more than rounding.
 // ---------------------------------------------------------------------------
 
-const BETWEEN_SECTION_GAP = 12 // --inspector-space-xl
+const BETWEEN_SECTION_GAP = 8 // --inspector-space-m
 /** `Section`'s header alone, which is all a collapsed More group costs. */
 const MORE_HEADER_H = HEADER_H
 
@@ -463,31 +463,31 @@ describe('computed section rest-height budget', () => {
     expect(rotationRadiusRow - xyRow).toBeLessThanOrEqual(ROW_H + WITHIN_GROUP_GAP)
   })
 
-  it('the F2 text node Design tab costs 756px of sections with More collapsed', () => {
+  it('the F2 text node Design tab costs 716px of sections with More collapsed', () => {
     // This is a SECTIONS-only sum, and it is not the whole Design tab. The
-    // measured `scrollHeight` for the same fixture is 1190px against 626px of
-    // room at a 900px viewport (`tests/e2e/inspector-height.e2e.ts`,
-    // `STATE.md` panel-37) — the difference is the panel chrome, the Module
-    // block, and container padding, none of which a static sum can see. What
-    // this exact number is good for is catching a section that quietly grows
-    // a resident row without anyone opening a browser; it is NOT evidence
-    // that the tab fits. A companion "< 900" assertion used to sit here
-    // claiming exactly that, on the reasoning that "no amount of chrome
-    // tuning could ever make 900px fit" otherwise. Measurement disproved the
-    // premise (the chrome is 274px and fixed), so the assertion was deleted
-    // rather than left restating this one more weakly.
+    // measured height for the same fixture is far larger
+    // (`tests/e2e/inspector-height.e2e.ts`) — the difference is the
+    // write-target row, the Module block and container padding, none of which
+    // a static row count can see. What this exact number is good for is catching a section that
+    // quietly grows a resident row without anyone opening a browser; it is
+    // NOT evidence that the tab fits.
+    //
+    // 756 -> 716 is the between-section gap moving from 12px to Figma's and
+    // Penpot's own measured 8px, across ten gaps.
     const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
-    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(756)
+    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(716)
   })
 
-  it('the More disclosure buys back 164px that used to be always-mounted', () => {
+  it('the More disclosure buys back 152px that used to be always-mounted', () => {
     const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
     const moreSectionHeights = MORE_GROUP_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
     // Before S5: all four mounted inline, each its own grid item.
     const before = sumWithGaps([...primary, ...moreSectionHeights])
     // After S5: one collapsed header in their place.
     const after = sumWithGaps([...primary, MORE_HEADER_H])
-    expect(before - after).toBe(164)
+    // Was 164 while the between-section gap was 12px; the same fold is worth
+    // 152 at the 8px gap panel-39 moved it to (three fewer gaps × 4px).
+    expect(before - after).toBe(152)
   })
 
 })

@@ -255,18 +255,24 @@
          - `--inspector-space-m` (8px) — BETWEEN groups inside one section
            (Layout's mode vs. padding vs. flex settings vs. margin; Measures'
            size vs. position vs. rotation; one declared prop row vs. the
-           next). Already `Section.module.css`'s `.sectionBody` gap and
-           `PropertyList`'s row height rhythm — this pass just applies it
-           deliberately elsewhere instead of a smaller, arbitrary step.
-         - `--inspector-space-xl` (12px) — BETWEEN sections. Lives in
-           `StyleSurface.module.css`'s `.surfaceContent` gap (the single
-           shared ancestor of every section, headered or headerless), not in
-           `Section.module.css` itself (`Section` is also used by GitPanel/
-           FrameworkScalePanel, outside the Properties panel's rhythm). A
-           section's own `.sectionContent` already has zero top padding, so
-           this single shared gap is ALSO what gives a header more space
-           above it than below — the header belongs to its own content, not
-           to the section before it.
+           next) AND between sections. Already `Section.module.css`'s
+           `.sectionBody` gap and `PropertyList`'s row height rhythm; since
+           panel-39 it is also `StyleSurface.module.css`'s `.surfaceContent`
+           gap — the single shared ancestor of every section, headered or
+           headerless. That gap lives there and not in `Section.module.css`
+           itself, because `Section` is also used by GitPanel/
+           FrameworkScalePanel, outside the Properties panel's rhythm. A
+           section's own `.sectionContent` has zero top padding, so this one
+           shared gap is ALSO what gives a header more space above it than
+           below — the header belongs to its own content, not to the section
+           before it. 8px is Figma's and Penpot's own measured section gap
+           (`docs/audits/penpot-inspector-baseline/`); the 12px step that
+           used to sit here cost a text node 132px across twelve gaps for no
+           reference behind it.
+         - `--inspector-space-xl` (12px) — block padding for a full-width
+           inset card inside the panel (`MultiSelectorInspector`'s bulk-
+           action surface, the generated-utility notice). NOT a step in the
+           row/section rhythm above.
 
        This replaces `--inspector-gap-tight`/`--inspector-gap-group`, the P3
        pair this comment used to describe: `-gap-group` (16px) was defined
