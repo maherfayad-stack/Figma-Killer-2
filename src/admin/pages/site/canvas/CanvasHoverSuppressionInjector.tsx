@@ -47,9 +47,18 @@
  * different iframe in a different component tree (`CanvasLiveSurface` vs the
  * design canvas), so a document that had hover suppressed never becomes one
  * that should not.
+ *
+ * ## Why it is not a full CSSOM walk per frame
+ *
+ * It was, and on an 18-frame board that cost ~100 ms of a single 255 ms
+ * animation frame during a zoom-out — frame-invariant work paid N times for
+ * one answer. `hoverSuppressionPlan.ts` does the walk once per distinct sheet
+ * TEXT and hands every later frame an index-path plan to apply; read its
+ * header for why a path built in one document addresses the same rule in
+ * another.
  */
 import { useEffect } from 'react'
-import { disableHoverInSelector } from './hoverSuppression'
+import { suppressHoverInSheet } from './hoverSuppressionPlan'
 
 /**
  * The page-content stylesheets, by the `id` each injector gives its `<style>`
@@ -59,23 +68,6 @@ import { disableHoverInSelector } from './hoverSuppression'
  */
 const CONTENT_STYLE_IDS = new Set(['mc-vendor', 'mc-authored', 'mc-classes', 'mc-user-styles'])
 
-function rewriteRules(rules: CSSRuleList): void {
-  for (const rule of Array.from(rules)) {
-    // A `CSSStyleRule` can be BOTH — native CSS nesting gives a style rule its
-    // own child rules — so this is two independent checks, not a branch.
-    const styleRule = rule as CSSStyleRule
-    if (typeof styleRule.selectorText === 'string') {
-      const next = disableHoverInSelector(styleRule.selectorText)
-      // An invalid selector makes the setter a silent no-op, so only write
-      // when there is a real change to make.
-      if (next !== styleRule.selectorText) styleRule.selectorText = next
-    }
-    // `@media`, `@supports`, `@layer`, `@container` — and nested rules.
-    const nested = (rule as CSSGroupingRule).cssRules
-    if (nested) rewriteRules(nested)
-  }
-}
-
 function suppressHover(doc: Document): void {
   for (const sheet of Array.from(doc.styleSheets)) {
     // `nodeType` rather than `instanceof Element`: this module's `Element` is
@@ -84,7 +76,12 @@ function suppressHover(doc: Document): void {
     const owner = sheet.ownerNode as Element | null
     if (owner?.nodeType !== 1 || !CONTENT_STYLE_IDS.has(owner.id)) continue
     try {
-      rewriteRules(sheet.cssRules)
+      // The text the injector wrote IS what the parser consumed, so it keys
+      // the plan exactly. A sheet with no text (nothing injected yet) has no
+      // rules to rewrite either.
+      const text = owner.textContent
+      if (!text) continue
+      suppressHoverInSheet(sheet, text)
     } catch (_err) {
       // A stylesheet the document cannot read (cross-origin `@import`). There
       // is nothing to rewrite and nothing to report — the browser refusing to
