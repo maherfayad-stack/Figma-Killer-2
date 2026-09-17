@@ -338,10 +338,10 @@ the token they sign in with is stored per user, encrypted.
 - **Every state-changing route on this surface runs `originAllowed`** — the
   credential-writing GitHub routes, and `gitSyncRoutes.ts`'s POSTs (`fetch`,
   `pull`, `commit-and-switch`, the conflict verbs, `pull-request`).
-  `SameSite=Lax` already stops a cross-SITE POST from carrying the session
-  cookie; this closes the same-site-different-subdomain case it does not cover,
-  which matters because a forged `pull` rewrites a working tree and a forged
-  `pull-request` publishes a proposal under the user's GitHub identity.
+  `SameSite=Lax` already stops a POST from an unrelated origin from carrying the
+  session cookie; this closes the same-registrable-domain case it does not
+  cover, which matters because a forged `pull` rewrites a working tree and a
+  forged `pull-request` publishes a proposal under the user's GitHub identity.
 
 **A note for anyone writing a test here.** A network git call with **no**
 credential invokes the host's credential helper, and on Windows that is Git

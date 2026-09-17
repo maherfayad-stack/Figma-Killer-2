@@ -80,10 +80,10 @@
  *
  * Every POST here goes through `originAllowed`, the same CSRF check the
  * credential-writing GitHub routes and `handleCmsRequest` apply. `SameSite=Lax`
- * already stops a cross-SITE POST from carrying the session cookie; this closes
- * the same-site-different-subdomain case, which matters because a forged `pull`
- * rewrites a working tree and a forged `pull-request` publishes under the
- * user's GitHub identity.
+ * already stops a POST from an unrelated origin from carrying the session
+ * cookie; this closes the same-registrable-domain case it does not, which
+ * matters because a forged `pull` rewrites a working tree and a forged
+ * `pull-request` publishes under the user's GitHub identity.
  *
  * Refusals follow the same contract as `git.ts`: a state-based refusal is a
  * **409** with `{ error, code, … }`, a git invocation that actually failed is
@@ -222,11 +222,11 @@ export async function tryServeStudioGitSync(req: Request, url: URL, pathname: st
 
   // CSRF defence in depth, matching `githubAuthRoutes.ts`, `handleCmsRequest`
   // and the AI routes. `SameSite=Lax` on the session cookie already stops a
-  // cross-SITE POST from carrying it; this closes the
-  // same-site-different-subdomain case it does not cover. Every POST below
-  // changes the user's repository — a forged `pull` could rewrite their
-  // working tree, a forged `pull-request` could publish a proposal under their
-  // GitHub identity — so the check is worth the line.
+  // POST from an unrelated origin from carrying it; this closes the
+  // same-registrable-domain case it does not cover. Every POST below changes
+  // the user's repository — a forged `pull` could rewrite their working tree, a
+  // forged `pull-request` could publish a proposal under their GitHub
+  // identity — so the check is worth the line.
   if (isStateChangingMethod(req.method) && !originAllowed(req)) {
     return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
   }

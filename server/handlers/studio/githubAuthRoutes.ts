@@ -17,8 +17,8 @@
  *
  * The three state-changing ones additionally go through `originAllowed`, the
  * same CSRF check `handleCmsRequest` and the AI routes apply. `SameSite=Lax`
- * already stops a cross-SITE POST from carrying the session cookie; this
- * closes the same-site-different-subdomain case, which matters more here than
+ * already stops a POST from an unrelated origin from carrying the session
+ * cookie; this closes the same-registrable-domain case, which matters more than
  * anywhere else on this surface because a forged `POST github/token` would
  * plant an attacker's credential under the operator's account.
  *
@@ -143,8 +143,8 @@ export async function tryServeStudioGithubAuth(
   if (!routed) return null
 
   // CSRF defence in depth, matching `handleCmsRequest` and the AI routes.
-  // `SameSite=Lax` on the session cookie already stops a cross-site POST from
-  // carrying it, but these three state-changing routes STORE AND DELETE A
+  // `SameSite=Lax` on the session cookie already stops a POST from an
+  // unrelated origin from carrying it, but these three routes STORE AND DELETE A
   // CREDENTIAL — the highest-value writes on the whole Studio surface — and
   // the same-site-different-subdomain case is exactly the one SameSite does
   // not cover. A forged `POST github/token` would plant an attacker's token
