@@ -92,8 +92,16 @@
  * thing worth continuing.
  */
 import { pageKindPreset, type PageKind } from '@core/studio-board'
-import { ALM_DESIGN_PACKAGE_SPECIFIER } from './designSystemDetect'
-import { hasDependency, readPackageJson } from './packageJsonRead'
+import { isDesignSystemBacked } from './builtinDesignSystem'
+
+/**
+ * How a scaffolded page imports the built-in design system. A page is written
+ * into the project's pages directory one level below the root, so the folder
+ * is one hop up — the same specifier `designSystemImportSpecifier`
+ * (`@core/page-parser`) computes for `pages/<Name>.tsx`, which is where
+ * `pageScaffold.ts` puts every page it creates.
+ */
+const DESIGN_SYSTEM_SPECIFIER = '../design-system'
 
 /**
  * The `.tsx`/`.jsx` source and its co-located CSS module.
@@ -118,13 +126,14 @@ export type PageTemplateKit = 'alm' | 'plain'
  * the same posture `detectPageFileExtension` takes for `.tsx` vs `.jsx`:
  * Studio continues what it finds rather than imposing a house style.
  *
- * `appRoot` is where the `package.json` lives (a nested app has its own), which
- * the caller resolves — this module does no path discovery of its own.
+ * `dir` is the PROJECT directory, not a nested app root: the design-system
+ * folder is always written at the project root (`isDesignSystemBacked`),
+ * whatever `package.json` a nested app happens to carry. This used to ask
+ * `hasDependency(@alm-design/design-system)`, which is why it took an app root
+ * — there is no dependency to look up any more.
  */
-export function detectPageTemplateKit(appRoot: string): PageTemplateKit {
-  const pkg = readPackageJson(appRoot)
-  if (!pkg) return 'plain'
-  return hasDependency(pkg, ALM_DESIGN_PACKAGE_SPECIFIER) ? 'alm' : 'plain'
+export function detectPageTemplateKit(dir: string): PageTemplateKit {
+  return isDesignSystemBacked(dir) ? 'alm' : 'plain'
 }
 
 /**
@@ -192,7 +201,7 @@ function component(componentName: string, body: string): string {
 function almSheet(size: 'small' | 'fullscreen', blurb: string): Template {
   return {
     jsx: (componentName) =>
-      `import { BottomSheet } from '${ALM_DESIGN_PACKAGE_SPECIFIER}'\n\n` +
+      `import { BottomSheet } from '${DESIGN_SYSTEM_SPECIFIER}'\n\n` +
       component(
         componentName,
         `    <BottomSheet open platform="ios" size="${size}" title="${componentName}" onClose={() => {}}>\n` +
@@ -245,7 +254,7 @@ const ALM_SHEET_CONTENT_CSS = `/* The package leaves \`.bottom-sheet__content\` 
  */
 const almPopup: Template = {
   jsx: (componentName) =>
-    `import { Dialog } from '${ALM_DESIGN_PACKAGE_SPECIFIER}'\n\n` +
+    `import { Dialog } from '${DESIGN_SYSTEM_SPECIFIER}'\n\n` +
     component(
       componentName,
       `    <Dialog\n` +

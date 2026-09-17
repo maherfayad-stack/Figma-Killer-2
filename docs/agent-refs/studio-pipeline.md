@@ -27,7 +27,7 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
             Accepted subset + the named refusals + measured acceptance
             rates: studio-import.md §"Storybook stories as pages".
         2. parsePageFile() per file              page-parser/parsePageFile.ts
-        3. resolveComponentSources()             componentSources.ts   local | package
+        3. resolveComponentSources()             componentSources.ts   local | package | design-system
         4. inlineLocalComponents()               inlineLocalComponents.ts
         5. staticEval — resolve values           staticEval*.ts        Tiers A/B/C
         6. staticLoopExpansion — .map            staticLoopExpansion.ts
@@ -353,7 +353,9 @@ does **not** lock the node.
 
 | Source | moduleId |
 |---|---|
-| `kind: 'component'` | `alm.<Name>` |
+| `kind: 'component'`, source `design-system` (resolves inside `<root>/design-system/`) | `alm.<ExportName>` — the built-in design system, a **black box**: never inlined, its CSS never enters `site.styleRules`, its folder never searched for pages/components/assets. See `studio-import.md` §"Local-component inlining". |
+| `kind: 'component'`, source `package` | `pkg.<sanitized-package>.<Name>` — every package, no carve-out for any specifier |
+| `kind: 'component'`, unclassified (no import, no same-file declaration) | `alm.<Name>` — renders "Unknown module", the honest outcome |
 | `div/section/main/header/footer/nav/article/aside` | `base.container` |
 | `img` / `a` | `base.image` / `base.link` |
 | anything carrying resolved SVG markup, or `svg` | `base.svg` |

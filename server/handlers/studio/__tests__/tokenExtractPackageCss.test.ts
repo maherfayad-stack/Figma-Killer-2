@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { readInstalledPackageCss } from '../tokenExtractPackageCss'
+import { builtinDesignSystemTokenCss, readBuiltinDesignSystemCss, readInstalledPackageCss } from '../tokenExtractPackageCss'
 
 let root: string
 
@@ -122,5 +122,41 @@ describe('readInstalledPackageCss', () => {
     const css = readInstalledPackageCss(root, ['@acme/ui'])
     expect(css).toContain('--first')
     expect(css).not.toContain('--second')
+  })
+})
+
+/**
+ * DS-3 — Studio's OWN copy of the built-in design system's compiled
+ * stylesheet. This is what makes Colors/Type/Space populate for a DS-backed
+ * project with no `node_modules` at all: the tokens are in Studio's vendored
+ * `dist/index.css`, which is also the sheet the canvas injects, so the panel
+ * and the canvas can never disagree about which tokens exist.
+ */
+describe('readBuiltinDesignSystemCss / builtinDesignSystemTokenCss', () => {
+  function writeBuiltin(css: string): string {
+    const builtinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-ds-css-'))
+    fs.mkdirSync(path.join(builtinDir, 'dist'), { recursive: true })
+    fs.writeFileSync(path.join(builtinDir, 'dist', 'index.css'), css)
+    return builtinDir
+  }
+
+  it("reads the vendored dist/index.css", () => {
+    const builtinDir = writeBuiltin(':root { --color-aqua-100: #0C9AB0; }')
+    try {
+      expect(readBuiltinDesignSystemCss(builtinDir)).toContain('--color-aqua-100')
+    } finally {
+      fs.rmSync(builtinDir, { recursive: true, force: true })
+    }
+  })
+
+  it("returns '' when the vendor folder is not there, rather than throwing", () => {
+    expect(readBuiltinDesignSystemCss(path.join(root, 'no-such-vendor'))).toBe('')
+  })
+
+  it('contributes nothing for a project that does not carry the design system', () => {
+    // The refusal: a project with no `design-system/` folder cannot import
+    // these tokens, so naming them would send an agent to `var(--color-…)`
+    // values that resolve to nothing in that project's browser.
+    expect(builtinDesignSystemTokenCss(root)).toBe('')
   })
 })

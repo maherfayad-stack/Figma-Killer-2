@@ -46,14 +46,20 @@ describe('slot candidates', () => {
     }
   })
 
-  it('offers the registered design-system icons, each with its BARE import specifier', () => {
+  /**
+   * DS-3 — a BUILT-IN design-system icon carries no specifier at all. The
+   * folder it comes from is reached by a path relative to the file being
+   * written, which this side does not know; `designSystemImport` says which
+   * system and the server computes the path. A specifier invented here would
+   * be a broken import for every file at a different depth.
+   */
+  it('offers the registered design-system icons with designSystemImport, never a guessed path', () => {
     const icons = designSystemIconCandidates()
     expect(icons.length).toBeGreaterThan(0)
     const chevron = icons.find((c) => c.name === 'ChevronRightIcon')
     expect(chevron).toBeDefined()
-    // Bare, never a relative path: running `relativeImportSpecifier` over a
-    // package name produces a broken import.
-    expect(chevron!.importSpecifier).toBe('@alm-design/design-system')
+    expect(chevron!.designSystemImport).toBe(true)
+    expect(chevron!.importSpecifier).toBeUndefined()
     expect(chevron!.source).toBe('design-system')
   })
 
@@ -74,17 +80,22 @@ describe('slot candidates', () => {
     expect(forSlot.some((c) => c.source === 'package-icon')).toBe(true)
   })
 
-  it('carries markup for a file icon and an import specifier for a component', () => {
+  it('carries markup for a file icon and an import for a component', () => {
     const forIcon = slotCandidatesFor('icon', projectCatalog, 'src/pages/Home.tsx', packageIcons)
     const file = forIcon.find((c) => c.kind === 'svg')
     const component = forIcon.find((c) => c.kind === 'component')
     // A file icon is written INLINE — it has markup and needs no import.
     expect(file?.kind === 'svg' && file.markup).toContain('<path')
-    expect(component?.kind === 'component' && component.importSpecifier).toBeTruthy()
+    // Every component candidate says where it comes from in exactly one of
+    // the two ways there are — never neither.
+    expect(
+      component?.kind === 'component' &&
+        (component.importSpecifier !== undefined || component.designSystemImport === true),
+    ).toBe(true)
   })
 
   it('resolves a project component import relative to the call site file', () => {
     const [candidate] = slotCandidatesFor('header', projectCatalog, 'src/pages/Home.tsx', [])
-    expect(candidate!.kind === 'component' && candidate.importSpecifier.startsWith('.')).toBe(true)
+    expect(candidate!.kind === 'component' && candidate.importSpecifier?.startsWith('.')).toBe(true)
   })
 })

@@ -118,15 +118,17 @@ export async function commitStudioDuplicate(nodeIds: readonly string[]): Promise
  * W4-1 — wrapping one element in a new container written into the user's
  * `.tsx`.
  *
- * `name`/`importSpecifier` spell the wrapper the way `commitStudioInsert` spells
- * a new element: an intrinsic tag (`div`) needs no import and omits the
- * specifier; a design-system container names where it comes from and the codemod
- * writes that import alongside.
+ * `name`/`importSpecifier`/`designSystemImport` spell the wrapper the way
+ * `commitStudioInsert` spells a new element: an intrinsic tag (`div`) needs no
+ * import and omits both; a package component names its specifier; a built-in
+ * design-system component names only the SYSTEM, and the server computes the
+ * relative path (see `commitStudioInsert`).
  */
 export async function commitStudioWrap(wrap: {
   nodeId: string
   name: string
   importSpecifier?: string
+  designSystemImport?: true
 }): Promise<void> {
   await commitStructural(
     [
@@ -135,6 +137,7 @@ export async function commitStudioWrap(wrap: {
         nodeId: wrap.nodeId,
         name: wrap.name,
         ...(wrap.importSpecifier === undefined ? {} : { importSpecifier: wrap.importSpecifier }),
+        ...(wrap.designSystemImport === undefined ? {} : { designSystemImport: wrap.designSystemImport }),
       },
     ],
     'Wrap refused',
@@ -175,9 +178,17 @@ export async function commitStudioInsert(insert: {
   /**
    * Omit for an INTRINSIC element (`<div>`, `<p>`) — those need no import, and
    * `insertJsxElement` reads the field's absence as exactly that. Present for a
-   * component, which is imported from this specifier.
+   * package component, which is imported from this specifier.
    */
   importSpecifier?: string
+  /**
+   * DS-3 — the component comes from Studio's built-in design system, which a
+   * project reaches through its own `design-system/` folder. There is no
+   * specifier to send: it is RELATIVE to the file being written, and only the
+   * server knows where that file sits. It computes it
+   * (`designSystemImportSpecifier`) after decoding the node id.
+   */
+  designSystemImport?: true
   props: Record<string, InsertPropValue>
   /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
   children?: string
@@ -193,6 +204,7 @@ export async function commitStudioInsert(insert: {
         // branches on `importSpecifier === undefined` to choose intrinsic vs
         // component, and the wire schema has it optional for the same reason.
         ...(insert.importSpecifier === undefined ? {} : { importSpecifier: insert.importSpecifier }),
+        ...(insert.designSystemImport === undefined ? {} : { designSystemImport: insert.designSystemImport }),
         ...(insert.children === undefined ? {} : { children: insert.children }),
         props: insert.props,
       },

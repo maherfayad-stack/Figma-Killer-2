@@ -396,6 +396,120 @@ export default function Home() {
   })
 })
 
+/**
+ * DS-3 — `designSystemImport`. The client cannot spell an import of the
+ * project's own `design-system/` folder, because the specifier depends on
+ * where in the tree the file being written sits; the SERVER knows, having just
+ * decoded the node id through `studioEditLocation`, so it computes it.
+ *
+ * The refusal these tests protect is the one that would be easy to lose: if
+ * the client were allowed to guess, a page one directory deeper would get
+ * `'../design-system'` and import a folder that is not there — code that
+ * typechecks against a Vite ambient module and fails only at runtime.
+ */
+describe('applyStudioEdit — insert with designSystemImport', () => {
+  const PAGE = `export default function Home() {
+  return (
+    <section className="wrap">
+      <p>hi</p>
+    </section>
+  )
+}
+`
+
+  it("writes '../design-system' for a page one level down", () => {
+    write('pages/Home.tsx', PAGE)
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/Home.tsx:3:6',
+      name: 'Button',
+      designSystemImport: true,
+      props: { label: 'Buy now' },
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('pages/Home.tsx')).toBe(
+      `import { Button } from '../design-system'
+export default function Home() {
+  return (
+    <section className="wrap">
+      <p>hi</p>
+      <Button label="Buy now" />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it("climbs the right number of levels for a nested page", () => {
+    write('pages/account/Settings.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/account/Settings.tsx:3:6',
+      name: 'Button',
+      designSystemImport: true,
+    })
+
+    expect(read('pages/account/Settings.tsx')).toStartWith("import { Button } from '../../design-system'\n")
+  })
+
+  it('reuses the existing import on a second insert — one import, two elements', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, { kind: 'insert', nodeId: 'pages/Home.tsx:3:6', name: 'Button', designSystemImport: true })
+    // Re-read: the first write shifted every line below it, so the container
+    // is now one line further down — exactly what `shifted: true` means.
+    applyStudioEdit(tmpDir, { kind: 'insert', nodeId: 'pages/Home.tsx:4:6', name: 'Chip', designSystemImport: true })
+
+    const after = read('pages/Home.tsx')
+    expect(after).toStartWith("import { Button, Chip } from '../design-system'\n")
+    expect(after.match(/from '\.\.\/design-system'/g)).toHaveLength(1)
+    expect(after).toContain('<Button />')
+    expect(after).toContain('<Chip />')
+  })
+
+  it('resolves a design-system component nested inside a subtree, at any depth', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/Home.tsx:3:6',
+      name: 'div',
+      children: [{ name: 'span', children: [{ name: 'Pill', designSystemImport: true }] }],
+    })
+
+    const after = read('pages/Home.tsx')
+    expect(after).toStartWith("import { Pill } from '../design-system'\n")
+    expect(after).toContain('<Pill />')
+  })
+
+  it('wraps in a design-system container with the same computed specifier', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, { kind: 'wrap', nodeId: 'pages/Home.tsx:4:8', name: 'Card', designSystemImport: true })
+
+    const after = read('pages/Home.tsx')
+    expect(after).toStartWith("import { Card } from '../design-system'\n")
+    expect(after).toContain('<Card>')
+  })
+
+  it('a package insert is untouched by any of this', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/Home.tsx:3:6',
+      name: 'Button',
+      importSpecifier: '@acme/ui',
+    })
+
+    expect(read('pages/Home.tsx')).toStartWith("import { Button } from '@acme/ui'\n")
+  })
+})
+
 describe('applyStudioEditBatch — unexplainedSkips (STUDIO-FIGMA-PARITY-PLAN.md item 0.7)', () => {
   it('names a synthetic-node skip (no writable source location) with its nodeId and kind', () => {
     const result = applyStudioEditBatch(tmpDir, [

@@ -44,7 +44,6 @@ import {
 } from '../studioProjects'
 import { autoPlaceBoardFrame } from './boardFrames'
 import { detectPageTemplateKit, pageNameBase, starterPage } from './pageTemplates'
-import { resolveAppRoot } from './appRoot'
 import { pageIdFromRelPath } from '../studioPageIds'
 
 /**
@@ -82,7 +81,7 @@ export function createScaffoldedPage(
   // The project's own dialect — an installed design system means the overlay
   // kinds scaffold its real `BottomSheet`/`Dialog` instead of a hand-rolled
   // copy. Same posture as `detectPageFileExtension` above.
-  const starter = starterPage(componentName, kind, detectPageTemplateKit(resolveAppRoot(dir)))
+  const starter = starterPage(componentName, kind, detectPageTemplateKit(dir))
   writeFileSync(file, starter.component)
   // Written alongside the component, never lazily: the component imports it by
   // name, so a missing stylesheet is a broken page, not a deferred nicety. A

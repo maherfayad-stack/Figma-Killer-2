@@ -269,6 +269,33 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
       expect(fullReloads).toBe(1)
     })
 
+    /**
+     * DS-3 — a built-in design-system insert sends `designSystemImport: true`
+     * and NO specifier. The browser genuinely cannot compute one: the
+     * specifier is relative to the file the server is about to write, and the
+     * editor knows a node id, not a directory depth. Asserting the wire shape
+     * here is what keeps a well-meaning "just send '../design-system'" from
+     * creeping back in.
+     */
+    it('sends designSystemImport and no importSpecifier for a built-in design-system insert', async () => {
+      stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: ['pages/Home.tsx'] } })
+
+      await commitStudioInsert({
+        parentNodeId: 'node-a',
+        anchorNodeId: null,
+        position: 'after',
+        name: 'Button',
+        designSystemImport: true,
+        props: {},
+      })
+
+      const save = calls.find((c) => c.url.includes('/admin/api/studio/save'))
+      expect(save).toBeDefined()
+      const edit = (save!.body as { edits: Array<Record<string, unknown>> }).edits[0]!
+      expect(edit).toMatchObject({ kind: 'insert', name: 'Button', designSystemImport: true })
+      expect(edit).not.toHaveProperty('importSpecifier')
+    })
+
     it('an empty touchedFiles list (defensive — should not occur when written > 0) never calls /reload-scope and falls back to a full reload', async () => {
       stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: [] } })
 

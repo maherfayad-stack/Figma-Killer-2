@@ -52,6 +52,99 @@ export default function Page() {
 }
 `
 
+/**
+ * DS-3 — the built-in design system is imported by RELATIVE PATH (a project
+ * carries its own `design-system/` folder), so the specifier this codemod is
+ * handed is now routinely `'../design-system'` rather than a bare package
+ * name. The codemod itself does not compute it — `studioStructuralWriteback.ts`
+ * does, from the file being written — but these are the writes that path
+ * produces, asserted whole-file like every other one here.
+ */
+describe('insertJsxElement — a relative design-system specifier', () => {
+  const PLAIN_PAGE = `export default function Page() {
+  return (
+    <section className="list">
+      <p>hi</p>
+    </section>
+  )
+}
+`
+
+  it('writes the relative specifier verbatim, never normalising it', () => {
+    const file = writeFixture(PLAIN_PAGE)
+    const at = locateTag(PLAIN_PAGE, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'Button', importSpecifier: '../design-system' })
+
+    expect(result).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      `import { Button } from '../design-system'
+export default function Page() {
+  return (
+    <section className="list">
+      <p>hi</p>
+      <Button />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it('merges a second component into the existing import rather than adding a duplicate', () => {
+    const source = `import { Button } from '../design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      <Button />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'Chip', importSpecifier: '../design-system' })).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      `import { Button, Chip } from '../design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      <Button />
+      <Chip />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it('treats a DIFFERENT relative depth as a different module, because it is one', () => {
+    // `'../design-system'` and `'../../design-system'` name the same folder
+    // only from the same directory. Merging them would be a guess about the
+    // file's location that this codemod has no way to make.
+    const source = `import { Button } from '../design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      <Button />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'Chip', importSpecifier: '../../design-system' })).toEqual({ ok: true })
+    const after = fs.readFileSync(file, 'utf8')
+    expect(after).toContain("import { Button } from '../design-system'")
+    expect(after).toContain("import { Chip } from '../../design-system'")
+  })
+})
+
 describe('insertJsxElement — writes', () => {
   it('appends as the last child, at the siblings own indentation', () => {
     const file = writeFixture(PAGE)

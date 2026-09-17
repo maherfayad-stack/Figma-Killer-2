@@ -1,7 +1,9 @@
 /**
  * designSystemDetect — where does this project's design system live on disk,
- * regardless of whether it arrived via `npm install` (source `'node-modules'`)
- * or the manual "Import design tokens" wizard's CSS copy (source `'imported'`).
+ * regardless of whether it is Studio's BUILT-IN one (source `'builtin'`, the
+ * `<project>/design-system/` folder), arrived via `npm install` (source
+ * `'node-modules'`), or came from the manual "Import design tokens" wizard's
+ * CSS copy (source `'imported'`).
  *
  * Root cause this exists to fix: every mechanism Studio has for giving an
  * agent design-system knowledge — `almosafer-ds-expert`'s embedded
@@ -26,33 +28,29 @@
  */
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { PROJECT_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from './builtinDesignSystem'
 import type { DesignSystemRef } from './projectProfileSchema'
 
 const IMPORTED_DESIGN_SYSTEMS_DIR = 'styles/imported'
 
 /**
- * The one design-system package Studio has first-class, hand-manifested
- * knowledge of.
+ * Studio's BUILT-IN design system, as this project sees it.
  *
- * `@alm-design/design-system` keeps resolving to `alm.<Name>` (WS-3's
- * hardcoded, build-time-manifested path) rather than the generic
- * `pkg.<sanitized>.<Name>` scheme every other package gets. `standing-07`
- * (STATE.md): the generic pipeline is not yet PROVEN to render the eSIM board
- * — the one real corpus that actually uses this package — visually
- * equivalently to the hardcoded `alm.*` registration in
- * `src/modules/alm/register.tsx`. Routing this one specifier through the new
- * scheme before that dogfood pass would regress the only corpus that
- * currently renders correctly. Revisit only once `standing-07`'s five
- * preconditions all hold — see the `pkg-01` STATE.md entry.
+ * A DS-backed project carries a Studio-written `<project>/design-system/`
+ * folder (`isDesignSystemBacked`) — that is the whole declaration; there is no
+ * dependency to look up, because there is no npm package any more. Its
+ * components resolve to `alm.<Name>` (`moduleMapping.ts`) and render from
+ * Studio's OWN vendored source, so this ref exists to tell an agent (and the
+ * digest/guide generators) that the system is there and where the project's
+ * copy of its source sits.
  *
- * Lives HERE, in the module named for "where does this project's design system
- * live", because two server callers need it and neither owns the other:
- * `studioPageLoad.ts` (which module id a component gets) and
- * `pageTemplates.ts` (whether a scaffolded overlay can use the real
- * `BottomSheet`). `src/modules/alm/register.tsx` carries the browser-side copy
- * — client and server may not import each other, so that one stays.
+ * `root` names the PROJECT's copy — the folder a user's imports point at. The
+ * design system's DOCS and its compiled `dist/index.css` are read from Studio's
+ * own `BUILTIN_DESIGN_SYSTEM_DIR` instead, because the project's copy carries
+ * source only; `designSystemCssRoot` (`designSystemDigest.ts`) is the one place
+ * that mapping is written down.
  */
-export const ALM_DESIGN_PACKAGE_SPECIFIER = '@alm-design/design-system'
+const BUILTIN_DESIGN_SYSTEM_NAME = 'alm'
 
 /**
  * Every immediate subdirectory of `<root>/styles/imported/` — one per
@@ -99,5 +97,13 @@ export function detectDesignSystems(
     root: `${IMPORTED_DESIGN_SYSTEMS_DIR}/${slug}`,
   }))
 
-  return [...fromNodeModules, ...fromImported]
+  const builtin: DesignSystemRef[] = isDesignSystemBacked(root)
+    ? [{ name: BUILTIN_DESIGN_SYSTEM_NAME, source: 'builtin', root: PROJECT_DESIGN_SYSTEM_DIR }]
+    : []
+
+  // Built-in FIRST: it is the system this project's pages actually import, and
+  // every consumer that picks "the" design system (the guide generator, the
+  // catalog's empty-state note) should land on it before an installed package
+  // or a CSS-only wizard copy.
+  return [...builtin, ...fromNodeModules, ...fromImported]
 }

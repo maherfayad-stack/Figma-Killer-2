@@ -161,12 +161,46 @@ describe('resolveModuleId — WS-3.3 package components', () => {
     expect(mapping(page)).toEqual(['pkg.some_design_system.Button'])
   })
 
-  it('keeps @alm-design/design-system components on alm.<Name> — standing-07', async () => {
+  /**
+   * DS-3 — the carve-out is GONE. There is no design-system npm any more, so
+   * an unmigrated project that still imports it gets exactly what every other
+   * package gets: a `pkg.*` id, the Tier-0 package placeholder, and (from
+   * DS-2) a migration banner. Rendering Studio's own components for a
+   * dependency that no longer exists would hide the fact that the project's
+   * own code does not build.
+   */
+  it('routes the RETIRED design-system npm to pkg.* like any other package', async () => {
     const page = await loadPageWithImports(
       "import { Card } from '@alm-design/design-system'",
       '<Card />',
     )
+    expect(mapping(page)).toEqual(['pkg._alm_design_design_system.Card'])
+  })
+
+  /**
+   * The built-in design system, reached the way a migrated project reaches
+   * it: a relative import of its own `design-system/` folder. The folder is a
+   * BLACK BOX — `Card` is not inlined into the page even though its source
+   * sits right there inside the workspace — and the id is minted from the
+   * EXPORT name, so an alias still lands on the right module.
+   */
+  it('routes the project design-system folder to alm.<ExportName>, aliased or not', async () => {
+    const dsDir = path.join(tmpDir, 'design-system')
+    fs.mkdirSync(path.join(dsDir, 'components'), { recursive: true })
+    fs.writeFileSync(
+      path.join(dsDir, 'components', 'Card.jsx'),
+      'export function Card({ title }) {\n  return <section className="card"><h2>{title}</h2></section>\n}\n',
+      'utf8',
+    )
+    fs.writeFileSync(path.join(dsDir, 'index.js'), "export { Card } from './components/Card'\n", 'utf8')
+
+    const page = await loadPageWithImports(
+      "import { Card as PlanCard } from '../design-system'",
+      '<PlanCard title="Pro" />',
+    )
     expect(mapping(page)).toEqual(['alm.Card'])
+    // Black box: the component's own `<section>`/`<h2>` never reached the page.
+    expect(Object.values(page.nodes).some((n) => n.moduleId === 'base.text')).toBe(false)
   })
 
   it('keeps an unclassified component (no import, no same-file declaration) on alm.<Name>', async () => {

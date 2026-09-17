@@ -57,6 +57,10 @@ import type { ProjectProfile } from './projectProfileSchema'
 import { readTextCapped } from './cappedFileRead'
 import { getOrBuildDesignSystemDigest } from './designSystemDigest'
 import { buildDesignSystemGuide, renderComponentReference, renderIconReference, type ComponentApi, type DesignSystemGuide } from './designSystemGuide'
+import { BUILTIN_DESIGN_SYSTEM_DIR, PROJECT_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from './builtinDesignSystem'
+
+/** What the generated guides call Studio's built-in design system. Mirrors `designSystemDetect.ts`'s `DesignSystemRef.name` for the `'builtin'` source, so an agent reading the guide and an agent reading `studio_list_components` hear the same name. */
+const BUILTIN_DESIGN_SYSTEM_NAME = 'alm'
 import { buildPackageManifest } from './packageManifest'
 import type { PropKind, PropSpec } from './packageManifestSchema'
 import { detectPageFileExtension } from './pageScaffold'
@@ -454,7 +458,7 @@ function resolveCatalogDesignSystemGuide(appRootAbs: string, pkg: string): Desig
     '',
     `\`${pkg}\` is the exact specifier — import components by name from the package root; never deep-import a component file.`,
   ].join('\n')
-  return { packageName: pkg, components, importContract }
+  return { packageName: pkg, importStyle: { kind: 'package', specifier: pkg }, components, importContract }
 }
 
 /**
@@ -484,7 +488,23 @@ function resolveCatalogDesignSystemGuide(appRootAbs: string, pkg: string): Desig
  * second way there would let the finding name components the project's own
  * `CLAUDE.md` never mentioned, which is worse than no finding.
  */
-export function resolveDesignSystemGuide(dir: string, profile: ProjectProfile): DesignSystemGuide | undefined {
+export function resolveDesignSystemGuide(
+  dir: string,
+  profile: ProjectProfile,
+  builtinDir: string = BUILTIN_DESIGN_SYSTEM_DIR,
+): DesignSystemGuide | undefined {
+  // DS-3 — Studio's BUILT-IN design system comes first, and its docs come from
+  // Studio's own vendored copy rather than from anything in the project: the
+  // `design-system/` folder Studio writes carries source only. A DS-backed
+  // project's pages import that folder, so this IS its design system, whatever
+  // else `package.json` happens to still declare.
+  if (isDesignSystemBacked(dir)) {
+    const builtin = buildDesignSystemGuide(builtinDir, BUILTIN_DESIGN_SYSTEM_NAME, {
+      kind: 'folder',
+      dirName: PROJECT_DESIGN_SYSTEM_DIR,
+    })
+    if (builtin) return builtin
+  }
   const appRootAbs = joinAppRoot(dir, profile.appRoot)
   for (const pkg of profile.componentPackages) {
     const pkgDir = join(appRootAbs, 'node_modules', ...pkg.split('/'))

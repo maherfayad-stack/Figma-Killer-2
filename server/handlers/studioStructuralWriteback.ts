@@ -34,7 +34,19 @@ import {
   moveJsxElement,
   wrapJsxElement,
 } from '@core/ast-codemods'
+import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+
+/**
+ * "This tag comes from Studio's built-in design system" — the one thing the
+ * client can say about a design-system import, because the specifier itself is
+ * a path only the server can compute. A literal `true` rather than a boolean so
+ * `designSystemImport: false` cannot be sent and read as an assertion.
+ */
+export const DesignSystemImportSchema = Type.Literal(true, {
+  description:
+    "The tag comes from Studio's built-in design system, reached through the project's own design-system/ folder. The server computes the relative specifier for the file being written ('../design-system' from pages/Home.tsx) — do NOT also send importSpecifier, and never guess the path yourself. Takes precedence if both are sent.",
+})
 
 /**
  * One sibling reorder (`struct-01`) — `moveJsxElement`. `nodeId` is the moved
@@ -87,6 +99,16 @@ const DeleteEditSchema = Type.Object({
  * (`div`, `span`, `button`) that needs no import. See `insertJsxElement`'s
  * "COMPONENTS AND INTRINSIC TAGS" — an agent composing a screen needs the
  * layout elements, not only the design-system components that sit inside them.
+ *
+ * `designSystemImport` is the third case, and it exists because the CLIENT
+ * CANNOT SPELL IT. Studio's built-in design system is reached through the
+ * project's own `design-system/` folder, so its specifier is relative to the
+ * file being written — `'../design-system'` from `pages/Home.tsx`,
+ * `'../../design-system'` from `pages/account/Settings.tsx`. The editor does
+ * not know where the target file sits in the tree; the server does, having
+ * just decoded the node id through `studioEditLocation`. So the client says
+ * WHICH SYSTEM and the server computes the PATH
+ * (`designSystemImportSpecifier`). See {@link resolveInsertImports}.
  */
 /**
  * Any JSON value — `insertJsxElement`'s `JsonDataValue`, which it renders as a
@@ -151,6 +173,7 @@ const InsertNodeSchema = Type.Recursive((Self) =>
   Type.Object({
     name: Type.String(),
     importSpecifier: Type.Optional(Type.String()),
+    designSystemImport: Type.Optional(DesignSystemImportSchema),
     props: Type.Optional(InsertPropsSchema),
     children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
   }),
@@ -163,6 +186,7 @@ const InsertEditSchema = Type.Object({
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
+  designSystemImport: Type.Optional(DesignSystemImportSchema),
   children: Type.Optional(Type.Union([Type.String(), Type.Array(InsertNodeSchema)])),
   props: Type.Optional(InsertPropsSchema),
 })
@@ -193,6 +217,7 @@ const WrapEditSchema = Type.Object({
   nodeId: Type.String(),
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
+  designSystemImport: Type.Optional(DesignSystemImportSchema),
 })
 
 /**
@@ -228,11 +253,75 @@ export const StructuralEditSchemas = [
 export const StructuralEditSchema = Type.Union([...StructuralEditSchemas])
 export type StructuralEdit = Static<typeof StructuralEditSchema>
 
+
 /** A decoded, already path-guarded source location. */
 interface JsxLocation {
   file: string
   line: number
   col: number
+}
+
+/**
+ * One wire node's import, resolved to the string `insertJsxElement` writes
+ * verbatim. `undefined` means an intrinsic tag, which needs none.
+ *
+ * `designSystemImport` wins when both fields are set: it is the only one that
+ * names a SYSTEM rather than a path, and the path it resolves to is computed
+ * from the file actually being written rather than guessed by the sender. A
+ * client that sends both is a client that does not know where the file lives —
+ * which is exactly the case this field exists for.
+ */
+function resolveNodeImport(
+  node: { importSpecifier?: string; designSystemImport?: true },
+  targetRel: string,
+): string | undefined {
+  if (node.designSystemImport) return designSystemImportSpecifier(targetRel)
+  return node.importSpecifier
+}
+
+/**
+ * A JSX node as it arrives on the wire, in the one shape shared by every
+ * writeback that renders a subtree: `insert`'s `children`, and
+ * `studioSlotWriteback.ts`'s slot fill. Generic in the prop value type only
+ * because those two schemas differ there (a slot value carries plain JSON, an
+ * insert prop may also carry a `{__jsx}` element) — the import fields, which
+ * are all this resolver touches, are identical.
+ */
+export interface ImportableJsxNode<TProps> {
+  name: string
+  importSpecifier?: string
+  designSystemImport?: true
+  props?: TProps
+  children?: string | ImportableJsxNode<TProps>[]
+}
+
+/**
+ * Resolves `designSystemImport` into a real specifier through a whole subtree
+ * — a nested `children` array may name design-system components at any depth,
+ * and every one of them resolves against the SAME file, because the subtree is
+ * written into one file in one splice.
+ *
+ * Returns a new tree; the validated wire object is never mutated, and
+ * `designSystemImport` does not survive into the codemod's input (the codemod
+ * knows only specifiers — see `insertJsxElement`'s "COMPONENTS AND INTRINSIC
+ * TAGS").
+ */
+export function resolveDesignSystemImports<TProps>(
+  nodes: readonly ImportableJsxNode<TProps>[],
+  targetRel: string,
+): ImportableJsxNode<TProps>[] {
+  return nodes.map((node) => {
+    const specifier = resolveNodeImport(node, targetRel)
+    const children = node.children
+    return {
+      name: node.name,
+      ...(specifier === undefined ? {} : { importSpecifier: specifier }),
+      ...(node.props === undefined ? {} : { props: node.props }),
+      ...(children === undefined
+        ? {}
+        : { children: typeof children === 'string' ? children : resolveDesignSystemImports(children, targetRel) }),
+    }
+  })
 }
 
 /** Applied, or refused with a reason the caller turns into a `StudioEditRefusalError`. */
@@ -268,12 +357,18 @@ export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind
  * `destination` is the same-file decoding of a `reparent`'s `parentNodeId`. It
  * is `null` for every other kind, and a `null` on a reparent is `cross-file`:
  * the new parent is in another module, where the markup's bindings do not exist.
+ *
+ * `targetRel` is `loc.file`'s workspace-relative POSIX path — already decoded
+ * and path-guarded by the caller's `studioEditLocation`, and the one input a
+ * `designSystemImport` needs to become a real specifier
+ * (see {@link resolveNodeImport}).
  */
 export function applyStructuralEdit(
   loc: JsxLocation,
   edit: StructuralEdit,
   anchor: { line: number; col: number } | null,
-  destination: { line: number; col: number } | null = null,
+  destination: { line: number; col: number } | null,
+  targetRel: string,
 ): StructuralEditOutcome {
   switch (edit.kind) {
     case 'move': {
@@ -303,13 +398,18 @@ export function applyStructuralEdit(
       // as "write an intrinsic tag" and `children === undefined` as "write an
       // empty element", so an explicitly-undefined key must mean the same
       // thing as an absent one.
+      const importSpecifier = resolveNodeImport(edit, targetRel)
+      const children =
+        edit.children === undefined || typeof edit.children === 'string'
+          ? edit.children
+          : resolveDesignSystemImports(edit.children, targetRel)
       const result = insertJsxElement({
         ...loc,
         ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
         name: edit.name,
         props: edit.props,
-        ...(edit.importSpecifier === undefined ? {} : { importSpecifier: edit.importSpecifier }),
-        ...(edit.children === undefined ? {} : { children: edit.children }),
+        ...(importSpecifier === undefined ? {} : { importSpecifier }),
+        ...(children === undefined ? {} : { children }),
       })
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
@@ -318,10 +418,11 @@ export function applyStructuralEdit(
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'wrap': {
+      const wrapperSpecifier = resolveNodeImport(edit, targetRel)
       const result = wrapJsxElement({
         ...loc,
         name: edit.name,
-        ...(edit.importSpecifier === undefined ? {} : { importSpecifier: edit.importSpecifier }),
+        ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }

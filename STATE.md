@@ -1221,6 +1221,137 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### parser-12 — DS-3: a project's `design-system/` folder is a black-box source kind; inserts write a relative import
+- **Agent:** parser-surgeon
+- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `feat/ds-source-kind`. Worktree: `.tmp/wt-ds-source-kind/`. Based on `feat/alm-figma-killer-studio-shell` @ `0da8a84b`.
+- **Updated:** 2026-09-17.
+- **Work order:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` §3 DS-3 (wave 1, parallel with DS-1 `feat/ds-vendor` and DS-2 `feat/ds-project-files`).
+
+#### Goal
+A DS-backed project carries a Studio-written `<project>/design-system/` folder and imports it
+relatively (`import { Button } from '../design-system'`). Studio renders those components from
+its OWN vendored copy (the `alm.*` pack) — the project's folder exists for the runnable
+download and the live dev server. So the parser must treat that folder as a **black box**,
+never as local components, and an insert must write the relative import the SERVER computes.
+
+#### Scope — parser files touched
+- `src/core/page-parser/designSystemDir.ts` **(new)** — `PROJECT_DESIGN_SYSTEM_DIR`,
+  `isDesignSystemPath`, `designSystemImportSpecifier`. Exported from the barrel (`index.ts`).
+- `src/core/page-parser/componentSources.ts` — `ComponentSource` gains
+  `{ kind: 'design-system'; name }`. `classifyImport` now takes the export name and checks the
+  RESOLVED file's path (so barrel, deep import and tsconfig alias all land the same way);
+  named imports classify against `importedName`, never the declaring file's own name.
+- `src/core/page-parser/index.ts` — barrel exports.
+- `src/core/studio-sync/collectPageStylesheets.ts` — page walk, entry walk AND the
+  missing-candidate recorder skip the folder.
+- `src/core/ast-codemods/resolveComponentCallSite.ts` — detach/extract refuse a design-system
+  call site (stable `package-component` code, honest message).
+- `src/core/module-engine/types.ts` — `sourceImport` becomes
+  `{ kind:'package'; specifier; name } | { kind:'design-system'; name }`.
+- Server: `builtinDesignSystem.ts` **(new, shared with DS-2)**, `moduleMapping.ts`,
+  `designSystemDetect.ts`, `projectProfileSchema.ts`, `componentBundle.ts`,
+  `pageTemplates.ts` + `pageScaffold.ts`, `styleCompile.ts`, `projectProbe.ts`,
+  `componentSpecExtract.ts`, `projectAssets.ts`, `studioProjects.ts` (`discoverPageFiles`),
+  `iconCatalog.ts`, `designSystemGuide.ts`, `designSystemDigest.ts`, `projectGuide.ts`,
+  `tokenExtract.ts`, `tokenExtractPackageCss.ts`, `studioStructuralWriteback.ts`,
+  `studioSlotWriteback.ts`, `studioWriteback.ts`.
+- Client: `studioLoadStreamSchema.ts`, `studioStructuralCommits.ts`, `studioSourceWrites.ts`,
+  `studioSaveRequests.ts`, `slotCandidates.ts`, `SlotPicker.tsx`, `studioTokenStatus.ts`,
+  `TokenImportStatus.tsx` (label map only), `registerProjectModules.ts`,
+  `src/modules/alm/register.tsx` (only `sourceImport` ×2 + deleting `ALM_PACKAGE_SPECIFIER`).
+- MCP: `componentCatalogTools.ts`, `packageDocTools.ts`, `editTools.ts` (description),
+  `compare.ts`/`qualityCheck.ts`/`variantTools.ts`/`measureReference.ts` (token-index CSS sources).
+- Schemas: `@core/framework-schema`, `@core/design-tokens` gain the `builtin-design-system`
+  token origin.
+- Docs: `docs/features/studio-import.md`, `docs/agent-refs/studio-pipeline.md`,
+  `docs/agent-refs/path-index.md`, `docs/features/mcp-connectors.md`.
+
+#### Decisions — for each new resolution: locks? codeProps? origin?
+1. **`{ kind: 'design-system'; name }`** — a CLASSIFICATION, not a value resolution.
+   **Locks:** no. **codeProps:** no. **Origin:** no — nothing is read from a literal; the node
+   keeps exactly the call-site props and `codeProps` a package node would have. **Panel:** the
+   `alm.*` module's own controls, identical to today. It changes only WHICH module renders the
+   node and whether the call site is inlined.
+2. **`name` is the PUBLIC EXPORT name**, not the JSX tag and not the declaring identifier —
+   `import { Button as Btn }`, `<DS.Button/>` and a renaming barrel all resolve to `alm.Button`.
+   `moduleMapping` reads `source.name`; the old code read `node.name`, which was only ever right
+   because a package node has no other spelling available.
+3. **No carve-out for any specifier.** `kind:'package'` → `pkg.*` for every package including
+   the retired `@alm-design/design-system`. An unmigrated project shows the Tier-0 package
+   placeholder AND DS-2's migration banner — the honest state.
+4. **`designSystemImport: true` on the wire, never a specifier.** The client cannot spell the
+   import (it is relative to the file being written); the server resolves it from `target.rel`
+   after `studioEditLocation` has decoded and path-guarded it. Applies to insert, wrap, slot
+   fill, and every nested child of an insert subtree (one recursive resolver,
+   `resolveDesignSystemImports`, shared by structural and slot writeback).
+5. **`builtin-design-system` token source, tried FIRST for a DS-backed project** (ahead of
+   `project-css`, per the work order). Rationale + the accepted consequence are written into
+   `tokenExtract.ts`'s module doc: a DS-backed project that ALSO declares its own `:root`
+   tokens has them skipped, because the first source with any token wins.
+   `mergeExtractedFramework` still never clobbers a family the user has filled.
+
+#### Verification
+`bun run build` ✅ · `bun run lint` ✅ · targeted suites all green (parser, ast-codemods,
+studio-sync, studioModuleMapping, studioWriteback, pageTemplates, designSystemDetect,
+designSystemDigest, projectGuide, projectProbe, iconCatalog, tokenExtractPackageCss,
+projectTokenIndex, componentCatalogTools, slotCandidates, studioSaveRequests).
+**Pre-existing, NOT mine:** `src/core/page-parser/__tests__/canonicalCheck.test.ts` — 24 tests
+fail in ANY fresh worktree because `studio-workspace/__canonical-fixture` was deleted from git
+in `cd12ad25` and survives only as an untracked directory in the primary checkout. It is not
+gitignored and not regenerated by the test. Worth a `test-` work order.
+
+#### Same-hunk edits shared with DS-2 (merge is trivial, do not re-word)
+- `server/handlers/studio/builtinDesignSystem.ts` — created **byte-identical** to the text in
+  both work orders. Same file, same content, on both branches.
+- `server/handlers/studio/pageTemplates.ts` — the `hasDependency(ALM_DESIGN_PACKAGE_SPECIFIER)`
+  gate became `isDesignSystemBacked(dir)`. I also had to (a) rename the parameter `appRoot` →
+  `dir` (the folder is at the PROJECT root, not a nested app root — `pageScaffold.ts`'s call
+  now passes `dir` instead of `resolveAppRoot(dir)`), and (b) change the two template import
+  strings to `'../design-system'`, because deleting `ALM_DESIGN_PACKAGE_SPECIFIER` left them
+  unresolvable and scaffolding an import of a package the project does not have is worse than
+  the merge conflict. DS-2's own spec says exactly `'../design-system'`, so take either side.
+
+#### Landmines (tell `studio-scribe` to add to `docs/features/studio-import.md`)
+- **`discoverPageFiles`'s design-system filter is relative to `pagesDir`, not the project root.**
+  It only matters when `pagesDir` IS the project root (where 40 component `.jsx` files would
+  otherwise arrive as pages), but a project whose `pagesDir` is `src` and that has its own
+  `src/design-system/` would also have it filtered out of PAGE discovery. Component
+  classification is unaffected (that check is root-anchored and exact).
+- **A refused stylesheet must never be recorded as a "missing candidate."**
+  `collectEntryStylesheets`'s cache tracks specifiers that did not resolve so their later
+  creation invalidates the cache. A design-system `.css` is refused *on purpose* while existing
+  on disk — recording it makes the entry-stylesheet cache permanently stale (the "is it still
+  absent" check fails on every load). Guard added in `recordMissingStylesheetCandidate`.
+- **The client's `TokenExtractionSourceSchema` was already missing `scss-vars` and `js-theme`**
+  (`studioTokenStatus.ts`), so a project extracting from either would have failed response
+  validation. Fixed in passing while adding `builtin-design-system`; `TokenImportStatus.tsx`'s
+  label map gained all three.
+- **`filterReemittableColorTokens` treats every non-`studio-authored` origin as
+  "already declared in a stylesheet the canvas loads."** That is TRUE for
+  `builtin-design-system` only because `canvasVendorCss.ts` injects Studio's copy of
+  `dist/index.css` into every canvas iframe. If DS-1 ever stops injecting it, these tokens must
+  start re-emitting or every `var(--color-*)` on the canvas resolves to nothing.
+- **`componentCatalogTools.ts` imports `@modules/alm/manifest.generated.json` server-side.**
+  First time server code reads the browser module pack's committed manifest. It is the honest
+  source ("the EXACT catalog the insert palette draws from"), but it couples the MCP catalog to
+  that artefact's freshness gate (DS-1's `alm-design-system-fresh.test.ts`).
+
+#### What DS-9 must finish
+1. **Make `ComponentSpec.description`/`keywords`/`group` REQUIRED** once DS-6 lands. I read them
+   as optional (`componentCatalogTools.ts`'s `BuiltinManifest` interface) so this branch and
+   DS-1/DS-6 compile independently. Once they are required, drop the optionality and the
+   `...(x === undefined ? {} : …)` spreads, and tighten the catalog test to assert a real
+   description.
+2. **Reference-render parity on `test4` after DS-2's migration** — the plan's §5 gate. Nothing
+   in this branch was dogfooded in a browser: `vendor/alm-design-system/` does not exist yet, so
+   every path that reads it is covered by fixture tests only.
+3. **`registerProjectModules.ts`'s `PALETTE_HIDDEN_ALM_MODULE_IDS` naming** — DS-9's own sweep
+   item; untouched here (it was only referenced in a doc comment, which I corrected).
+4. **`resolveDesignSystemGuide`'s `builtinDir` parameter** is a test seam; `buildGuideFiles`
+   does not thread it. If a future caller needs to point the whole guide generator at a
+   different vendor dir, thread it there too rather than adding a second seam.
+
 ### meta-11 — plan: built-in design system, Assets panel, live previews, Add page
 - **Agent:** orchestrator (plan only — no code written)
 - **Stage:** research complete · plan written · **owner confirmed all three §0 decisions (2026-09-17)** — ready for `studio-architect` to cut wave-1 and wave-2 work orders.

@@ -93,6 +93,21 @@ export function resolveComponentCallSite(
   if (source.kind === 'package') {
     return { ok: false, failure: { reason: 'package-component', message: `<${identifier}> comes from an installed package, not this project's own source.` } }
   }
+  // DS-3 — the project's `design-system/` folder is Studio-written and
+  // Studio-managed (`@core/page-parser`'s `designSystemDir`). Its files are
+  // inside the workspace, so this is NOT the package case textually, but it is
+  // the same refusal in substance: inlining or copying that body would write
+  // code the user does not own into their page, and Studio rewrites the folder
+  // whenever it goes stale. Same stable reason code, honest message.
+  if (source.kind === 'design-system') {
+    return {
+      ok: false,
+      failure: {
+        reason: 'package-component',
+        message: `<${identifier}> comes from the built-in design system (the project's design-system/ folder), which Studio manages — it is not this project's own source.`,
+      },
+    }
+  }
 
   const targetAbsPath = path.resolve(workspaceRoot, source.file)
   const target = resolveCallTarget(callerFile, identifier, targetAbsPath, project)
