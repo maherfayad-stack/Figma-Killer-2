@@ -35,6 +35,7 @@ import { existsSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { Project } from 'ts-morph'
 import type { SourceFile } from 'ts-morph'
+import { EolPreservingFileSystem } from '@core/page-parser'
 import { codeFlowEdgeId, createCodeFlow, type CodeFlow, type CodeFlowEdge } from '@core/studio-prototype'
 import {
   discoverAppRouterRoutes,
@@ -95,7 +96,7 @@ export function deriveCodeFlow(dir: string): CodeFlow {
   const index = buildRouteIndex(pages)
   // Syntax-only: no tsconfig, no type checker, no file globbing. Every file is
   // added by hand below, so this Project never touches anything but the pages.
-  const project = new Project({ useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true })
+  const project = new Project({ useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true, fileSystem: new EolPreservingFileSystem() })
   const edges: CodeFlowEdge[] = []
   const seen = new Set<string>()
 

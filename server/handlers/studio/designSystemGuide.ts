@@ -34,6 +34,7 @@
  * contributes nothing rather than producing a confidently empty reference.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { splitLines, toLf } from '@core/utils/lineEndings'
 import { join } from 'node:path'
 
 /** Package docs are big by nature; this is a sanity ceiling, not a budget — the whole point is that we keep only a fraction of what we read. */
@@ -96,10 +97,20 @@ interface Section {
   readonly body: string
 }
 
+/**
+ * Normalised to LF on the way in. This markdown comes out of the USER's
+ * `node_modules`, and a Windows checkout of a design-system package is CRLF —
+ * in which case `/^(#{1,6})\s+(.*)$/` below matches NOT ONE heading (a JS `.`
+ * does not match `\r`, and a non-`m` `$` only matches end-of-input), the guide
+ * silently loses every section, and the agent is told the package documents
+ * nothing. That exact failure emptied Studio's own vendored manifest once —
+ * `STATE.md` `server-24`. `splitSections`/`firstProseLine` split with
+ * `splitLines` as well, so the parse does not depend on who read the file.
+ */
 function readDoc(pkgDir: string, file: string): string | undefined {
   try {
     const text = readFileSync(join(pkgDir, file), 'utf8')
-    return text.length > MAX_DOC_BYTES ? undefined : text
+    return text.length > MAX_DOC_BYTES ? undefined : toLf(text)
   } catch {
     return undefined
   }
@@ -114,7 +125,7 @@ function splitSections(markdown: string): Section[] {
   const sections: Section[] = []
   let current: { level: number; title: string; lines: string[] } | null = null
   let inFence = false
-  for (const line of markdown.split('\n')) {
+  for (const line of splitLines(markdown)) {
     if (line.startsWith('```')) inFence = !inFence
     const heading = inFence ? null : /^(#{1,6})\s+(.*)$/.exec(line)
     if (heading) {
@@ -148,7 +159,7 @@ function firstFencedBlock(body: string): string | undefined {
  */
 function firstProseLine(body: string): string | undefined {
   let inFence = false
-  for (const raw of body.split('\n')) {
+  for (const raw of splitLines(body)) {
     const line = raw.trim()
     if (line.startsWith('```')) {
       inFence = !inFence
