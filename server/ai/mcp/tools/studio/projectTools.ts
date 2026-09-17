@@ -45,7 +45,7 @@ import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../handlers/studio/installDeps'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
-import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
+import { scaffoldPageLocked } from '../../../../handlers/studio/pageScaffold'
 import { DEFAULT_PAGE_KIND, PageKindSchema, type PageKind } from '@core/studio-board'
 import { readTextCapped } from '../../../../handlers/studio/cappedFileRead'
 import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
@@ -408,7 +408,7 @@ const createPageTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, name, kind } = input as { dir?: string; name?: string; kind?: PageKind }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const result = createScaffoldedPage(dir, name ?? '', kind ?? DEFAULT_PAGE_KIND)
+    const result = await scaffoldPageLocked(dir, name ?? '', kind ?? DEFAULT_PAGE_KIND)
     if (!result.ok) {
       return toolRefusal('write-conflict', result.conflict, {
         remedy: 'Pick a different name, or edit the existing file instead — this tool never overwrites.',

@@ -139,12 +139,35 @@ Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorte
 
 ### How a project gets in, and what it reports on the way (W7-4)
 
-Three entry paths, two routes, one aftermath:
+Four entry paths, three routes, one aftermath:
 
 | Path | Route | Transport |
 |---|---|---|
 | GitHub URL | `POST /admin/api/studio/import-github` → `{ jobId }`, then poll `GET .../import-github/status` | zipball fetch, phases reported (`downloading` with a byte count, `unpacking`, `probing`) |
+| GitHub URL, **Keep history (clone)** | `POST /admin/api/studio/git/clone` → `{ jobId }`, then poll `GET .../git/clone/status` | `git clone --filter=blob:none`, phases `cloning` / `probing` |
 | `.zip` / picked folder / **folder dropped on the launcher** | `POST /admin/api/studio/import-upload` | multipart XHR (upload progress) |
+
+**Why a clone is a separate route, not a flag on the import.** They share no
+machinery: the zipball path is an HTTP fetch plus an `unzipSync` with an
+entry-decider (the zip-bomb mitigation); the clone path is a subprocess behind
+`gitRunner.ts`'s guards, with the URL judged by `gitPaths.ts`'s transport
+allowlist and the credential handed over through a one-shot askpass. They meet
+again at `buildImportSummary`, which is the part that genuinely is the same —
+so both land the user on the identical summary step.
+
+The zipball stays the **default**: it needs no `git` on the host and no
+credential, which is right for "show me this repo". Turn **Keep history** on
+and the project arrives with its commit history, every branch, and `origin`
+already set, so the version-control panel is fully working the moment the board
+opens instead of the user's first commit having no parent. The clone path
+deliberately has no `ref` or `subdir` field — a clone brings every branch (so a
+ref is something to switch to afterwards, in the panel) and a partial checkout
+is not a clone — and no `token` field either: the credential is the signed-in
+GitHub account's, resolved server-side from the session
+([`studio-git.md`](studio-git.md)). It **refuses rather than overwrites** when
+`studio-workspace/<owner>-<repo>` already exists; the zipball path clears that
+directory because re-importing is how a zipball user updates, and a clone user
+has `git pull`.
 
 A dropped folder is not a fourth path. `src/admin/pages/site/studio/droppedFolderWalk.ts`
 walks the `DataTransfer` entry tree (`webkitGetAsEntry()`, paging `readEntries`

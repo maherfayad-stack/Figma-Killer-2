@@ -28,6 +28,7 @@ import * as path from 'node:path'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioGit } from '../studio/git'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { isProjectWriteLocked, withProjectWriteLock } from '../studio/projectWriteLock'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
@@ -441,5 +442,86 @@ describe('git routes — rejections', () => {
     }
     expect(status.status.entries.map((e) => e.path)).toEqual(['pages/Home.tsx'])
     expect(status.status.excludedCount).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The write lock (G7)
+// ---------------------------------------------------------------------------
+
+/**
+ * A commit is several subprocesses with awaits between them; a canvas save is
+ * one synchronous burst of `writeFileSync`. Without the lock the save lands
+ * between the staging step and the commit step and the commit carries content
+ * the user never reviewed — and two overlapping git verbs surface git's own
+ * `index.lock`, which has a filesystem path in it.
+ *
+ * `applyStudioEditBatchLocked` is the real save entry point, so these drive the
+ * same lock the save route takes rather than a stand-in.
+ */
+describe('git routes — the project write lock', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = makeProjectDir()
+    await makeRepo(dir)
+  })
+
+  it('commits the content the panel showed even when a save is issued mid-commit', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'REVIEWED\n')
+
+    const commit = call('/admin/api/studio/git/commit', post({ dir, message: 'Reviewed', files: ['pages/Home.tsx'] }))
+    // Wait for the route to actually be inside its critical section rather
+    // than guessing a number of microtasks — the assertion below is about
+    // what happens to a save issued DURING the commit, so "during" has to be
+    // observed, not assumed.
+    while (!isProjectWriteLocked(dir)) await Bun.sleep(1)
+
+    // Issued while the commit is in flight. It must wait, not overwrite the
+    // file between the staging step and the commit step.
+    const save = withProjectWriteLock(dir, () => {
+      fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'WRITTEN AFTER THE COMMIT\n')
+    })
+
+    const [commitRes] = await Promise.all([commit, save])
+    expect(commitRes.status).toBe(200)
+
+    const committed = await git(dir, ['show', 'HEAD:pages/Home.tsx'])
+    expect(committed.out).toContain('REVIEWED')
+    expect(committed.out).not.toContain('WRITTEN AFTER THE COMMIT')
+    // And the save did land — it waited, it was not dropped.
+    expect(fs.readFileSync(path.join(dir, 'pages', 'Home.tsx'), 'utf8')).toContain('WRITTEN AFTER THE COMMIT')
+  })
+
+  it('answers 409 busy — with no filesystem path — when another writer holds the lock past the wait', async () => {
+    let finishTheOtherWriter = () => {}
+    const otherWriter = withProjectWriteLock(
+      dir,
+      () => new Promise<void>((resolve) => (finishTheOtherWriter = resolve)),
+    )
+
+    const res = await call('/admin/api/studio/git/commit', post({ dir, message: 'x', files: ['pages/Home.tsx'] }))
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { error: string; code: string }
+    expect(body.code).toBe('busy')
+    expect(body.error).not.toContain(dir)
+    expect(body.error).not.toContain(projectsRootDir())
+
+    finishTheOtherWriter()
+    await otherWriter
+  })
+
+  it('leaves reads working while a writer holds the lock — status must never answer busy', async () => {
+    let finishTheOtherWriter = () => {}
+    const otherWriter = withProjectWriteLock(
+      dir,
+      () => new Promise<void>((resolve) => (finishTheOtherWriter = resolve)),
+    )
+
+    const res = await call(`/admin/api/studio/git/status?dir=${encodeURIComponent(dir)}`)
+    expect(res.status).toBe(200)
+
+    finishTheOtherWriter()
+    await otherWriter
   })
 })

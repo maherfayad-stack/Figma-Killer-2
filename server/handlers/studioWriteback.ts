@@ -67,6 +67,7 @@ import {
   swapComponentInstance,
 } from '@core/ast-codemods'
 import { applyCssEdit } from './studioCssWriteback'
+import { withProjectWriteLock } from './studio/projectWriteLock'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
   applySlotEdit,
@@ -683,4 +684,30 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     unexplainedSkips,
     touchedFiles: [...touchedFiles],
   }
+}
+
+/**
+ * {@link applyStudioEditBatch}, serialized against every other writer of this
+ * project — **the entry every production caller uses**. The `/admin/api/studio/save`
+ * route and the MCP `studio_apply_edits` tool both come through here; the
+ * synchronous engine above stays exported for tests, which drive it directly
+ * against a temp directory with nothing else running.
+ *
+ * The lock matters even though the engine is synchronous and therefore atomic
+ * on its own: an async git verb holds the lock across several subprocesses,
+ * and without waiting here a save would land *between* `git add` and
+ * `git commit` and put content nobody reviewed into the commit. See
+ * `projectWriteLock.ts`.
+ *
+ * No `waitMs`: a save waits as long as it has to. The user's alternative to
+ * waiting is losing the edit.
+ *
+ * `studioCssWriteback.ts`'s `applyCssEdit` needs no lock of its own — the
+ * batch above is its only caller, so a `css` edit is already inside this one.
+ */
+export function applyStudioEditBatchLocked(
+  dir: string,
+  edits: readonly StudioEdit[],
+): Promise<StudioEditBatchResult> {
+  return withProjectWriteLock(dir, () => applyStudioEditBatch(dir, edits))
 }

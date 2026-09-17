@@ -31,8 +31,10 @@
  *
  *   POST /admin/api/studio/git/push     { dir? }
  *       → `{ ok, branch, output }`. `--set-upstream origin <branch>`, never
- *       `--force`. Authentication is the user's own credential helper's;
- *       Studio stores no token and reads none from its environment.
+ *       `--force`. Authentication is the token the signed-in user stored via
+ *       `/admin/api/studio/github/*` (G2) — resolved from the SESSION, never
+ *       from a body field — or, when nobody signed in, the host's own
+ *       credential helper. Studio reads no token from its environment.
  *
  *   POST /admin/api/studio/git/init     { dir?, confirm: true, message? }
  *       → `{ ok, branch, sha, filesCommitted }`. Offered only when no `.git`
@@ -74,6 +76,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { isCommitSha, isAcceptableCommitMessage, resolveWorkspaceRelativePath } from './gitPaths'
+import { getGithubTokenForRequest } from './githubToken'
 import { assertOwnGitRepo, assertWithinWorkspace, hasGitRepo } from './gitRunner'
 import {
   commitFiles,
@@ -141,7 +144,14 @@ const RestoreBodySchema = Type.Object({
 
 export type GitCommitBody = Static<typeof CommitBodySchema>
 
-/** Refusal → HTTP status. A refusal is a 409 (the request was well-formed, the repository's state says no); a git invocation failure is a 500. */
+/**
+ * Refusal → HTTP status. A refusal is a 409 (the request was well-formed, the
+ * repository's state says no); a git invocation failure is a 500.
+ *
+ * `code: 'busy'` is a 409 like the rest: something else is writing to this
+ * project right now (a save, an install, another git verb). It is the
+ * project's state answering, and the next action is simply "try again".
+ */
 function failureResponse(failure: GitOperationFailure): Response {
   const status = failure.code === 'git-failed' ? 500 : 409
   return jsonResponse(
@@ -263,7 +273,12 @@ async function servePush(req: Request): Promise<Response> {
   const guard = assertOwnGitRepo(resolveProjectDir(body.dir))
   if (!guard.ok) return NOT_FOUND()
 
-  const result = await pushCurrentBranch(guard.dir)
+  // The credential is resolved from the SESSION, never from the body: there
+  // is deliberately no `token` field on this wire, so a request cannot supply
+  // one and no proxy log can capture one. `null` (nobody signed in) is normal
+  // and means git falls back to the host's own credential helper.
+  const credential = await getGithubTokenForRequest(req)
+  const result = await pushCurrentBranch(guard.dir, credential ? { credential } : {})
   if (isGitFailure(result)) return failureResponse(result)
   return jsonResponse(result)
 }

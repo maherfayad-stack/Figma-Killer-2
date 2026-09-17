@@ -36,9 +36,12 @@
  *     `process.env` forwarded wholesale. The extra keys are what git genuinely
  *     needs to find the user's own config and credential/SSH agent —
  *     `GIT_ASKPASS`, `SSH_AUTH_SOCK`, `XDG_CONFIG_HOME`, … — and deliberately
- *     do NOT include any token variable. **Studio stores no git credentials
- *     and reads none from its environment**: authentication is the user's own
- *     credential helper's job, or it does not happen.
+ *     do NOT include any token variable. **Studio never reads a git credential
+ *     from its environment.** Authentication is either the user's own
+ *     credential helper / ssh-agent, or the per-user token they signed in with
+ *     (G2) handed over through the `credential` option below — which is a
+ *     one-shot `GIT_ASKPASS` script, never an environment variable and never
+ *     part of a URL. See `gitAskpass.ts`.
  *   - `GIT_TERMINAL_PROMPT=0` is forced. Without it a push against a remote
  *     needing a password blocks on a terminal read that will never be
  *     answered, and the request sits until the timeout instead of returning
@@ -54,9 +57,10 @@
  * push, no reset, no clean, no arbitrary passthrough.
  */
 import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { projectsRootDir } from '../studioProjects'
+import { writeAskpassScript } from './gitAskpass'
 import {
   minimalSubprocessEnv,
   runCappedSubprocess,
@@ -140,37 +144,77 @@ export interface GitRunResult extends CappedSubprocessResult {
   ok: boolean
 }
 
+export interface RunGitOptions {
+  timeoutMs?: number
+  /** Test seam so the argv/cwd/env a given operation builds can be asserted without a real repository. */
+  spawn?: SubprocessSpawnFn
+  /**
+   * The signed-in user's GitHub token, for this ONE invocation. Present only
+   * on the network verbs, and only when the user actually signed in — a
+   * missing token is not an error, it just means git falls back to whatever
+   * credential helper the host has (the pre-G2 behaviour).
+   *
+   * The token never enters `env` and never enters an argv token: it is
+   * written to a one-shot `GIT_ASKPASS` script that is deleted in this
+   * function's `finally`. See `gitAskpass.ts` for why both alternatives are
+   * worse.
+   *
+   * **The caller decides which host may see it.** The askpass script answers
+   * every password prompt git makes during this invocation, whatever remote
+   * that is — so passing `credential` for an operation whose remote has not
+   * been checked against `parseGithubRemoteUrl` hands that remote the token.
+   * `gitClone.ts` knows its URL is allowlisted; `pushCurrentBranch` reads
+   * `origin` and drops the credential when it is not github.com.
+   */
+  credential?: string
+}
+
 /**
  * Runs one git invocation in `dir`. `args` NEVER contains a caller-supplied
  * string that has not been through `gitPaths.ts`, and callers always place a
  * literal `--` before any pathspec.
- *
- * `spawn` is a test seam so the argv/cwd/env a given operation builds can be
- * asserted without a real repository.
  */
 export async function runGit(
   dir: string,
   args: readonly string[],
-  options: { timeoutMs?: number; spawn?: SubprocessSpawnFn } = {},
+  options: RunGitOptions = {},
 ): Promise<GitRunResult> {
-  const result = await runCappedSubprocess(['git', ...args], {
-    cwd: dir,
-    env: minimalSubprocessEnv(GIT_ENV_EXTRA_KEYS, {
-      // Never block on an interactive credential prompt — fail fast with the
-      // real error instead of sitting until the timeout.
-      GIT_TERMINAL_PROMPT: '0',
-      // Second, independent stop for git's repository-discovery walk: it can
-      // never climb out of studio-workspace/ and find Studio's own .git.
-      GIT_CEILING_DIRECTORIES: resolve(projectsRootDir()),
-      // Deterministic, parseable output regardless of the host's locale.
-      LC_ALL: 'C',
-    }),
-    timeoutMs: options.timeoutMs ?? GIT_LOCAL_TIMEOUT_MS,
-    maxStdoutBytes: MAX_OUTPUT_BYTES,
-    maxStderrBytes: MAX_OUTPUT_BYTES,
-    spawn: options.spawn,
-  })
-  return { ...result, ok: result.exitCode === 0 && !result.timedOut }
+  // A stored token takes precedence over whatever helper the host has
+  // configured, which is why `credential.helper=` (an empty value CLEARS the
+  // list) is prepended: otherwise a stale cached credential answers first and
+  // the sign-in the user just performed appears to have done nothing. The
+  // flag pair is a literal constant — nothing caller-supplied reaches argv.
+  const askpass = options.credential ? writeAskpassScript(options.credential) : null
+  const argv = askpass ? ['-c', 'credential.helper=', ...args] : [...args]
+
+  try {
+    const result = await runCappedSubprocess(['git', ...argv], {
+      cwd: dir,
+      env: minimalSubprocessEnv(GIT_ENV_EXTRA_KEYS, {
+        // Never block on an interactive credential prompt — fail fast with the
+        // real error instead of sitting until the timeout. This stays true
+        // WITH a credential: the askpass script answers without a terminal.
+        GIT_TERMINAL_PROMPT: '0',
+        // Second, independent stop for git's repository-discovery walk: it can
+        // never climb out of studio-workspace/ and find Studio's own .git.
+        GIT_CEILING_DIRECTORIES: resolve(projectsRootDir()),
+        // Deterministic, parseable output regardless of the host's locale.
+        LC_ALL: 'C',
+        // Applied last by `minimalSubprocessEnv`, so it wins over the
+        // pass-through `GIT_ASKPASS` in the allowlist above.
+        ...(askpass ? { GIT_ASKPASS: askpass.path } : {}),
+      }),
+      timeoutMs: options.timeoutMs ?? GIT_LOCAL_TIMEOUT_MS,
+      maxStdoutBytes: MAX_OUTPUT_BYTES,
+      maxStderrBytes: MAX_OUTPUT_BYTES,
+      spawn: options.spawn,
+    })
+    return { ...result, ok: result.exitCode === 0 && !result.timedOut }
+  } finally {
+    // Unconditional: a throw, a timeout, and a clean exit all reach here, so
+    // the script cannot outlive the invocation it was written for.
+    askpass?.dispose()
+  }
 }
 
 /**
@@ -203,7 +247,13 @@ function elideRoot(text: string, root: string, label: string): string {
  * claim against what git actually prints. It also names paths OUTSIDE the
  * workspace: `warning: unable to access 'C:/Users/me/.gitconfig'`,
  * `core.excludesFile`, a hooks path. Those are the same filesystem-layout
- * leak one directory up, so the home directory is elided too.
+ * leak one directory up, so the home directory is elided too. The temp root
+ * goes with them (`sec-11`): a failure to exec the one-shot askpass script
+ * would otherwise name the host's temp directory in a browser message.
+ *
+ * A stored token cannot appear here at all: it is never an argv token, never
+ * part of a remote URL, and never in the child's environment (see
+ * `gitAskpass.ts`).
  *
  * Still passed through, deliberately: git's identity failure quotes the
  * detected `user@host` (`got 'me@laptop.(none)'`). That is not a path, it is
@@ -217,11 +267,12 @@ export function clientSafeGitError(result: GitRunResult, fallback: string): stri
   if (!raw) return fallback
   const root = resolve(projectsRootDir())
   const home = homedir()
+  const temp = resolve(tmpdir())
   return raw
     .split('\n')
     // Workspace first: it usually sits INSIDE the home directory, and eliding
     // the outer one first would leave `<home>/studio-workspace/...` behind.
-    .map((line) => elideRoot(elideRoot(line, root, '<workspace>'), home, '<home>'))
+    .map((line) => elideRoot(elideRoot(elideRoot(line, root, '<workspace>'), home, '<home>'), temp, '<temp>'))
     .join('\n')
     .slice(0, 2000)
 }

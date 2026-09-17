@@ -17,7 +17,6 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
-  detectPackageManager,
   getInstallJob,
   probeInstallStatus,
   resolveInstallJobStatus,
@@ -27,6 +26,7 @@ import {
   type InstallSpawnedProcess,
   type PublicInstallJob,
 } from '../studio/installDeps'
+import { detectPackageManager } from '../studio/packageManager'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from '../studio/installJobStore'
 import { projectsRootDir } from '../studioProjects'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
