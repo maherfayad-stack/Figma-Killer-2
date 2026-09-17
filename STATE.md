@@ -1514,7 +1514,7 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ### meta-13 — plan: "feels like Figma, never shows me an error" — `STUDIO-FIGMA-FEEL-PLAN.md`
 - **Agent:** main session (orchestrator) — seven read-only `studio-scout` audits, no code changed
-- **Stage:** done (plan written) — nothing in it is started
+- **Stage:** done (plan written) — **wave 1 executed 2026-09-17**: 22 work orders + 3 security reviews landed as draft PRs #136–#159; per-work-order entries follow this one. Integration into `feat/alm-figma-killer-studio-shell` is the orchestrator's next step.
 - **Updated:** 2026-09-17
 - **Goal:** one plan that answers the owner's ask in full — Figma-grade speed and feel, Figma
   shortcuts (Alt+drag, ⌘D, ⌘G, ⌘[ ], lock, Alt-hover measure), zero noisy errors, no action
@@ -1560,6 +1560,868 @@ None blocking — this design is directly implementable by `panel-designer` (the
   `.tmp/plan-lint.log`. No source files changed.
 - **Human action needed:** run `bun install`; confirm decision 2 was meant as "promote, don't ask"
   (not "keep it manual"); then authorize the Track Z wave.
+
+### dev-04 — Z4: the dev server does not restart on workspace writes, and never did; the reload was Vite's
+- **Agent:** server-engineer (parallel wave, `standing-05`)
+- **Stage:** done. Branch `fix/dev-server-supervisor`, commit `e5e9823f`, PR #136 (draft → `feat/alm-figma-killer-studio-shell`).
+- **Updated:** 2026-09-17
+- **Goal:** Z4 assumed `bun --watch server/index.ts` restarts when Studio writes into `studio-workspace/`, and asked for a supervisor in `scripts/lib/` to replace it. The work order required measuring first. The measurement disproved the premise, so the supervisor was NOT built — per Z4's own fallback branch.
+
+**What was measured (controlled `bun --watch` fixture in `.tmp/`, since removed; never touched the owner's ports)**
+- **Bun's `--watch` keys on the entry's transitive module graph, PER FILE — not on directories.** New file in a sibling dir → **0 restarts**. Modified file in a sibling dir → **0**. 300 files written into a `studio-workspace/` under the cwd in 344 ms → **0**, no panic, child alive. An unimported `.ts`, then a `.json`, dropped into the *very directory holding the imported module* → **0**. Control (touch the imported module) → **1 restart**, every time, in every run.
+- **No OS handle is held on a directory containing no graph module.** While the watcher ran, `rmdir`-ing the probe's `studio-workspace/` and the unrelated sibling both succeeded; renaming the imported module's own directory failed **`EPERM`**. So the Windows `EBUSY`/`integer overflow` watcher panic in `server-14` (`docs/state-archive/2026-Q3.md:3454`) **cannot originate from a workspace write** — only from the watched tree.
+- **`server/index.ts`'s graph is 630 modules** (resolved with the bundler + external sourcemap): 567 `server/`, 55 `src/modules/base`, 3 `src/core/data`, 3 `src/modules/studio`, 2 `src/core/persistence`. **Zero** under `studio-workspace/`, `uploads/`, `.tmp/`, `.data/`, `dist/`. **Zero** test files. No production server module dynamically `import()`s a workspace path — everything reads `studio-workspace/` through `fs`. The repo-relative `mkdtempSync(path.join(root, …))` test dirs land in `projectsRootDir()` (= `studio-workspace/`), also unwatched.
+
+**The real bug the measurement found: it is VITE's watcher, not Bun's.** Vite watches the repo root as a tree and full-reloads on any watched `.html` change that maps to no module. Every Vite-template React app Studio imports ships a root `index.html`. Before the fix, touching `studio-workspace/test4/index.html` on a running dev server logged `[vite] (client) page reload studio-workspace/test4/index.html` — the editor reloading out from under the user on import and on save. After adding `**/studio-workspace/**` to `server.watch.ignored`: **0 events**, control (`index.html`) still reloads. A-B'd on the same probe.
+
+**Done**
+- `vite.config.ts` — `**/studio-workspace/**` added to `server.watch.ignored` (was `.tmp`, `uploads`, `dist`), with the measurement in the comment.
+- `scripts/dev.ts` — the `--watch` spawn is **unchanged** (measured correct). The watch semantics + graph shape are recorded at the spawn. Comment-only, inside the `processes` array; the region above the spawn is untouched so **Z7's `devPreflight` call merges trivially**.
+- `src/__tests__/devWorkflow.test.ts` — new gate: every runtime-written root dir must be in `server.watch.ignored`.
+- `PROJECT-BRIEF.md` §7 — a "what watches what in `bun run dev`" table.
+
+**Decisions**
+- **No supervisor, deliberately.** Z4's proposed allowlist (`server/**`, `src/core/**`, `vendor/**`) was already wrong in two directions against the measured graph: it misses all **55 `src/modules/base`** modules the server imports, and watches **`vendor/`**, of which the server imports **none**. A hand-maintained list drifts on the next import; `--watch` derives the set exactly, for free. Building it would have replaced a correct mechanism with a subtly wrong one.
+- **Commit title deviates from the work order's** (`fix(dev): the server restarts only for server source changes`), which described the supervisor branch. The premise flipped, so the title names what actually changed.
+- Job stores' restart-survival code untouched, as instructed — and it is still correct: `bun --watch` restarts are real whenever server source changes.
+- `STUDIO-FIGMA-FEEL-PLAN.md:593` row 1 ("the dev server restarts mid-session when Studio writes into a workspace") is **wrong** and deliberately left unedited — parallel-wave protocol. Correct it when the wave lands.
+
+**Landmines**
+- The two dev watchers work on **opposite principles**. Bun = module graph, per file, restarts the process. Vite = chokidar, whole root, reloads the browser. Do not reason about one from the other; the Z4 premise came from exactly that conflation.
+- **Any new runtime-written directory at the repo root must be added to `vite.config.ts` `server.watch.ignored` in the same change.** `src/__tests__/devWorkflow.test.ts` is now the gate.
+- `server-14`'s operational note "do not run the dev server with `--watch` while dogfooding" is now known to be over-broad for the workspace-write case. Its root cause (a leaked `claude` subprocess inheriting the listening socket) was fixed in `server-14`/`server-15`.
+
+**Verification:** `bun run build` clean. `bun run lint` → 6 errors, all the pre-existing `'os' is defined but never used` set in `server/handlers/__tests__/*` + `referenceUpload.test.ts` (`store-11`); none in touched files. `bun test src/__tests__/architecture` → 559 pass / 9 fail, all pre-existing (generated-artefact drift `alm:sync`/`bootstrap:sync`/`studio-runtime:sync`, icon-catalog mismatch, a core-barrel deep import, a Windows `EFAULT` symlink flake) — verified none of those gates read any file in this diff. `bun test src/__tests__/devWorkflow.test.ts` → 7 pass / 0 fail. `bun test scripts` → 1 pass / 0 fail.
+
+**Human action needed:** dogfood — run `bun run dev`, import a GitHub project (or save into `studio-workspace/test4/`), and confirm the editor no longer full-reloads mid-import. Z4's "done when" (a 5-minute agent session writing 30 files produces zero server restarts) was already true before this change and is now proven at 300 files; the browser-side half wants a human eye.
+
+---
+
+### server-24 — Z9 + Z7: studio-workspace gitignored; `bun run dev` preflights the checkout; the CRLF root cause of the "drift" gates
+- **Agent:** server-engineer (parallel wave, `standing-05`)
+- **Stage:** done, PR #138 open as draft against `feat/alm-figma-killer-studio-shell`
+- **Branch:** `chore/workspace-gitignore-and-dev-preflight` · commits `d38018ba` (Z9), `baffe946` (Z7)
+- **Updated:** 2026-09-17
+- **Work orders:** STUDIO-FIGMA-FEEL-PLAN.md §6 decision 4 (Z9), §3 Z7
+
+**Z9.** `.gitignore` ignores `studio-workspace/*` by default and negates the named
+sample list — `.ignore`, `__canonical-fixture/`, `test4/`. Inside a kept project,
+`prototype/*.generated.*` is ignored; `node_modules/` and `dist/` were already
+covered by the root rules at any depth. The one-by-one `__bench-synth/` and
+`__bench-live-synth/` rules are deleted — the blanket rule covers them. 116 paths
+left the index via `git rm --cached` (all 111 of `test4 copy/`, `test4 copy.zip`,
+test4's four `prototype/*.generated.*`). Disk file count before and after: 366 → 366,
+tracked 366 → 250. `liveFrameFixture.ts`'s missing-source error now says `test4 copy`
+is local data a fresh clone must supply.
+
+**Z7.** New `scripts/lib/devPreflight.ts`; `scripts/dev.ts` calls it with one line
+(`runDevPreflight(log, fail)`) ABOVE the spawn block, so Z4's `--watch` rewrite merges
+cleanly. It installs when `node_modules/` is gone, when any `file:` dependency declared
+in `package.json` is unlinked, or when `bun.lock` is newer than
+`node_modules/.studio-install-stamp`, printing one line naming which; then runs the four
+`*:check` scripts in parallel IN THE BACKGROUND (they cost ~20 s cold) and prints the
+one-line `bun run <x>:sync` for each drift. Silence means fresh. `package.json` is read
+through `safeParseJson` + a TypeBox schema.
+
+**DURABLE FACT — why the four `*:sync` gates were red, and it is NOT what plan §0 assumed.**
+Windows `core.autocrlf=true` gives a CRLF working tree. `vendorDocs.ts:36` matches
+headings with `/^(#{1,6})\s+(.*)$/`; JavaScript's `.` does not match `\r` (line
+terminator) and a non-multiline `$` only matches end-of-input, so on a CRLF checkout
+NOT ONE heading in `design.md`/`CLAUDE.md` matches. `buildDesignSystemManifest()` then
+returns 39 components with `props: []` + placeholder descriptions, and **`bun run
+alm:sync` writes that over the real 3,454-line manifest** (it shrinks to 641 lines).
+The same CRLF made `alm:check`/`bootstrap:check` report drift no `*:sync` could clear,
+since they compare committed bytes against a freshly generated LF string.
+Fixed with a scoped `.gitattributes`: `vendor/** text=auto eol=lf` (`text=auto`, NOT a
+bare `text` — the vendored tree holds PNGs), the ALM manifest, the studio-runtime
+bundles, the QuickJS bootstrap, plus `studio-workspace/** -text` so git never converts
+a user's own repo. Repo content unchanged; it was already LF in the index.
+After it: `src/core/design-system-manifest` 9 pass/16 fail → **25 pass/0 fail**;
+`alm:check`, `icons:check`, `bootstrap:check` pass with NO regeneration. Only
+`studio-runtime:sync` was genuine drift; its two bundles are committed.
+Recorded as `PROJECT-BRIEF.md` §6 trap 15.
+
+**Tests — rejection cases, `src/__tests__/devWorkflow.test.ts` (8 new):** absent
+`node_modules/`; an unlinked `file:` dependency; no install stamp; a lockfile newer than
+the stamp; a lockfile-less-but-stamped checkout (must NOT install); a fully installed
+checkout (must stay silent); `file:` deps read from `package.json` not a hardcoded list;
+`dev.ts` calls the preflight before `Bun.spawn`. `installReason(paths)` takes its paths
+as an argument so all of it runs against a temp dir.
+
+**Docs:** `docs/architecture.md` "`bun run dev` preflights the checkout";
+`PROJECT-BRIEF.md` §7 (one line), §6 trap 12 (workspace now gitignored) and new trap 15
+(line endings).
+
+**Verification.** `bun run build` PASSES — it failed on this checkout before, which was
+Z7's stated symptom. `bun run lint` 6 errors, all the pre-existing `'os' is defined but
+never used` set. `bun test src/__tests__/architecture` 562 pass / 5 fail:
+`no-core-barrel-deep-imports` (plan §0), `resolveProjectDir` symlink `EFAULT` (Windows,
+untouched), and three that pass alone and only timed out under 22-way agent load.
+
+**Open, for whoever picks it up.**
+1. `studio-workspace/__canonical-fixture/` is NOT tracked (partial copy exists untracked
+   in the main checkout, `src/screens/*.tsx` missing) — that, not a parser bug, is the
+   cause of the 25 `canonicalCheck` + 1 `canonicalPageCheck` failures in plan §0. The
+   `.gitignore` negation makes it committable; the V2 agent was told to supply it.
+2. `vendorDocs.ts` / `componentCuration.ts` split on `'\n'`, not `/\r?\n/`. The
+   `.gitattributes` removes the exposure for the vendored tree, but Studio parses USERS'
+   repos, which can be CRLF. Deliberately out of Z7's scope — worth its own work order.
+3. Merge Z9 before any other Track Z PR (decision 4), or the generated output comes back.
+4. Plan §0's diagnosis "generated-artefact drift → run the syncs" was WRONG for three of
+   the four gates; the plan and STATE `meta-13` need this correction when the wave lands.
+
+---
+
+### docs-14 — the plan headers lied about three shipped tracks, and the Studio auth posture was never written down
+- **Agent:** studio-scribe
+- **Stage:** done — PR [#137](https://github.com/maherfayad-stack/Figma-Killer-2/pull/137) (draft) against `feat/alm-figma-killer-studio-shell`, branch `docs/plan-truth-pass`
+- **Updated:** 2026-09-17
+- **Roadmap:** `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 7 (work order Z10), §0's stale-doc table, §7 row 20, and `STUDIO-NEXT-WORKSTREAMS.md` WS-14.6.
+- **Goal:** (1) write the Studio HTTP auth posture down where a reader of the server doc finds it, per decision 7; (2) make every plan header match the tree; (3) clear WS-14.6's named residue. Docs only — zero `.ts`/`.tsx` changes.
+- **Scope:** `docs/server.md`, `docs/README.md`, `docs/CONVENTIONS.md`, `docs/features/studio-prototype.md`, `PROJECT-BRIEF.md`, `STUDIO-LIVE-CANVAS-PLAN.md`, `STUDIO-PROTOTYPE-PLAN.md`, `STUDIO-NEXT-WORKSTREAMS.md`, `STUDIO-FIGMA-PARITY-PLAN.md`. Three commits: `b861694f`, `981b0ad0`, `3d82b17c`.
+- **Done so far:**
+  - **Z10.** `docs/server.md` gains "Single-operator posture on the Studio routes" under Auth and capabilities: most of `/admin/api/studio/*` runs no per-request authentication and no per-request authorization (`server/handlers/studio.ts` imports nothing from `server/auth/authz.ts`), and the namespace does not run the CSRF origin check `handleCmsRequest` (`server/handlers/cms/index.ts:72`) and the AI dispatcher (`server/ai/handlers/index.ts:40`) run. Three protections tabled (path containment via `resolveProjectDir` → `isRealpathContainedAllowingMissing`; the `Path=/admin; HttpOnly; SameSite=Lax` cookie scope; `requireTrustTier` in `trustGate.ts:44`), the complete guarded-route list tabled, and the consequences stated — including that there is **no gate**: `cms-handlers-capability-gated.test.ts` and `ai-handlers-capability-gated.test.ts` exist, nothing equivalent covers `server/handlers/studio/`. `PROJECT-BRIEF.md` §6 trap 15 points at it. The TL;DR's "every state-changing handler starts with one of these guards" now names the exception.
+  - **Plan truth pass.** `STUDIO-LIVE-CANVAS-PLAN.md`'s header replaced ("proposed, nothing started" → per-track STATE ids); every L/R/P work-order heading marked `— done (<id>)`; §7's four "open decisions" all called, decision 2 marked superseded by the feel plan's §6.2. `STUDIO-PROTOTYPE-PLAN.md`: Phases 4 and 5 rewritten, §9 down from five items to two, and the §1 bullet crediting code-derived connectors to "Phase 5" now names Phase 6. `STUDIO-NEXT-WORKSTREAMS.md` WS-14.2 and WS-14.5 marked done. `STUDIO-FIGMA-PARITY-PLAN.md` §0a: G2 landed, prototype row no longer partial, Track G density no longer "not started" (that was the §10-vs-§0a contradiction), A7 split into its own row. `PROJECT-BRIEF.md` §3 links `STUDIO-FIGMA-FEEL-PLAN.md` as the active plan.
+  - **WS-14.6.** Dangling markdown links to `docs/features/inspector-disclosure.md` (renamed `inspector.md` by `panel-27`) repointed; a duplicated `features/inspector.md` row deleted from `docs/README.md`; a "Plans (repo root)" table added there with the feel plan first; `docs/CONVENTIONS.md`'s claim that plans live in `docs/plans/` corrected (that folder does not exist) and its folder diagram completed.
+- **Next step:** none for this entry. The follow-up the posture section names — `requireCapability` on every Studio route, one sub-router at a time — is `STUDIO-FIGMA-FEEL-PLAN.md` §9, unassigned.
+- **Decisions:**
+  - **Documented the tree, not `sec-05`.** `sec-05` finding 2 names three files calling `requireCapability` under `server/handlers/studio/`. Today it is two (`projectRoutes.ts` ×3, `trashRoutes.ts` ×2, all `studio.write`); `turnDesignReferences.ts` is not a route and its own doc comment explains it deliberately does not gate. The doc lists five capability-gated paths plus five `requireAuthenticatedUser` sites, by file and line.
+  - **Did not touch `CLAUDE.md`.** Its "Barrel imports" list is seven modules where the gate enforces twelve — a real drift, recorded as WS-14.6 "Still open" rather than fixed, because a rule-book edit is a deliberate act and my configuration forbids editing it on agent instruction.
+  - **Left `STUDIO-FIGMA-PARITY-PLAN.md` §4's 0.11/0.12 bodies alone.** The feel plan's §0 flags them, but §0a already carries "The body of this plan is the *original* analysis and is deliberately left as written" plus "Phase 0 (0.1-0.13) ✅ all 13 landed". The disclaimer is the fix; a second one would be noise.
+  - **`PROJECT-BRIEF.md` §3's test-project row de-enumerated.** It named `test`, `esim-journey`, `my-workspace`, `untitled*`; the disk holds `test4` and `test4 copy`. Replaced with "whatever folders are there on your checkout" rather than a new list that will rot the same way.
+- **Landmines:**
+  - **The worktree this ran in was cut from the wrong commit** — `8ab00ae0`, not `b770d211`. Neither `STUDIO-FIGMA-FEEL-PLAN.md` nor `STUDIO-LIVE-CANVAS-PLAN.md` existed in it. Fixed with `git reset --hard b770d211` on a fresh branch before any work. **Other agents in this parallel wave may have the same wrong base** — check `git log --oneline -1` before trusting a "file not found".
+  - `STUDIO-WAVE7-PLAN.md` contains a byte that makes `grep` treat it as binary (`grep -a` works). It still names `docs/features/inspector-disclosure.md` twice, in prose rather than as links — not fixed here.
+  - Three of WS-14.6's four named items were **already fixed** by somebody and the item still said otherwise. Before executing a residue list, verify each item against the tree; do not assume the list is current.
+- **Verification:** `bun test src/__tests__/architecture` → 544 pass / 1 skip / 10 fail; all ten pre-existing and named in `STUDIO-FIGMA-FEEL-PLAN.md` §0's repo-health table (generated-artefact drift ×6, `icon-catalog-integrity`'s `chevron-left`, `no-core-barrel-deep-imports`, Windows `EFAULT` in `studio-tool-project-dir`). `css-token-vocabulary` green. `bun run lint` → the same 6 pre-existing `'os' is defined but never used` errors (`store-11`). No `bun run build` — zero source files touched. Every markdown link target added or repointed checked to exist on disk.
+- **Human action needed:** none to merge. Two facts worth a look: the auth posture section says plainly "do not deploy this server on a network where an untrusted client can reach `/admin/api/studio/*`" — confirm that matches your intent before G2 stores a real GitHub token. And `CLAUDE.md`'s barrel list needs five entries added by someone authorized to edit the rule book.
+
+---
+
+### mcp-21 — Z3: every agent loop has a ceiling
+- **Agent:** mcp-tooling (parallel wave, `standing-05`; the agent's own draft labelled this `mcp-17`, renumbered by the orchestrator because `mcp-17` is the warm-CLI-session entry)
+- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `fix/bounded-tool-loops` (commit `c3a909b3`). PR: https://github.com/maherfayad-stack/Figma-Killer-2/pull/139
+- **Updated:** 2026-09-17.
+- **Goal:** `STUDIO-FIGMA-FEEL-PLAN.md` §3, work order Z3 — bound the HTTP tool loop,
+  the `claude` CLI turn, and the dev-server readiness poll; verify the bridge-routed
+  writes reach `store-11`'s guard.
+- **Setup defect worth knowing:** the worktree was seeded at `8ab00ae0`, **197 commits
+  behind** the `b770d211` the task named, and `STUDIO-FIGMA-FEEL-PLAN.md` did not exist
+  in it. Reset the branch to `b770d211` before starting.
+- **What shipped:**
+  - **`server/ai/drivers/http/toolLoop.ts`** — `export const MAX_TOOL_ROUNDS = 40`
+    (per-turn `req.maxToolRounds`), checked at the top of the loop; on the cap it yields
+    the aggregated `usage` (the provider billed those rounds) then ONE `error` naming
+    the last tool. Plus `seenMutatingCalls`, a per-TURN map keyed by
+    `toolCallFingerprint(name, input)` = `JSON.stringify(name)` + canonical key-sorted
+    JSON of the args. A repeat of a `mutates === true` call is answered with
+    `{ ok:false, data:{ code:'duplicate-call', toolName, priorResult } }` and never
+    reaches the handler. Recorded on FAILED writes too.
+  - **The finding that shaped that:** every provider adapter renders a FAILED tool
+    result as its `error` string alone and drops `data` (`anthropic.ts`'s
+    `toolOutputToContent`, same in `chatCompletions.ts` / `responses-shared.ts`). So the
+    payload is carried in BOTH `data` (Studio's transcript/UI) and serialized into
+    `error` (the only thing the model sees). If a future change makes adapters carry
+    `data` on failures, drop the serialized copy — do not leave both.
+  - **`claudeCliSpawn.ts`** — `export const TOTAL_TURN_CAP_MS = 20 * 60_000`
+    (per-turn `req.turnCapMs`), armed ONCE. New terminal raw event
+    `{ kind:'turnCapped', capMs }`, distinct from `exit`: on the warm path the process
+    is still running.
+  - **`claudeCliWarmSession.ts`** — `runTurn(prompt, signal, totalTurnCapMs)`; on expiry
+    sends `{subtype:'interrupt'}`, drains to the terminating `result` without forwarding
+    the post-interrupt lines, keeps the session alive; only an unanswered interrupt
+    (`interruptGraceMs`) disposes it.
+  - **`claudeCliEvents.ts`** — `ClaudeCliTurnState.lastToolName`,
+    `claudeCliTurnCapErrorMessage(capMs, lastToolName)`.
+  - **`src/core/ai/chatRequest.ts` + `server/ai/drivers/types.ts` + `chat.ts`** —
+    `maxToolRounds` (1–200) and `turnCapMs` (1 min – 2 h) on the session-controls wire,
+    bounded at the SCHEMA. No UI picker.
+  - **`useDevServerReadiness.ts`** — backoff 1s→2→4→8→10s (`nextPollDelayMs`, pure,
+    exported), reset to 1s on a phase change, `logOncePerCondition`.
+  - **Gate `src/__tests__/architecture/no-unbounded-tool-loop.test.ts`** — a `for (;;)` /
+    `while (true)` under `server/ai/drivers/` must name a ceiling or sit in
+    `STREAM_DRAIN_ALLOWLIST` with a reason (one entry: `http/sse.ts`).
+- **Part 4 — the bridge-write trace, verified.** `editorBridge.callBrowser` → NDJSON
+  `toolRequest` → `useMcpWorkspaceBridge` → `executeMcpBridgeRequest` →
+  `executeAgentTool` (`src/admin/pages/site/agent/executor.ts`) → an EditorStore action.
+  **No bridge-routed `studio_*` tool inserts, duplicates or wraps a page-tree node.**
+  `site_duplicate_node` (CMS toolset, unbound connectors only) → `store.duplicateNode`
+  → `writeDuplicateToSource` → guarded.
+  - **Open defect, NOT fixed here, deliberately.** `site_insert_html` /
+    `site_replace_node_html` → `store.insertImportedNodes` (`nodeActions.ts:190`), which
+    posts no source write at all: on a studio-imported tree the fragment is merged into
+    the in-memory tree as nanoid nodes the next parse silently deletes. Reachable by an
+    unbound external MCP client with `ai.tools.write`. Real fix: route through a source
+    write or refuse on a studio tree — `store-engineer` / `parser-surgeon` work order.
+- **Also fixed (root cause):** `src/__tests__/canvas/liveBoardFrame.test.tsx` calls
+  `mock.module('@site/studio/useDevServerReadiness', …)` and `useLiveOrigin`; Bun module
+  mocks are PROCESS-GLOBAL and were never undone, so the readiness suite watched a stub.
+  Now captured and restored in `afterAll`. **Repo-wide hazard: any `mock.module` of a
+  module another file tests for real needs the same treatment.**
+- **Verification:** `bun run build` clean. `bun run lint` 6 pre-existing. `bun test
+  src/__tests__/architecture` 562/9 (all pre-existing; new gate 3/3). `bun test server/ai`
+  914/26 (all pre-existing; `claudeCli.test.ts`'s one failure is the Windows `0o600` mode
+  check). `bun test src/__tests__/ai` 187/0. `src/admin/pages/site/studio/__tests__` 113/0.
+  `useDevServerReadiness.test.tsx` 6/0.
+- **Toolchain trap:** the Edit tool wrote a NUL (U+0000) escape inside a template literal as a
+  LITERAL NUL byte, making `toolLoop.ts` binary to git. Byte-scan touched files for NULs
+  after any edit containing an escape sequence.
+- **Human action needed:** review/merge #139; optional dogfood — run a turn against a
+  model that loops and confirm the transcript ends with one message naming the tool.
+
+---
+
+### store-12 — the editor stopped shouting: toasts collapse, boundaries render in place, and a save chip that never lies
+- **Agent:** store-engineer (parallel wave, `standing-05`)
+- **Stage:** done — branch pushed, draft PR #145 open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `fix/zero-noise-toasts-boundaries-savechip`. Commits `2fd11af0` (Z1), `2446d874` (Z2), `f040b806` (Z6).
+- **Updated:** 2026-09-17.
+- **Goal:** `STUDIO-FIGMA-FEEL-PLAN.md` Track Z work orders Z1, Z2, Z6 — the three that remove "every error has a toast" from the editor.
+- **Z1 — `toastBus.ts` collapses by default.** `dedupeKey` omitted → key derived from `kind + title + body`; an explicit string still means explicit identity; the NEW `dedupeKey: false` opts out. The resolved key is stored on the toast as `collapseKey`, so two opted-out toasts can never match each other. The `×N` counter and its CSS already existed — only the identity rule changed. **No call site needed an explicit key**: `studioStructuralCommits.ts`'s "Still writing your last change" warning and its insert/duplicate/wrap success toast collapse on the derived key. Gate: `src/__tests__/architecture/toast-dedupe-default.test.ts` (behaviour + a source scan of `resolveCollapseKey`).
+- **Z2 — `ErrorBoundary` renders in place.** `silentToast` defaults to TRUE; the push is gated on `silentToast === false`. `admin-shell` is the one opt-in (`src/admin/main.tsx`). `NodeRenderer.tsx`'s explicit `silentToast` deleted. Default fallback is a compact `--bg-surface-2` panel (one line + "Reload this panel"); the dev cause chain and component stack live in a COLLAPSED `<details>`. `error-boundary-coverage.test.ts` gained four assertions.
+- **Z6 — the retry ladder is in `usePersistence`, NOT in the chip.** A chip-side ladder needs a synchronous `setState` inside a `useEffect` to reset the counter on success, which `react-hooks/set-state-in-effect` fails as an ERROR. The ladder moved to the persistence layer, where the reset happens inside `runSave`'s own success callback. New exports: `SAVE_RETRY_BACKOFF_MS = [2000, 4000, 8000]`, `PersistenceSaveStatus.retrying?: boolean`. Each retry re-enters through `saveCurrentSite`; the first success clears the streak; unmount cancels an armed rung. `toolbar/SaveStatusChip.tsx` + module CSS is pure presentation — Saved · Saving… · Unsaved (click = save now) · Unsaved — retry — mounted from `AdminCanvasLayout`'s toolbar `rightSlot`. **No toast anywhere on this path.**
+- **`studioStructuralCommits.ts` gained a subscription** — `subscribeStructuralCommitInFlight` + a notifying `setStructuralCommitInFlight` setter; `commitStructural`'s two assignment lines call it. The chip reads it via `useSyncExternalStore` so it says "Saving…" while an insert/duplicate/wrap writes source. The flag, the `guardAgainstConcurrentStructuralCommit` refusal and its toast are semantically unchanged (`store-11` intact).
+- **Bundle budget raised with a measurement:** `SitePage-*.js` 36.7 KB → 39.4 KB in `bundle-size-budgets.test.ts` (36,390 B → 38,193 B, all the chip). **The shell had 310 B of headroom before this PR** — any other agent adding to `AdminCanvasLayout` / `Toolbar` will blow it too.
+- **Docs:** `docs/reference/ui-primitives.md` (three-value `dedupeKey` table), `docs/reference/error-boundaries.md`, `docs/reference/architecture-tests.md`, `docs/editor.md` ("Save status").
+- **Verification:** `bun run build` clean · lint 6 pre-existing · architecture 568 pass / 9 fail (8 = plan §0 set; the 9th, `ai-driver-isolation > claude-agent-sdk`, fails only in a full-directory run — see below) · persistence/editor-store/toolbar/panels 1435/0 · ui/studio 542/0.
+- **A latent gate bug found, NOT fixed:** `ai-driver-isolation.test.ts`'s `collectFiles` skips its own directory with `full.includes('/__tests__/architecture/')` — forward-slash against backslash paths, so on Windows it scans every architecture test file and its `claude-agent-sdk` rule fails in a full-directory run (passes standalone). Same mixed-separator class as `parity-01`; V2's bucket.
+- **Open:** nothing from Z1/Z2/Z6. `LazyChunkBoundary` keeps its own custom fallback (already silent).
+- **Pending dogfood:** (1) rapid ⌘D ×5 on the canvas shows one "Duplicated ×5"; (2) a panel that throws shows the fallback in that panel and nothing else moves; (3) kill the server mid-edit → chip reads "Saving…" for ~14 s, then "Unsaved — retry"; restart the server, click it, the edit lands; no toast at any point.
+
+---
+
+### style-06 — Z8: the residual CSS refusal picks the open page; ambiguity is a choice
+- **Agent:** parser-surgeon (parallel wave, `standing-05`)
+- **Stage:** done · PR #143 (draft, base `feat/alm-figma-killer-studio-shell`) · branch `feat/css-destination-open-page` · commit `5dcb8f39`
+- **Updated:** 2026-09-17
+- **Scope:**
+  - `src/admin/pages/site/studio/cssInsertDestination.ts` — `openPageFile` module state + `setOpenPageFile`/`getOpenPageFile`, `resolveOpenPageFile(pages, activePageId)`, `pinnedDestinations` + `pinCssInsertDestination`, `CssInsertDestination` refusal gains `candidates`, `CssDestinationRefusal` moved here, new resolution order.
+  - `styleRuleWriteback.ts` — `collectStyleRuleEdits` 4th param `activePageId`; `StyleRuleEditPlan.destinationRefusals`; destination refusals no longer ride `unmapped`.
+  - `openPageWatch.ts` (new) — publishes the anchor on load and on page switch, so the panel and the save path agree.
+  - `refusalToasts.ts` — `reportStyleRulePlanRefusals` (single entry), `presentCssDestinationRefusals` (dialog), `styleRulePlanTouchedSomething`; `reportUnmappedStyleRules`/`reportUnwritableContexts` now internal.
+  - `fsCodemodAdapter.ts` — threads `activePageId`, seeds `refusedRuleIds` from destination refusals, calls the one reporter.
+  - `src/core/page-tree/editConstraint.ts` — `choose-stylesheet` action kind + `stylesheet` field; `explainCssRuleConstraint` builds one remedy per candidate.
+  - `store/constraintActions.ts` — runs `choose-stylesheet`. `store/slices/uiSlice.ts` — `presentRefusalDialog`.
+  - Tests: `src/__tests__/studio/cssInsertDestinationOpenPage.test.ts` (new, 15), `cssDestinationChoice.test.ts` (new, 7), `styleRuleWriteback.test.ts`, `server/handlers/__tests__/cssInsertIntegration.test.ts`. Docs: `docs/features/studio-import.md` (CSS write-back), `PROJECT-BRIEF.md` §3.
+- **Decisions:**
+  - Open page as co-location anchor: no lock, no codeProps, no origin — it decides a destination FILE; `EditConstraintAction.stylesheet` is a file, not a `{rel,line,col}` target (position is postcss's answer at write time). `StyleTargetChip`/`resolveClassCssEditability` pick it up via module state and now show `will-create-existing` / `will-create-new-stylesheet` instead of `unmapped`.
+  - Pinned destination (`choose-stylesheet`) is rendered by `RefusalDialog` via `ConstraintActionButtons`, one real `Button` per candidate file.
+  - `resolveOpenPageFile` is NOT `resolvePageSourceFile` (server, best-effort tail-first, "a file to READ"); the new one is call-site-first, skips route chrome, answers only on unanimity. Do not de-duplicate them.
+- **Landmines:**
+  1. **`commitBaseline` advanced past a destination refusal** — a rule refused client-side emitted no edit, never appeared in the server's `refusals`, never reached `refusedRuleIds`; the baseline adopted declarations that never reached disk and the retry diffed as "no change". Live until this PR. Fixed by seeding `refusedRuleIds` from `destinationRefusals`. **Any future "refused before the POST" outcome must do the same.**
+  2. A held-back baseline makes the refusal RECUR on every autosave tick (correct — the work is still in the diff), so any surface presenting it must de-dupe: `presentCssDestinationRefusals` uses `refusalToasts.ts`'s per-session `seen` set.
+  3. `resolveClassCssEditability` greys out property rows for a class it thinks has no destination, so the anchor could not be a save-path-only parameter — hence `openPageWatch.ts` publishing on page switch.
+  4. `fsCodemodAdapter.ts` is at exactly 700 lines and `styleRuleWriteback.ts` at 690; neither grandfathered. Next change must extract.
+- **Verification:** `bun run build` clean · lint 6 pre-existing · architecture `module-size-budgets` passes; remaining fails are §0 buckets · `src/admin/pages/site/studio` 213/0 · `server/handlers` 1826 pass / 20 pre-existing · `src/core/css-codemods` + `src/__tests__/studio` 302/0. One cross-file flake seen once: `iframeFrameSurfaceDocumentMode.test.tsx` fails in the big batch, passes alone.
+- **Human action needed:** Phase 0 exit dogfood — create a class on the Selectors panel in a project with three stylesheets: writes silently or opens "Which stylesheet should this class live in?", never a toast. Check the dialog's per-file buttons at >4 candidates (footer lays actions out in a row).
+
+---
+
+### canvas-17 — S3 + S4: sandbox-module selectors narrowed; the selection overlay is event-driven
+- **Agent:** canvas-engineer (parallel wave, `standing-05`)
+- **Stage:** done — draft PR #140 against `feat/alm-figma-killer-studio-shell`, branch `perf/sandbox-selectors-event-driven-overlay`. Commits `35d6dc64` (S3), `47cacc45` (S4).
+- **Updated:** 2026-09-17
+- **Goal:** work orders S3 and S4 of `STUDIO-FIGMA-FEEL-PLAN.md` Track S.
+
+**S3 — files touched**
+- `src/admin/pages/site/canvas/ModuleSandboxFrame.tsx` — `useEditorStore((s) => s.site)` replaced by
+  `s.site?.styleRules` / `.breakpoints` / `.conditions` with module-level stable empty fallbacks;
+  the render-body `collectSiteStyleBackgroundImagePaths` + `generateClassCSS` calls are gone.
+- `src/admin/pages/site/canvas/canvasClassCss.ts` — new `nodeClassBackgroundImagePaths` and
+  `generateNodeClassCSS`, plus a private `selectNodeClassRules` and a `createSharedInputCache`
+  helper. Memo shape: shared inputs identity-compared (`styleRules`, `breakpoints`, `conditions`,
+  `mediaSignature`), then a `Map` keyed by the node's `classIds` signature.
+- `src/__tests__/architecture/no-full-site-scan-in-selectors.test.ts` — the whole-`site` detector's
+  scan root became a covered SET (`WHOLE_SITE_SCAN_ROOTS`); `admin/pages/site/canvas/` added.
+- `src/__tests__/canvas/nodeClassCssMemo.test.ts` — new.
+- `docs/agent-refs/canvas-internals.md` — cross-frame memo table row + prose.
+
+**S4 — files touched**
+- `src/admin/pages/site/canvas/overlayMeasureScheduler.ts` — NEW. Owns when the overlay measures.
+- `src/admin/pages/site/canvas/canvasViewportActivity.ts` — NEW. "a pan/zoom is in flight" broadcast.
+- `src/admin/pages/site/canvas/BreakpointSelectionOverlay.tsx` — the permanent rAF loop replaced by
+  a scheduler-owning effect; `observe(trackedElements)` from the measurement pass; `schedule()`
+  added to the anchor-dirty effect; `continuousGesture` derived from
+  `reorderDrag.dragging || animationScrub.phase === 'playing'`.
+- `src/admin/pages/site/canvas/canvasGesture.ts` — new `onCanvasGestureChange` (the BEGIN edge).
+- `src/admin/pages/site/canvas/frameAdapter/canvasFrameAdapterRegistry.ts` — new
+  `onFrameAdapterRegistryChange`; register/unregister now notify.
+- `src/admin/pages/site/hooks/useCanvas.ts` — `applyTransformToDOM` calls
+  `markCanvasViewportActivity(animated ? ANIMATED_TRANSFORM_MS : 0)`.
+- `canvasOverlayGeometry.ts` gained `overlayRectsEqual`, `overlayRectIsFinite`;
+  `canvasSelectionOverlayPositioning.ts` gained `resolveNodeBadgeLabel` (moved out of the overlay,
+  which was at the 700-line ceiling).
+- Tests: `overlayMeasureScheduler.test.ts` (NEW, fake rAF), `overlayRafDiscipline.test.ts`
+  (retargeted), `selectionToolbar.test.tsx` (its fake `cancelAnimationFrame` was a no-op — fixed).
+- `docs/agent-refs/canvas-internals.md` — new §"The selection overlay measures on events".
+
+**Landmines**
+1. A `MutationObserver` over the frame document now exists, filtered to ignore mutations inside
+   `overlayRoot` — the overlay writes inline styles onto its own rings. **Anything new that writes
+   into the frame document from the overlay must either live inside `overlayRoot` or be filtered
+   explicitly**, or the event-driven loop becomes the permanent loop with extra steps.
+2. Two gesture flags exist and are NOT interchangeable: `canvasGesture.ts` = a pointer gesture is
+   mutating the PAGE (freezes auto-height refit + parent-doc anchor); `canvasViewportActivity.ts` =
+   the VIEWPORT is moving (a pan must NOT freeze the refit).
+3. `canvasViewportActivity`'s idle window (150 ms) is deliberately LONGER than `useCanvas`'s 100 ms
+   debounced store commit. Shortening it below 100 ms leaves a pan ending with a stale toolbar.
+4. `markCanvasViewportActivity` lives in `applyTransformToDOM` (the one funnel, incl. animated
+   discrete zooms, hence `holdMs`), not `scheduleTransformWrite`.
+5. `BreakpointSelectionOverlay` is a SIBLING of `IframeFrameSurface`, not a descendant — no adapter
+   context; it resolves the adapter from the registry by iframe element and re-resolves on
+   `onFrameAdapterRegistryChange`.
+6. `resolvePortalDocument` is portal-mode only: a bridge (Tier-2) frame gets NO observers — only
+   `frame:resize` and the `hmr:before`/`hmr:after` pair, with a 2 s `HMR_HOLD_CEILING_MS`.
+7. Module-level canvas state is shared across test files in a worker (no `--isolate`):
+   `overlayMeasureScheduler.test.ts` quiesces both gesture flags in `beforeEach` and asserts only
+   on measure COUNTS. New tests of this machinery must do the same.
+8. `BreakpointSelectionOverlay.tsx` is at 698/700 lines — the next change must extract
+   (`canvasChrome` JSX block is the obvious unit). K5's MeasureLayer mount line will push it over —
+   extract first.
+
+**Verification:** `bun run build` clean · `bun run lint` 6 pre-existing · architecture 9 pre-existing
+fails · `src/__tests__/store` 27/27 · `src/admin/pages/site/canvas` 147/147 · `src/__tests__/canvas`
+829 pass / 22 fail, byte-identical failure list to `b770d211` baseline (+14 new passing).
+
+**Human action needed (dogfood S4):** `bun run dev`, `/admin/site`, a project with 4+ frames at ~50 %
+zoom. (1) Select an element; leave the mouse still 10 s; DevTools Performance 3 s record → no
+repeating per-frame scripting. (2) Pan: ring glued at every zoom, toolbar re-anchors on stop.
+(3) Body-drag and resize: ring/handles track every frame; toolbar snaps back on release.
+(4) Scroll inside a scrollable frame region: ring follows. (5) Edit padding in Properties: ring
+resizes within a frame or two. (6) Shift+1 and Ctrl+0: overlay arrives with the frames.
+**S3:** a page with a sandboxed (`editorRuntime.sandbox`) module — typing in an unrelated text
+node must not flicker the sandbox iframe; editing a class it uses must reach it.
+
+---
+
+### canvas-18 — K5: Alt-hover measures distances and padding
+- **Agent:** canvas-engineer (parallel wave, `standing-05`)
+- **Stage:** shipped, awaiting dogfood · **Branch:** `feat/alt-hover-measure` · **Commit:** `29a82a54` · **PR:** #142 (draft, base `feat/alm-figma-killer-studio-shell`)
+- **Updated:** 2026-09-17
+- **Goal:** with a selection and Alt held, hovering another node draws the distances between the two boxes and the hovered node's padding bands + content box, inside the in-frame selection overlay.
+- **Files touched:**
+  - `src/admin/pages/site/canvas/MeasureLayer.tsx` (new) — owns its own Alt state (listeners on BOTH the parent document and the frame document), its own rAF loop, renders nothing until the gesture is live.
+  - `MeasureLayer.module.css` (new) — parent-document fallback appearance only; mirrors the injected stylesheet declaration for declaration; keep in sync.
+  - `canvasMeasureGeometry.ts` (new) — pure math: `measureRectDistances`, `measureSegmentRect/Midpoint`, `parseMeasurePadding`, `measureContentBox`, `measurePaddingBands`, `measureBandMidpoint`, `formatMeasureDistance`, `measurementWinsOverTreeLadder`. 22 tests in `src/__tests__/canvas/canvasMeasureGeometry.test.ts`.
+  - `BreakpointSelectionOverlay.tsx` — ONE mount line, one extra arg on the tree-ladder call, one import; `resolveNodeBadgeLabel` moved OUT to `canvasSelectionOverlayPositioning.ts` (700 → 687 lines). **Merge note: #140 (S4) made the identical extraction — resolve to one copy.**
+  - `CanvasTreeLadderOverlay.tsx` — takes `selectedNodeIds`, suppresses itself when measurement owns Alt.
+  - `canvasOverlayGeometry.ts` — `CanvasOverlayMeasureSession.project(rect)` extracted out of `measure`.
+  - `src/core/studio-runtime/selectionChromeCss.ts` — `data-canvas-measure-*` rules + 9 forwarded tokens; generated bundles re-synced.
+  - `src/styles/globals.css` — the `--canvas-measure-*` affordance family.
+  - `src/admin/spotlight/keybindings.ts` — appended `canvas.measureHover` (`match: () => false`; a gesture, listed in the `?` sheet).
+  - `docs/agent-refs/canvas-internals.md` — overlays section.
+- **Decisions:** the tree ladder has NO hold delay (the work order assumed one), so the two Alt gestures are split by TARGET via `measurementWinsOverTreeLadder(selectedNodeIds, hoveredNodeId)`: measurement wins over a node OUTSIDE the selection; the ladder wins over the selection itself and when nothing is selected. The ladder is suppressed, not hidden, so Alt-release cannot reselect the measured node.
+- **Landmines:**
+  - `SELECTION_CHROME_RULES` is a template literal — a backtick in a CSS comment inside it ENDS THE STRING (four bogus `tsc` errors on the wrong lines). Comment now says so.
+  - The measure layer paints into the zero-size in-frame overlay root using ONLY `transform: translate()` + `width`/`height`, never `top`/`left`: a `top`-positioned child contributes to `body`'s scrollable overflow → `useIframeFrameAutoHeight` grows the frame → loop. Pills sit outside the measured element by construction, so this is the first chrome that routinely paints past the content edge.
+  - Two rect spaces disagree by `body`'s margin: adapter `measure` is body-relative; in-frame rings use `measureIframeLocalRect` (viewport-relative). MeasureLayer uses the adapter for padding and BRIDGE rects, `measureIframeLocalRect` for portal rects, so a line always starts on the ring. Unify both spaces everywhere in one change or not at all.
+  - Alt is tracked on two documents (parent + portal frame document), with a `blur` clear for Alt-Tab. Bridge mode has no local document — its Alt would come from the forwarded `pointer` event's `modifiers.altKey`: disclosed, not implemented. Bridge path never executed (no Tier-2 project on this machine).
+  - Both Alt paths stand down during an inline edit.
+  - Anyone adding a third Alt gesture must extend the predicate, not add a timer.
+  - `studio-runtime-bundle-fresh` fails on Windows after any `git checkout` (autocrlf) — see `server-24`'s `.gitattributes` fix in #138.
+  - Attribution line on this commit is `Claude Opus 5 (1M context)`, not the wave's `Claude Fable 5.1`.
+- **Verification:** `bun run build` clean · lint 6 pre-existing · architecture: only pre-existing fails · `src/__tests__/canvas` 842 pass / 17 fail, verified identical at `b770d211` · `src/admin/pages/site/canvas` 147/0 · geometry tests 22/22.
+- **Human action needed (dogfood, `/admin/site`, 2+ frames, at 100 % then 50 %):** (1) select a button in a card, Alt-hover the card → four red 1 px lines with mono pills + violet padding bands + dashed content box; (2) Alt-hover a sibling card → one gap line per axis; (3) Alt-hover the selected button itself → no measurement, the tree ladder opens as before; (4) release Alt over the sibling → selection unchanged; (5) at 50 % the pill numbers are byte-identical to 100 %; (6) pan with Alt held → lines glued, no drift.
+
+---
+
+### canvas-19 — S2 + K2 + K6: the drag is a session; Alt duplicates; ⌘ places
+- **Agent:** canvas-engineer (parallel wave, `standing-05`) · **Stage:** done · PR #153 (draft) · branch `feat/drag-session-alt-duplicate-free-move` · `10f1107d` (S2) `08735038` (K2) `8e29ac94` (K6) · base `b770d211`
+- **Updated:** 2026-09-17
+
+**What shipped.**
+- **S2.** `useCanvasReorderDrag` is D2's `dragSession`. `pointerdown` builds a `frameCandidateIndex` once (`canvasDragSession.ts` — every `[data-node-id]` rect in frame space, plus the viewport origin and live scale); pointer moves write a ref; one rAF refreshes, resolves, auto-pans and paints; the store is written once on `pointerup`. **Zero React commits and zero forced layout reads per pointermove** (was 1 `setState` + 2 `getBoundingClientRect()` per raw move). Everything drawn is painted by `canvasDragPainter.ts` into a React-rendered, never-React-populated layer. Escape cancels, Shift constrains the axis, a ghost follows the cursor. Landed D2 **G6** and the board half of **G8**. **G3 (cross-frame) still open** (per-frame index; a board-wide one needs a decision about which page a cross-frame drop writes to).
+- **K2.** Alt+drag. Elements → `duplicateNodesTo` → `writeDuplicateToSource(ids, {parentId,index})` → `planSourceDuplicateTo` → `commitStudioDuplicate` → `duplicateJsxElement`'s new destination form `({ file, line, col, destinationLine?, destinationCol?, anchorLine?, anchorCol?, position? })`. One source write, same `store-11` guard as ⌘D. Board frames → `duplicateFrameAt`, a `boards.json` write, spawned on the first move.
+- **K6.** ⌘/Ctrl-drag writes `left`/`top` (or `inset-inline-start` in RTL, delta negated) inline, plus `position: absolute` when the element was in flow. Refuses `static-parent` through `RefusalDialog` with a one-click `position-parent-relative` remedy. Snapping reuses `computeSnap`.
+
+**Coordination with #140 / #142:** `dragging` is React state on the hook's return, flipping exactly twice per gesture (activation, release) — #140's `continuousGesture` works unchanged. The session takes `beginCanvasGesture`/`endCanvasGesture` for the drag's length and never touches `canvasViewportActivity`. `BreakpointSelectionOverlay.tsx` is net zero lines vs `b770d211`. No drag chrome is added to the frame document (drop line, refusal chip, alignment guides, ghost all in the parent's per-frame overlay layer via `transform: translate()`); the only in-frame write is K6's preview (`left`/`top` on the dragged element's own `style`), cleared before the commit. **`@dnd-kit/core` NOT removed** — the DOM panel's layer tree still uses it.
+
+**Files.** `canvas/`: `useCanvasReorderDrag.ts` (700/700), NEW `canvasDragSession.ts`, `canvasDragPainter.ts`, `canvasDragAutoPan.ts`, `canvasFreeMove.ts`, `useCanvasBodyDragTrigger.ts`, `BoardFramesLayer/useBoardFrameMoveDrag.ts`; `CanvasDropIndicators.tsx`, `SelectionToolbar.tsx`, `BreakpointSelectionOverlay.tsx` + css, `canvasSelectionOverlayPositioning.ts`, `boardSnapping.ts`, `BoardFramesLayer/BoardFrameView.tsx`. Store: `boardSlice.ts`, `boardFrameSliceActions.ts`, `site/{nodeActions (700/700),types,structuralSourceEdits,studioSourceWrites}.ts`, `constraintActions.ts`, `studio/studioStructuralCommits.ts`, `ui/ConstraintNotice/ConstraintActionButtons.tsx`, `spotlight/keybindings.ts`. Engine/server: `ast-codemods/duplicateJsxElement.ts`, `page-tree/{editConstraint,index}.ts`, `studio-board/boardsModel.ts`, `server/handlers/studioStructuralWriteback.ts`. Tests: `src/__tests__/canvas/{canvasDragSession,canvasAltDragDuplicate,canvasFreeMove}`, `store/slices/site/__tests__/duplicateToPlan.test.ts`, `ast-codemods/__tests__/copyJsxCodemods.test.ts`. Docs: `docs/reference/canvas-dnd.md`, canvas-internals.md, studio-pipeline.md, canvas-iframe-per-frame.md.
+
+**Landmines**
+- **`canvasGesture` is load-bearing for the DRAG.** `beginCanvasGesture()` at `pointerdown` freezes `useIframeFrameAutoHeight`'s refit, which would otherwise reflow the frame under a stationary pointer and invalidate the once-measured `frameCandidateIndex`. Make `canvasGesture` skip the reorder drag and drops land one element off.
+- **`dragging` must stay React state, not a ref** (S4's scheduler derives from it). `canvasDragSession.test.tsx` asserts the exact commit count.
+- K6's free-move preview is the ONLY in-frame write; it is cleared BEFORE the store commit (same DOM property). It WILL trip the overlay's `MutationObserver`; the gesture freeze prevents the cascade.
+- Drop chrome is in the PARENT document's overlay layer (the opposite of the rings), via the `--canvas-drop-*` channel — never `top`/`left`.
+- The candidate index survives pan/zoom (frame-space rects); the viewport ORIGIN is re-read only when the live `transformRef` differs. **Never swap for the store's debounced `zoom`/`panX`/`panY`.**
+- Alt and ⌘ are read live for elements; a FRAME copy's Alt is latched (the copy is a real `boards.json` object the moment it exists).
+- `planSourceDuplicateTo`'s anchor comes from `resolveContainerAnchor`, not `previewStructuralMove`'s commit (the move preview removes the dragged node; a copy removes nothing).
+- `position-parent-relative` is the first `EditConstraintAction` whose handler is a WRITE; it is INJECTED by `ConstraintActionButtons` (same seam as `jump-to-source`'s `openSource`) because `constraintActions.ts` may not import the composed store.
+- `useCanvasReorderDrag.ts` and `nodeActions.ts` are at 700/700 — the next line forces an extraction.
+
+**Still open:** D2 G3 (cross-frame), G15 (file drop), `@dnd-kit/core` removal (blocked on the DOM panel), an animated sibling FLIP for K6's reflow preview.
+
+**Verification:** `bun run build` clean · lint 6 pre-existing · architecture 546/8 pre-existing · `src/__tests__/canvas` 845/17 verified pre-existing against `b770d211` · editor-store + store + studio + ast-codemods 949/0. No Playwright.
+
+**Human action needed (dogfood, 50 %, 6+ frames):** (2) drag an element's body ~5 s: drop line tracks with no stutter, ghost chip sits down-right of the cursor, toolbar does not flicker; React DevTools "Highlight updates" flashes exactly twice (start, release). (3) Escape mid-drag clears everything; Shift locks one axis. (4) At 25 %, drag to the canvas edge: the board pans and the drop line keeps resolving under the cursor. (5) Alt+drag an element into another container: ghost gains `+`; release Alt → move again; Alt-drop → one "Duplicated" toast, original unmoved, copy inside the target; `.tsx` has one new element. (6) Alt-drag a `.map()` row → RefusalDialog. (7) Alt-drag a frame header: copy under the cursor, snaps to neighbours; Escape removes it; ⌘Z undoes in ONE step. (8) ⌘-drag an element in a `position: relative` parent: follows freely, snaps with a guide line; file gets `style={{ position: 'absolute', left, top }}` on that one element. (9) ⌘-drag under a static parent → "Cannot place this by hand" with a "Make <div> position: relative" button; click, retry works. (10) RTL preview axis: written property is `inset-inline-start`, dragging right DECREASES it.
+
+---
+
+### perf-07 — S1: a frame mount that does not block a zoom; the 290 ms was mostly poster rasterization, not the mount
+- **Agent:** perf-hunter (parallel wave, `standing-05`) · **Stage:** done — PR #155 (draft), branch `perf/cheap-frame-mount-iframe-pool`, **base `8ab00ae0`** (an ancestor of the plan commit; this agent did not reset — merge is clean, but the plan file was absent in its worktree)
+- **Commits:** `f46887a0` split the mount · `bda5543a` `:hover` plan cache · `5f40d44b` poster capture held until quiet · `1d0785da` iframe mount pool · `0ab87044` ratchet budget
+- **Updated:** 2026-09-17
+- **Headline:** `perf-01` attributed the 290–337 ms zoom stall to "one `BreakpointFrame` mount is 100–140 ms". **A CPU profile disagrees: the long animation frames admit ZERO new iframes.** Creating an iframe is ~12 ms; the largest item was `useFramePosterCapture` rasterizing the frames that had just arrived, inside the gesture that brought them.
+
+- **Measured cost of one mount** (18-frame board, dev build, CPU profile self-time ÷ mounts):
+  | Cost per mounting frame | Where | Status |
+  |---|---|---|
+  | ~85–350 ms per poster, in a burst | `useFramePosterCapture` → `html-to-image` `toCanvas` | fixed — queued |
+  | ~10 ms | `CanvasHoverSuppressionInjector` walking four content sheets' CSSOM | fixed — plan cache |
+  | ~7 ms | `ProjectCssInjector` `textContent =` (vendor CSS parse per document) | unfixed |
+  | ~5 ms | `collectScrollDeficits` forced layout | unfixed |
+  | ~5 ms | `CanvasScrollUnrollInjector` snapshot + unroll | unfixed |
+  | ~12 ms | the `<iframe srcDoc>` element itself | irreducible |
+
+- **Before / after** (18-frame stand-in board from `test4`'s three screens, 865 DOM nodes, dev build, Chromium via Playwright runner, 3 runs):
+  | Zoom-out admitting 12–14 frames | before | after |
+  |---|---|---|
+  | worst animation frame | 350 / 354 / 375 ms | **195 / 198 / 200 ms** |
+  | mean animation frame | 41 / 46 / 44 ms | **22 / 21 / 21 ms** |
+  | frames over 50 ms | 13 / 14 / 13 | **7 / 7 / 7** |
+  | Pan churning 3–6 frames | 148 ms worst, 13 over 50 | **50 / 92 / 53 ms worst, 5 / 1 / 2 over 50** |
+  Each lever alone: poster queue ≈ 100 ms off the worst frame, `:hover` plan ≈ 100 ms, staged mount halved the mean. Live iframes bounded — 6 of 18 at rest, 16 of 18 with 12 on screen.
+
+- **Mechanisms** (one commit each): (1) `IframeFrameSurface` mounts in THREE commits — iframe, injectors, then the node tree via `startTransition` (`onContentReadyChange` reports the third; `BoardFrameView` holds the frozen poster until then; **`startTransition`, never rAF/`setTimeout`/idle** — a transition always runs). (2) `hoverSuppressionPlan.ts` — the `:hover` rewrite walks a sheet's CSSOM once per distinct sheet TEXT, applies an index-path plan elsewhere. (3) `framePosterQueue.ts` — captures held until the board is quiet (requests and wheel/pointer/key events re-arm one shared timer), then drain serially, one per macrotask. (4) `frameMountPool.ts` — a departed frame keeps its iframe while the pool has room, `max(8, onScreen + 4)`, evicted least-recently-on-screen. No iframe is ever re-pointed, so `canvasFrameAdapterRegistry` identity is untouched and `useCanvas.ts` is unmodified.
+- **Budget:** `BUDGET_ZOOM_WORST_FRAME_MS` 600 → **250** in `tests/e2e/studio-board-perf.e2e.ts` (~1.25× measured worst).
+
+#### Landmines
+- `studio-workspace/maherfayad-stack-eSIM` is gone from this machine; every earlier number was taken against it. Do not tighten the budget further without a real corpus.
+- **`test4` is NOT a mount-path corpus** — its three frames fit inside the viewport margin at the opening zoom, so a scripted zoom mounts nothing (3 live iframes before and after; worst 18–30 ms either way). `studio-feel.e2e.ts`'s zoom budget (#152) is a smoothness gate, not a mount gate; its recorded 260–520 ms could not be reproduced here. With the pool holding ≥ 8 live frames, **a mount gate needs a board of ≥ 9 frames.**
+- `CanvasHoverSuppressionInjector` is untestable under `bun test` (happy-dom: `CSSStyleSheet.ownerNode` undefined; `CSSStyleRule.selectorText` readonly) — `planHoverRewrites` is the exported seam.
+- `CanvasSelectionOverlayInjector` must stay in the LAST mount stage (it appends a real element to `<body>`; earlier it becomes `body`'s first child and breaks `:first-child`/`:nth-child`/`:empty`). `bodyPresentation.test.tsx` catches it.
+- Tried and NOT kept: splitting the mount alone (mean improved, worst frame unchanged); a settle timer re-armed on frame ARRIVALS only (frames arrive in the first third of a gesture); retention in `useState` (double commits; broke commit-counting tests) → shipped as "adjust state during render".
+- Two levers deliberately not shipped: (a) a LITERAL iframe pool that re-points a parked document (needs CSS injectors to stop removing their `<style>` on cleanup and skip identical `textContent` writes, plus register/unregister on #140's registry per re-point); (b) zoom-aware virtualization (a product decision: a poster is a stale picture).
+
+#### For the integrator
+- `studio-feel.e2e.ts` (#152) carries a second `BUDGET_ZOOM_WORST_FRAME_MS = 600` and `BUDGET_ZOOM_MEAN_FRAME_MS = 45`. **Hoist both into `tests/e2e/helpers/canvasPerf.ts`**; 250 / 35 are the values this change earns. Merging #152 conflicted in six canvas files — aborted; resolve at integration.
+- Once #140's `canvasViewportActivity.ts` is on the branch, `framePosterQueue` should read it instead of sniffing wheel/pointer/key events (it cannot see a programmatic pan). Noted in that module's header.
+
+**Verification:** `bun run build` green · lint 6 pre-existing · `src/__tests__/canvas` 774/12 vs 767/15 on the base measured the same way · architecture 5 pre-existing (bundle-size confirmed identical on the base, 802.55 kB) · `src/admin/pages/site/canvas` 147/0.
+
+**Human action needed (dogfood):** a board with **12+ frames** at 100 % (none exists in `studio-workspace/` on this machine — largest is `test4` at 3), Ctrl+wheel out until the whole board is in view: frames fade up from posters without the canvas locking; the following pan stays smooth; pan one column left and back — returning frames must not blink. Decide whether the two unshipped levers get a follow-up work order.
+
+---
+
+### keys-01 — one keyboard dispatcher, the missing bindings, paste beside the selection (K1 · K4 · K7)
+- **Agent:** canvas-engineer (parallel wave, `standing-05`) · **Stage:** done, awaiting review + dogfood
+- **Branch:** `feat/one-key-dispatcher-bindings` · **PR:** #148 (draft, base `feat/alm-figma-killer-studio-shell`)
+- **Commits:** `8957625f` (K1) · `2acac131` (K4) · `0da8ca65` (K7) · base `b770d211`
+- **Updated:** 2026-09-17
+
+#### What shipped
+**K1 — one key dispatcher.** The workspace owned 21 `keydown` listeners, nine of them persistent parent-`document` shortcut listeners re-implementing the same guards, with precedence decided by mount order in `CanvasRoot`. Now: one listener, mounted by `SitePage`, routing to an ordered scope ladder `inline-edit > prototype-link > annotation > node > board > global`. First active scope refuses or claims; claiming stops dispatch. Every former hook registers via `useEditorKeyScope(id, isActive, handle, handleKeyUp?)`.
+**K4 — the missing bindings.** `⌘]`/`⌘[` reorder (an `aliasShortcut` on the existing `⌥↑`/`⌥↓` entries — one help-sheet row, two keycaps); `⌘⇧L` lock; `H` latched hand tool; `K` latched proportional scale tool; `R`/`O` insert a box / round box BESIDE the selection (`F` still inserts inside).
+**K7 — paste and duplicate land where the eye expects.** `pasteNode(target, placement)`: `'after'` for selection-anchored callers (⌘V, palette `layers.paste`, multi-select Paste), `'auto'` unchanged for the two right-click "Paste here" menus. Paste selects its result inside the slice; ⌘D selects at the keyboard call site.
+
+#### Files
+New: `canvas/editorKeyDispatcher.ts` (scope registry + `EDITOR_KEY_SCOPE_ORDER`) · `canvas/useEditorKeyDispatcher.ts` (THE listener + `useEditorKeyScope` + the `inline-edit` halt) · `canvas/editorKeyGuards.ts` (`isTextInputTarget`, `isInsideKeyOwningOverlay`) · `canvas/useCanvasNodeShortcuts.ts` (replaces `useCanvasKeyboardShortcuts.ts`'s shortcut half) · `canvas/useEditorHistoryShortcuts.ts` (⌘Z/⌘⇧Z, off `UndoRedoButtons`) · `canvas/useCanvasHandTool.ts` · `src/__tests__/architecture/keybindings-single-dispatcher.test.ts` · `src/__tests__/canvas/toolKeybindings.test.ts`.
+**Deleted: `src/admin/pages/site/canvas/useCanvasKeyboardShortcuts.ts`** (`isTextInputTarget` moved to `editorKeyGuards.ts` — any branch importing the old path needs a one-line import change).
+Modified: `CanvasRoot.tsx` + css · `IframeFrameSurface.module.css` · `UndoRedoButtons.tsx` · `useCanvasSelectionKeyboard.ts` · `useBoardAnnotationKeyboard.ts` · `useBoardFrameNudge.ts` · `useBoardSelectAllShortcut.ts` · `useCanvasToolShortcuts.ts` · `useCopyAsPngShortcut.ts` · `usePrototypeLinkKeyboard.ts` · `canvasPanInput.ts` · `elementResize.ts` · `useElementResizeDrag.ts` · `CanvasResizeHandles.tsx` · `hooks/useCanvas.ts` (697 lines) · `hooks/useInsertModule.ts` · `SitePage.tsx` · `store/insertLocation.ts` · `store/slices/canvasSlice.ts` · `store/slices/clipboardSlice.ts` · `store/slices/site/{nodeActions (692),studioSourceWrites,types (695)}.ts` · `panels/PropertiesPanel/MultiSelectionInspector.tsx` (**deleted by #144 — drop this hunk on merge**) · `spotlight/{keybindings.ts,HelpKeybindingsList.tsx,+css,commands/layers.ts}` · gates + tests · `docs/agent-refs/canvas-internals.md` · `docs/features/spotlight.md`.
+
+#### Merge notes (orchestrator)
+- **#146 (K3) appended two `if` blocks (`runGroupShortcut`, ⌘G/⌘⇧G) to `useCanvasKeyboardShortcuts.ts`, which this PR deletes.** Re-home them verbatim at the end of the chain in `useCanvasNodeShortcuts.ts`, returning `true` after each `event.preventDefault()`, dispatching to `store.groupNodes` / `store.ungroupNode`. K3's registry entries at the tail of `keybindings.ts` and its `commands/layers.ts` additions merge cleanly.
+- **#142 (K5):** registry additions here are in the middle of `keybindings.ts`; the tail is byte-identical. `CanvasTreeLadderOverlay.tsx` keeps its own listeners (on the gate's allowlist); if K5 added a NEW `keydown` listener file under `canvas/`, add it to `ALLOWED_NON_DISPATCHER_LISTENERS` with a reason — the map is asserted for equality.
+- The Windows path bug the K1 order named in `keybindings-registry-single-source.test.ts` was already fixed (`toPosixPath`); two stale allowlist entries removed instead.
+
+#### Landmines
+- **The ladder is the contract; the call order in `CanvasRoot` is not.** Two rungs carry more than one handler: `node` (selection ladder, then node shortcuts) and `board` (select-all, copy-as-PNG, frame nudge, tool letters).
+- Two intentional ordering changes: a mixed marquee (notes AND frames) nudges the notes (`annotation` outranks `board`); Delete with a connector and an element selected removes the connector (`prototype-link` outranks `node`).
+- `useBoardAnnotationKeyboard`'s ⌘C needed a new `!event.shiftKey` guard (it sits above copy-as-PNG). **A handler on a high rung that matches loosely shadows a lower rung that matches precisely.**
+- THREE inline-edit stand-downs: the dispatcher's `inline-edit` rung; `useIframeEventForwarding` refusing to forward; and `useCanvas`'s React `onKeyDown` (a synthetic event crosses the iframe boundary through the fiber tree), now guarded inline and pinned by `inlineTextEditingWiring.test.ts`.
+- ⌘S and ⌘K are deliberately NOT on the ladder (window-level shell shortcuts that must survive an inline edit). `SpotlightRoot`'s window-capture listener `stopPropagation`s on a match.
+- `useCanvas` no longer has `spaceActiveRef`; pan arming reads `isCanvasSpacePanActive(document)` (ORs `parentDocument`, `iframe`, `handTool` `data-*` sources) — drives the grab cursor, frames' `pointer-events: none`, `useMarqueeSelection`, `useCanvasReorderDrag`.
+- Escape disarms a latched tool only as a SECOND chance (the `node` rung claims Escape when anything is selected); each tool toggles on its own key.
+- `O`'s radius rides the insert. **Open follow-up:** selecting a source-backed duplicate/insert after the resync needs `commitStructural` to report created node ids (⌘D selects on the in-memory path only).
+- The single-dispatcher gate asserts its allowlist for EQUALITY.
+
+#### Verification
+`bun run build` clean · lint 6 pre-existing · architecture 563/9 (baseline 562/10; fixed the `module-size-budgets` one this branch had caused) · `src/__tests__/canvas` 836/17, failure set identical to `b770d211` (measured) · spotlight + editor-store + canvas + toolbar 776/0.
+
+#### Human action needed (dogfood, `/admin/site`, 3+ frames, ~60 %)
+(1) Click an element → click a Properties field → `Delete`: confirm dialog, element goes; ⌘Z. (2) ⌘D ×3: three consecutive siblings, the third selected and named in the panel header (on a source-backed project the selection stays on the original after resync — known). (3) ⌘C a text node, select a container with children, ⌘V → copy lands NEXT TO the container and is selected; right-click → Paste here → inside. (4) `⌘]`/`⌘[` and `⌥↑`/`⌥↓` reorder; `⌘⇧L` toggles the lock badge. (5) `H`: open-hand cursor, frames stop taking clicks, drag pans with no marquee; `H` or Escape (with nothing selected) disarms. (6) `K` then drag the east handle: width and height grow together; `K` again → only width. (7) `R` → empty box after the selection, selected; `O` → round box with `style={{ borderRadius: '50%' }}` literally in the `.tsx`. (8) Double-click a text node, type `- h k r o d`, `Delete`, `⌘Z`: all ordinary text editing; Escape reverts. (9) Marquee a sticky note AND a frame, `→`: the note moves; ⌘Z once undoes the hold. (10) `?` sheet lists `H K R O ⌘⇧L` and ONE row each for move up/down with both keycaps.
+
+---
+
+### struct-10 — K3: ⌘G / ⌘⇧G write real source (group and ungroup)
+- **Agent:** parser-surgeon (parallel wave, `standing-05`)
+- **Stage:** done, PR #146 open as a draft against `feat/alm-figma-killer-studio-shell`. Not dogfooded in a browser.
+- **Branch:** `feat/group-ungroup`. Commits `61f68e35` (codemods), `ebc7d5ba` (editor wiring + docs).
+- **Updated:** 2026-09-17
+- **Scope:**
+  - NEW `src/core/ast-codemods/wrapJsxElements.ts` (one container around a contiguous run of siblings), NEW `unwrapJsxElement.ts` (the container goes, its children take its range); barrel; `jsxChildPlacement.ts` (`elementChildren` accepts a `JsxFragment`); NEW `__tests__/groupJsxCodemods.test.ts` (20 tests, two corpora).
+  - NEW `src/core/page-tree/wrapMutations.ts` (`wrapNode`/`wrapNodes` moved out of `mutations.ts`, plus `unwrapNode`); NEW `sourceStructurePreview.ts` (`previewStructuralMove`, `resolveSourceContainer`, `resolveContainerAnchor` moved out of `sourceStructure.ts`, plus `previewStructuralGroup`) — both forced by the 700-line ceiling; `{sourceStructure,editConstraint,operationSchema,treeOperations,mutations,index}.ts`; NEW `__tests__/groupUngroup.test.ts`; `editConstraint.test.ts` grew the exhaustive reason map.
+  - Server: `studioStructuralWriteback.ts` (`group`/`ungroup` schemas + dispatch), `studioWriteback.ts` (decode `siblingNodeIds`, dedupe exemption for `group`), `studioEditSchemas.ts`, `__tests__/studioWriteback.test.ts` (+7).
+  - Store/UI: NEW `site/groupActions.ts`; `site/{structuralSourceEdits,studioSourceWrites,nodeActions,types}.ts`; `studio/studioStructuralCommits.ts`; `canvas/useCanvasKeyboardShortcuts.ts` (two `if` blocks appended); `spotlight/commands/layers.ts`; `spotlight/keybindings.ts` (appended); NEW `src/__tests__/studio/groupUngroupPlans.test.ts`; gate `no-vc-mode-branches-in-mutations.test.ts` 11 → 13 with an `ACTION_PATHS` map.
+  - Docs: `PROJECT-BRIEF.md` §2 codemod list + §3, `docs/agent-refs/studio-pipeline.md`, `docs/reference/page-tree.md`.
+- **Deviations from the work order:** `studioEditPayload.ts` untouched (it holds only VALUE edit kinds; structural kinds live in `studioStructuralWriteback.ts` + `studioStructuralCommits.ts`). `has-behaviour` uses the existing `jump-to-source` action ("Open it in code"), not a new `open-in-code` kind.
+- **Decisions:** `group`/`ungroup` write STRUCTURE — no lock, no codeProps, no origin; the wrapper is an ordinary parsed element on the next load with no props (no module schema defaults written into the user's file). ⌘G on ONE node commits as the existing `wrap` edit. A group carries ordinary TEXT between its members and REFUSES an expression container between them (`expression-child`). `ungroup`'s allow-list is `className`/`style`/`id`/`data-*` + intrinsic tags; a `key`, `ref`, handler, spread or component tag refuses with `has-behaviour` (RefusalDialog, remedy jump-to-source). `group`/`ungroup` refusals with no remedy take the toast path.
+- **Landmines:**
+  1. **`CLAUDE.md` §"Mutation API" still says 11 named tree-mutation actions; it is 13** (`groupNodes`, `ungroupNode`). Rule-book edit pending (orchestrator).
+  2. A named tree-mutation action no longer implies a file: the gate carries `ACTION_PATHS`; a new action in a new module must be added there.
+  3. `store/slices/site/{types,nodeActions}.ts` are at 697/698 lines. `types.ts` is the split candidate.
+  4. `isRefusingEditKind` was type-unsound (`duplicate`/`wrap`/`reparent` missing from `StudioEditRefusal['kind']`); fixed along with `group`/`ungroup`.
+  5. `unwrapJsxElement` cannot see CSS that crosses the wrapper (`.list > .row`, `.card + .card`) — documented, not refused.
+  6. Group's span carries whatever is between the endpoints; a child the parser dropped entirely rides into the wrapper unseen. The expression-child refusal closes the common case.
+  7. Every structural codemod still writes `\n` line endings — a CRLF file loses `\r` on rewritten lines (pre-existing across the module; joins the CRLF backlog).
+- **Not done:** no optimistic canvas paint for group/ungroup (commit, then resync, like insert/duplicate/wrap). K1 may fold `runGroupShortcut` into a scope handler.
+- **Verification:** `bun run build` clean · lint 6 pre-existing · `src/core/ast-codemods` 385/0 · page-tree 0 fail · editor-store + store 476/0 · studio 448/0 · `studioWriteback.test.ts` 109/0 (20 pre-existing elsewhere in `server/handlers`) · architecture: module-size + VC-branch gates pass, 9 pre-existing.
+- **Human action needed (dogfood):** (1) two ADJACENT rows → ⌘G: one "Grouped 2 elements" toast, one `<div>` in the file, everything else byte-identical; (2) first and third rows → ⌘G: refusal "Select siblings next to each other", `git diff` empty; (3) rows from different parents → same; (4) the new `<div>` → ⌘⇧G: file byte-identical to before; (5) an element with a handler or `dangerouslySetInnerHTML` → ⌘⇧G: RefusalDialog with "Open it in code" jumping to the right line; (6) a component instance → ⌘⇧G: component refusal; (7) a `.map` row → `list-row` dialog; (8) hold ⌘G (autorepeat): one write, at most one "Still writing" warning, never nested containers; (9) Spotlight "Group selection" / "Ungroup selection" show `⌘G` / `⌘⇧G`.
+
+---
+
+### panel-35 — P9: Figma parity gaps in the inspector (constraints, auto layout, radius link, fill blend)
+- **Agent:** panel-designer (parallel wave, `standing-05`; the agent's draft said `panel-34`, renumbered — `panel-34` is DS-7)
+- **Stage:** done (targeted gates green; draft PR #141 against `feat/alm-figma-killer-studio-shell`, branch `feat/inspector-figma-parity-sections`)
+- **Updated:** 2026-09-17
+- **Commits:** `a1a85ae4` constraints crosshair · `9bf19a33` corner radius link toggle · `55c3a606` auto-layout controls with the Figma box model · `f8115829` blend mode on fill layers
+- **Goal:** STUDIO-FIGMA-FEEL-PLAN §P9 — the four controls Figma has that Studio either lacked or expressed twice, each as one section commit that deletes the old control it replaces.
+- **Scope:** `panels/PropertiesPanel/` → `useConstraintAxes.ts` (new), `constraintModeLabels.ts` (new), `ConstraintsDiagram.tsx`, `PositionConstraints.tsx`, `PositionControls.module.css`. `inspector/sections/` → `MeasuresSection.tsx`, `RadiusCluster.tsx` + css, `borderRadiusShorthand.ts` (new), `LayoutSection.tsx` + css, `LayoutSection/{FlexFlowControl.tsx,LinkedSidesField.tsx}` (new), `LayoutSection/{FlexDirectionControl.tsx,WrapToggleButton.tsx}` (DELETED), `LayoutSection/{GapRow.tsx,PaddingCluster.tsx}`, `FillSection.tsx` + css, `FillSectionParts.tsx`. `src/ui/components/ExpandableFieldCluster/`. Tests under `inspector/sections/__tests__/`, `src/__tests__/panels/`, `PropertiesPanel/__tests__/bespokeSectionsMixed`. Docs: `docs/features/inspector.md` §3.3, G3.4, G4, G5.5, G6.5, G6.7, G10, G10.3, §9.3. Pruned `vendor/pixel-art-icons/**/text-wrap.*`.
+- **Done so far:**
+  - **Constraints.** `useConstraintAxes.ts` is the ONE live binding between `constraintMapping.ts` and both surfaces (store subscription, the two `getComputedStyle` reads, the containing-block gate, percent geometry). The two-option `Left ▾ / Right ▾` side picker is replaced by a per-axis constraint `Select` over all five modes; a refused mode is a disabled option carrying its reason. Inset fields follow the mode (two for stretch/Scale). One constraint change = ONE history entry (`applyMode` commits `planConstraintChange`'s whole patch through `commitStyleMany`).
+  - **Radius.** The link toggle picks the DECLARATION: linked → `border-radius` + four longhand clears; unlinked → four longhands + shorthand clear. `borderRadiusShorthand.ts` (9 unit tests) applies CSS's 1/2/3/4 expansion, refuses the elliptical `/` form, `(`, >4 components. `ExpandableFieldCluster` gained `collapsedIcon`/`expandedIcon`.
+  - **Auto layout.** `ExpandableFieldCluster` gained an optional `all` slot → three-way cycle `all → collapsed → expanded` (`data-cluster-state`). Padding writes the four longhands in ONE patch (not the shorthand — see `LinkedSidesField.tsx`). `FlexDirectionControl` + `WrapToggleButton` → `FlexFlowControl` (only the reverse half survives; `LayoutModeRow` already writes `flex-direction`). `GapRow` row gap gets `RowGapIcon`.
+  - **Fill blend.** `LayerBlendSelect` (in `FillSectionParts.tsx`, because `FillSection.tsx` sits at 689/700) puts `background-blend-mode` on each `background-image` layer ROW, `stopPropagation`-guarded. Refused per-layer → the select disables with the reason.
+- **Decisions:** `mix-blend-mode` is NOT the per-fill target (element-level, already in Layer); `background-blend-mode` on image-layer rows ONLY. Padding's link does NOT write the `padding` shorthand; radius's does. Un-reversing writes the plain axis, never clears (clearing `column-reverse` would fall back to `row`). The reverse toggle replaced the direction picker, not the mode row.
+- **Landmines:**
+  - The constraint DROPDOWN is gated where the old side picker was not: no live frame → "can't verify" → dropdown disabled; inset fields stay editable. Deliberate behaviour change from `positionSection`'s old "move, don't duplicate".
+  - `Select`'s `combobox` role is a readonly `<input>` carrying the option TEXT; options live in an `aria-hidden` native select — tests need `getByRole('option', { hidden: true })` AND `within(...)`.
+  - `_historyPast` is capped and coalesces bursts — "one more entry" assertions must reset `{ _historyPast: [], _historyCoalesceKey: null }` first.
+  - `ScrubInput` has no `title` prop — a disabled field's reason needs a wrapper.
+  - **`bun run icons:sync` cannot run on this machine** (needs the private upstream checkout at `../pixel-art-icons`); orphaned `text-wrap.*` pruned by hand.
+  - `FillSection.tsx` is at 689/700 lines. S5's overlap to re-check: `FillSection.tsx`'s entry list (`value` slot now holds `LayerBlendSelect`) and `LayoutSection.tsx`'s `flexHeaderRow`.
+- **Verification:** `bun run build` clean · lint 6 pre-existing · architecture 557 pass / 11 pre-existing · `src/__tests__/panels` 786 pass · `inspector` 295 pass · `property-controls` 88 pass / 1 pre-existing · `src/ui` 281 pass. No new tokens in `globals.css`. No browser e2e.
+- **Human action needed (dogfood at `/admin/site`):** (1) absolute node in a relative parent on a live frame: X row reads `Left`; pick **Left and right** → second offset field, `width` gone, ONE Ctrl+Z undoes it; pick **Scale** → dashed edges, percent insets. (2) Static parent / unrendered frame: dropdown disabled with reason, crosshair dimmed, offset field still types. (3) With `transform: translateX(4px)`, **Centre** is a disabled option naming the transform. (4) Radius link: linked `12` → `border-radius: 12px` in source, not four longhands; unlink → four fields; paste `12px 4px / 8px 2px` → collapsed field verbatim, corners disabled with "elliptical". (5) Padding cycle `all → H/V → 4 → all`, remembered across selections. (6) Flex container: one direction control + reverse + wrap; Vertical stack + reverse → `column-reverse`, again → `column` not `row`. (7) Two `background-image` layers: per-row blend dropdown, layer 2 `multiply` → `background-blend-mode: normal, multiply`; clicking it must not open the layer popover; Text and Solid rows have none. (8) At minimum panel width, the two-field constraint row must not collapse.
+
+---
+
+### panel-36 — S5: the Design tab fits 900px, and multi-select goes through the one model
+- **Agent:** panel-designer (parallel wave, `standing-05`; agent's draft said `panel-34`, renumbered) · **Stage:** done (gates green; draft PR open) · **Updated:** 2026-09-17
+- **Branch:** `feat/inspector-fits-900-multiselect-model` off `feat/alm-figma-killer-studio-shell` (`b770d211`). PR **#144** (draft). Commits `d98d766d`, `18320466`.
+- **Goal:** `STUDIO-FIGMA-FEEL-PLAN.md` work order **S5**, both halves, plus `STUDIO-NEXT-WORKSTREAMS.md` WS-14.4 and WS-14.5.
+
+**Shipped — commit 1 (`d98d766d`), the 900px budget**
+- `INSPECTOR_SECTIONS` gains `tabs?: readonly ('design'|'prototype')[]` (replacing `tab`) and `designGroup?: 'primary'|'more'`. `transform`/`animations`/`interaction` are `['design','prototype']` + `'more'`; `customProperties` is `'more'`. They mount **expanded** on Prototype and inside ONE collapsed `Section title="More"` at the end of Design.
+- `StyleSurface.tsx` renders both groups through a single `MountedSections` loop; `MoreDisclosure` returns `null` when the selection mounts none of them.
+- New manifest selectors: `designPrimarySections(model)`, `designMoreSections(model)`, `PROTOTYPE_TAB_SECTIONS`.
+- **Deleted the retired Attributes code**: `AttributesSection.tsx`, `.module.css`, `htmlAttributesModel.ts`, and their tests (`panel-29` had parked them "unmounted but intact"). The `htmlAttributes` **prop** is untouched.
+- **WS-14.5:** `tests/e2e/inspector-height.e2e.ts` (Playwright, not run here) asserts `scrollHeight <= clientHeight` at 900px for F1 rectangle / F2 text / F3 flex board / F4 image (new fixture), plus "the four extras are folded at rest and one click away"; writes `docs/audits/penpot-inspector-baseline/05-section-heights.json`. Companion `05-section-heights.md` committed. Static half (`src/__tests__/inspector/measurement.test.ts`) asserts the Design-tab total, **756px** at rest for F2 (920 → 756).
+
+**Shipped — commit 2 (`18320466`), multi-select**
+- `useSelectionModel()` describes N nodes. **No section file changed**: each section gets the anchor wearing the selection's collapsed inline bag (`MIXED` where layers disagree, via `buildMultiSelectStyleBags`), `codeProps` narrowed to the locks every layer carries, `computedValues: null`, `assignedClassRules: []` until the class target is explicitly picked. New fields: `selectedNodeIds`, `selectedNodes`, `inlineWritableNodeIds`, `inlineUnwritableNodes`, `blockedPropertyCounts`, `sharedClassRules`.
+- `commitApi.ts` routes an inline write for N to `setNodesInlineStyles` (one history entry); preview/clear fan to the same ids; `commitProp` stays single-selection.
+- `MultiSelectTargetContext` + `MultiSelectTargetProvider` (mounted in `PropertiesPanelBody`) carry the Element/Class choice — panel state, not a store fact.
+- **Deleted:** `MultiSelectionInspector.tsx` (+css), `MultiInlineStyleComposer.tsx`, `MultiSelectionStyleArea.tsx`, their tests. `PropertiesPanelBody` has no multi-select branch.
+- **New:** `MultiSelectTargetBar.tsx` (+css) — target chip, blast-radius gate (`resolveBulkClassTarget`), the two partial-write notices.
+- **WS-14.4:** `SelectionColorsSection` moved to `inspector/sections/` as the `selectionColors` manifest entry (`order: 5`, under Fill), the only multi-only `appliesTo`; uses `ColorValueInput` so the swatch opens the real picker on first click.
+- 8 new `selectionModel.test.ts` cases.
+
+**Decisions**
+1. **`MultiSelectorInspector.tsx` is KEPT** — it is a multi-CLASS surface (Selectors panel bulk ops, `docs/reference/css-class-registry.md`), not a multi-node one.
+2. The height spec does NOT use `studio-workspace/test4` (user data); it creates/removes a throwaway `ws145-e2e-` project like `inspector-panel-measurement.e2e.ts` does, with the `rmSync` guarded on that prefix.
+3. `computedValues` is `null` for N — one mounted element cannot speak for N; under-stating is the safe direction.
+4. The multi-select action bar (Duplicate/Wrap/Copy/Cut/Paste/Delete + layer list) is gone; Figma's right panel has none — canvas context menu and keyboard own those.
+5. Per-node chrome (SharedComponentNotice / SlotFillNotice / SourceConstraintNotice / BranchChoiceNotice / ClassPicker / Module block) is hidden in multi.
+
+**Known gap — disclosed, not fixed:** `FillSection.tsx` dropped its `isMixed`/`MIXED_PLACEHOLDER` handling on the then-true premise it never sees N; a disagreeing fill renders its ordinary *unset* state rather than "Mixed". Nothing lies; it under-states. Re-wiring is `docs/features/inspector.md` §9.3's table, one row per field — left to whoever next owns `FillSection` (P9 was in it this wave: **merge-check `FillSection.tsx` against #141**).
+
+**Docs:** `docs/features/inspector.md` (§6 rewritten around the 900px gate; G12 rebuilt around `tabs`/`designGroup`; §9.0 "One model, no second section tree"), `docs/audits/penpot-inspector-baseline/05-section-heights.md` + README, `docs/agent-refs/editor-store.md`.
+
+**Verification** — `bun run build` clean · lint 6 pre-existing · inspector/panels/property-controls/editor-store suites **1636 pass / 1 fail** (`PropertyControlRenderer.test.tsx` `--inspector-row-h <= --control-row-h`, pre-existing) · architecture 10 pre-existing (the CRLF cluster #138 fixes) — **no `*:sync` script was run; `manifest.generated.json` untouched**.
+
+**Human action needed (dogfood):** (1) ~900px window, select a text layer: Design ends in one collapsed **More** row, no internal scrollbar; More → Transform, Animations, Interaction, Custom properties. (2) Prototype tab: those three expanded under the link editor. (3) Shift-click a second layer: full section list (no action bar); a prop set on one only reads **Mixed**; typing changes both, one Ctrl+Z reverts both. (4) Two layers with inline colours: **Selection colours** under Fill; one swatch rewrites every occurrence in one undo. (5) Two layers sharing a class: chip shows **Element**; class chip raises the "used by N other elements" gate; after confirming, the edit lands in the class. (6) `npx playwright test tests/e2e/inspector-height.e2e.ts` — written, never executed here.
+
+---
+
+### proto-07 — P7: five prototype triggers, smart-animate, and pruning on page delete
+- **Agent:** canvas-engineer (parallel wave, `standing-05`) · **Stage:** done (build + lint + targeted suites green; draft PR open) — **needs human dogfood**
+- **Branch:** `feat/prototype-triggers-smart-animate` off `feat/alm-figma-killer-studio-shell` (`b770d211`) · **PR:** #147 (draft). Commits `15f76305` (triggers), `0c10a960` (smart-animate), `2d651501` (prune).
+- **Updated:** 2026-09-17
+- **Work order:** `STUDIO-FIGMA-FEEL-PLAN.md` P7. Closes `STUDIO-PROTOTYPE-PLAN.md` §9.4; §9.1 and §9.2 already true, now marked.
+
+**1. Five triggers as a TAGGED UNION.** `PrototypeTrigger` was `Type.Union([Type.Literal('click')])`; now `click` · `hover` · `press { reverseOnRelease }` · `after-delay { ms }` · `key { key }`. The reader's repair rule is extended: anything unreadable (a Phase-1 `"click"` string, an unknown kind, a `key` naming no key) becomes `{ kind: 'click' }` — existing `.studio/prototype.json` files open unchanged, no migration. Every trigger is legal for every action (no `ACTION_TRIGGERS` table). Triggers match EXACTLY — a click never falls back to a hover link on the same element.
+
+**2. Smart animate matches by `NodeHint`, not name.** `matchScreenNodes` (`@core/studio-prototype/smartAnimate.ts`, pure) captures each outgoing node's hint and re-resolves it against the incoming tree with `@core/studio-anchor` (`exact`/`moved`/`drifted` pair; `detached` does not). `drifted` counts as a match on purpose. One-to-one, root never paired, capped at 24 pairs breadth-first.
+
+**3. Pruning on page delete has a caller** — in a new store-free module (see landmines).
+
+**Files (canvas):** `useCanvasNodeInteraction.ts` (press down/reverse on release, hover on arrival; `followLinkAt` takes a trigger kind, returns the link) · NEW `usePrototypePlayTriggers.ts` (after-delay timers + parent-document `key` listener + `followPrototypeKeyFromFrame`) · `useIframeEventForwarding.ts` (a fourth effect: the live-frame `key` bridge) · `usePrototypePlayback.ts` (`stackDepth`) · `CanvasRoot.tsx` (mounts the triggers hook) · `PrototypeScreenStack.tsx` (smart-animate FLIP effect + `.smartAnimateLayer`; **gesture/transition code only — Z5/P8's crash card and pill untouched**) · NEW `smartAnimateFlip.ts` · `playbackMotion.ts` (`smart-animate` cross-dissolve, `DUR_SMART_ANIMATE`, `EASE_IOS`, `prefersReducedMotion` exported) · `CanvasLiveSurface.module.css`.
+**Files (elsewhere):** `@core/studio-prototype/{types,serialize,playback,smartAnimate,index}.ts` · `studio/{playNavigation,prototypeActions,prototypePrune}.ts` · `store/slices/site/pageActions.ts` · `panels/PrototypePanel/PrototypePanel.tsx` (trigger picker only) · tests in `src/core/studio-prototype/__tests__/`, `src/__tests__/canvas/{prototypePlayTriggers,smartAnimateFlip,prototypePlayFirstClick}`, `src/__tests__/studio/prototypePrune.test.ts` · docs: `docs/features/studio-prototype.md`, `STUDIO-PROTOTYPE-PLAN.md`.
+
+**Decisions:** `linkForClick` → `linkForTrigger` (renamed, no shim). A press's reverse is a synthetic `PrototypeLink` (`releaseActionFor`), not a new action verb. Smart animate flies GHOSTS (a rectangle carrying background/radius/border/shadow/type + a leaf's text), not clones (`importNode` drops the iframe's stylesheets). The unmatched half dissolves at SCREEN level, not per node.
+
+**Landmines:**
+- **A live frame's keyboard must NOT be cloned onto the parent document** (the design-canvas bridge does that, correctly, elsewhere). The `key` trigger is delivered by DIRECT CALL to one consumer (`followPrototypeKeyFromFrame`), standing down on any modifier and on a text-input target. Cloning would hand every keystroke in a running prototype's form to undo/save/spotlight.
+- The player's `key` scope cannot be re-derived from `playState` (an untouched player has two EMPTY stacks); `usePrototypePlayTriggers` publishes a module-scoped `playScope`.
+- The smart-animate FLIP needs TWO rAFs: the first lets the incoming slot commit and lay out (first navigation into the back slot has zero rects), the second separates the read (`planSmartAnimate`) from the write (`runSmartAnimate`) — measure/write across two documents.
+- A ghost is positioned at its DESTINATION and animated FROM the origin with `fill: 'backwards'` (a held transform on an ancestor disables `backdrop-filter` inside it).
+- **`prototypePrune.ts` exists because `prototypeActions.ts` imports the store**: `no-circular-dependencies.test.ts` caught `store.ts → siteSlice.ts → pageActions.ts → prototypeActions.ts → store.ts`. Any future store-slice → `studio/*` call must target a store-free module (`studioStructuralCommits.ts` is the shape).
+- A press released outside any node is BOUNDED, not guarded: the reverse applies at the start of the NEXT gesture (a window listener would silently never run; needs the pointer bridge).
+
+**Verification:** `bun run build` clean · lint 6 pre-existing · `src/core/studio-prototype` + `studio-anchor` 89/0 · canvas + PrototypePanel 147/0 · `prototypePrune.test.ts` 5/0 · `src/__tests__/canvas` 830 pass / 21 fail in batch only (`canvas-12` batch-isolation flake; buckets pass alone) · architecture 559/9 pre-existing, `no-circular-dependencies` green · `server/handlers/studio` 851/14 byte-identical to before.
+
+**Human action needed (dogfood, `/admin/site`, 3+ pages, 100 % zoom, 2–3 frames):** (1) Prototype → Interaction: pick each of the five triggers; only the matching secondary control appears (`After delay` → Delay; `On key press` → Key box that captures `ArrowRight`; `While pressing` → Back-on-release switch). (2) Hover link Home card → Details: Live + Play, hover without clicking → one navigation, no editor hover ring. (3) Press with back-on-release: Details on the way down, Home on release; slide off and release → still back; release outside the frame → peek stays until the next gesture (documented bound). (4) After-delay 2 s → Second, fires once; Back → fires again; disarm Play mid-countdown → nothing. (5) Key `k` → Details after clicking inside the prototype; Ctrl+Z navigates nothing and undoes nothing; typing `k` in a text input navigates nothing. (6) Smart animate with a shared header: header does not jump, moved content travels, rest cross-dissolves, no stranded box on the top edge; Back is clean. (7) OS reduce-motion → effectively instant, no ghost. (8) Delete a linked page → the Home Prototype tab no longer shows "Deleted page"; `.studio/prototype.json` lost the link; deleting an unlinked page makes NO POST to `/admin/api/studio/prototype`.
+
+---
+
+### live-09 — Z5 + P8: live frames report their errors; the preview never breaks silently; Vite auto-promotion
+- **Agent:** canvas-engineer (parallel wave, `standing-05`)
+- **Stage:** done (implementation + static gates; draft PR #150 open, awaiting `security-guard` sign-off — dispatched as `sec-10`)
+- **Branch:** `feat/live-frame-errors-and-auto-promote`. Commits `c09388d2` (Z5), `495cbd02` (P8 a+b), `f5f6b5b2` (P8 c, owner decision 2), `64b1d8ba` (P8 d).
+- **Updated:** 2026-09-17
+- **Goal:** a crash inside a Tier-2 live frame reaches Studio (a badge and `studio_page_diagnostics`); the Live/Play surface never shows a blank screen without saying why nor leaves you guessing which runtime drew it; a Vite project runs live on first open with a visible undo.
+- **Scope:**
+  - `src/core/studio-runtime/`: `messages.ts` (new outbound `error`), `runtime.ts`, NEW `runtimeErrorRules.ts` / `runtimeErrorTaps.ts` / `optimisticDomOps.ts`, `index.ts`, generated bundles re-synced.
+  - `src/admin/pages/site/canvas/`: `canvasDiagnosticsBuffer.ts`, `CanvasDiagnosticsInjector.tsx`, `CanvasContexts.ts`, `CanvasLiveSurface.tsx`, `CanvasModeToggle.tsx`, `BoardBanners/BoardBanners.tsx`, `frameAdapter/{FrameDocumentAdapter,BridgeFrameAdapter}.ts`, `BoardFramesLayer/{BoardFrameView,LiveBoardFrame}.tsx`; NEW `useBridgeFrameDiagnostics.ts`, `liveScreenDiagnosticsScope.ts`, `PlayCrashCard.tsx(+css)`, `LiveRuntimePill.tsx(+css)`, `BoardFramesLayer/FrameDiagnosticsBadge.tsx(+css)`, `LiveAutoPromoteNotice/`.
+  - `src/admin/pages/site/studio/studioProjectTrust.ts`; `server/handlers/studio/`: NEW `liveCapability.ts`, `trustTier.ts`, `studioMeta.ts`, `prototypeShell/shellFiles.ts` + NEW `bootstrapTemplates.ts`.
+  - DELETED: `src/admin/pages/site/preview/` (whole folder), `previewOverlay.test.tsx`; `Toolbar`'s `overlay` prop, `uiSlice`'s `previewOpen`/`openPreview`/`closePreview`, `AdminCanvasLayout`'s lazy mount, spotlight's `preview.toggle` (the other five `preview.*` commands stay).
+  - Gates: `frame-document-adapter-isolation` (+1 allowlist), `module-size-budgets` (shellFiles GRADUATED), `canvas-aware-selectors` (§A.4 retired), `close-icon-correctness` (CI-4 removed). New tests: `runtimeErrorTaps.test.ts`, `bridgeFrameErrors.test.ts`, `canvasDiagnosticsScope.test.ts`, `liveCapability.test.ts`.
+  - Docs: canvas-internals.md ("Runtime diagnostics"), prototype-export.md §7, glossary, editor.md, design-tokens.md, **CLAUDE.md + PROJECT-BRIEF.md (invariant 1 amended for decision 2)**, STUDIO-CMS-REMOVAL-PLAN.md.
+- **Done so far:** Z5: outbound `error` (`kind | message | stack? | source?`), four taps in `runtime.ts`, capped 50/document + 10/second at the SENDER, routed into `canvasDiagnosticsBuffer` under the iframe's own `contentWindow` (the key `studio_page_diagnostics` reads), rendered as a passive `--warning` dot on the frame header; Vite's own overlay confirmed on. P8 (a)+(b): `PlayCrashCard` over a crashed Live/Play screen, `LiveRuntimePill` naming the runtime from a server-decided capability. P8 (c): auto-promotion to Tier 2 for a Vite-with-lockfile project on first open, notice + Undo, on-disk origin/latch (`trustAutoPromoted`, `trustAutoPromotedAt`), server-side re-check of every clause (`refuseAutoPromotion`). P8 (d): `PreviewOverlay` and all six attachment points deleted.
+- **Decisions:** the wire `error` kind set is FIVE (`network` separate from `resource`, matching `@core/ai`'s frozen `PageDiagnosticCode`). The 50-post cap keeps the FIRST 50 (the cause, not the consequences). A new `CanvasDiagnosticsScopeContext`, not `CanvasFrameContext` (which scopes SELECTION). Three extractions instead of three cap raises. The auto-promotion gate lives on the server; the client only asks.
+- **Landmines:**
+  - The diagnostics SCOPE is a fourth thing that fights height/injectors/events: `CanvasDiagnosticsInjector` reads a context that crosses `createPortal` (fiber tree) — moving a frame's injector subtree out from under its provider silently kills the badge. The Play surface's key is `live:<pageId>` via `liveScreenDiagnosticsScope()` — one function, two components.
+  - `recordFrameDiagnostic` re-publishes on a REPEAT (counts); bounded but on a hot path — do not add work to `orderedEntries`.
+  - `orderedEntries` `.reverse()`s before a stable sort (millisecond ties).
+  - happy-dom: `globalThis.console` is NOT `document.defaultView.console` — patch the frame's `view.console`/`fetch`.
+  - `createStudioRuntimeBridge` is booted AFTER `createRoot().render()` in the generated `main.jsx` on purpose (`ready` is posted at construction; earlier would flash an unpainted frame; React 19 does not render synchronously in `.render()`).
+  - `git stash apply` on Windows re-writes generated bundles with CRLF (see `server-24`).
+  - A same-realm script can forge the `error` message (`sec-06`): the parent schema's `maxLength` bounds are the protection, not the sender caps.
+- **Verification:** `bun run build` clean · lint 6 pre-existing · architecture 560/7 pre-existing · `studio-runtime` 176/0 · `src/__tests__/canvas` 829/17/4 vs measured baseline 820/17/4 · `server/handlers/studio` + trustTier + liveCapability 867/14 pre-existing · publisher + spotlight 362/0 · Playwright not run.
+- **Human action needed (dogfood, `/admin/site`):** (1) Tier 0: add `throw new Error('dogfood')` to a page body, save → red dot on that frame's header, hover shows `runtime-uncaught-error` with a stack, NO toast; Live view → "This screen crashed — open diagnostics" card; remove the throw → both disappear. (2) The pill: Vite+lockfile reads **Live** (after 3) or **Static** + "Run the real app"; non-Vite reads **Live needs Vite** as a label. (3) Auto-promotion: a Vite project at `trust: "static"` with no `trustAutoPromoted*` → board reloads once, "Running your app live — Undo" bottom-centre; `.studio/meta.json` has `run-project` + `trustAutoPromoted: true` + timestamp; Undo → `static` with `trustAutoPromotedAt` KEPT; reload → stays static, notice does NOT reappear. (4) Tier 2: throw in a screen with the dev server running → badge on the live frame and `studio_page_diagnostics` returns it (needs a real cross-origin postMessage).
+
+---
+
+### mcp-22 — A9 / A12 / A13: a turn has a budget, a design policy the user controls, composition archetypes
+- **Agent:** mcp-tooling (parallel wave, `standing-05`) · **Stage:** done · **Branch:** `feat/agent-budget-design-policy-composition` · **PR:** #149 (draft, base `feat/alm-figma-killer-studio-shell`)
+- **Commits:** `b9fc47c3` (A9) · `360b4601` (A12) · `d63db2c3` (A13)
+- **Updated:** 2026-09-17
+
+**A9 — a turn has a budget and shows its work.**
+- `AGENT_TURN_ROUND_BUDGET = 40` in `src/core/ai/turnBudget.ts` (exported from `@core/ai`) — the prompt states it, the driver loop caps at it, the panel renders against it. **Merge with #139's `MAX_TOOL_ROUNDS` in `toolLoop.ts`: read it from here; do not keep a second 40.**
+- Static prefix gained `# Step budget` (ceiling, `step k/N`, duplicate-call and `retryable: false` rules).
+- `parseTurnStepReport` runs on each text delta in `streamEvents.ts` and stamps `AgentMessage.reportedStep`; `formatTurnProgress` composes the line; `AgentActivity` renders it beside the elapsed clock. Passive. Known limit: a report split across two deltas is missed — the tool-call fallback covers it.
+- Telemetry: one line per tool round in `<project>/.studio/agent-turns.jsonl`, written by `executeAiTool` (`server/ai/drivers/http/execTool.ts`) and nowhere else (the one choke point both HTTP drivers and the `claude` CLI via `server/ai/mcp/server.ts` pass through). TypeBox schema in `agentTurnLog.ts`, 2 MB cap, failures swallowed, byte counts only.
+- `bench:agent-turn` gained per-tool p50/p95/max/total + cache-hit rate and grades each conversation against `AGENT_TURN_BUDGETS` (90 s creative / 3 min balanced) — **warnings, not failures**, until a real turn is measured.
+- Stop gate mode-aware in full: `computePageWriteVerification(dir, userKey, pages, { fidelityMode, replyText })` — creative → a clean `studio_quality_check` since the write (new `qualityChecks` record in `pageVerificationStore.ts`); balanced → a compare has run since the write and every still-differing region is fixed or named (`compareRegionLabel(index, top)` → `R1@y412`, shared by tool and gate; `hooks/stopHookTranscript.ts` reads the trailing assistant reply out of the CLI's `transcript_path`); strict unchanged. `studio_compare` records every ok verdict with region labels.
+
+**A12 — design policy.** `follow` / `balanced` / `free`, a second axis beside fidelity. `resolveDesignPolicy` in `server/handlers/studio/designPolicy.ts`, disk half in `projectDesignPolicy.ts`. Persisted per (project, account) in `.studio/meta.json`'s `agentSession` through `GET/POST /admin/api/ai/studio-session` (partial saves). `findingSeverity(code, policy)` is the single source of error / warning / off, shared by `studio_quality_check` and the Stop gate; a finding turned off is not produced. Governed: `raw-hex-color`, `raw-px-length`, `off-scale-spacing`, `off-scale-type-size`, `design-system-unused`, `design-system-coverage-low`. Contrast, fonts, assets, hand-drawn paths and every composition rule stay errors at every policy. UI: fourth `ContextMenu` trigger in `AgentSessionControls.tsx`, `Project default` = `null`.
+
+**A13 — composition.** `LAYOUT_ARCHETYPES` (hero, feature grid, split, testimonial band, pricing, footer) and `COMPOSITION_RULES` in `compositionAudit.ts`, consumed by the creative prompt block and `generateVariantSeeds` (shuffled order from a per-variant offset, so each variant opens on a different shape). New findings, errors at every policy: `no-focal-point` (never fires when `flat-type-hierarchy` did) and `monotone-band-rhythm`. `free` seeds draw from extended type/spacing/radius pools.
+
+**Durable facts**
+- **`MODE_BLOCK` is no longer in `systemPrompt.ts`** — it and `DESIGN_POLICY_BLOCK` live in `server/ai/tools/studio/promptSessionBlocks.ts` (700-line ceiling).
+- `modeOf` in `compositionAudit.ts` returns the most frequent size; fixtures for the focal rule need a dominant body size.
+- Three `pageWriteVerification.test.ts` tests and one `hooks.test.ts` test called post-W10/W9-2 signatures with stale arity — fixed; `compare.test.ts:370` still has the same class of bug (`readPassingCompare(dir, pageId)` missing `userKey`).
+
+**Verification:** `bun run build` clean · lint 6 pre-existing · architecture 10 pre-existing (`module-size-budgets` green after the split) · `server/ai` 26 pre-existing · `server/handlers/studio` 11 fail (down from 13; the two Stop-gate hook tests that were this branch's are fixed) · `src/__tests__/panels` 786/0 · `src/admin/pages/site/agent` 18/0.
+
+**Pending dogfood:** (1) one real agent turn on a `studio-workspace/` project, then `bun run bench:agent-turn` to calibrate the budgets; (2) the `step k/N` line renders from a live `claudeCli` turn; (3) the balanced Stop gate reads the CLI transcript's real line shape (`stopHookTranscript.ts` tested only on synthesised fixtures).
+
+---
+
+### mcp-23 — A10/A11/A14: the Tier-2 gate, a prompt that cannot lie, and structured refusals
+- **Agent:** mcp-tooling (parallel wave, `standing-05`; agent's draft said `mcp-21`, renumbered) · **Stage:** done, PR #154 (draft) → `feat/alm-figma-killer-studio-shell`, branch `fix/agent-tool-truth-and-gates`. Security review dispatched as `sec-12`.
+- **Commits:** `6c9b823f` (A10) · `fe8104c2` (A11) · `d4aca4f5` (A14)
+- **Updated:** 2026-09-17
+- **Goal:** make the one ground-truth verification tool reachable without weakening its gate, stop the system prompt describing a tool wrongly, give every `studio_*` refusal a machine-readable code.
+
+**Tools changed:**
+- `studio_render_reference` — **server**, caps `studio.run.project` PLUS the project's own `.studio/meta.json` `trust === 'run-project'` (`checkTrustTier` in `trustGate.ts`, the same predicate `devServer.ts` uses). Precondition failure `{ ok:false, code:'trust-tier-required', trust, requiredTrust, retryable:false }` with a message telling the agent it may not promote the project itself. Nothing is spawned below Tier 2. Tier is read from the contained project dir, never the app root.
+- `studio_page_diagnostics` — reclassified **server → bridge** (handler relays; the board is genuinely required). No-board failure `{ code:'no-board-connected', retryable:true }`.
+- `studio_screenshot`, `studio_compare`, `studio_computed_styles`, `studio_export_frames` — reclassified **server → server-with-bridge-fallback** (metadata now says what they already did).
+- `studio_upload_asset` + the 29 `site_*` write tools — `execution: 'browser'` renamed `'bridge'`.
+
+**Decisions:**
+1. **`studio.run.project` granted to Admin** (decision 1). Safe only because the capability is no longer the whole gate — the per-project tier is a second factor. `studio.git.write` stays off Admin because it has no second gate; written in `src/core/capabilities.ts`, `docs/reference/capabilities.md`, `PROJECT-BRIEF.md`. **Caveat (orchestrator):** with PR #150's auto-promotion the second factor is weaker than this self-review assumes — `sec-12` assesses the combination.
+2. `ToolExecution` is three values: `server` / `server-with-bridge-fallback` / `bridge`; read only through `server/ai/runtime/toolExecution.ts` (`toolDispatchesInProcess` is the single reader for both dispatch sites).
+3. A `bridge` tool MAY declare a handler ("dispatched in-process, board still required").
+4. `retryable` means "this identical call could succeed once something outside your arguments changes" — only `no-board-connected` and `io-error`; `toolRefusal.test.ts` trips if more than a quarter of codes become retryable.
+5. The code is rendered INTO `error` (`… [code=<code> retryable=<bool>]`) because every consumer path reduces a failed tool result to that string — same conclusion Z3 reached for `duplicate-call`.
+6. A14 scope: every top-level handler refusal + `studio_compare`'s per-page `results[]`; NOT the CMS `site_*` half's `aiToolError`.
+
+**Reconciliation:** #149 — kept to the live-tab paragraph and the failure-example entry; the generated-sentence helper lives in `server/ai/tools/studio/boardRequirementClaim.ts`; `systemPrompt.ts` is 623 lines on this branch. #139 — `duplicate-call` is NOT in `TOOL_REFUSAL_CODES` (originates in `toolLoop.ts`); two-line follow-up at merge: add it to the vocabulary and the `agent.md` table (parity-gated between `<!-- refusal-codes:start/end -->`).
+
+**Landmines:** `compare.ts` was 711 lines after A14 → extracted `comparePageResult.ts` (658, close to the ceiling again). `systemPrompt.ts` is contended by four work orders — do not inline the helper back. Admin is force-resynced on boot, so the grant lands on every existing Admin at next startup with no operator action. `git-failed` now carries `details.gitCode`; relies on `GitOperationFailure.message` being client-safe.
+
+**Verification:** `bun run build` clean · lint 6 pre-existing · architecture 580/9 pre-existing · `server/ai` 913/26 pre-existing · `server/handlers/studio` + trustTier 857/14 pre-existing. New gates green: `referenceRender.test.ts`, `studio-tier2-two-gates.test.ts`, `prompt-claims-match-tool-metadata.test.ts`, `toolRefusal.test.ts`, `studio-tool-refusals-are-coded.test.ts`.
+
+**Next:** the follow-up wave's per-route `requireCapability` pass (plan §9) is the remaining half of `sec-05`; finding 1 is closed by this PR.
+
+---
+
+### git-21 — G2 + G1: sign in to GitHub, connect a repository — shipped, needs dogfood
+- **Agent:** server-engineer (parallel wave, `standing-05`) · **Branch** `feat/github-connect-and-signin` · **PR** #151 (draft) · **SHAs** `90e3098c` (G2), `c8659f10` (G1) · base `feat/alm-figma-killer-studio-shell`. Security review dispatched as `sec-11`.
+- **Updated:** 2026-09-17
+
+**What landed.** Studio can sign in to GitHub and connect a project to a repository. Both were visible holes: Push was disabled with "This project has no origin remote" and nothing in Studio could add one; an auth failure showed git's "Support for password authentication was removed" with no action attached.
+
+**Routes** (every body through `readValidatedBody`; every client call through `apiRequest` with a schema appended at the END of `gitRequests.ts`):
+| Method | Path | Request | Response |
+|---|---|---|---|
+| POST | `/admin/api/studio/github/device/start` | — (session) | `{ flowId, userCode, verificationUri, expiresInSeconds, intervalSeconds }` |
+| GET | `/admin/api/studio/github/device/poll` | `?flowId` | `{ status: 'pending'|'authorized'|'denied'|'expired', retryInSeconds, account }` |
+| POST | `/admin/api/studio/github/token` | `{ token }` (closed to the askpass charset) | `{ account }` |
+| DELETE | `/admin/api/studio/github/token` | — | `{ ok: true }` (idempotent) |
+| GET | `/admin/api/studio/github/account` | — | `{ account | null, clientConfigured }` |
+| GET | `/admin/api/studio/github/repos` | — | `{ repositories: [{ fullName, cloneUrl, isPrivate, defaultBranch, pushedAt }] }` |
+| GET | `/admin/api/studio/git/remotes` | `?dir` | `{ remotes: [{ name, fetchUrl, pushUrl }] }` |
+| POST | `/admin/api/studio/git/remote` | `{ dir?, set: { name: 'origin', url } }` | `{ ok, remote }` |
+| POST | `/admin/api/studio/git/clone` | `{ url }` — `additionalProperties: false` | `{ jobId }` |
+| GET | `/admin/api/studio/git/clone/status` | `?jobId` | `{ job }` (phase + terminal `ImportSummary`) |
+
+**Rejection cases tested** (`githubAuth.test.ts` 28, `gitAskpass.test.ts`, `gitRemote.test.ts` 18, none touching the network): 401 on all six github routes with no session · user B cannot poll, read, or delete user A's flow or credential (404/null) · a token GitHub will not identify is never stored · a token with a quote / backtick / `$(` / newline / space is refused BEFORE GitHub is called · 501 + "paste a token" when `GITHUB_OAUTH_CLIENT_ID` is unset · 404 for unknown/finished flowId, 400 for none · `denied`/`expired` terminal · poll paces to GitHub's `interval` (injected clock) · `device_code` and the token never appear in any response body · `ext::sh -c`, `file://`, bare path, drive letter, `..`, `ssh://`, `git://`, `http://`, look-alike host, userinfo, query, fragment, non-`owner/repo` path all rejected as remote URLs · a remote name other than `origin` is a 400 from the SCHEMA · `dir` outside the workspace, or with no `.git` of its own (which would resolve to Studio's own repository) · clone into an occupied dir is 409 leaving bytes untouched · a `dir` field on the clone body is 400 · a failed clone leaves no partial project · askpass files are 0700-dir/0600-file, one per invocation, `dispose()` idempotent.
+
+**Durable facts**
+1. `getGithubTokenForUser(userId): Promise<string | null>` (`server/handlers/studio/githubToken.ts`) is the shared entry for every network verb; `null` = run git without a credential. Sibling `getGithubTokenForRequest(req)` for `(req, url, pathname)` sub-routers. The client is handed over at boot by `provideGithubCredentialDb(db)` in `server/index.ts`.
+2. **The token never enters an env var, an argv token, or a URL.** `runGit(dir, args, { credential })` writes a 0600 one-shot `sh` askpass script, deletes it in `finally`, and prepends `-c credential.helper=`. Do not "simplify" into `GIT_TOKEN` or `https://x-access-token:TOKEN@…`.
+3. **`parseGithubRemoteUrl` is an allowlist, not a sanitiser**; it re-composes the URL from owner/repo. Adding a host or a scheme is a security decision.
+4. Migration `023_git_credentials` is the last id. `scopes_json` is text in both dialects with explicit `JSON.stringify` (a bare array bound by Bun.sql becomes a Postgres array literal).
+5. `plugin-secrets-never-leak.test.ts` has a `RAW_MATERIAL_ALLOWLIST` with one §1 entry (`githubCredentialStore.ts`); any future credential repository needs its own entry AND no-leak test.
+
+**Security self-review (author's):** AES-256-GCM via `server/secrets/encryption.ts` under the process master key, same as `ai_provider_credentials`; a token that will not decrypt (or is expired) is deleted on read; plaintext lives in one call frame. Askpass: `mkdtempSync` 0700 → 0600 script → `GIT_ASKPASS` → `dispose()` in `finally`; `isEmbeddableGitToken` `[A-Za-z0-9_]{8,255}` refuses rather than escapes; env-var and credential-in-URL rejected as designs. `clientSafeGitError` now elides the OS temp root too. Device-flow map is in-memory keyed by `flowId` + owning user; scope `repo` only.
+
+**Verification:** `bun run build` clean · lint 6 pre-existing · architecture: `migration-parity`, `db-postgres-isms`, `db-json-column-naming`, `boundary-validation`, `plugin-secrets-never-leak` green, 8 pre-existing · `server/handlers` identical failure set to a stashed baseline · `server/ai/credentials` 63/1 pre-existing · `src/__tests__/studio` 328/0.
+
+**Human action needed:** create a GitHub OAuth App (Settings → Developer settings → OAuth Apps → New, **"Enable Device Flow"** ticked) and set **`GITHUB_OAUTH_CLIENT_ID`** on the server (client id only; no secret). Unset is supported: device routes answer 501 and paste-a-token works. Then G8 dogfood: sign in via device flow, clone a private repo with history, edit on the canvas, commit, push.
+
+---
+
+### git-22 — G7/G3/G4/G5/G6: write lock, branches, fetch/pull/conflicts, pull requests, agent parity
+- **Agent:** server-engineer (parallel wave, `standing-05`) · **Branch:** `feat/branches-pull-pr` · **PR:** #160 (draft, base `feat/alm-figma-killer-studio-shell`) · **Status:** landed, not dogfooded (G8 is the open precondition). **This branch already merged #151 (G1/G2) and #157 (its security review)** — integrate #160, not #151.
+- **Updated:** 2026-09-17
+- **Commits:** `0846a5ab` (G7 lock) · `901a5753` (G3 branches) · `1cc2761e` (G4 fetch/pull/conflicts) · `7922ddfc` (drop stub) · `4bd084d3` (merge #151) · `aef7bd4b` (G5 PR) · `5d8fb0cc` (G6 MCP tools) · `e9b8d02f` (merge review/pr-151 + apply its findings to fetch/pull/PR) · `f8f86e43` (split remote half) · `51118872` (wording).
+- **Branch name deviates** from the work order (`feat/git-branches-pull-pr`): the worktree-isolation guard refuses any command containing a `/git-…` token; not evaded.
+- **Routes added** — all under `/admin/api/studio/git/` in `server/handlers/studio/gitSyncRoutes.ts` (one line in `STUDIO_SUB_ROUTERS`); every POST runs `originAllowed` (CSRF):
+  | Method | Path | Body | Rejections tested |
+  |---|---|---|---|
+  | GET | `branches` | `?dir` | outside workspace / no `.git` / workspace root → 404 |
+  | POST | `commit-and-switch` | `{ dir?, message, files(min 1), switch }` | empty files, blank message/switch → 400; flag-looking branch → 409 `invalid-branch-name` BEFORE anything is committed; dirty remainder → 409 `dirty-tree` with the commit intact; traversal/absolute/drive/`node_modules`/`.studio`/`.git` → 404 |
+  | POST | `fetch` | `{ dir? }` | no origin → 409 `no-origin-remote` |
+  | POST | `pull` | `{ dir?, strategy?: 'ff-only'|'rebase'|'merge' }` | unknown strategy → 400; dirty → 409 `dirty-tree`; divergence → 409 `diverged`; conflict → 409 `conflict` + `files` |
+  | GET | `conflicts` | `?dir` | `{ kind, files }` |
+  | POST | `conflict/resolve` | `{ dir?, file, side:'mine'|'theirs' }` | `side:'ours'` → 400; nothing in progress → 409; traversal → 404 |
+  | POST | `conflict/continue` | `{ dir? }` | still unmerged → 409 `unresolved-conflicts` + `files` |
+  | POST | `conflict/abort` | `{ dir?, confirm: Type.Literal(true) }` | missing/false confirm → 400 (schema) |
+  | GET | `pull-request/context` | `?dir` | `{ supported, base, head, compareUrl, isDefaultBranch }` — non-GitHub origin / detached → `supported:false` |
+  | POST | `pull-request` | `{ dir?, title?, body?, base? }` | non-GitHub origin → 409 `not-a-github-remote`; base === head → 409 `same-branch`; no token → 409 `no-github-token` + compareUrl and NO outbound request; GitHub 5xx → 502 |
+- **Modules added:** `projectWriteLock.ts`, `gitSyncOperations.ts`, `gitSyncRoutes.ts`, `githubPullRequest.ts`, `packageManager.ts` (server); `gitSyncRequests.ts`, `BranchSection.tsx`, `SyncSection.tsx`, `useGitBranches.ts`, `useGitConflicts.ts`, `useGitPullRequestContext.ts` (client). Deleted: the free-text branch field + handlers + dead CSS; this branch's own `githubToken.ts` stub and `gitRemoteCredential.ts` once G2 landed. New suites: `projectWriteLock.test.ts` (13), `gitSyncRoutes.test.ts` (38), `githubPullRequest.test.ts` (10), +16 in `gitTools.test.ts`; all remote work against local bare repos with `credential.helper=` in fixtures.
+- **Verified against real git, not assumed:** (1) `REBASE_HEAD` SURVIVES a successful rebase — `conflictKind` uses `rev-parse --git-path rebase-merge|rebase-apply`. (2) Under Bun an `unref`'d `setTimeout` is not guaranteed to fire when it is the only pending work — the lock's `busy` timer is deliberately NOT unref'd (it hung `bun test` until found).
+- **Reconciled with #151/#157:** G2's `getGithubTokenForRequest` and `runGit({ credential })` replaced the placeholders; `gitPaths.parseGithubRemoteUrl` replaced its own parser; #157's `originAcceptsStoredGithubToken` is applied to `fetch`/`pull` via `credentialForOrigin` (imported, never re-derived), six rejection cases (local bare, no origin, `github.com.evil.example`, `gitlab.com`, `ext::`, `file://`). The PR call puts the token in an `Authorization` header only; a missing token → named refusal with zero outbound requests. New destructive verb `rebase --abort`/`merge --abort` behind `Type.Literal(true)` + the two-step danger button; `pull` refuses over a dirty tree. `-c core.editor=true` is a literal constant. `mine`/`theirs` inversion tested both directions in a real conflicted rebase AND merge.
+- **Residual risk not closed:** `gitSyncRoutes.ts` has no per-request capability check — consistent with the documented single-operator posture (decision 7), plus CSRF.
+- **Verification:** `bun run build` clean · lint 6 pre-existing · architecture 559/9 pre-existing (`module-size-budgets` and `singleInstallManagedHosting` were red on this branch and are green again) · `server/handlers/__tests__` + `gitTools` 1032/5 pre-existing Windows path · `src/__tests__/studio` 328/0.
+- **Human action needed (G8 dogfood against a PRIVATE repo, `/admin/site` → Version control):** (1) sign in (device flow), clone with *Keep history*, Repository block shows `origin`, dropdown lists `main` + remote branches; (2) dirty the tree, **New** branch `feat/dogfood` — uncommitted work comes along; (3) commit + push → branch on GitHub, "Up to date"; (4) **Open PR** visible → real PR, title = last commit subject; **Compare on GitHub** works; (5) edit on github.com, **Fetch** → `1↓`, Push disabled "Pull first", **Pull** → board reloads with GitHub's version; (6) diverge both sides → `1↑ 1↓`, rebase-or-merge choice; (7) same-line conflict → file listed, **Keep mine** puts YOUR text on disk, **Continue**; (8) provoke again, **Abort the rebase** twice → back where it was; (9) start an install, immediately **Commit** → "busy, try again" after ~5 s, no `index.lock`, no path; (10) commit-and-switch with one file un-ticked → commit stands, switch refuses naming the file.
+
+---
+
+### verify-01 — S6 + V1 + V3(CI): a browser perf gate that runs
+- **Agent:** test-engineer (parallel wave, `standing-05`)
+- **Stage:** done; draft PR #152 open against `feat/alm-figma-killer-studio-shell`, branch `test/browser-perf-gate`
+- **Commits:** `098e7a9d` (bench via Playwright runner) · `b5fc3eb4` (studio-feel spec) · `a61d071b` (CI browser gate) · `bbeee037` (a failed bench fails the command; a skipped spec is never a pass)
+- **Updated:** 2026-09-17
+- **Goal:** `STUDIO-FIGMA-FEEL-PLAN.md` S6, V1, V3's CI half. Done when `bench:studio-board` can fail, a Studio-feel spec gates toast/Escape/zoom in a real browser, and CI runs the budget slice.
+
+**Tests added, and the contract each locks in**
+| Test | Contract |
+|---|---|
+| `tests/e2e/studio-feel.e2e.ts` "rapid ⌘D five times…" | Five rapid ⌘D presses create EXACTLY one success toast card and AT MOST one warning card, counted by `MutationObserver` over the toast portal (cards ever inserted). Asserts on card count, never on copy. |
+| "the Escape ladder never widens…" | No press may ADD a ring or a selected frame; must reach "nothing selected" within 4 presses; a further Escape changes nothing and does not leave the board. Forward-compatible with K1's rungs. |
+| "a scripted zoom stays inside its frame budget…" | `BUDGET_ZOOM_WORST_FRAME_MS = 600` (same ratchet as `studio-board-perf.e2e.ts` — S1 lowers both) + new `BUDGET_ZOOM_MEAN_FRAME_MS = 45`; asserts `transformWrites > 0`. |
+| "Alt+drag on a board frame duplicates the frame" | Skipped with a named reason until `[data-gesture="alt-duplicate"]` exists on the frame chrome; then asserts `.studio/boards.json` gained exactly one frame and kept every original. |
+| `scripts/bench/studioBoard.bench.ts` (rewritten) | Reads per-test statuses from the target spec FILE (not run-level `stats`), fails if the report has no result for that file. |
+| `scripts/bench/index.ts` | Exits 1 when any bench threw; `skipped` still exits 0. |
+
+**Assertions deliberately changed:** `tests/e2e/helpers/editor.ts` `expectEditorReady` wait 20 s → 60 s and `auth.setup.ts` `setTimeout(240_000)` (cold dev server compiles the editor chunk on demand; readiness waits, not assertions); `playwright.config.ts` `webServer.timeout` 120 s → 300 s; `profileGesture`/`readBoardCounts` MOVED to `tests/e2e/helpers/canvasPerf.ts`.
+
+**Findings the plan should absorb**
+1. `studio-workspace/maherfayad-stack-eSIM` is untracked → `studio-board-perf.e2e.ts` self-skips on every clean checkout incl. CI; `studio-feel.e2e.ts` on tracked `test4` is the gate that actually runs.
+2. The single-mount defect reproduces on a THREE-frame board: `test4`, live iframes 2 → 3, worst frame 515.8 / 444.1 / 260.1 ms vs ~19 ms mean. S1's premise confirmed on a second corpus.
+3. `bun run test:e2e` cannot reliably start its own stack on Windows: Playwright's `webServer` spawn of `bun run e2e:dev` repeatedly left Vite never binding on 5174 (4 occurrences) while the same stack started by hand comes up in ~25 s. Workaround: start it yourself + `E2E_REUSE_SERVER=1`. A `stdin: 'ignore'` attempt in `scripts/e2e-dev.ts` was reverted (did not reproduce as a fix). **V2's bucket** — a large part of why handoffs read "Playwright not run".
+4. Running e2e dirties `studio-workspace/test4` (`auth.setup.ts` rewrites `lastOpenedAt` + regenerated `prototype/*`); `git checkout -- studio-workspace/` after a local run.
+
+**Blocking, by design:** the ⌘D test is RED until Z1 (#145) merges — measured 4 stacked "Still writing your last change" + 1 "Duplicated" on all three runs. `ci.yml` triggers only on PRs to `main`. `CLAUDE.md` was NOT edited (V1(c) asked for a "Verification" line; agent config forbids it) — documented in `PROJECT-BRIEF.md` §7/§8 and `docs/e2e/README.md`; the exact line is in PR #152's body (orchestrator pastes).
+
+**Verification:** `bun run build` 0 · lint 6 pre-existing · architecture 559/9 identical before/after · `bun test scripts` 1/0 · Chromium installed: `studio-feel.e2e.ts` driven 3× (isolated ports 5231/3231 and reuse-server on 5174), `bench:studio-board` 8× incl. cold end-to-end.
+
+**Human action needed (dogfood):** `/admin/site` on `test4`, click a text node inside a frame, click the canvas background once, hit ⌘D five times fast → ONE "Duplicated" card and at most one "Still writing" (today: five cards) — exactly what the spec fails on until #145 merges.
+
+---
+
+### test-05 — the Windows bucket closed: 210 fail / 134 errors → 33 fail / 0 errors
+- **Agent:** test-engineer (parallel wave, `standing-05`) · **Stage:** done (PR #158 open as draft against `feat/alm-figma-killer-studio-shell`, branch `test/windows-bucket-closed`, 9 commits on `b770d211`: `d7fa3cf4` · `d7478f47` · `4fa138cf` · `01b9d4f3` · `e0410fbe` · `926d51c4` · `4f5b6229` · `9960492c` · `ba619097`)
+- **Updated:** 2026-09-17
+- **Goal:** STUDIO-FIGMA-FEEL-PLAN V2 — every red on Windows either fixed or quarantined with a named runtime blocker.
+- **Scope:** `src/__tests__/{setup.ts,architecture/*,canvas/boardFrameAxesOverride,panels/agentPanel,agent/renderEvidence,server/plugin*}` · `src/admin/{pages/site/store/store.ts,pages/dashboard,pages/site/{inspector,panels,ui},modals,spotlight}` · `src/core/{design-system-manifest,page-parser/__tests__,plugin-sdk/cli/lint.ts}` · `server/{liveOrigin.test.ts,ai/mcp/**,ai/credentials,handlers/**,publish/runtime/packageServer.ts}` · `scripts/{lib/generatedArtefact.ts,sync-*}` · `studio-workspace/__canonical-fixture/` · `.gitignore`
+- **Done so far:**
+  - **`mock.module` is process-wide and PERMANENT, and was the single largest failure source.** `mock.restore()` does not undo it; `--parallel=4` gives each worker a PROCESS. `server/liveOrigin.test.ts` replaced `server/handlers/studioProjects.ts` with a two-export stand-in; **129 later files failed to LINK** (`Export named 'rethrowProjectDirRefusal' not found`) — the whole `server/handlers/**`, `server/ai/mcp/**`, `src/__tests__/server/**` tail. `projectsProvider.test.ts` replaced `requestCmsSiteReload`, zeroing 8 assertions in `studioSaveRequests`/`saveNarrowResync`/`fsCodemodAdapter`. All 18 mocking files now snapshot the real namespace as a plain object, spread it into the replacement, restore in `afterAll`. Gated by `mock-module-must-restore.test.ts`.
+  - **A CRLF checkout emptied the design-system manifest** (product defect, complementary to #138's `.gitattributes`): fixed at `readVendorFile` + `/\r?\n/` splits in `vendorDocs`/`componentCuration`; `__tests__/vendorDocsCrlf.test.ts` parses the same doc LF and CRLF. 16 red → 0 with NO regeneration; correct in a USER's Windows project too. Freshness gates compare EOL-normalised content via `scripts/lib/generatedArtefact.ts`.
+  - **The canvas "batch-isolation flake" was a real store leak.** `useEditorStore` is a module singleton; `boardFrameAxesOverride` and `canvasContextSelectorBoardMode` reset on the way IN and not OUT. `store.ts` snapshots its module-load state and publishes a reset on `globalThis` (test-only); `setup.ts` calls it in `afterEach`. `src/__tests__/canvas` 17 fail → 3.
+  - Three more product defects unmasked: `packageServer.ts`'s containment check (`startsWith(`${dir}/`)`) rejected EVERY request on Windows — the runtime package route served only 404s; `LEGACY_GUIDE_ARTEFACTS` was `path.join`-built and PERSISTED, so a project touched by two OSes re-swept and could eat a user's own `.claude/figma.md`; `studio_git_commit` threw where its description promises a structured refusal.
+  - `__canonical-fixture` restored from `origin/main`, trimmed to its README's layout (26 failures), then PROTECTED (untracked generated files + `.gitignore`) because `prototypeShellBoards`-family tests scaffold a Vite shell onto the checked-in corpus.
+  - `agentPanel` gets one `installFetch` seam (48 traces, no assertion changed). `no-core-barrel-deep-imports` gains a justified ALLOWLIST + POSIX-normalised report; `icon-catalog-integrity` drops the unimported `chevron-left` and self-polices. Six unused `os` imports deleted — `bun run lint` clean.
+- **Reconciliation:** ran `alm:sync` early, saw it gut the manifest, reverted before committing — manifest and `vendor/` untouched. `.gitattributes` and studio-runtime bundles left to #138. `useDevServerReadiness.test.tsx`/`liveBoardFrame.test.tsx` untouched (ALLOWLIST entries naming #139, delete when it lands).
+- **Next step:** two follow-ups: (1) `parityMatrix` reports `studio_plan_variants` and `studio_import_figma_frame` have no canvas-parity row — real content gap, `mcp-tooling`; (2) the `live-01` scaffolder still writes into the tracked fixture and `package.json` is tracked — it must scaffold into a tmp copy.
+- **Landmines:** `mock.module` cannot be undone by `mock.restore()`; the namespace captured by `await import()` is LIVE — restore must hand back a plain-object COPY. A replacement factory that omits an export makes that export stop EXISTING for unrelated files. One full `bun test` rewrites `studio-workspace/__canonical-fixture/package.json`; check `git status` before staging there.
+- **Verification:** `bun test` (full) **13,041 pass / 33 fail / 0 errors / 1,199 files / 713 s** vs **11,159 / 210 / 134 / 1,197 / 477 s** on the same tree before (+1,900 pass = 129 files that never loaded). `bun run lint` clean. `./node_modules/.bin/tsc -b` exit 0. Targeted suites 1,902 pass / 2 fail (`studio-runtime-bundle-fresh` = #138's; `ai-driver-isolation` = 20 s whole-tree budget under 22-agent load). **The <6 min target is NOT met (713 s) and is not reachable by removing failures** — 129 more files now execute; re-time on an idle machine.
+- **Human action needed:** none blocking. Re-time `bun test` on an idle machine.
+
+---
+
+### sec-10 — security review of PR #150 (live-frame errors + Vite auto-promotion): APPROVED WITH FIXES
+- **Agent:** security-guard · **Stage:** done · **Updated:** 2026-09-17
+- **Goal:** review PR #150's auto-promotion gate, the new `error` wire message, the generated shell and the PreviewOverlay deletion; fix real findings on a review branch.
+- **Result:** draft PR #156 (`review/pr-150` → `feat/live-frame-errors-and-auto-promote`), 3 commits. **Merge #156 into #150 before #150 merges.**
+- **Scope:** `server/handlers/studio/{trustTier.ts,liveCapability.ts,devServer.ts}`, `server/liveOrigin.ts`, `src/admin/pages/site/canvas/{useBridgeFrameDiagnostics.ts,LiveRuntimePill.tsx,LiveAutoPromoteNotice/,canvasDiagnosticsBuffer.ts}`, `src/core/studio-runtime/{messages.ts,runtimeErrorTaps.ts}`, `server/handlers/__tests__/trustTier.test.ts`, `src/__tests__/canvas/bridgeDiagnosticsRate.test.ts`, `docs/agent-refs/glossary.md`.
+- **Findings:**
+  - **S-1 High — FIXED.** A demotion (`LiveAutoPromoteNotice.tsx:95` writing `trust: 'static'`) closed the Tier-2 routes but never stopped the dev server `useDevServerPrewarm.ts:32` had already spawned; `startDevServer` (`devServer.ts:418`) never schedules an idle teardown and `server/liveOrigin.ts:44-47` deliberately never re-reads `.studio/meta.json`, so the UNAUTHENTICATED second listener kept proxying `/p/<projectKey>/` (the folder name) to a running process. `trustTier.ts` now calls `stopDevServer` in the one write path (`enforceTierOnRunningProcesses`), so every demotion inherits it. Test verified failing without the fix.
+  - **S-2 Medium — FIXED.** Tier 2 was revocable only in the promoting session (the notice renders only at its own `phase === 'promoted'`; the latch never sets it again; the `Live` pill was a bare label). `LiveRuntimePill` gained a permanent "Back to static". CLAUDE.md invariant 1 requires the consent to be revocable.
+  - **S-3 Medium — FIXED.** The `error` message's RATE bound lived only in `runtimeErrorTaps.ts:70-71` — in the frame, i.e. in the code an attacker replaces (`sec-06`); a forged repeat is not dropped as a duplicate (`canvasDiagnosticsBuffer.ts:253` bumps a count and falls through to `publishScope`, which copies/sorts the array and notifies every subscriber). `admitBridgeDiagnostic` in `useBridgeFrameDiagnostics.ts` adds a parent-side fixed-window gate (6× the sender's, NOT a lifetime cap — a cross-origin frame keeps one `WindowProxy` across reloads).
+  - **Low, reported not fixed:** `useBridgeFrameDiagnostics.ts` keys on `iframe.contentWindow` (stable across navigation), so a frame reload does not clear the buffer — clear on the adapter's `ready`. No persistent design-board indicator that a promoted project's code is executing.
+  - **Clean:** the auto-promotion gate (`trustTier.ts:83-97` — non-Vite, outside-workspace, wrong-tier, re-promote-after-Undo all refused from disk); no `dangerouslySetInnerHTML` in new render sites; `source` never used as URL/path; generated shell interpolates only a compile-time constant; bridge-after-`render()` safe; PreviewOverlay's `sandbox=""` not load-bearing elsewhere.
+  - PR body claims inaccurate on two counts: "one click puts it back, permanently" (S-1, S-2) and "the bounds exist for the FORGED message" (true for size, not rate — S-3).
+- **Landmines:** `server/liveOrigin.ts` is a SEPARATE, UNAUTHENTICATED `Bun.serve` listener trusting the dev-server registry; **anything that revokes Tier 2 must kill the process — closing routes is not enough.** `startDevServer` (browser path) never schedules an idle teardown; only `referenceRender.ts` does.
+- **Verification:** `bun run build` clean · named test set 207/0 · `src/__tests__/canvas` 833/17 vs the PR's 829/17 · lint 6 pre-existing.
+- **Human action needed:** dogfood — open a Vite project, confirm the notice, click Undo, confirm the `vite` process is gone (task manager / `/p/<key>/` answers 503); reload and confirm the Live pill's "Back to static". Decide the two Low items.
+
+---
+
+### sec-11 — security review of PR #151 (GitHub connect + sign-in): APPROVED WITH FIXES
+- **Agent:** security-guard · **Stage:** done · **Updated:** 2026-09-17
+- **Result:** draft PR #157 into `feat/github-connect-and-signin`, 6 commits (one per finding). **Merge #157 into #151 before #151 leaves draft.**
+- **Scope:** `server/handlers/studio/{gitOperations,gitClone,gitAskpass,gitRunner,githubAuthRoutes,githubDeviceFlow}.ts`, `server/handlers/__tests__/{gitRemote,githubAuth,gitAskpass}.test.ts`, `docs/features/studio-git.md`. Read-only over `gitPaths.ts`, `githubToken.ts`, `githubCredentialStore.ts`, `githubApi.ts`, both migrations, `RepositorySection.tsx`, `gitRequests.ts`.
+- **Findings:**
+  - **HIGH, fixed** — the stored token was offered to whatever `origin` names: `GIT_ASKPASS` answers a PROMPT, not a destination, and `pushCurrentBranch` (`gitOperations.ts:441`) forwarded the credential unconditionally. Proven offline on Git for Windows 2.50 against a local 401 listener, which received `Basic x-access-token:<token>`. `originAcceptsStoredGithubToken` now gates it on `parseGithubRemoteUrl`; a non-GitHub origin falls back to the host's helper. `gitClone.ts` needed nothing (URL allowlisted by construction).
+  - **MEDIUM, fixed** — two clone jobs for one repo raced into the same directory (`existsSync` is a check, not a lock); the loser's cleanup `rmSync`'d the winner's FINISHED project. `inFlightTargets` reserves the derived name for the life of the job.
+  - **LOW, fixed** — device-flow map unbounded (`FLOW_TTL_MS` was dead code; `expires_in` unclamped above); now a real ceiling + `MAX_PENDING_FLOWS_PER_USER = 3`, evicting only that user's own oldest.
+  - **LOW, fixed** — identity cache keyed by credential id leaked one entry per sign-in; re-keyed by user id.
+  - **LOW, fixed** — `gitAskpass.ts` and `studio-git.md` claimed 0600/0700 protection Windows does not provide (measured 666 for file and dir; what protects the token is `%TEMP%`'s ACL). Docs corrected; a cross-platform test pins the guarantee that holds (script inside `os.tmpdir()`).
+  - **LOW, fixed** — `originAllowed` (CSRF) was missing on the three credential-writing routes; applied, matching the CMS/AI families. Does not settle `sec-05` finding 2.
+- **Answers:** token at rest — AES-256-GCM, fresh 96-bit IV per call, row never crosses HTTP, undecryptable row deleted → "signed out"; allowlist entry narrow. Device flow — user-scoped 404s, `device_code` never in a response, `repo` scope only, `nextPollAt` set before the await, all six routes behind `requireAuthenticatedUser` (the exception to the surface's posture, correctly). URL allowlist — 26 adversarial inputs probed (trailing dot, `@evil`, dotless-ı, `%2e%2e`, `\@`, `ext::`, `file://`, …) all rejected; `GITHUB.COM`, fullwidth, `:22`, double slashes normalised; `-c protocol.*.allow` deliberately NOT added (redundant; would break an operator's `insteadOf`). Clone containment — before AND after real-path checks; folder name from `[A-Za-z0-9_.-]` always containing `-`. `GET github/repos` — one page of 100, five fields; a 429/secondary-limit 403 reads as "may lack the repo scope" (misleading, leaks nothing; not fixed). SQL — both `023`, additive, unique index, `scopes_json` text, gates pass.
+- **Windows askpass — verified, works:** Git for Windows resolves the `#!` interpreter through its bundled `sh` and runs the script; the executable bit is irrelevant. Caveat: file modes are decorative on NTFS.
+- **Landmines:** `GIT_ASKPASS` has no notion of "which credential" — any future `runGit` caller passing `credential` for a remote not through `parseGithubRemoteUrl` reopens the HIGH. `existsSync` is never a lock for a directory a subprocess creates. On Windows, a network git call with NO credential invokes Git Credential Manager, which opens a GUI dialog and blocks for the full 120 s timeout — tests must set `credential.helper=` in fixtures. `bun test`'s happy-dom preload appears to break `Bun.serve`'s request path (consistent with `live-02`).
+- **Verification:** `bun run build` clean · `githubAuth`, `gitAskpass`, `gitRemote`, `git` tests + `migration-parity` + `plugin-secrets-never-leak` 88 pass / 1 skip / 0 fail · `db-postgres-isms` + `db-json-column-naming` 5 pass · eslint clean on all nine touched files · findings 1 and 2 confirmed failing without their fix. Nothing contacted github.com.
+- **Human action needed:** merge #157 into the feature branch before #151 leaves draft. Decide whether `sec-05` finding 2 is still "intentional single-operator" now that one Studio route family holds a real secret.
+
+---
+
+### sec-12 — security review of PR #154 (`fix/agent-tool-truth-and-gates`, A10/A11/A14) — APPROVED WITH FIXES; one HIGH closed
+- **Agent:** security-guard · **Stage:** done · **Updated:** 2026-09-17
+- **Result:** draft PR #159 (`review/pr-154` → `fix/agent-tool-truth-and-gates`), 4 commits. **The HIGH must not ship behind the A10 capability grant — merge #159 into #154 before #154 merges.**
+- **Scope:** NEW `server/handlers/studio/agentWriteScope.ts` + `.test.ts` (13 tests), NEW `server/handlers/studio/hooks/denyControlPlaneWrite.ts`, NEW `server/handlers/studio/gitRunner.test.ts`; modified `projectGuide.ts` (+test), `gitRunner.ts`, `server/ai/drivers/claudeCliToolSurface.ts`, `server/auth/capabilities.ts`, `src/core/capabilities.ts`, `referenceRender.ts`, `docs/reference/capabilities.md`, `studio-tier2-two-gates.test.ts`, `prompt-claims-match-tool-metadata.test.ts`.
+- **Findings:**
+  - **HIGH, fixed — the second gate was writable by the caller it gates.** `.studio/meta.json` carries `trust`, sits inside the CLI subprocess's `cwd` (`claudeCli.ts:297` = the project root), and the agent holds native `Write`/`Edit` there (`claudeCliToolSurface.ts:98`) with no deny rule (the generated `.claude/settings.local.json` wired only `PostToolUse` and `Stop`). Prompt-injected content → `Write` `{"trust":"run-project"}` → `referenceRender.ts:158`'s `checkTrustTier` passes → dev server spawns, no promotion by anyone. Worse, pre-existing: the same write can add `registeredMcpServers` + `approvedRegisteredMcpServers` (read straight off the file by `registeredMcpServers.ts:380`, fed to `--mcp-config` at `claudeCli.ts:527`) — a `stdio` command spawned next turn from a process denied `Bash`; and `.claude/settings.local.json` is never regenerated once hand-edited (`projectGuide.ts:617`), so one write disables the hooks. Closed with a `PreToolUse`(`Write|Edit`) deny hook refusing any write resolving into `.studio/`, `.claude/`, `.git/` or the rest of `EXCLUDED_WORKSPACE_DIR_NAMES`; evaluated independently of `--permission-mode` (holds under the panel's `bypassPermissions` default); checked on the textual AND symlink-resolved real path; judged RELATIVE to the project (an absolute scan would refuse every write in a checkout under `.claude/worktrees/`). Adversarial inputs: `src/../.studio/meta.json`, `.STUDIO`/`.Claude` case, `.git/hooks/pre-commit`, nested `packages/app/.studio/`, a real `src/cfg -> ../.studio` symlink, a project under `.claude/worktrees/wt/`; negatives `.studiorc`, `studio-notes.md`, `src/gitignore.ts`.
+  - **MEDIUM, fixed — the claims overstate the gate, and #150 makes them false.** Five places read the tier as an explicit human click; under decision 2 a Vite project is Tier 2 on first open. Corrected in all five (with the multi-user caveat); `studio-tier2-two-gates.test.ts` now ASSERTS the control-plane refusal so removing the hook fails the test that documents the pair.
+  - **LOW, fixed —** `clientSafeGitError` elided only the workspace root; git routinely names paths outside it (`~/.gitconfig`, `core.excludesFile`, hooks) and A14 hands the string to a model. Now elides the home directory too, both separator spellings.
+  - **LOW, fixed —** A11's gate asserted "a relayed tool declares no handler" but not the converse; the `bridge` + handler exception is now enumerated. No current tool changed dispatch (enumerated).
+  - **Reported, not fixed:** `deploy.ts:169` reads the tier off the APP ROOT while `devServer.ts`/`referenceRender.ts` read the project dir, so a monorepo can never deploy (fail-closed, pre-existing). `boardRequirementClaim.ts:48` calls a board refusal "a settled fact", pulling mildly against `no-board-connected`'s `retryable: true`.
+- **A10 + auto-promotion (#150), plainly:** with #150 merged both gates are satisfied by default for every project Studio can run — "Admin × Vite", no human answers a question. **Acceptable single-operator** (Tier 2 for Vite is a PRODUCT DEFAULT, not a consent boundary — now written down). **Not acceptable multi-user**; would need (a) authorisation per (user, project), (b) an unforgeable promotion record carrying who/why, (c) `sec-05` finding 2 closed (per-route capability checks — plan §9) as the prerequisite.
+- **Decisions:** deny list = `EXCLUDED_WORKSPACE_DIR_NAMES` + `.claude`, reused not hand-listed. Hook fails OPEN on unparseable stdin (the payload is the CLI's, never the model's). `Read` deliberately NOT gated (`.studio/` holds secret NAMES only).
+- **Landmines:** do not remove the `PreToolUse` hook while `studio.run.project` stays on Admin. The tier is NOT per-call human consent once #150 lands; anything needing a human must ask at the point of use.
+- **Verification:** `bun run build` pass · the nine named suites 81/0 · `server/handlers/__tests__` 885/4 and architecture 582/8, every failure reproduced on the base · eslint clean on all 12 touched files · `projectGuide.test.ts` 5 pre-existing Windows path failures, identical on `b770d211`.
+- **Human action needed:** merge #159 into #154 (or land it first). Whoever lands #150 reads `docs/reference/capabilities.md`'s new "what the Tier-2 second gate proves" section before writing the auto-promotion notice copy: it must not describe an auto-promotion as consent.
+
+---
 
 ### panel-34 — DS-7: the built-in design system's colours as an Assets → Colors section
 - **Agent:** panel-designer (Opus 5)
@@ -11187,48 +12049,16 @@ would have sent the next person hunting a bug that does not exist. If you are
 about to report a large, cross-cutting `tsc` breakage in files nobody touched,
 **check `npx tsc --version` against `package.json` before you write it down.**
 
-### standing-01 — the full suite runs now: 34 pre-existing failures, not ~200
-**Rewritten 2026-07-31 by `test-infra-01`. The old numbers are dead — do not
-quote "~200 failures" or "never run the full suite" any more.**
+### standing-01 — the pre-existing-failure bucket is 33, and every one of them has a name
+**Rewritten 2026-09-17 by `test-05` (PR #158). The "34 failures" text and the "honest not-my-failure bucket" framing are both dead — do not quote them.**
 
-`bun test` now **completes** in ~300 s and reports **7618 pass / 34 fail /
-1 skip** across 772 files on this Windows machine. Measured before/after on the
-same tree, same machine:
+`bun test` on this Windows machine now reports **13,041 pass / 33 fail / 0 errors** across 1,199 files (before `test-05`: 11,159 / 210 / 134 / 1,197). **129 files could not LOAD at all before** — the cause was one unrestored `mock.module`, not Windows.
 
-| | pass | fail |
-|---|---|---|
-| before `test-infra-01` | 7436 | **215** |
-| after | 7618 | **34** |
+The three things that were really wrong, none a "flake": (1) **`mock.module` is process-wide and PERMANENT** — `mock.restore()` restores spies, not module mocks; gated by `mock-module-must-restore.test.ts`, read its header before writing another module mock. (2) **The canvas cluster was a store leak** — `setup.ts` now resets `useEditorStore` per test via a hook `store.ts` publishes on `globalThis`. (3) **CRLF** — `core.autocrlf=true` is the Git-for-Windows default and `.` does not match `\r`; that emptied the design-system manifest (making `alm:sync` destructive) and broke `canonicalCheck`.
 
-**181 of the 215 were one bug** — `EBUSY` unlinking temp SQLite databases under
-`%TEMP%\cms-test-*`. Root cause and fix are in the `test-infra-01` entry:
-`DbClient` had no `close()`, and bun's own statement cache evicts prepared
-statements that only the GC finalizes, so `sqlite3_close_v2` closed into a
-zombie that kept the file locked. Both halves are fixed; the EBUSY class is
-**gone, not reduced** (`grep -c EBUSY` over a full run: 0).
+The 33 that remain, by owner: **2** `useDevServerReadiness` (PR #139, allowlisted, delete when it lands) · **1** `studio-runtime-bundle-fresh` (`Bun.build` output drift across Bun PATCH versions; #138 commits the bundles and owns `.gitattributes`) · **9** newly VISIBLE, none newly broken — `studio_compare` (2), `parityMatrix` (1, a REAL gap: `studio_plan_variants` and `studio_import_figma_frame` have no canvas-parity row), `agentBreakpointCapture` (1), `claudeCli` (1), `studio.test.ts` (2), `projectTools` (1), `useLiveOrigin` (1) · **the rest are machine-load artefacts** (whole-tree scans like `ai-driver-isolation` blow a 20 s budget under 22 agents and pass alone).
 
-The suite also used to **wedge forever** — nobody could finish a full run. Cause
-was not load: `sqlite-transaction-concurrency.test.ts` deadlocked in
-`expect(...).rejects` (see `test-infra-01`). Also fixed.
-
-**The 34 that remain are genuinely not yours** (unchanged before → after, zero
-new failures introduced). They are:
-
-- **Windows path/separator gates** — `codemirror-lazy-only`,
-  `dispatcher-html-pipeline`, `error-boundary-coverage`,
-  `keybindings-registry-single-source`, `selectorStability`,
-  `siteExplorerPanel`, `plugin-sdk/lintCli`, `cacheLayout` (×2),
-  `cmsMigrations`. These join or compare paths and lose on `\` vs `/`. Nobody
-  has fixed them; they are still the honest "not my failure" bucket.
-- **Plugin QuickJS/worker suites** — `pluginServerRuntime` (×7),
-  `pluginWorkerRpcTimeout` (×3).
-- **In-flight work from parallel agents** — `fsCodemodAdapter` (×12),
-  `layerNodeContextMenu`, `agentBreakpointCapture`.
-
-**Triage rule (updated):** run the full suite — it works and it is fast enough.
-Diff your failures against the 34 above. Anything else is yours. `tsc -b`
-currently reports ~108 errors, all in `src/core/*` from another agent's
-in-flight refactor; that number is *not* a `test-infra-01` regression.
+**Triage rule:** run the full suite, diff against this list, and if a file you did not touch fails, **run it on its own before calling it yours or not-yours** — most of what used to be called a flake here was a real leak with a findable cause. Runtime is ~713 s, longer than the 477 s baseline precisely because 129 more files now execute; re-time on an idle machine before quoting a number.
 
 ### standing-02 — verification split: browser for layout, static gates elsewhere
 **Amended 2026-07-31.** The original rule was "never run a browser pass, the
