@@ -51,6 +51,25 @@ bun run test:e2e:install
 bun run test:e2e
 ```
 
+### In CI
+
+The full suite is **not** run in CI: serial (`workers: 1`) across 150+ specs it
+takes ~45-60 minutes and is timeout-fragile against the un-optimized dev
+server. The `e2e-budgets` job in `.github/workflows/ci.yml` runs the narrow
+budget slice instead — `studio-board-perf`, `inspector-panel-measurement`,
+`inspector-height`, `studio-feel` — because those four measure **computed
+layout and frame time**, the one class of question happy-dom structurally
+cannot answer (`standing-02`). The job starts `bun run e2e:dev` itself and
+waits on the two ports rather than leaving it to `playwright.config.ts`'s
+120s `webServer` timeout, which a cold Vite can exceed while it compiles the
+editor chunk. It passes only the spec paths that exist, so a spec that has not
+landed yet costs coverage instead of failing the job for the wrong reason, and
+it uploads `.tmp/playwright-report` as an artifact.
+
+`bun run bench:studio-board` runs `studio-board-perf.e2e.ts` through the same
+Playwright Node runner from the bench harness and republishes its `perf`
+annotations — see `scripts/bench/README.md`.
+
 The Playwright config starts a disposable local stack by default:
 
 - Admin UI: `http://127.0.0.1:5174`
@@ -165,7 +184,8 @@ work that was never folded into that matrix at all — each spec below cites the
 | `lock-01` | A node whose VALUE the evaluator resolved is no longer locked | `resolved-value-not-locked.e2e.ts` |
 | `struct-01` | A move/delete/insert/duplicate/wrap writes back to the real `.tsx`, or refuses with an `EditConstraint` | `structural-writeback.e2e.ts` |
 | *(no `STATE.md` id — no docblock)* | An authored background-image prop uses optimized media variants in both the editor and the published CSS | `background-image-smoke.e2e.ts` |
-| `perf-01` (WS-5.3/5.4) | Board pan/selection perf against a synthetic 50-frame board and the real eSIM corpus | `studio-board-perf.e2e.ts`; `_perf-diagnostic-studioboard.e2e.ts` is the underlying diagnostic, explicitly not a permanent spec |
+| `perf-01` (WS-5.3/5.4) | Board pan/zoom frame time and iframe virtualization against the real eSIM corpus. **Self-skips on a clean checkout** — `studio-workspace/maherfayad-stack-eSIM` is not tracked by git | `studio-board-perf.e2e.ts`; `_perf-diagnostic-studioboard.e2e.ts` is the underlying diagnostic, explicitly not a permanent spec |
+| V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
 
 ### Intentionally left agent-run only
 
