@@ -1221,9 +1221,87 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### meta-12 — the four built-in-design-system branches merged into one integration branch
+- **Agent:** integration (Opus 5)
+- **Stage:** done — pushed to `feat/alm-figma-killer-studio-shell`; PRs #128–#131 closed as superseded.
+- **Updated:** 2026-09-17.
+- **Branch/worktree:** `feat/ds-integration` in `.tmp/wt-ds-integrate`, cut from `feat/alm-figma-killer-studio-shell` @ `0da8a84b` (still the tip when the merge started and when it was pushed — a fast-forward, no second merge needed).
+- **Goal:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` waves 1+2 land as ONE branch. Four agents each built against `0da8a84b` and none could see the others' files, so several deliberately left a seam for whoever merged.
+
+#### Merge order and what each contributed
+| # | Branch | PR | Entry | Merge commit |
+|---|---|---|---|---|
+| 1 | `feat/ds-vendor` | #129 | `struct-08` | `ce1b3930` |
+| 2 | `feat/ds-source-kind` | #131 | `parser-12` | `ff0566aa` |
+| 3 | `feat/ds-project-files` | #128 | `server-23` | `f87f1730` |
+| 4 | `feat/assets-panel` | #130 | `panel-33` | `2bb05a57` |
+
+Then two integration commits: `76b478e4` (the seams the branches could not close) and `0d180e0c` (two gates the merge genuinely broke).
+
+#### Every conflict, and how it was resolved
+1. **`src/core/module-engine/types.ts`** — auto-merged correctly. DS-1 and DS-4 add the byte-identical `keywords?: string[]`; DS-3 widens `sourceImport` to the union. Verified by reading the merged file, not by trusting git: one `keywords?`, and `{ kind:'package'; specifier; name } | { kind:'design-system'; name }`.
+2. **`server/handlers/studio/builtinDesignSystem.ts`** — no conflict, and `git diff` between the two branches' copies is empty. Both agents wrote it byte-identically on purpose; confirmed rather than assumed.
+3. **`server/handlers/studio/pageTemplates.ts`** (4 hunks) — kept `feat/ds-project-files`' `StarterPageContext` (`{ kit, designSystemImport }`) with the specifier COMPUTED per page, and deleted `feat/ds-source-kind`'s literal `DESIGN_SYSTEM_SPECIFIER = '../design-system'` constant. The literal is wrong for a page nested deeper than `pages/`. The parameter is the PROJECT dir under both branches (`projectDir`, not `appRoot`); both sides' doc prose was merged into one comment that keeps the "this used to ask `hasDependency`, which is why it took an app root" sentence.
+   *(Note: the work order had these two branches swapped for this seam — `feat/ds-project-files` is the one that computes. The instruction's substance — computed path, project-dir parameter — is what landed.)*
+4. **`server/handlers/studio/pageScaffold.ts`** — same seam, took the computing side: `starterPage(componentName, kind, { kit: detectPageTemplateKit(dir), designSystemImport: designSystemImportSpecifier(dir, pagesDir) })`.
+5. **`server/handlers/studio/__tests__/pageTemplates.test.ts`** (7 hunks) — kept the UNION of both sides' cases, not one side. Git had silently dropped `withPackageJson` while keeping three calls to it, so the file would not have run. Restored both helpers and merged the `detectPageTemplateKit` block into five distinct cases: folder → alm; no folder → plain; **unmigrated project that only declares the retired npm** → plain (DS-3's case, DS-2's comment); folder with no `index.js` → plain (DS-2 only); bare folder, no `package.json` → plain.
+6. **`server/handlers/studio/projectProbe.ts`** — kept `feat/ds-project-files`' multi-line `NON_PAGES_DIR_SEGMENTS` with its comment (identical set, better doc), and dropped the DUPLICATE `PROJECT_DESIGN_SYSTEM_DIR` import the merge produced. Server files take that constant from `./builtinDesignSystem` (every other server importer does); the `@core/page-parser` copy is the browser-side mirror. `feat/ds-source-kind`'s separate `discoverPageFiles` filter was untouched and survives.
+7. **`src/modules/alm/register.tsx`** — auto-merged correctly and verified by grep: DS-1's `description`/`keywords`/`spec.group → category` mapping AND DS-3's `sourceImport: { kind: 'design-system', name }` both present; `ALM_PACKAGE_SPECIFIER` / `ALM_DESIGN_PACKAGE_SPECIFIER` have **zero occurrences** anywhere in `src/`, `server/`, `scripts/`.
+8. **`src/admin/pages/site/panels/AssetsPanel/assetsModel.ts`** — git tracked the rename, so this was a content conflict, not modify/delete. DS-1's `moduleAvailability` rewrite (keys on `sourceImport`, not `category === 'Design System'`) auto-merged and is intact — it had to, or all 39 design-system modules would be hidden. DS-1's `moduleAccentForCategory` was **not** re-applied: DS-4 deletes the accent mechanism outright (its module doc says so) and nothing reads it, so re-applying a tuned version of a deleted function would have been resurrecting dead code. `src/admin/pages/site/module-picker/` does not exist.
+9. **`src/admin/pages/site/studio/registerProjectModules.ts`** — `category: 'Design System'` → `'Packages'` (see fixups).
+10. **`STATE.md`** ×3 — all four entries kept, appended in merge order under `## Now`, plus this one.
+11. **`docs/features/modules.md`** — kept DS-4's fuller `keywords` doc and merged both sides' `category` sentence, adding that a design-system component carries its PURPOSE group there.
+
+#### Post-merge fixups — `76b478e4`
+- **`designSystemPreviewSheet.ts` imported the RETIRED npm specifier.** It only built because a stale `node_modules/@alm-design/design-system` survived `bun install` after DS-1 dropped the dependency; `rm -rf node_modules/@alm-design && bun install` reproduces the real failure. Repointed to `alm-design-system/dist/index.css?inline`. Chose the second `?inline` import over re-exporting the string from `canvasVendorCss.ts`: Vite resolves both specifiers to ONE module-graph node so no bytes are duplicated, and the alternative drags `canvasCssLayers` + `darkSchemeCssTransform` into the panel's chunk for a constant.
+- **`assets-search-coverage.test.ts` imported `@site/module-picker/moduleInserterModel`**, which DS-4 moved. **`tsconfig.app.json` excludes `src/__tests__` and `**/*.test.ts`, so `bun run build` can NEVER catch a broken import in a test** — `bun test` is the only gate on test-file imports. Repointed to `@site/panels/AssetsPanel/assetsModel`.
+- **`rankAssets.test.ts`** now runs DS-1's table through DS-4's real ranker over the REAL registry, in two populations: every registered module (the data promise — the same population DS-1's gate scores) and what the panel actually offers. `toast → alm.Snackbar` holds in the first and deliberately returns NOTHING in the second, because Snackbar is one of the five palette-hidden overlays; that asymmetry is now asserted instead of assumed.
+- **`componentCatalogTools.ts`** already spread `description`/`keywords`/`group` through. Added a test against the REAL manifest holding every `apiSource: 'builtin'` entry to a non-placeholder description, ≥ 3 keywords and a group (`Button` → `Actions`). Tightening `ComponentSpec` to make them required stays DS-9's.
+- **`registerProjectModules.ts`: `category: 'Design System'` → `'Packages'`.** In the Assets panel `category` is a SECTION NAME, so the old string claimed a user's own npm belonged to Studio's built-in system. Verified the section composition against the real registry: Design system renders nine purpose groups in `DESIGN_SYSTEM_GROUP_ORDER`, then `Icons` (10), and an unknown group sorts last alphabetically — so `pkg.*` lands in its own sub-group under `PackageBundleNotice` and nothing vanishes. The section SPLIT is by module id (`base.*` vs the rest), never by this string.
+- **`bun run alm:sync` is a no-op on the merged tree** — the freshness gate holds.
+
+#### Two gates the merge genuinely broke — `0d180e0c`
+Both were listed as "pre-existing" in `parser-12`'s handoff. **They are not** — a baseline worktree at `0da8a84b` passes both.
+- **`studio-runtime-bundle-fresh`** — `feat/ds-source-kind` added `builtin-design-system` to `FrameworkColorTokenOriginSchema` (`@core/framework-schema`), which the studio-runtime Vite plugin bundles, and never re-ran `bun run studio-runtime:sync`. Regenerated; the diff is exactly that one `Type.Literal`.
+- **`no-legacy-pages-table`** — `DesignSystemImportSchema`'s description read "`('../design-system' from pages/Home.tsx)`". The gate is a deliberately crude `\bfrom\s+pages\b` grep over `server/` that strips COMMENTS but not string literals, so a schema description tripped a rule about SQL. Reworded to "a page at pages/Home.tsx gets '../design-system'" — same fact, gate keeps its crude shape.
+
+#### Verification
+- **`bun run build`** — clean (tsc -b && vite build, ~18 s).
+- **`bun run lint`** — exactly the six known `'os' is defined but never used` errors in six `server/**` test files this work does not touch. Nothing else.
+- **`bun test src/__tests__/architecture`** — **559 pass / 2 fail**, both known-red: `no-core-barrel-deep-imports` (two `prototypeShell/*` files) and `direct-icon-imports` (`chevron-left`). Before `0d180e0c` it was 557/4.
+- **`bun test` (full), merged vs. baseline.** Baseline built by `git worktree add --detach .tmp/wt-ds-baseline 0da8a84b` + its own `bun install` (worktree deleted afterwards).
+
+  | | baseline `0da8a84b` | merged |
+  |---|---|---|
+  | pass | 10 969 | 11 131 |
+  | fail | 216 | 219 |
+  | errors | 144 | 147 |
+  | files | 1 187 | 1 196 |
+
+  **The failing-test NAME set is IDENTICAL: 88 unique names on each side, and identical multiplicity per name. Zero new failures, zero fixed-by-accident.** The fail/error count delta is entirely the `standing-01` batch-isolation flake, which drifts in BOTH directions between runs (baseline errors in `tagToCodemod.integration`, `cssInJsExtraction`, `copyJsxCodemods`, `publishAtomicityRace` that merged does not; merged errors in `setImportSpecifier`, `entryStylesheetCache`, `staticEval`, `authSessions` that baseline does not) plus the happy-dom canvas timeout clusters (`bodyPresentation` 11→16, `agentPanel` 45→46). Every one of those files was re-run PER-FILE on both trees and passes.
+- **Explicit suites** — `bun test src/core/page-parser src/core/ast-codemods src/core/studio-sync server/handlers/studio src/__tests__/panels src/__tests__/modules src/__tests__/architecture` → **2911 pass / 31 fail**: the 29 `canonicalCheck` / `canonicalSummaryForFile` / `resolvePageSourceFile` / `computePageWriteVerification` fixture family (`studio-workspace/__canonical-fixture` is untracked, so they fail in ANY fresh worktree), the 2 architecture known-reds, and one `tagToCodemod.integration` flake that passes per-file on baseline AND merged.
+
+#### Landmines
+- **`bun run build` cannot see test files.** `tsconfig.app.json` excludes `src/__tests__` and `**/*.test.ts*`. A gate test importing a path another branch deleted builds green and only `bun test` catches it. That is how DS-1's search gate reached this merge broken.
+- **A stale `node_modules/` entry masks a deleted dependency.** `bun install` did not remove `@alm-design/design-system` after `package.json` dropped it, so the retired specifier still RESOLVED and the build passed. Before trusting a "the npm is gone" build, `rm -rf node_modules/@alm-design && bun install`.
+- **"Pre-existing failure" claims in a handoff need a baseline, not a plausible story.** Two of the three such claims in `parser-12` were failures that branch had caused; both message texts invited the misreading (`no-legacy-pages-table` literally prints "Expected failures until Step 3"). The only reliable method is a detached worktree at the base commit with its own `bun install`.
+- **`git merge` silently dropped a test helper.** In `pageTemplates.test.ts` the region defining `withPackageJson` was replaced by the other side's helper while three call sites survived outside the conflict markers. Conflict markers are not the boundary of what a merge changed — read the whole file.
+- **Two `designSystemImportSpecifier` functions now exist** (`@core/page-parser/designSystemDir.ts`, workspace-relative file path; `server/handlers/studio/designSystemFiles.ts`, two absolute dirs). They AGREE on every case checked, are separately tested, and serve different layers — but it is one rule with two implementations. Left for DS-9 rather than rewritten in an integration commit.
+
+#### Left for DS-9 (nothing here blocks the merge)
+- **Residual `@alm-design/design-system`, allowed:** `designSystemMigrate.ts` (`RETIRED_DESIGN_SYSTEM_PACKAGE`) + its test, and `rewriteImportSpecifier.test.ts` — the specifier the migration exists to rewrite.
+- **Residual, honest prose naming the retired npm** (no action needed, but the `no-alm-npm-specifier` gate DS-9 adds must allowlist them): `moduleMapping.ts`, `studioDownload.ts`, `projectSeed.ts`, `designSystemFiles.ts`, `vendorRoot.ts`, `componentCuration.ts`, `scripts/sync-alm-design-system.ts`, `assets-search-coverage.test.ts:57` (detects the OLD placeholder description), `register.tsx:440`, `vendor/alm-design-system/README.md`.
+- **Residual, genuinely STALE — fix before the gate:** `src/admin/pages/site/canvas/ProjectCssInjector.tsx:9`, `src/core/module-engine/packageModuleId.ts:32`, `src/core/page-tree/sourceWritability.ts:158`, `src/core/studio-sync/collectPageStylesheets.ts:37`, `docs/features/canvas-iframe-per-frame.md:153,191`, `docs/agent-refs/canvas-internals.md:51,223`, `docs/features/studio-import.md:18,1316`, `docs/reference/canonical-jsx.md:240,293`, `PROJECT-BRIEF.md:153`. None were touched by this merge, so they were left alone per the work order.
+- **Fixture strings that must stay** (they exercise the `kind: 'package'` path, which an UNMIGRATED project genuinely still hits): `insertJsxElement.test.ts`, `studioWriteback.test.ts`, `componentSources.test.ts`, `slotReplace.test.ts`, `slotCandidates.test.ts`, `rawSvgImports.test.ts`, `pruneOrphanedImports.test.ts`.
+- **Deleted-path references — ZERO in `src/`/`server/`/`scripts/` code.** Remaining hits are historical prose ("replaces `NewPageButton`", "moved out of `module-picker/`", which are correct) plus stale live docs DS-9 owns: `PROJECT-BRIEF.md:245,323` and `docs/agent-refs/canvas-internals.md:720`. Also `src/__tests__/toolbar/toolbar.test.ts` still has a `ModulePickerDropdown — search filter` describe block that re-implements a deleted component's filter locally — green, but dead.
+- **`PALETTE_HIDDEN_ALM_MODULE_IDS`** still carries its "ALM" naming; the root `design-system/` template folder still exists.
+
+#### Human action needed — dogfood at `/admin/site` on `test4`
+Nothing in this merge was driven in a browser. The script is in the final report; the two things no test covers are **(a)** the Assets cards following the board's preview axes into dark + RTL, and **(b)** the migration banner on `test4` — **the human clicks it**, because it rewrites their source.
+
 ### struct-08 — DS-1: vendor the design system into Studio (+ DS-6's data half)
 - **Agent:** studio-implementer (Opus 5)
-- **Stage:** done
+- **Stage:** merged into `feat/alm-figma-killer-studio-shell` via `meta-12` (PR #129 closed superseded)
 - **Updated:** 2026-09-17
 - **Branch/worktree:** `feat/ds-vendor` in `.tmp/wt-ds-vendor`, off `feat/alm-figma-killer-studio-shell` @ `0da8a84b`. Draft PR against that branch.
 - **Goal:** the ALM design system's SOURCE lives in this repo and is the only copy Studio renders from; the generated component manifest additionally carries the description / keywords / group that make the Assets panel findable.
@@ -1272,7 +1350,7 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ### parser-12 — DS-3: a project's `design-system/` folder is a black-box source kind; inserts write a relative import
 - **Agent:** parser-surgeon
-- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Stage:** merged into `feat/alm-figma-killer-studio-shell` via `meta-12` (PR #131 closed superseded). Two failures this entry called pre-existing were NOT — see `meta-12`.
 - **Branch:** `feat/ds-source-kind`. Worktree: `.tmp/wt-ds-source-kind/`. Based on `feat/alm-figma-killer-studio-shell` @ `0da8a84b`.
 - **Updated:** 2026-09-17.
 - **Work order:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` §3 DS-3 (wave 1, parallel with DS-1 `feat/ds-vendor` and DS-2 `feat/ds-project-files`).
@@ -1415,7 +1493,7 @@ branch does not touch.
 
 ### server-23 — DS-2: projects carry a Studio-written `design-system/` folder instead of the npm
 - **Agent:** server-engineer
-- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Stage:** merged into `feat/alm-figma-killer-studio-shell` via `meta-12` (PR #128 closed superseded)
 - **Branch:** `feat/ds-project-files`. Worktree: `.tmp/wt-ds-project-files/`. Base: `0da8a84b`.
 - **Updated:** 2026-09-17.
 - **Goal:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` §3 DS-2 — nothing in a user's project
@@ -1556,7 +1634,7 @@ succeeds. Then "Download the code" and `bun install && bun run dev` in the unzip
 ### panel-33 — Assets panel, live previews, ranked search, and Add page (DS-4 / DS-5 / DS-6-UI / DS-8)
 - **Id note:** the work order called this `panel-32`, but that id was already taken (above) by
   the inspector base-declared-Fill fix that landed on this branch. Renumbered to `panel-33`.
-- **Agent:** panel-designer · **Stage:** done (build + lint + targeted tests green; draft PR open) — **needs human dogfood**
+- **Agent:** panel-designer · **Stage:** merged into `feat/alm-figma-killer-studio-shell` via `meta-12` (PR #130 closed superseded) — **still needs human dogfood**
 - **Branch:** `feat/assets-panel` off `feat/alm-figma-killer-studio-shell` (`0da8a84b`). Worktree `.tmp/wt-assets-panel`.
 - **Updated:** 2026-09-17.
 - **Goal:** the wave-2 editor half of `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` — replace the
