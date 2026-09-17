@@ -161,15 +161,6 @@ describe('studio_git_commit — behaviour', () => {
     expect(result.error).toContain('may not create it yourself')
   })
 
-  it('refuses a directory outside the workspace', async () => {
-    const result = (await tool.handler(
-      { dir: '/etc', message: 'x', files: ['passwd'] },
-      context(dir),
-    )) as { ok: boolean; code: string }
-    expect(result.ok).toBe(false)
-    expect(result.code).toBe('outside-workspace')
-  })
-
   it('refuses a blank message', async () => {
     fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'changed\n')
     const result = (await tool.handler(
@@ -229,6 +220,68 @@ describe('the git tool family — capability declarations', () => {
       'studio_git_push',
       'studio_git_status',
     ])
+  })
+})
+
+/**
+ * `guardProject` — the one guard all five tools share.
+ *
+ * `sec-13` filed its `outside-workspace` branch as dead on the grounds that
+ * `resolveToolProjectDir` throws first. It does throw first for a `dir`
+ * OUTSIDE the workspace — which is why the guard catches that throw — but the
+ * branch is still reachable, because `resolveProjectDir` accepts the workspace
+ * ROOT (and returns it when no `dir` is given and the workspace holds no
+ * projects), and the root is not a project. Both paths are driven here, so the
+ * next person to call the branch dead has to explain these two tests.
+ */
+describe('the git tool family — the shared project guard', () => {
+  const allTools = [statusTool, branchTool, pushTool, openPrTool, toolNamed('studio_git_commit')]
+
+  /** Minimal valid arguments per tool, so the guard is what refuses and not the schema. */
+  function argsFor(name: string, dir: string): Record<string, unknown> {
+    if (name === 'studio_git_commit') return { dir, message: 'x', files: ['pages/Home.tsx'] }
+    if (name === 'studio_git_branch') return { dir, action: 'list' }
+    if (name === 'studio_git_open_pr') return { dir, title: 'x' }
+    return { dir }
+  }
+
+  it.each(allTools.map((entry) => [entry.name] as const))(
+    '%s refuses a directory outside the workspace with a structured refusal, never a thrown exception',
+    async (name) => {
+      const outside = path.parse(workspaceRoot).root
+      const result = (await toolNamed(name).handler(argsFor(name, outside), context(makeProject()))) as {
+        ok: boolean
+        code: string
+        error: string
+        retryable: boolean
+      }
+      expect(result.ok).toBe(false)
+      expect(result.code).toBe('outside-workspace')
+      // A14: the code is rendered into `error` too, because every driver
+      // reduces a failed tool result to that string.
+      expect(result.error).toContain('[code=outside-workspace retryable=false]')
+      expect(result.retryable).toBe(false)
+    },
+  )
+
+  it('refuses the workspace ROOT itself — reached past the containment check, not by the catch above it', async () => {
+    const result = (await statusTool.handler({ dir: workspaceRoot }, context(workspaceRoot))) as {
+      ok: boolean
+      code: string
+    }
+    expect(result.ok).toBe(false)
+    expect(result.code).toBe('outside-workspace')
+  })
+
+  it('lets a bound connector naming a DIFFERENT project fail with the mismatch message, not as "not a Studio project"', async () => {
+    // Deliberately a throw, exactly as in every other Studio tool: the
+    // message names both projects and the next action, and flattening it into
+    // `outside-workspace` told the agent a project that exists does not.
+    const turnProject = makeProject()
+    const otherProject = makeProject()
+    await expect(
+      statusTool.handler({ dir: otherProject }, context(turnProject)),
+    ).rejects.toThrow(/cannot operate on/)
   })
 })
 

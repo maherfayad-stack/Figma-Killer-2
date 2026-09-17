@@ -540,6 +540,21 @@ of consent for delegated work. There is deliberately **no** `init`, `restore`,
 overwrite work the user has on screen and cannot see being overwritten, which
 is exactly why the Version control panel shows them a list instead.
 
+All five share one guard, `guardProject` in `gitTools.ts`, and it owns both
+halves of "can this directory be operated on": it catches
+`ProjectDirOutsideWorkspaceError` (which `resolveToolProjectDir` throws for a
+`dir` outside `studio-workspace/`) and then runs `assertOwnGitRepo`, so every
+tool in the family answers a structured `outside-workspace` /
+`not-a-repository` refusal rather than a raw exception — which only
+`studio_git_commit` used to do. `outside-workspace` is reachable two ways, and
+both are tested: the caught throw, and the workspace **root** itself, which
+`resolveProjectDir` accepts (it is what you get with no `dir` in an empty
+workspace) and which is not a project. `ProjectDirMismatchError` — a
+workspace-bound connector naming a project other than its turn's —
+deliberately still throws, as it does in every other Studio tool: its message
+names both projects and the next action, and flattening it into
+`outside-workspace` told the agent a project that exists does not.
+
 **Non-Studio MCP tools.** `get_context` (`mcp/tools/contextTool.ts`) is the orientation call for the CMS half: it reports whether the Site editor is connected — every browser tool needs it — and which templates wrap pages, so an agent knows what its authored markup is *in addition to*. Headless; call it first when a browser tool answers "open the workspace". `mcp_list_project_servers` and `mcp_propose_server` (`mcpServerTool.ts`) cover external MCP servers: the first lists every project-declared (`.mcp.json`) and Studio-registered server with its approval state and its *secret field names* — never a secret value; the second registers a proposal that is saved **unapproved and cannot be approved by any tool or agent**, so the honest report to the user is "proposed, needs your review", never "set up". `site_read_styles` and `site_list_breakpoints` (`styleTools.ts`) are headless replacements for their snapshot-backed `site_*` siblings, which read a browser-posted snapshot that is `null` over MCP; `site_publish` (`publishTool.ts`) is the one explicitly capability-gated write that leaves draft state. The CMS `site_*` toolset itself is tabulated under [Tools](#tools) below.
 
 ### `studio_screenshot` — the agent's eyes
