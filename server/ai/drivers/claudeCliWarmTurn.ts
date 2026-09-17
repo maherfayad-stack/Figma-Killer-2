@@ -179,7 +179,7 @@ async function createWarmSession(
     ...(options.mintConnector ? { mintConnector: options.mintConnector } : {}),
   })
   const mcpConfigFile = connector
-    ? tryWriteMcpConfigFile(buildMcpConfig(connector, options.serverPort, ctx.projectServers, ctx.registeredServers))
+    ? await tryWriteMcpConfigFile(buildMcpConfig(connector, options.serverPort, ctx.projectServers, ctx.registeredServers))
     : null
 
   let session: ClaudeCliWarmSession
