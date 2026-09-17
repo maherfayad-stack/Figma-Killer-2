@@ -26,6 +26,7 @@ import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProje
 import { tryServeStudioGitRemote } from '../studio/gitRemoteRoutes'
 import {
   cloneTargetDir,
+  cloneTargetIsFree,
   clearGitCloneJobsForTest,
   readGitCloneJob,
   startGitCloneJob,
@@ -350,6 +351,47 @@ describe('git clone', () => {
     const remotes = Bun.spawnSync(['git', 'remote'], { cwd: target })
     expect(remotes.stdout.toString().trim()).toBe('origin')
   })
+
+  it('refuses a second clone into a target a running job owns, and does not touch its work', async () => {
+    const source = makeProjectDir()
+    await makeRepo(source)
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-clone-origin-race-'))
+    created.push(bare)
+    await git(bare, ['init', '--bare', '--initial-branch=main'])
+    await git(source, ['remote', 'add', 'origin', bare])
+    await git(source, ['push', '--set-upstream', 'origin', 'main'])
+
+    const remote = { owner: 'studio-test', repo: 'raced', url: bare, protocol: 'https' as const }
+    const target = cloneTargetDir(remote)
+    created.push(target)
+
+    expect(cloneTargetIsFree(remote)).toBe(true)
+    const first = startGitCloneJob(remote, undefined)
+
+    // `git clone` is what creates the directory, so the target does not exist
+    // yet — "is it free?" has to answer no on the RESERVATION, not on disk.
+    expect(fs.existsSync(target)).toBe(false)
+    expect(cloneTargetIsFree(remote)).toBe(false)
+
+    // …and a caller that starts one anyway is refused rather than racing into
+    // the same directory and deleting the winner's clone on its own cleanup.
+    const second = startGitCloneJob(remote, undefined)
+    expect(second.phase).toBe('failed')
+    expect(second.error).toMatch(/already running/)
+
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      const current = readGitCloneJob(first.id)
+      if (current && (current.phase === 'done' || current.phase === 'failed')) break
+      await Bun.sleep(50)
+    }
+
+    const finished = readGitCloneJob(first.id)!
+    expect(finished.error).toBeNull()
+    expect(finished.phase).toBe('done')
+    // The loser's cleanup did not take the winner's project with it.
+    expect(fs.existsSync(path.join(target, '.git'))).toBe(true)
+  }, 90_000)
 
   it('leaves no partial project behind when the clone fails', async () => {
     const remote = {
