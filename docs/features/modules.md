@@ -79,13 +79,21 @@ interface ModuleDefinition<TProps extends Record<string, unknown>> {
   /** Namespaced id — 'base.text', 'acme.product-card'. URL-safe lowercase. */
   id: string
 
-  /** Display name in the module picker. */
+  /** Display name on the Assets panel card. */
   name: string
 
-  /** One-line description (shown in the picker). */
+  /** One-line description (shown under the name on the card). */
   description?: string
 
-  /** Category for grouping in the picker ('Layout', 'Typography', 'Forms', ...). */
+  /**
+   * Search keywords the Assets panel matches in addition to `name` and
+   * `description` — purposes ("header"), synonyms ("pill"), variant names.
+   * A card shows the keyword that matched when the hit did not come from the
+   * module's own name.
+   */
+  keywords?: string[]
+
+  /** Category for grouping ('Layout', 'Typography', 'Forms', ...). In the Assets panel it is the sub-heading a design-system component sits under. */
   category: string
 
   /** Icon component from pixel-art-icons (deep-imported, tree-shakeable). */
@@ -437,7 +445,7 @@ registry.registerOrReplace(HeadingModule)
 // Then add `import './heading'` to src/modules/base/index.ts
 ```
 
-That's it. The module shows up in the picker, in the Properties panel, in the publisher, in the canvas.
+That's it. The module shows up in the **Assets panel** (the palette — a left-rail card grid; the insert dialog it replaced is gone), in the Properties panel, in the publisher, in the canvas. Its card is a live render of the `component` you just wrote, with the `defaults` you just declared.
 
 ### Override per-breakpoint props
 
