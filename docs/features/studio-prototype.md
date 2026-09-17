@@ -502,6 +502,26 @@ deliberately **no POST counterpart for `/flow`**.
 enumerate pages without parsing the project, and a prune naming no pages is
 indistinguishable from a caller that failed to load its pages.
 
+**Deleting a page is what calls it**, from `deletePage`
+(`store/slices/site/pageActions.ts` → `studio/prototypePrune.ts`). It is the one
+edit that orphans a link without touching the link's own source — a link FROM
+the page and a link TO it both end up naming something that is gone, and neither
+the serializer nor the `NodeHint` re-resolution can notice, because both are
+about an element *inside* a page. The store is the right caller for the same
+reason it already commits the source delete and drops the board frames: it is
+the chokepoint every surface runs through, and it holds the page list the op
+needs. `prototypePrune.ts` is a separate module from `prototypeActions.ts`,
+where every other round trip lives, for one reason worth stating: its caller is
+inside the store and `prototypeActions` imports the store, so putting it there
+closes an import cycle `no-circular-dependencies.test.ts` catches. It therefore
+touches no store at all — it takes the links and the page list and hands the
+merged file back, the same shape `studioStructuralCommits` has. Two cases make
+no request at all — nothing named the deleted page (a
+project with no prototype must not pay a round trip per delete), and no pages
+would be left to name (asking would be asking for a 400 on purpose). A failed
+prune is logged, never toasted: the page IS deleted, and a red box about the
+flow file is noise on an operation that succeeded.
+
 ---
 
 ## Where the code is
@@ -519,7 +539,8 @@ indistinguishable from a caller that failed to load its pages.
 | `server/handlers/studio/prototypeCodeFlow.ts` | discovery, orchestration, mtime memo |
 | `server/handlers/studio/prototypeRoutes.ts` | the three routes |
 | `src/admin/pages/site/store/slices/prototypeSlice.ts` | both collections + `boardMode` |
-| `src/admin/pages/site/studio/prototypeActions.ts` | every round trip |
+| `src/admin/pages/site/studio/prototypeActions.ts` | every round trip but one |
+| `src/admin/pages/site/studio/prototypePrune.ts` | the page-delete prune — store-free, because the store calls it |
 | `src/core/studio-prototype/playback.ts` | the player's stack machine |
 | `src/core/studio-prototype/smartAnimate.ts` | which element on one screen is which on the next — pure |
 | `src/admin/pages/site/canvas/smartAnimateFlip.ts` | measuring those pairs and flying ghosts between them |
@@ -545,6 +566,3 @@ Tracked in [`STUDIO-PROTOTYPE-PLAN.md`](../../STUDIO-PROTOTYPE-PLAN.md).
 
 - **`back`-shaped code flows.** `router.back()` is a real fact with no drawable
   destination and, today, no consumer.
-- **Pruning on page delete.** `prunePrototypeLinks` and the `prune` op exist;
-  nothing calls them yet. A link to a deleted page simply draws nothing, and
-  the inspector's list shows it pointing at "Deleted page".

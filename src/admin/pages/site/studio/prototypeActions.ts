@@ -11,6 +11,10 @@
  * every page — so they are fetched independently and a failure in either is
  * reported on its own. Coupling them would mean an unreadable page file blanks
  * the links the user drew, which have nothing to do with it.
+ *
+ * ONE ROUND TRIP IS NOT HERE: the page-delete prune (`./prototypePrune.ts`).
+ * Its caller is inside the editor store, and this file imports the store, so it
+ * would close an import cycle. That module's own doc has the full reason.
  */
 import { useEditorStore } from '@site/store/store'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'

@@ -1,7 +1,9 @@
 # Studio Prototype Mode — plan
 
-**Status:** Phases 1a–4 and 6 landed; **5 (Play) is the only feature phase left** ·
-**Opened:** 2026-09-02 · **Last updated:** 2026-09-06
+**Status:** every phase landed (1a–6). Play shipped with `canvas-12`; richer
+triggers and `smart-animate` with `STUDIO-FIGMA-FEEL-PLAN.md`'s P7. §9 is the
+remaining backlog, and it is two items long ·
+**Opened:** 2026-09-02 · **Last updated:** 2026-09-17
 
 Shipped behaviour is documented in
 [`docs/features/studio-prototype.md`](docs/features/studio-prototype.md) — read
@@ -142,14 +144,15 @@ follow.
 - **[x] 4 — Connectors (M/L — the hard one).** `BoardFlowLayer` in
   `StudioBoardLayers`, alongside `BoardCommentsLayer`, in the parent document, in
   board coordinates, counter-scaled in pure CSS. Both authored and derived flows
-  route through one geometry. **The `+` drag is NOT done** — see §9. Connectors
-  are frame-to-frame rather than element-to-frame; the reasoning is in
-  `BoardFlowLayer.tsx`'s module doc and the feature doc, and element-level
-  anchoring for authored links is a follow-up.
-- **[ ] 5 — Play in live mode (M/L).** History stack, transition runtime,
-  back/close, scrim dismiss, reset. Risk: a transition needs both frames mounted
-  at once, so the incoming frame must be prewarmed or the first navigation to
-  each screen stutters. **The only feature phase not started.**
+  route through one geometry. The `+` drag landed later, with `canvas-12` (§9.2).
+  DERIVED connectors are frame-to-frame rather than element-to-frame; the
+  reasoning is in `BoardFlowLayer.tsx`'s module doc and the feature doc, and
+  AUTHORED links are element-anchored in `BoardPrototypeLayer`.
+- **[x] 5 — Play in live mode (M/L).** History stack, transition runtime,
+  back/close, scrim dismiss, reset. The prewarming risk resolved differently
+  from the sketch: `PrototypeScreenStack` mounts TWO slots for the life of the
+  player and moves pages between them, so only the first navigation pays for an
+  iframe mount and nothing is rendered for a screen nobody is looking at.
 - **[x] 6 — Code-derived connectors (M).** The differentiator in §1. Four AST
   rules, all refusing rather than guessing — `docs/features/studio-prototype.md`
   enumerates them and, more importantly, what they refuse.
@@ -188,24 +191,37 @@ behind no longer applies.
 
 In priority order. Nothing here blocks anything above it.
 
-1. **Phase 5 — Play.** The one feature phase not started. Needs the armed `▶ Play`
-   state in the canvas chrome (§5's sketch), a history stack, the transition
-   runtime, and back/close. The authored-link model already carries everything it
-   needs: action, transition, target.
-2. **The drag-from-`+` gesture (Phase 4's other half).** An alternative input for
-   the model the inspector already writes end to end, so it is additive rather
-   than load-bearing. Must be raw pointer events — see §7. The open design
-   question is where the `+` handle lives: the selection ring is portaled *into*
-   the frame's iframe, and nothing of this feature may be inserted there.
+1. **[x] Phase 5 — Play.** Landed with `canvas-12`: the armed `▶ Play` state in
+   the canvas chrome, the history stack (`@core/studio-prototype/playback.ts`),
+   the WAAPI transition runtime (`canvas/playbackMotion.ts`,
+   `PrototypeScreenStack`, `PrototypeOverlay`), and back/close. `proto-back`
+   then fixed the gesture it rides — the press/release pair on the node, not
+   the `click` a re-rendering component prevents the browser from dispatching.
+2. **[x] The drag-from-`+` gesture (Phase 4's other half).** Also landed with
+   `canvas-12`. `BoardPrototypeLayer` draws the handle beside the selected
+   element and commits on the drop, in raw pointer events (§7), with
+   `usePrototypeLinkPick` as the toolbar's second entry point into the same
+   draft. The open design question is answered: the handle lives in the PARENT
+   document, in board coordinates — nothing is inserted into a user iframe.
 3. **Element-level anchoring for authored connectors.** Frame-to-frame is right
    for a derived flow map (the fact is about screens); a link the user placed on
    one specific button has a stronger claim to start there. Needs the
    cross-document measurement pass §6/Phase 4 warns about, so it needs a real
-   perf budget rather than an afternoon.
-4. **Pruning on page delete.** `prunePrototypeLinks` and the `prune` op both
-   exist; nothing calls them. A link to a deleted page draws nothing today, so
-   this is cruft rather than a bug — the caller has to be client-side, because
-   the op carries the page list by design.
+   perf budget rather than an afternoon. *(`BoardPrototypeLayer` now measures
+   only the handful of elements links actually start from, on a `ResizeObserver`
+   over their frames' documents — see the feature doc for the budget it keeps.)*
+4. **[x] Pruning on page delete.** `deletePage` now calls
+   `pruneLinksForDeletedPage` (`studio/prototypePrune.ts` — its own, store-free
+   module, because the store is the caller and `prototypeActions` imports the
+   store), client-side because the `prune` op carries the page list by design.
+   It skips the round trip entirely when nothing named the deleted page, and
+   when there would be no pages left to name.
 5. **`back`-shaped derived flows.** `router.back()` / `navigate(-1)` /
    `history.goBack()` are real facts with no drawable destination. Worth
    surfacing once there is a flows list to surface them in.
+
+Landed since, from `STUDIO-FIGMA-FEEL-PLAN.md` work order **P7**: the trigger is
+no longer only `click` (§4), and a `navigate` can wear **`smart-animate`** —
+matched element by element through the same `NodeHint` re-resolution
+`.studio/prototype.json` anchors use, flown on ghosts in the parent overlay
+because both screens are live iframes and neither may be written into.
