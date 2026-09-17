@@ -55,7 +55,7 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
-import type { CSSPropertyBag } from '@core/page-tree'
+import type { CSSPropertyBag, PageNode } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
 import { getActiveStyleTab } from '../panels/PropertiesPanel/classStyleSections'
 import type { SelectionModel } from './selectionModel'
@@ -102,6 +102,30 @@ export interface InspectorCommitApi {
 }
 
 // ---------------------------------------------------------------------------
+// The code-lock rule, shared
+// ---------------------------------------------------------------------------
+
+/**
+ * The style properties this node's own SOURCE computes — a `style:<prop>`
+ * entry in `codeProps`. `commitStyleMany` drops every one of them from a patch
+ * before a write target is even resolved (see this module's doc), so a control
+ * that offers one commits nothing and says nothing.
+ *
+ * Exported because a surface OUTSIDE the inspector — the Assets panel's colour
+ * swatches, which apply `var(--token)` to the selected layer's fill or text
+ * through `commitStyle` — has to disable its own button on this exact rule
+ * rather than let the user discover the refusal by nothing happening. One rule,
+ * one implementation: this function is what the hook below uses too.
+ */
+export function lockedStyleProperties(node: PageNode | null): ReadonlySet<string> {
+  return new Set(
+    (node?.codeProps ?? EMPTY_CODE_PROPS)
+      .filter((name) => name.startsWith(STYLE_KEY_PREFIX))
+      .map((name) => name.slice(STYLE_KEY_PREFIX.length)),
+  )
+}
+
+// ---------------------------------------------------------------------------
 // useInspectorCommit
 // ---------------------------------------------------------------------------
 
@@ -129,11 +153,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const onCondition = activeConditionId !== null
   const activeTab = getActiveStyleTab(activeBreakpointId)
 
-  const lockedPropertySet = new Set(
-    (selectedNode?.codeProps ?? EMPTY_CODE_PROPS)
-      .filter((name) => name.startsWith(STYLE_KEY_PREFIX))
-      .map((name) => name.slice(STYLE_KEY_PREFIX.length)),
-  )
+  const lockedPropertySet = lockedStyleProperties(selectedNode)
 
   const writeToTarget = (target: WriteTarget, patch: Record<string, string | number | null>) => {
     if (!selectedNodeId) return

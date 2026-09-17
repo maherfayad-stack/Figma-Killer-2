@@ -24,6 +24,7 @@ import {
   buildAssetItems,
   type ModuleInsertionContext,
 } from '@site/panels/AssetsPanel/assetsModel'
+import { buildColorAssetItems } from '@site/panels/AssetsPanel/colorTokens'
 // Side-effect registration, exactly as `canvasModuleSet.ts` does it — the real
 // registry is the point of the last `describe` in this file.
 import '@modules/base'
@@ -218,5 +219,47 @@ describe('rankAssets over the real registry', () => {
   it('finds no CARD for "toast" — the Snackbar is a hidden overlay, by design', () => {
     expect(rankAssets('toast', moduleItems)).toEqual([])
     expect(rankAssets('toast', allModuleAssets)[0]?.item.id).toBe('alm.Snackbar')
+  })
+})
+
+/**
+ * DS-7 — the design system's colour tokens ride the SAME ranker. They are not
+ * `AssetItem`s (nothing inserts a colour), they are `RankableAsset`s, which is
+ * the whole contract this file tests: a section supplies name, description and
+ * keywords, and gets a ranked list back.
+ *
+ * The keywords a colour carries are its family, its own name (whole and split
+ * on `-`), and both hex values — so the three ways a designer asks for a
+ * colour all land.
+ */
+describe('rankAssets over the colour palette', () => {
+  const colorItems = buildColorAssetItems()
+
+  it('ranks a whole palette without any module in the frame', () => {
+    expect(colorItems.length).toBeGreaterThan(100)
+    expect(rankAssets('', colorItems).map((r) => r.item.name)).toEqual(
+      colorItems.map((item) => item.name),
+    )
+  })
+
+  it('reports the family as the matched keyword so the hit is explainable', () => {
+    const [top] = rankAssets('coral', colorItems)
+
+    expect(top?.item.name).toBe('--color-coral-10')
+    expect(top?.matchedKeyword).toBe('Coral')
+  })
+
+  it('finds a token by the hex a designer pasted in', () => {
+    expect(rankAssets('#E9666F', colorItems)[0]?.item.name).toBe('--color-coral-100')
+  })
+
+  it('narrows a family with a second token, same AND rule as components', () => {
+    expect(rankAssets('coral 100', colorItems).map((r) => r.item.name)).toEqual([
+      '--color-coral-100',
+    ])
+  })
+
+  it('drops the palette entirely for a component query', () => {
+    expect(rankAssets('navbar', colorItems)).toEqual([])
   })
 })
