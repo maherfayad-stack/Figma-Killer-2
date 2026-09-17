@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { applyProjectSeed, resolveProjectSeedDir } from './projectSeed'
 import { readStudioMeta } from './studioMeta'
 import { isDesignSystemBacked } from './builtinDesignSystem'
