@@ -623,3 +623,65 @@ describe('findAgentRenderFrame — pageId disambiguation (Studio board frames)',
     expect(outer!.contains(viewport)).toBe(true)
   })
 })
+
+/**
+ * The two frame-SELECTION rules S1's staged mount and `panel-26`'s iframe
+ * stamp made load-bearing. Both are cheap DOM assertions on purpose: the
+ * behavioural end-to-end gate is `agentBreakpointCapture.test.tsx`, and that
+ * one costs 5 s per timeout before it tells you which of the two broke.
+ */
+describe('findAgentRenderFrame — a ready frame is a MOUNTED frame', () => {
+  /** A visible frame the way `BreakpointFrame` renders it: `.viewport` div > iframe. */
+  function mountVisibleFrame(breakpointId: string): HTMLIFrameElement {
+    const viewport = document.createElement('div')
+    viewport.dataset.breakpointId = breakpointId
+    const iframe = document.createElement('iframe')
+    // `panel-26` — IframeFrameSurface stamps the breakpoint on the iframe too.
+    iframe.dataset.breakpointId = breakpointId
+    iframe.dataset.studioCanvasDocumentLoaded = 'true'
+    viewport.appendChild(iframe)
+    document.body.appendChild(viewport)
+    const body = iframe.contentDocument?.body
+    if (!body) throw new Error('iframe.contentDocument unavailable in test env')
+    body.dataset.breakpointId = breakpointId
+    return iframe
+  }
+
+  it('refuses a visible frame whose document loaded but whose node tree has not (stage 3 pending)', () => {
+    const iframe = mountVisibleFrame('desktop')
+    const query = { breakpointId: 'desktop', source: 'visible' as const, requireReady: true }
+
+    // S1 stages the mount: the srcDoc document is loaded and the body already
+    // carries its breakpoint id one or more commits BEFORE the node tree lands
+    // in it. Capturing here rasterises a blank page and reports zero nodes.
+    expect(findAgentRenderFrame(query)).toBeNull()
+
+    iframe.dataset.studioCanvasContentReady = 'true'
+    expect(findAgentRenderFrame(query)).not.toBeNull()
+  })
+
+  it('never returns the transient capture frame for a visible query', () => {
+    const host = document.createElement('div')
+    host.dataset.agentSnapshotFrame = ''
+    host.dataset.agentSnapshotRequestId = 'req-1'
+    host.dataset.agentSnapshotBreakpointId = 'mobile'
+    const iframe = document.createElement('iframe')
+    // The `panel-26` stamp makes this iframe a `[data-breakpoint-id]` match
+    // even though it lives inside the offscreen, `inert` capture frame.
+    iframe.dataset.breakpointId = 'mobile'
+    iframe.dataset.studioCanvasDocumentLoaded = 'true'
+    iframe.dataset.studioCanvasContentReady = 'true'
+    host.appendChild(iframe)
+    document.body.appendChild(host)
+    const body = iframe.contentDocument?.body
+    if (!body) throw new Error('iframe.contentDocument unavailable in test env')
+    body.dataset.breakpointId = 'mobile'
+
+    expect(findAgentRenderFrame({ breakpointId: 'mobile', source: 'visible' })).toBeNull()
+    expect(
+      findAgentRenderFrame({ breakpointId: 'mobile', source: 'visible', requireReady: true }),
+    ).toBeNull()
+    // The transient query still finds it — only the `'visible'` source is scoped.
+    expect(findAgentRenderFrame({ breakpointId: 'mobile', source: 'transient' })).toBe(host)
+  })
+})

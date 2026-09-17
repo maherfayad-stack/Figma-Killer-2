@@ -1394,6 +1394,13 @@ Snapshot pixels come from the iframe document's authored rendering. Full-page ca
 
 Every request uses `AgentSnapshotFrame`, an offscreen one-shot `IframeFrameSurface` at the configured width. Before it becomes capturable, a revisioned barrier waits for template preview rows, nested loop data, media metadata, web fonts, the resulting React commit, and a quiet DOM window. Readiness lives on the host iframe, never on authored `<html>`/`<body>`, so user attribute selectors cannot distinguish Agent evidence from the published page. Lazy `<img>` resources are left authored as-is; `html-to-image` makes its private clones eager and embeds image/background resources before `toCanvas()` resolves. The frame deliberately does not execute authored runtime scripts, and it is released after capture without changing `activeBreakpointId`, `canvasView`, or collapsed-frame state. Parallel requests are serialized so they cannot replace the single transient frame mid-capture.
 
+**Which iframe gets captured** is decided by `findAgentRenderFrame` (`agent/renderEvidence.ts`), and the canvas's staged mount (S1 — see `canvas-internals.md` §Perf) makes two of its rules load-bearing:
+
+- A `'visible'` query never returns anything inside the transient capture frame. `IframeFrameSurface` stamps `data-breakpoint-id` on the iframe ELEMENT in both document modes (so a cross-mode caller can read a frame's breakpoint without touching `contentDocument`), which otherwise makes the offscreen capture frame's own iframe a match — and an `<iframe>` returned where a frame HOST is expected yields `null` from the capture, silently.
+- A frame with no capture-request marker is ready only once its iframe carries `data-studio-canvas-content-ready`. The srcDoc document loads, and its body is tagged with the breakpoint id, one or more commits BEFORE the node tree is portalled into it; capturing in between rasterises an empty document. The transient frame vouches for itself through the stronger, request-scoped `data-agent-snapshot-ready`, written by a marker that lives inside the node tree and only after the settle barrier.
+
+The transient frame itself is mounted UNSTAGED for this reason — see `IframeFrameSurface`'s stage-3 effect.
+
 ---
 
 ## System prompt

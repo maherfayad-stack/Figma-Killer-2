@@ -92,6 +92,12 @@ export interface IframeFrameSurfaceProps {
    * top of the iframe until this turns true, so a frame entering the viewport
    * never flashes an empty document.
    *
+   * The SAME state also lands on the iframe element as
+   * `data-studio-canvas-content-ready`, for callers that hold only DOM
+   * (`renderEvidence.ts`'s frame selection). Optional here precisely because
+   * that stamp is unconditional — a caller that needs readiness but not a
+   * React callback reads the attribute instead of inventing a second notion.
+   *
    * Pass a `useState` SETTER, not a fresh closure: `BreakpointFrame` is
    * `memo()`'d (React Compiler exception #2) and a new identity here defeats
    * that bailout on every render. A setter's identity is stable for the life
