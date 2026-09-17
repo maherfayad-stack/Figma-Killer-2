@@ -367,6 +367,70 @@ animates and a sheet Studio animates have to move identically), and dismissal is
 quicker than presentation (arriving is the moment worth drawing out; leaving
 should get out of the way).
 
+### Smart animate, and why it runs on ghosts
+
+`smart-animate` is a `navigate` transition: the two screens are matched element
+by element, the pairs that MOVED travel between their two positions, and
+everything else cross-dissolves. Only a `navigate` can wear it — an overlay
+presents *over* a screen that stays put, so there is no second layout to match
+against.
+
+**Matching is `NodeHint` re-resolution, the same primitive `.studio/prototype.json`
+anchors use.** Figma matches smart-animate layers by NAME, because a Figma layer
+has a stable name and a stable id. A Studio node has neither: its id is
+`relFile:line:col`, a source *position*, and its "name" is whatever the JSX
+element is called — `<div>`, several hundred times per screen. So
+`matchScreenNodes` (`@core/studio-prototype/smartAnimate.ts`) captures each
+outgoing node's hint and re-resolves it against the INCOMING tree, which asks
+exactly the right question ("is there a node of the same kind at the same
+structural address?") and already separates the three answers:
+
+| Confidence | Meaning | Pair? |
+|---|---|---|
+| `exact` | the two screens share a source position — the same imported component | yes, the strongest |
+| `moved` | same address, same module, same text — a shared header | yes |
+| `drifted` | same address, same module, **different text** — a title whose words changed | yes, and it is the case most worth animating |
+| `detached` | nothing of the kind is there | no |
+
+Matching is **one-to-one** (two elements animating into one box is a visibly
+wrong answer), never pairs the **root** (that is the screen, not an element on
+it), and is **capped at 24 pairs, breadth-first** — a screen is routinely
+hundreds of nodes and the FLIP measures both sides of every pair, so an uncapped
+match would make the one transition meant to look expensive the one that
+stutters. Breadth-first means the cap keeps the outermost, biggest boxes. A pair
+past the cap is still a match, not a departure: calling it `leaving` would claim
+an element vanished when it is standing on the new screen.
+
+**Nothing is written into either screen.** Both are live iframes rendering the
+user's own components. A transform on a matched element would be a transform in
+the user's document — changing what their `%`/flex chains and `backdrop-filter`s
+resolve against, and left behind if the animation is cancelled. Animating the
+iframes is equally out: they are the two screens, and a smart animate is
+precisely the transition in which the screens do not move as wholes.
+
+So the travel happens on **ghosts** in `.smartAnimateLayer`, a parent-document
+overlay inside `PrototypeScreenStack` — over both slots and inside neither,
+because a matched pair spans two iframes and neither contains the travel between
+them. A ghost is a box and at most one line of text, painted from a snapshot of
+the incoming element's computed style; `importNode` would copy the subtree
+*without* the iframe's stylesheets, so a deep clone renders as unstyled markup —
+visibly worse than a rectangle with the right colour, radius, border, shadow and
+type. The two real screens cross-dissolve underneath, which IS "unmatched nodes
+dissolve" — and it is why a matched element that did **not** move gets no ghost
+at all: identical pixels cross-fading are invisible.
+
+**Two `requestAnimationFrame`s, both load-bearing.** The first lets the incoming
+slot commit and lay out (on the first navigation into the back slot its iframe
+is still mounting, and measuring before that yields zeros). The second separates
+the READ (`planSmartAnimate`) from the WRITE (`runSmartAnimate`): building an
+element inside a measurement loop is a forced reflow per pair, across two
+documents. `prefers-reduced-motion` collapses the duration here too, explicitly
+— the global CSS clamp cannot see a script-driven animation.
+
+A screen that cannot be measured — a bridge-mode (Tier 2, cross-origin) frame,
+or a layout that has not settled — produces no ghosts and the transition is the
+cross-dissolve the screens are already playing. Quieter, never broken.
+
 ### The overlay owns its own unmounting
 
 React removes a component the moment its parent stops rendering it, so an
@@ -457,6 +521,8 @@ indistinguishable from a caller that failed to load its pages.
 | `src/admin/pages/site/store/slices/prototypeSlice.ts` | both collections + `boardMode` |
 | `src/admin/pages/site/studio/prototypeActions.ts` | every round trip |
 | `src/core/studio-prototype/playback.ts` | the player's stack machine |
+| `src/core/studio-prototype/smartAnimate.ts` | which element on one screen is which on the next — pure |
+| `src/admin/pages/site/canvas/smartAnimateFlip.ts` | measuring those pairs and flying ghosts between them |
 | `src/admin/pages/site/canvas/BoardFlowLayer/` | the derived connectors |
 | `src/admin/pages/site/canvas/BoardPrototypeLayer/` | the authored connectors, the `+` handle, the drag |
 | `src/admin/pages/site/canvas/playbackMotion.ts` | every animation the player runs |

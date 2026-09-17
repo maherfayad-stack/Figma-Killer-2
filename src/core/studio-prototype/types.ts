@@ -127,6 +127,13 @@ export type PrototypeAction = Static<typeof PrototypeActionSchema>
 export const PrototypeTransitionSchema = Type.Union([
   Type.Literal('instant'),
   Type.Literal('dissolve'),
+  /**
+   * The two screens are matched element by element and the pairs that MOVED are
+   * animated between their two positions; everything unmatched cross-dissolves.
+   * Only a `navigate` can wear it — an overlay presents OVER a screen that stays
+   * put, so there is no second layout to match against.
+   */
+  Type.Literal('smart-animate'),
   Type.Literal('slide-left'),
   Type.Literal('slide-right'),
   Type.Literal('push-left'),
@@ -147,7 +154,15 @@ export type PrototypeTransition = Static<typeof PrototypeTransitionSchema>
  * `navigate` with `sheet` opens with `instant` instead of losing the link.
  */
 export const ACTION_TRANSITIONS: Readonly<Record<PrototypeAction, readonly PrototypeTransition[]>> = {
-  navigate: ['instant', 'dissolve', 'slide-left', 'slide-right', 'push-left', 'push-right'],
+  navigate: [
+    'instant',
+    'dissolve',
+    'smart-animate',
+    'slide-left',
+    'slide-right',
+    'push-left',
+    'push-right',
+  ],
   overlay: ['popup', 'sheet'],
   back: [],
   close: [],

@@ -114,6 +114,7 @@ const ACTION_LABELS: Readonly<Record<PrototypeAction, string>> = {
 const TRANSITION_LABELS: Readonly<Record<PrototypeTransition, string>> = {
   instant: 'Instant',
   dissolve: 'Dissolve',
+  'smart-animate': 'Smart animate',
   'slide-left': 'Slide left',
   'slide-right': 'Slide right',
   'push-left': 'Push left',

@@ -81,7 +81,7 @@ visibly broken connector rather than disappearing.
 
 | Action | What it does | Transitions |
 |---|---|---|
-| `navigate` | replaces the screen | `instant`, `dissolve`, `slide-left`, `slide-right`, `push-left`, `push-right` |
+| `navigate` | replaces the screen | `instant`, `dissolve`, `smart-animate`, `slide-left`, `slide-right`, `push-left`, `push-right` |
 | `overlay` | presents on top, base screen stays | `popup` (centred + scrim), `sheet` (bottom, slides up) |
 | `back` | pops the history stack | reverses whatever brought you here |
 | `close` | dismisses the top overlay | reverses its presentation |
