@@ -62,6 +62,21 @@
  * (never the whole row) with a lock icon + tooltip, the same fact
  * `StyleSectionsComposer.tsx`'s banner states for the whole curated bag,
  * scoped down to just the two properties this section owns.
+ *
+ * ## Multi-select
+ *
+ * Three CSS fields, three Mixed states (`docs/features/inspector.md` §9.3):
+ * `opacity` reads "Mixed" in its `ScrubInput` (via `toPercentString`, which
+ * passes the sentinel through so `resolveStyleFieldDisplay` can see it), the
+ * blend trigger says "Blend mode: Mixed" and its menu claims no option, and
+ * the CSS-visibility toggle names the disagreement in its label. The toggle
+ * gets no indeterminate glyph — the same call §9.3 makes for `AlignGrid` and
+ * Clip content — and clicking it hides every selected layer.
+ *
+ * `node.hidden` / `node.locked` are NOT multi-select aware: both buttons read
+ * and toggle the ANCHOR only. That is a structural fan-out gap, not a Mixed
+ * one (it needs a store action over N ids, the way `setNodesInlineStyles` is
+ * for styles), and it is recorded in `STATE.md` `panel-38`.
  */
 import { useRef, useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -74,6 +89,7 @@ import { buildContextOnlyClassChain, buildCollapsedCurrentStyles, buildCollapsed
 import { buildClassChain } from '../../panels/PropertiesPanel/stylePropertyProvenance'
 import { resolveStyleFieldDisplay } from '../../panels/PropertiesPanel/styleFieldDisplay'
 import { readString } from '../../panels/PropertiesPanel/styleValueUtils'
+import { isMixed, MIXED, MIXED_PLACEHOLDER, type Mixed } from '@ui/components/MixedValue'
 import { ScrubInput } from '@ui/components/ScrubInput'
 import { Button } from '@ui/components/Button'
 import { Tooltip } from '@ui/components/Tooltip'
@@ -107,8 +123,17 @@ function blendModeLabel(value: string): string {
     .join(' ')
 }
 
-/** See this file's own "Reading opacity as a percentage" doc. */
-function toPercentString(value: unknown): string | undefined {
+/**
+ * See this file's own "Reading opacity as a percentage" doc.
+ *
+ * The `MIXED` sentinel passes through UNTOUCHED and first: it is a Symbol, so
+ * every branch below would have collapsed it to `undefined`, and
+ * `resolveStyleFieldDisplay`'s own mixed test — which this value feeds — would
+ * then never fire. Five layers at five opacities read "100%" (the fallback),
+ * one keystroke from becoming one opacity (`docs/features/inspector.md` §9.3).
+ */
+function toPercentString(value: unknown): string | Mixed | undefined {
+  if (isMixed(value)) return MIXED
   if (typeof value === 'number') return `${Math.round(value * 100)}%`
   if (typeof value !== 'string' || value === '') return undefined
   const trimmed = value.trim()
@@ -161,10 +186,29 @@ export function LayerSection() {
     fallback: '100%',
   })
 
+  // Both read the RAW cell first: `readString` collapses the `MIXED` Symbol to
+  // `undefined`, which read as "nobody set a blend mode" / "nothing is hidden"
+  // for a selection that plainly disagreed (§9.3).
+  const blendMixed = isMixed(storedStyles.mixBlendMode)
   const blendValue = readString(storedStyles, 'mixBlendMode')
   const blendActive = blendValue != null && blendValue !== 'normal'
+  const blendLabel = blendMixed
+    ? `Blend mode: ${MIXED_PLACEHOLDER}`
+    : blendValue
+      ? `Blend mode: ${blendModeLabel(blendValue)}`
+      : 'Blend mode'
 
-  const isCssHidden = readString(storedStyles, 'visibility') === 'hidden'
+  const visibilityMixed = isMixed(storedStyles.visibility)
+  const isCssHidden = !visibilityMixed && readString(storedStyles, 'visibility') === 'hidden'
+  // The toggle has no indeterminate affordance (the same reason §9.3 leaves
+  // `AlignGrid` and Clip content unset), so a mixed selection shows it
+  // unpressed and says so in words. Clicking it hides every selected layer,
+  // which is the Figma contract for a mixed field: the first edit agrees them.
+  const cssVisibilityLabel = visibilityMixed
+    ? `Hide with CSS (keeps its space) — currently ${MIXED_PLACEHOLDER}`
+    : isCssHidden
+      ? 'Show (CSS visibility)'
+      : 'Hide with CSS (keeps its space)'
 
   return (
     <div className={styles.layerRow} data-testid="inspector-layer-row">
@@ -234,14 +278,8 @@ export function LayerSection() {
         disabled={blendLocked}
         aria-haspopup="menu"
         aria-expanded={blendMenuOpen}
-        aria-label={blendValue ? `Blend mode: ${blendModeLabel(blendValue)}` : 'Blend mode'}
-        tooltip={
-          blendLocked
-            ? 'Blend mode is set from an expression in code'
-            : blendValue
-              ? `Blend mode: ${blendModeLabel(blendValue)}`
-              : 'Blend mode'
-        }
+        aria-label={blendLabel}
+        tooltip={blendLocked ? 'Blend mode is set from an expression in code' : blendLabel}
         data-testid="layer-blend-mode-trigger"
         onClick={() => setBlendMenuOpen((v) => !v)}
       >
@@ -262,7 +300,8 @@ export function LayerSection() {
             ...group.map((mode) => (
               <ContextMenuItem
                 key={mode}
-                selected={(blendValue ?? 'normal') === mode}
+                // Mixed claims NO option — `normal` is not the shared answer.
+                selected={blendMixed ? false : (blendValue ?? 'normal') === mode}
                 onClick={() => {
                   commit.commitStyle('mixBlendMode', mode === 'normal' ? null : mode)
                   setBlendMenuOpen(false)
@@ -281,8 +320,8 @@ export function LayerSection() {
         size="micro"
         iconOnly
         pressed={isCssHidden}
-        aria-label={isCssHidden ? 'Show (CSS visibility)' : 'Hide with CSS (keeps its space)'}
-        tooltip={isCssHidden ? 'Show (CSS visibility)' : 'Hide with CSS (keeps its space)'}
+        aria-label={cssVisibilityLabel}
+        tooltip={cssVisibilityLabel}
         data-testid="layer-css-visibility-toggle"
         className={styles.cssVisibilityToggle}
         onClick={() => commit.commitStyle('visibility', isCssHidden ? null : 'hidden')}

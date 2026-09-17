@@ -74,6 +74,17 @@
  * renders and commits for a multi-selection through exactly the same reads
  * and `useInspectorCommit` calls it uses for one. See `selectionModel.ts`'s
  * own "Multi-select" doc.
+ *
+ * With ONE exception this file does own: a disagreeing `box-shadow` has no
+ * shared layer stack to draw one row per layer of, and `MIXED` is a Symbol
+ * that `String()` happily renders — so before `parseShadowValue` learned the
+ * sentinel, a mixed selection produced a raw text row reading
+ * `Symbol(studio-mixed-value)` and offering to write it to disk. The parse
+ * now answers `{ kind: 'mixed' }` and this file draws ONE row per property
+ * that reads "Mixed", whose popover writes the whole declaration to every
+ * selected layer. The add menu's matching items disable: appending to a list
+ * that does not exist is a replace wearing an add's icon
+ * (`docs/features/inspector.md` §9.3).
  */
 import { useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -89,7 +100,8 @@ import { Switch } from '@ui/components/Switch'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { ColorValueInput } from '@site/property-controls/ColorValueInput'
 import { ClassPropertyRow } from '../../panels/PropertiesPanel/ClassPropertyRow'
-import { hasStyleValue } from '../../panels/PropertiesPanel/styleValueUtils'
+import { hasStyleValue, pickMixedCell } from '../../panels/PropertiesPanel/styleValueUtils'
+import { MIXED, MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import { useSelectionModel } from '../selectionModel'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedStoredStyles } from '../collapsedStyleBag'
@@ -119,6 +131,11 @@ type ShadowEntryData =
   | { kind: 'boxShadowRaw'; raw: string; reason: string }
   | { kind: 'textShadowLayer'; index: number; layer: BoxShadowLayer }
   | { kind: 'textShadowRaw'; raw: string; reason: string }
+  /** A multi-selection whose members declare different shadows — see §9.3. */
+  | { kind: 'shadowMixed'; property: 'boxShadow' | 'textShadow' }
+
+const MIXED_SHADOW_REASON =
+  'The selected layers set different shadows, so there is no shared layer stack to edit. Typing a value here writes it to every selected layer.'
 
 function ShadowSwatch({ layer }: { layer: BoxShadowLayer }) {
   const style = { '--effect-swatch-color': layer.color || 'var(--overlay-30)' } as CSSProperties
@@ -183,17 +200,31 @@ export function ShadowSection() {
 
   const onClearPreview = commit.clearStylePreview
 
+  // A multi-selection whose members declare different shadows has no shared
+  // list to append to — "add" would be a replace wearing an add's icon, and
+  // the pre-`MIXED` code would have stringified the sentinel into it
+  // (`docs/features/inspector.md` §9.3). Both parsed once, here, because the
+  // add menu and the rows below both ask.
+  const boxShadowResult = parseShadowValue(pickMixedCell(storedStyles.boxShadow))
+  const textShadowResult = parseShadowValue(pickMixedCell(storedStyles.textShadow), TEXT_SHADOW_GRAMMAR)
+  const boxShadowMixed = boxShadowResult.kind === 'mixed'
+  const textShadowMixed = textShadowResult.kind === 'mixed'
+
   function addShadow(inset: boolean) {
+    if (boxShadowMixed) return
     const layerCss = serializeBoxShadowLayer(createDefaultBoxShadowLayer(inset))
     onChange('boxShadow', appendBoxShadowLayer(storedStyles.boxShadow as string | number | undefined, layerCss))
     setAddMenuOpen(false)
   }
 
   function addTextShadow() {
+    if (textShadowMixed) return
     const layerCss = serializeBoxShadowLayer(createDefaultTextShadowLayer())
     onChange('textShadow', appendBoxShadowLayer(storedStyles.textShadow as string | number | undefined, layerCss))
     setAddMenuOpen(false)
   }
+
+  const mixedAddTooltip = 'The selected layers have different shadows — add one with a single layer selected'
 
   const addMenu = (
     <>
@@ -221,9 +252,27 @@ export function ShadowSection() {
           offset={6}
           onClose={() => setAddMenuOpen(false)}
         >
-          <ContextMenuItem onClick={() => addShadow(false)}>Drop shadow</ContextMenuItem>
-          <ContextMenuItem onClick={() => addShadow(true)}>Inner shadow</ContextMenuItem>
-          <ContextMenuItem onClick={addTextShadow}>Text shadow</ContextMenuItem>
+          <ContextMenuItem
+            disabled={boxShadowMixed}
+            tooltip={boxShadowMixed ? mixedAddTooltip : undefined}
+            onClick={() => addShadow(false)}
+          >
+            Drop shadow
+          </ContextMenuItem>
+          <ContextMenuItem
+            disabled={boxShadowMixed}
+            tooltip={boxShadowMixed ? mixedAddTooltip : undefined}
+            onClick={() => addShadow(true)}
+          >
+            Inner shadow
+          </ContextMenuItem>
+          <ContextMenuItem
+            disabled={textShadowMixed}
+            tooltip={textShadowMixed ? mixedAddTooltip : undefined}
+            onClick={addTextShadow}
+          >
+            Text shadow
+          </ContextMenuItem>
         </ContextMenu>
       )}
     </>
@@ -233,12 +282,6 @@ export function ShadowSection() {
   if (!setAnywhere) {
     return <Section title="Shadow" empty flush actions={addMenu} />
   }
-
-  const boxShadowResult = parseShadowValue(storedStyles.boxShadow as string | number | undefined)
-  const textShadowResult = parseShadowValue(
-    storedStyles.textShadow as string | number | undefined,
-    TEXT_SHADOW_GRAMMAR,
-  )
 
   const entries: PropertyListEntry<ShadowEntryData>[] = []
 
@@ -262,7 +305,19 @@ export function ShadowSection() {
       value: boxShadowResult.raw,
       data: { kind: 'boxShadowRaw', raw: boxShadowResult.raw, reason: boxShadowResult.reason },
     })
+  } else if (boxShadowMixed) {
+    entries.push({
+      id: 'shadow-mixed',
+      label: 'Box shadow',
+      summary: 'Box shadow',
+      value: MIXED_PLACEHOLDER,
+      data: { kind: 'shadowMixed', property: 'boxShadow' },
+    })
   }
+
+  // Where the text-shadow block starts in `entries` — the box block above
+  // contributes one row per layer, or exactly one for `raw`/`mixed`.
+  const boxRowCount = entries.length
 
   if (textShadowResult.kind === 'layers') {
     textShadowResult.layers.forEach((layer, index) => {
@@ -283,6 +338,14 @@ export function ShadowSection() {
       value: textShadowResult.raw,
       data: { kind: 'textShadowRaw', raw: textShadowResult.raw, reason: textShadowResult.reason },
     })
+  } else if (textShadowMixed) {
+    entries.push({
+      id: 'text-shadow-mixed',
+      label: 'Text shadow',
+      summary: 'Text shadow',
+      value: MIXED_PLACEHOLDER,
+      data: { kind: 'shadowMixed', property: 'textShadow' },
+    })
   }
 
   function handleActivate(entry: PropertyListEntry<ShadowEntryData>, anchorRef: RefObject<HTMLElement | null>) {
@@ -302,6 +365,11 @@ export function ShadowSection() {
       onRemove('boxShadow')
       return
     }
+    if (data.kind === 'shadowMixed') {
+      // Clears the property from every selected layer, one history entry.
+      onRemove(data.property)
+      return
+    }
     if (data.kind === 'textShadowLayer') {
       if (textShadowResult.kind !== 'layers') return
       const next = removeBoxShadowLayer(textShadowResult.layers, data.index)
@@ -313,8 +381,8 @@ export function ShadowSection() {
   }
 
   function handleReorder(fromIndex: number, toIndex: number) {
-    // `entries` is built in blocks: box-shadow layers first, then text-shadow
-    // layers. Only a drag whose BOTH endpoints sit inside one block means
+    // `entries` is built in blocks: box-shadow rows first, then text-shadow
+    // rows. Only a drag whose BOTH endpoints sit inside one block means
     // anything — layer order is paint order within one property, and a text
     // shadow can never be dragged above a box shadow (two declarations).
     const boxCount = boxShadowResult.kind === 'layers' ? boxShadowResult.layers.length : 0
@@ -326,8 +394,11 @@ export function ShadowSection() {
       return
     }
 
-    const textStart = boxCount
-    const textEnd = boxCount + textCount
+    // `boxRowCount`, not `boxCount`: a `raw`/`mixed` box shadow contributes
+    // ONE row that is not a layer, and offsetting by the layer count would
+    // silently drop every text-shadow drag under it.
+    const textStart = boxRowCount
+    const textEnd = boxRowCount + textCount
     if (
       textShadowResult.kind === 'layers' &&
       fromIndex >= textStart &&
@@ -434,15 +505,21 @@ function ShadowEditorPopover({
     )
   }
 
-  // `boxShadowRaw` / `textShadowRaw` — honest refusal, reuses `ClassPropertyRow`.
-  const property: keyof CSSPropertyBag = data.kind === 'boxShadowRaw' ? 'boxShadow' : 'textShadow'
+  // `boxShadowRaw` / `textShadowRaw` / `shadowMixed` — the same honest shape:
+  // the whole declaration as one field, with the reason above it.
+  // `ClassPropertyRow` turns the `MIXED` sentinel into its control's own
+  // "Mixed" placeholder, so nothing ever stringifies the Symbol.
+  const property: keyof CSSPropertyBag =
+    data.kind === 'shadowMixed' ? data.property : data.kind === 'boxShadowRaw' ? 'boxShadow' : 'textShadow'
   return (
     <InspectorPopover id={id} anchorRef={anchorRef} onClose={onClose} title={label} width={248}>
       <div className={styles.rawEditor}>
-        <p className={styles.rawEditorReason}>{data.reason}</p>
+        <p className={styles.rawEditorReason}>
+          {data.kind === 'shadowMixed' ? MIXED_SHADOW_REASON : data.reason}
+        </p>
         <ClassPropertyRow
           property={property}
-          value={data.raw}
+          value={data.kind === 'shadowMixed' ? MIXED : data.raw}
           isSet
           layout="stacked"
           onChange={onChange}
