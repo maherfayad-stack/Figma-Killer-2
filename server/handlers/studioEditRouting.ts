@@ -196,6 +196,13 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * containers around two different runs. `ungroup` does NOT — it removes the
  * span its nodeId points at, so a second one in the same batch is the same
  * write twice.
+ *
+ * `transplant` (D2 G3) is exempt too. In its `copy` form it is `duplicate`
+ * with a destination in another file, so two of them are two copies the user
+ * asked for; in its move form no real gesture can issue two against one
+ * element in a batch (a cross-frame drag resolves one target, and the second
+ * would be planned against a tree the first already changed). Collapsing it
+ * would silently drop a copy while `written` reported the truth.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(edits: readonly T[]): T[] {
   const byTarget = new Map<string, T>()
@@ -216,6 +223,7 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(ed
       edit.kind === 'duplicate' ||
       edit.kind === 'wrap' ||
       edit.kind === 'group' ||
+      edit.kind === 'transplant' ||
       edit.kind === 'styled'
     ) {
       passthrough.push(edit)
