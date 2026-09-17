@@ -188,7 +188,21 @@ const BUDGETS: ChunkBudget[] = [
     // RefusalDialog — all genuinely new post-paint editor-body code, not a
     // lazy-boundary leak. Measured 834,254 B; headroom left for the
     // remaining 7 P3 sections still to land the same way.
-    maxBytes: 850_000,
+    //
+    // Raised 850,000 -> 880,000 for the Figma-feel wave 1 integration.
+    // Measured 861,893 B — +27,639 B, and every kilobyte of it is new
+    // post-paint editor-body behaviour rather than a lazy-boundary leak:
+    // K5's `MeasureLayer` + measure geometry, S2/K2/K6's drag session
+    // (`canvasDragSession`/`canvasDragPainter`/`canvasDragAutoPan`/
+    // `canvasFreeMove`), S1's mount pool and poster queue, K1's key
+    // dispatcher and its six scope hooks, Z5/P8's diagnostics buffer +
+    // `PlayCrashCard`/`LiveRuntimePill`/`LiveAutoPromoteNotice`, P7's
+    // trigger and smart-animate runtime, and P9/S5's inspector sections.
+    // Audited against the route shell: `SitePage-*.js` measured 37,632 B
+    // against its own 39,400 cap, so none of it leaked forward of the
+    // lazy boundary. ~18 KB of headroom left; the next raise should be
+    // preceded by an audit of what is actually in this chunk.
+    maxBytes: 880_000,
     rationale:
       'post-paint Site editor body (canvas + panels + modules + publisher). ' +
       'Current ~815 KB raw / ~271 KB gzipped after the 2026-09-14 P3/Track-L/R2 ' +
