@@ -163,7 +163,20 @@ interface BoardFrameViewProps {
   isActive: boolean
   /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
   isSelected: boolean
+  /**
+   * Whether this frame's board rect intersects the viewport (plus margin). It
+   * drives the frozen-poster CAPTURE only — the picture has to be taken while
+   * the frame is genuinely on screen and settled.
+   */
   isOnScreen: boolean
+  /**
+   * Whether this frame holds a live iframe. A superset of `isOnScreen`: the
+   * mount pool (S1, `frameMountPool.ts`) keeps recently-departed frames
+   * mounted so panning back to them costs nothing. A mounted-but-offscreen
+   * frame is simply outside the visible area — it renders exactly as it did
+   * on screen, it just isn't being looked at.
+   */
+  isMounted: boolean
 }
 
 /**
@@ -187,6 +200,7 @@ function BoardFrameViewImpl({
   isActive,
   isSelected,
   isOnScreen,
+  isMounted,
 }: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
   const resizeRef = useRef<ResizeDragState | null>(null)
@@ -489,17 +503,17 @@ function BoardFrameViewImpl({
           UNLESS the frame has never been manually resized, in which case
           `data-frame-auto-height` (canvas-04) lets the box grow to wrap its
           already-correctly-fitted iframe instead (see
-          `BoardFramesLayer.module.css`). Gated on `isOnScreen` too: an
-          offscreen frame has no live iframe to size against, so it keeps the
-          fixed fallback box the placeholder needs — same as before. */}
+          `BoardFramesLayer.module.css`). Gated on `isMounted` too: a
+          frame with no live iframe has nothing to size against, so it keeps
+          the fixed fallback box the placeholder needs — same as before. */}
       <div
         ref={frameBodyRef}
         className={styles.frameBody}
         data-testid="board-frame-body"
-        data-frame-auto-height={!hasManualHeight && isOnScreen ? 'true' : undefined}
+        data-frame-auto-height={!hasManualHeight && isMounted ? 'true' : undefined}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
-        {isOnScreen ? (
+        {isMounted ? (
           <CanvasPageContext.Provider value={page.id}>
             {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
                 every selection/hover it originates with the frame it came
@@ -528,14 +542,14 @@ function BoardFrameViewImpl({
         ) : (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
         )}
-        {isOnScreen && !contentReady && (
+        {isMounted && !contentReady && (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} overlay />
         )}
         {/* A page with nothing on it renders as a blank rectangle, which reads
             as "it did not load". Only for a frame that is actually drawing its
             iframe: an offscreen frame is showing a poster, and a caption over
             that would be about a page nobody can see. */}
-        {isOnScreen && pageHasNoContent(page) && <CanvasEmptyPageHint />}
+        {isMounted && pageHasNoContent(page) && <CanvasEmptyPageHint />}
       </div>
       {/* Resize handles — SELECTED frames only, not merely active.
           `activePageId` is the edit target: it is set by a capture-phase click
