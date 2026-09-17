@@ -71,6 +71,58 @@ be conditional, and the one thing that genuinely differs between projects is
 which providers exist. Putting that seam in its own tiny generated file is what
 lets `App.jsx` be written once and then belong to the user.
 
+A project carrying the built-in design system (§3.1) gets
+`import { DesignSystemProvider } from '../design-system'` there — a **relative
+path into the project's own folder**, never a package name, and with no
+separate stylesheet import: the folder's `index.js` imports the token CSS
+itself. The gate is `isDesignSystemBacked(dir)` (the folder is present), not a
+`package.json` dependency.
+
+## 3.1. `design-system/` — the other Studio-written folder
+
+The design system Studio renders with is **not an npm dependency**. Every
+DS-backed project carries a Studio-written `<project>/design-system/` folder
+written from Studio's own vendored copy (`vendor/alm-design-system/src/`), and
+every page imports it relatively: `'../design-system'` from `pages/`,
+`'../../design-system'` from a page one directory deeper,
+`designSystemImportSpecifier` computing it per file.
+
+That is what makes the download honest. `node_modules/` is excluded from the
+zip by design, so a synthesized `package.json` naming a design-system package
+produced an export that could not `bun install`. With the folder, the
+downloaded repo builds with `react`, `react-dom`, `vite` and
+`@vitejs/plugin-react` — and nothing else.
+
+`server/handlers/studio/designSystemFiles.ts` owns it, with exactly the
+contract the shell's static files have:
+
+| Fact | Where |
+|---|---|
+| What is written | `index.js`, `components/`, `context/`, `tokens/`, `icons/LineIcons.jsx`, **only** the `icons/**/*.svg` a component or `LineIcons.jsx` actually imports (≈20 of 568, read statically with a regex — nothing is executed), plus `README.md` and `VERSION` |
+| When | `loadStudioPages` (beside `ensurePrototypeShell`) and `buildStudioDownloadResponse` |
+| Who gets it | only a project whose `.studio/meta.json` carries `designSystem: 'alm'` — set by "New project" and by the migration route, never by a GitHub import |
+| How staleness is known | `.studio/design-system.json` — `{ version, hash, files }`, a SHA-256 over the whole source set. A matching hash writes nothing at all; a differing one rewrites the folder in place and removes the files that left the source set |
+| What it will never touch | anything outside `<project>/design-system/` and `.studio/design-system.json`. The delete list is the manifest's own `files` array, nothing else |
+| Containment | every write target and every source read is checked on its **real** path (`isRealpathContainedAllowingMissing` / `isRealpathContained`), so a planted symlink cannot carry a read or a write out |
+
+`README.md` in the folder says it: *Studio-managed. Edit the design system in
+Studio's `vendor/alm-design-system/`, then reopen the project — this folder is
+rewritten when stale.* `VERSION` carries the vendored package's own version, so
+a version bump is a hash change and therefore a rewrite.
+
+### Migrating a project that still imports the retired npm
+
+`GET/POST /admin/api/studio/design-system/migrate`
+(`server/handlers/studio/designSystemMigrate.ts`) moves a project off
+`@alm-design/design-system`: it marks the meta, writes the folder, rewrites
+every import in the project's own source with the formatting-preserving
+`rewriteImportSpecifier` codemod, drops the dependency from `package.json`, and
+deletes `node_modules/@alm-design/design-system`.
+
+It runs **from a click and never on load** — the board shows
+`DesignSystemMigrateBanner` and a source rewrite is a user action, the same
+rule trust promotion follows.
+
 ## 4. Boards are tabs
 
 Every board in `.studio/boards.json` gets a tab, in file order, in **both**
@@ -187,6 +239,9 @@ independent of that workspace's own freeze state:
 |---|---|
 | `server/handlers/studio/__tests__/prototypeShell.test.ts` | the write policy: user edits survive, unedited files update, `package.json` merges, `.studio/` awkward cases, `main.jsx`'s bridge-boot imports/gate, `studioRuntimeBridge.generated.js` always coming back |
 | `server/handlers/studio/__tests__/prototypeShellBoards.test.ts` | two-board generator output, board order, empty boards, deleted pages, the tab row in `App.jsx`, and the zip actually containing a board created after the last load |
+| `server/handlers/studio/__tests__/designSystemFiles.test.ts` | the `design-system/` folder: the exact written set, only-imported icons, idempotence, stale rewrite, stale removal, and every refusal (not DS-backed, no vendored source, a symlinked source file, a symlinked target folder) |
+| `server/handlers/studio/__tests__/designSystemMigrate.test.ts` | the migration: relative rewrites at each depth, the dropped stylesheet import, `package.json` formatting, the guarded `node_modules` delete, a refused symlinked install, and a whole-tree hash proving nothing else changed |
+| `src/core/ast-codemods/__tests__/rewriteImportSpecifier.test.ts` | the codemod: default/named/namespace imports, sub-paths, quote style, and full-file byte equality where it had nothing to do |
 | `server/handlers/studio/__tests__/devServer.test.ts` | `spawnEntry` injecting `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV` (present only when `PUBLIC_ORIGIN` is set) alongside the existing `STUDIO_LIVE_BASE_PATH_ENV` |
 | `src/core/studio-runtime/__tests__/vitePlugin.test.ts` | `studioRuntimeIdPlugin()`'s two-plugin split: the config plugin's `apply`-free `resolveId`/`load`, the id-stamp plugin's unchanged `apply: 'serve'` `transform` |
 | `src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts` | both generated bundles (`vitePluginBundle.ts`, `runtimeBridgeBundle.ts`) match a fresh re-bundle of their sources |

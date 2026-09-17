@@ -610,6 +610,29 @@ Env vars: `LIVE_PORT` (default `port + 1`) and `LIVE_ORIGIN` (default `http://lo
 
 ---
 
+## The project's design-system folder
+
+Studio's design system is **not an npm dependency of the user's project**. Every DS-backed project carries a Studio-written `<project>/design-system/` folder, and its pages import it relatively (`import { Button } from '../design-system'`). That is what makes "Download the code" honest: `node_modules/` never ships, so a synthesized `package.json` naming a design-system package produced a zip that could not `bun install`. With the folder, the export builds with `react`, `react-dom`, `vite` and `@vitejs/plugin-react` and nothing else.
+
+- `server/handlers/studio/builtinDesignSystem.ts` — the three shared declarations: `BUILTIN_DESIGN_SYSTEM_DIR` (Studio's own vendored copy at `vendor/alm-design-system/`), `PROJECT_DESIGN_SYSTEM_DIR` (`'design-system'`), and `isDesignSystemBacked(dir)` — the READ-side check every consumer uses (the folder has an `index.js`).
+- `server/handlers/studio/designSystemFiles.ts` — `ensureDesignSystemFiles(dir)`, called from `loadStudioPages` beside `ensurePrototypeShell` and from `buildStudioDownloadResponse`. Writes the vendored `src/` into the folder, including **only** the `icons/**/*.svg` a component or `LineIcons.jsx` actually imports (≈20 of 568, read statically with a regex — nothing is executed at any trust tier). Idempotent by a SHA-256 of the whole source set recorded in `.studio/design-system.json` (`{ version, hash, files }`); a matching hash writes nothing, a differing one rewrites in place and removes the files that left the source set. Nothing outside `<project>/design-system/` and that one sidecar is ever touched, the delete list is the manifest's own `files` array, and every read and write is containment-checked on its **real** path. Never throws.
+- The WRITE-side authority is `.studio/meta.json`'s `designSystem: 'alm'` — set by `POST /admin/api/studio/create` (via `projectSeed.ts`) and by the migration route, never by a GitHub import. An imported repository does not get 600 KB of someone else's `.jsx` because it was opened.
+
+### `GET/POST /admin/api/studio/design-system/migrate`
+
+`server/handlers/studio/designSystemMigrate.ts` — moving a project that still imports the retired `@alm-design/design-system` npm.
+
+| | |
+|---|---|
+| `GET ?dir=<abs>` | `{ declaresDependency, hasInstalledCopy, importsRetiredPackage, designSystemBacked }`. Two cheap reads (the manifest, one `existsSync`) because the board asks on every open — deliberately not a walk of every source file. |
+| `POST { dir? }` | `{ filesRewritten, importsRewritten, removedDependency }`. Marks the meta → writes the folder → rewrites every import with `rewriteImportSpecifier` (formatting-preserving ts-morph) → drops the dependency from `package.json` keeping its formatting and every other key → deletes `node_modules/@alm-design/design-system` and its now-empty scope directory. |
+
+The delete is the one in this feature, and its guard is stated where it happens: the path is derived server-side, must pass `isRealpathContained(target, dir)` (containment after every symlink in the chain resolves), and a target that is itself a symlink is refused rather than followed. Failures use the `{ error }` envelope; a `dir` outside `studio-workspace/` is the router's 404 via `resolveProjectDir`.
+
+**POST never runs on load.** The board offers it through `DesignSystemMigrateBanner` and the user clicks — a rewrite of someone's source is a user action, the same rule trust promotion follows.
+
+---
+
 ## Adding a new endpoint
 
 1. **Pick the right layer.**
@@ -660,6 +683,7 @@ See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for boun
   - `server/router.ts` — request dispatch
   - `server/handlers/studio/` — Studio's own server half (parse, writeback, git, trust tiers, capture)
   - `server/handlers/studio/trustTier.ts` — reads/writes `.studio/meta.json`'s `trust` field (`static` | `render-packages` | `run-project`)
+  - `server/handlers/studio/designSystemFiles.ts` — writes `<project>/design-system/` from Studio's vendored copy; `designSystemMigrate.ts` — `GET/POST /admin/api/studio/design-system/migrate`
   - `server/handlers/studio/devServer.ts` — Tier-2-gated dev-server process manager (`/admin/api/studio/dev-server/{status,start,stop}`), one reused idle-timed subprocess per project, shared by the MCP `studio_render_reference` tool and the client prewarm hook (Track L, `live-01`)
   - `server/ai/mcp/capture/captureRoute.ts` — headless agent capture (`/admin/agent-capture`, `/admin/api/agent-capture/*`)
   - `server/ai/mcp/` — the `/_studio/mcp` MCP server endpoint for external AI clients

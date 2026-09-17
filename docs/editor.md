@@ -529,6 +529,14 @@ Canvas-internal values are not CSS tokens — they are raw integers intentionall
 | `DocumentSwitcher.tsx`          | Compact grouped dropdown (Pages / Templates / Components) for jumping to any other document — shared by `TemplateModeControl` and `VisualComponentModeControl` |
 | `TemplateModeControl.tsx`       | Floating control shown while editing a template: document switcher + preview-source selector |
 | `VisualComponentModeControl.tsx`| Floating control shown while editing a Visual Component: "Back to page" exit + document switcher |
+| `BoardBanners/`                 | The bottom-centre stack of project-level banners — see below      |
+
+### Board banners
+
+`BoardBanners` is the board's bottom-centre stack of project-level prompts, mounted from `StudioCanvasChrome`. Each card self-gates (renders `null` unless it has something to offer), so the stack is usually empty; the stack owns the positioning and the stacking tier so two cards that apply at once do not land on top of each other, and order is precedence. `pointer-events: none` on the stack, `auto` on each card, so an empty stack never eats a board click.
+
+- **`DesignSystemMigrateBanner`** — "This project imports the retired design-system package." Studio's design system is no longer an npm dependency; a project that still imports `@alm-design/design-system` does not build. One `Button` runs `POST /admin/api/studio/design-system/migrate`, which writes the project's own `design-system/` folder, rewrites every import to a relative path, drops the dependency and deletes the installed copy — then toasts and reloads the board. It is **never automatic on load**: a rewrite of the user's source is a user action, exactly like trust promotion, and a silent one would show up as a diff nobody authored the next time they ran `git status`. There is deliberately no "not now" — unlike the style-compile prompt it is not offering to run code, it is reporting a project that is broken in a way only this button fixes.
+- **`StyleCompileConsentBanner`** — the first-run "this project styles itself with Tailwind/Sass/PostCSS, so the board is showing it unstyled" consent. Promote → Tier 1 → reload; "Not now" → `.studio/meta.json`'s `styleCompilePromptDismissed`.
 
 ---
 
