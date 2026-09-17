@@ -9,6 +9,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { listWorkspaceFiles, WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES } from '@core/page-parser'
+import { ensureDesignSystemFiles } from './studio/designSystemFiles'
 import { ensurePrototypeShell } from './studio/prototypeShell'
 import { jsonResponse } from '../http'
 import { binaryResponse } from '../binary'
@@ -68,14 +69,31 @@ export function collectWorkspaceFiles(
   return results
 }
 
-/** Minimal package.json synthesized when the workspace ships none of its own. */
+/**
+ * Minimal package.json synthesized when the workspace ships none of its own.
+ *
+ * **No design-system dependency**, deliberately: a DS-backed project carries
+ * the design system as a `design-system/` FOLDER, which is ordinary source and
+ * goes into the zip like every other source folder. The previous version named
+ * `@alm-design/design-system` here, which made the download's own instructions
+ * ("unzip, `bun install`, `bun run dev`") fail on a package no registry
+ * serves. React and Vite are the whole dependency set now.
+ *
+ * Rarely reached in practice: `ensurePrototypeShell` merges a real
+ * `package.json` into the workspace before the walk, so a project with none of
+ * its own has one by the time it is collected. Kept as the honest fallback for
+ * a workspace whose manifest is unreadable or over the per-file size cap.
+ */
 function synthesizedPackageJson(): Uint8Array {
   return strToU8(
     `${JSON.stringify(
       {
         name: 'studio-workspace',
         private: true,
-        dependencies: { '@alm-design/design-system': '*' },
+        type: 'module',
+        scripts: { dev: 'vite', build: 'vite build', preview: 'vite preview' },
+        dependencies: { react: '^19.2.0', 'react-dom': '^19.2.0' },
+        devDependencies: { '@vitejs/plugin-react': '^5.0.0', vite: '^7.0.0' },
       },
       null,
       2,
@@ -86,9 +104,10 @@ function synthesizedPackageJson(): Uint8Array {
 /**
  * Builds the `GET /admin/api/studio/download` response for `dir`: a zip of
  * every real source file, with a synthesized `package.json` when the
- * workspace doesn't ship its own (recording the `@alm-design/design-system`
- * dependency so `bun install && bun run dev` works in the unzipped copy).
- * `node_modules` is never bundled either way.
+ * workspace doesn't ship its own. `node_modules` is never bundled either way —
+ * which is exactly why a DS-backed project's design system is a
+ * `design-system/` folder of real source rather than an installed package: the
+ * zip has to build on its own, with only what npm can still serve.
  */
 export function buildStudioDownloadResponse(dir: string): Response {
   if (!existsSync(dir)) {
@@ -102,6 +121,13 @@ export function buildStudioDownloadResponse(dir: string): Response {
   // the export — and a board created since the load memo was warmed would
   // otherwise be missing from it entirely. Never throws.
   ensurePrototypeShell(dir)
+  // Same reasoning for the design system: `design-system/` is ordinary source
+  // and goes into the zip like any other folder, so a project whose copy is
+  // stale (or whose folder was never written because it has not been opened
+  // since it became DS-backed) must be brought up to date BEFORE the walk.
+  // A no-op for every project that is not design-system-backed, and for every
+  // one whose folder already matches. Never throws.
+  ensureDesignSystemFiles(dir)
 
   const files = collectWorkspaceFiles(dir)
   const zipInput: Record<string, Uint8Array> = {}

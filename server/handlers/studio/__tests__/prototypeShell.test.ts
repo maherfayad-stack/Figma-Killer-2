@@ -43,6 +43,17 @@ function read(rel: string): string {
 }
 
 /**
+ * Makes the workspace design-system-backed the way a real one is: by carrying
+ * the folder. Not by declaring a dependency — the npm is retired, and
+ * `isDesignSystemBacked` reads the entry file, which is what an
+ * `import … from '../design-system'` actually resolves to.
+ */
+function writeDesignSystemFolder(): void {
+  fs.mkdirSync(path.join(tmpDir, 'design-system'), { recursive: true })
+  fs.writeFileSync(path.join(tmpDir, 'design-system', 'index.js'), "export const DesignSystemProvider = null\n")
+}
+
+/**
  * Write a complete `ProjectProfile` into `.studio/meta.json` with `extra`
  * merged in. Every required field has to be present: `readStudioMeta`
  * validates the profile as one value, so a partial object is dropped entirely
@@ -298,7 +309,7 @@ describe('ensurePrototypeShell — package.json', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({
         name: 'mine',
-        dependencies: { react: '18.0.0', '@alm-design/design-system': '^1.1.2' },
+        dependencies: { react: '18.0.0', 'some-ui-kit': '^1.1.2' },
         scripts: { dev: 'my-own-server' },
       }),
     )
@@ -315,7 +326,7 @@ describe('ensurePrototypeShell — package.json', () => {
     expect(pkg.scripts.dev).toBe('my-own-server')
     // …and still gains what it was missing.
     expect(pkg.scripts.build).toBe('vite build')
-    expect(pkg.dependencies['@alm-design/design-system']).toBe('^1.1.2')
+    expect(pkg.dependencies['some-ui-kit']).toBe('^1.1.2')
   })
 })
 
@@ -386,10 +397,7 @@ describe('ensurePrototypeShell — the generated providers', () => {
   it('mounts the project\'s LanguageProvider and feeds the design system its direction', () => {
     fs.mkdirSync(path.join(tmpDir, 'i18n'), { recursive: true })
     fs.writeFileSync(path.join(tmpDir, 'i18n', 'LanguageContext.tsx'), 'export const x = 1\n')
-    fs.writeFileSync(
-      path.join(tmpDir, 'package.json'),
-      JSON.stringify({ dependencies: { '@alm-design/design-system': '^1.1.2' } }),
-    )
+    writeDesignSystemFolder()
 
     ensurePrototypeShell(tmpDir)
     const providers = read('prototype/providers.generated.jsx')
@@ -406,6 +414,36 @@ describe('ensurePrototypeShell — the generated providers', () => {
 
     expect(providers).toContain('return children')
     expect(providers).toContain("lang: 'en', dir: 'ltr'")
+  })
+
+  /**
+   * The design system is a folder in the project now, so the shell imports it
+   * by the relative path from `prototype/` — and does NOT import a stylesheet
+   * beside it: the folder's own `index.js` imports the token CSS, which the
+   * retired package's `dist` build did not.
+   */
+  it('imports the design system from the project\'s own folder, with no separate CSS import', () => {
+    writeDesignSystemFolder()
+
+    ensurePrototypeShell(tmpDir)
+    const providers = read('prototype/providers.generated.jsx')
+
+    expect(providers).toContain("import { DesignSystemProvider } from '../design-system'")
+    expect(providers).not.toContain('index.css')
+    expect(providers).toContain('<DesignSystemProvider platform="ios" dir="ltr">')
+  })
+
+  it('does not mount the provider for a project that carries no design-system folder', () => {
+    // A leftover dependency on the retired npm is not evidence of anything —
+    // the folder is.
+    fs.writeFileSync(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ dependencies: { 'some-ui-kit': '^1.1.2' } }),
+    )
+
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/providers.generated.jsx')).not.toContain('DesignSystemProvider')
   })
 })
 

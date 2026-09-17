@@ -11,12 +11,13 @@
  *
  * ## Two kits, because a hand-rolled sheet is never as good as the real one
  *
- * A project with `@alm-design/design-system` installed gets `BottomSheet` and
- * `Dialog` themselves ({@link PageTemplateKit} `'alm'`). This is not a
- * convenience — it is the difference between a sheet that IS a sheet and a
- * drawing of one:
+ * A project carrying Studio's built-in design system — the Studio-written
+ * `<project>/design-system/` folder, see `./designSystemFiles.ts` — gets
+ * `BottomSheet` and `Dialog` themselves ({@link PageTemplateKit} `'alm'`).
+ * This is not a convenience — it is the difference between a sheet that IS a
+ * sheet and a drawing of one:
  *
- *   - The package's CSS reaches the canvas as raw `vendorCss`, never through
+ *   - The design system's CSS reaches the canvas as raw `vendorCss`, never through
  *     Studio's happy-dom CSSOM, so its glass, grabber, radii and bottom
  *     anchoring render exactly as shipped and stay correct when the package
  *     updates. See the CSSOM trap below for why that matters so much.
@@ -32,8 +33,14 @@
  *     usage — and a scaffolded page IS existing usage.
  *
  * Every other project gets `'plain'`: dependency-free JSX + a CSS module. A
- * starter that imported a package the project does not have would be a broken
+ * starter that imported something the project does not have would be a broken
  * file the moment it landed.
+ *
+ * The `'alm'` kit imports RELATIVELY — `'../design-system'` from `pages/`,
+ * `'../../design-system'` from a page one directory deeper — computed per page
+ * by `designSystemImportSpecifier`, never a package name. There is no
+ * design-system npm any more, and the relative import is what makes the
+ * downloaded repo build with `react` + `vite` and nothing else.
  *
  * ## The CSSOM trap — read before touching any colour here
  *
@@ -95,15 +102,6 @@ import { pageKindPreset, type PageKind } from '@core/studio-board'
 import { isDesignSystemBacked } from './builtinDesignSystem'
 
 /**
- * How a scaffolded page imports the built-in design system. A page is written
- * into the project's pages directory one level below the root, so the folder
- * is one hop up — the same specifier `designSystemImportSpecifier`
- * (`@core/page-parser`) computes for `pages/<Name>.tsx`, which is where
- * `pageScaffold.ts` puts every page it creates.
- */
-const DESIGN_SYSTEM_SPECIFIER = '../design-system'
-
-/**
  * The `.tsx`/`.jsx` source and its co-located CSS module.
  *
  * `styles` is optional because a template can genuinely have nothing to say:
@@ -126,14 +124,28 @@ export type PageTemplateKit = 'alm' | 'plain'
  * the same posture `detectPageFileExtension` takes for `.tsx` vs `.jsx`:
  * Studio continues what it finds rather than imposing a house style.
  *
- * `dir` is the PROJECT directory, not a nested app root: the design-system
- * folder is always written at the project root (`isDesignSystemBacked`),
- * whatever `package.json` a nested app happens to carry. This used to ask
- * `hasDependency(@alm-design/design-system)`, which is why it took an app root
- * — there is no dependency to look up any more.
+ * `projectDir` is the PROJECT root, not the app root: the design-system folder
+ * is written beside `pages/` and `components/`, never inside a nested app's
+ * own package. The question is "is the folder there", not "does a manifest
+ * declare a dependency" — this used to ask
+ * `hasDependency('@alm-design/design-system')`, which is why it took an app
+ * root; there is no dependency to look up any more, and `isDesignSystemBacked`
+ * is the one place the question is answered.
  */
-export function detectPageTemplateKit(dir: string): PageTemplateKit {
-  return isDesignSystemBacked(dir) ? 'alm' : 'plain'
+export function detectPageTemplateKit(projectDir: string): PageTemplateKit {
+  return isDesignSystemBacked(projectDir) ? 'alm' : 'plain'
+}
+
+/** Everything a template needs that is not the component's own name. */
+export interface StarterPageContext {
+  /** Which vocabulary to scaffold in — {@link detectPageTemplateKit}. */
+  kit: PageTemplateKit
+  /**
+   * The specifier this page imports the project's design system by, computed
+   * from the page's OWN directory (`designSystemImportSpecifier`). Read only
+   * by the `'alm'` kit; the `'plain'` kit imports nothing.
+   */
+  designSystemImport: string
 }
 
 /**
@@ -141,12 +153,17 @@ export function detectPageTemplateKit(dir: string): PageTemplateKit {
  * default-export function name and the page's own title text, so a scaffolded
  * page names itself on the board without a second naming step.
  */
-export function starterPage(componentName: string, kind: PageKind, kit: PageTemplateKit): StarterPageFiles {
-  const template = kit === 'alm' ? ALM_TEMPLATES[kind] : PLAIN_TEMPLATES[kind]
-  if (!template.css) return { component: template.jsx(componentName) }
+export function starterPage(
+  componentName: string,
+  kind: PageKind,
+  context: StarterPageContext,
+): StarterPageFiles {
+  const template = context.kit === 'alm' ? ALM_TEMPLATES[kind] : PLAIN_TEMPLATES[kind]
+  const source = template.jsx(componentName, context.designSystemImport)
+  if (!template.css) return { component: source }
   const stylesFileName = `${componentName}.module.css`
   return {
-    component: withStylesImport(template.jsx(componentName), `import styles from './${stylesFileName}'`),
+    component: withStylesImport(source, `import styles from './${stylesFileName}'`),
     styles: template.css,
     stylesFileName,
   }
@@ -171,8 +188,12 @@ function withStylesImport(source: string, statement: string): string {
 }
 
 interface Template {
-  /** The complete component source, minus the stylesheet import when `css` is set. */
-  jsx: (componentName: string) => string
+  /**
+   * The complete component source, minus the stylesheet import when `css` is
+   * set. `designSystemImport` is the relative specifier for THIS page's
+   * directory; the `plain` templates ignore it.
+   */
+  jsx: (componentName: string, designSystemImport: string) => string
   /** The co-located CSS module, when this template needs one at all. */
   css?: string
 }
@@ -200,8 +221,8 @@ function component(componentName: string, body: string): string {
  */
 function almSheet(size: 'small' | 'fullscreen', blurb: string): Template {
   return {
-    jsx: (componentName) =>
-      `import { BottomSheet } from '${DESIGN_SYSTEM_SPECIFIER}'\n\n` +
+    jsx: (componentName, designSystemImport) =>
+      `import { BottomSheet } from '${designSystemImport}'\n\n` +
       component(
         componentName,
         `    <BottomSheet open platform="ios" size="${size}" title="${componentName}" onClose={() => {}}>\n` +
@@ -253,8 +274,8 @@ const ALM_SHEET_CONTENT_CSS = `/* The package leaves \`.bottom-sheet__content\` 
  * `description` — the copy that actually gets rewritten — stay literal.
  */
 const almPopup: Template = {
-  jsx: (componentName) =>
-    `import { Dialog } from '${DESIGN_SYSTEM_SPECIFIER}'\n\n` +
+  jsx: (componentName, designSystemImport) =>
+    `import { Dialog } from '${designSystemImport}'\n\n` +
     component(
       componentName,
       `    <Dialog\n` +

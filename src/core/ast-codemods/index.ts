@@ -26,6 +26,8 @@ export type {
 } from './setStyledDeclaration'
 export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpecifier'
 export type { SetImportSpecifierParams } from './setImportSpecifier'
+export { rewriteImportSpecifier } from './rewriteImportSpecifier'
+export type { RewriteImportSpecifierParams, RewriteImportSpecifierResult } from './rewriteImportSpecifier'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'

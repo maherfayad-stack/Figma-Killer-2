@@ -43,6 +43,7 @@ import {
   projectPagesDir,
 } from '../studioProjects'
 import { autoPlaceBoardFrame } from './boardFrames'
+import { designSystemImportSpecifier } from './designSystemFiles'
 import { detectPageTemplateKit, pageNameBase, starterPage } from './pageTemplates'
 import { pageIdFromRelPath } from '../studioPageIds'
 
@@ -78,10 +79,15 @@ export function createScaffoldedPage(
   const file = join(pagesDir, relPath)
   if (existsSync(file)) return { ok: false, conflict: `A page named "${componentName}" already exists.` }
   mkdirSync(pagesDir, { recursive: true })
-  // The project's own dialect — an installed design system means the overlay
-  // kinds scaffold its real `BottomSheet`/`Dialog` instead of a hand-rolled
-  // copy. Same posture as `detectPageFileExtension` above.
-  const starter = starterPage(componentName, kind, detectPageTemplateKit(dir))
+  // The project's own dialect — a project carrying the built-in design system
+  // (`<project>/design-system/`) means the overlay kinds scaffold its real
+  // `BottomSheet`/`Dialog` instead of a hand-rolled copy, imported by the
+  // relative path from THIS page's directory. Same posture as
+  // `detectPageFileExtension` above.
+  const starter = starterPage(componentName, kind, {
+    kit: detectPageTemplateKit(dir),
+    designSystemImport: designSystemImportSpecifier(dir, pagesDir),
+  })
   writeFileSync(file, starter.component)
   // Written alongside the component, never lazily: the component imports it by
   // name, so a missing stylesheet is a broken page, not a deferred nicety. A

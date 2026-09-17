@@ -147,6 +147,7 @@
  *       most recently registered reference" and "remove by id" respectively.
  *
  *   GET/POST /admin/api/studio/trust-tier      → `studio/trustTier.ts`
+ *   GET/POST /admin/api/studio/design-system/migrate → `studio/designSystemMigrate.ts`
  *       WS-3.3 — reads/writes `.studio/meta.json`'s `trust` field. The action
  *       behind the canvas's "promote this project" placeholder for an
  *       unregistered `pkg.*` node — see `NodeRenderer.tsx`'s
@@ -293,6 +294,7 @@ import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
 import { tryServeStudioLiveOriginInfo } from './studio/liveOriginInfo'
 import { tryServeStudioStyleCompileConsent } from './studio/styleCompileConsent'
+import { tryServeStudioDesignSystemMigrate } from './studio/designSystemMigrate'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 import { tryServeStudioLocalizedPage } from './studio/localizedPage'
@@ -346,6 +348,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioTrustTier,
   tryServeStudioLiveOriginInfo,
   tryServeStudioStyleCompileConsent,
+  tryServeStudioDesignSystemMigrate,
   tryServeStudioTokens,
   tryServeStudioExtractComponent,
   tryServeStudioPreviewAxes,

@@ -1413,6 +1413,146 @@ branch does not touch.
    does not thread it. If a future caller needs to point the whole guide generator at a
    different vendor dir, thread it there too rather than adding a second seam.
 
+### server-23 — DS-2: projects carry a Studio-written `design-system/` folder instead of the npm
+- **Agent:** server-engineer
+- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `feat/ds-project-files`. Worktree: `.tmp/wt-ds-project-files/`. Base: `0da8a84b`.
+- **Updated:** 2026-09-17.
+- **Goal:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` §3 DS-2 — nothing in a user's project
+  depends on `@alm-design/design-system` any more. Every DS-backed project carries a
+  Studio-written `<project>/design-system/` folder and imports it **relatively**, so the
+  downloaded repo builds with `react` + `react-dom` + `vite` + `@vitejs/plugin-react` and
+  nothing else.
+
+#### Scope — files this branch owns
+New: `server/handlers/studio/{builtinDesignSystem,designSystemFiles,designSystemMigrate}.ts`,
+`src/core/ast-codemods/rewriteImportSpecifier.ts`,
+`src/admin/pages/site/studio/designSystemMigrateRequests.ts`,
+`src/admin/pages/site/canvas/{DesignSystemMigrateBanner,BoardBanners}/`, and four test files
+(`__tests__/designSystemFiles.test.ts`, `__tests__/designSystemMigrate.test.ts`,
+`ast-codemods/__tests__/rewriteImportSpecifier.test.ts`, rewritten `projectSeed.test.ts`).
+Changed: `projectSeed.ts`, `studioDownload.ts`, `studioPageLoad.ts`, `pageTemplates.ts`,
+`pageScaffold.ts`, `projectRoutes.ts`, `projectProbe.ts` (one line), `studioMeta.ts`,
+`prototypeShell/{index.ts,registryFile.ts}`, `studio.ts` (route registration),
+`StudioCanvasChrome.tsx`, `StyleCompileConsentBanner.module.css`, `ast-codemods/index.ts`,
+plus `docs/{features/prototype-export.md,agent-refs/path-index.md,server.md,editor.md}`.
+
+#### Routes
+| Method | Path | Request | Response |
+|---|---|---|---|
+| `GET` | `/admin/api/studio/design-system/migrate` | `?dir=<abs>` (`resolveProjectDir`) | `{ declaresDependency, hasInstalledCopy, importsRetiredPackage, designSystemBacked }` — all `boolean` |
+| `POST` | `/admin/api/studio/design-system/migrate` | `readValidatedBody(req, Type.Object({ dir: Type.Optional(Type.String()) }))` | `{ filesRewritten: number, importsRewritten: number, removedDependency: boolean }` |
+
+Client mirrors both schemas in `designSystemMigrateRequests.ts` and calls through `apiRequest`.
+Failures use the `{ error }` envelope; a `dir` outside `studio-workspace/` is the router's 404
+via `rethrowProjectDirRefusal`.
+
+#### Rejection cases actually tested (`__tests__/designSystemFiles.test.ts`, `__tests__/designSystemMigrate.test.ts`)
+- `ensureDesignSystemFiles` on a project with **no `designSystem: 'alm'`** in `.studio/meta.json`
+  → `skipped: 'not-design-system-backed'`, no folder created. Same for a meta naming something
+  else, and for a project directory that does not exist.
+- **No vendored source** (`vendor/alm-design-system/` absent — the state of every checkout until
+  DS-1 lands) → `skipped: 'no-source'`, nothing written, never throws.
+- **Symlinked source file** pointing out of the vendored `src/` → refused on the REAL path; the
+  file is not copied and its contents appear nowhere in the folder (asserted by scanning every
+  written file for the secret string).
+- **Symlinked `<project>/design-system/`** pointing out of the project → `skipped: 'unsafe-target'`,
+  and the linked-to directory is still empty afterwards. Checked BEFORE the `mkdir`.
+- **Symlinked directory inside the vendored source** → never walked into.
+- **A file the manifest does not claim** (a user's own `NOTES.md` in the folder) is never deleted;
+  the delete list is `.studio/design-system.json`'s own `files` array and nothing else.
+- Whole-project mtime scan proves nothing outside `design-system/` and `.studio/design-system.json`
+  is touched.
+- Migration: **symlinked `node_modules/@alm-design/design-system`** → refused, not followed; the
+  pnpm-store directory it points at still exists and the link is untouched.
+- Migration: the scope directory is kept when another package shares it; a whole-tree SHA-256 map
+  proves nothing outside `design-system/`, `.studio/`, `node_modules/@alm-design/`, `package.json`
+  and the two rewritten pages changed; running it twice is a no-op.
+- Codemod: a declaration that BINDS something is never removed, whatever its sub-path — only a
+  bare side-effect `.css` import is; a file with no matching import comes back byte-identical.
+
+#### Decisions a later agent could otherwise reverse by accident
+- **`builtinDesignSystem.ts` is byte-identical to the work order's text**, because DS-3 creates
+  the same file on its branch. Do not reword or extend it — put additions in a sibling.
+- **The banner reads a GET status route, NOT a `ProjectProfile` field.** The work order asked for
+  an `importsRetiredDesignSystem` boolean on `ProjectProfileSchema`; I deliberately did not add
+  one. `ProjectProfile` is a *cached* probe result persisted in `.studio/meta.json`, so (a) a new
+  field needs a `PROBE_VERSION` bump, which DS-3 also has to touch — a guaranteed conflict; (b) the
+  value is mutated by the very button the banner shows, so a cached copy is wrong the moment it
+  matters; (c) the profile does not reach the browser at all today, so it would have needed a new
+  route regardless. `styleCompileConsent.ts` is the precedent and this is an exact copy of its shape.
+- **`applyProjectSeed` does the whole job** (prepared-seed copy + `mergeShellPackageJson` + meta flag
+  + `ensureDesignSystemFiles`). `projectGuide.ts`'s `healMissingDesignSystem` calls it for any
+  project with no `package.json` at all, and its own doc is explicit that completing such a project
+  is a repair. That is today's semantics minus the npm — I preserved it rather than narrowing it.
+  The GitHub-import path never calls `applyProjectSeed`.
+- **`mergePackageJson` in `prototypeShell/index.ts` is now exported as `mergeShellPackageJson`** so
+  the seed and the shell share one definition of what a Studio project's manifest declares.
+- **`design-system` is in `NON_PAGES_DIR_SEGMENTS`** (`projectProbe.ts:109`), beside
+  `PROTOTYPE_SHELL_DIR`, for the same reason: ~40 JSX-returning component files would outrank a
+  project's handful of real screens in `rankPagesDirCandidates`. One line; DS-3 may collide there.
+- **`BoardBanners/`** is new: two bottom-centre banners now exist and both used to claim
+  `position: absolute; bottom; left: 50%; z-index: 53` for themselves. The stack owns the
+  positioning; `StyleCompileConsentBanner.module.css` lost it. Order is precedence.
+- **The migration banner has no "not now."** It reports a project that does not build, which is not
+  a choice to decline — unlike the style-compile prompt, which offers to run code.
+
+#### What DS-3 must still do (this branch does NOT close it)
+1. **`PROJECT_DESIGN_SYSTEM_DIR` must be skipped by the parser.** `src/core/page-parser/`'s
+   `componentSources` / `inlineLocalComponents` / `assetImports`, `@core/studio-sync`'s
+   `collectPageStylesheets`, and `styleCompile`'s stylesheet walk all still treat
+   `<project>/design-system/**` as the user's own source. Left alone, the folder's ~40 `.jsx` become
+   inlinable local components and its `.css` enters the editable `StyleRule` registry. **Harmless on
+   this branch only because `vendor/alm-design-system/` does not exist yet, so the folder is never
+   written.** DS-2 and DS-3 should land together, or DS-3 first.
+2. **`designSystemGuide.ts` / `designSystemDigest.ts` / `projectGuide.ts` must read the vendored
+   folder.** They are keyed on `profile.componentPackages`, which was populated by the
+   `node_modules` copy the seed no longer writes — so `.claude/design-system-components.md` is no
+   longer generated for a seeded project. I updated `projectGuide.test.ts`'s heal test to assert
+   what is true now (manifest written + `designSystem: 'alm'` marked) and named DS-3 in its comment.
+   That is the one behaviour regression this branch knowingly leaves open.
+3. `ALM_DESIGN_PACKAGE_SPECIFIER` (`designSystemDetect.ts`) now has **zero importers under
+   `server/`** except `designSystemMigrate.ts`'s own `RETIRED_DESIGN_SYSTEM_PACKAGE` constant
+   (declared locally, on purpose — the migration that retires the string is allowed to name it).
+   DS-3 deletes the constant; DS-9's `no-alm-npm-specifier.test.ts` should allowlist
+   `designSystemMigrate.ts` and its test.
+
+#### Landmines
+- **`vendor/alm-design-system/` does not exist on this branch (DS-1 owns it).** Every
+  `ensureDesignSystemFiles` call therefore returns `skipped: 'no-source'` and writes nothing, and
+  every test builds its own fake vendor directory. Nothing here has been exercised against the real
+  40-component source — the first real run happens when DS-1 merges.
+- The codemod maps anything under the package's `dist/` to the folder ROOT (`'../design-system'`),
+  not to `<to>/dist/...`: `dist/` was a BUILD of `src/` and has no counterpart in the folder.
+  `dist/index.css` as a bare side-effect import is deleted outright.
+- `starterPage`'s third argument changed from a bare `PageTemplateKit` to
+  `{ kit, designSystemImport }`. Three call sites (`pageScaffold.ts`, `projectRoutes.ts`, and
+  `pageScaffold.test.ts`) — `tsc` catches any I missed.
+- `detectPageTemplateKit` now takes the **project** dir, not the app root. `pageScaffold.ts`
+  was passing `resolveAppRoot(dir)`; the design-system folder is never inside a nested app.
+
+#### Verification
+- `bun run build` — clean.
+- `bun test` — **218 fail / 11007 pass**, identical count to the same command at base `0da8a84b`
+  (**218 fail / 11186 ran**) and a name-by-name diff of the two failure lists shows **zero new
+  failures** (my branch is two flaky ones short of the baseline). Baseline captured in a throwaway
+  detached worktree, since `git stash` is banned here.
+- `bun test server/handlers/studio` — 840 pass / 5 fail, all five confirmed pre-existing at base
+  (`canonicalPageCheck`, `pageSourceFile`, 3× `pageWriteVerification` — all fixture-dependent).
+- `bun test src/__tests__/architecture` — 550 pass / 2 fail, both pre-existing at base
+  (`no-core-barrel-deep-imports`, `direct-icon-imports` chevron-left).
+- `bun run lint` — 6 errors, all `'os' is defined but never used` in six test files this branch
+  does not touch; pre-existing.
+- **Not run:** anything against a real project on disk. `studio-workspace/test4` and `test4 copy`
+  still import the npm and were deliberately never touched.
+
+#### Human action needed
+Dogfood, after DS-1 and DS-3 land: open `/admin/site` on a COPY of `test4 copy` (duplicate it
+first — §5 of the plan), confirm the board shows "This project imports the retired design-system
+package", click it, confirm `pages/*.tsx` imports became `'../design-system'`, `package.json` lost
+the dependency, `node_modules/@alm-design` is gone, and `vite build` in the migrated folder
+succeeds. Then "Download the code" and `bun install && bun run dev` in the unzipped copy.
+
 ### meta-11 — plan: built-in design system, Assets panel, live previews, Add page
 - **Agent:** orchestrator (plan only — no code written)
 - **Stage:** research complete · plan written · **owner confirmed all three §0 decisions (2026-09-17)** — ready for `studio-architect` to cut wave-1 and wave-2 work orders.

@@ -233,6 +233,25 @@ export const StudioMetaSchema = Type.Object({
   previewLocale: Type.Optional(Type.String({ minLength: 1 })),
   trust: Type.Optional(TrustTierSchema),
   /**
+   * DS-2 — this project is backed by Studio's built-in design system, so
+   * Studio maintains a `<project>/design-system/` folder in it
+   * (`./designSystemFiles.ts`). The WRITE-side authority: "New project" sets
+   * it, so does the retired-package migration, and nothing else ever does —
+   * which is what keeps an imported GitHub repository from having 600 KB of
+   * someone else's `.jsx` appear inside it on open.
+   *
+   * The READ-side check is `isDesignSystemBacked(dir)` (the folder is there),
+   * because "can a page import it" is a question about the folder, not about
+   * a flag. The two are deliberately different questions: a project can be
+   * flagged a moment before the folder exists, and a downloaded-then-reopened
+   * project can carry the folder with a meta that was never copied.
+   *
+   * One value today. A union rather than a boolean because the field names
+   * WHICH design system, and a second built-in would be a second literal
+   * rather than a second field.
+   */
+  designSystem: Type.Optional(Type.Literal('alm')),
+  /**
    * WS-2.1 consent — the user answered "not now" to the board's
    * `StyleCompileConsentBanner`, the first-run prompt that offers to run this
    * project's own Sass/PostCSS/Tailwind compiler (see

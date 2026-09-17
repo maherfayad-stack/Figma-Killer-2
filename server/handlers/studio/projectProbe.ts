@@ -64,7 +64,7 @@
  */
 import { existsSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, PROJECT_DESIGN_SYSTEM_DIR, PROTOTYPE_SHELL_DIR, listWorkspaceFiles } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, PROTOTYPE_SHELL_DIR, listWorkspaceFiles } from '@core/page-parser'
 import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
 import { Type } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
@@ -72,6 +72,7 @@ import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readTextCapped } from './cappedFileRead'
 import { DEPENDENCIES_NOT_INSTALLED, detectComponentPackages } from './componentPackageDetect'
+import { PROJECT_DESIGN_SYSTEM_DIR } from './builtinDesignSystem'
 import { detectDesignSystems } from './designSystemDetect'
 import { findConfigFile, hasDependency, readPackageJson, type PackageJsonShape } from './packageJsonRead'
 import { detectStyleToolchain } from './styleToolchainDetect'
@@ -106,7 +107,18 @@ const CRA_ENTRY_CANDIDATES = ['src/index.tsx', 'src/index.jsx', 'src/index.ts', 
 // exactly what `rankPagesDirCandidates` scores on — so without this a
 // re-probe could rank the shell above the real `pages/` and Studio would
 // start treating its own scaffold as the design.
-const NON_PAGES_DIR_SEGMENTS = new Set(['public', '__tests__', '__mocks__', PROTOTYPE_SHELL_DIR, PROJECT_DESIGN_SYSTEM_DIR])
+//
+// `design-system` is the other Studio-written folder (`designSystemFiles.ts`)
+// and is here for the same reason, more so: it holds ~40 component files, each
+// a JSX-returning export, which would outweigh a project's handful of real
+// screens outright. It is a black box with props, never the user's pages.
+const NON_PAGES_DIR_SEGMENTS = new Set([
+  'public',
+  '__tests__',
+  '__mocks__',
+  PROTOTYPE_SHELL_DIR,
+  PROJECT_DESIGN_SYSTEM_DIR,
+])
 
 // ---------------------------------------------------------------------------
 // Small file-read primitives

@@ -1,31 +1,54 @@
 /**
- * `applyProjectSeed` — the copy that gives every new project a design system.
+ * `applyProjectSeed` — what a brand-new project starts with.
  *
- * Three behaviours worth pinning: the seed must never overwrite what the
- * project scaffolder already wrote; a missing or broken PREPARED seed must
- * fall back to Studio's own install rather than leaving the project empty
- * (nobody populates `.data/studio-seed`, so that fallback is the path almost
- * every real project takes); and nothing here may ever turn project creation
- * into a failure.
+ * Four behaviours worth pinning: the seed never overwrites what the project
+ * scaffolder already wrote; a new project comes out with a `package.json` that
+ * declares **no design-system dependency** (the design system is a folder in
+ * the project now, so an unzipped download installs only what npm can still
+ * serve); the project is marked design-system-backed so Studio maintains that
+ * folder from here on; and nothing here may ever turn project creation into a
+ * failure.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyProjectSeed, resolveProjectSeedDir } from './projectSeed'
+import { readStudioMeta } from './studioMeta'
+import { isDesignSystemBacked } from './builtinDesignSystem'
 
 let root: string
 let seedDir: string
+let designSystemSourceDir: string
 let projectDir: string
+
+/** A minimal stand-in for `vendor/alm-design-system/`, which DS-1 creates and this branch does not have. */
+function writeVendoredDesignSystem(): void {
+  const src = join(designSystemSourceDir, 'src')
+  mkdirSync(join(src, 'components'), { recursive: true })
+  mkdirSync(join(src, 'context'), { recursive: true })
+  mkdirSync(join(src, 'tokens'), { recursive: true })
+  mkdirSync(join(src, 'icons'), { recursive: true })
+  writeFileSync(join(designSystemSourceDir, 'package.json'), '{"name":"alm-design-system","version":"1.1.2"}')
+  writeFileSync(join(src, 'index.js'), "export { Button } from './components/Button'\n")
+  writeFileSync(join(src, 'components', 'Button.jsx'), 'export function Button() { return null }\n')
+  writeFileSync(join(src, 'context', 'DesignSystemContext.jsx'), 'export const ctx = null\n')
+  writeFileSync(join(src, 'tokens', 'index.css'), ':root { --a: 1px }\n')
+  writeFileSync(join(src, 'icons', 'LineIcons.jsx'), 'export const ChevronIcon = null\n')
+}
+
+function seed(extra: { seedDir?: string } = {}) {
+  return applyProjectSeed(projectDir, { designSystemSourceDir, ...extra })
+}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'studio-seed-'))
   seedDir = join(root, 'seed')
+  designSystemSourceDir = join(root, 'vendor', 'alm-design-system')
   projectDir = join(root, 'project')
-  mkdirSync(join(seedDir, 'node_modules', '@alm-design', 'design-system'), { recursive: true })
-  writeFileSync(join(seedDir, 'node_modules', '@alm-design', 'design-system', 'package.json'), '{"name":"ds"}')
-  writeFileSync(join(seedDir, 'package.json'), '{"dependencies":{"@alm-design/design-system":"^1.1.2"}}')
+  mkdirSync(seedDir, { recursive: true })
   mkdirSync(join(projectDir, 'pages'), { recursive: true })
+  writeVendoredDesignSystem()
 })
 
 afterEach(() => {
@@ -33,12 +56,64 @@ afterEach(() => {
 })
 
 describe('applyProjectSeed', () => {
-  it('copies the design system and its declared dependency into a new project', () => {
-    const result = applyProjectSeed(projectDir, seedDir)
+  it('gives a new project the design system as a folder, not as a dependency', () => {
+    const result = seed()
 
-    expect(result.copied.sort()).toEqual(['node_modules', 'package.json'])
-    expect(existsSync(join(projectDir, 'node_modules', '@alm-design', 'design-system', 'package.json'))).toBe(true)
-    expect(readFileSync(join(projectDir, 'package.json'), 'utf8')).toContain('@alm-design/design-system')
+    expect(isDesignSystemBacked(projectDir)).toBe(true)
+    expect(result.copied).toContain('design-system')
+    expect(existsSync(join(projectDir, 'design-system', 'components', 'Button.jsx'))).toBe(true)
+  })
+
+  it('writes a package.json with react and vite and NO design-system dependency', () => {
+    // The download zip excludes `node_modules` and there is no registry that
+    // serves the retired package, so a manifest naming it is a manifest that
+    // cannot install.
+    seed()
+    const manifest = readFileSync(join(projectDir, 'package.json'), 'utf8')
+
+    expect(manifest).not.toContain('alm-design')
+    const parsed = JSON.parse(manifest) as {
+      dependencies: Record<string, string>
+      devDependencies: Record<string, string>
+      scripts: Record<string, string>
+    }
+    expect(parsed.dependencies.react).toBeDefined()
+    expect(parsed.dependencies['react-dom']).toBeDefined()
+    expect(parsed.devDependencies.vite).toBeDefined()
+    expect(parsed.devDependencies['@vitejs/plugin-react']).toBeDefined()
+    expect(parsed.scripts.dev).toBe('vite')
+  })
+
+  it('records the design system in .studio/meta.json — the write-side authority', () => {
+    // Without the flag, `ensureDesignSystemFiles` refuses on every later open
+    // and the folder silently goes stale.
+    seed()
+    expect(readStudioMeta(projectDir).designSystem).toBe('alm')
+  })
+
+  it('preserves what the scaffolder already wrote to .studio/meta.json', () => {
+    mkdirSync(join(projectDir, '.studio'), { recursive: true })
+    writeFileSync(
+      join(projectDir, '.studio', 'meta.json'),
+      JSON.stringify({ displayName: 'My App', platform: 'mobile' }),
+    )
+
+    seed()
+    const meta = readStudioMeta(projectDir)
+
+    expect(meta.displayName).toBe('My App')
+    expect(meta.platform).toBe('mobile')
+    expect(meta.designSystem).toBe('alm')
+  })
+
+  it('copies a prepared seed directory, when one exists', () => {
+    mkdirSync(join(seedDir, 'styles'), { recursive: true })
+    writeFileSync(join(seedDir, 'styles', 'house.css'), '.house {}\n')
+
+    const result = seed({ seedDir })
+
+    expect(result.copied).toContain('styles')
+    expect(readFileSync(join(projectDir, 'styles', 'house.css'), 'utf8')).toBe('.house {}\n')
   })
 
   it('never overwrites what the scaffolder already wrote', () => {
@@ -48,55 +123,54 @@ describe('applyProjectSeed', () => {
     writeFileSync(join(seedDir, 'pages', 'Home.tsx'), 'SEED')
     writeFileSync(join(projectDir, 'pages', 'Home.tsx'), 'SCAFFOLD')
 
-    const result = applyProjectSeed(projectDir, seedDir)
+    const result = seed({ seedDir })
 
     expect(result.skipped).toContain('pages')
     expect(readFileSync(join(projectDir, 'pages', 'Home.tsx'), 'utf8')).toBe('SCAFFOLD')
   })
 
-  it('falls back to Studio\'s own install when no seed directory was prepared', () => {
-    // `.data/studio-seed` is opt-in and nothing populates it, so this is the
-    // path a real "New project" actually takes. It used to be a no-op, which
-    // is why every new project came out with no design system at all.
-    const result = applyProjectSeed(projectDir, join(root, 'does-not-exist'))
+  it('never overwrites a value the project\'s own package.json already set', () => {
+    writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ name: 'mine', dependencies: { react: '18.0.0' } }))
 
-    expect(result.copied).toContain('node_modules')
-    expect(result.copied).toContain('package.json')
-    expect(existsSync(join(projectDir, 'node_modules', '@alm-design', 'design-system'))).toBe(true)
-  })
-
-  it('declares the copied package in package.json at the version actually on disk', () => {
-    // Copying the package without declaring it produces a project whose design
-    // system is present but invisible: `componentPackages` is read from the
-    // manifest, so every detector downstream would report none.
-    applyProjectSeed(projectDir, join(root, 'does-not-exist'))
-    const manifest = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8')) as {
-      dependencies?: Record<string, string>
+    seed()
+    const parsed = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8')) as {
+      name: string
+      dependencies: Record<string, string>
     }
-    const declared = manifest.dependencies?.['@alm-design/design-system']
-    expect(declared).toBeDefined()
 
-    const installed = JSON.parse(
-      readFileSync(join(projectDir, 'node_modules', '@alm-design', 'design-system', 'package.json'), 'utf8'),
-    ) as { version?: string }
-    expect(declared).toBe(`^${installed.version}`)
+    expect(parsed.name).toBe('mine')
+    expect(parsed.dependencies.react).toBe('18.0.0')
+    // …and still gains what it was missing.
+    expect(parsed.dependencies['react-dom']).toBeDefined()
   })
 
-  it('falls back the same way when the seed path is a file, not a directory', () => {
+  it('works with no prepared seed directory at all — the normal case', () => {
+    // Nothing populates `.data/studio-seed`, so this is the path every real
+    // "New project" takes.
+    const result = applyProjectSeed(projectDir, {
+      seedDir: join(root, 'does-not-exist'),
+      designSystemSourceDir,
+    })
+
+    expect(result.copied).toContain('package.json')
+    expect(result.copied).toContain('design-system')
+  })
+
+  it('works when the seed path is a file, not a directory', () => {
     const notADir = join(root, 'seed.txt')
     writeFileSync(notADir, 'nope')
 
-    expect(applyProjectSeed(projectDir, notADir).copied).toContain('node_modules')
+    expect(seed({ seedDir: notADir }).copied).toContain('design-system')
   })
 
-  it('never overwrites a package.json the project already has', () => {
-    const mine = '{"name":"mine"}'
-    writeFileSync(join(projectDir, 'package.json'), mine)
+  it('never fails project creation when Studio has no vendored design system', () => {
+    rmSync(designSystemSourceDir, { recursive: true, force: true })
 
-    const result = applyProjectSeed(projectDir, join(root, 'does-not-exist'))
+    const result = seed()
 
-    expect(result.skipped).toContain('package.json')
-    expect(readFileSync(join(projectDir, 'package.json'), 'utf8')).toBe(mine)
+    expect(result.copied).toContain('package.json')
+    expect(result.skipped).toContain('design-system')
+    expect(existsSync(join(projectDir, 'design-system'))).toBe(false)
   })
 })
 

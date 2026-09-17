@@ -1,0 +1,26 @@
+/**
+ * The bottom-centre slot on the board, as a column rather than a single card.
+ *
+ * Untransformed (viewport-anchored) canvas chrome: bottom CENTRE is the one
+ * free slot — top-left is CanvasModeToggle, top-centre is CanvasNotch,
+ * bottom-left is BoardNotesToolbar. Same stacking tier (53) as all three, so
+ * it sits above the transform layer and the selection overlays and below
+ * floating panels and dialogs.
+ *
+ * `pointer-events: none` on the container and `auto` on each card: the stack
+ * spans the board's full width to centre its children, and an invisible strip
+ * that swallowed clicks along the bottom of the canvas would be a bug nobody
+ * could see.
+ */
+.stack {
+    position: absolute;
+    bottom: var(--space-2xl);
+    left: 50%;
+    z-index: 53;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2xs);
+    transform: translateX(-50%);
+    pointer-events: none;
+}
