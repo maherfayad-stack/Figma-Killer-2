@@ -21,7 +21,6 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProjects'
 import { tryServeStudioGitSync } from '../studio/gitSyncRoutes'
-import type { DbClient } from '../../db/client'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 async function git(cwd: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -35,19 +34,9 @@ function post(body: unknown): RequestInit {
   return { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
 }
 
-/**
- * The sub-router takes a `DbClient` only to look up the requesting user's
- * GitHub credential, and that lookup is short-circuited before it touches the
- * database when the request carries no session cookie — which none of these
- * do. So an empty runtime is honest here, not a mock standing in for
- * behaviour: any query at all would be a bug this stub would surface as a
- * crash.
- */
-const NO_SESSION_RUNTIME = { db: {} as DbClient }
-
 async function call(pathAndQuery: string, init?: RequestInit): Promise<Response> {
   const url = new URL(`http://localhost${pathAndQuery}`)
-  const res = await tryServeStudioGitSync(new Request(url, init), NO_SESSION_RUNTIME, url, url.pathname)
+  const res = await tryServeStudioGitSync(new Request(url, init), url, url.pathname)
   if (!res) throw new Error(`no route matched ${pathAndQuery}`)
   return res
 }
@@ -101,7 +90,15 @@ async function makeBareRemote(dir: string): Promise<string> {
 }
 
 afterAll(() => {
-  for (const dir of created) fs.rmSync(dir, { recursive: true, force: true })
+  // Per-entry, so one undeletable fixture cannot leave every later one behind
+  // in `projectsRootDir()` where another suite's project discovery will find it.
+  for (const dir of created) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch (err) {
+      console.error('[gitSyncRoutes.test] could not remove a fixture:', err)
+    }
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -607,8 +604,8 @@ describe('gitSyncRoutes — rejections', () => {
 
   it('does not answer a method or action it does not own', async () => {
     const url = new URL('http://localhost/admin/api/studio/git/branches')
-    expect(await tryServeStudioGitSync(new Request(url, { method: 'POST' }), NO_SESSION_RUNTIME, url, url.pathname)).toBeNull()
+    expect(await tryServeStudioGitSync(new Request(url, { method: 'POST' }), url, url.pathname)).toBeNull()
     const other = new URL('http://localhost/admin/api/studio/git/status')
-    expect(await tryServeStudioGitSync(new Request(other), NO_SESSION_RUNTIME, other, other.pathname)).toBeNull()
+    expect(await tryServeStudioGitSync(new Request(other), other, other.pathname)).toBeNull()
   })
 })

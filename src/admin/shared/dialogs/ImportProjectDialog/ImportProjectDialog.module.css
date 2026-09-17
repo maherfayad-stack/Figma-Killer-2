@@ -65,3 +65,32 @@
     color: var(--text-subtle);
     font-variant-numeric: tabular-nums;
 }
+
+/* "Keep history (clone)" — a labelled toggle, same two-column shape the
+   Settings modal's preference rows use. */
+.toggleRow {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-m);
+}
+
+.toggleRowContent {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    min-width: 0;
+}
+
+.toggleRowLabel {
+    font-size: var(--text-m);
+    color: var(--text-bright);
+    cursor: pointer;
+}
+
+.toggleRowDesc {
+    margin: 0;
+    font-size: var(--text-s);
+    line-height: 1.4;
+    color: var(--text-subtle);
+}

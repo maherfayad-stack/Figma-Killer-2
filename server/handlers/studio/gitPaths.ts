@@ -2,7 +2,7 @@
  * gitPaths — every string a client hands the git routes, judged before it can
  * reach an argv array.
  *
- * Three separate untrusted shapes reach `git`, and each has its own way of
+ * Four separate untrusted shapes reach `git`, and each has its own way of
  * being weaponised:
  *
  *   - a **workspace-relative file path** (`commit`'s `files`, `diff`'s `file`,
@@ -23,6 +23,12 @@
  *     the revision grammar git otherwise accepts (`HEAD~3`, `@{upstream}`,
  *     `:/message`) — is refused, because the only thing the history view ever
  *     hands back is a hash it read out of `git log`.
+ *   - a **remote URL** (G1's `POST git/remote`, and the clone target). The
+ *     dangerous one: git's URL grammar includes transports that EXECUTE
+ *     (`ext::sh -c …`) and transports that point at this server's own disk
+ *     (`file://`, a bare path). `parseGithubRemoteUrl` is an allowlist of two
+ *     GitHub shapes and re-composes the URL from the parsed owner/repo, so the
+ *     caller's string never reaches argv — see its own doc below.
  *
  * Nothing here interpolates into a shell string; there is no shell anywhere in
  * this feature. These guards exist because an argv array still lets a crafted
@@ -133,6 +139,92 @@ export function isArgvSafeBranchName(name: string): boolean {
 /** A raw object name as `git log` prints it — hex, 7–40 chars. Deliberately NOT git's wider revision grammar. */
 export function isCommitSha(value: string): boolean {
   return /^[0-9a-f]{7,40}$/.test(value)
+}
+
+/**
+ * A remote URL — the FOURTH untrusted shape (G1), and the one with the widest
+ * blast radius: `git remote add` and `git clone` take a *transport*, not just
+ * an address, and several of git's transports execute something.
+ * `ext::sh -c …` runs a shell command. `file://` and a bare local path make a
+ * "remote" out of any directory on this server, Studio's own repository
+ * included. `ssh://user@host:port/…` reaches wherever the host's keys reach.
+ *
+ * So `parseGithubRemoteUrl` is an allowlist of exactly two shapes, and nothing
+ * else is a remote in v1:
+ *
+ *   `https://github.com/<owner>/<repo>`   (`.git` and a trailing `/` tolerated)
+ *   `git@github.com:<owner>/<repo>.git`
+ *
+ * `<owner>` and `<repo>` are GitHub's own safe segment charset
+ * (`[A-Za-z0-9_.-]`), which excludes `/`, `:`, `@`, whitespace, and every
+ * control character — so a parsed pair can never re-compose into a different
+ * transport. No userinfo is accepted in the HTTPS form: a URL carrying
+ * `user:password@` would persist a credential in plaintext into the project's
+ * `.git/config`, which is the exact thing G2 exists to avoid.
+ */
+const GITHUB_REMOTE_HOSTS = new Set(['github.com', 'www.github.com'])
+const SAFE_REPO_SEGMENT = /^[A-Za-z0-9_.-]+$/
+const GITHUB_SSH_REMOTE_RE = /^git@github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\.git$/
+
+export interface GithubRemote {
+  owner: string
+  repo: string
+  /** The URL normalized to its canonical form — what is handed to git, never the caller's string. */
+  url: string
+  protocol: 'https' | 'ssh'
+}
+
+/**
+ * Parses a caller-supplied remote URL, or returns `null` for anything outside
+ * the two accepted shapes (see the block above for why the allowlist is that
+ * narrow). The returned `url` is RE-COMPOSED from the parsed owner/repo rather
+ * than passed through, so nothing the caller wrote reaches an argv array
+ * intact.
+ */
+export function parseGithubRemoteUrl(input: string): GithubRemote | null {
+  const trimmed = input.trim()
+  if (!trimmed || trimmed.length > 512 || hasControlCharacter(trimmed)) return null
+
+  const ssh = GITHUB_SSH_REMOTE_RE.exec(trimmed)
+  if (ssh) {
+    const owner = ssh[1]
+    const repo = ssh[2].replace(/\.git$/i, '')
+    if (!repo || !SAFE_REPO_SEGMENT.test(repo)) return null
+    return { owner, repo, url: `git@github.com:${owner}/${repo}.git`, protocol: 'ssh' }
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return null
+  }
+  // `https` only. Not `http` (a remote URL is persisted and reused, so the
+  // downgrade would be permanent), and emphatically not `ext`, `file`, `ssh`,
+  // or `git`.
+  if (parsed.protocol !== 'https:') return null
+  if (!GITHUB_REMOTE_HOSTS.has(parsed.hostname.toLowerCase())) return null
+  if (parsed.username || parsed.password) return null
+  if (parsed.search || parsed.hash) return null
+
+  const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0)
+  if (segments.length !== 2) return null
+  const owner = segments[0]
+  const repo = segments[1].replace(/\.git$/i, '')
+  if (!SAFE_REPO_SEGMENT.test(owner) || !repo || !SAFE_REPO_SEGMENT.test(repo)) return null
+
+  return { owner, repo, url: `https://github.com/${owner}/${repo}.git`, protocol: 'https' }
+}
+
+/**
+ * The one directory name a cloned repository may land in:
+ * `studio-workspace/<owner>-<repo>`, matching the zipball import's
+ * `defaultGithubImportDir` so the same repo gets the same project name however
+ * it arrived. Derived from the PARSED owner/repo, never from a caller-supplied
+ * directory — see `gitClone.ts`.
+ */
+export function githubProjectFolderName(remote: GithubRemote): string {
+  return `${remote.owner}-${remote.repo}`
 }
 
 /**

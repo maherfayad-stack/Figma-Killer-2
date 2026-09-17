@@ -40,6 +40,13 @@
  *       TypeBox `Type.Literal(true)` — the consent is in the wire contract
  *       rather than in a handler branch, exactly as `init` does it.
  *
+ *   POST /admin/api/studio/git/pull-request { dir?, title?, body?, base? }
+ *       → `{ ok, url, number, compareUrl }`. Every field defaults from the
+ *       repository: `base` from `origin/HEAD`, `title` from the last commit
+ *       subject, `body` from the commit list. With no connected GitHub account
+ *       it answers `409 { code: 'no-github-token', compareUrl }` — a link is a
+ *       worse product than a button and a much better one than a dead end.
+ *
  * ## Why these are not in `git.ts`
  *
  * `server/handlers/studio.ts`'s route table is the file every concurrent
@@ -47,11 +54,13 @@
  * composed in with one line (`standing-05`). The existing `git.ts` keeps the
  * local verbs it already had; nothing here duplicates one.
  *
- * It is composed into `STUDIO_SESSION_SUB_ROUTERS` rather than
- * `STUDIO_SUB_ROUTERS` because `fetch` and `pull` may act with the requesting
- * user's own GitHub credential, which is reachable only through the
- * `DbClient`. The identity is optional and nothing here 401s — see
- * `gitRemoteCredential.ts`.
+ * The network verbs (`fetch`, `pull`, `pull-request`) act with the requesting
+ * user's own GitHub credential, which `getGithubTokenForRequest`
+ * (`githubToken.ts`, G2) resolves from the session — so this stays an ordinary
+ * `(req, url, pathname)` sub-router with no `DbClient` threaded through it.
+ * That lookup is deliberately soft: a request with no session simply has no
+ * stored credential, git runs without one exactly as it did before, and
+ * nothing here 401s.
  *
  * ## What this file is, and is not
  *
@@ -69,10 +78,13 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import type { DbClient } from '../../db/client'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
-import { isAcceptableCommitMessage, resolveWorkspaceRelativePath } from './gitPaths'
-import { gitCredentialForRequest } from './gitRemoteCredential'
+import {
+  isAcceptableCommitMessage,
+  isArgvSafeBranchName,
+  parseGithubRemoteUrl,
+  resolveWorkspaceRelativePath,
+} from './gitPaths'
 import { assertOwnGitRepo } from './gitRunner'
 import {
   abortConflictResolution,
@@ -82,10 +94,14 @@ import {
   isGitFailure,
   listGitBranches,
   pullRemote,
+  readBranchCommitSubjects,
   readConflictState,
+  readPullRequestContext,
   resolveConflictFile,
   type GitOperationFailure,
 } from './gitOperations'
+import { githubCompareUrl, openGithubPullRequest } from './githubPullRequest'
+import { getGithubTokenForRequest } from './githubToken'
 
 const ROUTE_PREFIX = '/admin/api/studio/git/'
 
@@ -132,6 +148,19 @@ const AbortConflictBodySchema = Type.Object({
   confirm: Type.Literal(true),
 })
 
+/**
+ * Body of `POST .../pull-request`. Every field is optional because every one
+ * has an honest default read out of the repository — somebody who has just
+ * pushed a branch should be able to open a PR without composing anything.
+ */
+const PullRequestBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
+  title: Type.Optional(Type.String()),
+  body: Type.Optional(Type.String()),
+  /** The branch to merge INTO. Defaults to whatever `origin/HEAD` points at. */
+  base: Type.Optional(Type.String()),
+})
+
 /** Refusal → HTTP status, identical to `git.ts`'s mapping. `busy` is a 409 like every other state refusal. */
 function failureResponse(failure: GitOperationFailure): Response {
   const status = failure.code === 'git-failed' ? 500 : 409
@@ -147,34 +176,23 @@ function failureResponse(failure: GitOperationFailure): Response {
 }
 
 /**
- * `/admin/api/studio/git/{branches,commit-and-switch,fetch,pull,conflict*}` —
- * see the module doc.
- *
- * Takes the `DbClient` (it is a `STUDIO_SESSION_SUB_ROUTERS` entry) for ONE
- * reason: `fetch` and `pull` may need the requesting user's own GitHub
- * credential, which lives against their account and nowhere else. The identity
- * is OPTIONAL — see `gitRemoteCredential.ts` — so none of these routes 401s,
- * and a project with an ssh remote or a local credential helper behaves
- * exactly as it did before.
+ * `/admin/api/studio/git/{branches,commit-and-switch,fetch,pull,conflict*,pull-request}`
+ * — see the module doc.
  */
-export async function tryServeStudioGitSync(
-  req: Request,
-  runtime: { db: DbClient },
-  url: URL,
-  pathname: string,
-): Promise<Response | null> {
+export async function tryServeStudioGitSync(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (!pathname.startsWith(ROUTE_PREFIX)) return null
   const action = pathname.slice(ROUTE_PREFIX.length)
 
   try {
     if (action === 'branches' && req.method === 'GET') return await serveBranches(url)
     if (action === 'commit-and-switch' && req.method === 'POST') return await serveCommitAndSwitch(req)
-    if (action === 'fetch' && req.method === 'POST') return await serveFetch(req, runtime.db)
-    if (action === 'pull' && req.method === 'POST') return await servePull(req, runtime.db)
+    if (action === 'fetch' && req.method === 'POST') return await serveFetch(req)
+    if (action === 'pull' && req.method === 'POST') return await servePull(req)
     if (action === 'conflicts' && req.method === 'GET') return await serveConflicts(url)
     if (action === 'conflict/resolve' && req.method === 'POST') return await serveResolveConflict(req)
     if (action === 'conflict/continue' && req.method === 'POST') return await serveContinueConflict(req)
     if (action === 'conflict/abort' && req.method === 'POST') return await serveAbortConflict(req)
+    if (action === 'pull-request' && req.method === 'POST') return await servePullRequest(req)
   } catch (err) {
     rethrowProjectDirRefusal(err)
     console.error('[studio:git-sync]', err)
@@ -220,19 +238,19 @@ async function serveCommitAndSwitch(req: Request): Promise<Response> {
   return jsonResponse(result)
 }
 
-async function serveFetch(req: Request, db: DbClient): Promise<Response> {
+async function serveFetch(req: Request): Promise<Response> {
   const body = await readValidatedBody(req, DirOnlyBodySchema)
   if (!body) return badRequest('invalid fetch body')
 
   const guard = assertOwnGitRepo(resolveProjectDir(body.dir))
   if (!guard.ok) return NOT_FOUND()
 
-  const result = await fetchRemote(guard.dir, { credential: await gitCredentialForRequest(req, db) })
+  const result = await fetchRemote(guard.dir, { credential: await githubCredential(req) })
   if (isGitFailure(result)) return failureResponse(result)
   return jsonResponse(result)
 }
 
-async function servePull(req: Request, db: DbClient): Promise<Response> {
+async function servePull(req: Request): Promise<Response> {
   const body = await readValidatedBody(req, PullBodySchema)
   if (!body) return badRequest('invalid pull body')
 
@@ -242,7 +260,7 @@ async function servePull(req: Request, db: DbClient): Promise<Response> {
   // The default is the strategy that cannot rewrite anything. Rebase and merge
   // are only ever reached by an explicit choice the panel asked for.
   const result = await pullRemote(guard.dir, body.strategy ?? 'ff-only', {
-    credential: await gitCredentialForRequest(req, db),
+    credential: await githubCredential(req),
   })
   if (isGitFailure(result)) return failureResponse(result)
   return jsonResponse(result)
@@ -290,5 +308,80 @@ async function serveAbortConflict(req: Request): Promise<Response> {
 
   const result = await abortConflictResolution(guard.dir)
   if (isGitFailure(result)) return failureResponse(result)
+  return jsonResponse(result)
+}
+
+/**
+ * The requesting user's own GitHub token, or `undefined` for `runGit`'s
+ * `credential` option. Soft by design — see `githubToken.ts`.
+ */
+async function githubCredential(req: Request): Promise<string | undefined> {
+  return (await getGithubTokenForRequest(req)) ?? undefined
+}
+
+/**
+ * Opens a pull request for the current branch.
+ *
+ * The defaults are the feature: base from `origin/HEAD`, title from the last
+ * commit subject, body from the commit list. Someone who has just pushed a
+ * branch should be able to click once.
+ */
+async function servePullRequest(req: Request): Promise<Response> {
+  const body = await readValidatedBody(req, PullRequestBodySchema)
+  if (!body) return badRequest('invalid pull-request body')
+
+  const guard = assertOwnGitRepo(resolveProjectDir(body.dir))
+  if (!guard.ok) return NOT_FOUND()
+
+  const context = await readPullRequestContext(guard.dir)
+  if (isGitFailure(context)) return failureResponse(context)
+
+  // The SAME allowlist `POST git/remote` validates a URL with — one definition
+  // of "is this a GitHub remote", not two that can drift.
+  const target = parseGithubRemoteUrl(context.originUrl)
+  if (!target) {
+    // Deliberately says nothing about what the remote actually is: it may be a
+    // private host, and this answer is about GitHub support, not about them.
+    return jsonResponse(
+      {
+        error: 'This project\'s "origin" remote is not a GitHub repository, so Studio cannot open a pull request for it.',
+        code: 'not-a-github-remote',
+      },
+      { status: 409 },
+    )
+  }
+
+  const base = (body.base ?? '').trim() || context.defaultBranch || 'main'
+  if (!isArgvSafeBranchName(base)) return badRequest('that is not a usable base branch name')
+  if (base === context.branch) {
+    return jsonResponse(
+      {
+        error: `You are on "${context.branch}", which is also the base branch. Switch to a branch with your changes on it first.`,
+        code: 'same-branch',
+        compareUrl: githubCompareUrl(target, base, context.branch),
+      },
+      { status: 409 },
+    )
+  }
+
+  const subjects = await readBranchCommitSubjects(guard.dir, base, context.branch)
+  const title = (body.title ?? '').trim() || subjects[0] || context.branch
+  const prBody = body.body ?? subjects.map((subject) => `- ${subject}`).join('\n')
+
+  const result = await openGithubPullRequest({
+    target,
+    title,
+    body: prBody,
+    base,
+    head: context.branch,
+    // Belongs to the person making the request and to nobody else.
+    token: await getGithubTokenForRequest(req),
+  })
+  if (!result.ok) {
+    // A GitHub that could not be reached is not a refusal — it is a bad
+    // gateway, and retrying is the right next action.
+    const status = result.code === 'github-unreachable' ? 502 : 409
+    return jsonResponse({ error: result.message, code: result.code, compareUrl: result.compareUrl }, { status })
+  }
   return jsonResponse(result)
 }

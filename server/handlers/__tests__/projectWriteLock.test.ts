@@ -40,8 +40,29 @@ function makeProjectDir(): string {
   return dir
 }
 
+/**
+ * Per-entry try/catch, and `unlink` before `rm`.
+ *
+ * Not defensiveness for its own sake: these fixtures live in
+ * `projectsRootDir()`, which under test is the OS temp directory, and a
+ * Windows junction (the symlink case below) does not delete with a recursive
+ * `rm`. One throw in a bare loop would leave every LATER fixture behind — and
+ * a stale `__write_lock_*` directory in the workspace root is then visible to
+ * every other suite's project discovery.
+ */
 afterAll(() => {
-  for (const dir of created) fs.rmSync(dir, { recursive: true, force: true })
+  for (const entry of created) {
+    try {
+      if (fs.lstatSync(entry).isSymbolicLink()) fs.unlinkSync(entry)
+      else fs.rmSync(entry, { recursive: true, force: true })
+    } catch {
+      try {
+        fs.rmSync(entry, { recursive: true, force: true })
+      } catch (err) {
+        console.error('[projectWriteLock.test] could not remove a fixture:', err)
+      }
+    }
+  }
 })
 
 describe('withProjectWriteLock — ordering', () => {

@@ -1109,4 +1109,45 @@ export const pgMigrations: Migration[] = [
         on ai_conversations (user_id, project_key, updated_at desc);
     `,
   },
+  {
+    // G2 — a GitHub token Studio holds ON BEHALF OF one user, so a push to a
+    // private repository works on a host with no OS credential helper and no
+    // ssh-agent. One row per (user, provider); signing in again REPLACES the
+    // row rather than accumulating, which is what the unique index on the pair
+    // enforces.
+    //
+    // The token is never stored in plaintext: `ciphertext` + `iv` are
+    // AES-256-GCM from `server/secrets/encryption.ts` — the same pair
+    // `ai_provider_credentials` already uses, under the same process-wide
+    // master key. There is deliberately NO `key_fingerprint` column: a git
+    // token that cannot be decrypted has exactly one honest remedy — sign in
+    // again — so `githubCredentialStore.ts` drops the row and reports "signed
+    // out" rather than modelling a rotation state for a credential that takes
+    // ten seconds to replace.
+    //
+    // `scopes_json` is text rather than jsonb, and `githubCredentialStore.ts`
+    // writes it as an explicit `JSON.stringify`: a bare JS array bound by
+    // Bun.sql would be sent as a Postgres array literal, which the `*_json`
+    // read contract (shared by both adapters) could not parse back.
+    // `expires_at` is nullable because a device-flow token and a classic PAT
+    // have no expiry; a fine-grained PAT does, and the panel says when.
+    id: '023_git_credentials',
+    sql: `
+      create table if not exists git_credentials (
+        id text primary key,
+        user_id text not null references users(id) on delete cascade,
+        provider text not null,
+        ciphertext bytea not null,
+        iv bytea not null,
+        scopes_json text not null default '[]',
+        created_at timestamptz not null default now(),
+        expires_at timestamptz,
+        constraint git_credentials_provider_check
+          check (provider in ('github'))
+      );
+
+      create unique index if not exists git_credentials_user_provider_idx
+        on git_credentials (user_id, provider);
+    `,
+  },
 ]

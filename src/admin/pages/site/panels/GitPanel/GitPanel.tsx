@@ -31,9 +31,12 @@
  *   are about to be different files; leaving the board showing a parse of the
  *   old ones would be the "shows something the files do not say" failure this
  *   codebase has been bitten by before.
- * - **Fetch, pull, push and conflicts live in `SyncSection`**, which shows
- *   git's own output — the remote's "create a pull request" URL lives there,
- *   and an auth failure's real message is the only useful thing to show.
+ * - **Fetch, pull, push, conflicts and "Open PR" live in `SyncSection`**, which
+ *   shows git's own output — an auth failure's real message is the only useful
+ *   thing to show. Authentication is the GitHub account signed in at the top of
+ *   this panel (`RepositorySection`, G2) — resolved server-side from the
+ *   session, never sent on this wire — or, failing that, the host's own
+ *   credential helper.
  */
 import { useRef, useState } from 'react'
 import { Panel, useAutoFocusPanel } from '@admin/shared/Panel'
@@ -61,6 +64,7 @@ import { BranchSection } from './BranchSection'
 import { DeploySection } from './DeploySection'
 import { GitDiffView } from './GitDiffView'
 import { GitHistorySection } from './GitHistorySection'
+import { RepositorySection } from './RepositorySection'
 import { SyncSection } from './SyncSection'
 import { useGitStatus } from './useGitStatus'
 import styles from './GitPanel.module.css'
@@ -174,6 +178,14 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
       testId="git-panel"
       onClose={() => setGitPanelOpen(false)}
     >
+      {/* -----------------------------------------------------------------
+          Repository — who you are on GitHub, and where this project pushes.
+          Above everything, and deliberately OUTSIDE the `isRepo` branch:
+          signing in is worth doing before `git init`, and a project with no
+          repository yet is exactly the one about to need a remote.
+      ----------------------------------------------------------------- */}
+      <RepositorySection active={isOpen} dir={dir} isRepo={isRepo} onRemoteChanged={refresh} />
+
       {error ? (
         <p className={styles.error} role="alert">
           {error}

@@ -313,6 +313,8 @@ import { tryServeStudioShares } from './studio/shareRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
 import { tryServeStudioGitSync } from './studio/gitSyncRoutes'
+import { tryServeStudioGithubAuth } from './studio/githubAuthRoutes'
+import { tryServeStudioGitRemote } from './studio/gitRemoteRoutes'
 import { tryServeStudioDeploy } from './studio/deploy'
 import { tryServeStudioDevServer } from './studio/devServer'
 import { tryServeStudioStories } from './studio/storiesRoutes'
@@ -362,6 +364,8 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
+  tryServeStudioGitRemote,
+  tryServeStudioGitSync,
   tryServeStudioDeploy,
   tryServeStudioDevServer,
   tryServeStudioStories,
@@ -373,8 +377,8 @@ const STUDIO_SUB_ROUTERS = [
  * capture, a file's contents) rather than merely reading a project directory.
  */
 const STUDIO_SESSION_SUB_ROUTERS = [
+  tryServeStudioGithubAuth,
   tryServeStudioComments,
-  tryServeStudioGitSync,
   tryServeStudioProjectRoutes,
   tryServeStudioTrashRoutes,
   tryServeStudioShares,

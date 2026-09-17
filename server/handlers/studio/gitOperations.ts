@@ -1,5 +1,5 @@
 /**
- * gitOperations — the eight things Studio is allowed to ask git to do, and
+ * gitOperations — the ten things Studio is allowed to ask git to do, and
  * nothing else.
  *
  * Each exported function builds its own argv from already-validated pieces and
@@ -28,7 +28,13 @@
  *   never ride along in a commit the user thinks they understand.
  * - **Pushing without an `origin` remote refuses** rather than inventing one.
  *   Push always names the branch explicitly and always sets upstream; it is
- *   never `--force`, and there is no route that could make it so.
+ *   never `--force`, and there is no route that could make it so. Adding that
+ *   remote is a separate, explicit act (`setOriginRemote`).
+ * - **`origin` is the only remote name Studio writes.** `setOriginRemote` has
+ *   no name parameter, and the URL it takes has already been through
+ *   `parseGithubRemoteUrl`'s two-shape allowlist — git's URL grammar includes
+ *   transports that execute (`ext::`) and transports that point at this
+ *   server's own disk (`file://`).
  * - **Restoring a file requires a raw sha** (`gitPaths.isCommitSha`), not git's
  *   revision grammar — the only shas that exist in the UI are ones `git log`
  *   printed.
@@ -50,10 +56,14 @@
  *
  * ## Credentials
  *
- * There are none here. `push` succeeds if the user's own git credential helper
- * or ssh-agent answers, and otherwise fails with git's real message passed
- * through (`clientSafeGitError`). Studio never stores a git token, never reads
- * one from its environment, and never accepts one on this wire.
+ * Nothing here reads one. `pushCurrentBranch` takes an OPTIONAL `credential`
+ * string that its route resolved from the signed-in session (G2's encrypted
+ * per-user token — `githubToken.ts`); without one, `push` succeeds exactly
+ * when the user's own credential helper or ssh-agent answers, and otherwise
+ * fails with git's real message passed through (`clientSafeGitError`). The
+ * token is never read from the environment, never accepted as a request
+ * field, and never placed in argv or a remote URL — `gitRunner.ts` hands it to
+ * a one-shot askpass script instead.
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -163,6 +173,70 @@ async function hasOriginRemote(dir: string): Promise<boolean> {
   const result = await runGit(dir, ['remote'])
   if (!result.ok) return false
   return result.stdout.split('\n').some((line) => line.trim() === 'origin')
+}
+
+export interface GitRemote {
+  name: string
+  fetchUrl: string
+  pushUrl: string
+}
+
+/**
+ * Every remote this repository has, as `git remote -v` reports them.
+ *
+ * Read-only and unfiltered: a project that already had three remotes when the
+ * user opened it should SEE three, even though Studio will only ever write
+ * `origin`. Hiding them would make the panel disagree with the user's
+ * terminal, which is the failure mode `excludedCount` exists to avoid
+ * elsewhere in this module.
+ */
+export async function readRemotes(dir: string): Promise<GitRemote[] | GitOperationFailure> {
+  const result = await runGit(dir, ['remote', '-v'])
+  if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not read the remotes'))
+
+  const byName = new Map<string, GitRemote>()
+  for (const line of result.stdout.split('\n')) {
+    // `<name>\t<url> (fetch|push)` — tab-separated by git's own porcelain.
+    const match = /^(\S+)\t(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
+    if (!match) continue
+    const [, name, url, kind] = match
+    const existing = byName.get(name) ?? { name, fetchUrl: '', pushUrl: '' }
+    if (kind === 'fetch') existing.fetchUrl = url
+    else existing.pushUrl = url
+    byName.set(name, existing)
+  }
+  return [...byName.values()]
+}
+
+/**
+ * Points `origin` at `url`, creating it or replacing it.
+ *
+ * Two deliberate narrowings, both from the G1 work order:
+ *
+ *   - **`origin` is the only name.** There is no parameter for another one.
+ *     A designer who needs a second remote has a terminal; a UI that can
+ *     create arbitrarily-named remotes is a UI that can create one Studio's
+ *     own push path then silently disagrees with.
+ *   - **`url` must already have been through `parseGithubRemoteUrl`**, and
+ *     what is passed here is that function's RE-COMPOSED url, never the
+ *     caller's string. This function does not re-validate, and its only
+ *     callers are the route and the clone job, both of which do.
+ *
+ * `set-url` then `add` rather than `remove` then `add`: replacing a remote
+ * must not drop the remote-tracking refs a later fetch/pull depends on.
+ */
+export async function setOriginRemote(dir: string, url: string): Promise<GitRemote | GitOperationFailure> {
+  const setUrl = await runGit(dir, ['remote', 'set-url', 'origin', url])
+  if (!setUrl.ok) {
+    const add = await runGit(dir, ['remote', 'add', 'origin', url])
+    if (!add.ok) return failure('git-failed', clientSafeGitError(add, 'Could not set the origin remote'))
+  }
+
+  const remotes = await readRemotes(dir)
+  if (isGitFailure(remotes)) return remotes
+  const origin = remotes.find((remote) => remote.name === 'origin')
+  if (!origin) return failure('git-failed', 'git accepted the remote but did not report it back.')
+  return origin
 }
 
 export interface GitFileDiff {
@@ -563,16 +637,24 @@ export interface GitPushResult {
  * `git push --set-upstream origin <branch>`. Never `--force`, never
  * `--force-with-lease`, and there is no route parameter that could add one.
  *
- * Authentication is entirely the user's own credential helper's or
- * ssh-agent's — see the module doc. A failure passes git's real message
- * through, because "Support for password authentication was removed" is
- * exactly what the user needs to read.
+ * `credential` is the signed-in user's GitHub token (G2), resolved by the
+ * route from the session — never from a request field and never from the
+ * environment. It is optional: without it the push falls back to the user's
+ * own credential helper or ssh-agent exactly as it did before, and a failure
+ * passes git's real message through, because "Support for password
+ * authentication was removed" is exactly what the user needs to read.
  */
-export function pushCurrentBranch(dir: string): Promise<GitPushResult | GitOperationFailure> {
-  return withGitWriteLock(dir, () => runPushCurrentBranch(dir))
+export function pushCurrentBranch(
+  dir: string,
+  options: { credential?: string } = {},
+): Promise<GitPushResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runPushCurrentBranch(dir, options))
 }
 
-async function runPushCurrentBranch(dir: string): Promise<GitPushResult | GitOperationFailure> {
+async function runPushCurrentBranch(
+  dir: string,
+  options: { credential?: string },
+): Promise<GitPushResult | GitOperationFailure> {
   const status = await readGitStatus(dir)
   if ('ok' in status) return status
   if (!status.hasOrigin) {
@@ -588,6 +670,7 @@ async function runPushCurrentBranch(dir: string): Promise<GitPushResult | GitOpe
   const branch = status.branch.branch
   const result = await runGit(dir, ['push', '--set-upstream', 'origin', branch], {
     timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    credential: options.credential,
   })
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Push failed'))
   return { ok: true, branch, output: clientSafeGitError(result, '') || result.stdout.trim() }
@@ -904,6 +987,69 @@ async function runAbortConflictResolution(dir: string): Promise<GitConflictAbort
   const result = await runGit(dir, [kind === 'rebase' ? 'rebase' : 'merge', '--abort'])
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not abort'))
   return { ok: true, kind }
+}
+
+// ---------------------------------------------------------------------------
+// What a pull request needs to know (G5)
+// ---------------------------------------------------------------------------
+
+export interface GitPullRequestContext {
+  /** The branch being proposed. */
+  branch: string
+  /** `origin`'s URL, verbatim — the route parses it into `{ owner, repo }` with `gitPaths.parseGithubRemoteUrl`, or refuses. */
+  originUrl: string
+  /** What `origin/HEAD` points at, the natural base. `null` when nobody has ever run `git remote set-head`. */
+  defaultBranch: string | null
+}
+
+/**
+ * Everything the pull-request route needs out of the repository, in one read.
+ *
+ * A read — no write lock. Opening a pull request changes nothing on disk; it
+ * is an HTTP call to GitHub, and the only reason git is involved at all is to
+ * answer "which branch, against which remote, with what in it".
+ */
+export async function readPullRequestContext(dir: string): Promise<GitPullRequestContext | GitOperationFailure> {
+  const status = await readGitStatus(dir)
+  if ('ok' in status) return status
+  if (!status.hasOrigin) {
+    return failure(
+      'no-origin-remote',
+      'This project has no "origin" remote, so there is nothing to open a pull request against.',
+    )
+  }
+  if (status.branch.detached || !status.branch.branch) {
+    return failure('detached-head', 'HEAD is detached, so there is no branch to propose. Switch to a branch first.')
+  }
+
+  const remote = await runGit(dir, ['remote', 'get-url', 'origin'])
+  if (!remote.ok) return failure('git-failed', clientSafeGitError(remote, 'Could not read the origin remote'))
+
+  return {
+    branch: status.branch.branch,
+    originUrl: remote.stdout.trim(),
+    defaultBranch: await readDefaultBranch(dir),
+  }
+}
+
+/**
+ * The subjects of the commits on `head` that are not on `base`, newest first —
+ * what a pull request body says when nobody wrote one.
+ *
+ * `base` is compared against its REMOTE-TRACKING ref (`origin/main`), not the
+ * local branch: the local copy of the base branch may be months stale, and a
+ * body listing forty commits the reviewer already has is worse than no body.
+ * An empty list is a normal answer and never a failure — the route lets GitHub
+ * give the "no commits between these branches" verdict, since it is the side
+ * that actually knows.
+ */
+export async function readBranchCommitSubjects(dir: string, base: string, head: string): Promise<string[]> {
+  const result = await runGit(dir, ['log', `--max-count=${MAX_LOG_COMMITS}`, '--format=%s', `origin/${base}..${head}`])
+  if (!result.ok) return []
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
 }
 
 /** The `.gitignore` a fresh repository gets when the project has none — the same directories Studio already refuses to let git touch. */
