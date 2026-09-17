@@ -236,6 +236,10 @@ export const TOOL_REFUSAL_CODES = {
   },
 
   // --- the tool refuses on principle -------------------------------------
+  'duplicate-call': {
+    retryable: false,
+    meaning: 'This exact mutating call, with these exact arguments, already ran this turn. The loop answered from the first call\'s result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it.',
+  },
   'strict-mode-stand-in-refused': {
     retryable: false,
     meaning: 'Strict fidelity mode will not measure against a stand-in reference. Register the real design as a spec first.',

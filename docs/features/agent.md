@@ -403,6 +403,7 @@ itself succeeded, one page inside it did not.
 | `codemod-refused` | no | The AST edit has no single honest target, or would destroy a binding. The refusal names the reason. |
 | `crop-out-of-bounds` | no | The requested rectangle falls outside the source image. Deliberately refused rather than clamped — a silently clamped crop is a wrong asset that looks right. |
 | `dev-server-failed-to-boot` | no | The project's own dev script did not come up. The refusal carries the captured stdout/stderr tail — read it, fix the cause, then call again. |
+| `duplicate-call` | no | This exact mutating call, with these exact arguments, already ran this turn. The loop answered from the first call's result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it. |
 | `empty-body` | no | A comment reply needs a non-empty body. |
 | `empty-file-list` | no | The operation needs at least one file and none was usable. |
 | `git-failed` | no | git itself refused. The message is git's own — a missing git identity and an empty commit both land here. |

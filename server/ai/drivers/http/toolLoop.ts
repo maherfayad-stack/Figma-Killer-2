@@ -41,7 +41,7 @@
  * asked for arriving in the file four times. Two bounds close that, and they
  * are deliberately different in kind:
  *
- *   - {@link MAX_TOOL_ROUNDS} caps how many provider rounds one turn may
+ *   - {@link MAX_TOOL_ROUNDS} (= `AGENT_TURN_ROUND_BUDGET`) caps how many provider rounds one turn may
  *     spend. Reaching it ends the turn with a single `error` event that names
  *     the last tool the model was on, so the transcript says what it was
  *     looping on rather than just stopping.
@@ -67,6 +67,7 @@ import type {
 import type { AiStreamRequest } from '../types'
 import { parseSseStream, type SseFrame } from './sse'
 import { executeAiTool } from './execTool'
+import { AGENT_TURN_ROUND_BUDGET, type ToolRefusalCode } from '@core/ai'
 import { isAbortError, classifyHttpFailure } from './errors'
 
 export const PROVIDER_RETRY_IMAGE_OMITTED =
@@ -75,17 +76,24 @@ export const PROVIDER_RETRY_IMAGE_OMITTED =
 /**
  * How many provider rounds one turn may spend before the loop ends it itself.
  *
- * Forty is sized off the longest legitimate build turn this repo has measured
- * — a screen rebuilt from a reference, verified with a screenshot, corrected,
- * and type-checked, is on the order of fifteen rounds — so it is a ceiling a
- * working turn does not reach, not a budget it has to fit in. `req.maxToolRounds`
- * overrides it per turn; nothing in Studio raises it today, and a caller that
- * does is choosing to pay for those rounds.
+ * Read from {@link AGENT_TURN_ROUND_BUDGET}, never written here: A9 states
+ * the same integer to the model in the system prompt and renders progress
+ * against it in the panel, and a cap the prompt disagrees with is a control
+ * that lies. `req.maxToolRounds` still overrides it per turn; nothing in
+ * Studio raises it today, and a caller that does is choosing to pay for those
+ * rounds.
  */
-export const MAX_TOOL_ROUNDS = 40
+export const MAX_TOOL_ROUNDS = AGENT_TURN_ROUND_BUDGET
 
-/** The machine-readable code on a suppressed repeat of a mutating call. Documented in `docs/features/agent.md`. */
-export const DUPLICATE_CALL_CODE = 'duplicate-call'
+/**
+ * The machine-readable code on a suppressed repeat of a mutating call.
+ *
+ * Typed as a `ToolRefusalCode` so it cannot drift out of the shared
+ * vocabulary: this code originates HERE rather than in a tool handler, which
+ * is how it spent a wave outside `TOOL_REFUSAL_CODES` while every other code
+ * was in it. Documented in `docs/features/agent.md`'s refusal table.
+ */
+export const DUPLICATE_CALL_CODE: ToolRefusalCode = 'duplicate-call'
 
 /**
  * How much of the first call's `data` a `duplicate-call` result echoes back.
