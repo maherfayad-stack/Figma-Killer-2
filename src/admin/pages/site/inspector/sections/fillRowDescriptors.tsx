@@ -16,15 +16,22 @@
 import type { ReactNode } from 'react'
 import type { PropertyListEntry } from '@ui/components/PropertyList'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
+import { MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import { ImageSwatch } from './FillSectionParts'
 import { parseGradient, isUrlImageValue, extractUrlPayload } from '../../panels/PropertiesPanel/gradientValue'
 
-/** Which Fill row a `PropertyList` entry is. */
+/**
+ * Which Fill row a `PropertyList` entry is. `mixedLayers` is the
+ * multi-selection case: the selected layers declare DIFFERENT
+ * `background-image` values, so there is no shared stack to draw one row per
+ * layer of — see `FillSection.tsx`'s MULTI-SELECT doc.
+ */
 export type FillEntryData =
   | { kind: 'text' }
   | { kind: 'contentFit' }
   | { kind: 'layer'; index: number }
   | { kind: 'layersRaw'; raw: string; reason: string }
+  | { kind: 'mixedLayers' }
   | { kind: 'orphanSatellites' }
   | { kind: 'color' }
   | { kind: 'shorthand' }
@@ -34,6 +41,7 @@ const POPOVER_TITLES: Record<FillEntryData['kind'], string> = {
   contentFit: 'Content fit',
   layer: 'Background layer',
   layersRaw: 'Background image (raw CSS)',
+  mixedLayers: 'Background image',
   orphanSatellites: 'Background sizing',
   color: 'Solid fill',
   shorthand: 'Background (raw CSS)',
@@ -87,5 +95,22 @@ export function describeLayer(
     label: `Image fill${suffix}`,
     summary: 'Custom (raw CSS)',
     leading: <CodeIcon size={14} aria-hidden="true" />,
+  }
+}
+
+/**
+ * The ONE row standing in for the whole background-layer stack when the
+ * selection disagrees about it. Figma shows "Mixed" and replaces on the next
+ * edit; there is no honest per-layer row here, because the selected layers do
+ * not share a layer count, let alone a layer order. Removing it clears
+ * `background-image` from every selected layer.
+ */
+export function mixedLayersEntry(): PropertyListEntry<FillEntryData> {
+  return {
+    id: 'fill-layers-mixed',
+    label: 'Background image',
+    leading: <CodeIcon size={14} aria-hidden="true" />,
+    summary: MIXED_PLACEHOLDER,
+    data: { kind: 'mixedLayers' },
   }
 }

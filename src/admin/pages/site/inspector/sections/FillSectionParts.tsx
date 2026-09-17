@@ -18,22 +18,21 @@
  * inline chrome (`ColorFieldRow`, `ColorWriteRefusalBody`, `ColorSwatch`)
  * moved to `FillColorField.tsx` when panel-33 grew them enough to threaten
  * this file's own budget — see that file's doc for why they're not here.
+ * `GradientEditor.tsx` left for the same reason when the Mixed contract
+ * (`docs/features/inspector.md` §9.3) landed.
  */
 import { type CSSProperties } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { cn } from '@ui/cn'
-import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { Select } from '@ui/components/Select'
 import { ScrubInput } from '@ui/components/ScrubInput'
-import { ColorValueInput } from '@site/property-controls/ColorValueInput'
 import { SelectControl } from '@site/property-controls/SelectControl'
 import { TextControl } from '@site/property-controls/TextControl'
-import { PlusIcon } from 'pixel-art-icons/icons/plus'
-import { MinusIcon } from 'pixel-art-icons/icons/minus'
 import { ClassPropertyRow } from '../../panels/PropertiesPanel/ClassPropertyRow'
-import { hasStyleValue } from '../../panels/PropertiesPanel/styleValueUtils'
+import { hasStyleValue, pickMixedCell } from '../../panels/PropertiesPanel/styleValueUtils'
+import { isMixed } from '@ui/components/MixedValue'
 import { getEnumOptions } from '../../panels/PropertiesPanel/cssControlTypes'
 import {
   BACKGROUND_SATELLITE_LABELS,
@@ -48,23 +47,17 @@ import {
 import {
   CONTENT_FIT_PROPS,
   DEFAULT_GRADIENT_FILL,
-  angleFieldValue,
   parsePercentText,
-  withAddedStop,
-  withAngleText,
-  withKind,
-  withRemovedStop,
-  withStop,
 } from '../../panels/PropertiesPanel/fillModel'
 import {
   parseGradient,
   serializeGradient,
   isUrlImageValue,
   extractUrlPayload,
-  type ParsedGradient,
 } from '../../panels/PropertiesPanel/gradientValue'
 import { imageFillPreviewSrc, useProjectImageAssets } from '@site/studio/projectAssets'
 import { formatColor, parseCssColor } from '@ui/components/ColorPickerPopover'
+import { GradientEditor } from './GradientEditor'
 import { ImageFillEditor } from './ImageFillEditorParts'
 import styles from './FillSection.module.css'
 
@@ -159,6 +152,12 @@ export function ImageSwatch({ image }: { image: string }) {
 interface BackgroundLayerPopoverBodyProps {
   model: BackgroundModel
   index: number
+  /**
+   * The satellites whose STORED cell is the multi-selection `MIXED` sentinel
+   * — see `LayerSatelliteRow`'s own doc for why a mixed satellite cannot be
+   * spliced per layer. Empty for a single selection.
+   */
+  mixedSatellites: ReadonlySet<BackgroundSatelliteProp>
   /** Applies a whole `background-*` patch at once (see `FillSection`'s `applyPatch`). */
   onModelChange: (next: BackgroundModel) => void
   /** Raw edit of a satellite this module refused to split per layer. */
@@ -170,6 +169,7 @@ type ImageFillMode = 'gradient' | 'image'
 export function BackgroundLayerPopoverBody({
   model,
   index,
+  mixedSatellites,
   onModelChange,
   onChange,
 }: BackgroundLayerPopoverBodyProps) {
@@ -233,12 +233,13 @@ export function BackgroundLayerPopoverBody({
 
       <div className={styles.sizingGroup}>
         <p className={styles.sizingHeading}>Layer</p>
-        {popoverSatelliteProps(model, index).map((prop) => (
+        {popoverSatelliteProps(model, index, mixedSatellites).map((prop) => (
           <LayerSatelliteRow
             key={prop}
             model={model}
             index={index}
             prop={prop}
+            mixed={mixedSatellites.has(prop)}
             onModelChange={onModelChange}
             onChange={onChange}
           />
@@ -255,10 +256,18 @@ export function BackgroundLayerPopoverBody({
  * beside the fill it composites. It comes BACK here only when the declaration
  * could not be split per layer, because the row's per-layer select would then
  * have nothing honest to write and the raw text field is the only edit left.
+ * A MIXED blend mode comes back here for exactly the same reason.
  */
-function popoverSatelliteProps(model: BackgroundModel, index: number): ReadonlyArray<BackgroundSatelliteProp> {
+function popoverSatelliteProps(
+  model: BackgroundModel,
+  index: number,
+  mixedSatellites: ReadonlySet<BackgroundSatelliteProp>,
+): ReadonlyArray<BackgroundSatelliteProp> {
   return BACKGROUND_SATELLITE_PROPS.filter(
-    (prop) => prop !== 'backgroundBlendMode' || backgroundLayerSatellite(model, prop, index).kind === 'raw',
+    (prop) =>
+      prop !== 'backgroundBlendMode' ||
+      mixedSatellites.has(prop) ||
+      backgroundLayerSatellite(model, prop, index).kind === 'raw',
   )
 }
 
@@ -285,16 +294,27 @@ function popoverSatelliteProps(model: BackgroundModel, index: number): ReadonlyA
 export function LayerBlendSelect({
   model,
   index,
+  mixed = false,
   onModelChange,
 }: {
   model: BackgroundModel
   index: number
+  /**
+   * The selection disagrees on `background-blend-mode`. There is no shared
+   * list to splice one layer of, so the row's select states "Mixed" and
+   * disables; the whole declaration is editable in the layer's popover, the
+   * same route a refused (`raw`) list already takes.
+   */
+  mixed?: boolean
   onModelChange: (next: BackgroundModel) => void
 }) {
   const view = backgroundLayerSatellite(model, 'backgroundBlendMode', index)
   const keywords = getEnumOptions('backgroundBlendMode') ?? []
   const shared = view.kind === 'value' && view.shared
   const refused = view.kind === 'raw' ? view.reason : undefined
+  const blockedReason = mixed
+    ? 'The selected layers set different background-blend-mode values — open this layer to write one to all of them.'
+    : refused
 
   return (
     // The row itself is clickable (`PropertyList` opens the layer popover), so
@@ -307,11 +327,12 @@ export function LayerBlendSelect({
     <Select
       fieldSize="xs"
       aria-label={`Blend mode, layer ${index + 1}`}
+      mixed={mixed}
       title={
-        refused ??
+        blockedReason ??
         (shared ? 'This background-blend-mode is shared by every layer — editing it splits the list.' : undefined)
       }
-      disabled={refused != null}
+      disabled={blockedReason != null}
       value={view.kind === 'value' ? view.value : ''}
       options={[
         { value: '', label: BACKGROUND_SATELLITE_INITIALS.backgroundBlendMode },
@@ -340,23 +361,52 @@ export function LayerBlendSelect({
  *     layer (`backgroundLayers.ts`'s refusals), with the reason above it.
  *     Offering a per-layer control there would write a value that silently
  *     deletes part of the user's declaration.
+ *
+ * A MIXED satellite takes the third shape for the same reason, one level up:
+ * the selected nodes declare different lists, so the model this row was
+ * parsed from holds none of them. Splicing index N of a list that does not
+ * exist would write the CSS initial into every other layer of every selected
+ * node — the "one keystroke flattens a disagreement" bug class
+ * (`docs/features/inspector.md` §9.3). So the field writes the WHOLE
+ * declaration to every selected node instead, and says "Mixed" until it does.
  */
 function LayerSatelliteRow({
   model,
   index,
   prop,
+  mixed,
   onModelChange,
   onChange,
 }: {
   model: BackgroundModel
   index: number
   prop: BackgroundSatelliteProp
+  mixed: boolean
   onModelChange: (next: BackgroundModel) => void
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
 }) {
   const view = backgroundLayerSatellite(model, prop, index)
   const name = BACKGROUND_SATELLITE_LABELS[prop]
   const propKey = `bg-layer-${index}-${prop}`
+
+  if (mixed) {
+    return (
+      <div className={styles.refusalNote}>
+        <p className={styles.refusalText}>
+          {name}: the selected layers disagree. Typing here writes one value to every selected
+          layer.
+        </p>
+        <Input
+          fieldSize="sm"
+          monospace
+          mixed
+          value=""
+          aria-label={`${name}, every selected layer`}
+          onChange={(e) => onChange(prop, e.target.value || undefined)}
+        />
+      </div>
+    )
+  }
 
   if (view.kind === 'raw') {
     return (
@@ -420,19 +470,42 @@ function LayerSatelliteRow({
 }
 
 // ---------------------------------------------------------------------------
-// Orphan satellites — set, but with no `background-image` layer to apply to
+// Background declarations edited WHOLE — no layer index to splice into
 // ---------------------------------------------------------------------------
 
+/** Why this body is being shown instead of a per-layer control. */
+export type BackgroundWholeReason = 'refused-layers' | 'no-layer' | 'mixed-layers'
+
+const BACKGROUND_WHOLE_NOTES: Record<BackgroundWholeReason, string> = {
+  'refused-layers':
+    'The background-image above is edited as raw text, so these cannot be split per layer. Each one edits as a whole declaration.',
+  'no-layer':
+    'These size and place a background image, but this element has none — CSS ignores them until a background-image layer exists.',
+  'mixed-layers':
+    'The selected layers set different background images, so there is no shared layer stack to edit. Each declaration below writes one value to every selected layer.',
+}
+
 /**
- * The per-layer satellites with no layer ROW to live in — either the element
- * has no `background-image` at all (`background-size: cover` on its own is
- * inert CSS, but it IS in the user's file and must never become invisible in
- * the inspector), or the layer list itself was refused and there is no index
- * to hang them off. Either way each one edits as its own whole declaration,
- * which is the only write this module can make honestly here.
+ * The background declarations with no layer ROW to live in. Three reasons,
+ * one shape, because the honest write is identical in all three — the whole
+ * declaration, never a per-layer splice:
+ *
+ *   - `no-layer` — the element has no `background-image` at all
+ *     (`background-size: cover` on its own is inert CSS, but it IS in the
+ *     user's file and must never become invisible in the inspector);
+ *   - `refused-layers` — the layer list itself was refused
+ *     (`backgroundLayers.ts`), so there is no index to hang them off;
+ *   - `mixed-layers` — a multi-selection whose members declare different
+ *     lists (`docs/features/inspector.md` §9.3). `ClassPropertyRow` renders
+ *     the `MIXED` sentinel as an empty field with a "Mixed" placeholder, so
+ *     the disagreement is stated rather than flattened.
+ *
+ * `properties` is the caller's, because the mixed case also offers
+ * `background-image` itself while the other two draw it as their own row.
  */
-export function OrphanSatellitesBody({
-  hasRefusedLayers,
+export function BackgroundDeclarationsBody({
+  reason,
+  properties,
   storedStyles,
   currentStyles,
   activeTab,
@@ -440,7 +513,8 @@ export function OrphanSatellitesBody({
   onPreview,
   onClearPreview,
 }: {
-  hasRefusedLayers: boolean
+  reason: BackgroundWholeReason
+  properties: ReadonlyArray<keyof CSSPropertyBag>
   storedStyles: Record<string, unknown>
   currentStyles: Record<string, unknown>
   activeTab: string
@@ -450,25 +524,23 @@ export function OrphanSatellitesBody({
 }) {
   return (
     <div className={styles.popoverBody}>
-      <p className={styles.refusalText}>
-        {hasRefusedLayers
-          ? 'The background-image above is edited as raw text, so these cannot be split per layer. Each one edits as a whole declaration.'
-          : 'These size and place a background image, but this element has none — CSS ignores them until a background-image layer exists.'}
-      </p>
-      {BACKGROUND_SATELLITE_PROPS.filter((prop) => hasStyleValue(storedStyles[prop])).map((prop) => (
-        <ClassPropertyRow
-          key={`${activeTab}-${prop}`}
-          property={prop}
-          value={storedStyles[prop] as string | number}
-          isSet
-          layout="stacked"
-          onChange={onChange}
-          onRemove={(property) => onChange(property, undefined)}
-          onPreview={onPreview}
-          onClearPreview={onClearPreview}
-          placeholder={currentStyles[prop] as string | undefined}
-        />
-      ))}
+      <p className={styles.refusalText}>{BACKGROUND_WHOLE_NOTES[reason]}</p>
+      {properties
+        .filter((prop) => hasStyleValue(storedStyles[prop]))
+        .map((prop) => (
+          <ClassPropertyRow
+            key={`${activeTab}-${String(prop)}`}
+            property={prop}
+            value={pickMixedCell(storedStyles[prop])}
+            isSet
+            layout="stacked"
+            onChange={onChange}
+            onRemove={(property) => onChange(property, undefined)}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+            placeholder={isMixed(currentStyles[prop]) ? undefined : (currentStyles[prop] as string | undefined)}
+          />
+        ))}
     </div>
   )
 }
@@ -502,12 +574,16 @@ export function ContentFitPopoverBody({
       {CONTENT_FIT_PROPS.map((prop) => {
         const storedValue = storedStyles[prop]
         const isSet = hasStyleValue(storedValue)
+        // `pickMixedCell` rather than a cast: for a multi-selection that
+        // disagrees the cell IS the `MIXED` Symbol, and `ClassPropertyRow`
+        // normalizes it into its controls' `mixed` flag.
+        const placeholder = currentStyles[prop]
         return (
           <ClassPropertyRow
             key={`${activeTab}-${String(prop)}`}
             property={prop}
-            value={isSet ? (storedValue as string | number) : undefined}
-            placeholder={isSet ? undefined : (currentStyles[prop] as string | undefined)}
+            value={isSet ? pickMixedCell(storedValue) : undefined}
+            placeholder={isSet || isMixed(placeholder) ? undefined : (placeholder as string | undefined)}
             isSet={isSet}
             layout="stacked"
             onChange={onChange}
@@ -521,81 +597,6 @@ export function ContentFitPopoverBody({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Gradient editor — type + direction/shape + stops list (F15)
-// ---------------------------------------------------------------------------
-
-interface GradientEditorProps {
-  gradient: ParsedGradient
-  onChange: (next: ParsedGradient) => void
-}
-
-function GradientEditor({ gradient, onChange }: GradientEditorProps) {
-  return (
-    <div className={styles.gradientEditor}>
-      <SegmentedControl<'linear' | 'radial'>
-        value={gradient.kind}
-        options={[
-          { value: 'linear', label: 'Linear' },
-          { value: 'radial', label: 'Radial' },
-        ]}
-        onChange={(kind) => onChange(withKind(gradient, kind))}
-        fullWidth
-        size="sm"
-        aria-label="Gradient type"
-      />
-
-      {gradient.kind === 'linear' && (
-        <ScrubInput
-          aria-label="Gradient angle"
-          label={<span aria-hidden="true">°</span>}
-          value={angleFieldValue(gradient)}
-          unit="deg"
-          onChange={(next) => onChange(withAngleText(gradient, next))}
-        />
-      )}
-
-      <div className={styles.stopsList}>
-        {gradient.stops.map((stop, index) => (
-          <div key={index} className={styles.stopRow}>
-            <ColorValueInput
-              value={stop.color}
-              ariaLabel={`Stop ${index + 1} colour`}
-              swatchLabel={`Stop ${index + 1} colour swatch`}
-              onChange={(next) => onChange(withStop(gradient, index, { color: next }))}
-            />
-            <ScrubInput
-              aria-label={`Stop ${index + 1} position`}
-              label={<span aria-hidden="true">%</span>}
-              value={stop.position != null ? `${stop.position}%` : undefined}
-              placeholder="Auto"
-              unit="%"
-              className={styles.stopPosition}
-              onChange={(next) => onChange(withStop(gradient, index, { position: parsePercentText(next) }))}
-            />
-            <Button
-              variant="ghost"
-              size="micro"
-              iconOnly
-              tone="danger"
-              aria-label={`Remove stop ${index + 1}`}
-              tooltip="Remove stop"
-              disabled={gradient.stops.length <= 2}
-              onClick={() => onChange(withRemovedStop(gradient, index))}
-            >
-              <MinusIcon size={12} aria-hidden="true" />
-            </Button>
-          </div>
-        ))}
-      </div>
-
-      <Button variant="secondary" size="xs" onClick={() => onChange(withAddedStop(gradient))}>
-        <PlusIcon size={12} aria-hidden="true" />
-        Add stop
-      </Button>
-    </div>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Raw escape hatches — the `background` shorthand, and a refused layer list
@@ -603,21 +604,25 @@ function GradientEditor({ gradient, onChange }: GradientEditorProps) {
 
 interface ShorthandEscapeHatchBodyProps {
   value: string | undefined
+  /** The selection disagrees on `background` — empty field, "Mixed" placeholder. */
+  mixed?: boolean
   onChange: (value: string) => void
 }
 
-export function ShorthandEscapeHatchBody({ value, onChange }: ShorthandEscapeHatchBodyProps) {
+export function ShorthandEscapeHatchBody({ value, mixed = false, onChange }: ShorthandEscapeHatchBodyProps) {
   return (
     <div className={styles.refusalNote}>
       <p className={styles.refusalText}>
         This element uses the <code>background</code> shorthand, which can combine colour, image,
         position, size and repeat in one declaration. Splitting it into separate Fill rows risks
         silently dropping part of it, so it stays here as raw CSS instead of a lookalike editor.
+        {mixed ? ' The selected layers disagree — typing here writes one value to all of them.' : ''}
       </p>
       <Input
         fieldSize="sm"
         monospace
-        value={value ?? ''}
+        mixed={mixed}
+        value={mixed ? '' : (value ?? '')}
         aria-label="background, raw CSS"
         onChange={(e) => onChange(e.target.value)}
       />

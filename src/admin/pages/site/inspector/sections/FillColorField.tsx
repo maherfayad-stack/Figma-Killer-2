@@ -72,6 +72,7 @@ export function ColorFieldRow({
   ariaLabel,
   swatchLabel,
   value,
+  mixed = false,
   resolvedValue,
   skipIfEquals,
   notice,
@@ -84,6 +85,12 @@ export function ColorFieldRow({
   swatchLabel: string
   /** The value to show and edit — `storedDisplayValue` when stored, `mutedDisplayValue` otherwise. */
   value: string
+  /**
+   * The selection disagrees on this colour. Pass `value=""` with it: the
+   * field then reads "Mixed" and the swatch shows its no-single-colour state,
+   * and the first pick or typed value commits to every selected layer.
+   */
+  mixed?: boolean
   /** The frame's real computed value for `property` — see `ColorValueInput`'s own doc for why the swatch needs this. */
   resolvedValue: string | undefined
   /** `mutedDisplayValue`, passed only when `!stored` — committing this exact value again writes nothing. */
@@ -101,6 +108,7 @@ export function ColorFieldRow({
     >
       <ColorValueInput
         value={value}
+        mixed={mixed}
         ariaLabel={ariaLabel}
         swatchLabel={swatchLabel}
         resolvedValue={resolvedValue}

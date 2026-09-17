@@ -16,22 +16,34 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import type { PropertyListEntry } from '@ui/components/PropertyList'
 import {
+  BackgroundDeclarationsBody,
   BackgroundImageRawBody,
   BackgroundLayerPopoverBody,
   ContentFitPopoverBody,
-  OrphanSatellitesBody,
   ShorthandEscapeHatchBody,
 } from './FillSectionParts'
 import { ColorWriteRefusalBody } from './FillColorField'
 import { popoverTitle, type FillEntryData } from './fillRowDescriptors'
-import type { BackgroundModel } from '../../panels/PropertiesPanel/backgroundLayers'
+import {
+  BACKGROUND_SATELLITE_PROPS,
+  type BackgroundModel,
+  type BackgroundSatelliteProp,
+} from '../../panels/PropertiesPanel/backgroundLayers'
 import type { WriteTarget } from '../resolveWriteTarget'
+
+/** The mixed-layers body offers `background-image` itself; the other two draw it as their own row. */
+const MIXED_BACKGROUND_PROPS: ReadonlyArray<BackgroundSatelliteProp | 'backgroundImage'> = [
+  'backgroundImage',
+  ...BACKGROUND_SATELLITE_PROPS,
+]
 
 export function FillEntryPopover({
   entry,
   anchorRef,
   onClose,
   parsedModel,
+  mixedSatellites,
+  shorthandMixed,
   textWriteTarget,
   colorWriteTarget,
   textMutedValue,
@@ -49,6 +61,10 @@ export function FillEntryPopover({
   anchorRef: RefObject<HTMLElement | null>
   onClose: () => void
   parsedModel: BackgroundModel
+  /** Satellites whose stored cell is the `MIXED` sentinel — empty for one node. */
+  mixedSatellites: ReadonlySet<BackgroundSatelliteProp>
+  /** The selection disagrees on the `background` shorthand. */
+  shorthandMixed: boolean
   /** Null once `color` is stored here — the row then edits inline. */
   textWriteTarget: WriteTarget | null
   colorWriteTarget: WriteTarget | null
@@ -95,6 +111,7 @@ export function FillEntryPopover({
         <BackgroundLayerPopoverBody
           model={parsedModel}
           index={data.index}
+          mixedSatellites={mixedSatellites}
           onModelChange={onModelChange}
           onChange={onChange}
         />
@@ -108,9 +125,23 @@ export function FillEntryPopover({
         />
       )}
 
+      {data.kind === 'mixedLayers' && (
+        <BackgroundDeclarationsBody
+          reason="mixed-layers"
+          properties={MIXED_BACKGROUND_PROPS}
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
+          activeTab={activeTab}
+          onChange={onChange}
+          onPreview={onPreview}
+          onClearPreview={onClearPreview}
+        />
+      )}
+
       {data.kind === 'orphanSatellites' && (
-        <OrphanSatellitesBody
-          hasRefusedLayers={parsedModel.spine.kind === 'raw'}
+        <BackgroundDeclarationsBody
+          reason={parsedModel.spine.kind === 'raw' ? 'refused-layers' : 'no-layer'}
+          properties={BACKGROUND_SATELLITE_PROPS}
           storedStyles={storedStyles}
           currentStyles={currentStyles}
           activeTab={activeTab}
@@ -134,6 +165,7 @@ export function FillEntryPopover({
       {data.kind === 'shorthand' && (
         <ShorthandEscapeHatchBody
           value={shorthandValue}
+          mixed={shorthandMixed}
           onChange={(next) => onChange('background', next || undefined)}
         />
       )}
