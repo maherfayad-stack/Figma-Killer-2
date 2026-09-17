@@ -103,6 +103,7 @@ See [docs/design.md](../design.md), [docs/reference/design-tokens.md](design-tok
 | `button-primitive-usage.test.ts`              | Bare `<button>` in `src/admin/` goes through the allowlist (with §8 justifications). |
 | `ui-primitives-location.test.ts`              | Primitives live in `src/ui/components/<Name>/`. Don't scatter them.              |
 | `no-native-browser-dialogs.test.ts`           | No `alert()`, `confirm()`, `prompt()`. Use `Dialog` / Toast.                     |
+| `toast-dedupe-default.test.ts`                | `pushToast` collapses by default: two pushes with the same `kind` + `title` + `body` and no `dedupeKey` are one toast with `repeatCount: 2`, rendered as `×N`. `dedupeKey: false` is the opt-out. Source-scans `resolveCollapseKey` so the default cannot silently revert to opt-in. |
 | `no-native-title-tooltips.test.ts`            | No `title=` for hover hints. Use `<Tooltip>`.                                    |
 | `no-third-party-icons.test.ts`                | No `lucide-react`, `heroicons`, etc. Only `pixel-art-icons`.                     |
 | `direct-icon-imports.test.ts`                 | Icons imported deep (`pixel-art-icons/icons/<name>`), not from the package root. |

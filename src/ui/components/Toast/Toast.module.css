@@ -116,7 +116,7 @@
     overflow-wrap: anywhere;
 }
 
-/* Repeat counter for a `dedupeKey`ed toast that collapsed a second push. */
+/* Repeat counter for a toast that collapsed a second push onto itself. */
 .repeat {
     margin-inline-start: var(--space-2xs);
     color: var(--text-subtle);
