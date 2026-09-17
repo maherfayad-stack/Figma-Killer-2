@@ -107,10 +107,14 @@
  * WHERE THE REST LIVES
  * ---------------------
  * This file owns which ROWS exist. `FillSectionParts.tsx` draws the opacity
- * field and the layer/gradient/content-fit popover bodies. `FillColorField.tsx`
+ * field and the layer/gradient/content-fit popover bodies;
+ * `FillEntryPopover.tsx` is the one switch that picks which of those a row
+ * opens; `fillRowDescriptors.tsx` owns the row taxonomy (`FillEntryData`),
+ * each kind's popover title, and how a background layer reads in the list.
+ * `FillColorField.tsx`
  * owns the colour rows' own chrome; `buildColorFillEntry.tsx` builds the row
  * object itself; `colorWriteTargetNote.ts` is the shared note-string builder —
- * all three split out purely for `module-size-budgets.test.ts`. `backgroundLayers.ts`,
+ * all split out purely for `module-size-budgets.test.ts`. `backgroundLayers.ts`,
  * `fillModel.ts`, `gradientValue.ts`, `imageFillValue.ts` stay in
  * `panels/PropertiesPanel/`, unchanged, per the P3 work order's own
  * instruction to reuse them verbatim.
@@ -146,29 +150,21 @@
  * of `StyleSectionsComposer.tsx`'s top-level check every migrated section
  * reproduces (no composer aggregates the whole bag anymore).
  */
-import { useState, type ReactNode, type RefObject } from 'react'
+import { useState, type RefObject } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
 import { PropertyList, type PropertyListEntry } from '@ui/components/PropertyList'
-import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { Section } from '@ui/components/Section'
 import { Image2SolidIcon } from 'pixel-art-icons/icons/image-2-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { readString, hasStyleValue } from '../../panels/PropertiesPanel/styleValueUtils'
-import {
-  BackgroundImageRawBody,
-  BackgroundLayerPopoverBody,
-  ContentFitPopoverBody,
-  ImageSwatch,
-  LayerBlendSelect,
-  OrphanSatellitesBody,
-  ShorthandEscapeHatchBody,
-} from './FillSectionParts'
-import { ColorWriteRefusalBody } from './FillColorField'
+import { LayerBlendSelect } from './FillSectionParts'
 import { buildColorFillEntry } from './buildColorFillEntry'
 import { colorWriteTargetNote } from './colorWriteTargetNote'
 import { FillSectionActions } from './FillSectionActions'
+import { FillEntryPopover } from './FillEntryPopover'
+import { describeLayer, type FillEntryData } from './fillRowDescriptors'
 import { writeBackgroundModel } from './writeBackgroundModel'
 import {
   BACKGROUND_SATELLITE_PROPS,
@@ -178,7 +174,6 @@ import {
   type BackgroundModel,
 } from '../../panels/PropertiesPanel/backgroundLayers'
 import { CONTENT_FIT_PROPS } from '../../panels/PropertiesPanel/fillModel'
-import { parseGradient, isUrlImageValue, extractUrlPayload } from '../../panels/PropertiesPanel/gradientValue'
 import { useSelectionModel } from '../selectionModel'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedCurrentStyles, buildCollapsedStoredStyles } from '../collapsedStyleBag'
@@ -210,15 +205,6 @@ const FILL_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
 // ---------------------------------------------------------------------------
 // FillSection — the manifest section
 // ---------------------------------------------------------------------------
-
-type FillEntryData =
-  | { kind: 'text' }
-  | { kind: 'contentFit' }
-  | { kind: 'layer'; index: number }
-  | { kind: 'layersRaw'; raw: string; reason: string }
-  | { kind: 'orphanSatellites' }
-  | { kind: 'color' }
-  | { kind: 'shorthand' }
 
 export function FillSection() {
   const model = useSelectionModel()
@@ -554,145 +540,26 @@ export function FillSection() {
         />
 
         {editing && editingEntry && (
-          <InspectorPopover
-            id={editing.id}
+          <FillEntryPopover
+            entry={editingEntry}
             anchorRef={editing.anchorRef}
             onClose={() => setEditing(null)}
-            title={popoverTitle(editingEntry)}
-            width={editingEntry.data.kind === 'layer' ? 264 : undefined}
-          >
-            {editingEntry.data.kind === 'text' && textWriteTarget?.kind === 'none' && (
-              <ColorWriteRefusalBody
-                ariaLabel="Text colour"
-                swatchLabel="Text colour swatch"
-                value={textMutedValue}
-                reason={textWriteTarget.reason}
-              />
-            )}
-
-            {editingEntry.data.kind === 'color' && colorWriteTarget?.kind === 'none' && (
-              <ColorWriteRefusalBody
-                ariaLabel="Solid fill colour"
-                swatchLabel="Solid fill colour swatch"
-                value={colorMutedValue}
-                reason={colorWriteTarget.reason}
-              />
-            )}
-
-            {editingEntry.data.kind === 'layer' && (
-              <BackgroundLayerPopoverBody
-                model={parsedModel}
-                index={editingEntry.data.index}
-                onModelChange={write}
-                onChange={onChange}
-              />
-            )}
-
-            {editingEntry.data.kind === 'layersRaw' && (
-              <BackgroundImageRawBody
-                value={editingEntry.data.raw}
-                reason={editingEntry.data.reason}
-                onChange={(next) => onChange('backgroundImage', next || undefined)}
-              />
-            )}
-
-            {editingEntry.data.kind === 'orphanSatellites' && (
-              <OrphanSatellitesBody
-                hasRefusedLayers={parsedModel.spine.kind === 'raw'}
-                storedStyles={storedStyles}
-                currentStyles={currentStyles}
-                activeTab={contextKey}
-                onChange={onChange}
-                onPreview={previewProperty}
-                onClearPreview={onClearPreview}
-              />
-            )}
-
-            {editingEntry.data.kind === 'contentFit' && (
-              <ContentFitPopoverBody
-                storedStyles={storedStyles}
-                currentStyles={currentStyles}
-                activeTab={contextKey}
-                onChange={onChange}
-                onPreview={previewProperty}
-                onClearPreview={onClearPreview}
-              />
-            )}
-
-            {editingEntry.data.kind === 'shorthand' && (
-              <ShorthandEscapeHatchBody
-                value={shorthandValue}
-                onChange={(next) => onChange('background', next || undefined)}
-              />
-            )}
-          </InspectorPopover>
+            parsedModel={parsedModel}
+            textWriteTarget={textWriteTarget}
+            colorWriteTarget={colorWriteTarget}
+            textMutedValue={textMutedValue}
+            colorMutedValue={colorMutedValue}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            activeTab={contextKey}
+            shorthandValue={shorthandValue}
+            onModelChange={write}
+            onChange={onChange}
+            onPreview={previewProperty}
+            onClearPreview={onClearPreview}
+          />
         )}
       </div>
     </Section>
   )
-}
-
-// ---------------------------------------------------------------------------
-// Row summaries
-// ---------------------------------------------------------------------------
-
-const POPOVER_TITLES: Record<FillEntryData['kind'], string> = {
-  text: 'Text colour',
-  contentFit: 'Content fit',
-  layer: 'Background layer',
-  layersRaw: 'Background image (raw CSS)',
-  orphanSatellites: 'Background sizing',
-  color: 'Solid fill',
-  shorthand: 'Background (raw CSS)',
-}
-
-function popoverTitle(entry: PropertyListEntry<FillEntryData>): string {
-  return entry.data.kind === 'layer' ? entry.label : POPOVER_TITLES[entry.data.kind]
-}
-
-/**
- * How one `background-image` layer reads in the list. The layer NUMBER is
- * only drawn when there is more than one — a single-layer background is just
- * "the" fill, and numbering it invents a stack the user does not have.
- */
-function describeLayer(
-  image: string,
-  index: number,
-  total: number,
-): { label: string; summary: ReactNode; leading: ReactNode } {
-  const suffix = total > 1 ? ` ${index + 1}` : ''
-
-  if (image.trim().toLowerCase() === 'none') {
-    return {
-      label: `Empty layer${suffix}`,
-      summary: 'Empty layer',
-      leading: <CodeIcon size={14} aria-hidden="true" />,
-    }
-  }
-
-  if (isUrlImageValue(image)) {
-    return {
-      label: `Image fill${suffix}`,
-      summary: extractUrlPayload(image) || 'Image',
-      leading: <ImageSwatch image={image} />,
-    }
-  }
-
-  const parsed = parseGradient(image)
-  if (parsed.ok) {
-    const kindLabel = parsed.gradient.kind === 'linear' ? 'Linear gradient' : 'Radial gradient'
-    return {
-      label: `${kindLabel} fill${suffix}`,
-      // The stop count used to live in the row's trailing `value` slot, which
-      // the layer's blend select now occupies.
-      summary: `${kindLabel} · ${parsed.gradient.stops.length} stops`,
-      leading: <ImageSwatch image={image} />,
-    }
-  }
-
-  return {
-    label: `Image fill${suffix}`,
-    summary: 'Custom (raw CSS)',
-    leading: <CodeIcon size={14} aria-hidden="true" />,
-  }
 }
