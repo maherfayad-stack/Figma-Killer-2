@@ -33,7 +33,13 @@ interface CanvasSelectionChromeProps {
   hoverRef: RefObject<HTMLDivElement | null>
   ringRefs: RefObject<Map<string, HTMLDivElement | null> | null>
   badgeRefs: RefObject<Map<string, HTMLDivElement | null> | null>
-  resizeFrameRef: RefObject<HTMLDivElement | null>
+  /**
+   * Notified with the resize-handle frame element. A CALLBACK rather than
+   * the ref itself: the React Compiler forbids writing to a ref that
+   * arrived as a prop, and rightly — the owner of a ref should be the one
+   * that writes it. `BreakpointSelectionOverlay` keeps that ref.
+   */
+  onResizeFrameReady: (element: HTMLDivElement | null) => void
 }
 
 export function CanvasSelectionChrome({
@@ -49,7 +55,7 @@ export function CanvasSelectionChrome({
   hoverRef,
   ringRefs,
   badgeRefs,
-  resizeFrameRef,
+  onResizeFrameReady,
 }: CanvasSelectionChromeProps) {
   const legacyRingClassName = (variant: 'selection' | 'hover') =>
     usingIframeOverlay ? undefined : cn(styles.ring, styles[variant])
@@ -117,7 +123,7 @@ export function CanvasSelectionChrome({
         <CanvasResizeHandles
           nodeId={resizeNodeId}
           iframeDoc={overlayRoot?.ownerDocument ?? null}
-          onFrameReady={(element) => { resizeFrameRef.current = element }}
+          onFrameReady={onResizeFrameReady}
         />
       )}
     </>

@@ -329,8 +329,14 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     canvasRootRef,
     transformLayerRef,
     transformRef,
-    applyTransformToDOM,
-    setCanvasTransform,
+    // The ref moves BEFORE the store commit, so the store subscription
+    // below sees the values already match and skips its own (animated)
+    // DOM write — the fit gesture owns the animation.
+    commitTransform: (next, animated) => {
+      transformRef.current = next
+      applyTransformToDOM(next, animated)
+      setCanvasTransform(next.zoom, next.panX, next.panY)
+    },
   })
 
   // ─── Spacebar tracking (for Space+drag pan) ───────────────────────────────

@@ -589,6 +589,12 @@ export function BreakpointSelectionOverlay({
   const resizeNodeId = usingIframeOverlay && showRings && selectedNodeIds.length === 1
     ? (selectedNodeIds[0] ?? null)
     : null
+  // This component owns `resizeFrameRef`, so this component writes it —
+  // the chrome below is handed a setter, never the ref.
+  const setResizeFrameElement = (element: HTMLDivElement | null) => {
+    resizeFrameRef.current = element
+  }
+
   // The rings/badges/handles themselves — see `CanvasSelectionChrome`. It is
   // elements only; this component keeps every measurement and every ref.
   const canvasChrome = showRings && (selectedNodeIds.length > 0 || (showHover && hoverRingNodeId) || showSelectorHighlight) ? (
@@ -605,7 +611,7 @@ export function BreakpointSelectionOverlay({
       hoverRef={hoverRef}
       ringRefs={ringRefs}
       badgeRefs={badgeRefs}
-      resizeFrameRef={resizeFrameRef}
+      onResizeFrameReady={setResizeFrameElement}
     />
   ) : null
 

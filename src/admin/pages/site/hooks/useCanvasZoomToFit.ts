@@ -27,18 +27,29 @@ import type { CanvasTransform } from '@site/canvas/math'
 interface UseCanvasZoomToFitOptions {
   canvasRootRef: RefObject<HTMLElement | null>
   transformLayerRef: RefObject<HTMLElement | null>
-  /** The LIVE transform — never the store selector. See this module's doc. */
+  /**
+   * The LIVE transform — never the store selector, which is up to 100 ms
+   * behind during a gesture. READ-ONLY here: the write goes through
+   * {@link UseCanvasZoomToFitOptions.commitTransform}, because the React
+   * Compiler will not let a hook write a ref it was handed (and is right
+   * to — the owner of a ref should be the one that writes it).
+   */
   transformRef: RefObject<CanvasTransform>
-  applyTransformToDOM: (t: CanvasTransform, animated?: boolean) => void
-  setCanvasTransform: (zoom: number, panX: number, panY: number) => void
+  /**
+   * Adopt a computed transform: advance the live ref, write the DOM, commit
+   * to the store. One callback rather than three arguments because the
+   * three must happen in that order (the ref moves BEFORE the store, or the
+   * store subscription fires its own competing animated write), and because
+   * the React Compiler will not let this hook write a ref it was handed.
+   */
+  commitTransform: (t: CanvasTransform, animated: boolean) => void
 }
 
 export function useCanvasZoomToFit({
   canvasRootRef,
   transformLayerRef,
   transformRef,
-  applyTransformToDOM,
-  setCanvasTransform,
+  commitTransform,
 }: UseCanvasZoomToFitOptions) {
 /**
  * Zoom/pan so `targetRects` (screen-space, relative to the canvas root) are
@@ -61,12 +72,10 @@ const applyZoomToFitRects = useCallback(
       mode,
     )
     if (!next) return false
-    transformRef.current = next
-    applyTransformToDOM(next, true)
-    setCanvasTransform(next.zoom, next.panX, next.panY)
+    commitTransform(next, true)
     return true
   },
-  [canvasRootRef, applyTransformToDOM, setCanvasTransform],
+  [canvasRootRef, transformRef, commitTransform],
 )
 
 /**
