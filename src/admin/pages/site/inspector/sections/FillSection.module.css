@@ -26,6 +26,14 @@
     background-color: var(--fill-swatch-color);
 }
 
+/* ── Inline colour field — swatch + hex/token text, right in the row ────── */
+
+.colorFieldGuard {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+}
+
 /* ── Inline opacity field — the "% opacity" cell of the Color field chrome ── */
 
 .opacityFieldGuard {

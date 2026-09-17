@@ -225,27 +225,80 @@ describe('FillSection — Law 1', () => {
 // ---------------------------------------------------------------------------
 
 describe('FillSection — text fill entry', () => {
-  it('shows a Text row with the colour as its summary, an opacity field, and a remove button', () => {
+  it('shows a Text row with the colour in its own inline field, an opacity field, and a remove button', () => {
     selectNode({ inlineStyles: { color: '#112233' } })
     render(<FillSection />)
 
     const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('#112233')
+    expect(within(row).getByRole('textbox', { name: 'Text colour' })).toHaveProperty('value', '#112233')
     expect(within(row).getByRole('button', { name: 'Remove Text' })).toBeTruthy()
     expect(within(row).getByRole('textbox', { name: 'Text colour opacity' })).toHaveProperty('value', '100')
   })
 
-  it('edits through its own popover and writes color to the node', () => {
+  // `STATE.md` panel-33 — the reported "why here I need 2 clicks to change a
+  // colors": the row's OWN text field is editable directly, no popover hop
+  // needed to type a hex value.
+  it('commits a hex value typed directly into the row, with no popover', () => {
     selectNode({ inlineStyles: { color: '#112233' } })
     render(<FillSection />)
 
-    fireEvent.click(screen.getByText('#112233'))
-    const popover = screen.getByRole('dialog', { name: 'Text colour' })
-    const input = within(popover).getByRole('textbox', { name: 'Text colour' })
+    const input = screen.getByRole('textbox', { name: 'Text colour' })
     fireEvent.change(input, { target: { value: '#445566' } })
     fireEvent.blur(input)
 
     expect(currentNode()?.inlineStyles?.color).toBe('#445566')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  // The defect this ticket fixes: clicking the row used to open an
+  // intermediate "Text colour" popover whose OWN swatch had to be clicked
+  // again to reach the real picker. One click on the row's swatch now opens
+  // `ColorPickerPopover` directly.
+  it('opens the real colour picker on the FIRST click of the row swatch', () => {
+    selectNode({ inlineStyles: { color: '#112233' } })
+    render(<FillSection />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Text colour swatch' }))
+
+    const popover = screen.getByRole('dialog', { name: 'Text colour' })
+    // The real picker's OWN value field, distinct from the row's field
+    // (`aria-label="Text colour"`) — proof this is the picker itself, not a
+    // second intermediate stop.
+    expect(within(popover).getByRole('textbox', { name: 'Text colour value' })).toBeTruthy()
+  })
+
+  // Closing the picker without picking anything must never rewrite a
+  // `var(--token)` value to a literal colour — the honesty trap named in the
+  // work order.
+  it('leaves a token value untouched after opening and closing the picker without picking', () => {
+    selectNode({ inlineStyles: { color: 'var(--brand)' } })
+    setUpCanvasFrame(NODE_ID, (el) => {
+      el.style.color = 'rgb(10, 20, 30)'
+    })
+    render(<FillSection />)
+
+    const swatch = screen.getByRole('button', { name: 'Text colour swatch' })
+    fireEvent.click(swatch)
+    expect(screen.getByRole('dialog', { name: 'Text colour' })).toBeTruthy()
+    fireEvent.click(swatch)
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    expect(currentNode()?.inlineStyles?.color).toBe('var(--brand)')
+  })
+
+  // Defect 2: the swatch paints the RESOLVED colour the frame actually
+  // renders, never a blank well — `var()` has no meaning in the admin's own
+  // document, only in the canvas iframe that declares it.
+  it("paints the swatch with the frame's resolved colour while the field keeps the token text", () => {
+    selectNode({ inlineStyles: { color: 'var(--brand)' } })
+    setUpCanvasFrame(NODE_ID, (el) => {
+      el.style.color = 'rgb(248, 249, 249)'
+    })
+    render(<FillSection />)
+
+    expect(screen.getByRole('textbox', { name: 'Text colour' })).toHaveProperty('value', 'var(--brand)')
+    const swatchGlyph = screen.getByRole('button', { name: 'Text colour swatch' }).querySelector('span')
+    expect(swatchGlyph?.style.getPropertyValue('--color-token-option-value')).toBe('rgb(248, 249, 249)')
   })
 
   it('the opacity field commits the alpha channel of the same colour', () => {
@@ -357,21 +410,34 @@ describe('FillSection — solid fill entry', () => {
     const rows = screen.getAllByRole('listitem')
     expect(rows).toHaveLength(2)
     expect(rows[0]!.textContent).toContain('Linear gradient')
-    expect(rows[1]!.textContent).toContain('#ff0000')
+    expect(within(rows[1]!).getByRole('textbox', { name: 'Solid fill colour' })).toHaveProperty('value', '#ff0000')
     expect(within(rows[1]!).getByRole('textbox', { name: 'Solid fill opacity' })).toHaveProperty('value', '100')
   })
 
-  it('opens a colour popover on activation and writes through onChange', () => {
+  it('commits a hex value typed directly into the row, with no popover', () => {
     selectNode({ inlineStyles: { backgroundColor: '#ff0000' } })
     render(<FillSection />)
 
-    fireEvent.click(screen.getByText('#ff0000'))
-    const popover = screen.getByRole('dialog', { name: 'Solid fill' })
-    const input = within(popover).getByRole('textbox', { name: 'Solid fill colour' })
+    const input = screen.getByRole('textbox', { name: 'Solid fill colour' })
     fireEvent.change(input, { target: { value: '#00ff00' } })
     fireEvent.blur(input)
 
     expect(currentNode()?.inlineStyles?.backgroundColor).toBe('#00ff00')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('opens the real colour picker on the FIRST click of the row swatch', () => {
+    selectNode({ inlineStyles: { backgroundColor: '#ff0000' } })
+    render(<FillSection />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Solid fill colour swatch' }))
+
+    // The picker's own title/value field are named after the FIELD
+    // (`ariaLabel="Solid fill colour"`), distinct from the row-activation
+    // popover's section-level "Solid fill" title used only for the refused
+    // (`writeTarget.kind === 'none'`) case.
+    const popover = screen.getByRole('dialog', { name: 'Solid fill colour' })
+    expect(within(popover).getByRole('textbox', { name: 'Solid fill colour value' })).toBeTruthy()
   })
 
   it('"remove" clears backgroundColor', () => {
@@ -444,7 +510,7 @@ describe('FillSection — header add buttons', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add text colour/i }))
     expect(currentNode()?.inlineStyles?.color).toBe('#000000')
-    expect(screen.getByRole('listitem').textContent).toContain('#000000')
+    expect(screen.getByRole('textbox', { name: 'Text colour' })).toHaveProperty('value', '#000000')
   })
 
   it('"add solid color fill" writes an opaque default colour', () => {
@@ -492,14 +558,10 @@ describe('FillSection — rendered, not stored', () => {
     render(<FillSection />)
 
     const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('rgb(255, 255, 255)')
+    const input = within(row).getByRole('textbox', { name: 'Solid fill colour' })
+    expect(input).toHaveProperty('value', 'rgb(255, 255, 255)')
     expect(row.dataset.muted).toBe('true')
     expect(screen.queryByRole('button', { name: /remove solid fill/i })).toBeNull()
-
-    fireEvent.click(screen.getByText('rgb(255, 255, 255)'))
-    const popover = screen.getByRole('dialog', { name: 'Solid fill' })
-    const input = within(popover).getByRole('textbox', { name: 'Solid fill colour' })
-    expect(input).toHaveProperty('value', 'rgb(255, 255, 255)')
 
     fireEvent.change(input, { target: { value: '#00ff00' } })
     fireEvent.blur(input)
@@ -513,9 +575,7 @@ describe('FillSection — rendered, not stored', () => {
     })
     render(<FillSection />)
 
-    fireEvent.click(screen.getByText('rgb(255, 255, 255)'))
-    const popover = screen.getByRole('dialog', { name: 'Solid fill' })
-    const input = within(popover).getByRole('textbox', { name: 'Solid fill colour' })
+    const input = screen.getByRole('textbox', { name: 'Solid fill colour' })
     fireEvent.focus(input)
     fireEvent.blur(input)
 
@@ -542,7 +602,7 @@ describe('FillSection — rendered, not stored', () => {
     render(<FillSection />)
 
     const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('rgb(10, 20, 30)')
+    expect(within(row).getByRole('textbox', { name: 'Text colour' })).toHaveProperty('value', 'rgb(10, 20, 30)')
     expect(row.dataset.muted).toBe('true')
     expect(within(row).queryByRole('button', { name: 'Remove Text' })).toBeNull()
   })
@@ -597,7 +657,7 @@ describe('FillSection — computed-values loading state (Tier 2 bridge measureme
 
     await waitFor(() => expect(screen.getByRole('list', { name: 'Fill' })).toBeTruthy())
     const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('rgb(255, 255, 255)')
+    expect(within(row).getByRole('textbox', { name: 'Solid fill colour' })).toHaveProperty('value', 'rgb(255, 255, 255)')
     expect(row.dataset.muted).toBe('true')
   })
 })
@@ -678,13 +738,23 @@ describe('FillSection — declared at another context (panel-32)', () => {
     render(<FillSection />)
 
     const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('var(--text-base-default)')
+    expect(within(row).getByRole('textbox', { name: 'Text colour' })).toHaveProperty(
+      'value',
+      'var(--text-base-default)',
+    )
     expect(row.dataset.muted).toBe('true')
     expect(within(row).queryByRole('button', { name: 'Remove Text' })).toBeNull()
     expect(screen.queryByRole('button', { name: /add text colour/i })).toBeNull()
+
+    // Defect 2 (`STATE.md` panel-33) — measured live on this exact shape
+    // (`pages/Onboarding.tsx`'s `.Onboarding_title__83213`, `color:
+    // var(--text-base-default)`): the swatch paints the frame's RESOLVED
+    // colour, never a blank well, while the field keeps the authored token.
+    const swatchGlyph = within(row).getByRole('button', { name: 'Text colour swatch' }).querySelector('span')
+    expect(swatchGlyph?.style.getPropertyValue('--color-token-option-value')).toBe('rgb(17, 17, 17)')
   })
 
-  it("the popover states a write saves a NEW override, and the write lands there — base is untouched", () => {
+  it("the picker's notice states a write saves a NEW override, and the write lands there — base is untouched", () => {
     selectNodeWithBaseDeclaredClass('mobile')
     setUpCanvasFrame(
       NODE_ID,
@@ -695,18 +765,26 @@ describe('FillSection — declared at another context (panel-32)', () => {
     )
     render(<FillSection />)
 
-    fireEvent.click(screen.getByText('var(--text-base-default)'))
+    // `STATE.md` panel-33 — the note used to live in an intermediate popover
+    // reached by clicking the row; it now lives inside the REAL picker the
+    // row's own swatch opens directly.
+    fireEvent.click(screen.getByRole('button', { name: 'Text colour swatch' }))
     const popover = screen.getByRole('dialog', { name: 'Text colour' })
     expect(within(popover).getByTestId('source-constraint-notice').textContent).toMatch(
       /saves a new (override|declaration)/i,
     )
 
-    const input = within(popover).getByRole('textbox', { name: 'Text colour' })
+    // The picker seeded its model from the resolved `rgb(17, 17, 17)` it
+    // opened on, so a value typed into its OWN internal field commits
+    // reformatted to that model — the row's own outer field (exercised by
+    // the "commits a hex value typed directly into the row" tests) is what
+    // preserves whatever format the user types.
+    const input = within(popover).getByRole('textbox', { name: 'Text colour value' })
     fireEvent.change(input, { target: { value: '#ff0000' } })
     fireEvent.blur(input)
 
     const rule = useEditorStore.getState().site?.styleRules[TITLE_CLASS_ID]
-    expect(rule?.contextStyles.mobile?.color).toBe('#ff0000')
+    expect(rule?.contextStyles.mobile?.color).toBe('rgb(255, 0, 0)')
     expect(rule?.styles.color).toBe('var(--text-base-default)')
   })
 
@@ -747,7 +825,7 @@ describe('FillSection — declared at another context (panel-32)', () => {
     render(<FillSection />)
 
     const row = screen.getByRole('listitem')
-    expect(row.textContent).toContain('#00ff00')
+    expect(within(row).getByRole('textbox', { name: 'Text colour' })).toHaveProperty('value', '#00ff00')
     expect(row.dataset.muted).toBeUndefined()
     expect(within(row).getByRole('button', { name: 'Remove Text' })).toBeTruthy()
   })

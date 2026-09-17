@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import { TokenizedColorField } from './TokenizedColorField'
@@ -41,6 +41,10 @@ interface ColorValueInputProps {
    * edited (T9, `STUDIO-FIGMA-PARITY-PLAN.md` §11).
    */
   contrastAgainst?: string
+  /** The frame's own resolved value for this property — see `TokenizedColorField`'s doc. Only matters when `value` is a `var()` reference the field's own token catalogue can't resolve. */
+  resolvedValue?: string
+  /** An informational banner threaded straight through to the swatch's `ColorPickerPopover` — see that component's `notice` doc. */
+  notice?: ReactNode
 }
 
 /**
@@ -69,6 +73,8 @@ export function ColorValueInput({
   onPreview,
   onClearPreview,
   contrastAgainst,
+  resolvedValue,
+  notice,
 }: ColorValueInputProps) {
   // Hover previews are gated by the shared "Preview suggestions on hover"
   // preference; when off we don't wire the preview callbacks through.
@@ -131,6 +137,8 @@ export function ColorValueInput({
       onTokenPreview={previewActive ? onPreview : undefined}
       onTokenPreviewClear={previewActive ? onClearPreview : undefined}
       contrastAgainst={contrastAgainst}
+      resolvedValue={resolvedValue}
+      notice={notice}
     />
   )
 }

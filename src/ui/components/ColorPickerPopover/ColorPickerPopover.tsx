@@ -129,6 +129,16 @@ export interface ColorPickerPopoverProps {
   align?: InspectorPopoverProps['align']
   offset?: number
   width?: number
+  /**
+   * An optional informational banner rendered above the picker's own tabs
+   * (F14 / `STATE.md` panel-33) — e.g. "this colour is declared elsewhere;
+   * editing here saves a new override." A `src/ui/` primitive must not know
+   * what a write target or a source constraint is, so this is an opaque
+   * `ReactNode` the caller supplies fully rendered (`admin`'s own
+   * `SourceConstraintNotice`, typically) — never text this component
+   * composes itself.
+   */
+  notice?: ReactNode
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +210,7 @@ export function ColorPickerPopover({
   align,
   offset,
   width,
+  notice,
 }: ColorPickerPopoverProps) {
   const hasTokensTab = (tokens?.length ?? 0) > 0
   const tokenApplied = appliedTokenId != null && hasTokensTab
@@ -544,6 +555,7 @@ export function ColorPickerPopover({
       width={width}
     >
       <div className={styles.root}>
+        {notice}
         {hasTokensTab ? (
           <Tabs value={activeTab} onChange={(next) => setActiveTab(next as 'custom' | 'tokens')}>
             <TabList ariaLabel={`${title} sections`}>
