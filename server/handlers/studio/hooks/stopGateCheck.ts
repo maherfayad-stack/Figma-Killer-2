@@ -17,12 +17,19 @@
  * ## What it blocks on
  *
  * Every page `pageWriteVerification.ts` reports as written this turn AND not
- * `verifiedSinceWrite` — no design reference registered, a write that
- * happened after the last passing `studio_compare`, or (W9-2, strict projects
- * only) a pass that was graded at a looser fidelity mode than the one this
- * project works at. Silent (exit 0, no
- * stdout) for every other case: nothing written this turn, or everything
- * written this turn already passed a compare that postdates it.
+ * `verifiedSinceWrite`. What that means is MODE-SPECIFIC (A9), and that is
+ * the point — the gate must never ask for a measurement the mode does not
+ * define:
+ *
+ *   - `creative` — no clean `studio_quality_check` since the last write.
+ *     There may be no design reference at all, so a compare is not the bar.
+ *   - `balanced` — no compare since the last write, or one that still reports
+ *     differing regions the reply does not name.
+ *   - `strict` — no passing compare since the last write, or one graded at a
+ *     looser fidelity mode than the one this project works at (W9-2).
+ *
+ * Silent (exit 0, no stdout) for every other case: nothing written this turn,
+ * or everything written this turn already cleared its own mode's bar.
  *
  * ## Why this can only ever nudge once per stop attempt
  *
@@ -44,11 +51,14 @@ import { loadStudioPages } from '../../studioPageLoad'
 import { computePageWriteVerification, describeUnverifiedPage } from '../pageWriteVerification'
 import { studioAgentUserKeyFromEnv } from '../agentUserScope'
 import { resolveProjectFidelityMode } from '../projectFidelityMode'
+import { readLastAssistantReply } from './stopHookTranscript'
 import { buildStudioCapabilityDigest } from '../../../ai/tools/studio/liveDigest'
 
 interface StopHookInput {
   readonly stop_hook_active?: boolean
   readonly cwd?: string
+  /** The CLI's own transcript file for this session — A9's balanced half reads the trailing assistant reply out of it. Absent is an ordinary case, not an error. */
+  readonly transcript_path?: string
 }
 
 async function main(): Promise<void> {
@@ -76,7 +86,15 @@ async function main(): Promise<void> {
     // preference for how THIS turn is graded while the gate's question is
     // whether the project's own bar has been met.
     const userKey = studioAgentUserKeyFromEnv()
-    const entries = computePageWriteVerification(dir, userKey, pages, resolveProjectFidelityMode(dir, userKey))
+    // A9 — the reply is evidence, not decoration: at BALANCED fidelity a
+    // differing region may be closed by naming it, and the only place that
+    // naming can happen is the text the user is about to read. Best-effort;
+    // an unreadable transcript simply means nothing was named.
+    const replyText = readLastAssistantReply(input.transcript_path)
+    const entries = computePageWriteVerification(dir, userKey, pages, {
+      fidelityMode: resolveProjectFidelityMode(dir, userKey),
+      ...(replyText ? { replyText } : {}),
+    })
     const blocking = entries.filter((e) => !e.verifiedSinceWrite)
     if (blocking.length === 0) return
 

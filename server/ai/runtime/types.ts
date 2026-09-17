@@ -164,6 +164,14 @@ export interface ToolContext {
    * simply starts the chain one tier lower.
    */
   readonly fidelityMode?: import('../../handlers/studio/fidelityMode').FidelityMode
+  /**
+   * This turn's resolved design policy (A12), mirroring
+   * `ToolContextBase.designPolicy` — where it is set, and where the reasoning
+   * for the precedence lives. `studio_quality_check` reads it; `undefined`
+   * for a call that did not come from a chat turn, which starts the chain one
+   * tier lower.
+   */
+  readonly designPolicy?: import('../../handlers/studio/designPolicy').DesignPolicy
   readonly snapshot: unknown
   readonly signal: AbortSignal
 }

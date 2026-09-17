@@ -183,9 +183,13 @@ const EffortValueSchema = Type.Union([
 const FidelityModeValueSchema = Type.Union([
   Type.Literal('creative'), Type.Literal('balanced'), Type.Literal('strict'),
 ])
+const DesignPolicyValueSchema = Type.Union([
+  Type.Literal('follow'), Type.Literal('balanced'), Type.Literal('free'),
+])
 const StudioSessionResponseSchema = Type.Object({
   effort: Type.Union([EffortValueSchema, Type.Null()]),
   fidelityMode: Type.Union([FidelityModeValueSchema, Type.Null()]),
+  designPolicy: Type.Union([DesignPolicyValueSchema, Type.Null()]),
 })
 
 /** Soft fetch, matching `fetchStudioDefault`'s posture: any failure just means "no persisted effort yet". */
@@ -255,6 +259,40 @@ export async function persistStudioAgentFidelityMode(
     })
   } catch (err) {
     console.error('[AgentSlice] Failed to persist the studio fidelity mode:', err)
+  }
+}
+
+/** A12's design policy, same soft-fetch posture as the two pairs above: a failure means "no persisted policy", and the server then answers with its own default (`balanced`). */
+export async function fetchStudioAgentDesignPolicy(
+  dir: string,
+  signal?: AbortSignal,
+): Promise<Static<typeof DesignPolicyValueSchema> | null> {
+  try {
+    const body = await apiRequest(STUDIO_SESSION_PATH, {
+      query: { dir },
+      schema: StudioSessionResponseSchema,
+      signal,
+    })
+    return body.designPolicy
+  } catch (err) {
+    if (signal?.aborted || isAbortError(err)) throw err
+    console.error('[AgentSlice] Failed to fetch the persisted studio design policy:', err)
+    return null
+  }
+}
+
+export async function persistStudioAgentDesignPolicy(
+  dir: string,
+  designPolicy: Static<typeof DesignPolicyValueSchema> | null,
+): Promise<void> {
+  try {
+    await apiRequest(STUDIO_SESSION_PATH, {
+      method: 'POST',
+      body: { dir, designPolicy },
+      schema: StudioSessionResponseSchema,
+    })
+  } catch (err) {
+    console.error('[AgentSlice] Failed to persist the studio design policy:', err)
   }
 }
 

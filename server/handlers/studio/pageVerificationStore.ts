@@ -41,6 +41,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { agentCacheDir } from './agentUserScope'
 import { FIDELITY_MODES, type FidelityMode } from './fidelityMode'
+import { DESIGN_POLICIES, type DesignPolicy } from './designPolicy'
 
 const PageVerificationEntrySchema = Type.Object({
   /** When this page last had a PASSING `studio_compare` verdict, epoch ms. */
@@ -60,12 +61,70 @@ const PageVerificationEntrySchema = Type.Object({
   fidelityMode: Type.Optional(Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)))),
 })
 
+/**
+ * A9 — the last PASSING `studio_quality_check` for a page.
+ *
+ * Its own record rather than a second field on the compare entry, because it
+ * answers a different question and is the ONLY answer available in creative
+ * mode: a from-scratch screen has no reference, so "has it been verified since
+ * it was written" cannot be a compare. Recorded on a run that produced no
+ * finding at or above the policy's error severity — see
+ * `designPolicy.ts`'s `findingSeverity`.
+ */
+const PageQualityCheckEntrySchema = Type.Object({
+  /** When this page last had a CLEAN `studio_quality_check`, epoch ms. */
+  passedAtMs: Type.Number(),
+  /** How many findings the run returned in total, error-severity or not. Display only — a clean-at-`free` page with eleven suppressed token findings should read differently from one with none. */
+  findingCount: Type.Number(),
+  /** The design policy the run was graded under. A `free` pass does not satisfy a project that has since moved to `follow`, for the same reason a `balanced` compare does not satisfy `strict`. */
+  designPolicy: Type.Optional(Type.Union(DESIGN_POLICIES.map((p) => Type.Literal(p)))),
+})
+
+/**
+ * A9 — the LAST compare verdict for a page, pass or fail.
+ *
+ * `pages` above records only passes, which is all the strict gate needs. The
+ * balanced gate needs the failing case too: its bar is "every differing region
+ * is fixed or NAMED", and a gate that cannot see the regions can only ask for
+ * another compare forever.
+ *
+ * Region labels, not rectangles: the gate's question is whether the reply
+ * mentions each one, and a label is the smallest thing that makes that
+ * answerable. `compareRegionLabel` builds them and `studio_compare` returns
+ * the same strings to the model, so the string the agent is asked to quote is
+ * the string the gate looks for.
+ */
+const PageCompareVerdictEntrySchema = Type.Object({
+  atMs: Type.Number(),
+  pass: Type.Boolean(),
+  /** One label per differing region the verdict reported, worst first. Empty on a pass. */
+  regionLabels: Type.Array(Type.String()),
+})
+
 const PageVerificationStoreSchema = Type.Object({
   version: Type.Literal(1),
   pages: Type.Record(Type.String(), PageVerificationEntrySchema),
+  /** Optional so every store written before A9 still validates as-is. */
+  qualityChecks: Type.Optional(Type.Record(Type.String(), PageQualityCheckEntrySchema)),
+  compareVerdicts: Type.Optional(Type.Record(Type.String(), PageCompareVerdictEntrySchema)),
 })
 type PageVerificationStore = Static<typeof PageVerificationStoreSchema>
 export type PageVerificationEntry = Static<typeof PageVerificationEntrySchema>
+export type PageQualityCheckEntry = Static<typeof PageQualityCheckEntrySchema>
+export type PageCompareVerdictEntry = Static<typeof PageCompareVerdictEntrySchema>
+
+/**
+ * The stable, quotable name of one differing region: `R1@y412`.
+ *
+ * Short enough that an agent will actually paste it into a sentence, unique
+ * enough that two regions on one screen never collide, and stable across a
+ * recapture as long as the region is (the index is worst-first and the top
+ * edge is the region's own geometry). Built here — beside the gate that reads
+ * it back — so the tool and the gate can never disagree about the format.
+ */
+export function compareRegionLabel(index: number, top: number): string {
+  return `R${index + 1}@y${Math.round(top)}`
+}
 
 /**
  * A FRESH empty store every call — never a shared module-level constant.
@@ -129,6 +188,79 @@ export function readPassingCompare(dir: string, userKey: string, pageId: string)
     return readStore(dir, userKey).pages[pageId] ?? null
   } catch (err) {
     console.error('[pageVerificationStore] failed to read — treating as unverified:', err)
+    return null
+  }
+}
+
+/**
+ * A9 — records a CLEAN `studio_quality_check` for `pageId`. Called by the
+ * tool's handler for every page whose run returned no finding at error
+ * severity under the resolved policy. Never throws, same posture and same
+ * safe direction as `recordPassingCompare`: a missed record means one more
+ * check, never a page waved through.
+ */
+export function recordPassingQualityCheck(
+  dir: string,
+  userKey: string,
+  pageId: string,
+  findingCount: number,
+  designPolicy: DesignPolicy,
+  atMs: number = Date.now(),
+): void {
+  try {
+    const store = readStore(dir, userKey)
+    writeStore(dir, userKey, {
+      ...store,
+      qualityChecks: { ...(store.qualityChecks ?? {}), [pageId]: { passedAtMs: atMs, findingCount, designPolicy } },
+    })
+  } catch (err) {
+    console.error('[pageVerificationStore] failed to record a passing quality check — continuing:', err)
+  }
+}
+
+/** The last clean-quality-check record for `pageId`, or `null`. Never throws. */
+export function readPassingQualityCheck(dir: string, userKey: string, pageId: string): PageQualityCheckEntry | null {
+  try {
+    return readStore(dir, userKey).qualityChecks?.[pageId] ?? null
+  } catch (err) {
+    console.error('[pageVerificationStore] failed to read the quality-check record — treating as unchecked:', err)
+    return null
+  }
+}
+
+/**
+ * A9 — records the LAST compare verdict for `pageId`, pass or fail, with the
+ * labels of every differing region it reported.
+ *
+ * Called for every `ok` result, unlike `recordPassingCompare`, because the
+ * balanced Stop gate's question is about the FAILING case: which regions are
+ * still open, so it can ask whether the reply named them.
+ */
+export function recordCompareVerdict(
+  dir: string,
+  userKey: string,
+  pageId: string,
+  pass: boolean,
+  regionLabels: readonly string[],
+  atMs: number = Date.now(),
+): void {
+  try {
+    const store = readStore(dir, userKey)
+    writeStore(dir, userKey, {
+      ...store,
+      compareVerdicts: { ...(store.compareVerdicts ?? {}), [pageId]: { atMs, pass, regionLabels: [...regionLabels] } },
+    })
+  } catch (err) {
+    console.error('[pageVerificationStore] failed to record a compare verdict — continuing:', err)
+  }
+}
+
+/** The last compare verdict for `pageId`, pass or fail, or `null` if it has never been compared. Never throws. */
+export function readCompareVerdict(dir: string, userKey: string, pageId: string): PageCompareVerdictEntry | null {
+  try {
+    return readStore(dir, userKey).compareVerdicts?.[pageId] ?? null
+  } catch (err) {
+    console.error('[pageVerificationStore] failed to read the compare verdict — treating as uncompared:', err)
     return null
   }
 }

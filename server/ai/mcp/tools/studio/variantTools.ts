@@ -41,6 +41,8 @@ import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
 import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
 import { generateVariantSeeds, MAX_VARIANTS_PER_SET } from '../../../../handlers/studio/variantSeeds'
+import { resolveProjectDesignPolicy } from '../../../../handlers/studio/projectDesignPolicy'
+import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import { getVariantSet, listVariantSets, recordVariantSet } from '../../../../handlers/studio/variantStore'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
@@ -122,7 +124,12 @@ const planVariantsTool: AiTool = {
     }
 
     const seed = rngSeed ?? Math.floor(Math.random() * 0x7fffffff)
-    const variants = generateVariantSeeds({ tokens, brief, baseName, count: count ?? 3, rngSeed: seed })
+    // A12 — the same policy the prompt block was built from, resolved through
+    // the same chain: this turn's value, else the project's persisted default,
+    // else `balanced`. Under `free` the seeds draw from an extended pool; under
+    // everything else they stay inside the project's own token space.
+    const designPolicy = ctx.designPolicy ?? resolveProjectDesignPolicy(dir, studioAgentUserKey(ctx.userId))
+    const variants = generateVariantSeeds({ tokens, brief, baseName, count: count ?? 3, rngSeed: seed, designPolicy })
     const set = recordVariantSet(dir, { baseName, brief, rngSeed: seed, variants })
 
     return {
@@ -131,6 +138,7 @@ const planVariantsTool: AiTool = {
       setId: set.id,
       rngSeed: seed,
       baseName,
+      designPolicy,
       variants: set.variants,
       tokensIndexed: { colorCount: tokens.colors.length, sizeCount: tokens.fontSizes.length + tokens.lengths.length },
       note:

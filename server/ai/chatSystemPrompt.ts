@@ -22,6 +22,7 @@ import {
 } from './tools/site'
 import { buildStudioAgentSystemPrompt, studioPromptContextFromProfile } from './tools/studio'
 import type { FidelityMode } from '../handlers/studio/fidelityMode'
+import type { DesignPolicy } from '../handlers/studio/designPolicy'
 import { buildStudioLiveDigest } from './tools/studio/liveDigest'
 import { StudioAgentSnapshotSchema } from './tools/studio/snapshot'
 import { resolveProjectProfile } from '../handlers/studio/projectProbe'
@@ -94,6 +95,15 @@ export async function buildStudioProjectSystemPrompt(
    * `buildStudioAgentSystemPrompt`'s own `balanced` default.
    */
   fidelityMode?: FidelityMode,
+  /**
+   * A12's already-resolved design policy for this turn, threaded down the
+   * same way and for the same reason as `fidelityMode` above: `chat.ts` is
+   * the only caller holding both the turn value and the account key, so it
+   * resolves once and everything below reads the answer. Omitted by the tests
+   * and the CMS path, which fall back to `buildStudioAgentSystemPrompt`'s own
+   * `balanced` default.
+   */
+  designPolicy?: DesignPolicy,
 ): Promise<string[]> {
   let ctx: ReturnType<typeof studioPromptContextFromProfile>
   try {
@@ -103,7 +113,7 @@ export async function buildStudioProjectSystemPrompt(
     ctx = studioPromptContextFromProfile(dir, name, trust, profile)
   } catch (err) {
     console.error('[ai/chat] failed to resolve the studio project profile, using the unavailable fallback:', err)
-    return buildStudioAgentSystemPrompt(null, tools, null, fidelityMode)
+    return buildStudioAgentSystemPrompt(null, tools, null, fidelityMode, designPolicy)
   }
 
   let live: Awaited<ReturnType<typeof buildStudioLiveDigest>> | null = null
@@ -118,7 +128,7 @@ export async function buildStudioProjectSystemPrompt(
     console.error('[ai/chat] invalid studio snapshot, continuing without the live digest:', parsedSnapshot.errors)
   }
 
-  return buildStudioAgentSystemPrompt(ctx, tools, live, fidelityMode)
+  return buildStudioAgentSystemPrompt(ctx, tools, live, fidelityMode, designPolicy)
 }
 
 function emptySiteAgentSnapshot(): SiteAgentSnapshot {

@@ -15,11 +15,11 @@ import type { AgentRoutedTurn } from './types'
 
 export type AgentSessionControlsState = Pick<
   AgentSlice,
-  'agentEffort' | 'agentPermissionMode' | 'agentRoutedTurn' | 'agentFidelityMode'
+  'agentEffort' | 'agentPermissionMode' | 'agentRoutedTurn' | 'agentFidelityMode' | 'agentDesignPolicy'
 >
 export type AgentSessionControlsActions = Pick<
   AgentSlice,
-  'setAgentEffort' | 'setAgentPermissionMode' | 'setAgentFidelityMode'
+  'setAgentEffort' | 'setAgentPermissionMode' | 'setAgentFidelityMode' | 'setAgentDesignPolicy'
 >
 
 export function agentSessionControlsInitialState(): AgentSessionControlsState {
@@ -31,6 +31,10 @@ export function agentSessionControlsInitialState(): AgentSessionControlsState {
     // saved for this project, which is the one thing the precedence chain
     // exists to prevent.
     agentFidelityMode: null,
+    // Null for the same reason: the server owns the precedence chain, and a
+    // client-side literal here would outrank a policy the user saved for this
+    // project. A12.
+    agentDesignPolicy: null,
     // Read-only, server-reported, and null until a routing-capable driver
     // reports one — see `AgentSlice.agentRoutedTurn`.
     agentRoutedTurn: null,
@@ -74,6 +78,9 @@ export function createAgentSessionControlsActions(set: EditorStoreSet): AgentSes
     setAgentFidelityMode(mode) {
       set({ agentFidelityMode: mode })
     },
+    setAgentDesignPolicy(policy) {
+      set({ agentDesignPolicy: policy })
+    },
   }
 }
 
@@ -92,8 +99,9 @@ export function buildChatRequestBody(params: {
   agentEffort: AgentSlice['agentEffort']
   agentPermissionMode: AgentSlice['agentPermissionMode']
   agentFidelityMode: AgentSlice['agentFidelityMode']
+  agentDesignPolicy: AgentSlice['agentDesignPolicy']
 }): AiChatRequestBody {
-  const { conversationId, content, snapshot, workspaceDir, agentEffort, agentPermissionMode, agentFidelityMode } = params
+  const { conversationId, content, snapshot, workspaceDir, agentEffort, agentPermissionMode, agentFidelityMode, agentDesignPolicy } = params
   return {
     conversationId,
     content: [...content],
@@ -104,6 +112,9 @@ export function buildChatRequestBody(params: {
     // Omitted when null so the server's own precedence chain runs — sending a
     // fabricated 'balanced' would outrank this project's saved default.
     ...(agentFidelityMode ? { fidelityMode: agentFidelityMode } : {}),
+    // Same omitted-when-null rule, same reason: a fabricated 'balanced' would
+    // outrank this project's saved policy.
+    ...(agentDesignPolicy ? { designPolicy: agentDesignPolicy } : {}),
   }
 }
 

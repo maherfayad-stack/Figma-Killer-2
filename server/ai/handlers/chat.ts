@@ -85,6 +85,7 @@ import {
 import { normalizeContextTokens } from '../contextTokens'
 import { resolveValidatedWorkspaceDir } from '../../handlers/studio/workspaceDir'
 import { resolveProjectFidelityMode } from '../../handlers/studio/projectFidelityMode'
+import { resolveProjectDesignPolicy } from '../../handlers/studio/projectDesignPolicy'
 import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
 import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'
@@ -146,6 +147,7 @@ async function handleAiChat(
     maxToolRounds,
     turnCapMs,
     fidelityMode: turnFidelityMode,
+    designPolicy: turnDesignPolicy,
   } = chatBody
   // Validated once, reused for both tool selection and prompt assembly below
   // — a client-supplied path is never trusted twice with two different
@@ -170,6 +172,12 @@ async function handleAiChat(
   // whole turn down.
   const resolvedFidelityMode = validatedWorkspaceDir
     ? resolveProjectFidelityMode(validatedWorkspaceDir, studioAgentUserKey(user.id), turnFidelityMode)
+    : undefined
+  // A12's second axis, resolved the same way and for the same reason: the
+  // prompt block and `studio_quality_check`'s severities must come from ONE
+  // answer, or the agent is graded against a policy it was never told about.
+  const resolvedDesignPolicy = validatedWorkspaceDir
+    ? resolveProjectDesignPolicy(validatedWorkspaceDir, studioAgentUserKey(user.id), turnDesignPolicy)
     : undefined
 
   const conversation = await readConversationForUser(db, user.id, conversationId)
@@ -384,7 +392,7 @@ async function handleAiChat(
         .join('\n')
 
       const systemPrompt = validatedWorkspaceDir
-        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, { userId: user.id }, userMessageText, resolvedFidelityMode)
+        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, { userId: user.id }, userMessageText, resolvedFidelityMode, resolvedDesignPolicy)
         : buildCmsSiteSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold
@@ -481,6 +489,7 @@ async function handleAiChat(
           // pointed the agent at a project the user was not looking at.
           workspaceDir: validatedWorkspaceDir ?? undefined,
           fidelityMode: resolvedFidelityMode,
+          designPolicy: resolvedDesignPolicy,
           snapshot,
         }
         const { bridgeId, bridge, destroy } = createBridge(

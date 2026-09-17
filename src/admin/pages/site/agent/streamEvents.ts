@@ -8,7 +8,8 @@
  * Wire protocol (server → browser, NDJSON, one ServerStreamEvent per line):
  *   bridgeReady   first event; carries bridgeId for tool-result POSTs
  *   text          chunk of assistant text
- *   toolCall      driver issued a tool call (status: pending)
+ *   toolCall      driver issued a tool call (status: pending) — also the
+ *                 tick the panel's progress line counts rounds from (A9)
  *   toolResult    a previously-issued tool call completed (ok/error)
  *   toolRequest   server asks the browser to apply a write tool
  *   usage         per-turn token + cost totals
@@ -25,7 +26,7 @@
  */
 
 import { nanoid } from 'nanoid'
-import { aiToolError, type AiToolOutput } from '@core/ai'
+import { aiToolError, parseTurnStepReport, type AiToolOutput } from '@core/ai'
 import { Type } from '@core/utils/typeboxHelpers'
 import { postToolResult } from '@admin/ai/toolResultApi'
 import type { EditorStoreSet } from './agentSliceTypes'
@@ -130,6 +131,18 @@ export async function processStreamEvent(
   switch (event.type) {
     case 'text': {
       textSink.append(assistantId, event.text)
+      // A9 — the model reports "step k/N" as it works (the static prompt's
+      // "Step budget" section asks for it). Captured here, on the delta,
+      // rather than re-scanned from the assembled transcript on every render:
+      // the parse is a bounded regex over one chunk and the `set` only runs
+      // on the rare chunk that actually carries a report.
+      const reported = parseTurnStepReport(event.text)
+      if (reported) {
+        set((state) => {
+          const msg = state.agentMessages.find((m) => m.id === assistantId)
+          if (msg) msg.reportedStep = reported
+        })
+      }
       break
     }
 

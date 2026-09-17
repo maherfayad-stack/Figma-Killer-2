@@ -119,6 +119,24 @@ export const AiChatRequestBodySchema = Type.Object(
     fidelityMode: Type.Optional(Type.Union([
       Type.Literal('creative'), Type.Literal('balanced'), Type.Literal('strict'),
     ])),
+    /**
+     * A12 — how much of the project's OWN design system this turn is held to,
+     * which is a genuinely different question from `fidelityMode` above.
+     * Fidelity grades against a reference; this grades against the project's
+     * tokens and components. Tier 2 of `resolveDesignPolicy`'s precedence
+     * (`server/handlers/studio/designPolicy.ts`): an explicit tool argument
+     * outranks it, the persisted per-project default sits below it.
+     *
+     * Consumed server-side in two places, both Studio-only: the system
+     * prompt's static prefix gains this policy's block (its own prompt-cache
+     * partition, exactly as the fidelity block is), and
+     * `studio_quality_check` reads it to decide which findings are errors,
+     * which are warnings, and which are not produced at all. Every driver
+     * ignores it as a model knob, because it is not one.
+     */
+    designPolicy: Type.Optional(Type.Union([
+      Type.Literal('follow'), Type.Literal('balanced'), Type.Literal('free'),
+    ])),
   },
   { additionalProperties: false },
 )
