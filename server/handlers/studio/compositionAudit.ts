@@ -31,7 +31,34 @@
  *   - `off-scale-type-size` — font-sizes sitting on no step of the project's
  *     own declared type scale.
  *   - `flat-type-hierarchy` — largest type ÷ the page's most common (body)
- *     size, under `MIN_TYPE_HIERARCHY_RATIO`.
+ *     size, under `MIN_TYPE_HIERARCHY_RATIO`. The screen has no SCALE.
+ *   - `monotone-band-rhythm` (A13) — the screen's spacing is one value
+ *     repeated: too few distinct steps, or no gap large enough to separate
+ *     one band from the next. Everything is equidistant, so nothing groups.
+ *   - `no-focal-point` (A13) — the screen has a scale but nothing LEADS:
+ *     fewer than three type sizes in use, or the biggest size used so many
+ *     times that it is a body style, or a top-two gap too small to pick an
+ *     entry point from. Never fires when `flat-type-hierarchy` did — a screen
+ *     with no scale at all is one problem reported once.
+ *
+ * ## Layout archetypes (A13)
+ *
+ * {@link LAYOUT_ARCHETYPES} is the shared vocabulary for the shapes a screen
+ * is actually built out of — hero, feature grid, split, testimonial band,
+ * pricing, footer. It lives here, beside the rules that grade composition,
+ * and is consumed in two places that must agree:
+ *
+ *   - `variantSeeds.ts` gives each variant a different archetype SEQUENCE, so
+ *     A/B/C differ in STRUCTURE and not only in tokens. Three screens with
+ *     the same three stacked bands in a different accent are one screen.
+ *   - the creative fidelity block names them, so a from-scratch brief starts
+ *     from a composition rather than from a `<div>`.
+ *
+ * The archetypes are not detected from CSS and deliberately never will be:
+ * "is this a testimonial band" is a semantic question about content, and a
+ * textual scan that guessed at it would be exactly the word-overlap heuristic
+ * `qualityAudit.ts` already prototyped and rejected. They are a GENERATOR's
+ * vocabulary; what this module grades is whether the result reads as designed.
  *
  * Both scale rules run ONLY against the project's own declared tokens (the
  * SAME `buildProjectTokenIndex` index `qualityAudit.ts` uses — nothing new is
@@ -76,6 +103,89 @@ export const MIN_TYPE_HIERARCHY_RATIO = 1.6
 const TYPE_SCALE_TOLERANCE_PX = 0.5
 /** Offending values listed inside one aggregate finding. */
 const MAX_OFFENDERS_IN_FINDING = 8
+
+// ---------------------------------------------------------------------------
+// A13 — layout archetypes and the rules that make a screen read as designed
+// ---------------------------------------------------------------------------
+
+/**
+ * One archetype: the shape, and the sentence that tells an agent what it is
+ * for. The `brief` text is sent VERBATIM into a variant directive, so it has
+ * to stand alone — a subagent sees only the text it is handed.
+ */
+export interface LayoutArchetype {
+  readonly id: string
+  readonly label: string
+  readonly brief: string
+}
+
+/**
+ * The six shapes a marketing/product screen is almost always built out of.
+ *
+ * Six, not twenty: the list exists so three variants can be given three
+ * genuinely different SEQUENCES, and a pool that large enough to guarantee
+ * distinctness is small enough that every entry is a shape a weaker model can
+ * actually execute. Each `brief` names the structure and the one thing that
+ * makes it read as that structure rather than as a stack of boxes.
+ */
+export const LAYOUT_ARCHETYPES: readonly LayoutArchetype[] = [
+  {
+    id: 'hero',
+    label: 'Hero',
+    brief: 'A hero band: one headline at the top of the type scale, one supporting line at body size, one primary action. Nothing else competes for attention in this band — a second button, a third line, or a headline at the same size as the section below it all cost the screen its entry point.',
+  },
+  {
+    id: 'feature-grid',
+    label: 'Feature grid',
+    brief: 'A feature grid: three or four equal cards in a row (stacking on narrow widths), each with one icon or mark, one short title a step above body, and one or two lines of copy. Equal cards means EQUAL — same padding, same radius, same internal rhythm; a grid whose cards differ reads as a mistake rather than as emphasis.',
+  },
+  {
+    id: 'split',
+    label: 'Split',
+    brief: 'A split band: content on one side, a single image or visual on the other, meeting on a shared vertical centre. Use logical properties so the split flips in RTL. The copy side carries the type hierarchy; the visual side carries no text at all.',
+  },
+  {
+    id: 'testimonial-band',
+    label: 'Testimonial band',
+    brief: 'A testimonial band: one quotation set noticeably larger than body copy, with an attribution line below it at or under body size. One quote, not a carousel of three — the band earns its space by being the one thing on screen, and the size gap between quote and attribution is what makes it read as a quotation.',
+  },
+  {
+    id: 'pricing',
+    label: 'Pricing',
+    brief: 'A pricing band: two or three plan columns, each with a name, a price set at the top of the type scale, a short feature list, and one action. Exactly one column is emphasised — by the accent, not by being bigger — and the others are visually identical to each other.',
+  },
+  {
+    id: 'footer',
+    label: 'Footer',
+    brief: 'A footer: two to four link columns with a small column heading each, a divider or surface change separating it from the band above, and everything at or below body size. A footer that uses a heading size from the top of the scale competes with the hero it sits furthest from.',
+  },
+]
+
+/**
+ * The rules that separate "compiles and renders" from "reads as designed",
+ * stated once here and quoted verbatim into the creative fidelity block and
+ * every variant directive.
+ *
+ * Each one is either graded by a finding in this file or by an existing one in
+ * `qualityAudit.ts` — nothing in this list is advice the tools cannot check,
+ * because a rule with no grader is a rule nobody follows twice.
+ */
+export const COMPOSITION_RULES: readonly string[] = [
+  'At least three steps of the type scale in use — a body size, a section heading, and one display size that leads. Two sizes is a document, not a screen. (graded: no-focal-point)',
+  'One accent colour, spent on the single most important thing on the screen. An accent on every band is a colour scheme, not emphasis.',
+  'One radius family. Sharp, soft, round or pill — pick one and use it on every card, input and button. Mixed radii read as unfinished.',
+  'At least one spacing step MORE between bands than inside them, so sections separate without a rule or a border doing it. (graded: monotone-band-rhythm)',
+  'Every text/background pair at WCAG AA or better. (graded: low-contrast-pair)',
+]
+
+/** Fewer distinct type sizes than this and nothing can lead: there is body copy and one heading. */
+const MIN_TYPE_STEPS_IN_USE = 3
+/** How many rules may carry the page's LARGEST type size before it stops being a focal point and becomes a body style. Two — a heading and its mirror in a narrow-width media query is legitimate; five of them is a repeated style. */
+const MAX_FOCAL_OCCURRENCES = 2
+/** Largest distinct type size ÷ the second-largest. Below this the top two levels read as the same weight and the eye has no single entry point. 1.2 rather than `MIN_TYPE_HIERARCHY_RATIO`: that ratio grades the whole scale (display vs. body), and applying a display-sized step BETWEEN two adjacent levels would fail every well-built modular scale. */
+const MIN_FOCAL_STEP_RATIO = 1.2
+/** Below this many distinct spacing values, a screen has no rhythm — everything is equidistant. Two: a gap inside a group and a larger one between groups is the minimum that groups anything. */
+const MIN_DISTINCT_SPACING_STEPS = 2
 
 /** One page stylesheet's already-read text. `auditCompositionQuality` takes the page's WHOLE set (see the module doc: a per-file type hierarchy measures a fragment). */
 export interface PageStylesheetText {
@@ -237,14 +347,81 @@ export function auditCompositionQuality(
     const body = modeOf(values)
     const largest = Math.max(...values)
     const ratio = body > 0 ? Math.round((largest / body) * 100) / 100 : 0
-    if (ratio < MIN_TYPE_HIERARCHY_RATIO) {
-      const biggest = typeSizes.find((s) => s.px === largest)!
+    const biggest = typeSizes.find((s) => s.px === largest)!
+    const flat = ratio < MIN_TYPE_HIERARCHY_RATIO
+    if (flat) {
       findings.push({
         code: 'flat-type-hierarchy',
         file: biggest.file,
         line: biggest.line,
         selector: biggest.selector,
         message: `This screen's largest type is ${largest}px against a body size of ${body}px — a ratio of ${ratio}, under the ${MIN_TYPE_HIERARCHY_RATIO} that reads as hierarchy. Everything is roughly the same size, so nothing leads: the eye has no entry point and the screen reads as a list of equals. Take the top-level heading up the project's own type scale (available: ${tokens.fontSizes.map((t) => `${t.px}px`).join(', ') || 'no type tokens declared'}) rather than adding weight or colour to compensate.`,
+      })
+    } else {
+      // A13 — only reachable when the screen HAS a scale. A screen with no
+      // scale at all is one problem, and `flat-type-hierarchy` above has
+      // already reported it; adding a second finding for the same cause is
+      // one mistake told twice, which is how a tool starts reading as noise.
+      rulesScanned += 1
+      const distinct = [...new Set(values)].sort((a, b) => b - a)
+      const largestOccurrences = values.filter((px) => px === largest).length
+      const secondLargest = distinct[1]
+      const focalStep = secondLargest && secondLargest > 0 ? Math.round((largest / secondLargest) * 100) / 100 : null
+
+      const causes: string[] = []
+      if (distinct.length < MIN_TYPE_STEPS_IN_USE) {
+        causes.push(`only ${distinct.length} distinct type size${distinct.length === 1 ? '' : 's'} in use (${distinct.map((px) => `${px}px`).join(', ')}) — a screen needs at least ${MIN_TYPE_STEPS_IN_USE}: body, a section heading, and one display size that leads`)
+      }
+      if (largestOccurrences > MAX_FOCAL_OCCURRENCES) {
+        causes.push(`the largest size (${largest}px) is set on ${largestOccurrences} rules — a size used that often is a body style, not a focal point`)
+      }
+      if (focalStep !== null && focalStep < MIN_FOCAL_STEP_RATIO) {
+        causes.push(`the top two sizes are ${largest}px and ${secondLargest}px, a step of ${focalStep} — under the ${MIN_FOCAL_STEP_RATIO} at which two levels read as different rather than as the same weight twice`)
+      }
+
+      if (causes.length > 0) {
+        findings.push({
+          code: 'no-focal-point',
+          file: biggest.file,
+          line: biggest.line,
+          selector: biggest.selector,
+          message: `Nothing on this screen leads the eye. ${causes.join('; ')}. The scale itself is fine (largest ${largest}px over body ${body}px is a ratio of ${ratio}) — what is missing is ONE element that is unmistakably the most important thing here. Pick it, put it at the top of the scale, and leave every other element a clear step below it.`,
+        })
+      }
+    }
+  }
+
+  // A13 — band rhythm. Runs off the same spacing samples collected above and
+  // needs no tokens at all: the question is whether this screen's own spacing
+  // separates one band from the next, which is true or false regardless of
+  // whose scale the values came from.
+  if (spacing.length >= MIN_SPACING_SAMPLES) {
+    rulesScanned += 1
+    const values = spacing.map((s) => s.px)
+    const distinct = [...new Set(values)].sort((a, b) => a - b)
+    const inner = modeOf(values)
+    const largest = distinct.at(-1)!
+    // "One step" is the project's own base where it has one, and otherwise
+    // the smallest gap this screen actually uses — never an invented 4px,
+    // for the same reason `detectSpacingBasePx` refuses to invent one.
+    const step = spacingBase ?? distinct[0]!
+    const bandGap = largest - inner
+
+    const causes: string[] = []
+    if (distinct.length < MIN_DISTINCT_SPACING_STEPS) {
+      causes.push(`every padding, margin and gap on the screen is ${largest}px — one value repeated ${values.length} times`)
+    } else if (bandGap < step) {
+      causes.push(`the largest gap is ${largest}px against an inner rhythm of ${inner}px, a difference of ${bandGap}px — less than the ${step}px step that would separate one band from the next`)
+    }
+
+    if (causes.length > 0) {
+      const worst = spacing.find((s) => s.px === largest)!
+      findings.push({
+        code: 'monotone-band-rhythm',
+        file: worst.file,
+        line: worst.line,
+        selector: worst.selector,
+        message: `This screen has no band rhythm: ${causes[0]}. Equidistant spacing groups nothing — every element is as related to its neighbour as to the section above it, so the screen reads as one undifferentiated column no matter what is in it. Use the tight step INSIDE a group and at least one step more BETWEEN groups (${step}px inner, ${step * 2}px or more between bands), so the structure is visible before a single word is read.`,
       })
     }
   }
