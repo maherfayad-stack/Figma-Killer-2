@@ -1561,6 +1561,17 @@ None blocking — this design is directly implementable by `panel-designer` (the
 - **Human action needed:** run `bun install`; confirm decision 2 was meant as "promote, don't ask"
   (not "keep it manual"); then authorize the Track Z wave.
 
+### meta-15 — wave 2 of the Figma-feel plan dispatched: eleven parallel work orders from §9
+- **Agent:** orchestrator (main session) · **Stage:** in flight · **Updated:** 2026-09-18
+- **Base:** `27616ba8` = `feat/alm-figma-killer-studio-shell` after the `--no-ff` merge of PR #162 (wave 1). Clean merge, no conflicts; verification numbers are `meta-14`'s (the merge added only STATE.md commits on the shell side).
+- **Cleanup that preceded it:** review PRs #156/#157/#159/#161 closed as merged-via-#162; PRs #90–#98 and #127 (branches already contained in the shell branch) closed; 74 wave-1 remote branches + 85 remote branches whose PRs were squash-merged to `main` deleted; all local branches and the integration worktree removed. The remote now holds `main`, the shell branch, and two older branches with open PRs against `main` (#99 `feat/inspector-selection-model`, #86 `fix/ci-lint-and-server-suites`) that only the owner should decide on.
+- **Work orders (one Opus agent each, own worktree, draft PR → shell branch, handoff to scratch; `standing-05`):** `sec-14` per-route `requireCapability` + CSRF on every mutating Studio route (§6 decision 7) · `store-13` structural commits report created ids so ⌘D/Alt+drag/⌘G select the source-backed copy after resync, and `insertImportedNodes` never orphans (`mcp-21`) · `parser-13` CRLF-preserving codemods + `/?
+/` in the parse path for users' repos · `verify-2` `bun run test:e2e` starts the stack on Windows, tracked ≥9-frame perf corpus, throwaway workspace copy so runs leave the tree clean · `panel-38` `FillSection` Mixed through the one selection model · `panel-39` the Design tab fits 900 px (ratchet → budget) · `verify-3` the Phase 0 exit dogfood as a Playwright spec · `perf-9` one frame mount pool · `mcp-24` `parityMatrix`/`studio_compare`/`studio_list_projects`/`compare.test.ts` arity/`guardProject` dead branch · `server-25` `deploy.ts` trust dir on monorepos, `SAFE_REPO_SEGMENT` `..`, `claudeCli` 0600 on win32 (icacls), `studio.test.ts` nested page · `canvas-20` cross-frame drag (atomic two-file move) + OS image file drop through a new bounded upload route.
+- **Next step:** security reviews of `sec-14`, `canvas-20`, `store-13`, `server-25`; integrator merge in dependency order; CLAUDE.md edits the agents flag; plan "Wave 2 — landed" table; final numbers here.
+- **Human action needed:** none yet.
+
+---
+
 ### meta-14 — wave 1 of the Figma-feel plan integrated: 24 merges, 12 named reds, one S1 regression found
 - **Agent:** studio-implementer (integrator), own worktree
 - **Stage:** done — PR #162 (draft) → `feat/alm-figma-killer-studio-shell`, branch `integration/figma-feel-wave-1`, HEAD now `91a8451e` after the two follow-ups merged in (`panel-37` #164 as `d57db43a`, `perf-08` #163 as `91a8451e`).
