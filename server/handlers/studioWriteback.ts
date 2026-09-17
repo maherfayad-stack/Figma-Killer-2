@@ -64,6 +64,7 @@ import {
   setStyledDeclaration,
   swapComponentInstance,
 } from '@core/ast-codemods'
+import { buildSourceNodeId } from '@core/page-tree'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
@@ -306,7 +307,10 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         siblings,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      return { applied: true }
+      // `store-13` — `created` rides straight through; only the four creating
+      // kinds set it, and `applyStudioEditBatch` is what turns it into a node
+      // id (it alone knows the batch's final line count).
+      return { applied: true, ...(result.created === undefined ? {} : { created: result.created }) }
     }
     case 'detach': {
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
@@ -387,7 +391,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   }
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
-    lineCountBefore.set(file, existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0)
+    lineCountBefore.set(file, countLines(file))
   }
 
   // Which import bindings each file a DELETE touches references before anything
@@ -424,6 +428,9 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
   const addSlotPropDetails: (StudioAddSlotPropDetail & { nodeId: string })[] = []
   const unexplainedSkips: StudioEditUnexplainedSkip[] = []
+  // `store-13` — where each created element sat, measured from the END of its
+  // file. See `resolveCreatedNodeIds` for why that anchor and not the line.
+  const createdPositions: CreatedNodePosition[] = []
   for (const edit of ordered) {
     try {
       const outcome = applyStudioEdit(dir, edit)
@@ -434,6 +441,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
         // already carries the blast radius the caller asked to see.
       } else if (outcome.applied) {
         written += 1
+        if (outcome.created) recordCreatedPosition(createdPositions, dir, edit.nodeId, outcome.created)
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
@@ -459,12 +467,11 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   }
 
   let shifted = false
+  const lineCountAfter = new Map<string, number>()
   for (const file of touchedFiles) {
-    const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
-    if (after !== lineCountBefore.get(file)) {
-      shifted = true
-      break
-    }
+    const after = countLines(file)
+    lineCountAfter.set(file, after)
+    if (after !== lineCountBefore.get(file)) shifted = true
   }
 
   // W7-3 — the project's launcher preview is now out of date. Debounced and
@@ -489,7 +496,70 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     addSlotPropDetails,
     unexplainedSkips,
     touchedFiles: [...touchedFiles],
+    createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
   }
+}
+
+/** Lines in `file`, or 0 when it does not exist — the one reading every line-count comparison here uses. */
+function countLines(file: string): number {
+  return existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
+}
+
+/**
+ * `store-13` — one element a batch created, pinned to a coordinate that later
+ * edits in the same batch cannot invalidate.
+ *
+ * `linesFromEnd` is the file's line count at the moment this edit finished,
+ * minus the created element's line. `orderStudioEditsForApply` applies a batch
+ * BOTTOM-TO-TOP, so every edit that runs after this one sits strictly ABOVE
+ * the element just created: it can only add or remove lines before it, which
+ * moves the element's absolute line and leaves its distance from the end of
+ * the file exactly as it was. Recording the absolute line instead would report
+ * a stale position for every created element but the last — reachable today
+ * with a multi-selection ⌘D.
+ */
+interface CreatedNodePosition {
+  /** Workspace-relative POSIX path — the head of the node id. */
+  rel: string
+  /** Absolute path, for the final line count. */
+  file: string
+  col: number
+  linesFromEnd: number
+}
+
+/** Pin one `created` location to the file it landed in. Skips an edit whose id no longer decodes — there is no honest node id to mint from it. */
+function recordCreatedPosition(
+  into: CreatedNodePosition[],
+  dir: string,
+  nodeId: string,
+  created: { line: number; col: number },
+): void {
+  const location = studioEditLocation(nodeId)
+  const file = studioEditFile(dir, nodeId)
+  if (!location || !file) return
+  into.push({ rel: location.rel, file, col: created.col, linesFromEnd: countLines(file) - created.line })
+}
+
+/**
+ * The created elements' node ids, re-derived against the file as the WHOLE
+ * batch left it — the plain `rel:line:col` the parser will mint for the same
+ * element on its next read (`buildSourceNodeId`, so this cannot drift from the
+ * parser's own spelling).
+ *
+ * A file missing from `lineCountAfter` never happens for a created element (it
+ * was written, so it is in `touchedFiles`), but is skipped rather than guessed.
+ */
+function resolveCreatedNodeIds(
+  positions: readonly CreatedNodePosition[],
+  lineCountAfter: ReadonlyMap<string, number>,
+): string[] {
+  const ids: string[] = []
+  for (const position of positions) {
+    const after = lineCountAfter.get(position.file)
+    if (after === undefined) continue
+    ids.push(buildSourceNodeId(position.rel, after - position.linesFromEnd, position.col))
+  }
+  return ids
 }
 
 /**

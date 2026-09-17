@@ -47,6 +47,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { isStructuralEditKind, StructuralEditSchemas } from './studioStructuralWriteback'
+import type { CreatedJsxLocation } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -317,6 +318,16 @@ export interface StudioEditApplyOutcome {
   createdStylesheet?: { file: string }
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
+  /**
+   * `store-13` — the tag-name `line:col` of the element this edit brought into
+   * existence (`insert`/`duplicate`/`wrap`/`group`), measured against the file
+   * as it stands the moment that edit finished. Absent for every kind that
+   * creates nothing, and `null` when the codemod wrote but could not confirm
+   * the position. A LOCATION, not a node id: minting the id needs the
+   * workspace-relative path and the batch's final line count, and both are
+   * `applyStudioEditBatch`'s to know — see `StudioEditBatchResult.createdNodeIds`.
+   */
+  created?: CreatedJsxLocation | null
 }
 
 /**
@@ -455,4 +466,19 @@ export interface StudioEditBatchResult {
    * not a bug.
    */
   touchedFiles: string[]
+  /**
+   * `store-13` — the node id of every element this batch CREATED
+   * (`insert`/`duplicate`/`wrap`/`group`), in the order the batch wrote them.
+   * The plain `rel:line:col` shape the parser will mint for the same element
+   * on the next read, so the editor can select what a structural gesture just
+   * made once the board has re-synced (`keys-01`'s K7 follow-up: until this
+   * existed, ⌘D on a source-backed project left the ORIGINAL selected, because
+   * the copy had no id the client could name).
+   *
+   * Empty when nothing was created, and an edit whose position could not be
+   * confirmed against the re-parsed file contributes nothing rather than a
+   * guess — a wrong id would select, and then let the user edit, an element
+   * they never made.
+   */
+  createdNodeIds: string[]
 }

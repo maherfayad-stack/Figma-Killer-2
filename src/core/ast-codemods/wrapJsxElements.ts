@@ -51,6 +51,7 @@ import {
 import { elementChildren, indentUnit, lineIndentAt, reindentBlock } from './jsxChildPlacement'
 import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
 import { validateSubtree, type InsertJsxRefusalReason } from './jsxSubtree'
+import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 
 export interface WrapJsxElementsParams {
   file: string
@@ -94,7 +95,8 @@ export interface WrapJsxElementsRefusal {
 /** A refused group, as both the public result and every internal helper return it. */
 type WrapJsxElementsRefused = { ok: false; refusal: WrapJsxElementsRefusal }
 
-export type WrapJsxElementsResult = { ok: true } | WrapJsxElementsRefused
+/** `created` is the CONTAINER's own tag-name `line:col` — see `createdJsxLocation.ts`. */
+export type WrapJsxElementsResult = { ok: true; created: CreatedJsxLocation | null } | WrapJsxElementsRefused
 
 function refuseWrap(reason: WrapJsxElementsRefusalReason, message: string): WrapJsxElementsRefused {
   return { ok: false, refusal: { reason, message } }
@@ -168,7 +170,7 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   )
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [edit, ...importEdits]))
-  return { ok: true }
+  return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, edit.start), edit.text) }
 }
 
 /** The named elements as one unbroken run of a single parent's element children, or why they are not one. */
