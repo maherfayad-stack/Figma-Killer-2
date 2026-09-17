@@ -1,6 +1,6 @@
 /**
- * useCopyAsPngShortcut — ⌘⇧C / Ctrl+Shift+C puts a PNG of the selection on the
- * clipboard.
+ * useCopyAsPngShortcut — a `board` scope: ⌘⇧C / Ctrl+Shift+C puts a PNG of the
+ * selection on the clipboard.
  *
  * The same capture the Export section's PNG row downloads
  * (`fetchNodePngBlob` → `/admin/api/studio/node-png`), written to the clipboard
@@ -8,17 +8,15 @@
  * into Figma or a doc is byte-identical to what you would have downloaded.
  * Density is @2×, matching the Export section's own default row.
  *
- * A document-level listener, scoped by INTENT rather than by focus, for the
- * reason `useBoardSelectAllShortcut` is: this shortcut has to work while the
- * user is looking at the Properties panel, and a React `onKeyDown` on the
- * canvas div stops firing the moment focus leaves it. Four things stand it
- * down, in the order they are cheapest to check:
+ * Scoped by INTENT rather than by focus, for the reason
+ * `useBoardSelectAllShortcut` is: this shortcut has to work while the user is
+ * looking at the Properties panel. Three things stand it down, in the order
+ * they are cheapest to check (`defaultPrevented` and an open inline edit are
+ * the dispatcher's job now):
  *
- *   - `event.defaultPrevented` — somebody upstream already claimed the key;
- *   - an active inline text edit on the canvas (`activeInlineEdit`);
  *   - a text field holding an UNCOMMITTED draft (`hasPendingTextEdit`) — the
- *     exact rule `UndoRedoButtons` follows for ⌘Z, and for the same reason:
- *     whoever has an edit in progress owns the keystroke;
+ *     exact rule `editorHistoryShortcuts` follows for ⌘Z, and for the same
+ *     reason: whoever has an edit in progress owns the keystroke;
  *   - any input / textarea / contenteditable target (`isTextInputTarget`),
  *     where ⌘⇧C may mean something to the browser.
  *
@@ -32,7 +30,7 @@
  * One in-flight capture at a time. A capture is a headless browser round trip,
  * and holding the key down would otherwise queue a browser launch per repeat.
  */
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
@@ -41,7 +39,8 @@ import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { selectActiveBoardFrames } from '@site/store/slices/boardSelectors'
 import { resolveCopyAsPngTarget, type CopyAsPngSelection } from './copyAsPngTarget'
 import { hasPendingTextEdit } from './pendingTextEdit'
-import { isTextInputTarget } from './useCanvasKeyboardShortcuts'
+import { isTextInputTarget } from './editorKeyGuards'
+import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
 /** Matches the Export section's own default PNG density. */
 const COPY_AS_PNG_SCALE = 2
@@ -80,27 +79,25 @@ function readCopyAsPngSelection(): CopyAsPngSelection {
 export function useCopyAsPngShortcut(isLive: boolean): void {
   const runningRef = useRef(false)
 
-  useEffect(() => {
-    if (isLive) return undefined
-    const binding = getKeybindingForCommand('export.copySelectionPng')
-    if (!binding) return undefined
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      if (!binding.match(event)) return
-      if (useEditorStore.getState().activeInlineEdit) return
-      if (hasPendingTextEdit(event.target)) return
-      if (isTextInputTarget(event.target)) return
+  useEditorKeyScope(
+    'board',
+    // Not gated on `editable`: copying a screen as an image reads the board, it
+    // never writes to it, so a read-only board is still worth photographing.
+    () => !isLive,
+    (event) => {
+      if (!getKeybindingForCommand('export.copySelectionPng')?.match(event)) return false
+      if (hasPendingTextEdit(event.target)) return false
+      if (isTextInputTarget(event.target)) return false
 
       // Claimed before any async work: the browser's own ⌘⇧C must not also run,
       // and a refusal below is still this shortcut answering, not nothing.
       event.preventDefault()
-      if (runningRef.current) return
+      if (runningRef.current) return true
 
       const target = resolveCopyAsPngTarget(readCopyAsPngSelection())
       if (!target.ok) {
         pushToast({ kind: 'error', title: 'Nothing to copy as PNG', body: target.reason })
-        return
+        return true
       }
 
       runningRef.current = true
@@ -123,9 +120,7 @@ export function useCopyAsPngShortcut(isLive: boolean): void {
         .finally(() => {
           runningRef.current = false
         })
-    }
-
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [isLive])
+      return true
+    },
+  )
 }

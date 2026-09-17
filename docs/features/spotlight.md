@@ -302,6 +302,18 @@ Selected-layer shortcuts are command shortcuts too. `⌘C` / `Ctrl+C`, `⌘X` / 
 
 The keybindings registry is **the single source of truth** for shortcuts — gated by `keybindings-registry-single-source.test.ts`. Register each command shortcut in `keybindings.ts`; component-owned handlers may consume those registered bindings when a surface needs local selection or confirmation behavior, but they must not hard-code a second shortcut definition.
 
+### Who hears the key, in the editor workspace
+
+The registry says *what* a chord is; it does not say who runs it. Inside `/admin/site` that second question has exactly one answer since `K1`: **one `keydown` listener**, mounted by `SitePage` (`canvas/useEditorKeyDispatcher.ts`), routing to an ordered ladder of scopes (`canvas/editorKeyDispatcher.ts`):
+
+```
+inline-edit > prototype-link > annotation > node > board > global
+```
+
+Each active scope gets first refusal; claiming stops dispatch, declining falls through to the next rung. Canvas features register a handler with `useEditorKeyScope(...)` and own no listener of their own — gated by `keybindings-single-dispatcher.test.ts`, which allows exactly one `addEventListener('keydown'` under `src/admin/pages/site/canvas/` plus a justified list of iframe-realm and gesture-local exemptions. The full rationale is in [`docs/agent-refs/canvas-internals.md`](../agent-refs/canvas-internals.md) → "One keyboard dispatcher, six scopes".
+
+Modal-local listeners outside `canvas/` are unaffected and stay where they are: `AgentPanel`, `AgentImagePreview`, `ModuleInserterDialog`, `ConfirmDeleteDialog`, `MediaPickerModal`, `StepUpDialog` and the spotlight's own `SpotlightRoot` / `Spotlight` each bind Escape (or a focus trap) only while their own surface is open, which is a different thing from a standing shortcut whose precedence against other shortcuts could drift.
+
 ---
 
 ## Recents
@@ -447,6 +459,7 @@ run: async (ctx) => {
 | Pattern                                                              | Use instead                                              |
 |----------------------------------------------------------------------|----------------------------------------------------------|
 | Adding a raw `keydown` listener for a global shortcut                | Register in `keybindings.ts`. Gated.                    |
+| Adding a `keydown` listener under `src/admin/pages/site/canvas/`     | Register a scope with `useEditorKeyScope(...)`. Gated by `keybindings-single-dispatcher.test.ts`. |
 | Direct store mutation inside a provider's `search`                   | Providers are read-only — mutate in commands' `run`. Gated by `spotlight-no-direct-store-mutation.test.ts`. |
 | Persisting recents server-side                                       | They're per-device in localStorage. Cross-device recents need a real feature, not a Spotlight detail. |
 | Lazy-importing the editor store at module-eval time                  | The store mounts only when SitePage mounts — eager import would force the chunk. Use `require(...)` inside `search` (see `pagesProvider.ts`). |
@@ -475,7 +488,10 @@ run: async (ctx) => {
   - `src/admin/spotlight/matcher.ts` — fuzzy match
   - `src/admin/spotlight/types.ts` — `Command`, `SpotlightProvider`, `Scope`, `CommandContext`
   - `src/admin/spotlight/keybindings.ts` — keybinding registry
+  - `src/admin/pages/site/canvas/editorKeyDispatcher.ts` — the editor's key-scope ladder
+  - `src/admin/pages/site/canvas/useEditorKeyDispatcher.ts` — the one `keydown` listener
   - `src/admin/spotlight/groupAccent.ts` — CommandGroup → categorical accent mapping
 - Gate tests:
   - `src/__tests__/architecture/spotlight-no-direct-store-mutation.test.ts`
   - `src/__tests__/architecture/keybindings-registry-single-source.test.ts`
+  - `src/__tests__/architecture/keybindings-single-dispatcher.test.ts`

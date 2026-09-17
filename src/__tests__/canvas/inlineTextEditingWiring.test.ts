@@ -11,8 +11,9 @@
  *     hit the 700-line ceiling — the RULE is unchanged, only its address);
  *   - NodeRenderer builds an `InlineEditBinding`, passes `inlineEdit` to the
  *     component, and focuses the element via `useLayoutEffect`;
- *   - the canvas keyboard handler bails on `activeInlineEdit` so Delete/Cmd+D
- *     never fire mid-edit;
+ *   - the editor key ladder's `inline-edit` rung halts every canvas scope on
+ *     `activeInlineEdit` so Delete/Cmd+D never fire mid-edit, and `useCanvas`'s
+ *     React-side viewport keys bail on it separately;
  *   - BreakpointFrame no longer mounts an inline-edit overlay (the node itself
  *     is the editor now).
  */
@@ -21,7 +22,8 @@ import { readFileSync } from 'fs'
 
 const NODE_INTERACTION = new URL('../../admin/pages/site/canvas/useCanvasNodeInteraction.ts', import.meta.url)
 const NODE_RENDERER = new URL('../../admin/pages/site/canvas/NodeRenderer.tsx', import.meta.url)
-const KEYBOARD_SHORTCUTS = new URL('../../admin/pages/site/canvas/useCanvasKeyboardShortcuts.ts', import.meta.url)
+const KEY_DISPATCHER = new URL('../../admin/pages/site/canvas/useEditorKeyDispatcher.ts', import.meta.url)
+const CANVAS_VIEWPORT = new URL('../../admin/pages/site/hooks/useCanvas.ts', import.meta.url)
 const IFRAME_EVENT_FORWARDING = new URL('../../admin/pages/site/canvas/useIframeEventForwarding.ts', import.meta.url)
 const BREAKPOINT_FRAME = new URL('../../admin/pages/site/canvas/BreakpointFrame.tsx', import.meta.url)
 const CONTEXTS = new URL('../../admin/pages/site/canvas/CanvasContexts.ts', import.meta.url)
@@ -73,8 +75,23 @@ describe('inline text editing wiring (in-place contentEditable)', () => {
     expect(src).toContain('el.focus()')
   })
 
-  it('the canvas keyboard handler bails while an inline edit is active', () => {
-    const src = readFileSync(KEYBOARD_SHORTCUTS, 'utf-8')
+  it('the editor key ladder halts every canvas scope while an inline edit is active', () => {
+    // `K1` — the nine hand-rolled `activeInlineEdit` bails that used to sit at
+    // the top of nine separate handlers are now ONE rung of the dispatcher's
+    // precedence ladder: `inline-edit` claims every keystroke and acts on
+    // none, so Delete / ⌘D / ⌘Z / the tool letters cannot fire mid-edit.
+    const src = readFileSync(KEY_DISPATCHER, 'utf-8')
+    expect(src).toContain("id: 'inline-edit'")
+    expect(src).toContain('useEditorStore.getState().activeInlineEdit !== null')
+  })
+
+  it('the canvas VIEWPORT keys bail separately, because React synthetic events cross the iframe', () => {
+    // The ladder above only covers the dispatcher's own `document` listener.
+    // `useCanvas`'s +/−/⇧1/⇧2 handler is a React `onKeyDown` on the canvas
+    // div, and a synthetic event raised inside a frame iframe still reaches it
+    // through the fiber tree — so `-` typed mid-edit would zoom the canvas out
+    // without this second, store-backed guard.
+    const src = readFileSync(CANVAS_VIEWPORT, 'utf-8')
     expect(src).toContain('if (useEditorStore.getState().activeInlineEdit) return')
   })
 

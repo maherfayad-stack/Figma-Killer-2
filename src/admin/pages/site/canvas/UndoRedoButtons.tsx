@@ -5,6 +5,12 @@
  * on the visual editor's page tree — it has no meaning on admin pages
  * outside the canvas (Content, Plugins, …).
  *
+ * **Buttons only.** The ⌘Z / ⌘⇧Z keystrokes are NOT handled here — `K1` moved
+ * them to `useEditorHistoryShortcuts`, the `global` rung of the editor key
+ * ladder, so that (a) undo works whether or not this notch happens to be
+ * rendered and (b) it stands down during a canvas inline text edit like every
+ * other canvas shortcut. See `editorKeyDispatcher.ts`.
+ *
  * Accessibility (Guideline #224):
  * - Buttons are ALWAYS rendered in the DOM — never conditionally removed.
  * - When unavailable: aria-disabled="true" + visual grey. NOT the `disabled` HTML attr.
@@ -13,13 +19,11 @@
  * Shortcut display strings come from the keybindings registry (keybindings.ts)
  * — not hardcoded here.
  */
-import { useEffect } from 'react'
 import { useCanUndo, useCanRedo, useUndo, useRedo } from '@site/store/store'
 import { UndoIcon } from 'pixel-art-icons/icons/undo'
 import { RedoIcon } from 'pixel-art-icons/icons/redo'
 import { Button } from '@ui/components/Button'
 import { getKeybindingForCommand, formatShortcut } from '@admin/spotlight/keybindings'
-import { hasPendingTextEdit } from './pendingTextEdit'
 import styles from './CanvasNotch.module.css'
 
 // Resolve undo/redo bindings once at module load — they never change.
@@ -31,32 +35,6 @@ export function UndoRedoButtons() {
   const canRedo = useCanRedo()
   const undo = useUndo()
   const redo = useRedo()
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      // Whoever has an edit IN PROGRESS owns the keystroke — see
-      // `pendingTextEdit.ts`. This used to be a blanket "any editable target
-      // wins", which made the editor's undo unreachable from the keyboard for
-      // as long as the caret sat in a Properties-panel field. Since every
-      // style row is prefilled and every field keeps focus after its commit,
-      // that was most of the time.
-      if (hasPendingTextEdit(e.target)) return
-
-      if (kbUndo?.match(e)) {
-        e.preventDefault()
-        undo()
-      } else if (kbRedo?.match(e)) {
-        // `editor.redo`'s own `match` also accepts Ctrl/Cmd+Y (the
-        // Windows/Linux redo alias) — see that binding's comment in
-        // `keybindings.ts`. No inline key-combo check belongs here; the
-        // registry is the single source for what counts as "redo".
-        e.preventDefault()
-        redo()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo])
 
   // Shortcut labels from the registry — platform-aware.
   const undoHint = kbUndo ? formatShortcut(kbUndo.shortcut) : ''

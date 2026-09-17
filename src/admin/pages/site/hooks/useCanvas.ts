@@ -452,6 +452,14 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // `K1` — inherited from the canvas div's old combined shortcut handler,
+    // and load-bearing: a React synthetic event crosses the iframe boundary
+    // through the fiber tree even though a native one does not, and the target
+    // check below can't see it (the event is retargeted at the iframe element,
+    // whose `isContentEditable` is false). So `-` typed mid-edit would zoom the
+    // canvas out. The dispatcher's `inline-edit` rung covers the rest.
+    if (useEditorStore.getState().activeInlineEdit) return
+
     // Don't intercept typing — let inputs and contenteditables consume keys.
     const target = e.target as HTMLElement | null
     if (
