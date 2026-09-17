@@ -453,6 +453,18 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     UI. Run static gates (`bun test`, `bun run build`, `bun run lint`) and hand
     off with a "needs human dogfood" note.
 14. **Bun, not Node/npm/pnpm/yarn.** Lockfile is `bun.lock`.
+15. **Most `/admin/api/studio/*` routes have no per-request auth at all.** Studio
+    is a single-operator tool: the only thing every Studio route enforces is
+    path containment (`resolveProjectDir`), and the namespace does not even run
+    the CSRF origin check the CMS and AI dispatchers run. Ten routes carry a
+    real guard — delete/duplicate/sample/trash-restore/trash-purge on
+    `requireCapability('studio.write')`, onboarding/comments/node-export/shares
+    on `requireAuthenticatedUser`. Do not read a neighbouring ungated route as
+    permission to ship another one, do not assume `req` has a session behind it,
+    and never expose this server to an untrusted network. The full posture,
+    with paths: `docs/server.md` → "Single-operator posture on the Studio
+    routes". Closing it is the first follow-up wave in
+    `STUDIO-FIGMA-FEEL-PLAN.md` §9.
 
 ---
 
