@@ -371,6 +371,22 @@ section's height — plus split-axis `rowGap`/`columnGap` and
 rename only; the CSS written stays `overflow`), and the wrap toggle moves to the
 cluster header.
 
+**G3.4 — one direction control, not two (P9).** `FlexDirectionControl`'s
+`row | column | row-reverse | column-reverse` segments duplicated a choice the
+mode row above already makes (*Horizontal stack* writes `flex-direction: row`),
+so the same fact had two pickers with different glyphs on adjacent rows. It and
+`WrapToggleButton` are replaced by `FlexFlowControl` — a **reverse** toggle
+whose glyph follows the current axis, beside the **wrap** toggle, as one
+cluster. Nothing became unreachable: `row`/`column` are the mode row and
+`wrap-reverse` is still the Layout settings `⚙`. The wrap toggle clears
+`flex-wrap` when switched off (`nowrap` is the initial value); the reverse
+toggle writes the plain axis instead, because clearing `column-reverse` would
+fall back to `row` and silently turn a column into a row.
+
+The two gap fields now carry their own marks (`RowGapIcon` / `GapIcon`) rather
+than sharing one — a picture of a column gap over a field writing `row-gap` is
+the same small lie the panel refuses everywhere else.
+
 *Shipped correction:* the `⚙` is **resident on the Clip-content row**, not
 anchored to the gap field, so `alignSelf`/`justifySelf`/`flex`/`gridColumn`/
 `gridRow` stay reachable on a node that is not a container
@@ -383,11 +399,17 @@ Two captioned linear alignment rows (~56px) become one uncaptioned 3×3 pad
 instead of two — keeping the linear controls as its keyboard model. Grid mode
 maps to `alignItems` + `justifyItems`.
 
-### G4 — Spacing: padding as two fields (F4/F9)
+### G4 — Spacing: padding as a linked box (F4/F9)
 
-Padding collapses to horizontal/vertical fields with an expand toggle to four,
-and **moves into the Layout section**: padding is a layout property of a
-container, margin is a relationship with siblings. The `SpacingBoxControl`
+Padding **moves into the Layout section**: padding is a layout property of a
+container, margin is a relationship with siblings. Its toggle cycles three
+states — **all sides -> horizontal/vertical -> four sides** (P9). The `all`
+state is Figma's link: one field, writing the four longhands in a single
+history entry (`LinkedSidesField.tsx`). It is not the `padding` shorthand —
+here the link is about how many fields are drawn, unlike corner radius (G5.5),
+where the shorthand is what a human writes and the link picks the declaration.
+Before P9 the H/V pair was the whole collapsed state, so the most common
+padding gesture of all — one number on every side — took two edits. The `SpacingBoxControl`
 diagram — the tallest single block in the panel — survives as an opt-in behind
 the Spacing `⚙` (*Box model*), because it is the best control for "which side is
 which" and only the wrong *default*.
@@ -1366,8 +1388,8 @@ stored — the placeholder layer). Every section is wired:
 
 | Section | Mixed surface |
 |---|---|
-| Spacing, Layout padding | `SingleSideField` / `LinkedAxisField` → `ScrubTokenField`'s new `mixed` |
-| Layout | mode row (`data-mode="mixed"`), flex direction, gap, grid tracks |
+| Spacing, Layout padding | `SingleSideField` / `LinkedAxisField` / `LinkedSidesField` → `ScrubTokenField`'s new `mixed` |
+| Layout | mode row (`data-mode="mixed"`), the reverse toggle (disabled — no single axis to flip), gap, grid tracks |
 | Position | the `position` switcher (`data-position-value="mixed"`) and each TRBL offset |
 | Size | W/H and every revealed constraint (`AddablePropertyField` already took `MIXED`) |
 | Typography | text-align and vertical-align groups; every other row via `StackedPropertyGrid` |

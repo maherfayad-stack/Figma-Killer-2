@@ -74,10 +74,19 @@ function currentNode() {
   return useEditorStore.getState().site?.pages[0]?.nodes[NODE_ID]
 }
 
-function setPaddingExpanded(expected: boolean) {
-  const toggle = screen.getByTestId('expandable-field-cluster-padding-toggle')
-  const isExpanded = toggle.getAttribute('aria-expanded') === 'true'
-  if (isExpanded !== expected) fireEvent.click(toggle)
+/**
+ * The padding cluster cycles three states (all sides -> H/V -> four sides),
+ * so a test has to name the one it wants rather than flip a boolean. The
+ * state is module-level and sticky per cluster id (by design — see
+ * `ExpandableFieldCluster`'s doc), hence the walk rather than an assumption.
+ */
+function setPaddingState(expected: 'all' | 'collapsed' | 'expanded') {
+  const fields = () => screen.getByTestId('expandable-field-cluster-padding-fields')
+  for (let step = 0; step < 3; step += 1) {
+    if (fields().getAttribute('data-cluster-state') === expected) return
+    fireEvent.click(screen.getByTestId('expandable-field-cluster-padding-toggle'))
+  }
+  throw new Error(`padding cluster never reached the ${expected} state`)
 }
 
 function setMarginExpanded(expected: boolean) {
@@ -243,11 +252,11 @@ describe('LayoutSection — Clip content', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 5. Wrap toggle
+// 5. Flow cluster — reverse + wrap
 // ---------------------------------------------------------------------------
 
-describe('LayoutSection — wrap toggle', () => {
-  it('round-trips nowrap -> wrap', () => {
+describe('LayoutSection — flow cluster', () => {
+  it('round-trips nowrap -> wrap, and clears on the way back', () => {
     selectNode({ inlineStyles: { display: 'flex' } })
     render(<LayoutSection />)
 
@@ -257,6 +266,26 @@ describe('LayoutSection — wrap toggle', () => {
     fireEvent.click(toggle)
     expect(currentNode()?.inlineStyles?.flexWrap).toBe('wrap')
   })
+
+  it('reverses the CURRENT axis, never falling back to row', () => {
+    selectNode({ inlineStyles: { display: 'flex', flexDirection: 'column' } })
+    render(<LayoutSection />)
+
+    fireEvent.click(screen.getByTestId('css-layout-reverse-toggle'))
+    expect(currentNode()?.inlineStyles?.flexDirection).toBe('column-reverse')
+  })
+
+  it('un-reversing writes the plain axis rather than clearing it', () => {
+    selectNode({ inlineStyles: { display: 'flex', flexDirection: 'column-reverse' } })
+    render(<LayoutSection />)
+
+    const toggle = screen.getByTestId('css-layout-reverse-toggle')
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(toggle)
+    // Clearing would fall back to `row` and silently turn the column into a row.
+    expect(currentNode()?.inlineStyles?.flexDirection).toBe('column')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -264,10 +293,10 @@ describe('LayoutSection — wrap toggle', () => {
 // ---------------------------------------------------------------------------
 
 describe('LayoutSection — padding cluster', () => {
-  it('is resident regardless of display, collapsed shows 2 fields', () => {
+  it('is resident regardless of display; the H/V state shows 2 fields', () => {
     selectNode({ inlineStyles: { paddingTop: '8px', paddingBottom: '8px' } })
     render(<LayoutSection />)
-    setPaddingExpanded(false)
+    setPaddingState('collapsed')
 
     const fields = screen.getByTestId('expandable-field-cluster-padding-fields')
     expect(within(fields).getAllByRole('textbox').length).toBe(2)
@@ -276,7 +305,7 @@ describe('LayoutSection — padding cluster', () => {
   it('editing the collapsed horizontal field writes both paddingLeft and paddingRight', () => {
     selectNode()
     render(<LayoutSection />)
-    setPaddingExpanded(false)
+    setPaddingState('collapsed')
 
     const horizontal = screen.getByTestId('css-padding-horizontal') as HTMLInputElement
     fireEvent.change(horizontal, { target: { value: '12px' } })
@@ -284,6 +313,32 @@ describe('LayoutSection — padding cluster', () => {
 
     expect(currentNode()?.inlineStyles?.paddingLeft).toBe('12px')
     expect(currentNode()?.inlineStyles?.paddingRight).toBe('12px')
+  })
+
+  it('the link state is ONE field writing all four sides in a single history entry', () => {
+    selectNode()
+    render(<LayoutSection />)
+    setPaddingState('all')
+
+    const fields = screen.getByTestId('expandable-field-cluster-padding-fields')
+    expect(within(fields).getAllByRole('textbox').length).toBe(1)
+
+    // A deterministic baseline: the shared store's past stack is capped
+    // (`MAX_HISTORY`) and coalesces bursts, so "one more entry" is only
+    // measurable from a known-empty stack.
+    useEditorStore.setState({ _historyPast: [], _historyCoalesceKey: null } as Parameters<
+      typeof useEditorStore.setState
+    >[0])
+    const all = screen.getByTestId('css-padding-all') as HTMLInputElement
+    fireEvent.change(all, { target: { value: '16px' } })
+    fireEvent.blur(all)
+
+    const styles = currentNode()?.inlineStyles
+    expect(styles?.paddingTop).toBe('16px')
+    expect(styles?.paddingRight).toBe('16px')
+    expect(styles?.paddingBottom).toBe('16px')
+    expect(styles?.paddingLeft).toBe('16px')
+    expect(useEditorStore.getState()._historyPast.length).toBe(1)
   })
 })
 
@@ -383,7 +438,7 @@ describe('LayoutSection — code-locked properties', () => {
   it('refuses a padding write when paddingTop is code-valued', () => {
     selectNode({ codeProps: ['style:paddingTop'] })
     render(<LayoutSection />)
-    setPaddingExpanded(true)
+    setPaddingState('expanded')
 
     const field = screen.getByTestId('css-padding-top') as HTMLInputElement
     fireEvent.change(field, { target: { value: '20px' } })

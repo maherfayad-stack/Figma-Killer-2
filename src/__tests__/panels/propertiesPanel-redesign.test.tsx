@@ -646,7 +646,7 @@ describe('LayoutSection — clear via active segment X', () => {
     expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('clicking the active flex direction icon clears flexDirection', () => {
+  it('the reverse toggle flips the CURRENT axis — there is no second direction picker', () => {
     const { nodeId, classIds } = loadSiteWithClasses(1)
     const clsId = classIds[0]
     useEditorStore.getState().updateClassStyles(clsId, { display: 'flex', flexDirection: 'column' })
@@ -655,12 +655,15 @@ describe('LayoutSection — clear via active segment X', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    const columnSegment = screen.getByRole('button', { name: /^column$/i })
-    expect(columnSegment.getAttribute('aria-pressed')).toBe('true')
+    // The row/column choice lives in the mode row alone now (P9).
+    expect(screen.queryByRole('button', { name: /^column$/i })).toBeNull()
 
-    fireEvent.click(columnSegment)
+    const reverse = screen.getByTestId('css-layout-reverse-toggle')
+    expect(reverse.getAttribute('aria-pressed')).toBe('false')
 
-    expect(useEditorStore.getState().site!.styleRules[clsId].styles.flexDirection).toBeUndefined()
+    fireEvent.click(reverse)
+
+    expect(useEditorStore.getState().site!.styleRules[clsId].styles.flexDirection).toBe('column-reverse')
   })
 })
 
