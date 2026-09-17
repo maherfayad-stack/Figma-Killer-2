@@ -1,7 +1,7 @@
 # Studio Prototype Mode — plan
 
-**Status:** Phases 1a–4 and 6 landed; **5 (Play) is the only feature phase left** ·
-**Opened:** 2026-09-02 · **Last updated:** 2026-09-06
+**Status:** every phase (1a–7) has landed. What remains is the two items in §9 ·
+**Opened:** 2026-09-02 · **Last updated:** 2026-09-17
 
 Shipped behaviour is documented in
 [`docs/features/studio-prototype.md`](docs/features/studio-prototype.md) — read
@@ -35,12 +35,13 @@ Two things keep it from becoming a lie:
 
 - Connectors render **only in prototype mode**. Design mode never shows them and
   the publisher never sees them.
-- **Phase 5 reads real navigation out of the code and draws it too.** The user's
-  screens already have `onClick` handlers that navigate; the parser already sees
-  them and currently drops them as `codeFunctionPaths`. Those become *read-only*
-  connectors, drawn differently from authored ones. The board then shows flows
-  that are already true on day one — the part Figma structurally cannot do. The
-  link model carries `origin: 'design' | 'code'` from Phase 1 so this stays open.
+- **Phase 6 reads real navigation out of the code and draws it too.** The user's
+  screens carry `onClick` handlers that navigate; the parser reads them into
+  `CodeFlowEdge`s (`src/core/studio-prototype/codeFlow.ts`) that render as
+  *read-only* connectors, drawn differently from authored ones. The board shows
+  flows that are already true on day one — the part Figma structurally cannot
+  do. The `origin: 'design' | 'code'` discriminator this bullet originally
+  proposed did not survive Phase 6; see "What Phase 6 disproved".
 
 ## 2. Storage: `.studio/prototype.json`, not `boards.json`
 
@@ -131,17 +132,22 @@ follow.
     Those two are exclusive canvas *surfaces*; this is an overlay on the design
     board, and modelling it as a tab would have implied you leave the design
     canvas to use it.
-- **[x] 4 — Connectors (M/L — the hard one).** `BoardFlowLayer` in
-  `StudioBoardLayers`, alongside `BoardCommentsLayer`, in the parent document, in
-  board coordinates, counter-scaled in pure CSS. Both authored and derived flows
-  route through one geometry. **The `+` drag is NOT done** — see §9. Connectors
-  are frame-to-frame rather than element-to-frame; the reasoning is in
-  `BoardFlowLayer.tsx`'s module doc and the feature doc, and element-level
-  anchoring for authored links is a follow-up.
-- **[ ] 5 — Play in live mode (M/L).** History stack, transition runtime,
-  back/close, scrim dismiss, reset. Risk: a transition needs both frames mounted
-  at once, so the incoming frame must be prewarmed or the first navigation to
-  each screen stutters. **The only feature phase not started.**
+- **[x] 4 — Connectors (M/L — the hard one).** Two layers, one feature
+  (`canvas-12`). `BoardFlowLayer` in `StudioBoardLayers`, alongside
+  `BoardCommentsLayer`, in the parent document, in board coordinates,
+  counter-scaled in pure CSS, draws the **derived** frame-to-frame edges — a
+  claim about two screens has no element to start from, and measuring one per
+  edge is the stutter machine `BoardFlowLayer.tsx`'s module doc warns about.
+  `src/admin/pages/site/canvas/BoardPrototypeLayer/` draws the **authored**
+  links element-anchored and carries the `+` handle, the drag/pick gesture and
+  the `back`/`close` chips. Endpoints are measured off a `ResizeObserver` per
+  source frame and nothing else (`usePrototypeEndpoints.ts`).
+- **[x] 5 — Play in live mode (M/L).** History stack, transition runtime,
+  back/close, scrim dismiss, reset (`canvas-12`). The stack machine is
+  `src/core/studio-prototype/playback.ts`; the canvas side is
+  `canvas/PrototypeScreenStack.tsx`, `canvas/PrototypeOverlay.tsx`,
+  `canvas/usePrototypePlayback.ts` and the WAAPI transitions in
+  `canvas/playbackMotion.ts`. `setCanvasView` arms and disarms the player.
 - **[x] 6 — Code-derived connectors (M).** The differentiator in §1. Four AST
   rules, all refusing rather than guessing — `docs/features/studio-prototype.md`
   enumerates them and, more importantly, what they refuse.
@@ -178,26 +184,23 @@ behind no longer applies.
 
 ## 9. What is left
 
-In priority order. Nothing here blocks anything above it.
+Three of the five items this section used to list — Play, the drag-from-`+`
+gesture, and element-level anchoring for authored connectors — landed together
+in `canvas-12` and are described under Phases 4 and 5 above. The `+` handle's
+open design question ("where does it live, given the selection ring is portaled
+*into* the frame's iframe?") was answered by putting the authored layer in the
+parent document: `BoardPrototypeLayer/` composes `frame origin + element rect`
+and inserts nothing into a frame. Richer triggers and smart-animate are specced
+in `STUDIO-FIGMA-FEEL-PLAN.md` work order P7, not here.
 
-1. **Phase 5 — Play.** The one feature phase not started. Needs the armed `▶ Play`
-   state in the canvas chrome (§5's sketch), a history stack, the transition
-   runtime, and back/close. The authored-link model already carries everything it
-   needs: action, transition, target.
-2. **The drag-from-`+` gesture (Phase 4's other half).** An alternative input for
-   the model the inspector already writes end to end, so it is additive rather
-   than load-bearing. Must be raw pointer events — see §7. The open design
-   question is where the `+` handle lives: the selection ring is portaled *into*
-   the frame's iframe, and nothing of this feature may be inserted there.
-3. **Element-level anchoring for authored connectors.** Frame-to-frame is right
-   for a derived flow map (the fact is about screens); a link the user placed on
-   one specific button has a stronger claim to start there. Needs the
-   cross-document measurement pass §6/Phase 4 warns about, so it needs a real
-   perf budget rather than an afternoon.
-4. **Pruning on page delete.** `prunePrototypeLinks` and the `prune` op both
-   exist; nothing calls them. A link to a deleted page draws nothing today, so
-   this is cruft rather than a bug — the caller has to be client-side, because
-   the op carries the page list by design.
-5. **`back`-shaped derived flows.** `router.back()` / `navigate(-1)` /
+Two are left. Nothing here blocks anything above it.
+
+1. **Pruning on page delete.** `prunePrototypeLinks` exists and
+   `server/handlers/studio/prototypeStore.ts:103` runs it for the `prune` op,
+   but nothing in the editor ever sends that op — `prototypeApi.ts:52` declares
+   its shape and no caller dispatches it. A link to a deleted page draws nothing
+   today, so this is cruft rather than a bug; the caller has to be client-side,
+   because the op carries the page list by design.
+2. **`back`-shaped derived flows.** `router.back()` / `navigate(-1)` /
    `history.goBack()` are real facts with no drawable destination. Worth
    surfacing once there is a flows list to surface them in.

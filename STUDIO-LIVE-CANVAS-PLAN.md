@@ -1,6 +1,26 @@
 # Studio Live Canvas + Penpot Inspector — plan
 
-**Status:** proposed, nothing started · **Opened:** 2026-09-08 · **Owner:** main session (orchestrator)
+**Status:** L1–L8, R1–R3 and P0–P6 landed on `feat/alm-figma-killer-studio-shell`. L9 is the only unstarted work order. · **Opened:** 2026-09-08 · **Owner:** main session (orchestrator)
+
+**What landed, and the `STATE.md` entry to read for each:**
+
+| Track | Work orders | `STATE.md` |
+|---|---|---|
+| L — Live runtime frames | L1–L8 | `live-01` … `live-08`, plus `perf-06` (L8) |
+| R — Refusals become choices | R1–R3 | `refusal-01` (R1), `store-10` (R2), `panel-24` (R3) |
+| P — Penpot-exact inspector | P0–P6 | `panel-20` (P0), `panel-21` (P1+P2), `panel-22` (P2), `panel-25` (P3), `panel-23` (P4), `panel-26` (P5), `panel-27` (P6) |
+
+Two things this status does **not** claim. **L9 has not started**, and cannot:
+its own precondition is a dogfooded Tier 2 board, and no project in
+`studio-workspace/` has ever been promoted past `trust: 'static'`. Everything
+Track L built is therefore code-verified, not user-verified — `live-08` is the
+one work order that was driven end to end in a real browser. Second, the
+**Track L exit criterion** below (the SMS screen in `test4 copy`) has never been
+run.
+
+Work still owed against the surfaces these three tracks built is specced in
+`STUDIO-FIGMA-FEEL-PLAN.md`, not here: Tracks S and P of that plan carry the
+inspector and canvas follow-ups, Track Z carries the residual refusal toasts.
 
 Three tracks, one goal: the board behaves like the real app, every edit lands
 in the repo, the download runs, and the inspector is one a Figma or Penpot user
@@ -106,7 +126,7 @@ plan refuses to repeat.
 
 ## 2. Track L — Live runtime frames
 
-### L1 — Dev server manager (S/M) · `server-engineer`
+### L1 — Dev server manager (S/M) · `server-engineer` — done (`live-01`)
 
 Extract the process half of `referenceRender.ts` into
 `server/handlers/studio/devServer.ts`:
@@ -125,7 +145,7 @@ Extract the process half of `referenceRender.ts` into
 - **Prewarm:** the launcher calls `start` when a Tier 2 project is opened
   (`studioWorkspaceDir.ts`'s selection change), before the board mounts.
 
-### L2 — The live origin (S/M) · `server-engineer` + `security-guard`
+### L2 — The live origin (S/M) · `server-engineer` + `security-guard` — done (`live-02`)
 
 - `server/liveOrigin.ts`: a second `Bun.serve` on `LIVE_PORT` (config in
   `server/config.ts`, documented in `docs/deployment/`). Routes
@@ -136,7 +156,7 @@ Extract the process half of `referenceRender.ts` into
 - Memory note for the tunnel case: `PUBLIC_ORIGIN` and `LIVE_ORIGIN` are two
   URLs now; the tunnel doc (`docs/deployment/`) gains the second one.
 
-### L3 — The Vite plugin: ids and the runtime entry (M) · `parser-surgeon`
+### L3 — The Vite plugin: ids and the runtime entry (M) · `parser-surgeon` — done (`live-03`)
 
 `src/core/studio-runtime/vitePlugin.ts`, shipped into the workspace by the
 shell generator as a dependency of `vite.config.js` (hash-tracked, so an
@@ -162,7 +182,7 @@ untouched config picks it up on next open; an edited one is documented).
   among same-id siblings. Selection of anything unmapped resolves to that
   ancestor and says so in the badge.
 
-### L4 — The in-frame runtime (M/L) · `canvas-engineer`
+### L4 — The in-frame runtime (M/L) · `canvas-engineer` — done (`live-04`; its bootstrap wired into the generated shell in `live-08`)
 
 `src/core/studio-runtime/runtime.ts`, built to one ESM file served from the
 live origin. It is the in-frame half of every injector, driven by messages:
@@ -213,7 +233,7 @@ everything else. `projectKey` is derived from `registeredMcpServerProjectKey(dir
 `resolvePublicOrigins(process.env)[0]`, the same source
 `liveOriginSecurityHeaders`'s CSP already derives `PUBLIC_ORIGIN` from.
 
-### L5 — `FrameDocumentAdapter` (L, run alone) · `canvas-engineer`
+### L5 — `FrameDocumentAdapter` (L, run alone) · `canvas-engineer` — done (`live-05`)
 
 The refactor everything else waits on. 39 files under
 `src/admin/pages/site/canvas/` (46 under `site/`) reach into an iframe
@@ -244,7 +264,7 @@ interface FrameDocumentAdapter {
 
 No other canvas work runs in parallel with L5.
 
-### L6 — Per-screen routes in the shell (S) · `server-engineer` — done (`live-06`, STATE.md)
+### L6 — Per-screen routes in the shell (S) · `server-engineer` — done (`live-06`)
 
 `prototype/App.jsx` (generated, hash-tracked) serves
 `/__screen/<key>?dir=&theme=&lang=` for every entry in
@@ -287,7 +307,7 @@ longer explicitly closing that connection on browser disconnect — see
 `server/liveOrigin.ts`'s `close(ws)` handler for the full account and the
 accepted resource-lingering tradeoff.
 
-### L7 — Save → HMR loop (S/M) · `store-engineer`
+### L7 — Save → HMR loop (S/M) · `store-engineer` — done (`live-07`)
 
 - Writeback is unchanged: codemods write the file, Vite sees it.
 - The "reload only when a write landed" rule (`PROJECT-BRIEF.md` trap 5) holds.
@@ -296,7 +316,7 @@ accepted resource-lingering tradeoff.
 - Optimistic DOM ops (L4) run first for insert/delete/move/text so a gesture
   paints on the same tick, exactly as the portal path does today.
 
-### L8 — Warm, posters, pool (S) · `perf-hunter`
+### L8 — Warm, posters, pool (S) · `perf-hunter` — done (`perf-06`)
 
 **Correction (STATE.md `perf-06`, 2026-09-13/14): this was NOT "(S)".** The
 plan as originally written assumed a live-frame render mode already existed
@@ -338,7 +358,7 @@ Budgets, added to `bun run bench` and gated — buildability as of Phase B
 | Save → HMR reflected in frame | ≤ 400 ms | **Blocked on L7** (save→HMR loop, above) — do not build this by assuming L7 exists. |
 | Memory per live frame | baseline recorded in `docs/audits/`, regression gate at +20 % | **Blocked** on the same human dogfood gate as the warm-reopen row. Placeholder doc: `docs/audits/2026-09-13-live-frame-memory-baseline.md`, explaining exactly what a future session needs to do to fill it in. |
 
-### L9 — What Tier 2 makes redundant (S, last)
+### L9 — What Tier 2 makes redundant (S, last) — not started
 
 At Tier 2 the dev server serves package components, so
 `PackageComponentPlaceholder` never shows and `componentBundle.ts` is not
@@ -356,7 +376,7 @@ behaviour.
 
 ## 3. Track R — Refusals become choices
 
-### R1 — Remedies on the reason (S/M) · `parser-surgeon`
+### R1 — Remedies on the reason (S/M) · `parser-surgeon` — done (`refusal-01`; the exhaustive table is `STRUCTURAL_ACTIONS` in `src/core/page-tree/editConstraint.ts:370`)
 
 **Shipped 2026-09-08.** `structuralActions()` in
 `src/core/page-tree/editConstraint.ts` already existed as a reason→remedy map
@@ -399,7 +419,7 @@ Gate: `structuralActions — compile-time-exhaustive remedy map (R1)` in
 produces a well-formed constraint and that the terminal reasons resolve to an
 explicit `[]`.
 
-### R2 — `RefusalDialog` (M) · `store-engineer` + `panel-designer`
+### R2 — `RefusalDialog` (M) · `store-engineer` + `panel-designer` — done (`store-10`)
 
 Replaces the toast for any refusal that has remedies. Built from `src/ui`
 primitives. Each remedy is a button that runs the existing action
@@ -407,7 +427,7 @@ primitives. Each remedy is a button that runs the existing action
 then **re-applies the original gesture** — the user asked to delete; after
 detach, the delete happens. Non-actionable refusals keep the toast.
 
-### R3 — Inspector refusals (S) · `panel-designer`
+### R3 — Inspector refusals (S) · `panel-designer` — done (`panel-24`)
 
 Popover refusal copy gains the same remedy buttons. Lands with P2, section by
 section.
@@ -444,7 +464,7 @@ The result is a panel you *read* rather than *operate*. Track P fixes the
 structure first (P1, P2, P4), then re-skins the sections (P3), because a
 Penpot-looking panel over the current structure would still be slow to use.
 
-### P0 — Baseline (S, first) · `panel-designer` with `/browse`
+### P0 — Baseline (S, first) · `panel-designer` with `/browse` — done (`panel-20`)
 
 Run Penpot (self-hosted via its docker compose, version pinned in the audit)
 and record, for four fixtures — rectangle, text layer, flex board, image:
@@ -461,7 +481,7 @@ and record, for four fixtures — rectangle, text layer, flex board, image:
 Written to `docs/audits/penpot-inspector-baseline/` with the numbers in a
 table the P6 gate reads. **Nothing else in P starts until this exists.**
 
-### P1 — One paradigm: the shell (M) · `panel-designer`
+### P1 — One paradigm: the shell (M) · `panel-designer` — done (`panel-21`)
 
 New folder `src/admin/pages/site/inspector/`:
 
@@ -489,7 +509,7 @@ New folder `src/admin/pages/site/inspector/`:
 The old `PropertiesPanel` keeps rendering sections that have not moved yet,
 inside the new shell, for the duration of P3 only.
 
-### P2 — Structured for speed: the operating rules (S, lands with P1) · `panel-designer`
+### P2 — Structured for speed: the operating rules (S, lands with P1) · `panel-designer` — done (`panel-21`, `panel-22`)
 
 Rules the shell enforces, each with a test where one is possible:
 
@@ -519,7 +539,7 @@ Rules the shell enforces, each with a test where one is possible:
 10. **A field never lies.** Prefill from what renders (§5.0), coerce on
     commit (§5.1), refusal as a choice in the field's own popover (R3).
 
-### P3 — Sections in Penpot order (L) · `panel-designer`
+### P3 — Sections in Penpot order (L) · `panel-designer` — done (`panel-25`)
 
 One PR per section; each deletes its predecessor.
 
@@ -539,7 +559,7 @@ One PR per section; each deletes its predecessor.
 Each keeps token autocomplete, provenance and refusal-as-choice, in Penpot's
 visual language rather than bolted on.
 
-### P4 — Architected for speed (M) · `store-engineer` + `panel-designer`
+### P4 — Architected for speed (M) · `store-engineer` + `panel-designer` — done (`panel-23`)
 
 What makes rule 7 and rule 8 true:
 
@@ -562,12 +582,12 @@ What makes rule 7 and rule 8 true:
 - Budgets added to `bun run bench`: selection→paint ≤ 16 ms; scrub tick ≤ 4 ms
   on the main thread; typing latency ≤ 1 frame.
 
-### P5 — Values from the live DOM (S, after L5) · `panel-designer`
+### P5 — Values from the live DOM (S, after L5) · `panel-designer` — done (`panel-26`)
 
 `SelectionModel`'s effective values read through `adapter.measure` at Tier 2;
 Tier 0 keeps the registry-computed path. One call site.
 
-### P6 — Delete and gate (S) · `test-engineer`
+### P6 — Delete and gate (S) · `test-engineer` — done (`panel-27`)
 
 - `panels/PropertiesPanel/` and `property-controls/` removed — the 86 files.
 - `src/__tests__/inspector/measurement.test.ts`: per-section rest heights
@@ -618,16 +638,15 @@ through `studio-architect` first; L5 gets its own.
 
 ---
 
-## 7. Open decisions for the user
+## 7. Decisions — all four are called
 
-1. **Live origin form.** Second port on the same host (simplest, works with the
-   tunnel memory's caveat) or a subdomain (cleaner cookies story, needs DNS).
-   Recommendation: second port.
-2. **Promote prompt.** Keep promotion strictly manual, or ask once on open for a
-   Vite project with a lockfile, the way `StyleCompileConsentBanner` does for
-   Tailwind. Recommendation: ask once, default No.
-3. **Penpot version** to pin the baseline to. Recommendation: latest stable
-   self-hosted at P0 time, recorded in the audit.
-4. **Order.** Panel shell first (improves every project this week) then live
-   frames, or live frames first. Recommendation: P0+P1 and L1–L4 in parallel,
-   then L5 alone.
+1. **Live origin form.** Second port on the same host. Built that way:
+   `server/liveOrigin.ts` binds `LIVE_PORT` as an independent `Bun.serve`
+   listener (`live-02`).
+2. **Promote prompt.** Superseded. The owner called "no prompt — promote" for
+   Vite projects with a lockfile on 2026-09-17; see `STUDIO-FIGMA-FEEL-PLAN.md`
+   §6 decision 2 and work order P8, which owns the notice and the
+   back-to-static action. Non-Vite projects stay at Tier 0.
+3. **Penpot version** pinned at P0: self-hosted 2.17.2, measured into
+   `docs/audits/penpot-inspector-baseline/` (`panel-20`).
+4. **Order.** P0+P1 and L1–L4 ran in parallel, then L5 alone, as recommended.

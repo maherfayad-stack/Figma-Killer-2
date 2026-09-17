@@ -45,14 +45,15 @@ they left unfinished is tracked as **WS-14** in
 | **A1-A6, A8** agent fidelity · **A5** catalog-driven guide | ✅ landed |
 | Windows architecture gates (4 vacuously-red + sweep) | ✅ landed |
 | **D3** de-Studio-ify | ✅ landed |
-| **D2** DnD | ◐ **partial** — G10, G9 (flex/RTL), G5 (`previewStructuralMove` published), G12 (Alt+↑/↓) landed. **G2, G3, G6, G7, G8, G15 and the `@dnd-kit` removal are NOT done** — the `dragSession` + `frameCandidateIndex` rewrite was deliberately deferred, not half-built |
+| **D2** DnD | ◐ **partial** — G10, G9 (flex/RTL), G5 (`previewStructuralMove` published), G12 (Alt+↑/↓) landed, and **G2 landed** (`canvas-dnd`): a capture-phase `pointerdown` on the frame's own `contentDocument` opens the same session the 13px hand-grab button opens, through one `beginDrag(origin)` in `useCanvasReorderDrag.ts`. **G3, G6, G7, G8, G15 and the `@dnd-kit` removal are NOT done** — the `dragSession` + `frameCandidateIndex` rewrite was deliberately deferred, not half-built; it is specced as `STUDIO-FIGMA-FEEL-PLAN.md` S2 |
 | **E2.2** slot props · **E2.4** slot writeback | ✅ landed — E2.1's codemod now has a live caller (`promote-component`), and `add-slot-prop` runs its full pipeline in preview so blast radius is enforced, not advisory |
 | **F1/F2** truthful inspector | ✅ landed — **S6 shipped**: inline + class styling are no longer mutually exclusive |
 | **H** token model (scanner half) | ✅ landed — T12 reconciled, T9 shared, T8 demoted; **T4 fixed separately** (canvas no longer re-emits project tokens) |
 | **C5** reload surgery | ✅ landed — 40-page board, one file: payload 38,637 → 1,174 B; page-ref churn 40/40 → 1/40 |
 | Architecture-gate repairs + backlog | ✅ landed — and they hid **two real bugs**: `BindingPickerPopover` and `UserStylesheetInjector` both resolved the **stale pre-VC page** |
 | **E2.5** panel surfaces | ◐ **incomplete** — agent was killed by a session limit just before its handoff; work is in the tree, unverified |
-| **G** density · **A7** Figma discoverability | ⬜ not started |
+| **G** density | ✅ landed, in two passes on 2026-08-30 (the density win + label→icon swap, then the caption sweep) — §10's status block is the record. Its named tail has since been overtaken: the nudge ladder, arithmetic and scrub unification landed in W8-1/W8-2 below, and the whole panel was rebuilt section by section by Track P of `STUDIO-LIVE-CANVAS-PLAN.md`. Multi-select style editing is still missing — `STUDIO-FIGMA-FEEL-PLAN.md` S5 |
+| **A7** Figma discoverability | ⬜ not started |
 | **A2** exact-pixel diffing (capture-purpose split, not the originally-proposed region crop) | ✅ landed — see A2's own entry for why the crop framing was rejected |
 
 **Still true and still blocking:** the six open decisions in §15 are unanswered,
@@ -70,7 +71,7 @@ Merged as PRs #4–#33. Verified against the tree, not against the PR titles.
 | **Warm CLI session** per conversation | ✅ landed — cold 840 ms → warm 4 ms (`mcp-17`) |
 | **Git v1** — status, diff, branch, commit, push | ✅ landed (`GitPanel`, `server/handlers/studio/git*.ts`); PR creation is link-out via git's own push output, as v1 specced |
 | **CSS-in-JS** phase A (static extraction) + phase B (value writeback) | ✅ landed for the **tagged-template** form. ◐ the **object** form (`css({…})`) is refused by name on both sides — WS-14.1 |
-| **Prototype mode** + code-derived flow connectors | ◐ **partial** — the differentiator landed; **Phase 5 "Play" is unstarted** (WS-14.2), as is Phase 4's drag-from-`+` |
+| **Prototype mode** + code-derived flow connectors | ✅ landed in full. `canvas-12` closed the two open halves — Phase 5 "Play" (`src/core/studio-prototype/playback.ts` + `canvas/PrototypeScreenStack.tsx`) and Phase 4's drag-from-`+` with element-anchored authored connectors (`canvas/BoardPrototypeLayer/`). Richer triggers and smart-animate are `STUDIO-FIGMA-FEEL-PLAN.md` P7 |
 | **Share links** — read-only board snapshot at a revocable URL | ✅ landed (`server/handlers/studio/share*.ts`, `share.html`) |
 | **Storybook CSF import** | ◐ **partial** — discovery, 13 named refusals and board sync landed (measured: primer/react 67.2%, Shopify/polaris 97.8%); story `args` do **not** write back — WS-14.3 |
 | **Deploy previews** through the project's own Vercel/Netlify CLI | ✅ landed, Tier-2 gated, no provider token stored — **but never dogfooded against a real deploy** (CI cannot) |
@@ -80,8 +81,9 @@ Merged as PRs #4–#33. Verified against the tree, not against the PR titles.
 | **Trust tiers** (§0 of the import roadmap) | ✅ landed — `TrustTierSchema`, the promotion route, the consent banner, the `studio.run.project` capability |
 
 **Carried forward from the earlier waves, still open:** Track D2's `dragSession`
-rewrite (G2, G3, G6, G7, G8, G15 and the `@dnd-kit` removal), Track G density's
-tail, A7 Figma discoverability, and E2.5's unverified panel-surface work. The
+rewrite (G3, G6, G7, G8, G15 and the `@dnd-kit` removal — G2 landed as
+`canvas-dnd`), A7 Figma discoverability, and E2.5's unverified panel-surface
+work. The
 `src/modules/alm/` deletion is CLOSED, not deferred — `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`
 made that pack Studio's own built-in design system and deleted the npm instead.
 `scripts/bench/studioBoard.bench.ts` still carries uncalibrated budgets and has
@@ -799,11 +801,13 @@ resolvers, 3 separate index-normalisation implementations.**
 
 **Then the structural ones:**
 
-- **G2 — you cannot drag an element on the canvas.** The only drag trigger is a
-  13px hand-grab button in the floating selection toolbar
-  (`SelectionToolbar.tsx:74-83`, wired at `BreakpointSelectionOverlay.tsx:540`)
-  — a toolbar whose placement is itself the documented drift defect. **Make the
-  element itself draggable.**
+- **G2 — you cannot drag an element on the canvas.** ✅ Landed (`canvas-dnd`).
+  Pressing an element body opens the same drag session the 13px hand-grab
+  button in the floating selection toolbar opens: both entry points call one
+  `beginDrag(origin)` in `useCanvasReorderDrag.ts`, so activation distance,
+  candidate measurement, the cross-iframe relay flag and the commit path cannot
+  drift apart. The body path is a capture-phase `pointerdown` listener on the
+  frame's own `contentDocument`.
 - **G3 — cross-frame drag is structurally impossible.** Candidates are measured
   once, from one iframe, against one page (`useCanvasReorderDrag.ts:301`); a drop
   over another frame finds no candidate and hits `if (!target) return` (`:248`)
@@ -1139,11 +1143,14 @@ source* · *edit the data array* (`.map` row) · *detach or edit the definition*
 > and hundreds of colour utilities, and mixing them made the Typography menu
 > useless for the thing it existed for.
 >
-> **Still open in this track:** `SpacingBoxControl` (~253px measured) still
-> leads with its diagram and is now the tallest block in the panel;
-> `BorderControl`'s side/corner pickers are what is left of its height;
-> `AlignGrid`; multi-select style editing; drag-scrub beyond `SizeSection`;
-> the Shift-nudge 10-vs-8 inconsistency; math expressions in numeric fields.
+> **Still open in this track:** multi-select style editing — the sections
+> commit through the old panel paradigm rather than the one selection model
+> (`STUDIO-FIGMA-FEEL-PLAN.md` S5). Everything else this line used to list was
+> closed elsewhere: drag-scrub on every numeric, the Shift-nudge 10-vs-8
+> inconsistency and math expressions in numeric fields all landed in W8-1/W8-2
+> (see §0a), and the section geometry — `SpacingBoxControl`, `BorderControl`,
+> `AlignGrid` — was rebuilt section by section by Track P of
+> [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md).
 >
 > **This track is much smaller than expected.** WS-6.1–6.4 largely shipped
 > already: `ScrubInput` (drag-scrub, ±1/Shift±10/Alt×0.1, `MIXED`),

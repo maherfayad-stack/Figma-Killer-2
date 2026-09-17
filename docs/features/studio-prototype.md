@@ -425,8 +425,10 @@ Tracked in [`STUDIO-PROTOTYPE-PLAN.md`](../../STUDIO-PROTOTYPE-PLAN.md).
 
 - **`back`-shaped code flows.** `router.back()` is a real fact with no drawable
   destination and, today, no consumer.
-- **Pruning on page delete.** `prunePrototypeLinks` and the `prune` op exist;
-  nothing calls them yet. A link to a deleted page simply draws nothing, and
+- **Pruning on page delete.** `prunePrototypeLinks` exists and
+  `server/handlers/studio/prototypeStore.ts` runs it for the `prune` op, but
+  nothing in the editor sends that op — `prototypeApi.ts` declares its shape and
+  no caller dispatches it. A link to a deleted page simply draws nothing, and
   the inspector's list shows it pointing at "Deleted page".
 - **A trigger other than `click`.** The schema has one, and the reader repairs
   anything else to it.
