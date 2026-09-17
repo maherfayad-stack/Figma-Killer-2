@@ -1751,7 +1751,7 @@ tasks that were always scheduled to run last.
 Per-track status for everything else is
 [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) **§0a** — the
 single status ledger. Design rationale from the inspector plan lives in
-[`docs/features/inspector-disclosure.md`](docs/features/inspector-disclosure.md);
+[`docs/features/inspector.md`](docs/features/inspector.md);
 the comments feature's contract is
 [`docs/features/studio-comments.md`](docs/features/studio-comments.md).
 
@@ -1763,7 +1763,7 @@ the comments feature's contract is
 | **14.2** | **Prototype Phase 5 — "Play"** (was W5-1's tail). The transition runtime, navigation history stack, back/close, scrim dismiss and reset. | **Done** (`canvas-12`). The stack machine is `src/core/studio-prototype/playback.ts`; `canvas/PrototypeScreenStack.tsx`, `canvas/PrototypeOverlay.tsx`, `canvas/usePrototypePlayback.ts` and `canvas/playbackMotion.ts` are the canvas side. `BoardMode` is still `'design' \| 'prototype'` — the player is armed off `canvasView`, not a third board mode, because arming changes what is being looked at and not what is being edited. Richer triggers and smart-animate are `STUDIO-FIGMA-FEEL-PLAN.md` P7. |
 | **14.3** | **Storybook story `args` writeback** (was W5-3's tail). Args-only story call sites are `locked` and every arg lands in `codeProps`, so edits do not write back. | The blocker is `src/admin/pages/site/studio/fsCodemodAdapter.ts`'s `callSiteProps` branch having no origin case. Discovery, refusals and board sync all shipped. |
 | **14.4** | **Inspector G6.4 — Selection colours.** With 2+ nodes selected, list every distinct colour in the selection and let one edit rewrite all of them. | Deferred in `FillSection.tsx`: it needs store-side multi-select style editing that does not exist yet. `MultiSelectionInspector.tsx` has no colour list. |
-| **14.5** | **Inspector §6 — the measurement gate.** The `scrollHeight <= clientHeight` acceptance test for a text node's full inspector at 900px, plus the per-section height baseline in `docs/audits/`. | Never implemented; the budgets in [`docs/features/inspector-disclosure.md`](docs/features/inspector-disclosure.md) §6 are therefore unenforced. `test-engineer` owns this. |
+| **14.5** | **Inspector §6 — the measurement gate.** The `scrollHeight <= clientHeight` acceptance test for a text node's full inspector at 900px, plus the per-section height baseline. | **Done** (`panel-27`, P6). `src/__tests__/inspector/measurement.test.ts` and `tests/e2e/inspector-panel-measurement.e2e.ts` assert it, and [`docs/features/inspector.md`](docs/features/inspector.md) §6 carries the numbers they measure against. The gate does **not** assert the 900px target: the F2 text-node panel measures well above it, so the spec pins the real recorded baseline instead of forcing the target green. Closing the actual gap is `STUDIO-FIGMA-FEEL-PLAN.md` S5. |
 
 ## 2. The truth pass — remaining tasks
 
@@ -1777,21 +1777,30 @@ CMS-half page — and for (c), follow
 [`STUDIO-CMS-REMOVAL-PLAN.md`](STUDIO-CMS-REMOVAL-PLAN.md)'s disposition for it
 (delete/keep/rewrite) rather than inventing one. `docs/agent-refs/path-index.md`
 must reflect every file moved or deleted by the waves (the dashboard dialog move,
-the dead-panel deletions, the new GitPanel/capture routes). The glossary gains
-the new vocabulary (trust tiers, capture token, share token) — and its trust-tier
-entry, still marked "(planned)", must be corrected: the tiers shipped.
+the dead-panel deletions, the new GitPanel/capture routes).
 
-Two known-stale pointers to fix in that sweep, found during plan retirement:
+**Closed since this item was written:**
 
-- `docs/agent-refs/path-index.md` still points at
-  `src/core/studio-comments/anchorResolve.ts`. That file no longer exists — the
-  prototype work extracted it into `src/core/studio-anchor/`. The comment in
-  `src/__tests__/architecture/no-core-barrel-deep-imports.test.ts` repeats the
-  same stale reference.
-- That gate's `BARRELLED_MODULES` list contains `'studio-comments'` but not
-  `'studio-anchor'` or `'studio-prototype'`, though both are barrelled core
-  modules with an `index.ts`. `studio-anchor` is the one that most needs the
-  gate, since it holds the resolution logic that comment says must not be forked.
+- The two stale `src/core/studio-comments/anchorResolve.ts` pointers are gone.
+  `docs/agent-refs/path-index.md` documents `src/core/studio-anchor/` and says
+  the old file no longer exists; `no-core-barrel-deep-imports.test.ts`'s doc
+  header lists `@core/studio-anchor` and `@core/studio-prototype`, and its
+  `BARRELLED_MODULES` array carries `studio-anchor`, `studio-prototype` and
+  `studio-runtime` alongside `studio-comments`.
+- The glossary's trust-tier entry is no longer "(planned)":
+  `docs/agent-refs/glossary.md` describes all three shipped values, their
+  gates, and the promotion rule, and carries **Capture token** and
+  **Share token** too.
+- `docs/features/inspector-disclosure.md` was renamed to
+  `docs/features/inspector.md` (`panel-27`). The markdown links to the old name
+  in this file and in `STUDIO-FIGMA-PARITY-PLAN.md` are repointed.
+  `STUDIO-WAVE7-PLAN.md` still names the old path twice, in prose rather than
+  as a link.
+
+**Still open:** `CLAUDE.md` → "Barrel imports" lists seven barrelled modules;
+`no-core-barrel-deep-imports.test.ts` gates twelve. The rule book is the one
+that is short, and a rule-book edit is a deliberate act — it is not folded into
+a docs sweep.
 
 **14.7 — Dead-code sweep.** `npx fallow dead-code` (canonical), `knip` as second
 opinion; delete unused exports and files the waves orphaned. Run

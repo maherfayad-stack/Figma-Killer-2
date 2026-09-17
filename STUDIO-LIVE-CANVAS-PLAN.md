@@ -62,7 +62,7 @@ completely using penpot exactly?"*
 - **Detach, extract-a-copy and swap exist** as real codemods
   (`detachComponent.ts`, `extractComponentCopy.ts`). Track R exposes them at
   the moment of refusal; it writes no new codemod for the common cases.
-- **The inspector's field model is worth keeping** — `docs/features/inspector-disclosure.md`
+- **The inspector's field model is worth keeping** — `docs/features/inspector.md`
   §5 (prefill from what renders, coerce on commit, one scrub engine, arithmetic,
   Mixed). Track P keeps the model and replaces the chrome and the sections.
 
@@ -115,7 +115,7 @@ model is permitted; none of its ClojureScript is copied; Penpot's name and logo
 are not used in the product. Penpot is chosen over Figma because its model is
 CSS-native (flex and grid layout, radius, fill/stroke/shadow/blur map 1:1 to
 properties Studio can honestly write), so the "cannot translate" list in
-`inspector-disclosure.md` §7 nearly vanishes.
+`docs/features/inspector.md` §7 nearly vanishes.
 
 Nothing in Track P starts before P0's baseline exists. The previous inspector
 pass wrote budgets and never measured them (§6 is still "not implemented");
@@ -457,8 +457,11 @@ Measured against the current tree, not remembered:
   whole `site` object (line 27 area), so the panel re-renders on every
   keystroke anywhere in the document, and `buildClassTokenUsageMap` rebuilds
   in the render body.
-- **Nothing was ever measured.** `inspector-disclosure.md` §6's gate is still
-  "not implemented"; the budgets it lists were never asserted.
+- **Nothing was ever measured.** The inspector's §6 height gate was
+  unimplemented and its budgets unasserted. Closed by P6 (`panel-27`):
+  `src/__tests__/inspector/measurement.test.ts` and
+  `tests/e2e/inspector-panel-measurement.e2e.ts` assert it against a recorded
+  baseline, and `docs/features/inspector.md` §6 carries the real numbers.
 
 The result is a panel you *read* rather than *operate*. Track P fixes the
 structure first (P1, P2, P4), then re-skins the sections (P3), because a
@@ -594,8 +597,8 @@ Tier 0 keeps the registry-computed path. One call site.
   within 4 px of the P0 baseline; the text fixture's full panel fits 900 px
   with no scroll; `scrollWidth === clientWidth` at 260 px for every section;
   the P0 click counts for the common edits matched or beaten.
-- `docs/features/inspector-disclosure.md` → `docs/features/inspector.md`,
-  rewritten against what shipped.
+- `docs/features/inspector-disclosure.md` renamed to
+  `docs/features/inspector.md` and rewritten against what shipped.
 
 **Track P exit:** a Penpot user opens a text layer and a flex frame and finds
 every control where they expect it, in the same number of clicks as Penpot;

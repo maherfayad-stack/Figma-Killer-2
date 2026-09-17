@@ -23,7 +23,7 @@ and `STATE.md`'s `parity-01` entry is the coordination record.
 Three delivery plans were retired into this ledger once their work landed:
 `STUDIO-WAVE4-PLAN.md`, `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md` and
 `STUDIO-COMMENTS-PLAN.md`. Their design rationale moved to
-[`docs/features/inspector-disclosure.md`](docs/features/inspector-disclosure.md)
+[`docs/features/inspector.md`](docs/features/inspector.md)
 and [`docs/features/studio-comments.md`](docs/features/studio-comments.md); what
 they left unfinished is tracked as **WS-14** in
 [`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md).
