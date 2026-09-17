@@ -1574,6 +1574,25 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ---
 
+### panel-37 — the inspector height gate: scoped to the active tab, and told the truth about 900px
+- **Agent:** panel-designer · **Stage:** done (all gates green incl. the e2e spec; draft PR open) — needs human dogfood · **Updated:** 2026-09-18
+- **Branch:** `fix/inspector-height-gate` off `integration/figma-feel-wave-1` (`3dbb7413`). **PR #164** (draft, base `integration/figma-feel-wave-1`). Commit `5d2ef553`.
+- **Goal:** close the `inspector-height.e2e.ts` item PR #162 left open — make the spec and `InspectorShell` agree, with the spec still failing on a real regression.
+- **Scope:** `src/admin/pages/site/inspector/InspectorShell.tsx` · `tests/e2e/inspector-height.e2e.ts` · `src/__tests__/inspector/measurement.test.ts` · `docs/features/inspector.md` §6 · `docs/audits/penpot-inspector-baseline/05-section-heights.{md,json}`.
+- **Done so far:**
+  - Reproduced both failures on the branch tip, then measured the panel with a geometry probe rather than reasoning from the diff.
+  - **Assertion 1 was the SPEC's bug.** Document-wide `[data-section-id="transform"]` found the Prototype tab's hidden copy (`hiddenAncestor: true, h: 0`). Every locator now scopes to `[data-inspector-tab="design"]:not([hidden])` via `designPanel()`/`designSection()`; `InspectorShell.tsx` gains `data-inspector-tab` (additive). The unscoped `readSectionHeights` was also writing those hidden copies into the committed artefact as bogus 0px rows.
+  - **Assertion 2 was NOT a spec bug.** `.surface` measures `top: 274, height: 626` and ends at the window's bottom edge; 626 = 900 − 274 of chrome (36 admin top bar + 36 `PanelHeader` + 47 tab strip + 88 node header + 67 `headerClassPicker`). **The Design tab overflows 900px by 334–564px**: 960 / 1190 / 1013 / 1043 for F1 / F2 / F3 / F4.
+  - Height gate is now a measured per-fixture ceiling (`DESIGN_TAB_CEILING_PX` + 24px tolerance), recording `clientHeight` and live `overflowPx` into `05-section-heights.json` every run; a new assertion pins that the Prototype copies ARE still mounted.
+  - Deleted `measurement.test.ts`'s `< 900` assertion (implied by the `toBe(756)` beside it; its reasoning disproven). `05-section-heights.json` committed from the first successful run.
+- **Next step:** none for this gate. **The 334–564px density gap is an unclaimed wave-2 work order** — start at the three contributors in `05-section-heights.md`: `layout` renders 199px on a node with no layout at all (`LayoutSection.tsx`'s doc currently defends it); the unbudgeted 158px Module block; a duplicated `padding-bottom: var(--space-7xl)` on both `.surface` and `.surfaceContent`.
+- **Decisions:** hidden-but-mounted tabs KEPT (tab switch preserves scroll offset and transient state; unmounting buys nothing — `ExpandableFieldCluster`'s Law-4 memory is sticky-persisted, `PrototypePanel`'s link-draft state lives in the store). Ratchet, not a tautology: the "fits 900px" assertion could not be made true and was not weakened into a restatement of `clientHeight`.
+- **Landmines:** `InspectorShell` mounts all three tab panels — any DOM query into the inspector must say which tab it means (`data-inspector-tab` + `:not([hidden])`); `[data-testid]`s inside `transform`/`animations`/`interaction` exist TWICE at rest and trip Playwright strict mode unscoped. `docs/features/inspector.md` §6 carried a false claim for the whole of P3 and S5 restated it (274px chrome + 158px Module block were never in the 756px computed total). Running this spec dirties `studio-workspace/__canonical-fixture/.studio/meta.json` and generates `.studio/framework.json` (untracked; `git checkout --` does not remove it). Use isolated ports AND `VITE_ALLOWED_ORIGIN=http://127.0.0.1:<vite-port>` (`server/auth/security.ts:49`).
+- **Verification:** `npx playwright test tests/e2e/inspector-height.e2e.ts` **3 passed** (isolated stack 5211/3211) · red-then-green proven by removing the `Section title="More"` wrapper (F1 `scrollHeight=1093` vs `<= 984` AND `transform` count 1 vs 0), restored byte-identical → 3 passed · `src/__tests__/inspector` + `panels` + `inspector` **1098/0** · architecture **611/0** · build clean · lint clean.
+- **Human action needed:** dogfood at `/admin/site`, 900px-tall window, text layer: the Design tab WILL scroll — that is the finding, not a regression. Confirm it ends in one collapsed **More** row; More opens Transform / Animations / Interaction / Custom properties; switch to Prototype and back — scroll position survives; Prototype shows the three expanded under the link editor.
+
+---
+
 ### dev-04 — Z4: the dev server does not restart on workspace writes, and never did; the reload was Vite's
 - **Agent:** server-engineer (parallel wave, `standing-05`)
 - **Stage:** done. Branch `fix/dev-server-supervisor`, commit `e5e9823f`, PR #136 (draft → `feat/alm-figma-killer-studio-shell`).
