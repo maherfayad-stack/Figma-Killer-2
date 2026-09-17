@@ -254,7 +254,12 @@ export async function openGitPullRequest(
 ): Promise<GitPullRequestResult> {
   return apiRequest(`${BASE}/pull-request`, {
     method: 'POST',
-    body: { dir, ...options },
+    // Named one by one rather than spread. `dir` decides which project the
+    // server acts on, and a spread after it lets any future field on
+    // `options` — or any caller that reaches this through a looser type —
+    // silently take that decision over. The wire shape is small enough to
+    // write out, so it is written out.
+    body: { dir, title: options.title, body: options.body, base: options.base },
     schema: GitPullRequestResponseSchema,
   })
 }
