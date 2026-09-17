@@ -107,6 +107,7 @@ import { SampleProjectError, createSampleProject } from './sampleProject'
 import { readOnboardingFacts } from './onboardingFacts'
 import { serveProjectThumbnail } from './projectThumbnailRoute'
 import { projectThumbnailQueue } from './projectThumbnailQueue'
+import { designSystemImportSpecifier } from './designSystemFiles'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
@@ -350,10 +351,13 @@ export async function tryServeStudioProjectRoutes(
       }
       const pagesDir = projectPagesDir(dir)
       mkdirSync(pagesDir, { recursive: true })
-      // A brand-new folder has no `package.json` yet (the seed lands further
+      // A brand-new folder has no `design-system/` yet (the seed lands further
       // down), so this is always the plain kit — which is what a screen
       // scaffolds as under either one.
-      const home = starterPage('Home', DEFAULT_PAGE_KIND, detectPageTemplateKit(dir))
+      const home = starterPage('Home', DEFAULT_PAGE_KIND, {
+        kit: detectPageTemplateKit(dir),
+        designSystemImport: designSystemImportSpecifier(dir, pagesDir),
+      })
       writeFileSync(join(pagesDir, 'Home.tsx'), home.component)
       if (home.styles !== undefined && home.stylesFileName !== undefined) {
         writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
@@ -364,10 +368,11 @@ export async function tryServeStudioProjectRoutes(
       // later opens at the right width without being resized by hand.
       const platform = body.platform ?? DEFAULT_PROJECT_PLATFORM
       writeProjectMeta(dir, { displayName, platform, frameDefaults: frameDefaultsForPlatform(platform) })
-      // Design system + its declared dependency, copied from the local seed —
-      // AFTER the scaffolder's own files, which the seed never overwrites.
-      // Best-effort: a project without a seed is exactly what it used to be.
-      // See `projectSeed.ts` for why this copies rather than installs.
+      // `package.json`, the built-in design system's own folder, and whatever
+      // a prepared seed carries — AFTER the scaffolder's own files, which the
+      // seed never overwrites. Best-effort: a project that could not be seeded
+      // is exactly what it would have been. See `projectSeed.ts` for why the
+      // design system is a folder in the project rather than a dependency.
       applyProjectSeed(dir)
       // `CLAUDE.md` + the design-system references, written now rather than on
       // the first chat turn — a project is never briefly one where the design

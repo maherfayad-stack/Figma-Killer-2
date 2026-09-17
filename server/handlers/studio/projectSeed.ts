@@ -5,61 +5,56 @@
  * ## Why this exists
  *
  * "New project" scaffolded `pages/Home.tsx`, its stylesheet, and
- * `.studio/meta.json` — nothing else. No `package.json`, no `node_modules`, no
- * design system. The consequences only surfaced once an agent tried to build
- * in one of those projects:
+ * `.studio/meta.json` — nothing else. No `package.json` and no design system.
+ * The consequences only surfaced once an agent tried to build in one of those
+ * projects: there was no design-system component to reach for,
+ * `.claude/design-system.md` generated with nothing to index, and the
+ * fallback the agent took was re-implementing the design system by hand in
+ * inline styles with raw hex — which is both wrong and what made a generated
+ * screen not match its Figma source.
  *
- *   - `componentPackages` resolves to `[]`, so there is no design-system
- *     COMPONENT to reach for and `studio_list_components` is empty.
- *   - `.claude/design-system.md` generates with nothing to index, so the
- *     agent's main discovery route is blank.
- *   - Reaching for the design system anyway means writing an import for a
- *     package that is not installed, which resolves to nothing and breaks the
- *     user's build — observed exactly that way.
+ * ## A folder in the project, not a dependency
  *
- * The alternative the agent falls back to is re-implementing the design system
- * by hand in inline styles with raw hex, which is both wrong and what made a
- * generated screen not match its Figma source.
+ * The design system arrives as `<project>/design-system/`, written from
+ * Studio's own vendored copy by `./designSystemFiles.ts`. Nothing is fetched,
+ * nothing is installed and nothing is executed, so this is Tier-0-safe by
+ * construction (a new project is `DEFAULT_TRUST_TIER`, where running the
+ * project's own package manager is refused — see `installDeps.ts`) and needs
+ * no registry to be reachable.
  *
- * ## A copied cache, not an install
+ * It used to be a copy of `@alm-design/design-system` into the project's own
+ * `node_modules`, plus a `package.json` entry declaring it. That produced a
+ * project whose "Download the code" zip named a dependency the registry has
+ * never heard of — `node_modules/` is excluded from the download — so the
+ * unzipped copy could not `bun install`. The folder is the fix; see
+ * `./designSystemFiles.ts` for the full contract.
  *
- * The seed is COPIED from a local directory, never fetched and never executed.
- * That matters for two reasons:
+ * ## The prepared seed
  *
- *   1. **Trust tier.** A new project is Tier 0 (`DEFAULT_TRUST_TIER`), where
- *      running the project's own toolchain — including a package manager — is
- *      refused (`installDeps.ts`). Copying bytes runs nothing, so it is
- *      Tier-0-safe by construction and needs no promotion.
- *   2. **Determinism and offline.** Project creation is a UI click that must
- *      not depend on a registry being reachable, or take the 30s–3min a real
- *      install does.
- *
- * A symlink to one shared copy would be cheaper on disk and is deliberately
- * NOT used: Studio's own path guards containment-check the REAL path after
- * resolving symlinks (`isRealpathContained`, `resolveSafeWorkspaceFile`), so a
- * link pointing outside the project is rejected by the very rules that keep a
- * malicious import from escaping the workspace. Weakening those to save disk
- * would be a bad trade.
- *
- * ## Layout
- *
- * The seed directory is just a partial project — whatever top-level entries it
- * holds are copied in as-is (`node_modules/`, `styles/imported/`,
- * `package.json`, …). Adding to the seed later needs no change here.
+ * `.data/studio-seed` stays, and is now the ONLY thing this module copies. It
+ * is the way to start every new project in this installation with something
+ * of your own — a house `tsconfig.json`, a `styles/` folder, an `AGENTS.md` —
+ * and it is opt-in: absent (the normal case) simply means nothing extra.
+ * Whatever top-level entries it holds are copied in as-is, so adding to it
+ * later needs no change here.
  *
  * Seeding is BEST-EFFORT and never fatal: an absent or unreadable seed leaves
  * the project exactly as it would have been before this existed. Creating a
  * project must not fail because an optional convenience is missing.
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { cpSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { PROJECT_DESIGN_SYSTEM_DIR } from './builtinDesignSystem'
+import { ensureDesignSystemFiles } from './designSystemFiles'
+import { mergeShellPackageJson } from './prototypeShell'
+import { mergeStudioMeta } from './studioMeta'
 
 /**
  * Where a PREPARED seed lives, when one exists. `.data/` is already the
  * private, git-ignored home for local runtime state (the Claude CLI config dir
- * sits beside it). When this directory is absent — the normal case, since
- * nothing populates it automatically — {@link applyProjectSeed} falls back to
- * copying the design system out of Studio's own `node_modules`.
+ * sits beside it). When this directory is absent — the normal case — a new
+ * project still gets its manifest and its design-system folder; there is just
+ * nothing extra to copy.
  */
 export function resolveProjectSeedDir(env: Record<string, string | undefined> = process.env): string {
   const configured = env.STUDIO_PROJECT_SEED_DIR
@@ -67,121 +62,78 @@ export function resolveProjectSeedDir(env: Record<string, string | undefined> = 
 }
 
 export interface ProjectSeedResult {
-  /** Top-level entries actually copied, in the order they were applied. */
+  /** Top-level entries actually written, in the order they were applied. */
   copied: string[]
   /** Entries skipped because the new project already had them — the scaffolder's own files always win. */
   skipped: string[]
 }
 
 /**
- * Copy the seed into `projectDir`.
+ * Give `projectDir` its manifest, its design system, and whatever the prepared
+ * seed carries.
  *
- * An entry the project ALREADY has is skipped rather than overwritten: the
- * project scaffolder writes `pages/` and `.studio/` first, and those are the
- * authoritative ones. This ordering is what lets the seed carry a `pages/`
- * directory in future without clobbering the starter page.
+ * Order is load-bearing in one direction only: the prepared seed is copied
+ * FIRST and an entry the project already has is skipped rather than
+ * overwritten, because the project scaffolder writes `pages/` and `.studio/`
+ * before calling this and those are the authoritative ones. `package.json` is
+ * then MERGED (never clobbered — an existing value always wins), which is the
+ * same rule, expressed by the one function that already owns that manifest.
  */
+export interface ProjectSeedOptions {
+  /** Where the prepared seed lives. Defaults to {@link resolveProjectSeedDir}. */
+  seedDir?: string
+  /** Studio's vendored design-system package root. Overridden only by tests, which build a small fake one. */
+  designSystemSourceDir?: string
+}
+
 export function applyProjectSeed(
   projectDir: string,
-  seedDir: string = resolveProjectSeedDir(),
+  options: ProjectSeedOptions = {},
 ): ProjectSeedResult {
+  const seedDir = options.seedDir ?? resolveProjectSeedDir()
   const result: ProjectSeedResult = { copied: [], skipped: [] }
-  if (!existsSync(seedDir) || !statSync(seedDir).isDirectory()) {
-    return seedFromAppInstall(projectDir, result)
-  }
 
-  for (const entry of readdirSync(seedDir)) {
-    const target = join(projectDir, entry)
-    if (existsSync(target)) {
-      result.skipped.push(entry)
-      continue
+  if (existsSync(seedDir) && statSync(seedDir).isDirectory()) {
+    for (const entry of readdirSync(seedDir)) {
+      const target = join(projectDir, entry)
+      if (existsSync(target)) {
+        result.skipped.push(entry)
+        continue
+      }
+      try {
+        cpSync(join(seedDir, entry), target, { recursive: true, dereference: true })
+        result.copied.push(entry)
+      } catch (err) {
+        // One unreadable entry must not abort the rest of the seed, and must
+        // never fail the project creation that called this.
+        console.error(`[studio/projectSeed] failed to copy "${entry}":`, err)
+      }
     }
-    try {
-      cpSync(join(seedDir, entry), target, { recursive: true, dereference: true })
-      result.copied.push(entry)
-    } catch (err) {
-      // One unreadable entry must not abort the rest of the seed, and must
-      // never fail the project creation that called this.
-      console.error(`[studio/projectSeed] failed to copy "${entry}":`, err)
-    }
   }
-
-  return result
-}
-
-/** The design system every Studio project is expected to build with. */
-const SEED_PACKAGE = '@alm-design/design-system'
-
-/**
- * The fallback when no seed directory has been prepared: copy the design
- * system straight out of **Studio's own `node_modules`**.
- *
- * `.data/studio-seed` is opt-in and, in practice, nobody populates it — so
- * every "New project" came out with no `package.json` and no design system at
- * all, which is the exact failure this module's own doc comment describes.
- * Studio itself depends on `@alm-design/design-system`, so a correct copy is
- * already sitting on disk on any machine that can run the server. Using it
- * needs no setup step, no registry, and no install — the same copied-bytes,
- * Tier-0-safe property the configured seed has.
- *
- * A prepared seed directory still wins when one exists: it is the way to seed
- * something *other* than Studio's own dependency set.
- *
- * The `package.json` is written to match — declaring the dependency at the
- * version actually copied — because `componentPackages` (and therefore the
- * whole design-system half of the generated project guide) is read from the
- * manifest, not from what happens to be in `node_modules`. Copying the
- * package without declaring it would produce a project whose design system is
- * present but invisible to every detector.
- */
-function seedFromAppInstall(projectDir: string, result: ProjectSeedResult): ProjectSeedResult {
-  const source = join(process.cwd(), 'node_modules', ...SEED_PACKAGE.split('/'))
-  if (!existsSync(source)) return result
 
   try {
-    const target = join(projectDir, 'node_modules', ...SEED_PACKAGE.split('/'))
-    if (existsSync(target)) {
-      result.skipped.push('node_modules')
-    } else {
-      mkdirSync(dirname(target), { recursive: true })
-      cpSync(source, target, { recursive: true, dereference: true })
-      result.copied.push('node_modules')
-    }
+    // react + react-dom + vite + @vitejs/plugin-react and the three scripts —
+    // and deliberately NO design-system dependency. The design system is a
+    // folder in the project now, so an unzipped copy installs only what npm
+    // can actually serve.
+    if (mergeShellPackageJson(projectDir)) result.copied.push('package.json')
+    else result.skipped.push('package.json')
 
-    const manifestPath = join(projectDir, 'package.json')
-    if (existsSync(manifestPath)) {
-      result.skipped.push('package.json')
-    } else {
-      writeFileSync(manifestPath, `${JSON.stringify(seedManifest(source), null, 2)}\n`)
-      result.copied.push('package.json')
-    }
+    // The write-side authority for "Studio maintains this project's
+    // design-system folder". Set before the folder is written, because
+    // `ensureDesignSystemFiles` reads it as its own gate.
+    mergeStudioMeta(projectDir, { designSystem: 'alm' })
+    const designSystem = ensureDesignSystemFiles(
+      projectDir,
+      options.designSystemSourceDir ? { sourceDir: options.designSystemSourceDir } : {},
+    )
+    if (designSystem.written.length > 0) result.copied.push(PROJECT_DESIGN_SYSTEM_DIR)
+    else result.skipped.push(PROJECT_DESIGN_SYSTEM_DIR)
   } catch (err) {
-    // Same posture as the configured-seed path: a project that could not be
+    // Same posture as the prepared-seed path: a project that could not be
     // seeded is exactly the project it would have been before this existed.
-    console.error('[studio/projectSeed] failed to seed from Studio\'s own install:', err)
+    console.error('[studio/projectSeed] failed to seed the design system:', err)
   }
 
   return result
-}
-
-/** A minimal project manifest declaring the copied package at the version actually on disk. */
-function seedManifest(packageDir: string): Record<string, unknown> {
-  return {
-    name: 'studio-project',
-    private: true,
-    type: 'module',
-    dependencies: { [SEED_PACKAGE]: `^${readPackageVersion(packageDir) ?? '1.0.0'}` },
-  }
-}
-
-/** The copied package's own `version`, or `undefined` if its manifest is missing or unreadable — never a guessed one. */
-function readPackageVersion(packageDir: string): string | undefined {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return undefined
-    const version = (parsed as { version?: unknown }).version
-    return typeof version === 'string' ? version : undefined
-  } catch {
-    return undefined
-  }
 }

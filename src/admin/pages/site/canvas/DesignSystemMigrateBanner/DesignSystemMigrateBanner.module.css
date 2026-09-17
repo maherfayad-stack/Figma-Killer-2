@@ -1,12 +1,12 @@
 /**
- * StyleCompileConsentBanner — one card in the board's bottom-centre banner
- * stack (`../BoardBanners/`), which owns the positioning and the stacking
- * tier. This file owns only what the card looks like.
+ * DesignSystemMigrateBanner — one card in the board's bottom-centre banner
+ * stack (`../BoardBanners/`), which owns the positioning. This file owns only
+ * what the card looks like.
  *
- * `--warning` carries the meaning it carries everywhere else in this codebase
- * (see globals.css's canvas-comment-pin-stale note): not broken, but do not
- * trust it yet. That is exactly the state a Tier 0 project with an uncompiled
- * toolchain is in.
+ * `--warning` carries the meaning it carries everywhere else in this codebase:
+ * not broken, but do not trust it yet. A project importing a package that no
+ * longer exists is exactly that — it still renders on the board from Studio's
+ * own copy of the design system, and it does not build anywhere else.
  */
 .banner {
     display: flex;
@@ -62,8 +62,8 @@
     gap: var(--space-2xs);
 }
 
-/* On a narrow board the two actions stop fitting beside the copy — stack the
-   whole card instead of letting the buttons squeeze the text to one word a line. */
+/* On a narrow board the action stops fitting beside the copy — stack the whole
+   card instead of letting the button squeeze the text to one word a line. */
 @media (max-width: 900px) {
     .banner {
         flex-wrap: wrap;

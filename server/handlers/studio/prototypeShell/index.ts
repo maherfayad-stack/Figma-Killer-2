@@ -58,6 +58,7 @@ import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { discoverPageFiles, projectPagesDir } from '../../studioProjects'
 import { assignPageIds } from '../../studioPageIds'
+import { isDesignSystemBacked } from '../builtinDesignSystem'
 import { readStudioMeta } from '../studioMeta'
 import { readPrototypeFile } from '../prototypeStore'
 import { generatedShellFiles, hasLanguageContext, readBoardsForShell, type ShellScreen } from './registryFile'
@@ -173,8 +174,14 @@ function writeIfDifferent(absPath: string, contents: string): boolean {
  * A workspace that pins its own React, or already has a `dev` script pointing
  * somewhere else, keeps both — the shell adds what is missing and nothing
  * more. Returns whether the file changed.
+ *
+ * Exported because `../projectSeed.ts` needs exactly this manifest at CREATION
+ * time (before the project has ever been opened, and before anything would
+ * call `ensurePrototypeShell`). One definition of what a Studio project's
+ * `package.json` declares — react, react-dom, vite, `@vitejs/plugin-react` and
+ * the three scripts — rather than a copy in the seed that drifts from it.
  */
-function mergePackageJson(dir: string): boolean {
+export function mergeShellPackageJson(dir: string): boolean {
   const file = join(dir, 'package.json')
   const existing = existsSync(file)
     ? parseJsonWithFallback(readFileSync(file, 'utf8'), PackageJsonShape, {}) as Record<string, unknown>
@@ -263,7 +270,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       writeIfDifferent(manifestPath, `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`)
     }
 
-    if (mergePackageJson(dir)) result.created.push('package.json')
+    if (mergeShellPackageJson(dir)) result.created.push('package.json')
 
     const meta = readStudioMeta(dir)
     const generated: ShellFile[] = generatedShellFiles({
@@ -285,7 +292,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       colorScheme: meta.profile?.colorScheme ?? null,
       hasLanguageProvider: hasLanguageContext(dir),
       locales: collectLocales(dir),
-      hasDesignSystem: hasDesignSystemDependency(dir),
+      hasDesignSystem: isDesignSystemBacked(dir),
       links: readPrototypeFile(dir).links,
     })
 
@@ -300,15 +307,4 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
   }
 
   return result
-}
-
-/** True when the workspace declares `@alm-design/design-system` — the provider stack differs if it does. */
-function hasDesignSystemDependency(dir: string): boolean {
-  const file = join(dir, 'package.json')
-  if (!existsSync(file)) return false
-  const pkg = parseJsonWithFallback(readFileSync(file, 'utf8'), PackageJsonShape, {}) as {
-    dependencies?: Record<string, string>
-    devDependencies?: Record<string, string>
-  }
-  return Boolean(pkg.dependencies?.['@alm-design/design-system'] ?? pkg.devDependencies?.['@alm-design/design-system'])
 }

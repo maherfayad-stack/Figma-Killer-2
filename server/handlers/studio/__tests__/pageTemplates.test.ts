@@ -11,10 +11,10 @@
  * has to clear the same bar, so the check runs over EVERY kind rather than the
  * one that happened to exist first.
  *
- * **Dependency-free.** Most projects have no design-system package installed,
- * so a template that imported one would be a broken file the moment it landed.
- * The templates take their geometry from the design system; they must not take
- * their code from it.
+ * **Dependency-free.** Most projects carry no `design-system/` folder, so a
+ * template that imported one would be a broken file the moment it landed. The
+ * plain templates take their geometry from the design system; they must not
+ * take their code from it.
  *
  * **A 16px spacing floor.** This is the most copied code in any Studio
  * project, so the scale it ships is the scale everything written afterwards
@@ -26,8 +26,27 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { checkCanonicalJsx, parsePageFile } from '@core/page-parser'
 import { PAGE_KINDS, type PageKind } from '@core/studio-board'
-import { detectPageTemplateKit, pageNameBase, starterPage, type PageTemplateKit } from '../pageTemplates'
+import {
+  detectPageTemplateKit,
+  pageNameBase,
+  starterPage,
+  type PageTemplateKit,
+  type StarterPageFiles,
+} from '../pageTemplates'
 import { createScaffoldedPage } from '../pageScaffold'
+
+/**
+ * The specifier a page in `pages/` imports the project's design-system folder
+ * by — the depth every template in this file is written for. `starterPage`
+ * takes it as a parameter because a page one directory deeper needs
+ * `'../../design-system'`; `designSystemImportSpecifier` is what computes it
+ * for real, and `designSystemFiles.test.ts` is where that is tested.
+ */
+const PAGES_DESIGN_SYSTEM_IMPORT = '../design-system'
+
+function starter(componentName: string, kind: PageKind, kit: PageTemplateKit = 'plain'): StarterPageFiles {
+  return starterPage(componentName, kind, { kit, designSystemImport: PAGES_DESIGN_SYSTEM_IMPORT })
+}
 
 let tmpDir: string
 
@@ -43,18 +62,18 @@ afterEach(() => {
 function scaffoldAndParse(componentName: string, kind: PageKind, kit: PageTemplateKit = 'plain') {
   const pagesDir = path.join(tmpDir, 'pages')
   fs.mkdirSync(pagesDir, { recursive: true })
-  const starter = starterPage(componentName, kind, kit)
+  const files = starter(componentName, kind, kit)
   const file = path.join(pagesDir, `${componentName}.tsx`)
-  fs.writeFileSync(file, starter.component)
-  if (starter.styles !== undefined && starter.stylesFileName !== undefined) {
-    fs.writeFileSync(path.join(pagesDir, starter.stylesFileName), starter.styles)
+  fs.writeFileSync(file, files.component)
+  if (files.styles !== undefined && files.stylesFileName !== undefined) {
+    fs.writeFileSync(path.join(pagesDir, files.stylesFileName), files.styles)
   }
-  return { starter, page: parsePageFile(file, tmpDir) }
+  return { starter: files, page: parsePageFile(file, tmpDir) }
 }
 
 /** The CSS module a kind produces under the plain kit. Every plain kind has one. */
 function plainCss(kind: PageKind): string {
-  const styles = starterPage('Frame', kind, 'plain').styles
+  const styles = starter('Frame', kind, 'plain').styles
   if (styles === undefined) throw new Error(`plain ${kind} unexpectedly has no stylesheet`)
   return styles
 }
@@ -68,7 +87,7 @@ function everyStylesheet(): { kind: PageKind; kit: PageTemplateKit; css: string 
   const sheets: { kind: PageKind; kit: PageTemplateKit; css: string }[] = []
   for (const kit of ['plain', 'alm'] as const) {
     for (const preset of PAGE_KINDS) {
-      const css = starterPage('Frame', preset.kind, kit).styles
+      const css = starter('Frame', preset.kind, kit).styles
       if (css !== undefined) sheets.push({ kind: preset.kind, kit, css })
     }
   }
@@ -124,7 +143,7 @@ describe('starterPage', () => {
 
   it('uses the page name as the heading, so a scaffolded frame names itself', () => {
     for (const preset of PAGE_KINDS) {
-      expect(starterPage('Checkout', preset.kind).component).toContain('>Checkout<')
+      expect(starter('Checkout', preset.kind).component).toContain('>Checkout<')
     }
   })
 
@@ -170,7 +189,7 @@ describe('starterPage', () => {
     // The way out of a sheet is where the thumb already is. The alm kit gets
     // this from `onClose`; the plain kit has to draw it.
     for (const kind of ['sheet-small', 'sheet-large'] as const) {
-      expect(starterPage('Frame', kind, 'plain').component).toContain('aria-label="Close"')
+      expect(starter('Frame', kind, 'plain').component).toContain('aria-label="Close"')
       expect(plainCss(kind)).toContain('.close')
     }
   })
@@ -249,15 +268,15 @@ describe('starterPage', () => {
 
 describe('the alm kit', () => {
   it('scaffolds the design system\'s own sheet, not a hand-rolled copy', () => {
-    const small = starterPage('Frame', 'sheet-small', 'alm')
-    expect(small.component).toContain("import { BottomSheet } from '@alm-design/design-system'")
+    const small = starter('Frame', 'sheet-small', 'alm')
+    expect(small.component).toContain("import { BottomSheet } from '../design-system'")
     // `open` MUST be present: `.bottom-sheet` is `opacity: 0` until
     // `.bottom-sheet--open`, so a sheet without it renders invisible.
     expect(small.component).toContain('<BottomSheet open')
     expect(small.component).toContain('size="small"')
     // Big is the package's own `fullscreen`, not `medium` — `medium` is a tall
     // floating card, which is a different object from a screen you are inside.
-    expect(starterPage('Frame', 'sheet-large', 'alm').component).toContain('size="fullscreen"')
+    expect(starter('Frame', 'sheet-large', 'alm').component).toContain('size="fullscreen"')
   })
 
   it('passes onClose, which is what draws the sheet\'s close button', () => {
@@ -265,22 +284,22 @@ describe('the alm kit', () => {
     // without it the toolbar's leading slot is an empty div. A no-op is honest
     // for a still frame — there is nothing to close.
     for (const kind of ['sheet-small', 'sheet-large'] as const) {
-      expect(starterPage('Frame', kind, 'alm').component).toContain('onClose={() => {}}')
+      expect(starter('Frame', kind, 'alm').component).toContain('onClose={() => {}}')
     }
   })
 
   it('scaffolds the design system\'s own dialog', () => {
-    const popup = starterPage('Frame', 'popup', 'alm')
-    expect(popup.component).toContain("import { Dialog } from '@alm-design/design-system'")
+    const popup = starter('Frame', 'popup', 'alm')
+    expect(popup.component).toContain("import { Dialog } from '../design-system'")
     // `Dialog` has no `open` — it renders whenever it is mounted.
     expect(popup.component).not.toContain('<Dialog open')
   })
 
   it('writes no stylesheet for the dialog — it takes its whole shape from props', () => {
-    const starter = starterPage('Frame', 'popup', 'alm')
-    expect(starter.styles).toBeUndefined()
-    expect(starter.stylesFileName).toBeUndefined()
-    expect(starter.component).not.toContain('module.css')
+    const files = starter('Frame', 'popup', 'alm')
+    expect(files.styles).toBeUndefined()
+    expect(files.stylesFileName).toBeUndefined()
+    expect(files.component).not.toContain('module.css')
   })
 
   /**
@@ -296,15 +315,15 @@ describe('the alm kit', () => {
    */
   it('pads the sheet content slot, which is the one thing the package leaves to the caller', () => {
     for (const kind of ['sheet-small', 'sheet-large'] as const) {
-      const starter = starterPage('Frame', kind, 'alm')
-      expect(starter.stylesFileName).toBe('Frame.module.css')
-      expect(starter.styles).toContain('padding: var(--space)')
+      const files = starter('Frame', kind, 'alm')
+      expect(files.stylesFileName).toBe('Frame.module.css')
+      expect(files.styles).toContain('padding: var(--space)')
       // The wrapper is what carries the inset — the blurb alone would pad one
       // paragraph and leave anything added beside it flush to the edge.
-      expect(starter.component).toContain('<div className={styles.content}>')
+      expect(files.component).toContain('<div className={styles.content}>')
       // Without this, the browser's default `1em` block margin stacks on the
       // padding and the first line sits 32px down instead of 16px.
-      expect(starter.styles).toContain('.blurb {\n  margin: 0;\n}')
+      expect(files.styles).toContain('.blurb {\n  margin: 0;\n}')
     }
   })
 
@@ -315,37 +334,54 @@ describe('the alm kit', () => {
    * template had an import of its own.
    */
   it('puts the stylesheet import below the package import, not above it', () => {
-    const lines = starterPage('Frame', 'sheet-small', 'alm').component.split('\n')
-    expect(lines[0]).toBe("import { BottomSheet } from '@alm-design/design-system'")
+    const lines = starter('Frame', 'sheet-small', 'alm').component.split('\n')
+    expect(lines[0]).toBe("import { BottomSheet } from '../design-system'")
     expect(lines[1]).toBe("import styles from './Frame.module.css'")
     expect(lines[2]).toBe('')
   })
 
   it('scaffolds a screen the same way under either kit — a screen IS the shell', () => {
-    expect(starterPage('Frame', 'screen', 'alm')).toEqual(starterPage('Frame', 'screen', 'plain'))
+    expect(starter('Frame', 'screen', 'alm')).toEqual(starter('Frame', 'screen', 'plain'))
   })
 })
 
 describe('detectPageTemplateKit', () => {
-  function withPackageJson(contents: string): string {
+  function withDesignSystemFolder(): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-'))
-    fs.writeFileSync(path.join(dir, 'package.json'), contents)
+    fs.mkdirSync(path.join(dir, 'design-system'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'design-system', 'index.js'), 'export {}\n')
     return dir
   }
 
-  it('picks the alm kit for a project that actually depends on the design system', () => {
-    const dir = withPackageJson(JSON.stringify({ dependencies: { '@alm-design/design-system': '^1.0.0' } }))
+  it('picks the alm kit for a project carrying the design-system folder', () => {
+    const dir = withDesignSystemFolder()
     expect(detectPageTemplateKit(dir)).toBe('alm')
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('picks the plain kit for a project without it', () => {
-    const dir = withPackageJson(JSON.stringify({ dependencies: { react: '^19.0.0' } }))
+  it('picks the plain kit for a project without the folder, whatever its manifest says', () => {
+    // A leftover dependency on the retired npm is NOT the kit gate any more:
+    // the package does not exist, so scaffolding an import of it would write a
+    // file that cannot resolve. The folder is the only evidence that counts.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-'))
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ dependencies: { '@alm-design/design-system': '^1.0.0' } }),
+    )
     expect(detectPageTemplateKit(dir)).toBe('plain')
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('picks the plain kit when there is no package.json at all', () => {
+  it('picks the plain kit for a folder that exists but has no entry file', () => {
+    // Half-written (an interrupted `ensureDesignSystemFiles`) is not backed:
+    // `index.js` is what an import of `'../design-system'` resolves to.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-'))
+    fs.mkdirSync(path.join(dir, 'design-system'), { recursive: true })
+    expect(detectPageTemplateKit(dir)).toBe('plain')
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('picks the plain kit for a bare folder of .tsx files', () => {
     // A hand-authored folder with nothing but .tsx files in it is a real,
     // supported shape — it must not scaffold an import it cannot resolve.
     expect(detectPageTemplateKit(tmpDir)).toBe('plain')

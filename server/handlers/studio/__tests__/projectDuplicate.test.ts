@@ -33,10 +33,11 @@ function makeProject(folder: string, displayName?: string): string {
   fs.mkdirSync(path.join(dir, 'pages'), { recursive: true })
   fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'export default function Home() { return <div /> }\n')
   // A real `package.json`, because `generateStudioProjectGuide` heals a
-  // project that has none by applying the design-system SEED — which writes
-  // `node_modules/@alm-design` into the target. That is correct behaviour for
-  // a project with no manifest, and it would make the "nothing regenerable was
-  // copied" case below assert the seed rather than the filter.
+  // project that has none by applying the SEED — which writes a manifest and
+  // the built-in design system's own `design-system/` folder into the target.
+  // That is correct behaviour for a project with no manifest, and it would
+  // make the "nothing regenerable was copied" case below assert the seed
+  // rather than the filter.
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: folder, dependencies: {} }))
   if (displayName) writeStudioMeta(dir, { displayName })
   return dir

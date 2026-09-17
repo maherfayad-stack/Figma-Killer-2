@@ -136,7 +136,7 @@ describe('scaffoldedPageRootNodeId', () => {
     const pagesDir = path.join(tmpDir, 'pages')
     fs.mkdirSync(pagesDir, { recursive: true })
     const file = path.join(pagesDir, 'Home.tsx')
-    const starter = starterPage('Home', 'screen')
+    const starter = starterPage('Home', 'screen', { kit: 'plain', designSystemImport: '../design-system' })
     fs.writeFileSync(file, starter.component)
     fs.writeFileSync(path.join(pagesDir, starter.stylesFileName), starter.styles)
     const rootNodeId = scaffoldedPageRootNodeId(tmpDir, file)

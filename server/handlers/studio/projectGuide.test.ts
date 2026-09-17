@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateStudioProjectGuide } from './projectGuide'
 import { buildDesignSystemGuide, renderComponentReference, renderIconReference } from './designSystemGuide'
+import { readStudioMeta } from './studioMeta'
 
 function write(root: string, relPath: string, contents: string): void {
   const full = join(root, ...relPath.split('/'))
@@ -210,17 +211,25 @@ describe('generateStudioProjectGuide', () => {
   it('heals a project that has no design system at all, not just newly created ones', () => {
     // Seeding at project creation only ever helps projects created after the
     // seed existed. Every older project — and any project whose contents were
-    // cleared — stayed permanently empty: no `componentPackages`, so
+    // cleared — stayed permanently empty: no design system on disk, so
     // `design-system-components.md` never generated, while `CLAUDE.md` told
     // the agent to read it. Observed exactly that way, twice.
+    //
+    // DS-2 changed WHAT the heal writes: a `package.json` with no
+    // design-system dependency, plus the `designSystem: 'alm'` mark that makes
+    // Studio maintain the project's own `design-system/` folder from here on.
+    // The folder itself needs Studio's vendored copy, which DS-1 adds — so on
+    // a checkout without `vendor/alm-design-system/` the mark is written and
+    // the folder is not, which is exactly the degrade-honestly behaviour
+    // `ensureDesignSystemFiles` promises.
     rmSync(join(dir, 'package.json'))
     expect(existsSync(join(dir, 'package.json'))).toBe(false)
 
-    const result = generateStudioProjectGuide(dir)
+    generateStudioProjectGuide(dir)
 
     expect(existsSync(join(dir, 'package.json'))).toBe(true)
-    expect(result.written).toContain('.claude/design-system-components.md')
-    expect(read(dir, '.claude/design-system-components.md')).toContain("from '@alm-design/design-system'")
+    expect(read(dir, 'package.json')).not.toContain('alm-design')
+    expect(readStudioMeta(dir).designSystem).toBe('alm')
   })
 
   it('leaves a project that has its own package.json alone', () => {

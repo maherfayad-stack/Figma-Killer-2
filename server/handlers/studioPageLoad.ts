@@ -75,6 +75,7 @@ import type { Page } from '@core/page-tree'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
+import { ensureDesignSystemFiles } from './studio/designSystemFiles'
 import { ensurePrototypeShell } from './studio/prototypeShell'
 import {
   getCachedRouteParse,
@@ -573,6 +574,13 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   // skipped exactly when the boards it reads have changed. It never throws and
   // writes nothing when nothing changed.
   ensurePrototypeShell(dir)
+  // And the design system this project carries a copy of, for the same reason
+  // and in the same place: a project whose `design-system/` folder is stale
+  // relative to Studio's own vendored copy is one whose canvas and whose
+  // `npm run dev` disagree. A no-op unless `.studio/meta.json` says this
+  // project is design-system-backed AND the content hash has moved; never
+  // throws. See `./studio/designSystemFiles.ts`.
+  ensureDesignSystemFiles(dir)
 
   const fingerprint = workspaceLoadFingerprint(dir)
   const memoized = getMemoizedStudioLoad(dir, fingerprint)
