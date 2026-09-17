@@ -57,6 +57,7 @@ import {
   readBytesWithLimit,
   writeArchiveToWorkspace,
 } from './studio/archiveIngest'
+import { isGithubOwnerSegment, isGithubRepoSegment } from './studio/gitPaths'
 
 /** Thrown for every rejection `runGithubImport` wants mapped to a specific HTTP status. */
 export class GithubImportError extends ArchiveIngestError {
@@ -82,8 +83,6 @@ function asGithubImportError(err: unknown): never {
 }
 
 const GITHUB_HOSTS = new Set(['github.com', 'www.github.com'])
-/** GitHub owner/repo names: alphanumeric plus `-`, `_`, `.`. */
-const SAFE_REPO_SEGMENT = /^[A-Za-z0-9_.-]+$/
 
 /**
  * Parses a GitHub repository URL into `{ owner, repo }`. Pure — no network,
@@ -91,8 +90,10 @@ const SAFE_REPO_SEGMENT = /^[A-Za-z0-9_.-]+$/
  * trailing `.git`, a trailing slash, and extra path segments after the repo
  * name (e.g. `/tree/main`, from copying the address bar on a branch view).
  * Returns `null` for anything else: wrong host, non-http(s) protocol, a
- * missing repo segment, or an owner/repo containing characters outside
- * GitHub's safe segment charset.
+ * missing repo segment, or an owner/repo that is not a GitHub-legal name
+ * (`isGithubOwnerSegment`/`isGithubRepoSegment` in `studio/gitPaths.ts` — the
+ * same judgement the git routes apply, so the zipball import and `git clone`
+ * cannot disagree about what a repository is called).
  */
 export function parseGithubRepoUrl(input: string): { owner: string; repo: string } | null {
   let parsed: URL
@@ -109,7 +110,9 @@ export function parseGithubRepoUrl(input: string): { owner: string; repo: string
 
   const owner = segments[0]
   const repo = segments[1].replace(/\.git$/i, '')
-  if (!SAFE_REPO_SEGMENT.test(owner) || !SAFE_REPO_SEGMENT.test(repo)) return null
+  // The same owner/repo judgement the git routes use (`studio/gitPaths.ts`) —
+  // one rule, not a second copy of a charset that drifted from it.
+  if (!isGithubOwnerSegment(owner) || !isGithubRepoSegment(repo)) return null
 
   return { owner, repo }
 }

@@ -77,6 +77,37 @@ describe('parseGithubRepoUrl', () => {
   it('rejects an owner/repo with unsafe characters', () => {
     expect(parseGithubRepoUrl('https://github.com/acme/wid$gets')).toBeNull()
   })
+
+  /**
+   * The zipball import shares the git routes' owner/repo judgement
+   * (`studio/gitPaths.ts`) rather than keeping its own charset copy, so the
+   * two cannot disagree about what a repository is called. These drive the
+   * rules the charset alone never had (`sec-13`).
+   */
+  it('rejects a dots-only owner or repo, and a name GitHub could never issue', () => {
+    for (const hostile of [
+      'https://github.com/./widgets',
+      'https://github.com/acme/..',
+      'https://github.com/acme/.',
+      'https://github.com/%2e%2e/widgets',
+      'https://github.com/-acme/widgets',
+      'https://github.com/acme-/widgets',
+      'https://github.com/acme/-widgets',
+      `https://github.com/${'a'.repeat(40)}/widgets`,
+      `https://github.com/acme/${'a'.repeat(101)}`,
+    ]) {
+      expect(parseGithubRepoUrl(hostile)).toBeNull()
+    }
+  })
+
+  it('still accepts `.github`, dotted and underscored names, and the exact ceilings', () => {
+    expect(parseGithubRepoUrl('https://github.com/acme/.github')).toEqual({ owner: 'acme', repo: '.github' })
+    expect(parseGithubRepoUrl('https://github.com/my_org/socket.io')).toEqual({ owner: 'my_org', repo: 'socket.io' })
+    expect(parseGithubRepoUrl(`https://github.com/${'a'.repeat(39)}/${'b'.repeat(100)}`)).toEqual({
+      owner: 'a'.repeat(39),
+      repo: 'b'.repeat(100),
+    })
+  })
 })
 
 describe('buildGithubZipballUrl', () => {
