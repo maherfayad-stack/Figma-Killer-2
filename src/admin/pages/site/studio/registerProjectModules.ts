@@ -53,7 +53,7 @@
  *     any parsing/bundling happens) so a project that DOES depend on a
  *     component package gets an honest, actionable refusal
  *     (`trust-tier-required`) recorded via `setPackageBundleStatus` — surfaced
- *     by `ModulePicker.tsx`/`ModuleInserterDialog.tsx` with a "Promote
+ *     by `ModulePicker.tsx`/the Assets panel with a "Promote
  *     project" action, and by `PackageComponentPlaceholder.tsx` for a node
  *     already on the board — rather than the picker just staying silently
  *     empty. A project with no component-package dependency at all costs
@@ -161,7 +161,7 @@ const ComponentBundleResponseSchema = Type.Union([
 
 /**
  * Module ids the insert palette hides, across every registered package —
- * consulted by `moduleAvailability` (`moduleInserterModel.ts`) alongside
+ * consulted by `moduleAvailability` (`panels/AssetsPanel/assetsModel.ts`) alongside
  * `PALETTE_HIDDEN_ALM_MODULE_IDS`. Rebuilt wholesale each `syncProjectModules`
  * run (cheap — one pass over the just-fetched component list), not
  * maintained incrementally: this only changes once per project load/switch,
@@ -419,7 +419,7 @@ function unregisterActiveProjectModules(): void {
  * those left `syncProjectModules`'s promise REJECTED with nothing to catch it
  * (`void syncProjectModules(...)` in the hook below) — an unhandled rejection
  * that, in production, also left `PackageComponentPlaceholder`/`ModulePicker`/
- * `ModuleInserterDialog` stuck showing "Loading…" forever, since
+ * the insert palette stuck showing "Loading…" forever, since
  * `setPackageBundleStatus` was never reached. Catching here turns every
  * failure mode into the SAME honest, actionable refusal the `{ ok: false }`
  * branch already gives a structured server refusal — never a silent stall,
@@ -540,7 +540,7 @@ export function resyncActiveProjectModules(): void {
  *     route; the route refuses with `trust-tier-required` BEFORE any
  *     parsing/bundling, and that refusal is recorded via
  *     `setPackageBundleStatus` — read by `ModulePicker.tsx`/
- *     `ModuleInserterDialog.tsx` (picker-level "N components need this project
+ *     the Assets panel (picker-level "N components need this project
  *     promoted" notice) and `PackageComponentPlaceholder.tsx` (per-node, once
  *     one is on the board) — never a silent empty palette. Because the gate is
  *     the route's, every renderer that calls this — the editor canvas and the

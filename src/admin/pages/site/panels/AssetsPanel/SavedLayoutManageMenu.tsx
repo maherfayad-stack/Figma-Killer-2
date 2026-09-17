@@ -1,11 +1,11 @@
 /**
- * SavedLayoutManageMenu — right-click menu on a saved layout in the module
- * inserter: Rename… / Delete.
+ * SavedLayoutManageMenu — right-click menu on a saved layout card in the
+ * Assets panel: Rename… / Delete.
  *
- * Rename routes through the shared `LayoutNameDialog`, which sits on the
- * standard Dialog layer BELOW the spotlight-level inserter — so the inserter
- * closes first. Delete commits immediately (it is a normal undoable site
- * mutation) and confirms via toast, keeping the inserter open.
+ * Rename hands off to the shared `LayoutNameDialog`; delete commits
+ * immediately (a normal undoable site mutation) and confirms via toast. The
+ * panel stays open through both — it is docked chrome, not a modal that had to
+ * get out of a dialog's way.
  */
 
 import {
@@ -28,21 +28,17 @@ interface SavedLayoutManageMenuProps {
   menu: SavedLayoutMenuState
   /** Close just this menu. */
   onClose: () => void
-  /** Close the hosting inserter dialog (rename hands off to LayoutNameDialog). */
-  onCloseInserter: () => void
 }
 
 export function SavedLayoutManageMenu({
   menu,
   onClose,
-  onCloseInserter,
 }: SavedLayoutManageMenuProps) {
   const deleteLayout = useEditorStore((s) => s.deleteLayout)
   const openLayoutNameDialog = useEditorStore((s) => s.openLayoutNameDialog)
 
   function handleRename() {
     onClose()
-    onCloseInserter()
     openLayoutNameDialog({ mode: 'rename', layoutId: menu.layoutId })
   }
 
@@ -53,7 +49,7 @@ export function SavedLayoutManageMenu({
       kind: 'success',
       title: `Deleted layout "${menu.name}"`,
       body: 'Undo with Ctrl/Cmd+Z.',
-      location: 'module-inserter',
+      location: 'assets-panel',
     })
   }
 

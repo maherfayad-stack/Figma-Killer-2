@@ -10,6 +10,7 @@ export type FocusedPanel = 'canvas' | 'domTree' | 'properties' | null
 type FormPreviewState = 'default' | 'submitting' | 'success' | 'error'
 export type LeftSidebarPanelId =
   | 'explorer'
+  | 'assets'
   | 'selectors'
   | 'framework'
   | 'dependencies'
@@ -141,10 +142,6 @@ interface UiSlice {
   // Editor-only form state preview, keyed by base.form node id.
   formPreviewStates: Record<string, FormPreviewState>
 
-  // Module insert picker
-  insertPickerOpen: boolean
-  insertPickerParentId: string | null
-
   // Inline Visual Component extraction editor in the Properties panel.
   componentizeEditorRequest: ComponentizeEditorRequest | null
 
@@ -159,6 +156,7 @@ interface UiSlice {
   // tabs: the Site / Code / Media tabs (and the SiteExplorerPanel /
   // MediaExplorerPanel bodies behind them) were CMS-only surfaces and are gone.
   explorerPanelOpen: boolean
+  assetsPanelOpen: boolean
   selectorsPanelOpen: boolean
   frameworkPanelOpen: boolean
   /** Active tab inside the consolidated Framework panel. */
@@ -210,8 +208,6 @@ interface UiSlice {
   closePreview: () => void
   setFormPreviewState: (formNodeId: string, state: FormPreviewState) => void
 
-  openInsertPicker: (parentId: string) => void
-  closeInsertPicker: () => void
   openComponentizeEditor: (nodeId: string) => void
   clearComponentizeEditorRequest: (requestId: number) => void
   openLayoutNameDialog: (request: LayoutNameDialogRequest) => void
@@ -351,6 +347,7 @@ function getActiveLeftSidebarPanel(state: EditorStore): LeftSidebarPanelId | nul
   // panel is opened, so short-circuit here too.
   if (state.activePluginPanelId !== null) return null
   if (state.explorerPanelOpen) return 'explorer'
+  if (state.assetsPanelOpen) return 'assets'
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
@@ -375,11 +372,10 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   focusedPanel: 'canvas',
   previewOpen: false,
   formPreviewStates: {},
-  insertPickerOpen: false,
-  insertPickerParentId: null,
   componentizeEditorRequest: null,
   layoutNameDialogRequest: null,
   explorerPanelOpen: true,
+  assetsPanelOpen: false,
   selectorsPanelOpen: false,
   frameworkPanelOpen: false,
   frameworkPanelTab: 'home',
@@ -469,12 +465,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.formPreviewStates[formNodeId] = previewState
     }),
 
-  openInsertPicker: (parentId) =>
-    set({ insertPickerOpen: true, insertPickerParentId: parentId }),
-
-  closeInsertPicker: () =>
-    set({ insertPickerOpen: false, insertPickerParentId: null }),
-
   openComponentizeEditor: (nodeId) => {
     const current = get()
     if (current.selectedNodeId !== nodeId || current.selectedNodeIds.length !== 1) {
@@ -520,6 +510,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   setLeftSidebarPanel: (panel) =>
     set((state) => {
       state.explorerPanelOpen = panel === 'explorer'
+      state.assetsPanelOpen = panel === 'assets'
       state.selectorsPanelOpen = panel === 'selectors'
       state.frameworkPanelOpen = panel === 'framework'
       state.dependenciesPanelOpen = panel === 'dependencies'
@@ -545,6 +536,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   setActivePluginPanel: (panelId) =>
     set((state) => {
       state.explorerPanelOpen = false
+      state.assetsPanelOpen = false
       state.selectorsPanelOpen = false
       state.frameworkPanelOpen = false
       state.dependenciesPanelOpen = false

@@ -1,7 +1,7 @@
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { resolveInsertLocation, type InsertLocation } from '@site/store/insertLocation'
 import { pushToast } from '@ui/components/Toast'
-import type { ModuleInserterItem } from '@site/module-picker/moduleInserterModel'
+import type { AssetItem } from '@site/panels/AssetsPanel/assetsModel'
 import { useInsertModule } from './useInsertModule'
 
 /**
@@ -39,7 +39,7 @@ export function useInsertInserterItem() {
   }
 
   return (
-    item: ModuleInserterItem,
+    item: AssetItem,
     target: InsertLocation | undefined,
     mode: 'click' | 'drop',
   ): boolean => {
@@ -58,7 +58,7 @@ export function useInsertInserterItem() {
       kind: 'success',
       title: mode === 'drop' ? `Placed ${item.name}` : `Inserted ${item.name}`,
       body: mode === 'drop' ? 'Dropped on canvas.' : 'Inserted at the current selection.',
-      location: 'module-inserter',
+      location: 'assets-panel',
     })
     return true
   }

@@ -10,7 +10,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { CanvasRoot } from '@site/canvas/CanvasRoot'
 import { useEditorStore } from '@site/store/store'
 import { DEFAULT_MODULE_INSERTER_PREFERENCE } from '@core/persistence/userPreferences'
-import { __resetModuleInserterPreferenceForTests } from '@site/module-picker/useModuleInserterPreference'
+import { __resetAssetFavoritesForTests } from '@site/panels/AssetsPanel/assetsPrefs'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
 
@@ -20,13 +20,13 @@ afterEach(() => {
   cleanup()
   document.body.replaceChildren()
   globalThis.fetch = originalFetch
-  __resetModuleInserterPreferenceForTests()
+  __resetAssetFavoritesForTests()
 })
 
 beforeEach(() => {
   cleanup()
   document.body.replaceChildren()
-  __resetModuleInserterPreferenceForTests()
+  __resetAssetFavoritesForTests()
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
     if (url.includes('/admin/api/cms/me/preferences/module-inserter')) {

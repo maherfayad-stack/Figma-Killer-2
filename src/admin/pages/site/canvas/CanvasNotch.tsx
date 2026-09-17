@@ -5,15 +5,15 @@ import type { VisualComponent } from "@core/visualComponents";
 import type { SavedLayout } from "@core/layouts";
 import { useInsertModule } from "@site/hooks/useInsertModule";
 import {
-  DEFAULT_MODULE_INSERTER_FAVORITES,
-  buildModuleInserterItems,
+  DEFAULT_ASSET_FAVORITES,
+  buildAssetItems,
   recentKey,
-  recentRefForItem,
-  resolveInserterRefs,
-  type ModuleInserterItem,
-} from "@site/module-picker/moduleInserterModel";
-import { useModuleInserterPreference } from "@site/module-picker/useModuleInserterPreference";
-import { useModuleInsertionContext } from "@site/module-picker/useModuleInsertionContext";
+  refForAssetItem,
+  resolveAssetRefs,
+  type AssetItem,
+} from "@site/panels/AssetsPanel/assetsModel";
+import { useAssetFavorites } from "@site/panels/AssetsPanel/assetsPrefs";
+import { useModuleInsertionContext } from "@site/panels/AssetsPanel/useModuleInsertionContext";
 import { resolveInsertLocation } from "@site/store/insertLocation";
 import { CUSTOM_HTML_TAG_VALUE } from "@modules/base/utils/htmlTag";
 import { selectActiveCanvasPage, useEditorStore } from "@site/store/store";
@@ -264,12 +264,12 @@ function resolveDefaults(
 interface FavoriteMenuState {
   x: number;
   y: number;
-  item: ModuleInserterItem;
+  item: AssetItem;
 }
 
 function FavoriteNotchActions() {
   const insertModule = useInsertModule();
-  const { favorites, setFavorites, toggleFavorite } = useModuleInserterPreference();
+  const { favorites, setFavorites, toggleFavorite } = useAssetFavorites();
   const insertionContext = useModuleInsertionContext();
   const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_COMPONENTS);
   const savedLayouts = useEditorStore((s) => s.site?.layouts ?? EMPTY_SAVED_LAYOUTS);
@@ -279,16 +279,16 @@ function FavoriteNotchActions() {
   const insertComponentRef = useEditorStore((s) => s.insertComponentRef);
   const [menu, setMenu] = useState<FavoriteMenuState | null>(null);
 
-  const { allItems } = buildModuleInserterItems({
+  const { allItems } = buildAssetItems({
     modules: registry.list(),
     context: insertionContext,
     savedLayouts,
     visualComponents,
   });
-  const resolvedFavorites = resolveInserterRefs(favorites, allItems);
+  const resolvedFavorites = resolveAssetRefs(favorites, allItems);
   const favoriteItems = (
     favorites.length > 0 && resolvedFavorites.length === 0
-      ? resolveInserterRefs(DEFAULT_MODULE_INSERTER_FAVORITES, allItems)
+      ? resolveAssetRefs(DEFAULT_ASSET_FAVORITES, allItems)
       : resolvedFavorites
   ).filter((item) => !(item.kind === "module" && PRIMITIVE_MODULE_IDS.has(item.id)));
 
@@ -305,7 +305,7 @@ function FavoriteNotchActions() {
   // Reorder a favorite by swapping it with its visible neighbour. The swap
   // runs on the raw `favorites` ref array (keyed by item) so any favorites
   // that don't resolve against the current registry stay pinned in place.
-  function moveFavorite(item: ModuleInserterItem, direction: "left" | "right") {
+  function moveFavorite(item: AssetItem, direction: "left" | "right") {
     const visibleIndex = favoriteItems.findIndex((fav) => fav.key === item.key);
     const neighbor = favoriteItems[visibleIndex + (direction === "left" ? -1 : 1)];
     if (!neighbor) return;
@@ -317,8 +317,8 @@ function FavoriteNotchActions() {
     setFavorites(next);
   }
 
-  function undockFavorite(item: ModuleInserterItem) {
-    toggleFavorite(recentRefForItem(item));
+  function undockFavorite(item: AssetItem) {
+    toggleFavorite(refForAssetItem(item));
   }
 
   const menuIndex = menu
@@ -397,7 +397,7 @@ function FavoriteNotchActions() {
 }
 
 function actionForItem(
-  item: ModuleInserterItem,
+  item: AssetItem,
   handlers: {
     insertModule: ReturnType<typeof useInsertModule>;
     insertComponent: (componentId: string) => void;

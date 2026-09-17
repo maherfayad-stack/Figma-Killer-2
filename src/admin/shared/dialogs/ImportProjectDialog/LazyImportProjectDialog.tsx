@@ -8,10 +8,10 @@
  * through this single `lazy()` reference rather than each calling `lazy()` on
  * the same dynamic import — the bundler would dedupe those into one chunk but
  * give them two distinct component identities. Same pattern as
- * `LazyModuleInserterDialog`.
+ * `LazyCodeMirrorEditor`.
  *
  * `fallback={null}`: the convention for every full-screen/portal dialog behind
- * a lazy boundary here (`SettingsModal`, `ModuleInserterDialog`,
+ * a lazy boundary here (`SettingsModal`,
  * `MediaPickerModal`) — there is no inline layout to shift while the chunk
  * loads.
  */

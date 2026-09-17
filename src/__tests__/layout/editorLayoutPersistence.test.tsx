@@ -460,6 +460,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     // panel's own inspector shell — no rail button for it anymore.
     expect(primaryButtons.map((button) => button.getAttribute('data-testid'))).toEqual([
       'panel-rail-explorer',
+      'panel-rail-assets',
       'panel-rail-framework',
       'panel-rail-selectors',
       'panel-rail-content',
@@ -467,6 +468,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     ])
     expect(primaryButtons.map((button) => button.getAttribute('data-icon'))).toEqual([
       'database-solid',
+      'box-stack-solid',
       'colors-swatch',
       'paint-bucket',
       'globe-solid',
@@ -479,6 +481,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     const primaryAccents = primaryButtons.map((button) => button.getAttribute('data-accent'))
     expect(primaryAccents).toEqual([
       'gold', // explorer  — navigate
+      'gold', // assets    — navigate (find the thing, same job as the explorer)
       'mint', // framework — style
       'mint', // selectors — style
       'lilac', // content  — content

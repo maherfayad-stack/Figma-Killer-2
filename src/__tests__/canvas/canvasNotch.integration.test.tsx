@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEditorStore } from '@site/store/store'
 import { CanvasNotch } from '@site/canvas/CanvasNotch'
-import { __resetModuleInserterPreferenceForTests } from '@site/module-picker/useModuleInserterPreference'
+import { __resetAssetFavoritesForTests } from '@site/panels/AssetsPanel/assetsPrefs'
 import '@modules/base/index'
 import '@modules/alm/register'
 
@@ -18,7 +18,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   localStorage.clear()
-  __resetModuleInserterPreferenceForTests()
+  __resetAssetFavoritesForTests()
   globalThis.fetch = mock(async () => jsonResponse({ value: null })) as typeof fetch
   useEditorStore.setState({
     site: null,

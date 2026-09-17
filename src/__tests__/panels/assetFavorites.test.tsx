@@ -5,9 +5,9 @@ import {
   type ModuleInserterPreference,
 } from '@core/persistence/userPreferences'
 import {
-  __resetModuleInserterPreferenceForTests,
-  useModuleInserterPreference,
-} from '@site/module-picker/useModuleInserterPreference'
+  __resetAssetFavoritesForTests,
+  useAssetFavorites,
+} from '@site/panels/AssetsPanel/assetsPrefs'
 
 const originalFetch = globalThis.fetch
 const originalConsoleError = console.error
@@ -21,7 +21,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   cleanup()
-  __resetModuleInserterPreferenceForTests()
+  __resetAssetFavoritesForTests()
 })
 
 afterEach(() => {
@@ -30,11 +30,11 @@ afterEach(() => {
   console.error = originalConsoleError
 })
 
-describe('useModuleInserterPreference', () => {
+describe('useAssetFavorites', () => {
   it('starts with default favorites before the server preference loads', async () => {
     globalThis.fetch = mock(async () => new Promise<Response>(() => {})) as typeof fetch
 
-    const { result } = renderHook(() => useModuleInserterPreference())
+    const { result } = renderHook(() => useAssetFavorites())
 
     expect(result.current.favorites).toEqual(DEFAULT_MODULE_INSERTER_PREFERENCE.favorites)
     expect(result.current.loading).toBe(true)
@@ -46,7 +46,7 @@ describe('useModuleInserterPreference', () => {
     }
     globalThis.fetch = mock(async () => jsonResponse({ value: stored })) as typeof fetch
 
-    const { result } = renderHook(() => useModuleInserterPreference())
+    const { result } = renderHook(() => useAssetFavorites())
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.favorites).toEqual(stored.favorites)
@@ -66,7 +66,7 @@ describe('useModuleInserterPreference', () => {
       })
     }) as typeof fetch
 
-    const { result } = renderHook(() => useModuleInserterPreference())
+    const { result } = renderHook(() => useAssetFavorites())
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     act(() => {
@@ -98,8 +98,8 @@ describe('useModuleInserterPreference', () => {
       })
     }) as typeof fetch
 
-    const first = renderHook(() => useModuleInserterPreference())
-    const second = renderHook(() => useModuleInserterPreference())
+    const first = renderHook(() => useAssetFavorites())
+    const second = renderHook(() => useAssetFavorites())
     await waitFor(() => expect(first.result.current.loading).toBe(false))
     await waitFor(() => expect(second.result.current.loading).toBe(false))
 
@@ -120,7 +120,7 @@ describe('useModuleInserterPreference', () => {
     console.error = logged as typeof console.error
     globalThis.fetch = mock(async () => jsonResponse({ error: 'nope' }, 500)) as typeof fetch
 
-    const { result } = renderHook(() => useModuleInserterPreference())
+    const { result } = renderHook(() => useAssetFavorites())
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.favorites).toEqual(DEFAULT_MODULE_INSERTER_PREFERENCE.favorites)
@@ -133,7 +133,7 @@ describe('useModuleInserterPreference', () => {
     console.error = logged as typeof console.error
     globalThis.fetch = mock(async () => jsonResponse({ error: 'Unauthorized' }, 401)) as typeof fetch
 
-    const { result } = renderHook(() => useModuleInserterPreference())
+    const { result } = renderHook(() => useAssetFavorites())
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.favorites).toEqual(DEFAULT_MODULE_INSERTER_PREFERENCE.favorites)

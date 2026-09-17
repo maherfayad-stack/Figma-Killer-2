@@ -11,7 +11,7 @@
  * (`trust-tier-required`) — at the PICKER level instead.
  *
  * Shared by both picker surfaces (`ModulePicker.tsx`'s compact context-menu
- * flow and `ModuleInserterDialog.tsx`'s toolbar "+ Add to canvas" dialog) so
+ * flow and the Assets panel's Design system section, at whose head it sits) so
  * the message and the promote action are defined once, not drifted twice.
  * Returns `null` when there is nothing to report.
  */

@@ -1,28 +1,25 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import {
-  DEFAULT_MODULE_INSERTER_FAVORITES,
+  DEFAULT_ASSET_FAVORITES,
   composeLayoutsSection,
-  dedupeModuleInserterRefs,
+  dedupeAssetRefs,
   getSavedLayoutItems,
   getVisibleModuleItems,
   layoutPluginId,
-  moduleAccentForCategory,
   moduleAvailability,
-  resolveInserterRefs,
+  resolveAssetRefs,
   type ModuleInsertionContext,
-  type RegistryModuleForInserter,
-} from '@site/module-picker/moduleInserterModel'
+  type RegistryModuleForAssets,
+} from '@site/panels/AssetsPanel/assetsModel'
 import type { SavedLayout } from '@core/layouts'
 import { findCanvasViewportAtPoint } from '@site/canvas/canvasInsertionDrop'
-import { scrollSelectedItemIntoView } from '@site/module-picker/moduleInserterSelectionScroll'
 import {
-  MODULE_INSERTER_STORAGE_KEY,
-  readModuleInserterPrefs,
-  trackModuleInserterRecent,
-  writeModuleInserterView,
-} from '@site/module-picker/moduleInserterPrefs'
+  ASSET_PREFS_STORAGE_KEY,
+  readAssetPrefs,
+  trackAssetInsert,
+} from '@site/panels/AssetsPanel/assetsPrefs'
 
-function mod(id: string, category: string, name = id): RegistryModuleForInserter {
+function mod(id: string, category: string, name = id): RegistryModuleForAssets {
   return { id, category, name, description: `${name} description` }
 }
 
@@ -31,7 +28,7 @@ function mod(id: string, category: string, name = id): RegistryModuleForInserter
  * is a `<div>`, `base.text` a `<p>`. Only the field's presence is read by
  * `moduleAvailability`, so the stub returns a plausible tag and nothing more.
  */
-function intrinsicMod(id: string, category: string, name = id): RegistryModuleForInserter {
+function intrinsicMod(id: string, category: string, name = id): RegistryModuleForAssets {
   return { ...mod(id, category, name), sourceIntrinsic: () => ({ tag: 'div' }) }
 }
 
@@ -44,7 +41,7 @@ beforeEach(() => {
   document.body.replaceChildren()
 })
 
-describe('module inserter model', () => {
+describe('assets model', () => {
   // The rule is "does this have an honest spelling in the user's source?",
   // not "is this a design-system component". A component answers yes by
   // being imported; `base.container` and `base.text` answer yes by being
@@ -112,17 +109,8 @@ describe('module inserter model', () => {
     expect(getVisibleModuleItems([outlet], TEMPLATE_CTX)[0].disabledReason).toBeUndefined()
   })
 
-  it('maps module categories to the categorical accent set', () => {
-    expect(moduleAccentForCategory('Layout')).toBe('lilac')
-    expect(moduleAccentForCategory('Forms')).toBe('mint')
-    expect(moduleAccentForCategory('Media')).toBe('sky')
-    expect(moduleAccentForCategory('Typography')).toBe('peach')
-    expect(moduleAccentForCategory('Interactive')).toBe('rose')
-    expect(moduleAccentForCategory('Custom')).toBe('lilac')
-  })
-
-  it('deduplicates inserter refs by kind and id while preserving first order', () => {
-    expect(dedupeModuleInserterRefs([
+  it('deduplicates asset refs by kind and id while preserving first order', () => {
+    expect(dedupeAssetRefs([
       { kind: 'module', id: 'base.text' },
       { kind: 'module', id: 'base.text' },
       { kind: 'savedLayout', id: 'user-layout-1' },
@@ -142,8 +130,8 @@ describe('module inserter model', () => {
       intrinsicMod('base.image', 'Media', 'Image'),
     ], PAGE_CTX)
 
-    const resolved = resolveInserterRefs([
-      ...DEFAULT_MODULE_INSERTER_FAVORITES,
+    const resolved = resolveAssetRefs([
+      ...DEFAULT_ASSET_FAVORITES,
       { kind: 'module', id: 'base.missing' },
     ], items)
 
@@ -155,25 +143,19 @@ describe('module inserter model', () => {
   })
 })
 
-describe('module inserter preferences', () => {
-  it('falls back to grid view and empty recents for corrupted localStorage', () => {
-    localStorage.setItem(MODULE_INSERTER_STORAGE_KEY, '{not valid json')
+describe('asset preferences', () => {
+  it('falls back to empty recents for corrupted localStorage', () => {
+    localStorage.setItem(ASSET_PREFS_STORAGE_KEY, '{not valid json')
 
-    expect(readModuleInserterPrefs()).toEqual({
-      view: 'grid',
-      recent: [],
-    })
+    expect(readAssetPrefs()).toEqual({ recent: [] })
   })
 
-  it('persists view mode and de-duplicates recent insertion refs', () => {
-    writeModuleInserterView('list')
+  it('records inserts most-recent-first and de-duplicates them', () => {
+    trackAssetInsert({ kind: 'module', id: 'base.text' })
+    trackAssetInsert({ kind: 'savedLayout', id: 'user-layout-1' })
+    trackAssetInsert({ kind: 'module', id: 'base.text' })
 
-    trackModuleInserterRecent({ kind: 'module', id: 'base.text' })
-    trackModuleInserterRecent({ kind: 'savedLayout', id: 'user-layout-1' })
-    trackModuleInserterRecent({ kind: 'module', id: 'base.text' })
-
-    expect(readModuleInserterPrefs()).toEqual({
-      view: 'list',
+    expect(readAssetPrefs()).toEqual({
       recent: [
         { kind: 'module', id: 'base.text' },
         { kind: 'savedLayout', id: 'user-layout-1' },
@@ -182,7 +164,7 @@ describe('module inserter preferences', () => {
   })
 })
 
-describe('module inserter canvas drop targeting', () => {
+describe('canvas drop targeting', () => {
   it('finds the breakpoint viewport under the pointer instead of assuming the active frame', () => {
     const desktop = document.createElement('div')
     desktop.dataset.breakpointId = 'desktop'
@@ -217,55 +199,6 @@ describe('module inserter canvas drop targeting', () => {
     expect(findCanvasViewportAtPoint(260, 100)).toBe(mobile)
     expect(findCanvasViewportAtPoint(120, 100)).toBe(desktop)
     expect(findCanvasViewportAtPoint(220, 100)).toBeNull()
-  })
-})
-
-describe('module inserter selection scrolling', () => {
-  it('only scrolls offscreen selection for keyboard navigation, not pointer hover', () => {
-    const container = document.createElement('div')
-    const selected = document.createElement('button')
-    let scrollOptions: ScrollToOptions | null = null
-    container.append(selected)
-    container.scrollTop = 20
-    container.scrollBy = ((options?: ScrollToOptions | number, y?: number) => {
-      if (typeof options === 'number') {
-        container.scrollTop += y ?? 0
-        return
-      }
-      scrollOptions = options ?? {}
-      container.scrollTop += options?.top ?? 0
-    }) as typeof container.scrollBy
-
-    container.getBoundingClientRect = () => ({
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-      right: 300,
-      bottom: 100,
-      width: 300,
-      height: 100,
-      toJSON: () => ({}),
-    })
-    selected.getBoundingClientRect = () => ({
-      x: 0,
-      y: 120,
-      left: 0,
-      top: 120,
-      right: 300,
-      bottom: 170,
-      width: 300,
-      height: 50,
-      toJSON: () => ({}),
-    })
-
-    expect(scrollSelectedItemIntoView(container, selected, 'pointer')).toBe(false)
-    expect(container.scrollTop).toBe(20)
-
-    expect(scrollSelectedItemIntoView(container, selected, 'keyboard')).toBe(true)
-    expect(scrollOptions?.behavior).toBe('smooth')
-    expect(scrollOptions?.top).toBe(84)
-    expect(container.scrollTop).toBe(104)
   })
 })
 

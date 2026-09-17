@@ -512,7 +512,7 @@ describe('Toolbar — structural requirements', () => {
     // wrapping ContextMenuSubmenu for that — and uses ContextMenuItem for
     // every row, which renders a `role="menuitem"` button.
     const src = readFileSync(
-      new URL('../../admin/pages/site/module-picker/ModulePicker.tsx', import.meta.url), 'utf-8',
+      new URL('../../admin/pages/site/panels/AssetsPanel/ModulePicker.tsx', import.meta.url), 'utf-8',
     )
     expect(src).toContain('ContextMenuItem')
     // UX Review #333: role="listbox" without arrow-key nav is incorrect. The
@@ -624,7 +624,7 @@ describe('ModulePicker — ArrowDown keyboard bridge (WCAG SC 2.1.1)', () => {
   // DOM-panel right-click submenu.
   const { readFileSync } = require('fs')
   const src = readFileSync(
-    new URL('../../admin/pages/site/module-picker/ModulePicker.tsx', import.meta.url),
+    new URL('../../admin/pages/site/panels/AssetsPanel/ModulePicker.tsx', import.meta.url),
     'utf-8',
   )
 

@@ -3,6 +3,7 @@ import { useEditorStore } from '@site/store/store'
 import type { LeftSidebarPanelId } from '@site/store/slices/uiSlice'
 import { AgentStoreProvider } from '@admin/ai/AgentStoreContext'
 import { FrameworkPanel } from '@site/panels/FrameworkPanel'
+import { AssetsPanel } from '@site/panels/AssetsPanel'
 import { ExplorerPanel } from '@site/panels/ExplorerPanel'
 import { DependenciesPanel } from '@site/panels/DependenciesPanel'
 import { PanelRail } from '@site/sidebars/PanelRail'
@@ -38,6 +39,7 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
   // plugin mount when set.
   if (state.activePluginPanelId !== null) return null
   if (state.explorerPanelOpen) return 'explorer'
+  if (state.assetsPanelOpen) return 'assets'
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
@@ -164,6 +166,13 @@ export function LeftSidebar({
               they have no capability to commit. */}
           {editable && (
             <>
+              {/* Assets — hidden-but-mounted like its siblings, so a typed
+                  search and the section collapse state survive a tab switch,
+                  and `openAssetsSearch()` always has a live subscriber to
+                  hand focus to. */}
+              <div className={styles.panelMount} hidden={effectiveActivePanel !== 'assets'}>
+                <AssetsPanel />
+              </div>
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'selectors'}>
                 <SelectorsPanel variant="docked" />
               </div>

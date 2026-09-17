@@ -1,23 +1,21 @@
 /**
- * CanvasInsertModuleButton — "Insert module" action for the canvas selection
- * toolbar. Renders a single toolbar button that opens the full-screen
- * `ModuleInserterDialog` — the exact same command surface as the main toolbar's
- * "+ Add" button — instead of an anchored dropdown (which mis-positioned
- * relative to the zoom/transform-scaled canvas and its breakpoint iframes).
+ * CanvasInsertModuleButton — the "Insert module" action on the canvas
+ * selection toolbar.
  *
- * Insertion routes through the shared `useInsertInserterItem` hook, so the
- * picked node lands relative to the current selection: the dialog passes no
- * explicit target on click, and `useInsertModule` → `resolveInsertLocation`
- * resolves it from `selectedNodeId` — container targets nest the new node as a
- * last child, leaf targets get a sibling-after insertion under their parent.
+ * It used to open the full-screen inserter dialog. It now reveals the
+ * **Assets panel** with its search focused (`openAssetsSearch`), which is the
+ * same surface the left rail's Assets item opens — one library, reachable from
+ * both the chrome and the selection.
+ *
+ * Nothing about insertion changes: a card clicked in that panel routes through
+ * `useInsertInserterItem` → `useInsertModule` → `resolveInsertLocation`, so the
+ * node still lands relative to the CURRENT selection — container targets nest
+ * it as a last child, leaf targets get a sibling-after under their parent.
  */
 
-import { useRef, useState } from 'react'
-import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import { Button } from '@ui/components/Button'
-import { LazyModuleInserterDialog } from '@site/module-picker/LazyModuleInserterDialog'
-import { preloadModuleInserterDialog } from '@site/module-picker/preloadModuleInserterDialog'
-import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
+import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
+import { openAssetsSearch } from '@site/panels/AssetsPanel'
 
 interface CanvasInsertModuleButtonProps {
   /** Class applied to the trigger button so it matches the toolbar chrome. */
@@ -27,39 +25,17 @@ interface CanvasInsertModuleButtonProps {
 export function CanvasInsertModuleButton({
   buttonClassName,
 }: CanvasInsertModuleButtonProps) {
-  const [open, setOpen] = useState(false)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const handleInsertItem = useInsertInserterItem()
-
-  const handleClose = () => {
-    setOpen(false)
-    triggerRef.current?.focus()
-  }
-
   return (
-    <>
-      <Button
-        ref={triggerRef}
-        variant="secondary"
-        size="xs"
-        iconOnly
-        aria-label="Insert module"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        tooltip="Insert module"
-        className={buttonClassName}
-        onClick={() => setOpen(true)}
-        onPointerEnter={preloadModuleInserterDialog}
-        onFocus={preloadModuleInserterDialog}
-      >
-        <AppGridPlusGlyphIcon size={13} color="var(--text)" />
-      </Button>
-
-      <LazyModuleInserterDialog
-        open={open}
-        onClose={handleClose}
-        onInsertItem={handleInsertItem}
-      />
-    </>
+    <Button
+      variant="secondary"
+      size="xs"
+      iconOnly
+      aria-label="Insert module"
+      tooltip="Insert from Assets"
+      className={buttonClassName}
+      onClick={openAssetsSearch}
+    >
+      <AppGridPlusGlyphIcon size={13} color="var(--text)" />
+    </Button>
   )
 }

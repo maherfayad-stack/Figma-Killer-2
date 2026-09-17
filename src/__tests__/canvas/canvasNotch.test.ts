@@ -37,7 +37,7 @@ describe('CanvasNotch', () => {
     expect(src).toContain('floatingControl=')
   })
 
-  it('resolves quick insert actions from module inserter favorites', () => {
+  it('resolves quick insert actions from the Assets panel favourites', () => {
     const src = readFileSync(CANVAS_NOTCH, 'utf-8')
 
     // Icons come from each module's own declaration via the shared ModuleIcon
@@ -48,9 +48,9 @@ describe('CanvasNotch', () => {
     expect(src).not.toContain('pixel-art-icons/icons/image-solid')
 
     expect(src).not.toContain('QUICK_ACTION_MODULE_IDS')
-    expect(src).toContain('useModuleInserterPreference')
-    expect(src).toContain('DEFAULT_MODULE_INSERTER_FAVORITES')
-    expect(src).toContain('resolveInserterRefs')
+    expect(src).toContain('useAssetFavorites')
+    expect(src).toContain('DEFAULT_ASSET_FAVORITES')
+    expect(src).toContain('resolveAssetRefs')
 
     expect(src).toContain('canvas-notch-add-btn')
   })
