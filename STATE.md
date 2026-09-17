@@ -12,6 +12,110 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### store-11 — a duplicate you click once could write itself twice, silently
+- **Agent:** store-engineer
+- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `fix/canvas-source-desync`. Worktree: `.tmp/wt-desync/`.
+- **Updated:** 2026-09-17.
+- **Goal:** the owner reported a Duplicate action producing FOUR `<h1>` copies with TWO
+  stacked "Duplicated — Written to your project source" toasts on `test4 copy`'s
+  `onboarding` page, plus an "Empty container" placeholder and delete errors afterward.
+  Find the real desync (not the `staleness.ts` id-shift hypothesis on its own) and close
+  the class of bug, not just this one report.
+- **Scope:** `src/admin/pages/site/store/slices/site/studioSourceWrites.ts`,
+  `src/admin/pages/site/studio/studioStructuralCommits.ts`, new test
+  `src/admin/pages/site/store/slices/site/__tests__/structuralCommitConcurrency.test.ts`.
+- **Reproduction (confirmed, not speculative):** `writeInsertToSource` /
+  `writeDuplicateToSource` / `writeWrapToSource` (`studioSourceWrites.ts`) are
+  fire-and-forget — they `void commitStudioX(...)` and return immediately, and NOTHING
+  on the client marks a write "already pending for this position": these three gestures
+  mint nothing locally (`duplicateJsxElement` writes the copy straight into the file; the
+  board only learns about it from the commit's own resync). Fired a real curl reproduction
+  against a scratch copy of `test4 copy` (`studio-workspace/_scratch-desync-repro`, deleted
+  after — never touched the owner's own `test4 copy`): TWO concurrent
+  `POST /admin/api/studio/save` requests each carrying one `{kind:'duplicate', nodeId:
+  'pages/Onboarding.tsx:24:16'}` edit — both returned `written:1` (two honest-looking
+  successes → two stacked toasts) and disk ended up with **3** `<h1>`s from **1** original
+  (both requests duplicated the SAME still-unshifted original, since inserting a sibling
+  AFTER an element never moves that element's own `line:col`). This is a rapid
+  double-click/double-keypress race: `Button`'s own `loading` prop exists for exactly
+  "a second click must not land" (see its doc comment) but the canvas toolbar's Duplicate
+  button — and every other structural-gesture trigger (keyboard shortcut, Spotlight
+  command, agent executor) — never wires it up, and nothing in the STORE stopped a second
+  gesture from reaching the network either.
+- **What I could NOT reproduce, and did not invent an explanation for:** the canvas blur
+  (0 elements with a computed `filter !== none` in every probe, matching the PM's own
+  finding) and the exact owner end-state (disk showing only 1 `<h1>`, not 2 or 3 — my
+  repro's disk state after the race was 3, durably). Treat blur and the "reverted to
+  HEAD" detail as unexplained, not as confirmed consequences of this fix.
+- **The fix:** a shared re-entrancy guard, `guardAgainstConcurrentStructuralCommit()` /
+  `isStructuralCommitInFlight()`, new in `studioStructuralCommits.ts`. `structuralCommitInFlight`
+  is set the instant `commitStructural` starts (before its first `await`, so it is true by
+  the time the synchronous caller's own function returns) and cleared in a `finally` once
+  the commit's resync (or refusal) has fully resolved. `writeInsertToSource` /
+  `writeDuplicateToSource` / `writeWrapToSource` check it BEFORE planning anything; a second
+  call while one is in flight refuses (`kind: 'warning'`, "Still writing your last change",
+  toast, `location: 'site-editor'`) and never touches the network. Reported as a genuine
+  refusal — not a silent no-op — satisfying the "a write has exactly one honest target or it
+  says why not" invariant for what used to be a doubly-successful lie.
+- **Deliberately scoped to insert/duplicate/wrap only — NOT `deleteNode(s)`/`moveNodes`.**
+  First pass guarded all 5 structural actions; that broke `structuralMoveUndo.test.ts`
+  outright (7 failures) because `moveNodes` is also how undo of a move RE-ISSUES itself
+  (`reissueStructuralMove`, `structuralHistory.ts`) — pressing ⌘Z the instant after a drag,
+  before that drag's own commit resolves, is completely ordinary and must work; gating
+  `moveNodes` on this flag silently swallowed it. `deleteNode(s)`/`moveNodes` already mutate
+  the LOCAL tree immediately and optimistically (`struct-01`), which already makes a
+  double-fire of the SAME gesture a no-op the second time (nothing left to delete/move) —
+  they were never actually at risk the way insert/duplicate/wrap are, which mint nothing
+  locally at all. Full reasoning lives in `studioStructuralCommits.ts`'s doc comment above
+  `structuralCommitInFlight` — read it before touching this guard again.
+- **The lying toast (work-order item 3):** closed as a side effect of the race fix, not a
+  separate patch — the ONLY way the "Written to your project source" toast fired without an
+  honest single write behind it was exactly this double-post race; once a second gesture
+  can never reach the network while the first is in flight, the toast can never lie again.
+- **Test:** `structuralCommitConcurrency.test.ts` — two tests against
+  `writeDuplicateToSource` directly (no full store needed: `createStudioSourceWrites` takes
+  a minimal `{get, set}` stub + a `readTree` closure). (1) a second `writeDuplicateToSource`
+  call fired while the first's (deferred-fetch-stubbed) commit is still in flight is
+  refused: exactly ONE `POST /save` reaches the network, the "still writing" warning toast
+  fires, and the first's own success toast still lands once it resolves. (2) a duplicate
+  fired AFTER the previous one's resync has landed proceeds normally (two real posts).
+  Verified the test actually catches the regression: with the guard line removed from
+  `writeDuplicateToSource` only, test (1) fails with `Received length: 2` (exactly the
+  reproduced bug); restored, both pass.
+- **Landmine for the next person touching this file:** `structuralCommitInFlight` is a
+  bare module-level `let`, not reset between test files/cases. A test that fires a
+  structural commit and doesn't wait for it to fully settle (`await
+  waitFor(() => !isStructuralCommitInFlight())`, not a fixed number of `Promise.resolve()`
+  ticks — `apiRequest`/`readEnvelope` have an unpredictable number of internal microtask
+  hops) will poison every subsequent structural action in the SAME test run.
+- **Worktree hygiene note (mine, corrective):** the first draft of this fix was written
+  directly in the primary checkout by mistake (edited `nodeActions.ts` /
+  `deleteNodesAction.ts` / `studioSourceWrites.ts` / `studioStructuralCommits.ts` there,
+  plus a scratch repro project under `studio-workspace/_scratch-desync-repro/`). Caught
+  before committing: `git checkout --` on the 4 source files restored the primary checkout
+  exactly (confirmed clean via `git status`/`git diff --stat -- src/`), the scratch project
+  was `rm -rf`'d, and the real work moved into `.tmp/wt-desync/` on its own branch. The
+  owner's actual `studio-workspace/test4 copy/pages/Onboarding.tsx` was never touched by
+  this session and was confirmed clean against HEAD throughout.
+- **Verification:** in `.tmp/wt-desync/` — `bun test src/admin/pages/site/store/slices/site/__tests__/structuralCommitConcurrency.test.ts
+  src/__tests__/editor-store src/__tests__/architecture/centralized-site-mutation-history.test.ts
+  src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts src/admin/pages/site/studio/__tests__`
+  → 600 pass, 0 fail. `bun test src/__tests__/architecture` → 545 pass, 1 skip, 2 fail
+  (`icon-catalog-integrity.test.ts` chevron-left, `no-core-barrel-deep-imports.test.ts` —
+  both pre-existing per this task's own dispatch note, confirmed unrelated to my diff).
+  `bun run build` → clean (`tsc -b && vite build`). `bun run lint` → 6 pre-existing
+  `'os' is defined but never used` errors in `server/handlers/__tests__/*` (also named
+  pre-existing in the dispatch note), none in a file I touched.
+- **Human action needed:** dogfood — on the running `:5174` session (or after a `:5173`
+  restart), rapid-double-click the canvas toolbar's "Duplicate selected layers" button on a
+  studio-imported node and confirm exactly ONE copy lands, with the second click producing
+  the "Still writing your last change" toast instead of a second copy. The blur and the
+  exact "reverted to 1 on disk" detail from the original report remain unexplained — if
+  either recurs, it is a DIFFERENT bug from this one.
+
+---
+
 ### panel-33 — one click to the colour picker, and a swatch that finally paints a `var()` value
 - **Agent:** panel-designer
 - **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
