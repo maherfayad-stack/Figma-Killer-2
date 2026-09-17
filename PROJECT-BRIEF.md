@@ -494,7 +494,9 @@ bun run build          # tsc -b && vite build   ← type errors fail this
 bun test               # unit + architecture gates
 bun run lint           # eslint incl. react-compiler rules
 bun test src/__tests__/architecture   # gates only, fast
+bun run test:e2e       # Playwright — the fourth gate, for canvas/panel work
 bun run bench          # perf benchmarks
+bun run bench:studio-board   # canvas budgets, via Playwright's Node runner
 ```
 
 `bun run dev` preflights itself (`scripts/lib/devPreflight.ts`): it installs when
@@ -505,6 +507,22 @@ background, so it never delays the server.
 **Verification is an end-of-task gate, not a per-edit ritual.** Run the three
 (`build`, `test`, `lint`) once, at the end. Pre-existing failures from parallel
 sessions are not yours — triage with `git status` / `git diff` and say so.
+
+**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run
+`bun run test:e2e` too — it is the fourth gate, not an optional extra.**
+`standing-02` says why: happy-dom has no layout engine, so a unit test on
+those surfaces structurally cannot fail on the thing it is named after (WS-8.2
+shipped a real frame-height bug behind a green one). Assert on *computed*
+layout — measured rects, `scrollHeight`, computed styles after layout.
+
+The budget slice of that suite — `studio-board-perf`,
+`inspector-panel-measurement`, `inspector-height`, `studio-feel` — also runs
+in CI as the `e2e-budgets` job (`.github/workflows/ci.yml`). Locally it is
+cheaper to run just those four by path than the whole suite. Note that
+`studio-board-perf.e2e.ts` measures `studio-workspace/maherfayad-stack-eSIM`,
+which is **not tracked by git**: it self-skips on a clean checkout, and
+`studio-feel.e2e.ts` (against the tracked `studio-workspace/test4`) is what
+gates the canvas budget in CI.
 
 ### What watches what in `bun run dev`
 
@@ -548,4 +566,6 @@ Consequences:
 - [ ] Docs updated in the same change (`docs/features/*` or `docs/agent-refs/*`).
 - [ ] If a structural rule moved, its gate test in `src/__tests__/architecture/` moved too.
 - [ ] `bun run build && bun test && bun run lint` pass for the files you touched.
+- [ ] If the change touched canvas / frames / overlays / geometry / panel height,
+      `bun run test:e2e` ran too (`standing-02` — happy-dom cannot answer those).
 - [ ] **`STATE.md` updated with a handoff entry** — see `handoff-protocol.md`.

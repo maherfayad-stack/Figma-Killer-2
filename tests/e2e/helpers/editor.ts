@@ -12,9 +12,19 @@ import { OWNER } from './constants'
  * addressed by role/label.
  */
 
-/** The editor is ready once the canvas surface and its insert notch are shown. */
+/**
+ * The editor is ready once the canvas surface and its insert notch are shown.
+ *
+ * 60s, not 20s: the FIRST navigation to `/admin/site` in a run makes the dev
+ * server compile the editor chunk on demand, and until it lands the app shows
+ * its own "The dev server has not delivered the editor chunk yet — Retry"
+ * state. Observed taking longer than 20s on a cold Vite, which failed
+ * `auth.setup.ts` and therefore the entire suite before a single spec ran.
+ * This is a readiness WAIT, not an assertion about behaviour — an editor that
+ * is genuinely broken never shows `canvas-root` at any timeout.
+ */
 export async function expectEditorReady(page: Page): Promise<void> {
-  await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 60_000 })
   await expect(page.getByTestId('canvas-notch')).toBeVisible()
 }
 

@@ -46,9 +46,9 @@ const REPO_ROOT = resolve(import.meta.dir, '../..')
 // `browser`, `studio-board`, and `snapshot-tokens` are NOT in the default
 // run. `browser` needs Chromium and optional STUDIO_BENCH_ADMIN_EMAIL /
 // STUDIO_BENCH_ADMIN_PASSWORD credentials for authenticated scenarios;
-// `studio-board` (WS-5.6) needs Chromium too, generates its own synthetic
-// project + fresh throwaway DB/owner so it needs no credentials, but adds
-// real seconds (server boot + a 1s scripted pan); `snapshot-tokens` needs
+// `studio-board` shells out to Playwright's Node runner (S6), which starts
+// its own disposable e2e stack and needs Chromium installed
+// (`bun run bench:browser:install`) plus a couple of minutes; `snapshot-tokens` needs
 // ANTHROPIC_API_KEY + a seeded .tmp/dev.db and makes network calls to
 // count_tokens. Run them explicitly, e.g. `bun run bench --only=studio-board`.
 const DEFAULT_BENCHES: readonly BenchModule[] = [
@@ -190,6 +190,7 @@ async function main(): Promise<void> {
   if (flags.baseUrl) log.detail(`Targeting external server: ${flags.baseUrl}`)
 
   const results: BenchResult[] = []
+  const failed: string[] = []
   const suiteStart = performance.now()
   for (const bench of benches) {
     log.section(bench.title)
@@ -201,6 +202,7 @@ async function main(): Promise<void> {
       log.ok(`done in ${(result.durationMs / 1000).toFixed(1)}s`)
     } catch (err) {
       log.fail(`${bench.name} failed: ${(err as Error).message}`)
+      failed.push(bench.name)
       results.push({
         name: bench.name,
         title: bench.title,
@@ -245,6 +247,22 @@ async function main(): Promise<void> {
       .map(([k, v]) => `${k}=${v}`)
       .join('  ')
     console.log(`  ${r.name.padEnd(14)}  ${top}`)
+  }
+
+  // A bench that threw is a FAILED bench, and a command that reports a failure
+  // while exiting 0 is not a gate. `studio-board` is the reason this matters
+  // concretely — it throws when a canvas budget is breached (S6) — but the
+  // rule is the same for every bench: a benchmark that could not complete is a
+  // failure, not a footnote in a report nobody reads. The report above is
+  // written first, on purpose: the exit code must never cost you the numbers.
+  //
+  // This is NOT how a bench says "I cannot run here". That is `skipped`, a
+  // normal `BenchResult` (see `browser`, `snapshot-tokens`, `studio-board`),
+  // and it keeps the exit code at 0.
+  if (failed.length > 0) {
+    console.log('')
+    log.fail(`FAILED: ${failed.join(', ')} — see ${flags.output}`)
+    process.exit(1)
   }
 }
 

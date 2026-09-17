@@ -55,7 +55,16 @@ export default defineConfig({
     command: 'bun run e2e:dev',
     url: ADMIN_BASE_URL,
     reuseExistingServer: process.env.E2E_REUSE_SERVER === '1',
-    timeout: 120_000,
+    // A ceiling, not a delay: it costs nothing when the stack boots normally.
+    // 120s was not enough on a checkout whose `node_modules/.vite` cache is
+    // cold — Vite pre-bundles dependencies before it answers on 5174, and the
+    // run died with nothing but "Timed out waiting 120000ms" to show for it.
+    // (Separately, and NOT fixed by this number: on Windows this block's own
+    // spawn of `bun run e2e:dev` sometimes leaves Vite never binding at all.
+    // The `e2e-budgets` CI job sidesteps it by starting the stack itself and
+    // waiting on the ports; locally, `E2E_REUSE_SERVER=1` against a stack you
+    // started by hand is the reliable path.)
+    timeout: 300_000,
     gracefulShutdown: { signal: 'SIGTERM', timeout: 500 },
     stdout: 'pipe',
     stderr: 'pipe',

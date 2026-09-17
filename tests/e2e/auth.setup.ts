@@ -15,6 +15,13 @@ import { openSiteEditor } from './helpers/editor'
  * signed out, so it stays valid for the whole run.
  */
 setup('create owner and reach the editor (SETUP-001)', async ({ page }) => {
+  // This project pays the one-time cold cost for the entire run: the dev
+  // server compiles the editor chunk on demand on the FIRST navigation to
+  // `/admin/site`, and `expectEditorReady` waits up to 60s for it. The config's
+  // 60s per-test default would expire during that wait and fail the setup —
+  // which fails every spec in the run, because they all depend on it.
+  setup.setTimeout(240_000)
+
   await completeSetupOrLogin(page)
 
   // A freshly set-up site lands the owner in a usable editor, not a dead end.
