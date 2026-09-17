@@ -137,6 +137,7 @@ export function useCanvasBodyDragTrigger({
         selectOnActivate: inSelection ? null : nodeId,
         frameId,
         altKey: event.altKey,
+        freeKey: event.metaKey || event.ctrlKey,
       })
       if (!started) return
 

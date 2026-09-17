@@ -383,3 +383,27 @@
     color: var(--accent-3);
     font-weight: 700;
 }
+
+/* K6 — one alignment guide per snapped axis, drawn at a sibling's edge or
+   centre while an element is being placed freely. Same token as the board's
+   own snap guides, because it is the same affordance one level down. The rect
+   channel carries a zero on the guide's thin axis; the hairline itself is the
+   1px below, which stays 1px on screen at every zoom because the whole overlay
+   layer is inside the canvas transform. */
+.snapGuide {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y));
+    width: var(--canvas-drop-w);
+    height: var(--canvas-drop-h);
+    background: var(--canvas-snap-guide-color);
+}
+
+.snapGuide[data-axis="x"] {
+    width: 1px;
+}
+
+.snapGuide[data-axis="y"] {
+    height: 1px;
+}

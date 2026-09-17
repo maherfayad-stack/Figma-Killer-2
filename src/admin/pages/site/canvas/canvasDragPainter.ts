@@ -37,6 +37,7 @@
  * Each write is also skipped when the value is unchanged, so a pointer that
  * moves inside one drop zone costs nothing after the first frame.
  */
+import type { SnapGuide } from './boardSnapping'
 import type { CanvasDropResolution } from './canvasDnd'
 import type { ClientPoint } from './canvasDragSession'
 import {
@@ -59,6 +60,13 @@ export interface CanvasDragGhost {
 
 export interface CanvasDragPaint extends CanvasDropResolution {
   ghost: CanvasDragGhost | null
+  /**
+   * K6 — alignment guides for a FREE move: the sibling edges and centres the
+   * moved element snapped to, in the same frame space as the rects above.
+   * Empty for an ordinary reorder, which does not move the element freely and
+   * therefore has nothing to align.
+   */
+  guides?: readonly SnapGuide[]
 }
 
 /**
@@ -74,6 +82,14 @@ interface DragLayerParts {
   chipLabel: HTMLSpanElement
   ghost: HTMLDivElement
   ghostLabel: HTMLSpanElement
+  /**
+   * K6's alignment guides, POOLED rather than created per frame: at most two
+   * exist at once (one per axis), and a snap that appears and disappears as
+   * the pointer crosses a threshold would otherwise mount and unmount DOM at
+   * pointer rate. Reused and hidden, the same way the selector-affinity ring
+   * pool is.
+   */
+  guides: HTMLDivElement[]
 }
 
 const layerParts = new WeakMap<HTMLElement, DragLayerParts>()
@@ -121,6 +137,8 @@ export function paintCanvasDrag(layer: HTMLElement | null, paint: CanvasDragPain
     hide(parts.chip)
   }
 
+  paintGuides(parts, layer, paint.guides ?? [])
+
   const ghost = paint.ghost
   if (ghost) {
     applyIndicatorVars(parts.ghost, pointStyle(ghost.point.x, ghost.point.y))
@@ -161,11 +179,44 @@ function createParts(layer: HTMLElement): DragLayerParts {
   ghostLabel.className = styles.dragGhostLabel
   ghost.appendChild(ghostLabel)
 
-  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel }
+  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel, guides: [] }
   hideAll(parts)
   layer.append(line, invalid, chip, ghost)
   layerParts.set(layer, parts)
   return parts
+}
+
+/**
+ * K6 — draw one hairline per snapped axis, growing the pool on demand and
+ * hiding the surplus rather than removing it (`syncSelectorHighlightRings`'s
+ * own pattern). A guide is a zero-thickness line, so it is written through the
+ * same `--canvas-drop-*` rect channel with one dimension pinned to 0 and the
+ * stylesheet giving it its 1px.
+ */
+function paintGuides(parts: DragLayerParts, layer: HTMLElement, guides: readonly SnapGuide[]): void {
+  for (let i = 0; i < guides.length; i++) {
+    const guide = guides[i]!
+    let element = parts.guides[i]
+    if (!element) {
+      element = layer.ownerDocument.createElement('div')
+      element.className = styles.snapGuide
+      element.setAttribute('aria-hidden', 'true')
+      parts.guides.push(element)
+      layer.appendChild(element)
+    }
+    const horizontal = guide.axis === 'y'
+    applyIndicatorVars(
+      element,
+      rectStyle(
+        horizontal
+          ? { left: guide.start, top: guide.position, right: guide.end, bottom: guide.position, width: guide.end - guide.start, height: 0 }
+          : { left: guide.position, top: guide.start, right: guide.position, bottom: guide.end, width: 0, height: guide.end - guide.start },
+      ),
+    )
+    setAttribute(element, 'data-axis', guide.axis)
+    show(element)
+  }
+  for (let i = guides.length; i < parts.guides.length; i++) hide(parts.guides[i]!)
 }
 
 /**
@@ -210,4 +261,5 @@ function hideAll(parts: DragLayerParts): void {
   hide(parts.invalid)
   hide(parts.chip)
   hide(parts.ghost)
+  for (const guide of parts.guides) hide(guide)
 }

@@ -43,6 +43,11 @@ topology below first.
   `duplicateJsxElement`'s destination form) and for board frames (a cheap
   `boards.json` copy). Refuses for exactly the reasons the same drag without
   Alt would. See "[Alt+drag duplicates (K2)](#altdrag-duplicates-k2)".
+- **⌘/Ctrl+drag places by coordinates** instead of reordering — an inline
+  `left`/`top` (or `inset-inline-start` in RTL) on one element, snapped to its
+  siblings' edges and centres. Refuses, with a one-click remedy, when the
+  container is `position: static`. See
+  "[Free movement (K6)](#free-movement-k6)".
 - `@dnd-kit/core` genuinely IS used — but only on one surface that never
   crosses an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s
   `<DndContext>`). The Site Explorer used to be the second such surface; its
@@ -440,6 +445,68 @@ The gesture is documented in the `?` sheet as a virtual, never-matching
 `keybindings.ts` entry (`canvas.altDragDuplicate`) — that array *is* the sheet,
 and documenting a gesture anywhere else would fork the registry's
 single-source-of-truth gate.
+
+---
+
+## Free movement (K6)
+
+§15 decision 3 of the parity plan stands: **Studio does not fake absolute
+placement of flow elements.** Dragging an ordinary element still reorders it,
+and the canvas still shows the reflow that implies. What §6 decision 6 of the
+feel plan grants is narrower and explicit — a gesture may write `left`/`top`
+as an INLINE STYLE, which is one JSX element's `style={{…}}` and therefore one
+honest target, in exactly two cases. `canvasFreeMove.ts` owns the whole thing.
+
+| The element is… | ⌘/Ctrl held? | What happens |
+|---|---|---|
+| `position: absolute \| fixed` | not needed | the drag writes `left`/`top` — that is already the property deciding where it is, so dragging it into the child order would be the surprising behaviour |
+| in flow, parent is positioned | yes | the drag writes `position: absolute` **and** `left`/`top`. Writing the offsets alone would do nothing at all on a static element, and a declaration with no effect is exactly the silent no-op this codebase refuses |
+| in flow, parent is `position: static` | yes | **refuses** — see below |
+| in flow | no | ordinary reorder |
+
+**The refusal, and its remedy.** Absolutely positioning an element inside a
+static parent hands it to the nearest *positioned* ancestor, or to the
+viewport — not to the container the user dropped it in. So a ⌘-drag there
+refuses through `RefusalDialog`, with the one remedy that is actually true:
+make that container `position: relative`. This is the only
+`EditConstraintAction` whose handler is a **write** rather than a navigation
+(`position-parent-relative`), and therefore the only one the engine cannot
+run: the handler is injected by `ConstraintActionButtons`, the same way
+`jump-to-source`'s `openSource` already is, because `constraintActions.ts`
+sits inside the store's own import graph and may not import the composed store
+back. It is also the one refusal in `editConstraint.ts` that is NOT a
+source-writability question: the file would take the write; the CSS would not
+do what was pointed at.
+
+**RTL.** In a right-to-left element the physical `left` is the wrong property:
+a drag to the right must DECREASE the distance from the inline start. The
+write is `inset-inline-start`, with the horizontal delta negated. `top` is
+unaffected — RTL mirrors the inline axis only, never the block axis.
+
+**Snapping.** The moved rect snaps to its SIBLINGS' edges and centres through
+`computeSnap` — the same pure resolver board furniture already uses, at the
+same "closest wins, at most one snap per axis" contract, at
+`FREE_MOVE_SNAP_PX` in frame space. Guides are painted by the same imperative
+painter as everything else the drag draws, from a pool of at most two
+elements. Peers are read once from the drag session's candidate index, because
+siblings do not move while one element is being positioned.
+
+**Preview, then commit.** The step is written straight onto the element's own
+`style` during the drag — no store round trip, so it tracks the pointer at
+frame rate and the selection ring (which re-measures the real element) follows
+for free. The preview is dropped BEFORE the store commit, never after: they
+are the same DOM property, so clearing it afterwards would delete exactly what
+React just wrote. Same shape, and the same reasoning, as
+`useElementResizeDrag`.
+
+**A free move resolves no drop target and runs no auto-pan.** The two are
+different gestures: one places inside a container, the other looks for a
+position in a child list.
+
+**Modifier state is read per event, not latched**, exactly like Alt — press ⌘
+mid-drag and a reorder becomes a placement, release it and it goes back. The
+resolution itself is cached on the session (it reads computed style, which is
+a layout read) and re-taken only when the modifier flips.
 
 ---
 

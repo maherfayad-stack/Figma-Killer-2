@@ -82,6 +82,8 @@ export interface CanvasDragOrigin {
   frameId: string | null
   /** K2 — Alt was already held at `pointerdown`, so the ghost reads `+` from the first frame. */
   altKey: boolean
+  /** K6 — ⌘/Ctrl was already held at `pointerdown`: place by coordinates, not by order. */
+  freeKey: boolean
 }
 
 /**

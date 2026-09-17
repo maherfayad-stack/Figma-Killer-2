@@ -807,6 +807,17 @@ auto-height refit reflowing the page under a stationary pointer and
 invalidating the candidate index. Full contract:
 `docs/reference/canvas-dnd.md` → "The drag session (S2)".
 
+**⌘-drag is the ONE gesture allowed to write a position (K6).** It writes
+`left`/`top` — or `inset-inline-start` under `direction: rtl` — as an inline
+style on one element, plus `position: absolute` when the element was in flow
+(without it the offsets do nothing, and a declaration with no effect is a
+silent no-op). It **refuses** when the container is `position: static`,
+because absolute positioning there hands the element to a different ancestor
+than the one it was dropped in; the refusal carries a one-click "make the
+container `position: relative`" remedy. Studio still does not fake absolute
+placement — an ordinary drag is still a reorder. See
+`docs/reference/canvas-dnd.md` → "Free movement (K6)".
+
 **Chrome outside `CanvasRoot` reaches the canvas through the store, not the
 context.** The toolbar is painted eagerly by `AdminCanvasLayout`, *above* the
 lazy boundary that mounts the editor body — so `ZoomControls` can never be a

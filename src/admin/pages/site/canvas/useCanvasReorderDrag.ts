@@ -23,9 +23,8 @@
  * state and not a ref — but nothing between the edges renders at all.
  *
  * The pattern is `useElementResizeDrag`'s, which already coalesced its writes
- * to one per animation frame for exactly this reason; this hook adds the
- * measurement half (the index) because a reorder has to hit-test a whole page,
- * not just push one element's width.
+ * to one per animation frame; this hook adds the measurement half (the index)
+ * because a reorder has to hit-test a whole page, not one element's width.
  *
  * Three things follow from "the store is written once":
  *
@@ -65,7 +64,17 @@ import {
   type ClientPoint,
   type FrameCandidateIndex,
 } from './canvasDragSession'
+import { autoPanDelta } from './canvasDragAutoPan'
 import { paintCanvasDrag } from './canvasDragPainter'
+import {
+  clearFreeMovePreview,
+  freeMoveStylePatch,
+  paintFreeMoveFrame,
+  presentFreeMoveRefusal,
+  resolveFreeMove,
+  type FreeMoveResolution,
+  type FreeMoveStep,
+} from './canvasFreeMove'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
@@ -156,6 +165,23 @@ interface DragSession {
    */
   duplicating: boolean
   /**
+   * K6 — ⌘/Ctrl was held at the last pointer event: the user is asking to
+   * place this element by COORDINATES rather than in the child order. Read
+   * per event like Alt, so the gesture can change its mind.
+   */
+  freeRequested: boolean
+  /**
+   * The cached free-move answer, and the modifier state it was taken under.
+   * `undefined` means "not asked yet"; `null` means "this is an ordinary
+   * reorder". Cached because it reads computed style, which is a layout read —
+   * and re-taken whenever the modifier flips, because that is the one input
+   * that can change it mid-gesture.
+   */
+  free?: FreeMoveResolution | null
+  freeWanted?: boolean
+  /** The last painted free-move step — exactly what `pointerup` commits. */
+  freeStep: FreeMoveStep | null
+  /**
    * False until the pointer has travelled `DRAG_ACTIVATE_PX` from the origin.
    * While false the session resolves no drop target, runs no auto-pan, and
    * commits no move on pointerup — see `DRAG_ACTIVATE_PX`.
@@ -179,9 +205,6 @@ interface DragSession {
   /** The last resolution painted, and what `pointerup` commits. */
   resolution: CanvasDropResolution
 }
-
-const AUTO_PAN_EDGE_PX = 48
-const AUTO_PAN_MAX_SPEED = 18
 
 /**
  * How far the pointer must travel before a press on the drag handle becomes a
@@ -259,6 +282,26 @@ export function useCanvasReorderDrag({
       ? constrainToDragAxis(session.origin, session.point)
       : session.point
     const point = indexLocalPoint(session.index, screenPoint)
+    const ghost = { point, label: session.label, duplicating: session.duplicating }
+
+    // K6 — a FREE move (an already-positioned element, or ⌘ held inside a
+    // positioned parent) does not resolve a drop target at all: it writes a
+    // position. Nothing below this branch runs for one, including the auto-pan
+    // — a coordinate drag stays inside the container it is positioned in.
+    const free = readSessionFreeMove(session, iframeElement)
+    if (free) {
+      const origin = indexLocalPoint(session.index, session.origin)
+      session.freeStep = paintFreeMoveFrame({
+        layer: dropLayerRef.current,
+        resolution: free,
+        draggedId: session.draggedId,
+        rect: session.index.candidates.find((c) => c.nodeId === session.draggedId)?.rect,
+        dx: point.x - origin.x,
+        dy: point.y - origin.y,
+        ghost,
+      })
+      return
+    }
 
     session.resolution = resolveCanvasDropTarget({
       tree: session.tree,
@@ -273,10 +316,7 @@ export function useCanvasReorderDrag({
     const pan = autoPanDelta(canvasRootRef?.current ?? null, screenPoint)
 
     // ── WRITE ───────────────────────────────────────────────────────────
-    paintCanvasDrag(dropLayerRef.current, {
-      ...session.resolution,
-      ghost: { point, label: session.label, duplicating: session.duplicating },
-    })
+    paintCanvasDrag(dropLayerRef.current, { ...session.resolution, ghost })
 
     if (pan && panBy) {
       panBy(pan.dx, pan.dy)
@@ -297,6 +337,12 @@ export function useCanvasReorderDrag({
       cancelAnimationFrame(frameRef.current)
       frameRef.current = null
     }
+    // K6 — drop the free-move preview BEFORE anything else: it is the SAME
+    // DOM property the commit is about to write, so clearing it afterwards
+    // would delete exactly what React just wrote (and React would not write it
+    // again, the style prop not having changed from its point of view).
+    const previewed = sessionRef.current?.free
+    if (previewed?.ok) clearFreeMovePreview(previewed.plan)
     sessionRef.current = null
     paintCanvasDrag(dropLayerRef.current, null)
     teardownRef.current?.()
@@ -330,6 +376,9 @@ export function useCanvasReorderDrag({
     // K2 — read per event, not latched: release Alt and the drop is a move
     // again, press it and the same drop becomes a copy.
     session.duplicating = event.altKey
+    // K6 — same treatment for ⌘/Ctrl: the gesture may change its mind between
+    // "reorder this" and "place this".
+    session.freeRequested = event.metaKey || event.ctrlKey
 
     // Hold the gesture as a click until it clears the activation distance.
     // Until then there is deliberately no drop target and no auto-pan, so a
@@ -383,11 +432,21 @@ export function useCanvasReorderDrag({
     // K2 — the modifier state at RELEASE decides, which is the only reading
     // that matches what the ghost was showing the instant before.
     const duplicating = session.duplicating || event.altKey
+    // K6 — a free move commits a POSITION, never a reorder. Captured before
+    // `resetDrag` drops the session (and the preview with it).
+    const free = session.free
+    const freeStep = session.freeStep
+    const draggedId = session.draggedId
     resetDrag()
 
-    if (!target) return
     try {
       const store = useEditorStore.getState()
+      if (free) {
+        if (!free.ok) presentFreeMoveRefusal(free.refusal)
+        else if (freeStep) store.setNodeInlineStyles(draggedId, freeMoveStylePatch(free.plan, freeStep))
+        return
+      }
+      if (!target) return
       if (duplicating) store.duplicateNodesTo(target.draggedIds, target.parentId, target.index)
       else store.moveNodes(target.draggedIds, target.parentId, target.index)
     } catch (err) {
@@ -455,6 +514,8 @@ export function useCanvasReorderDrag({
       point,
       axisLocked: false,
       duplicating: origin.altKey,
+      freeRequested: origin.freeKey,
+      freeStep: null,
       // Not a drag yet — `handleWindowPointerMove` promotes it once the pointer
       // clears DRAG_ACTIVATE_PX, so a press that stays put stays a click.
       active: false,
@@ -527,6 +588,7 @@ export function useCanvasReorderDrag({
       selectOnActivate: null,
       frameId,
       altKey: event.altKey,
+        freeKey: event.metaKey || event.ctrlKey,
     })
     if (!started) return
 
@@ -577,6 +639,33 @@ export function useCanvasReorderDrag({
   }
 }
 
+/**
+ * K6 — whether this session is a free move, cached on the session.
+ *
+ * `resolveFreeMove` reads computed style, which is a layout read, so it must
+ * not run per frame. The cache is keyed on the MODIFIER state it was taken
+ * under, because that is the one input that can flip the answer mid-gesture:
+ * press ⌘ and a reorder becomes a placement, release it and it goes back.
+ */
+function readSessionFreeMove(
+  session: DragSession,
+  iframe: HTMLIFrameElement | null,
+): FreeMoveResolution | null {
+  if (session.free !== undefined && session.freeWanted === session.freeRequested) return session.free
+  const doc = resolvePortalDocument(iframe)
+  session.freeWanted = session.freeRequested
+  session.free = doc
+    ? resolveFreeMove({
+        doc,
+        tree: session.tree,
+        nodeId: session.draggedId,
+        candidates: session.index.candidates,
+        modifierHeld: session.freeRequested,
+      })
+    : null
+  return session.free
+}
+
 function resolveDraggedIds(
   tree: NodeTree<PageNode>,
   selectedNodeIds: readonly string[],
@@ -608,45 +697,4 @@ function dragLabel(tree: NodeTree<PageNode>, draggedIds: string[], draggedId: st
 
 function canHaveChildren(moduleId: string): boolean {
   return registry.get(moduleId)?.canHaveChildren === true
-}
-
-/**
- * How far to nudge the canvas this frame because the pointer is in an edge
- * band, or `null` when it is not. Pure apart from the one
- * `getBoundingClientRect()` on the canvas ROOT — which is a stable,
- * untransformed element, so this read costs no layout invalidation of the
- * frames themselves.
- */
-function autoPanDelta(
-  root: HTMLElement | null,
-  point: ClientPoint,
-): { dx: number; dy: number } | null {
-  if (!root) return null
-  const rect = root.getBoundingClientRect()
-  const leftDistance = point.x - rect.left
-  const rightDistance = rect.right - point.x
-  const topDistance = point.y - rect.top
-  const bottomDistance = rect.bottom - point.y
-
-  let dx = 0
-  let dy = 0
-
-  if (leftDistance >= 0 && leftDistance < AUTO_PAN_EDGE_PX) {
-    dx = autoPanSpeed(leftDistance)
-  } else if (rightDistance >= 0 && rightDistance < AUTO_PAN_EDGE_PX) {
-    dx = -autoPanSpeed(rightDistance)
-  }
-
-  if (topDistance >= 0 && topDistance < AUTO_PAN_EDGE_PX) {
-    dy = autoPanSpeed(topDistance)
-  } else if (bottomDistance >= 0 && bottomDistance < AUTO_PAN_EDGE_PX) {
-    dy = -autoPanSpeed(bottomDistance)
-  }
-
-  return dx === 0 && dy === 0 ? null : { dx, dy }
-}
-
-function autoPanSpeed(distanceFromEdge: number): number {
-  const ratio = 1 - Math.max(0, Math.min(AUTO_PAN_EDGE_PX, distanceFromEdge)) / AUTO_PAN_EDGE_PX
-  return Math.max(1, Math.ceil(ratio * AUTO_PAN_MAX_SPEED))
 }

@@ -348,6 +348,13 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   insert: 'Cannot add this to imported code',
   duplicate: 'Duplicate refused',
   wrap: 'Wrap refused',
+  /**
+   * K6 — a ⌘-drag that asked to place an element by coordinates. The only
+   * entry here that is not a source-writability refusal: the file would take
+   * the write, the CSS would not do what the user pointed at. Same channel
+   * regardless, so one refusal vocabulary reaches the user.
+   */
+  freeMove: 'Cannot place this by hand',
 } as const
 
 /**

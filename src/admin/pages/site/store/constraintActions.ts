@@ -73,6 +73,19 @@ export interface ConstraintActionContext {
    * completely unaffected.
    */
   onSettled?: (ok: boolean) => void
+  /**
+   * K6 — how to write `position: relative` onto the container a
+   * `static-parent` refusal names.
+   *
+   * Injected, exactly like `openSource`, and for the same reason: this module
+   * sits INSIDE the store's own import graph (`structuralSourceEdits.ts`
+   * reaches it), so it may not import the composed store back
+   * (`no-circular-dependencies.test.ts`). The surface that renders the button
+   * — `ConstraintActionButtons`, an ordinary component — can, and does.
+   * Absent means the action stays un-runnable and renders as plain advice
+   * text, the same honesty rule every other unwireable kind follows.
+   */
+  makeParentRelative?: (nodeId: string) => void
 }
 
 /** `Header.tsx:42` — the origin, short enough to sit inside a button label. */
@@ -114,6 +127,17 @@ export function resolveConstraintAction(
     const nodeId = context.nodeId
     const onSettled = context.onSettled
     return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId), onSettled)
+  }
+  // K6 — `context.nodeId` is the CONTAINER here, not the dragged element: the
+  // refusal is about the parent, and so is the remedy.
+  if (action.kind === 'position-parent-relative' && context.nodeId !== undefined && context.makeParentRelative) {
+    const nodeId = context.nodeId
+    const run = context.makeParentRelative
+    const onSettled = context.onSettled
+    return () => {
+      run(nodeId)
+      onSettled?.(true)
+    }
   }
   return null
 }
