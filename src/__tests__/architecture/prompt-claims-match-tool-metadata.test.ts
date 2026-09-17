@@ -123,6 +123,36 @@ describe('the execution metadata the prompt is generated from is itself coherent
     }
   })
 
+  it('a bridge tool dispatches in-process only where that is an enumerated decision', () => {
+    // The direction the rest of this block does not cover. `bridge` + a
+    // handler is the ONE shape whose dispatch flipped with A11: it used to be
+    // relayed (the handler was dead code under `execution === 'browser'`) and
+    // now runs server-side. That is right for `studio_page_diagnostics`, whose
+    // handler owns its own relay — and silently wrong for a tool that grows a
+    // handler expecting the runner to still forward the call, which would then
+    // execute in-process while the prompt tells the model it needs the board.
+    // Enumerated, so adding one is a decision somebody makes on purpose.
+    const declared = new Set(['studio_page_diagnostics'])
+
+    for (const tool of ALL_TOOLS) {
+      if (tool.execution !== 'bridge' || tool.handler === undefined) continue
+      expect(
+        declared.has(tool.name),
+        `${tool.name} is execution:'bridge' WITH a handler, so the runner dispatches it in-process rather than relaying it. `
+          + 'If its handler does its own relay (and owns the "no board is connected" message), add it to this list. '
+          + 'If it expected to be relayed whole, drop the handler.',
+      ).toBe(true)
+    }
+
+    // And the list cannot outlive the shape it describes.
+    for (const name of declared) {
+      const tool = ALL_TOOLS.find((t) => t.name === name)
+      expect(tool, `${name} is listed here but is not a registered tool`).toBeDefined()
+      expect(tool!.execution).toBe('bridge')
+      expect(typeof tool!.handler).toBe('function')
+    }
+  })
+
   it('no tool claims a bridge fallback it cannot take', () => {
     // `server-with-bridge-fallback` is a promise that the tool keeps working
     // without a tab. A tool making that claim with no handler at all could
