@@ -46,9 +46,9 @@ const REPO_ROOT = resolve(import.meta.dir, '../..')
 // `browser`, `studio-board`, and `snapshot-tokens` are NOT in the default
 // run. `browser` needs Chromium and optional STUDIO_BENCH_ADMIN_EMAIL /
 // STUDIO_BENCH_ADMIN_PASSWORD credentials for authenticated scenarios;
-// `studio-board` (WS-5.6) needs Chromium too, generates its own synthetic
-// project + fresh throwaway DB/owner so it needs no credentials, but adds
-// real seconds (server boot + a 1s scripted pan); `snapshot-tokens` needs
+// `studio-board` shells out to Playwright's Node runner (S6), which starts
+// its own disposable e2e stack and needs Chromium installed
+// (`bun run bench:browser:install`) plus a couple of minutes; `snapshot-tokens` needs
 // ANTHROPIC_API_KEY + a seeded .tmp/dev.db and makes network calls to
 // count_tokens. Run them explicitly, e.g. `bun run bench --only=studio-board`.
 const DEFAULT_BENCHES: readonly BenchModule[] = [
