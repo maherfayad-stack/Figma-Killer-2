@@ -614,9 +614,10 @@ there is no genuinely empty state to collapse to (see that file's own doc).
 `AlignBar` mounts at the top of the Position section for single-node selection,
 with a 7th overflow button carrying *Tidy up* / *Distribute vertical spacing* /
 *Distribute horizontal spacing*. F29's constraint dropdowns appear in absolute
-mode — they choose *which* of left/right and top/bottom the offsets are written
-to, a real and frequently-wanted choice previously expressible only by which of
-four fields the user typed in. `rotate` is now **resident** on the section's
+mode — one per axis, offering Figma's five constraints (Left / Right / Left and
+right / Centre / Scale) and reading back the one the edited bag declares. Each
+constraint's inset fields follow it: one field per pinned edge, two for the
+constraints that pin both (see G10.3). `rotate` is now **resident** on the section's
 third row (`RotationRow.tsx`, paired with `ZIndexSettingsRow` on the same row)
 rather than tucked behind a popover — it writes the standalone `rotate`
 property and refuses, with a reason, when `transform` already contains a
@@ -635,19 +636,27 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
   the collisions are independent. An unflipped element gets no `scale`
   declaration at all, never a no-op `scale: 1 1`.
 
-- **G10.3 — The constraints crosshair (W8-4).** Figma's constraints widget now
-  sits beside the side pickers in absolute/fixed mode
-  (`ConstraintsDiagram.tsx`) — four edge bars plus a centring line per axis,
-  over a square standing for the containing block. It is **presentation over
-  the pickers, not a replacement**: the pickers still own "which property does
-  the value land on", and both surfaces write through the same per-property
-  commit channel. What the crosshair adds is the two constraints a pair of
-  side pickers cannot express, and a read-back of which edges the element is
-  pinned to.
+- **G10.3 — The constraints crosshair (W8-4, completed P9).** Figma's
+  constraints widget sits beside the per-axis constraint dropdowns in
+  absolute/fixed mode (`ConstraintsDiagram.tsx`) — four edge bars plus a
+  centring line per axis, over a square standing for the containing block.
+
+  **Crosshair and dropdown are two faces of one model.** P9 replaced the old
+  two-option `Left ▾ / Right ▾` side picker — which only chose *which inset
+  property the value field wrote to*, leaving stretch, Centre and Scale
+  reachable by crosshair clicks alone — with a dropdown over the same five
+  constraints. Both surfaces read and write through `useConstraintAxes`, so
+  they cannot disagree about which constraint an axis is in, and a refused
+  constraint is a **disabled option carrying its reason** rather than a choice
+  that silently does nothing. The inset fields stay: one per pinned edge, two
+  for the constraints that pin both.
 
   Every mapping and every refusal lives in one pure module,
-  `constraintMapping.ts` (unit-tested in `constraintMapping.test.ts`) — the
-  component owns pixels and pointer events only:
+  `constraintMapping.ts` (unit-tested in `constraintMapping.test.ts`);
+  `useConstraintAxes.ts` supplies it the three things it cannot compute — the
+  element's live insets, its parent's padding box, and whether that parent
+  really is the containing block. The components own pixels and pointer events
+  only:
 
   | Constraint | The CSS it actually is |
   |---|---|
@@ -683,11 +692,18 @@ rotate function. `zIndex` keeps its own small sliders-icon `⚙` trigger
   Normal-flow positions never reach the cluster at all (Law 5 already keeps
   the constraints shape absolute-only).
 
-  Known limitation, inherited not introduced: one crosshair click can produce
-  two or three property writes (stretch sets both insets and clears the size),
-  which lands as that many undo entries — the panel's commit channel is
-  per-property. Same limitation `PositionConstraints` already documents for
-  moving a value between sides.
+  **One constraint change is one undo entry.** The multi-write limitation W8-4
+  recorded (stretch sets both insets and clears the size, landing as three
+  history entries because the crosshair replayed its plan property by
+  property) is gone: `useConstraintAxes` commits the whole plan through
+  `commitStyleMany`.
+
+  The cluster's gate is stricter than the old side picker was, deliberately.
+  A side picker moving a value from `left` to `right` needed no measurement;
+  a *constraint* is a claim about the element's relationship to its parent, so
+  with no frame rendering that parent the dropdown is disabled with the
+  "can't verify" reason. The inset fields beside it stay editable throughout —
+  they are ordinary declarations, not claims.
 
 ### G11 — Export (W8-4)
 

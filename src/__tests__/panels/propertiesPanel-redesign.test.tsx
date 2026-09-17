@@ -887,7 +887,7 @@ describe('LayoutSection — position block', () => {
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.top).toBe('12px')
   })
 
-  it('G10/F29: absolute position renders the constraint side-pickers instead of the 4-direction grid', () => {
+  it('G10/F29: absolute position renders the per-axis constraint dropdowns instead of the 4-direction grid', () => {
     const { nodeId, classIds } = loadSiteWithClasses(1)
     const clsId = classIds[0]
     useEditorStore.getState().updateClassStyles(clsId, { position: 'absolute', left: '10px' })
@@ -896,8 +896,8 @@ describe('LayoutSection — position block', () => {
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
     expect(document.querySelector('[data-testid="css-direction-input-top"]')).toBeNull()
-    expect(screen.getByRole('combobox', { name: 'X anchor side' })).toBeTruthy()
-    expect(screen.getByRole('combobox', { name: 'Y anchor side' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'X constraint' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Y constraint' })).toBeTruthy()
     expect(screen.getByRole('textbox', { name: 'X offset (left)' })).toBeTruthy()
   })
 

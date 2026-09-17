@@ -26,7 +26,7 @@
  *      per-row) posture `LayerSection`/`AlignSection` already established.
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
@@ -142,36 +142,112 @@ describe('MeasuresSection — z-index settings affordance', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3. Absolute-mode constraint side-picker (F29)
+// 3. Absolute-mode constraints — the per-axis constraint dropdown (F29/G10.3)
 // ---------------------------------------------------------------------------
 
 describe('MeasuresSection — absolute-mode constraints', () => {
-  it('shows the side pickers only in absolute/fixed position, not relative', () => {
+  it('shows the constraint dropdowns only in absolute/fixed position, not relative', () => {
     selectNode({ inlineStyles: { position: 'relative' } })
     render(<MeasuresSection />)
-    expect(screen.queryByLabelText('X anchor side')).toBeNull()
+    expect(screen.queryByLabelText('X constraint')).toBeNull()
     expect(screen.getByTestId('css-direction-input-left')).toBeTruthy()
   })
 
-  it('switching the horizontal side moves a set value instead of duplicating it', () => {
+  it('offers all five of Figma constraints per axis, reading back the one the bag declares', () => {
     selectNode({ inlineStyles: { position: 'absolute', left: '10px' } })
     render(<MeasuresSection />)
 
-    const combobox = screen.getByRole('combobox', { name: 'X anchor side' })
-    fireEvent.click(combobox.nextElementSibling as HTMLElement)
-    fireEvent.click(screen.getByRole('option', { name: 'Right' }))
-
-    expect(currentNode()?.inlineStyles?.right).toBe('10px')
-    expect(currentNode()?.inlineStyles?.left).toBeUndefined()
+    // The trigger is a readonly input carrying the selected option's TEXT.
+    const combobox = screen.getByRole('combobox', { name: 'X constraint' }) as HTMLInputElement
+    expect(combobox.value).toBe('Left')
+    // Scoped to the X cell — the Y axis offers "Centre"/"Scale" under the
+    // same names.
+    const xAxis = within(screen.getByTestId('css-constraint-left-right'))
+    for (const name of ['Left', 'Right', 'Left and right', 'Centre', 'Scale']) {
+      expect(xAxis.getByRole('option', { name, hidden: true })).toBeTruthy()
+    }
   })
 
-  it('mounts the crosshair beside the pickers, disabled with a reason when no frame can confirm the containing block', () => {
-    selectNode({ inlineStyles: { position: 'absolute' } })
+  it('refuses the whole cluster, by name, when no frame can confirm the containing block', () => {
+    selectNode({ inlineStyles: { position: 'absolute', left: '10px' } })
     render(<MeasuresSection />)
 
-    expect(screen.getByLabelText('X anchor side')).toBeTruthy()
-    const diagram = screen.getByTestId('css-constraints-diagram')
-    expect(diagram.getAttribute('data-disabled')).toBe('true')
+    // The dropdown is a claim about the element's relationship to its parent;
+    // with nothing rendering that parent it is disabled with the reason
+    // rather than quietly writing an inset that anchors somewhere else.
+    const combobox = screen.getByLabelText('X constraint') as HTMLSelectElement
+    expect(combobox.disabled).toBe(true)
+    expect(screen.getByTestId('css-constraints-diagram').getAttribute('data-disabled')).toBe('true')
+
+    // The inset itself is still an ordinary declaration and stays editable.
+    expect(screen.getByTestId('css-constraint-input-left-right')).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3b. A constraint change, against a measured containing block
+// ---------------------------------------------------------------------------
+
+describe('MeasuresSection — constraint writes', () => {
+  let frameAdapters: PortalFrameAdapter[] = []
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    for (const adapter of frameAdapters) adapter.dispose()
+    frameAdapters = []
+  })
+
+  /** One frame carrying the node AND its parent, so the gate and the geometry both resolve. */
+  function mountPositionedPair(nodeStyle: Partial<CSSStyleDeclaration>) {
+    const frame = document.createElement('iframe')
+    document.body.appendChild(frame)
+    const frameDoc = frame.contentDocument!
+    frameDoc.body.setAttribute('data-breakpoint-id', 'desktop')
+    const parent = frameDoc.createElement('div')
+    parent.setAttribute('data-node-id', ROOT_ID)
+    Object.assign(parent.style, { position: 'relative', width: '200px', height: '100px' })
+    const el = frameDoc.createElement('div')
+    el.setAttribute('data-node-id', NODE_ID)
+    Object.assign(el.style, nodeStyle)
+    parent.appendChild(el)
+    frameDoc.body.appendChild(parent)
+    const adapter = new PortalFrameAdapter(frameDoc)
+    frameAdapters.push(adapter)
+    registerFrameAdapter(frame, adapter)
+  }
+
+  function pickConstraint(axisLabel: string, option: string) {
+    const combobox = screen.getByRole('combobox', { name: axisLabel })
+    fireEvent.click(combobox.nextElementSibling as HTMLElement)
+    fireEvent.click(screen.getByRole('option', { name: option }))
+  }
+
+  it('the stretch constraint writes both insets and clears the size in ONE history entry', () => {
+    selectNode({ inlineStyles: { position: 'absolute', left: '10px', width: '50px' } })
+    mountPositionedPair({ position: 'absolute', left: '10px', right: '20px', width: '50px' })
+    render(<MeasuresSection />)
+
+    const before = useEditorStore.getState()._historyPast.length
+    pickConstraint('X constraint', 'Left and right')
+
+    // Both insets land, the size that would fight them is cleared. The exact
+    // `right` value comes from whatever the frame measures (happy-dom does
+    // not lay out, so it is the mapping's `0px` fallback here, not `20px`) —
+    // the fact under test is that the axis ends up defined by TWO edges.
+    const styles = currentNode()?.inlineStyles
+    expect(styles?.left).toBe('10px')
+    expect(styles?.right).toBeDefined()
+    expect(styles?.width).toBeUndefined()
+    expect(useEditorStore.getState()._historyPast.length).toBe(before + 1)
+  })
+
+  it('a stretched axis shows an editable field for BOTH of its insets', () => {
+    selectNode({ inlineStyles: { position: 'absolute', left: '10px', right: '20px' } })
+    mountPositionedPair({ position: 'absolute', left: '10px', right: '20px' })
+    render(<MeasuresSection />)
+
+    expect(screen.getByTestId('css-constraint-input-left-right')).toBeTruthy()
+    expect(screen.getByTestId('css-constraint-input-right')).toBeTruthy()
   })
 })
 

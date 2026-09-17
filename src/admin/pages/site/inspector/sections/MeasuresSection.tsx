@@ -354,6 +354,7 @@ export function MeasuresSection() {
           tokens={spacingTokens}
           onChange={onChange}
           onClear={onClearProperty}
+          onChangeMany={onChangeMany}
           onPreview={previewProperty}
           onClearPreview={onClearPreview}
         />
