@@ -25,9 +25,12 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
  * ts-morph, and the two sides only need to agree on the JSON wire shape.
  */
 const TokenExtractionSourceSchema = Type.Union([
+  Type.Literal('builtin-design-system'),
   Type.Literal('project-css'),
   Type.Literal('tailwind-theme'),
   Type.Literal('vendor-css'),
+  Type.Literal('scss-vars'),
+  Type.Literal('js-theme'),
   Type.Literal('none'),
 ])
 const TokenExtractionCountsSchema = Type.Object({

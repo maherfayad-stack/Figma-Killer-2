@@ -93,6 +93,7 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
+import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
 import { auditPageSourceQuality, auditStylesheetQuality, type DesignSystemCatalog, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
 import { auditCompositionQuality, type PageStylesheetText } from '../../../../handlers/studio/compositionAudit'
 import { resolveDesignSystemGuide } from '../../../../handlers/studio/projectGuide'
@@ -179,7 +180,7 @@ export const studioQualityCheckTool: AiTool = {
       const guide = resolveDesignSystemGuide(dir, profile)
       if (guide) catalog = { packageName: guide.packageName, componentNames: guide.components.map((c) => c.name) }
       const compiled = await compileProjectStyles(dir, profile)
-      cssSources = [compiled.styles.vendorCss, compiled.styles.css]
+      cssSources = [builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css]
     } catch (err) {
       console.error('[studio_quality_check] could not resolve the project profile / compile project styles:', err)
     }

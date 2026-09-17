@@ -64,7 +64,7 @@
  */
 import { existsSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, PROTOTYPE_SHELL_DIR, listWorkspaceFiles } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, PROJECT_DESIGN_SYSTEM_DIR, PROTOTYPE_SHELL_DIR, listWorkspaceFiles } from '@core/page-parser'
 import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
 import { Type } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
@@ -106,7 +106,7 @@ const CRA_ENTRY_CANDIDATES = ['src/index.tsx', 'src/index.jsx', 'src/index.ts', 
 // exactly what `rankPagesDirCandidates` scores on — so without this a
 // re-probe could rank the shell above the real `pages/` and Studio would
 // start treating its own scaffold as the design.
-const NON_PAGES_DIR_SEGMENTS = new Set(['public', '__tests__', '__mocks__', PROTOTYPE_SHELL_DIR])
+const NON_PAGES_DIR_SEGMENTS = new Set(['public', '__tests__', '__mocks__', PROTOTYPE_SHELL_DIR, PROJECT_DESIGN_SYSTEM_DIR])
 
 // ---------------------------------------------------------------------------
 // Small file-read primitives

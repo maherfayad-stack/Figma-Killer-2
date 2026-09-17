@@ -53,14 +53,16 @@ export const DesignTokenFamilySchema = Type.Union([
 export type DesignTokenFamily = Static<typeof DesignTokenFamilySchema>
 
 /**
- * Where a token was found. `project-css`/`vendor-css`/`tailwind-theme`/
- * `scss-source`/`js-theme` are all real-file provenance — the canvas must
+ * Where a token was found. `builtin-design-system` (Studio's own copy of the
+ * built-in design system's compiled CSS)/`project-css`/`vendor-css`/
+ * `tailwind-theme`/`scss-source`/`js-theme` are all real-file provenance — the canvas must
  * treat their value as authoritative and must NOT re-declare them (see the
  * module doc). `studio-authored` is the one kind Studio itself may mint (the
  * explicit "New token" write path, T7 in the audit) — it has no source file
  * because Studio is the source.
  */
 export const DesignTokenOriginKindSchema = Type.Union([
+  Type.Literal('builtin-design-system'),
   Type.Literal('project-css'),
   Type.Literal('vendor-css'),
   Type.Literal('tailwind-theme'),

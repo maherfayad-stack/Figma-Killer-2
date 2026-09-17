@@ -29,7 +29,7 @@
  *   - **No trust tier.** This is `readdir`. Nothing is imported, bundled or
  *     evaluated — "parse, never execute" holds trivially.
  */
-import { isPrototypeShellPath, listWorkspaceFiles } from '@core/page-parser'
+import { isDesignSystemPath, isPrototypeShellPath, listWorkspaceFiles } from '@core/page-parser'
 import { jsonResponse } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 
@@ -58,6 +58,9 @@ export function listProjectImageAssets(dir: string): string[] {
   for (const rel of listWorkspaceFiles(dir)) {
     if (assets.length >= MAX_PROJECT_ASSETS) break
     if (isPrototypeShellPath(rel)) continue
+    // Same rule, same reason: the built-in design system's ~20 bundled SVGs
+    // are Studio's files inside the user's repo, not the project's own assets.
+    if (isDesignSystemPath(rel)) continue
     const dot = rel.lastIndexOf('.')
     if (dot === -1) continue
     if (!IMAGE_EXTENSIONS.has(rel.slice(dot + 1).toLowerCase())) continue

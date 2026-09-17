@@ -78,6 +78,7 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
+import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
 import { measureReference, type MeasureRegionInput } from '../../../../handlers/studio/referenceMeasure'
 import { resolveApplicableDesignVariableSets } from '../../../../handlers/studio/designVariableStore'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -164,7 +165,7 @@ export const studioMeasureReferenceTool: AiTool = {
     let cssSources: string[] = []
     try {
       const compiled = await compileProjectStyles(dir, resolveProjectProfile(dir))
-      cssSources = [compiled.styles.vendorCss, compiled.styles.css]
+      cssSources = [builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css]
     } catch (err) {
       // Token matching degrades to "no tokens"; the raw measurements are still
       // the point and are still correct.

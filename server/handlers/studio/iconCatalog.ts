@@ -6,15 +6,26 @@
  *
  * The slot picker's first icon source was the module registry: every
  * `*Icon`-suffixed export a registered design-system bundle carries
- * (`slotCandidates.ts`). For `@alm-design/design-system` that is TEN icons —
- * the chevrons, checkmarks and radio glyphs its own components draw with. The
- * package's real icon set is 568 SVG FILES under `src/icons/`, published
- * deliberately (`package.json#exports` maps `"./src/icons/*"`), and none of
- * them is a React export, so none of them could ever appear in the picker. A
- * user filling `<Cell icon={…}/>` was offered ten arrows for a set that
- * contains `wifi`, `passport`, `bed` and 300 more.
+ * (`slotCandidates.ts`). For the built-in design system that is TEN icons —
+ * the chevrons, checkmarks and radio glyphs its own components draw with. Its
+ * real icon set is 568 SVG FILES under `src/icons/`, and none of them is a
+ * React export, so none of them could ever appear in the picker. A user
+ * filling `<Cell icon={…}/>` was offered ten arrows for a set that contains
+ * `wifi`, `passport`, `bed` and 300 more.
  *
  * This route reads that set off disk.
+ *
+ * ## Two sources, and why the built-in one is not in `node_modules`
+ *
+ * For a DS-backed project (`isDesignSystemBacked`) the set comes from Studio's
+ * OWN vendored copy (`BUILTIN_DESIGN_SYSTEM_DIR/src/icons/`) — the project's
+ * `design-system/` folder deliberately carries only the handful of SVGs its
+ * components import, so reading the project would offer twenty icons out of
+ * 568 and call that the catalog. Studio's copy is the whole set, it is the
+ * same one the canvas renders from, and it needs no dependency install.
+ *
+ * Genuinely third-party packages the profile lists keep the `node_modules`
+ * branch below, unchanged.
  *
  * ## What is returned, and what is deliberately left out
  *
@@ -48,6 +59,7 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { jsonResponse } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
+import { BUILTIN_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from './builtinDesignSystem'
 import { resolveProjectProfile } from './projectProbe'
 import { readTextCapped } from './cappedFileRead'
 import { resolveAppRoot } from './appRoot'
@@ -76,14 +88,17 @@ const MAX_ICON_BYTES = 4096
 /** Ceiling on the whole catalog, so a pathological dependency cannot turn one request into a full directory walk. */
 const MAX_ICONS = 600
 
+/** What `StudioIcon.pkg` says for an icon out of Studio's built-in design system. Matches `designSystemDetect.ts`'s `'builtin'` ref name. */
+const BUILTIN_ICON_SOURCE_NAME = 'alm'
+
 export interface StudioIcon {
-  /** Stable identity: `<package>:<path below the icon root>`. */
+  /** Stable identity: `<source>:<path below the icon root>`. */
   id: string
   /** The file's basename without `.svg` — what the picker shows and searches. */
   name: string
   /** Directory below the icon root (`line-icons`, `logotypes/flags`), or `''` at the root. Groups the picker. */
   group: string
-  /** The package that ships it. */
+  /** The design system that ships it — an installed package's name, or `'alm'` for Studio's built-in one. */
   pkg: string
   /** Raw file text — sanitised by the CLIENT, see the module doc. */
   markup: string
@@ -114,9 +129,8 @@ function collectSvgFiles(absDir: string, relPrefix: string, depth: number, out: 
   }
 }
 
-/** The icons one installed package ships, in `ICON_ROOTS` order. */
-function packageIcons(appRootAbs: string, pkg: string, budget: number): StudioIcon[] {
-  const pkgRoot = join(appRootAbs, 'node_modules', ...pkg.split('/'))
+/** The icons one design system ships, in `ICON_ROOTS` order. `pkgRoot` is its own root directory — an installed `node_modules` entry, or Studio's vendored copy for the built-in one. */
+function designSystemIcons(pkgRoot: string, pkg: string, budget: number): StudioIcon[] {
   const icons: StudioIcon[] = []
   for (const root of ICON_ROOTS) {
     if (icons.length >= budget) break
@@ -141,21 +155,43 @@ function packageIcons(appRootAbs: string, pkg: string, budget: number): StudioIc
   return icons
 }
 
+/**
+ * Every icon a project can reach, in catalogue order: Studio's built-in design
+ * system first (for a DS-backed project), then each installed component
+ * package. See the module doc for why the built-in set is read from Studio's
+ * own copy rather than from the project.
+ *
+ * `builtinDir` is injectable so a test can point at a fixture instead of the
+ * real vendor folder; the route passes the default.
+ */
+export function collectStudioIcons(dir: string, builtinDir: string = BUILTIN_DESIGN_SYSTEM_DIR): StudioIcon[] {
+  const icons: StudioIcon[] = []
+
+  // `pkg` is the built-in design system's name, the same one
+  // `designSystemDetect.ts` reports, so every icon id stays
+  // `<system>:<path>` with no special case downstream.
+  if (isDesignSystemBacked(dir)) {
+    icons.push(...designSystemIcons(builtinDir, BUILTIN_ICON_SOURCE_NAME, MAX_ICONS))
+  }
+
+  // The same package list `componentBundle.ts` bundles from, so the picker
+  // can never offer an icon out of a package the canvas does not know.
+  const appRootAbs = resolveAppRoot(dir)
+  for (const pkg of [...resolveProjectProfile(dir).componentPackages].sort()) {
+    if (icons.length >= MAX_ICONS) break
+    const pkgRoot = join(appRootAbs, 'node_modules', ...pkg.split('/'))
+    icons.push(...designSystemIcons(pkgRoot, pkg, MAX_ICONS - icons.length))
+  }
+  return icons
+}
+
 /** `GET /admin/api/studio/icons?dir=<abs>` — see module doc for the full contract. */
 export async function tryServeStudioIcons(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (pathname !== ROUTE_PATH || req.method !== 'GET') return null
 
   try {
     const dir = resolveProjectDir(url.searchParams.get('dir'))
-
-    // The same package list `componentBundle.ts` bundles from, so the picker
-    // can never offer an icon out of a package the canvas does not know.
-    const appRootAbs = resolveAppRoot(dir)
-    const icons: StudioIcon[] = []
-    for (const pkg of [...resolveProjectProfile(dir).componentPackages].sort()) {
-      icons.push(...packageIcons(appRootAbs, pkg, MAX_ICONS - icons.length))
-    }
-    return jsonResponse({ icons })
+    return jsonResponse({ icons: collectStudioIcons(dir) })
   } catch (err) {
     rethrowProjectDirRefusal(err)
     console.error('[studio:icons]', err)

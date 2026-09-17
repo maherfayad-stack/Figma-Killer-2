@@ -250,7 +250,7 @@ describe('starterPage', () => {
 describe('the alm kit', () => {
   it('scaffolds the design system\'s own sheet, not a hand-rolled copy', () => {
     const small = starterPage('Frame', 'sheet-small', 'alm')
-    expect(small.component).toContain("import { BottomSheet } from '@alm-design/design-system'")
+    expect(small.component).toContain("import { BottomSheet } from '../design-system'")
     // `open` MUST be present: `.bottom-sheet` is `opacity: 0` until
     // `.bottom-sheet--open`, so a sheet without it renders invisible.
     expect(small.component).toContain('<BottomSheet open')
@@ -271,7 +271,7 @@ describe('the alm kit', () => {
 
   it('scaffolds the design system\'s own dialog', () => {
     const popup = starterPage('Frame', 'popup', 'alm')
-    expect(popup.component).toContain("import { Dialog } from '@alm-design/design-system'")
+    expect(popup.component).toContain("import { Dialog } from '../design-system'")
     // `Dialog` has no `open` — it renders whenever it is mounted.
     expect(popup.component).not.toContain('<Dialog open')
   })
@@ -309,14 +309,14 @@ describe('the alm kit', () => {
   })
 
   /**
-   * Packages first, local files after — the order a hand-written React file
-   * uses, and the order a scaffolded page will be copied in. The stylesheet
-   * import used to be prepended blindly, which was invisible only while no
-   * template had an import of its own.
+   * The design system first, the page's own co-located file after — the order
+   * a hand-written React file uses, and the order a scaffolded page will be
+   * copied in. The stylesheet import used to be prepended blindly, which was
+   * invisible only while no template had an import of its own.
    */
-  it('puts the stylesheet import below the package import, not above it', () => {
+  it('puts the stylesheet import below the design-system import, not above it', () => {
     const lines = starterPage('Frame', 'sheet-small', 'alm').component.split('\n')
-    expect(lines[0]).toBe("import { BottomSheet } from '@alm-design/design-system'")
+    expect(lines[0]).toBe("import { BottomSheet } from '../design-system'")
     expect(lines[1]).toBe("import styles from './Frame.module.css'")
     expect(lines[2]).toBe('')
   })
@@ -333,14 +333,28 @@ describe('detectPageTemplateKit', () => {
     return dir
   }
 
-  it('picks the alm kit for a project that actually depends on the design system', () => {
-    const dir = withPackageJson(JSON.stringify({ dependencies: { '@alm-design/design-system': '^1.0.0' } }))
+  /**
+   * DS-3 — the kit is decided by the FOLDER, never by a dependency. There is
+   * no design-system package any more: an unmigrated project that still
+   * declares the retired npm must NOT be scaffolded with an import of it,
+   * because that import no longer resolves to anything.
+   */
+  it('picks the alm kit for a project that carries the design-system folder', () => {
+    const dir = withPackageJson(JSON.stringify({ dependencies: { react: '^19.0.0' } }))
+    fs.mkdirSync(path.join(dir, 'design-system'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'design-system', 'index.js'), 'export {}\n')
     expect(detectPageTemplateKit(dir)).toBe('alm')
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('picks the plain kit for a project without it', () => {
+  it('picks the plain kit for a project without the folder', () => {
     const dir = withPackageJson(JSON.stringify({ dependencies: { react: '^19.0.0' } }))
+    expect(detectPageTemplateKit(dir)).toBe('plain')
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('picks the plain kit for an UNMIGRATED project that only declares the retired npm', () => {
+    const dir = withPackageJson(JSON.stringify({ dependencies: { '@alm-design/design-system': '^1.0.0' } }))
     expect(detectPageTemplateKit(dir)).toBe('plain')
     fs.rmSync(dir, { recursive: true, force: true })
   })

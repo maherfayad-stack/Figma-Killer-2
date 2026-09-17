@@ -39,6 +39,7 @@ import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
+import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
 import { generateVariantSeeds, MAX_VARIANTS_PER_SET } from '../../../../handlers/studio/variantSeeds'
 import { getVariantSet, listVariantSets, recordVariantSet } from '../../../../handlers/studio/variantStore'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -115,7 +116,7 @@ const planVariantsTool: AiTool = {
     try {
       const profile = resolveProjectProfile(dir)
       const compiled = await compileProjectStyles(dir, profile)
-      tokens = buildProjectTokenIndex(compiled.styles.vendorCss, compiled.styles.css)
+      tokens = buildProjectTokenIndex(builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css)
     } catch (err) {
       console.error('[studio_plan_variants] could not resolve the project profile / compile project styles:', err)
     }

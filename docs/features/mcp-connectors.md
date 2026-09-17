@@ -126,6 +126,17 @@ the shipped `@core/ast-codemods`, plus the WS-4 instance-model verbs
 out the write surface with the one operation none of these three cover:
 scaffolding a brand-new page file.
 
+**The built-in design system (DS-3).** `studio_list_components`/
+`studio_find_component` list Studio's own design system as
+`apiSource: "builtin"` entries for any project that carries the
+`design-system/` folder — from the committed manifest the insert palette
+itself registers, so no dependency install, no `.d.ts` and no Code Connect
+file is needed. Their `pkg` is that FOLDER, not a package name: the real
+import is relative to the importing file, so an insert sends
+`designSystemImport: true` instead of `importSpecifier` and the server
+computes the path. `studio_read_package_doc` accepts `package: "alm"` for the
+same system's `design.md`/`CLAUDE.md`, which ship with Studio.
+
 **Review comments** — `studio_list_comments` (read, ungated),
 `studio_reply_comment` and `studio_resolve_comment` (both `studio.write`). These
 let an agent close a human review thread end to end: read what is outstanding,

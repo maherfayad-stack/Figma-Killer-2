@@ -43,7 +43,7 @@ import {
   type TypeNode,
   type VariableDeclaration,
 } from 'ts-morph'
-import { isPrototypeShellPath } from '@core/page-parser'
+import { isDesignSystemPath, isPrototypeShellPath } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { ComponentSpec, PropKind, PropSpec } from './packageManifestSchema'
 import { PropSpecSchema } from './packageManifestSchema'
@@ -434,6 +434,12 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
     // the design — `App`/`CanvasPanel` in the component picker would be Studio
     // offering the user its own scaffold to place on their canvas.
     if (isPrototypeShellPath(relFile)) continue
+    // Studio's own copy of the built-in design system is not one of the
+    // project's local components: it is a black box the parser never inlines
+    // (`componentSources.ts`'s `design-system` kind), and offering its forty
+    // components here would invite a deep relative import into a folder
+    // Studio rewrites whenever it goes stale.
+    if (isDesignSystemPath(relFile)) continue
 
     for (const fn of sourceFile.getFunctions()) {
       if (fn.isDefaultExport()) {

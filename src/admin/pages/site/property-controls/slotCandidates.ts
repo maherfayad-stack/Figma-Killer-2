@@ -50,8 +50,15 @@ export interface ComponentSlotCandidate {
   kind: 'component'
   key: string
   name: string
-  /** The exact specifier the insert writes an import for — bare for a package icon, relative for a local component. */
-  importSpecifier: string
+  /**
+   * The exact specifier the insert writes an import for — bare for a package
+   * icon, relative for a local component. Absent for a BUILT-IN design-system
+   * component: its specifier is relative to the file being written, which only
+   * the server knows, so `designSystemImport` travels instead.
+   */
+  importSpecifier?: string
+  /** DS-3 — the component comes from Studio's built-in design system; the server computes the path. See `ModuleDefinition.sourceImport`. */
+  designSystemImport?: true
   source: 'design-system' | 'project'
 }
 
@@ -90,13 +97,18 @@ export function designSystemIconCandidates(): ComponentSlotCandidate[] {
   return registry
     .list()
     .filter((mod) => mod.sourceImport !== undefined && /Icon$/.test(mod.sourceImport.name))
-    .map((mod) => ({
-      kind: 'component' as const,
-      key: `ds:${mod.id}`,
-      name: mod.sourceImport!.name,
-      importSpecifier: mod.sourceImport!.specifier,
-      source: 'design-system' as const,
-    }))
+    .map((mod) => {
+      const sourceImport = mod.sourceImport!
+      return {
+        kind: 'component' as const,
+        key: `ds:${mod.id}`,
+        name: sourceImport.name,
+        ...(sourceImport.kind === 'package'
+          ? { importSpecifier: sourceImport.specifier }
+          : { designSystemImport: true as const }),
+        source: 'design-system' as const,
+      }
+    })
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 

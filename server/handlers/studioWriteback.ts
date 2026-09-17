@@ -474,6 +474,11 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         edit,
         anchor && anchor.rel === target.rel ? anchor : null,
         destination && destination.rel === target.rel ? destination : null,
+        // The workspace-relative path of the file being written — what a
+        // `designSystemImport` needs to become a real relative specifier. It
+        // comes from the SAME decoder every other path here goes through, so
+        // it inherits `studioEditLocation`'s containment guard.
+        target.rel,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       return { applied: true }
@@ -506,7 +511,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // `move`/`insert` already apply above.
       const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
       const anchor = anchorId ? studioEditLocation(anchorId) : null
-      const result = applySlotEdit(loc, edit, anchor && anchor.rel === target.rel ? anchor : null, dir)
+      const result = applySlotEdit(loc, edit, anchor && anchor.rel === target.rel ? anchor : null, dir, target.rel)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       // `applied` reads straight from the codemod's own answer (E2.2 — a
       // `preview: true` add-slot-prop is `applied: false` here, on purpose;

@@ -143,7 +143,13 @@ export function createStudioSourceWrites(
       void commitStudioInsert({
         ...plan.commit,
         name: sourceImport.name,
-        importSpecifier: sourceImport.specifier,
+        // The two spellings a registered component can have: a package names
+        // its specifier, the built-in design system names only itself and the
+        // SERVER computes the path relative to the file being written (the
+        // editor does not know where that file sits — see `sourceImport`).
+        ...(sourceImport.kind === 'package'
+          ? { importSpecifier: sourceImport.specifier }
+          : { designSystemImport: true as const }),
         props: insertableJsxProps(props),
       })
       return true
@@ -254,7 +260,13 @@ export function createStudioSourceWrites(
     const props = { ...(mod?.defaults ?? {}), ...defaults }
     const sourceImport = mod?.sourceImport
     if (sourceImport) {
-      void commitStudioWrap({ nodeId: plan.commit, name: sourceImport.name, importSpecifier: sourceImport.specifier })
+      void commitStudioWrap({
+        nodeId: plan.commit,
+        name: sourceImport.name,
+        ...(sourceImport.kind === 'package'
+          ? { importSpecifier: sourceImport.specifier }
+          : { designSystemImport: true as const }),
+      })
       return true
     }
     const intrinsic = mod?.sourceIntrinsic?.(props)

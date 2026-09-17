@@ -44,6 +44,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync, type Dirent } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { BUILTIN_DESIGN_SYSTEM_DIR } from './builtinDesignSystem'
 import { readTextCapped } from './cappedFileRead'
 import {
   classifyDeclaration,
@@ -74,6 +75,25 @@ const CACHE_DIR_SEGMENTS = ['.studio', 'cache'] as const
 const CSS_DISCOVERY_EXCLUDED_DIRS = new Set(['node_modules', '.git'])
 const MAX_CSS_FILES_PER_SYSTEM = 300
 const MAX_CSS_FILE_BYTES = 2_000_000
+
+/**
+ * Where a design system's CSS actually is, absolutely.
+ *
+ * For everything the project carries itself (`'node-modules'`, `'imported'`)
+ * that is `dir + ref.root`. For the BUILT-IN design system it is Studio's own
+ * vendored `dist/` — the project's `design-system/` folder ships SOURCE only
+ * (component `.jsx` + their sibling `.css`), while `dist/index.css` is the one
+ * compiled sheet that actually carries every token, in one file, identically
+ * for every DS-backed project. Reading Studio's copy also keeps the digest
+ * honest when a project's folder is stale or has not been written yet.
+ *
+ * `builtinDir` is injectable so a test can point at a fixture instead of the
+ * real vendor folder; every caller passes the default.
+ */
+function designSystemCssRoot(dir: string, ref: DesignSystemRef, builtinDir: string): string {
+  if (ref.source === 'builtin') return join(builtinDir, 'dist')
+  return join(dir, ...ref.root.split('/'))
+}
 
 function listCssFilesUnder(absRoot: string): string[] {
   const out: string[] = []
@@ -338,14 +358,18 @@ function renderDigestMarkdown(
  * readable `.css` file — never throws, matching every other module in this
  * folder's "degrade, don't crash the turn" contract.
  */
-export function buildDesignSystemDigest(dir: string, designSystems: readonly DesignSystemRef[]): string | undefined {
+export function buildDesignSystemDigest(
+  dir: string,
+  designSystems: readonly DesignSystemRef[],
+  builtinDir: string = BUILTIN_DESIGN_SYSTEM_DIR,
+): string | undefined {
   if (designSystems.length === 0) return undefined
 
   const cssTexts: string[] = []
   const blocks = new Map<string, BlockEntry>()
 
   for (const ds of designSystems) {
-    const absRoot = join(dir, ...ds.root.split('/'))
+    const absRoot = designSystemCssRoot(dir, ds, builtinDir)
     for (const relFile of listCssFilesUnder(absRoot)) {
       const text = readTextCapped(join(absRoot, ...relFile.split('/')), MAX_CSS_FILE_BYTES)
       if (text === undefined) continue
@@ -386,10 +410,14 @@ function cacheFilePath(dir: string, cacheKey: string): string {
  * roster generator only needs to know whether it changed, not (yet) the
  * digest content itself.
  */
-export function computeDesignSystemCacheKey(dir: string, designSystems: readonly DesignSystemRef[]): string {
+export function computeDesignSystemCacheKey(
+  dir: string,
+  designSystems: readonly DesignSystemRef[],
+  builtinDir: string = BUILTIN_DESIGN_SYSTEM_DIR,
+): string {
   const hash = createHash('sha1')
   for (const ds of [...designSystems].sort((a, b) => a.root.localeCompare(b.root))) {
-    const absRoot = join(dir, ...ds.root.split('/'))
+    const absRoot = designSystemCssRoot(dir, ds, builtinDir)
     hash.update(`${ds.source}:${ds.name}:${ds.root}`)
     for (const relFile of listCssFilesUnder(absRoot)) {
       try {
@@ -424,14 +452,18 @@ function writeDigestCache(dir: string, cacheKey: string, content: string): void 
  * or none had a readable `.css` file) — `buildReferenceFiles` treats that as
  * "no seventh file this turn", not an error.
  */
-export function getOrBuildDesignSystemDigest(dir: string, designSystems: readonly DesignSystemRef[]): string | undefined {
+export function getOrBuildDesignSystemDigest(
+  dir: string,
+  designSystems: readonly DesignSystemRef[],
+  builtinDir: string = BUILTIN_DESIGN_SYSTEM_DIR,
+): string | undefined {
   if (designSystems.length === 0) return undefined
 
-  const cacheKey = computeDesignSystemCacheKey(dir, designSystems)
+  const cacheKey = computeDesignSystemCacheKey(dir, designSystems, builtinDir)
   const cached = readDigestCache(dir, cacheKey)
   if (cached !== undefined) return cached
 
-  const built = buildDesignSystemDigest(dir, designSystems)
+  const built = buildDesignSystemDigest(dir, designSystems, builtinDir)
   if (built === undefined) return undefined
 
   writeDigestCache(dir, cacheKey, built)
@@ -439,6 +471,10 @@ export function getOrBuildDesignSystemDigest(dir: string, designSystems: readonl
 }
 
 /** Test seam only — lets `designSystemDigest.test.ts` assert cache-file existence without depending on `existsSync` import order in the module under test. */
-export function designSystemCacheFileExists(dir: string, designSystems: readonly DesignSystemRef[]): boolean {
-  return existsSync(cacheFilePath(dir, computeDesignSystemCacheKey(dir, designSystems)))
+export function designSystemCacheFileExists(
+  dir: string,
+  designSystems: readonly DesignSystemRef[],
+  builtinDir: string = BUILTIN_DESIGN_SYSTEM_DIR,
+): boolean {
+  return existsSync(cacheFilePath(dir, computeDesignSystemCacheKey(dir, designSystems, builtinDir)))
 }

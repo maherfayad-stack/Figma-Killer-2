@@ -141,6 +141,7 @@ import { explainRegionColors, type RegionExplainVocabulary } from './regionExpla
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
+import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
 import { buildDesignVariableIndex } from '../../../../handlers/studio/designVariableIndex'
 import { resolveApplicableDesignVariableSets } from '../../../../handlers/studio/designVariableStore'
 import {
@@ -417,7 +418,7 @@ export const studioCompareTool: AiTool = {
         try {
           const profile = resolveProjectProfile(dir)
           const compiled = await compileProjectStyles(dir, profile)
-          return buildProjectTokenIndex(compiled.styles.vendorCss, compiled.styles.css)
+          return buildProjectTokenIndex(builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css)
         } catch (err) {
           // Same degrade path `studio_quality_check` uses: without tokens the
           // explanation still names both hex values, which already beats a

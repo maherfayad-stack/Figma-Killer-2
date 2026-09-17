@@ -207,6 +207,41 @@ describe('studio_list_components', () => {
     expect(result.note).toContain('acme-ds-1-0-0')
   })
 
+  /**
+   * DS-3 — the BUILT-IN design system, listed straight from the committed
+   * manifest `src/modules/alm/register.tsx` registers the palette from. It
+   * needs no install, no `.d.ts` and no Code Connect file, which is exactly
+   * why it used to be invisible to this tool: every source it consults is
+   * keyed on `node_modules`.
+   */
+  it('lists the built-in design system for a project carrying the design-system folder', async () => {
+    write('design-system/index.js', 'export {}\n')
+
+    const result = (await call('studio_list_components')) as {
+      components: Array<{ name: string; pkg: string; apiSource: string; props: Array<{ name: string; kind: { kind: string } }> }>
+      designSystems: Array<{ name: string; source: string; root: string }>
+    }
+
+    expect(result.designSystems).toEqual([{ name: 'alm', source: 'builtin', root: 'design-system' }])
+    const builtin = result.components.filter((c) => c.apiSource === 'builtin')
+    expect(builtin.length).toBeGreaterThan(10)
+    const button = builtin.find((c) => c.name === 'Button')
+    expect(button).toBeDefined()
+    // `pkg` is the FOLDER, not a package name — the tool description says the
+    // specifier is relative to the importing file and that an insert should
+    // use `designSystemImport: true` rather than guess it.
+    expect(button!.pkg).toBe('design-system')
+    // Props arrive in the same `PropKind` vocabulary every other entry uses.
+    expect(button!.props.every((p) => typeof p.kind.kind === 'string')).toBe(true)
+  })
+
+  it('lists NO built-in components for a project that does not carry the folder', async () => {
+    // The refusal: naming components a project cannot import is worse than an
+    // empty list, because the agent writes the import and the build breaks.
+    const result = (await call('studio_list_components')) as { components: Array<{ apiSource: string }> }
+    expect(result.components.some((c) => c.apiSource === 'builtin')).toBe(false)
+  })
+
   it('reports no note at all for a project with neither an installed nor an imported design system', async () => {
     const result = (await call('studio_list_components')) as { components: unknown[]; designSystems: unknown[]; note?: string }
     expect(result.components).toEqual([])

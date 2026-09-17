@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { buildProjectTokenIndex, nearestSizeToken, rgbToHex } from './projectTokenIndex'
 
-/** A trimmed slice of the shape `@alm-design/design-system` actually ships. */
+/** A trimmed slice of the shape the built-in design system actually ships. */
 const ALM_CSS = `
 :root{--color-aqua-100:#0c9ab0;--color-coral-100:#ef4550;--color-metal:#1c1c1c;--color-light:#fff}
 :root{
@@ -119,5 +119,24 @@ describe('rgbToHex', () => {
   it('pads and clamps', () => {
     expect(rgbToHex({ r: 0, g: 0, b: 0 })).toBe('#000000')
     expect(rgbToHex({ r: 300, g: -5, b: 176 })).toBe('#ff00b0')
+  })
+})
+
+/**
+ * DS-3 — the built-in design system's CSS is passed in FIRST and the
+ * project's own compiled CSS after, so the project still wins on any name it
+ * redeclares (last declaration wins, exactly as the cascade behaves in the
+ * canvas). Measuring a design and being told a token name is only useful if
+ * that name resolves to the value the browser will actually paint.
+ */
+describe('buildProjectTokenIndex — design-system CSS ahead of the project\'s own', () => {
+  it("lets the project override a design-system token of the same name", () => {
+    const index = buildProjectTokenIndex(
+      ':root{--color-brand:#0c9ab0;--space-sm:8px}',
+      ':root{--color-brand:#ef4550}',
+    )
+    expect(index.colors.find((c) => c.name === '--color-brand')?.hex).toBe('#ef4550')
+    // …and keeps everything the project says nothing about.
+    expect(index.lengths.find((l) => l.name === '--space-sm')?.px).toBe(8)
   })
 })

@@ -36,6 +36,58 @@ function importedRef(): DesignSystemRef[] {
   return [{ name: 'fixture-ds', source: 'imported', root: IMPORTED_ROOT }]
 }
 
+/**
+ * DS-3 — the BUILT-IN design system's CSS is not in the project at all: its
+ * `root` names the project's source copy, but the tokens are read from
+ * Studio's own vendored `dist/index.css`. The fixture stands in for
+ * `vendor/alm-design-system/`.
+ */
+describe('buildDesignSystemDigest — the built-in design system', () => {
+  const builtinRef: DesignSystemRef[] = [{ name: 'alm', source: 'builtin', root: 'design-system' }]
+
+  function writeBuiltinFixture(css: string): string {
+    const builtinDir = mkdtempSync(join(tmpdir(), 'builtin-ds-digest-'))
+    mkdirSync(join(builtinDir, 'dist'), { recursive: true })
+    writeFileSync(join(builtinDir, 'dist', 'index.css'), css)
+    return builtinDir
+  }
+
+  it("reads Studio's vendored dist/index.css, not the project's design-system folder", () => {
+    const builtinDir = writeBuiltinFixture(
+      ':root { --color-aqua-100: #0C9AB0; --space-sm: 8px; }\n.ds-pill { padding: 4px; }\n.ds-pill--small { padding: 2px; }',
+    )
+    try {
+      // A DIFFERENT token in the project's own copy: if the digest read the
+      // project it would report this one, and it must not — the project's copy
+      // is source, may be stale, and is not what the canvas renders.
+      write('design-system/tokens/tokens.css', ':root { --color-stale-999: #000; }')
+
+      const digest = buildDesignSystemDigest(dir, builtinRef, builtinDir)!
+      // Spacing tokens ARE listed by name; colors are counted by prefix.
+      expect(digest).toContain('--space-sm: 8px')
+      expect(digest).toContain('## Colors (1 tokens)')
+      expect(digest).not.toContain('stale')
+      expect(digest).toContain('- .ds-pill — variants: --small')
+    } finally {
+      rmSync(builtinDir, { recursive: true, force: true })
+    }
+  })
+
+  it('caches on the vendored files, so two projects with the same system share one key', () => {
+    const builtinDir = writeBuiltinFixture(':root { --color-aqua-100: #0C9AB0; }')
+    try {
+      expect(getOrBuildDesignSystemDigest(dir, builtinRef, builtinDir)).toContain('## Colors (1 tokens)')
+      expect(designSystemCacheFileExists(dir, builtinRef, builtinDir)).toBe(true)
+    } finally {
+      rmSync(builtinDir, { recursive: true, force: true })
+    }
+  })
+
+  it('degrades to undefined when the vendor folder is not there at all', () => {
+    expect(buildDesignSystemDigest(dir, builtinRef, join(dir, 'no-such-vendor'))).toBeUndefined()
+  })
+})
+
 describe('buildDesignSystemDigest', () => {
   it('returns undefined when there are no design systems', () => {
     expect(buildDesignSystemDigest(dir, [])).toBeUndefined()

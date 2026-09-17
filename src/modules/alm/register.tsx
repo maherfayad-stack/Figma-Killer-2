@@ -40,16 +40,6 @@ import { buildDefaults, buildPropsSchema, buildSchema } from './inspectorSchema'
 const manifest = manifestJson as DesignSystemManifest
 
 /**
- * The specifier every component here is imported from in a user's source.
- * Mirrors `studioPageLoad.ts`'s `ALM_DESIGN_PACKAGE_SPECIFIER` (server-side —
- * it decides which components keep the `alm.*` module id instead of the generic
- * `pkg.*` one). Declared on each module as `sourceImport` so the Studio insert
- * path can write a real `import { Button } from '@alm-design/design-system'`
- * without knowing anything about this package.
- */
-const ALM_PACKAGE_SPECIFIER = '@alm-design/design-system'
-
-/**
  * Overlay/portal components that render detached from the canvas flow and would
  * be confusing to place by hand. They are hidden from the INSERT PALETTE only —
  * `PALETTE_HIDDEN_ALM_MODULE_IDS`, consumed by `moduleAvailability`.
@@ -463,7 +453,7 @@ for (const spec of manifest.components) {
     schema: buildSchema(spec.props),
     propsSchema,
     defaults: buildDefaults(spec),
-    sourceImport: { specifier: ALM_PACKAGE_SPECIFIER, name: spec.name },
+    sourceImport: { kind: 'design-system', name: spec.name },
     component: makeComponent(spec.name, handlerProps, collectionProps),
     // Publish (HTML) path is a later step — the canvas uses `component` above.
     render: () => ({ html: '' }),
@@ -533,7 +523,7 @@ for (const name of iconExportNames) {
     schema: buildSchema([]),
     propsSchema: buildPropsSchema([]),
     defaults: {},
-    sourceImport: { specifier: ALM_PACKAGE_SPECIFIER, name },
+    sourceImport: { kind: 'design-system', name },
     component: makeComponent(name, []),
     render: () => ({ html: '' }),
   } as unknown as ModuleDefinition<Record<string, unknown>>

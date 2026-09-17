@@ -9,13 +9,13 @@
  * way `src/modules/alm/register.tsx` does for the one hardcoded
  * `@alm-design/design-system` case.
  *
- * `src/modules/alm/register.tsx` is NOT deleted by this change —
- * `standing-07` (STATE.md): that deletion is gated on the generic pipeline
- * being PROVEN to render the eSIM board visually equivalently, which needs a
- * real browser dogfood pass this change does not run. The two paths coexist:
- * `@alm-design/design-system` components keep resolving to `alm.<Name>`
- * (`studioPageLoad.ts`'s `ALM_DESIGN_PACKAGE_SPECIFIER` carve-out); every
- * OTHER package's components resolve to `pkg.*` and register here.
+ * `src/modules/alm/register.tsx` is NOT deleted by this change, and it is no
+ * longer a carve-out either: it registers Studio's OWN built-in design system,
+ * which is not a package at all. A project reaches those components through
+ * its own `design-system/` folder, `componentSources.ts` classifies that as
+ * the `design-system` source kind, and `moduleMapping.ts` sends it to
+ * `alm.<Name>`. EVERY package — with no exception for any specifier —
+ * resolves to `pkg.*` and registers here.
  *
  * Kept VERBATIM from `register.tsx`, because each earned its own comment
  * there — see the sibling functions/constants below for why:
@@ -475,7 +475,7 @@ async function syncProjectModules(dir: string): Promise<void> {
         // How this component is spelled in the user's source, so adding it from
         // the picker can write `import { X } from '<pkg>'` + `<X />` into the
         // file — see `ModuleDefinition.sourceImport`.
-        sourceImport: { specifier: spec.pkg, name: spec.name },
+        sourceImport: { kind: 'package', specifier: spec.pkg, name: spec.name },
         component: makePackageComponent(spec.pkg, spec.name, Comp, Provider),
         // Publish (HTML) path is out of scope, same as `register.tsx` — the canvas uses `component` above.
         render: () => ({ html: '' }),

@@ -135,6 +135,7 @@ const FrameworkColorVariantOptionsSchema = withFallback(
  * declaration anywhere, so they must still be emitted.
  */
 const FrameworkColorTokenOriginSchema = Type.Union([
+  Type.Literal('builtin-design-system'),
   Type.Literal('project-css'),
   Type.Literal('tailwind-theme'),
   Type.Literal('vendor-css'),

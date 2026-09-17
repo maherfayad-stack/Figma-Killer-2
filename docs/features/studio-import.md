@@ -341,8 +341,58 @@ component's own file, so a text or style edit lands there and refuses as
 
 `resolveComponentSources` classifies every `kind: 'component'` node:
 
-- **local** — the import resolves to a real file inside the workspace. `inlineLocalComponents` parses that file's returned JSX and splices it in, recursively (`maxDepth` 6, `maxNodes` 4000).
-- **package** — a bare specifier. Left as an opaque `alm.*` node with a read-only prop surface; the design-system modules render these properly on their own.
+| Kind | When | What happens to the node |
+|---|---|---|
+| **local** | the import resolves to a real file inside the workspace | `inlineLocalComponents` parses that file's returned JSX and splices it in, recursively (`maxDepth` 6, `maxNodes` 4000) |
+| **package** | a bare specifier that resolves outside the workspace (or not at all) | left opaque, with a read-only prop surface. Module id `pkg.<sanitized-package>.<Name>` — **every** package, with no carve-out for any specifier |
+| **design-system** | the import resolves inside `<root>/design-system/` — Studio's own copy of the built-in design system, written into the project by `designSystemFiles.ts` | left opaque, exactly as a package is. Module id `alm.<ExportName>`, rendered by the built-in `alm.*` module pack from Studio's own vendored source at every trust tier. `name` is the PUBLIC EXPORT name, so `import { Button as Btn }` and `<DS.Button/>` both land on `alm.Button` |
+
+### Why `<project>/design-system/` is a black box
+
+A DS-backed project carries a Studio-written `design-system/` folder so the
+repository builds, runs and downloads standalone, and its pages import it by
+relative path (`import { Button } from '../design-system'`). Its source is
+therefore *inside* the workspace — which is exactly why it needs a rule of its
+own, because every default in this pipeline would otherwise treat it as the
+user's app:
+
+- **Not inlined.** Expanding `<Button variant="primary"/>` would replace one
+  node the user can edit with ~40 nodes of a component they do not own and
+  cannot keep (Studio rewrites the folder whenever it goes stale).
+- **Its CSS never enters `site.styleRules`.** The canvas already injects
+  Studio's own copy of the same stylesheet as a read-only `@layer vendor`
+  bucket; collecting it again would bury the user's own classes under hundreds
+  of rules they cannot meaningfully edit. `collectPageStylesheets` (page walk
+  AND entry walk) and `styleCompile` both skip the folder.
+- **Never searched for pages, components or assets.** Forty `.jsx` files that
+  each default-export JSX otherwise score as the best pages directory in the
+  project (`projectProbe`'s heuristic, `discoverPageFiles`), its components
+  would be offered as the project's own local components
+  (`componentSpecExtract`), and its bundled SVGs as the project's own assets
+  (`projectAssets`).
+- **Detach / extract-component refuse on it**, with the same stable
+  `package-component` reason code and a message naming the real case.
+
+The folder name lives in two places on purpose — `PROJECT_DESIGN_SYSTEM_DIR` in
+`src/core/page-parser/designSystemDir.ts` (the browser core cannot import
+`server/`) and in `server/handlers/studio/builtinDesignSystem.ts`, which also
+owns `BUILTIN_DESIGN_SYSTEM_DIR` (Studio's vendored copy) and
+`isDesignSystemBacked(dir)`. `designSystemDir.test.ts` asserts the two literals
+are equal; nothing else does. The match is **root-anchored**: a user's own
+`src/design-system/` folder of hand-written components stays local and stays
+inlinable.
+
+### Inserting one: the server computes the specifier
+
+`ModuleDefinition.sourceImport` is `{ kind: 'package'; specifier; name } | { kind: 'design-system'; name }`. A design-system insert has no specifier the
+browser can send — the real one is relative to the file being written
+(`'../design-system'` from `pages/Home.tsx`, `'../../design-system'` from
+`pages/account/Settings.tsx`) and the editor knows a node id, not a directory
+depth. So the wire carries `designSystemImport: true` (insert, wrap, slot fill,
+and any nested child of an insert subtree), and
+`studioStructuralWriteback.ts` resolves it with `designSystemImportSpecifier(targetRel)`
+**after** `studioEditLocation` has decoded and path-guarded the target. MCP's
+`studio_apply_edits` takes the same field.
 
 ### Composite node ids
 

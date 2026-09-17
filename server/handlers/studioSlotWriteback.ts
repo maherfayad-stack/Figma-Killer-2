@@ -59,7 +59,7 @@
  * `no-jsx-parent` stays an AST-only residual in `struct-01`.
  */
 import { insertJsxIntoSlotProp, extractSubtreeToComponent, addSlotPropToComponent, type ComponentCallSite } from '@core/ast-codemods'
-import { JsonDataValueSchema } from './studioStructuralWriteback'
+import { DesignSystemImportSchema, JsonDataValueSchema, resolveDesignSystemImports } from './studioStructuralWriteback'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -73,6 +73,7 @@ const SlotJsxNodeSchema = Type.Recursive((Self) =>
   Type.Object({
     name: Type.String(),
     importSpecifier: Type.Optional(Type.String()),
+    designSystemImport: Type.Optional(DesignSystemImportSchema),
     props: Type.Optional(Type.Record(Type.String(), JsonDataValueSchema)),
     children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
   }),
@@ -266,18 +267,20 @@ export function applySlotEdit(
   edit: SlotEdit,
   anchor: { line: number; col: number } | null,
   workspaceRoot: string,
+  targetRel: string,
 ): SlotEditOutcome {
   switch (edit.kind) {
     case 'insert-slot': {
+      // The fill can name a built-in design-system component at any depth, and
+      // every one of them resolves against the file being written — the same
+      // resolution `applyStructuralEdit` runs, from the same module, so a slot
+      // fill and a plain insert can never write two different specifiers for
+      // the same component.
+      const [node] = resolveDesignSystemImports([edit.node], targetRel)
       const result = insertJsxIntoSlotProp({
         ...loc,
         propName: edit.propName,
-        node: {
-          name: edit.node.name,
-          ...(edit.node.importSpecifier === undefined ? {} : { importSpecifier: edit.node.importSpecifier }),
-          ...(edit.node.props === undefined ? {} : { props: edit.node.props }),
-          ...(edit.node.children === undefined ? {} : { children: edit.node.children }),
-        },
+        node: node!,
         ...(edit.mode === undefined ? {} : { mode: edit.mode }),
         ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })

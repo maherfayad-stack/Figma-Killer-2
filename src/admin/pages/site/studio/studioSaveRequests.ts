@@ -277,12 +277,15 @@ export type InsertPropValue =
  * never reach the browser bundle — the same posture `registerProjectModules.ts`
  * takes for `ICON_PROP_SVG_KEY`.
  *
- * A component fill names its `importSpecifier`; an inline SVG icon
- * (`svgToJsxNode.ts`) is a tree of intrinsic tags and names none.
+ * A package-component fill names its `importSpecifier`; a built-in
+ * design-system component names `designSystemImport` and lets the server
+ * compute the relative path (see `commitStudioInsert`); an inline SVG icon
+ * (`svgToJsxNode.ts`) is a tree of intrinsic tags and names neither.
  */
 export interface SlotJsxNode {
   name: string
   importSpecifier?: string
+  designSystemImport?: true
   props?: Record<string, JsonDataValue>
   children?: string | SlotJsxNode[]
 }

@@ -15,7 +15,7 @@
  */
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, isDesignSystemPath, listWorkspaceFiles } from '@core/page-parser'
 import type { ProjectPlatform } from '@core/studio-board'
 import {
   DEFAULT_TRUST_TIER,
@@ -169,7 +169,14 @@ function isPageFile(relPath: string): boolean {
  * `collectWorkspaceFiles` via `listWorkspaceFiles`).
  */
 export function discoverPageFiles(pagesDir: string): string[] {
-  return listWorkspaceFiles(pagesDir).filter(isPageFile)
+  // `design-system/` is Studio's own copy of the built-in design system,
+  // written into the project so it builds standalone (`isDesignSystemPath`,
+  // `@core/page-parser`). Forty component `.jsx` files that each default-export
+  // JSX are indistinguishable from a pages directory to every rule here, so a
+  // project whose pages root IS its project root would put the whole design
+  // system on the board as pages. Relative to `pagesDir`, same as every other
+  // path in this walk.
+  return listWorkspaceFiles(pagesDir).filter((relPath) => isPageFile(relPath) && !isDesignSystemPath(relPath))
 }
 
 // ---------------------------------------------------------------------------

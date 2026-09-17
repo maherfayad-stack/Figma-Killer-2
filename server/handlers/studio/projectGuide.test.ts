@@ -329,6 +329,41 @@ describe('buildDesignSystemGuide', () => {
     expect(buildDesignSystemGuide(pkgDir, '@scope/ds')!.importContract).not.toContain('.css')
   })
 
+  /**
+   * DS-3 — the BUILT-IN design system is not a package and has no specifier
+   * that is true everywhere: it lives in a folder at the project root, so each
+   * file spells it by its own distance from there. The generator used to print
+   * the npm name, which now resolves to nothing from anywhere — and an agent
+   * follows a generated import line literally.
+   */
+  it('teaches a RELATIVE folder import for the built-in design system, never a package name', () => {
+    const contract = buildDesignSystemGuide(pkgDir, 'alm', { kind: 'folder', dirName: 'design-system' })!.importContract!
+    expect(contract).toContain("from '../design-system'")
+    expect(contract).toContain("'../../design-system'") // the rule, not just one example
+    expect(contract).not.toContain("from '@scope/ds'")
+    expect(contract).not.toContain("from 'alm'")
+    // The folder's index loads its own token CSS — no separate import to write.
+    expect(contract).not.toContain("import '")
+  })
+
+  it('tells the agent the folder is Studio-managed, so it is read but never hand-edited', () => {
+    const contract = buildDesignSystemGuide(pkgDir, 'alm', { kind: 'folder', dirName: 'design-system' })!.importContract!
+    expect(contract).toContain('never hand-edit')
+  })
+
+  it('does not hand out per-file icon paths for the built-in system, because the project has only a few of them', () => {
+    // Studio ships 568 SVGs; a project's copy carries the ~20 its own
+    // components import. Printing all of them as importable paths would be an
+    // instruction that fails on almost every one.
+    mkdirSync(join(pkgDir, 'src', 'icons', 'line-icons'), { recursive: true })
+    writeFileSync(join(pkgDir, 'src', 'icons', 'line-icons', 'wifi.svg'), '<svg/>', 'utf8')
+    const guide = buildDesignSystemGuide(pkgDir, 'alm', { kind: 'folder', dirName: 'design-system' })!
+    const rendered = renderIconReference(guide)!
+    expect(rendered).toContain('inline them, do not import them')
+    expect(rendered).toContain('wifi')
+    expect(rendered).not.toContain('?raw')
+  })
+
   it('contributes nothing at all for a package that ships no docs', () => {
     const bare = mkdtempSync(join(tmpdir(), 'studio-ds-bare-'))
     try {

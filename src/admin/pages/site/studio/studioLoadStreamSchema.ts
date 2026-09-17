@@ -26,15 +26,22 @@ import { StyledRuleSourceSchema } from './styledRuleSources'
  * One `kind: 'component'` node's classification (Phase 7A — multi-file
  * workspace backend): **local** components resolve to a real file inside the
  * workspace (recorded as a workspace-relative path); **package** components
- * come from a bare specifier (an npm dependency, e.g.
- * `@alm-design/design-system`) and stay a read-only prop surface this slice.
+ * come from a bare specifier (an npm dependency) and stay a read-only prop
+ * surface this slice; **design-system** components come from Studio's own
+ * built-in design system, reached through the project's `design-system/`
+ * folder, and are a black box by design (`name` is the component's public
+ * export name — what `alm.<Name>` is minted from).
+ *
  * Mirrors `ComponentSource` in `@core/page-parser` (server-only ts-morph
  * module) — this file runs in the browser, so it only needs to agree on the
- * JSON wire shape, not import the server-side type.
+ * JSON wire shape, not import the server-side type. **A variant missing here
+ * fails the whole `meta` line's validation, which fails the whole load** — so
+ * this union is not optional bookkeeping, it is the load contract.
  */
 export const ComponentSourceSchema = Type.Union([
   Type.Object({ kind: Type.Literal('local'), file: Type.String() }),
   Type.Object({ kind: Type.Literal('package'), specifier: Type.String() }),
+  Type.Object({ kind: Type.Literal('design-system'), name: Type.String() }),
 ])
 
 export type ComponentSource = Static<typeof ComponentSourceSchema>
