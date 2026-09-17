@@ -337,3 +337,40 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
+
+/* The drag ghost (S2/K2). A zero-size anchor pinned to the pointer, counter-
+   scaled out of the canvas transform for the same reason the refusal chip is:
+   it is a label ABOUT the gesture, not part of the page, so it must read the
+   same at 25% and at 400%. Offset down-right of the cursor so it never sits
+   under the arrow itself. */
+.dragGhost {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y)) scale(calc(1 / var(--canvas-zoom)));
+    transform-origin: 0 0;
+}
+
+.dragGhostLabel {
+    position: absolute;
+    top: var(--space-2xs);
+    left: var(--space-2xs);
+    width: max-content;
+    max-width: 200px;
+    padding: var(--space-3xs) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    /* Opaque, for the same reason the refusal label is: this floats over the
+       user's own page and cannot assume what is behind it. */
+    background: var(--bg-surface-3);
+    box-shadow: inset 0 0 0 1px var(--border);
+    color: var(--text-bright);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

@@ -787,7 +787,20 @@ shared contract (`CanvasViewportActionsContext` carries it too, for consumers
 that aren't direct children of `CanvasRoot`): anything that must track
 pan/zoom live — `CanvasRulers`, D2's drag/drop, a future measurement HUD —
 reads this ref, never the store selector, during an active gesture. See
-`docs/features/canvas-rulers-and-guides.md`.
+`docs/features/canvas-rulers-and-guides.md`. The element drag
+(`useCanvasReorderDrag`) is one such consumer: its `frameCandidateIndex`
+compares the transform it measured its viewport origin under against this
+ref, and re-reads the origin only when they differ — which is how auto-pan
+stays correct without a `getBoundingClientRect()` per frame.
+
+**A canvas gesture measures once and paints imperatively.** The element drag
+(S2) does zero forced layout reads and zero React commits between
+`pointerdown` and `pointerup`: `canvasDragSession.ts` holds the measurements,
+`canvasDragPainter.ts` writes the indicator/ghost into a React-rendered but
+never-React-populated layer, and the store is written exactly once, on
+release. The same shape as `useElementResizeDrag`'s one-write-per-rAF
+coalescing, extended with the measurement half a hit-test needs. Full
+contract: `docs/reference/canvas-dnd.md` → "The drag session (S2)".
 
 **Chrome outside `CanvasRoot` reaches the canvas through the store, not the
 context.** The toolbar is painted eagerly by `AdminCanvasLayout`, *above* the

@@ -32,6 +32,13 @@ topology below first.
   capture handler, it must see a press on any node without threading a
   callback through every module's prop bag, and it adds no element to the
   canvas DOM.
+- **The canvas node reorder is a SESSION (S2, D2's `dragSession`), not a
+  re-render.** `pointerdown` measures everything the gesture needs once;
+  every `pointermove` writes a ref; ONE `requestAnimationFrame` resolves the
+  drop target and paints the indicator straight into the DOM; `pointerup`
+  writes the store once. Between `pointerdown` and `pointerup` there is **no
+  React commit and no forced layout read**. See
+  "[The drag session](#the-drag-session-s2)" below.
 - `@dnd-kit/core` genuinely IS used — but only on one surface that never
   crosses an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s
   `<DndContext>`). The Site Explorer used to be the second such surface; its
@@ -275,6 +282,57 @@ regardless of trigger, so there is little for one to do yet.
 
 ---
 
+## The drag session (S2)
+
+`useCanvasReorderDrag.ts` runs one gesture as one session. Three files:
+
+| File | Owns |
+|---|---|
+| `useCanvasReorderDrag.ts` | The session: listeners, activation distance, the single rAF, the one store write |
+| `canvasDragSession.ts` | `frameCandidateIndex` — the measurements, and when they go stale |
+| `canvasDragPainter.ts` | Everything the drag draws, written straight into the DOM |
+
+**What is measured, and when it is re-measured.** `beginDrag` builds a
+`frameCandidateIndex`: every `[data-node-id]` rect in the frame (in
+viewport-local/frame-space coordinates), plus the viewport's client origin
+and the live canvas scale. Both are constant for the length of an ordinary
+drag, so both are measured exactly once. Two things invalidate them, and
+only two:
+
+- **A real reflow** — a `ResizeObserver` on the frame body sets
+  `index.stale`, and the next rAF rebuilds the candidate rects. Nothing
+  polls.
+- **A real transform change** — the index remembers the `CanvasTransform` its
+  origin was measured under and compares against D1's **live `transformRef`**
+  (`CanvasViewportActionsContext`), never the store's `zoom`/`panX`/`panY`,
+  which are the ~100 ms-debounced commit values and lag a gesture by design.
+  Auto-pan is the case that makes this necessary: it moves the layer under a
+  stationary pointer.
+
+Candidate rects themselves survive a pan or a zoom untouched — they are
+stored in frame space, and a pure translate/scale of the transform layer
+cancels out of both terms of `(clientLeft - viewportClientLeft) / scale`.
+Only the POINTER's conversion needs a fresh origin.
+
+**One rAF does the whole visual half**: refresh the index, resolve the drop
+target, compute the auto-pan delta (READ phase), then paint (WRITE phase).
+Reads and writes are never interleaved. The frame re-arms itself only while
+auto-pan is still moving the canvas, so a stationary pointer costs nothing.
+
+**Escape cancels**, because the tree was never touched — cancelling is just
+dropping the session. Listened for on the parent document AND the frame's own
+document, since a keystroke raised inside an iframe never reaches the parent
+window. **Shift constrains the axis** (`constrainToDragAxis`), applied in
+client space before the frame-space conversion so the locked axis is the one
+the user sees. **The ghost follows the cursor exactly**, painted from the same
+pointer position the resolution used, in the same frame.
+
+**`pointerup` resolves any still-pending frame synchronously** before
+committing, so a flick whose last move and release land inside one animation
+frame commits the position the user actually pointed at.
+
+---
+
 ## Drop overlay
 
 The overlay highlights the resolved drop position. Geometry comes from the resolver or, for insert sources, from `canvasInsertionDrop.ts`'s fixed preview helpers:
@@ -283,7 +341,17 @@ The overlay highlights the resolved drop position. Geometry comes from the resol
 - **Into** — a sky-tinted dashed outline inset 4px from the target's bounding box.
 - **Invalid** — a danger-tinted outline (`--danger`) + a tooltip explaining why (`'cannot drop into self'`, `'target is locked'`).
 
-The overlay is a separate React tree positioned with absolute coordinates derived from the canvas zoom/pan transform.
+**For the canvas node reorder the overlay is NOT a React tree.** React renders
+one empty, click-through layer per frame (`CanvasDropIndicators`, in the
+breakpoint viewport — already inside `CanvasTransformLayer`, which is why the
+frame-space rects go in unconverted) and never gives it children.
+`canvasDragPainter.ts` creates, positions, and hides the drop line, the
+refused-position box, the refusal chip and the drag ghost inside it, through
+the `--canvas-drop-*` custom-property channel, skipping every write whose
+value is unchanged. Same division of labour as the selector-affinity ring
+pool (`syncSelectorHighlightRings`), for the same reason: a pointermove must
+not cost a React commit. Insert-source overlays (`useCanvasInsertionDrag`)
+still render from React — they are not in a per-pointermove path.
 
 ---
 
@@ -366,6 +434,8 @@ Studio-mode board furniture — frames (`BoardFramesLayer`), sticky notes (`Boar
 - **`collectPeerRects(board, dragged)`** — flattens a board's frames/notes/docs into the flat `SnapRect[]` peer list, excluding whichever object is being dragged. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`, mirroring `BoardFramesLayer`'s own render-time fallback.
 - **Threshold:** `SNAP_THRESHOLD_BOARD_UNITS = 8` — a fixed board-unit distance, not a screen-pixel feel divided by zoom. Simpler, and board furniture rarely sits near the threshold at extreme zoom in practice.
 - **Guides are transient, not persisted.** `boardSnapGuides` (`boardSlice`) is a top-level store field holding the active drag's `SnapGuide[]`, separate from `boards`/`BoardsFile` — it never reaches `serializeBoardsFile` or the boards auto-save effect, and `setBoardSnapGuides` never flips `boardsDirty`. Each move handler calls `setBoardSnapGuides(snapped.guides)`; pointer-up/cancel clears it (`setBoardSnapGuides([])`).
+- **One store write per pointermove, not two (D2 G8).** A furniture drag calls `setBoardSnapGuides` alongside `setFramePosition` on every move, and on the overwhelming majority of those events the guide list is identical to the last one (usually empty). `setBoardSnapGuides` now no-ops when `snapGuidesEqual(current, next)` — so the second write costs nothing until the guides actually change.
+- **Escape cancels a frame drag (D2 G8).** Unlike the element drag (which writes nothing until `pointerup`), a frame drag writes its position live, so cancelling restores the position captured at `pointerdown` (`DragState.frameX/frameY`), clears the guides, and closes the `store-09` coalescing burst. The listener is on `window`, not the header: the pointer is captured but keyboard focus is not.
 - **`BoardGuidesLayer`** (`canvas/BoardGuidesLayer/`) renders the active guides as thin lines, mounted last inside `CanvasTransformLayer` so it paints above every furniture layer and inherits the pan/zoom transform for free. `pointer-events: none` throughout — guides are purely visual. Line color is the `--canvas-snap-guide-color` token (globals.css) — a fourth canvas-affordance identity distinct from the selection/hover/selector rings.
 
 **Deferred from this pass** (see the plan's backlog): multi-select drag for board furniture (marquee/shift-click, moving several objects together), and drop-precision improvements to the tree-reorder system (`useCanvasReorderDrag.ts`) — a different drag system, out of scope here.

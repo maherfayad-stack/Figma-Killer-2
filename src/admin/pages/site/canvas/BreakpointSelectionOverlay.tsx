@@ -350,6 +350,10 @@ export function BreakpointSelectionOverlay({
     bodyDragEnabled: canEditStructureHere,
     panBy: viewportActions?.panBy,
     canvasRootRef: viewportActions?.canvasRootRef,
+    // D1's LIVE transform, not the store's debounced commit values: during a
+    // drag with auto-pan the store is ~100ms behind by design, and the drag
+    // session compares against this to know when to re-measure its origin.
+    transformRef: viewportActions?.transformRef,
   })
 
   // Each RAF tick reads the freshest selection / hover / toolbar inputs from
@@ -556,7 +560,6 @@ export function BreakpointSelectionOverlay({
     <SelectionToolbar
       toolbarRef={toolbarRef}
       mode={toolbarMode}
-      dragging={reorderDrag.dragging}
       onDragPointerDown={reorderDrag.handlePointerDown}
     />
   ) : null
@@ -686,11 +689,12 @@ export function BreakpointSelectionOverlay({
 
   return (
     <>
-      {/* Drop indicators (and the reason a position is refused) stay inside
+      {/* Drop indicators, the refusal reason and the drag ghost stay inside
           the breakpoint viewport — they only appear transiently during a
           drag, and the transform-scaled coordinate path is established for
-          them. See `CanvasDropIndicators`. */}
-      <CanvasDropIndicators target={reorderDrag.target} invalid={reorderDrag.invalid} />
+          them. React renders the empty layer; the drag session paints inside
+          it. See `CanvasDropIndicators` / `canvasDragPainter`. */}
+      <CanvasDropIndicators layerRef={reorderDrag.dropLayerRef} />
       {canvasChrome && chromeTarget && createPortal(canvasChrome, chromeTarget)}
       {toolbar && portalTarget && createPortal(toolbar, portalTarget)}
       {inspector && portalTarget && createPortal(inspector, portalTarget)}

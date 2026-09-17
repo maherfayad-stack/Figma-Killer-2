@@ -104,7 +104,7 @@ import type {
   NoteColor,
   PreviewAxes,
 } from '@core/studio-board'
-import type { SnapGuide } from '@site/canvas/boardSnapping'
+import { snapGuidesEqual, type SnapGuide } from '@site/canvas/boardSnapping'
 import {
   createBoard,
   createBoardsFile,
@@ -557,7 +557,15 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     })
   },
 
-  setBoardSnapGuides: (guides) => set({ boardSnapGuides: guides }),
+  // D2 G8 — a furniture drag called this on EVERY pointermove, alongside its
+  // `setFramePosition`: two store writes (each a full notification and
+  // selector sweep) per pointer event where one of them almost always wrote
+  // the same empty list back. The equality check makes the guide write cost
+  // nothing until the guides actually change — see `snapGuidesEqual`.
+  setBoardSnapGuides: (guides) => {
+    if (snapGuidesEqual(get().boardSnapGuides, guides)) return
+    set({ boardSnapGuides: guides })
+  },
 
   // ── Frame multi-selection (WS-7.1) — implementation split out to
   // `boardFrameSelectionActions.ts` purely to stay under the module-size

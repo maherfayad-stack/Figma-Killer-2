@@ -329,6 +329,35 @@ function BoardFrameViewImpl({
     }
   }
 
+  /**
+   * D2 G8 — Escape abandons a frame drag.
+   *
+   * Unlike the element drag (which writes nothing until `pointerup`), a frame
+   * drag writes its position live, so cancelling has to put the frame back
+   * where the press started — `DragState` is already carrying exactly that.
+   * The coalescing burst is closed too, so the cancelled drag does not fold
+   * into whatever the user does next.
+   *
+   * On `window` rather than the header: the pointer is captured by the header
+   * but keyboard focus is not, so a keydown during the drag lands wherever
+   * focus already was.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const drag = dragRef.current
+      if (event.key !== 'Escape' || !drag) return
+      event.preventDefault()
+      event.stopPropagation()
+      dragRef.current = null
+      const store = useEditorStore.getState()
+      store.setFramePosition(frame.id, drag.frameX, drag.frameY)
+      store.setBoardSnapGuides([])
+      store.endBoardGesture()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [frame.id])
+
   // Resize handles — same pointer-capture + screenDelta/zoom pattern as the
   // header drag above, so a handle tracks the cursor 1:1 at any zoom. The
   // geometry itself (which edges move, the min-size clamp) is the pure
