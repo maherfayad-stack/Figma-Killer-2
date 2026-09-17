@@ -282,7 +282,7 @@ function compareCacheDepFiles(
 export const studioCompareTool: AiTool = {
   name: 'studio_compare',
   scope: 'shared',
-  execution: 'server',
+  execution: 'server-with-bridge-fallback',
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:

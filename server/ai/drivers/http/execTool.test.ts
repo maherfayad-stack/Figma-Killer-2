@@ -87,7 +87,7 @@ describe('executeAiTool with an unresolved capability set', () => {
     const browserTool: AiTool = {
       name: 'studio_upload_asset',
       scope: 'site',
-      execution: 'browser',
+      execution: 'bridge',
       mutates: true,
       requiredCapabilities: ['studio.write'],
       description: 'test',

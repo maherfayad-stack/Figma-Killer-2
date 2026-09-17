@@ -1,10 +1,16 @@
 /**
  * Shared tool-execution body for the direct provider HTTP drivers.
  *
- * Both execution modes funnel through here:
- *   - `server`  — call the tool's `handler(input, ctx)` directly, in-process.
- *   - `browser` — forward to the browser via `bridge.callBrowser(...)` and
- *                 await the POST-back from /admin/api/ai/tool-result.
+ * Every execution mode funnels through here, split by
+ * `toolDispatchesInProcess` (`../../runtime/toolExecution.ts` — the single
+ * reader of `AiTool.execution`, so the dispatch and the system prompt's
+ * live-tab claim can never disagree about what a tool needs):
+ *   - in-process — call the tool's `handler(input, ctx)` directly. `server`,
+ *     `server-with-bridge-fallback`, and a `bridge` tool that declares its own
+ *     handler (which relays from inside it).
+ *   - relayed — a `bridge` tool with no handler: forward to the workspace via
+ *     `bridge.callBrowser(...)` and await the POST-back from
+ *     /admin/api/ai/tool-result.
  *
  * Defence in depth: every raw tool input is re-validated against the
  * canonical TypeBox `inputSchema` before dispatch — the model's argument JSON
@@ -20,6 +26,7 @@ import type {
   AiToolOutput,
   ToolContext,
 } from '../../runtime/types'
+import { toolDispatchesInProcess } from '../../runtime/toolExecution'
 import type { ToolContextBase } from '../types'
 
 /**
@@ -83,9 +90,9 @@ export async function executeAiTool(
     }
   }
 
-  if (aiTool.execution === 'server') {
+  if (toolDispatchesInProcess(aiTool)) {
     if (!aiTool.handler) {
-      return { ok: false, error: `Tool ${aiTool.name} declares execution='server' but has no handler.` }
+      return { ok: false, error: `Tool ${aiTool.name} declares execution='${aiTool.execution}' but has no handler.` }
     }
     try {
       const ctx: ToolContext = { ...toolContextBase, signal }
@@ -97,7 +104,8 @@ export async function executeAiTool(
     }
   }
 
-  // Browser execution: forward to the bridge and wait for the POST-back.
+  // Bridge execution, sentinel form (no handler): forward to the connector
+  // owner's open workspace and wait for the POST-back.
   // A resolved `{ ok: false }` remains a recoverable domain failure. Rejection
   // means the transport itself is unavailable and deliberately propagates.
   return await bridge.callBrowser(aiTool.name, validated)

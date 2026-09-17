@@ -12,7 +12,7 @@
  *     screenshot forces the agent to estimate spacing by eye, which is how a
  *     24px gap gets "fixed" to 24px.
  *
- * Both used to require the user's editor tab (`execution: 'browser'`, ~8s of
+ * Both used to require the user's editor tab (`execution: 'bridge'`, ~8s of
  * bridge timeout when none was open), for no reason that survives inspection:
  * the answer is a property of what is ON DISK, which is exactly what the
  * capture page renders. So they run here instead, on the same warm Chromium

@@ -2,18 +2,30 @@
  * MCP tool registry — the full set of tools an external MCP client may use,
  * filtered to the connector's granted capabilities.
  *
- * Two execution classes are exposed:
- *   - server-resolved tools (`site_list_documents` + `site_read_styles` +
+ * Three execution classes are exposed — one `AiTool.execution` value each,
+ * defined and read through `../runtime/toolExecution.ts`:
+ *   - `server` tools (`site_list_documents` + `site_read_styles` +
  *     `studio_import_project`, a thin adapter over the Phase 7B GitHub import
  *     engine) run in-process and work with NO editor open;
- *   - browser tools (structure edits, HTML/CSS authoring, design tokens, page
- *     lifecycle, code assets, live-DOM reads) are relayed to the connector
- *     owner's open Site workspace via the live editor bridge
- *     (`./editorBridge`). If that workspace is not connected, the call
- *     returns a clear scope-specific error.
+ *   - `server-with-bridge-fallback` tools (the visual-audit family —
+ *     `studio_screenshot`, `studio_compare`, `studio_computed_styles`,
+ *     `studio_export_frames`) also run in-process, headless, and reach for an
+ *     open board only when the headless browser cannot run or when the caller
+ *     explicitly wants the live tab's own unsaved state. They never REQUIRE
+ *     a board;
+ *   - `bridge` tools (structure edits, HTML/CSS authoring, design tokens,
+ *     page lifecycle, code assets, live-frame reads, the session-authenticated
+ *     asset upload) need the connector owner's open Site workspace via the
+ *     live editor bridge (`./editorBridge`). If that workspace is not
+ *     connected, the call returns a clear scope-specific error.
+ *
+ * That third class — and only that third class — is what the Studio system
+ * prompt's "these tools need the open board" sentence is generated from, so
+ * the prompt cannot describe a tool's requirement differently from the way it
+ * is dispatched.
  *
  * The editor's live store is the single source of truth: ALL page editing goes
- * through it (browser tools). There is deliberately no headless DB-mutating
+ * through it (`bridge` tools). There is deliberately no headless DB-mutating
  * page-tree tool — that created a second surface with identical node ids that
  * desynced from the open editor and got clobbered by its autosave.
  *

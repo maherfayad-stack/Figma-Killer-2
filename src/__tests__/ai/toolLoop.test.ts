@@ -105,7 +105,7 @@ function makeRequest(
     name: 'paint',
     description: 'a browser tool',
     scope: 'site',
-    execution: 'browser',
+    execution: 'bridge',
     inputSchema: Type.Object({}),
   }
   return {

@@ -101,7 +101,7 @@ const ScreenshotInputSchema = Type.Object(
 export const studioScreenshotTool: AiTool = {
   name: 'studio_screenshot',
   scope: 'shared',
-  execution: 'server',
+  execution: 'server-with-bridge-fallback',
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:

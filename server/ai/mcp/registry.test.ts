@@ -25,12 +25,12 @@ describe('mcp registry', () => {
     // headless (server-resolved) reads
     expect(names).toContain('site_read_styles') // headless design-system read
     expect(names).toContain('site_publish') // explicit full-site deployment
-    // browser-execution editing (relayed via the editor bridge)
+    // bridge-execution editing (relayed via the editor bridge)
     expect(names).toContain('site_insert_html')
     expect(names).toContain('site_delete_node')
     expect(names).toContain('site_apply_css')
     expect(names).toContain('site_set_color_tokens')
-    expect(tools.some((t) => t.execution === 'browser')).toBe(true)
+    expect(tools.some((t) => t.execution === 'bridge')).toBe(true)
   })
 
   it('does not expose the removed headless page-tree tools', () => {

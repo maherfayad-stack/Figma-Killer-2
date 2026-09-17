@@ -358,13 +358,23 @@ What survives is what the filesystem cannot do: see the canvas (`studio_screensh
 
 Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "Gate" is the tool's own `requiredCapabilities` / `mutates` posture; a **read** row is reachable by any `ai.chat` caller. Prose for each group follows below.
 
+"Where it runs" is the tool's own `execution` field, which has exactly three values (`server/ai/runtime/toolExecution.ts`):
+
+| `execution` | Dispatch | Needs the open board? |
+|---|---|---|
+| `server` | in-process | never |
+| `server-with-bridge-fallback` | in-process, headless first; relays to an open board only when the headless path cannot run, or when the caller explicitly wants the live tab's own state | never — it gets slower without one, not unavailable |
+| `bridge` | relayed whole by the runner when the tool declares no handler; dispatched in-process when it does, in which case the handler owns the relay and the "no board" message | **yes** — no board means a refusal |
+
+**The prompt's live-tab claim is generated from this field.** The static prefix used to name `studio_computed_styles` and `studio_page_diagnostics` by hand as the tools that require the open board. That was true when it was written and became false in `mcp-20`, when `studio_computed_styles` went headless — and nothing caught it, because a prompt string has no compiler. The failure mode is the expensive kind: the agent does not get an error, it simply stops calling a tool that works, and reports "the project is not open" on a question that would have been answered off disk. Both halves of that paragraph are now built by `buildBoardRequirementParagraph` from the caller's own capability-filtered tool array, and `src/__tests__/architecture/prompt-claims-match-tool-metadata.test.ts` asserts the generated sentence names **exactly** the `bridge`-only set.
+
 | Tool | Where it runs | Gate | One line |
 |---|---|---|---|
-| `studio_screenshot` | server (headless capture, live tab fallback) | read | Sync frames from disk, wait for the reload, capture. The agent's eyes |
-| `studio_compare` | server | read | Capture + score against the page's registered design reference in one call. The agent's ruler |
+| `studio_screenshot` | `server-with-bridge-fallback` | read | Sync frames from disk, wait for the reload, capture. The agent's eyes |
+| `studio_compare` | `server-with-bridge-fallback` | read | Capture + score against the page's registered design reference in one call. The agent's ruler |
 | `studio_measure_reference` | server | read | Read the design's own colours, type sizes and line-heights out of the reference, in CSS px |
-| `studio_computed_styles` | browser (live board) | read | What the CSS actually resolved to on the canvas — real px, real weight, real colour, real font |
-| `studio_page_diagnostics` | server → live board | read | What the screen's runtime said: exceptions, `console.error`, failed assets/modules/fetches |
+| `studio_computed_styles` | `server-with-bridge-fallback` | read | What the CSS actually resolved to on the canvas — real px, real weight, real colour, real font |
+| `studio_page_diagnostics` | `bridge` (needs the open board) | read | What the screen's runtime said: exceptions, `console.error`, failed assets/modules/fetches |
 | `studio_render_reference` | server | `studio.run.project` **and** the project at `run-project` trust | Boot the project's OWN dev server and screenshot a route through it. Tier 2 only |
 | `studio_quality_check` | server (headless) | read | Reference-free source audit: raw hex/px where a token exists, AA contrast, hand-rolled icons, design-system coverage, spacing/type-scale composition |
 | `studio_plan_variants` | server | `studio.write` | N style seeds for one brief, each drawn from the project's own tokens, plus a self-contained subagent directive per variant |
@@ -389,7 +399,7 @@ Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "
 | `studio_list_tokens` | server | read | The project's colours and type/spacing scales, projected small |
 | `studio_list_components` | server | read | The design system's real component API — the same catalog the insert palette shows |
 | `studio_find_component` | server | read | The narrow lookup into that catalog, by component name and/or a prop it declares |
-| `studio_upload_asset` | browser (live board) | `studio.write` | Land bytes the model holds as a new image file in the project |
+| `studio_upload_asset` | `bridge` (needs the open board) | `studio.write` | Land bytes the model holds as a new image file in the project |
 | `studio_fetch_remote_asset` | server | `studio.write` | Fetch a URL server-side and land it as a project image; bytes never transit the model |
 | `studio_extract_reference_asset` | server | `studio.write` | Crop artwork out of the registered reference when it exists nowhere else |
 | `studio_install_deps` | server (background job) | `studio.write` + trust ≥ Tier 1 | Start a `bun install --ignore-scripts` job; returns a `jobId` |
@@ -556,7 +566,7 @@ see in a picture but not name, so it "fixed" a value that was already correct:
   still being estimated off a screenshot.
 
 **W9-6 — neither needs a browser tab.** `studio_computed_styles` shipped as
-`execution: 'browser'`, so a project with no editor open spent ~8s in the bridge
+`execution: 'bridge'`, so a project with no editor open spent ~8s in the bridge
 and then refused — on a question whose whole subject matter is what is on disk.
 Both now render the screen on the same headless capture substrate
 `studio_screenshot` uses. `studio_computed_styles` keeps the live tab as its
@@ -608,7 +618,7 @@ It is explicitly second choice to a real source (the design system's own icon se
 
 Five tools that answer "is what I built actually right", each covering a channel the others are blind to. A screenshot is only one of them, and it is the one that lies most easily.
 
-**`studio_computed_styles`** (`browserBridgeTools.ts`, `execution: 'browser'`) is the only read in that file and the only one there that does not mutate. Per node it reports what the CSS *resolved to* on the live canvas: font-size and line-height in real px, font-weight, colour and background as rgb, and — the field a picture can never give — the font family the text is genuinely **set in**, as opposed to the declared stack. A stack whose first family never loaded looks identical to one that did, and that difference makes correct px look like the wrong size; every "fix" that follows edits a value that was already correct. It defaults to nodes with their own text (`textOnly`); pass `textOnly: false` for container padding, radius and background. This is the half of a fidelity loop that lets a difference be closed by arithmetic — diff these numbers against the design's own (a Figma connector's variable-definitions tool, or `studio_read_design_variable_set`) and fix whatever disagrees. It requires the project open in a Studio browser tab, because the numbers exist only where the frames are.
+**`studio_computed_styles`** (`computedStyles.ts`, `execution: 'server-with-bridge-fallback'`) is a pure read. Per node it reports what the CSS *resolved to* on the live canvas: font-size and line-height in real px, font-weight, colour and background as rgb, and — the field a picture can never give — the font family the text is genuinely **set in**, as opposed to the declared stack. A stack whose first family never loaded looks identical to one that did, and that difference makes correct px look like the wrong size; every "fix" that follows edits a value that was already correct. It defaults to nodes with their own text (`textOnly`); pass `textOnly: false` for container padding, radius and background. This is the half of a fidelity loop that lets a difference be closed by arithmetic — diff these numbers against the design's own (a Figma connector's variable-definitions tool, or `studio_read_design_variable_set`) and fix whatever disagrees. It does **not** need a Studio browser tab: since `mcp-20` it renders the screen on the same headless capture substrate `studio_screenshot` uses, keeping the open tab only as a fallback (`readVia` says which answered). The system prompt claimed the opposite for months — see "The prompt's live-tab claim is generated" below.
 
 **`studio_page_diagnostics`** (`pageDiagnostics.ts`) reads what the screen's runtime *said*: uncaught exceptions, unhandled rejections, `console.error` output (how React reports a failed render, an invalid hook call and a hydration mismatch), assets that failed to load, module specifiers that did not resolve, and failed `fetch`es from inside the frame. It exists because a frame whose component throws photographs as a blank rectangle, honestly and with no error, and *every other tool agrees with the photograph* — compare reports ~100% different, quality-check reads a stylesheet that never ran, computed-styles reports an empty body. The loop that follows is screenshot, adjust CSS, screenshot, against a page that never executed; the one fact that ends it in a single step was in the frame's own console the whole time. Batch by name, one call per turn's worth of screens. Every finding carries a stable `code` from `@core/ai`'s `PAGE_DIAGNOSTIC_CODES` with that code's suggested `fix`, an occurrence count, and — when the failure is on a real element — the `file:line` its node id decodes to. It is a pure read and deliberately does **not** sync board frames from disk the way `studio_screenshot` does: placing a frame would be a mutation, and a page with no frame is a genuinely different answer, reported as `status: "no-frame"` rather than as clean. Like `studio_computed_styles` it needs a connected board, and says so in a message that tells the user the tab reconnects on its own.
 
@@ -855,11 +865,11 @@ Two consequences worth knowing. `StudioCapabilityDigest.figma.status` gained **`
 
 `server/ai/tools/studio/parityMatrix.ts` is the enforcement mechanism for "the agent can do what you can do in the canvas" — not documentation. Every real editor action resolves to exactly one status: a real tool (name-checked against the live registry), an explicitly withheld action (a stated reason — undo/redo, viewport pan/zoom, trust promotion, project deletion, a shell tool, a raw file-overwrite), or a confirmed gap. `parityMatrix.test.ts` gates all of it, including the inverse direction (every registered mutating tool is referenced by at least one row — an orphaned tool is itself a finding), plus a regression test pinning the current gap count so a future "missing" row silently downgraded to "withheld" fails loudly.
 
-**The three gaps the matrix found are now closed.** All three shipped as thin `execution: 'browser', scope: 'site'` wrappers over the SAME verb the canvas UI already calls; W9-6 then moved two of them server-side, because only one of the three was ever actually about the user's browser:
+**The three gaps the matrix found are now closed.** All three shipped as thin `execution: 'bridge', scope: 'site'` wrappers over the SAME verb the canvas UI already calls; W9-6 then moved two of them server-side, because only one of the three was ever actually about the user's browser:
 
 | Editor action | Tool | Where it runs, and why |
 |---|---|---|
-| Upload a new image asset into the project | `studio_upload_asset` | **Browser** (`server/ai/mcp/tools/studio/uploadAssetTool.ts` declares it; `src/admin/pages/site/agent/studioUploadAsset.ts` runs it). Decodes the agent's base64 into a `Blob` and posts real `FormData` to `POST /admin/api/studio/asset-upload` **as the signed-in user** — that endpoint's authority is the operator's session, the one thing a server-side tool cannot honestly stand in for. Every validation (magic-number sniffing, containment) happens server-side exactly as for a human upload. |
+| Upload a new image asset into the project | `studio_upload_asset` | **`bridge`** (`server/ai/mcp/tools/studio/uploadAssetTool.ts` declares it; `src/admin/pages/site/agent/studioUploadAsset.ts` runs it). Decodes the agent's base64 into a `Blob` and posts real `FormData` to `POST /admin/api/studio/asset-upload` **as the signed-in user** — that endpoint's authority is the operator's session, the one thing a server-side tool cannot honestly stand in for. Every validation (magic-number sniffing, containment) happens server-side exactly as for a human upload. |
 | Set a board frame's preview axes (direction/locale/color-scheme) | `studio_set_frame_axes` | **Server** (`frameAxesTools.ts`). Writes `.studio/boards.json` and pushes a live reload. |
 | Duplicate a board frame as a variant | `studio_duplicate_frame_as_variant` | **Server** (`frameAxesTools.ts`). Same file, same push; the variant lands beside its source at the shared `VARIANT_GAP`. |
 
@@ -1054,9 +1064,9 @@ Resolved server-side from the posted `SiteAgentSnapshot` or the data repositorie
 | `site_list_loop_sources` | Loop source ids, source fields, order/filter options, and data-table field catalogs with valid `{currentEntry.field}` tokens. For post/custom table loops, use source id `data.rows`, the returned table `id` as `<studio-loop data-table-id>`, and the returned tokens inside the loop body |
 | `site_list_tokens`     | Design tokens: colors (with shades/tints), typography/spacing scale steps, font tokens — each with CSS variable + utility classes; optional `family` filter (`colors`\|`typography`\|`spacing`\|`fonts`) |
 
-### Site browser tools — 29, browser-bridged
+### Site bridge tools — 29, relayed to the open workspace
 
-All 29 tools carry `execution: 'browser'` in their `AiTool` definition. The server emits `toolRequest`; the browser executor validates input with TypeBox, runs the store action or read helper, and POSTs the canonical `AiToolOutput` result back.
+All 29 tools carry `execution: 'bridge'` in their `AiTool` definition. The server emits `toolRequest`; the browser executor validates input with TypeBox, runs the store action or read helper, and POSTs the canonical `AiToolOutput` result back.
 
 **Documents**
 
@@ -1442,7 +1452,7 @@ unblocks deletion of the credential that had been protected by the default FK.
 | Importing `zod` anywhere | Banned repo-wide — TypeBox schemas pass directly as JSON Schema to every provider. Gated by `ai-driver-isolation.test.ts`. |
 | Writing a private `parseToolArguments` / `parseJsonOrEmpty` copy inside a driver | Import `parseToolArguments` from `./http/toolArgs`. Private copies diverge silently — the same malformed model output produces different outcomes per provider. Gated by `ai-driver-shared-helpers.test.ts`. |
 | Redefining `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` in a driver or prompt builder | Import it from `server/ai/runtime/types.ts`. One source — if a driver or builder drifts the literal, prompt caching silently breaks for that driver. Gated by `ai-driver-shared-helpers.test.ts`. |
-| Routing a write tool as a server-side read (resolving from snapshot) | Write tools are `execution: 'browser'` — they must go through the bridge. The Site editor store is the write authority. |
+| Routing a write tool as a server-side read (resolving from snapshot) | Write tools are `execution: 'bridge'` — they must go through the bridge. The Site editor store is the write authority. |
 | Using invented breakpoint ids in `breakpointStyles` (`"mobile"`, `"desktop"`, etc.) | Use verbatim ids from the dynamic suffix. Invalid ids are rejected by the executor. |
 
 ---

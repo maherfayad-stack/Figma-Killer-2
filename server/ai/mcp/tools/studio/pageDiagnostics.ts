@@ -20,13 +20,19 @@
  *
  * ## Shape
  *
- * `execution: 'server'` and relayed, the same arrangement `studio_screenshot`
- * uses and for the same reason: the SERVER half resolves screen NAMES to page
+ * `execution: 'bridge'` WITH a server handler — the one combination that means
+ * "dispatched in-process, but the board is genuinely required"
+ * (`runtime/toolExecution.ts`). The server half resolves screen NAMES to page
  * ids (the agent knows it wrote `Checkout.tsx`, not that Studio calls it
  * `checkout`) and owns the "no board is connected" message, while the actual
  * read happens in the browser (`src/admin/pages/site/agent/studioPageDiagnostics.ts`)
  * because that is where the frames are. Batch by construction — one call covers
  * every screen the turn just wrote.
+ *
+ * It is NOT `server-with-bridge-fallback` like `studio_screenshot`: there is no
+ * headless path to fall back FROM. A frame's console exists only where the
+ * frame is mounted, so with no board this tool has no answer at all — which is
+ * exactly what the prompt's live-tab sentence is generated from.
  *
  * It is a pure READ: no `mutates`, no `requiredCapabilities`, same posture as
  * every other Studio read tool. It deliberately does NOT sync board frames from
@@ -115,7 +121,7 @@ function enrichFinding(finding: RawFinding): Record<string, unknown> {
 export const studioPageDiagnosticsTool: AiTool = {
   name: 'studio_page_diagnostics',
   scope: 'shared',
-  execution: 'server',
+  execution: 'bridge',
   description:
     'Read what a screen\'s RUNTIME reported since it loaded: uncaught exceptions, unhandled promise rejections, console.error output (this is how React reports a failed render, an invalid hook call and a hydration mismatch), assets that failed to load, module specifiers that did not resolve, and fetches that failed. Call this the moment a screenshot looks blank, half-empty, or unchanged after a write — a frame whose component threw photographs as an empty rectangle, and no amount of CSS editing fixes a page that never executed. Batch: name several screens in one call. Each finding carries a stable code, a count of how many times it happened, a suggested fix, and — for a failure on a real element — the file:line its node id decodes to. A screen with NO live board frame is reported as such (status "no-frame"), never as clean.',
   inputSchema: PageDiagnosticsInputSchema,
