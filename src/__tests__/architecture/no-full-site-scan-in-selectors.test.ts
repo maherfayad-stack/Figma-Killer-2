@@ -78,14 +78,27 @@
  * which keeps its reference stable across any mutation that doesn't touch
  * `styleRules` specifically (Mutative's structural sharing).
  *
- * Scoped to `admin/pages/site/inspector/` ONLY, per
- * `STATE.md` (`panel-23`)'s own text — a repo-wide ban would need to
+ * Scoped to an explicit COVERED SET (`WHOLE_SITE_SCAN_ROOTS`), not the whole
+ * repo, per `STATE.md` (`panel-23`)'s own text — a repo-wide ban would need to
  * allowlist every legitimate whole-`site` read elsewhere (`saveSite`,
  * `loadSite`, plugin RPC, autosave serialization), which would gut the gate
  * the same way a repo-wide `FOR_OF_PAGES_RE` ban would. This means the gate
  * does NOT catch a regression in `usePropertiesPanelData.ts` itself (that
- * file lives outside `inspector/`) — verified instead by direct grep in
+ * file lives outside the covered set) — verified instead by direct grep in
  * `panel-23`'s own verification step.
+ *
+ * The set grows one directory at a time, as each is cleaned:
+ *
+ *   - `admin/pages/site/inspector/` — the original entry (`panel-23`).
+ *   - `admin/pages/site/canvas/` — added by S3
+ *     (`STUDIO-FIGMA-FEEL-PLAN.md`). `ModuleSandboxFrame.tsx` selected the
+ *     whole `site` and then ran `generateClassCSS` in its render body, once
+ *     per sandboxed module instance, on every store change. It now subscribes
+ *     to `s.site?.styleRules` / `.breakpoints` / `.conditions` and computes
+ *     through the per-node memo in `canvasClassCss.ts`. The canvas is the
+ *     other surface where this defect is expensive by construction: every
+ *     mounted frame runs its injectors over the same snapshot, so one
+ *     whole-`site` subscription is paid N times.
  */
 
 import { describe, it, expect } from 'bun:test'
@@ -194,7 +207,11 @@ function findFullSiteScanLines(content: string): number[] {
 // `admin/pages/site/inspector/` — see this file's own doc comment above.
 // ---------------------------------------------------------------------------
 
-const INSPECTOR_SCAN_ROOT = join(SRC_ROOT, 'admin/pages/site/inspector')
+/** The covered set for the whole-`site` selector detector — see this file's doc comment. */
+const WHOLE_SITE_SCAN_ROOTS = [
+  join(SRC_ROOT, 'admin/pages/site/inspector'),
+  join(SRC_ROOT, 'admin/pages/site/canvas'),
+]
 
 // `useEditorStore((s) => s.site)` / `useEditorStore((state) => state.site)`,
 // optionally through `?.`/`!.` on the way to `.site` — and NOTHING narrower
@@ -345,22 +362,24 @@ describe('Architecture gate — no full-site pages scan reachable from a useEdit
     expect(violations).toHaveLength(0)
   })
 
-  it('no useEditorStore( selector under admin/pages/site/inspector/ returns bare s.site', () => {
+  it('no useEditorStore( selector in the covered set returns bare s.site', () => {
     const violations: string[] = []
 
-    for (const file of collectSourceFiles(INSPECTOR_SCAN_ROOT)) {
-      const content = readOrNull(file)
-      if (content === null) continue
-      const rel = toPosix(relative(SRC_ROOT, file))
-      for (const lineNum of findWholeSiteSelectorLines(content)) {
-        violations.push(`${rel}:${lineNum}`)
+    for (const root of WHOLE_SITE_SCAN_ROOTS) {
+      for (const file of collectSourceFiles(root)) {
+        const content = readOrNull(file)
+        if (content === null) continue
+        const rel = toPosix(relative(SRC_ROOT, file))
+        for (const lineNum of findWholeSiteSelectorLines(content)) {
+          violations.push(`${rel}:${lineNum}`)
+        }
       }
     }
 
     if (violations.length > 0) {
       throw new Error(
-        '[no-full-site-scan-in-selectors] A useEditorStore( selector under ' +
-        'admin/pages/site/inspector/ returns the whole `site` object ' +
+        '[no-full-site-scan-in-selectors] A useEditorStore( selector inside ' +
+        'the covered set (WHOLE_SITE_SCAN_ROOTS) returns the whole `site` object ' +
         '(`s.site`/`state.site`) instead of a narrower field.\n' +
         'Mutative replaces `site` wholesale on every mutation anywhere in the ' +
         'document, so a selector returning it re-renders on every keystroke ' +

@@ -763,9 +763,26 @@ for one answer. The three that do this now, and the pattern to copy:
 
 | Module | Memo shape | What varies per frame |
 |---|---|---|
-| `canvasClassCss.ts` | single-slot identity memo over 9 inputs | nothing |
+| `canvasClassCss.ts` — `generateCanvasClassCSS` | single-slot identity memo over 9 inputs | nothing |
+| `canvasClassCss.ts` — `generateNodeClassCSS` / `nodeClassBackgroundImagePaths` | shared inputs identity-compared, then a `Map` keyed by the node's `classIds` signature | which NODE is asking |
 | `canvasVendorCss.ts` | single-slot memo on `projectVendorCss` | nothing |
 | `canvasUserStylesheetCss.ts` | two stages: `(site, scopeId, scopeTemplate)` → `Map` by viewport | the viewport-unit resolution, and only by frame **width** |
+
+The `generateNodeClassCSS` pair is the sandboxed-module path (S3):
+`ModuleSandboxFrame` renders each module into its own `srcdoc` iframe that no
+canvas injector reaches, so it needs a self-contained CSS string built from
+just its node's own rules. It used to select the whole `s.site` and run
+`collectSiteStyleBackgroundImagePaths` + `generateClassCSS` **in its render
+body**, per module instance, on every store change; it now subscribes to
+`s.site?.styleRules` / `.breakpoints` / `.conditions` and reads through these
+memos. The key is a `classIds` signature rather than a single slot because two
+sandboxed modules on one page is the common case, and a single slot would miss
+on every alternating call. **`styleRuleNeedsCanvasOverlay`'s filter does not
+apply here** — there is no `AuthoredCssInjector` raw text inside a sandbox
+document, so an unedited imported rule must be emitted or it is simply absent.
+`admin/pages/site/canvas/` is now in the covered set of
+`no-full-site-scan-in-selectors.test.ts`'s whole-`site` detector, so the old
+shape cannot come back.
 
 `canvasUserStylesheetCss.ts` also **reorders** the chain
 (`collect → rewritePrefersColorScheme → resolveViewportUnits`) so the
