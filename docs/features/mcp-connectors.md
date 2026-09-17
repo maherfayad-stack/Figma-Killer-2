@@ -208,8 +208,17 @@ visually by exporting them as images and comparing them to the live one"):
     edit not yet saved to disk, or an unpersisted board re-frame.
 
 - `studio_render_reference` — **Tier 2**, `execution:'server'`, `mutates:true`
-  + `studio.run.project` (never granted by default, never implicit — this is
-  the only Studio tool that EXECUTES the project's own code). Boots the
+  + `studio.run.project` **and** the target project at `run-project` trust.
+  This is the only Studio tool that EXECUTES the project's own code, and it is
+  the only one with two independent gates: the capability answers "may this
+  caller run project code at all", the project's own `.studio/meta.json` tier
+  answers "may THIS project be run". The handler checks the second via
+  `checkTrustTier` (`server/handlers/studio/trustGate.ts`) — the same helper
+  the `/admin/api/studio/dev-server` route uses — and refuses below Tier 2
+  with `{ ok:false, code:'trust-tier-required', trust, requiredTrust }`,
+  spawning nothing. Before A10 the capability was the only gate, which made
+  the MCP path strictly weaker than the HTTP route performing the identical
+  spawn (`sec-05` finding 1). Boots the
   project's own `dev`/`start` script via the detected package manager
   (`server/handlers/studio/installDeps.ts`'s `detectPackageManager`, reused),
   parses the URL it prints (no forced port — frameworks disagree on how to

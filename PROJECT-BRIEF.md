@@ -95,8 +95,11 @@ never silently no-ops.
    toolchain compiles in a capped subprocess (`styleCompileTier1.ts`) and its
    package components are bundled and rendered in the canvas
    (`componentBundle.ts`). **The parse itself never executes anything at any
-   tier**, and Tier 2 (`run-project`) is a defined value that no gate yet
-   distinguishes from Tier 1 — both read as `trust !== 'static'`.
+   tier**, and Tier 2 (`run-project`) is now genuinely distinct from Tier 1:
+   the dev-server manager, the preview deploy, and the agent's
+   `studio_render_reference` all demand `trust === 'run-project'` exactly, via
+   `server/handlers/studio/trustGate.ts` — not the looser
+   `trust !== 'static'` that Tier-1 consumers read.
 2. **A write must have exactly one honest target.** Every lock, every
    `codeProps` entry, every refusal exists because writing an edit there would
    destroy a binding, change N places at once, or write to a file that does not
@@ -149,6 +152,17 @@ never silently no-ops.
   (Track L, `live-01`) — one reused, idle-timed subprocess per project,
   exposed as a polled `status`/`start`/`stop` route family and prewarmed the
   instant a Tier-2 project's canvas mounts.
+  **A Tier-2 action needs two independent gates, and the tier is the one that
+  cannot be delegated.** The `studio.run.project` capability (now held by
+  Owner *and* Admin, A10) says a caller may run project code at all; the
+  project's own tier says *this* project may be run. Every Tier-2 entry point
+  checks both through the one shared helper — `requireTrustTier` for an HTTP
+  route, `checkTrustTier` for an agent tool — in
+  `server/handlers/studio/trustGate.ts`. Until A10 the MCP tool
+  `studio_render_reference` checked only the capability, which made it
+  strictly weaker than the route performing the identical spawn (`sec-05`
+  finding 1); the trap to avoid is adding a Tier-2 tool that leans on the
+  capability alone.
 - **A built-in design system, and an Assets panel to insert from**
   (`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`, DS-1…DS-9). The 39-component ALM
   design system is **vendored into Studio** at `vendor/alm-design-system/` and

@@ -7,10 +7,29 @@
  * **Tier 2, not Tier 0/1.** Every other Studio MCP tool reads source
  * statically or writes it back; this one EXECUTES the project's own code —
  * whatever `scripts.dev` runs, including every dependency it imports. That is
- * exactly the blast-radius `studio.run.project` exists to gate: never granted
- * by default, never implicit to a connector (`mcp-tooling.md`'s "Never let a
- * tool publish, deploy, or run project code without an explicit, separately-
- * gated capability").
+ * exactly the blast-radius `studio.run.project` exists to gate
+ * (`mcp-tooling.md`'s "Never let a tool publish, deploy, or run project code
+ * without an explicit, separately-gated capability").
+ *
+ * **TWO gates, not one (A10 / `sec-05` finding 1).** The capability alone was
+ * never enough, and for a year it was all this tool had: it answers "may this
+ * CALLER run project code at all", which is a property of the connector, not
+ * of the repository it is pointed at. A connector holding
+ * `studio.run.project` could therefore boot ANY project's dev server,
+ * including one whose owner never promoted it past Tier 0 — strictly weaker
+ * than the HTTP route (`devServer.ts`) doing the same spawn, which has always
+ * demanded `trust === 'run-project'`. So this handler now ALSO calls
+ * `checkTrustTier(dir, 'run-project')` (`handlers/studio/trustGate.ts`, the
+ * same helper the route uses) and refuses a Tier-0/1 project with the shared
+ * `trust-tier-required` code. Promotion stays a deliberate user action; the
+ * agent may ask for it and may never perform it.
+ *
+ * Because both gates exist, the CAPABILITY can now be held by an ordinary
+ * operator: `studio.run.project` is granted to the built-in Admin role
+ * (`server/auth/capabilities.ts`), which is what makes the only
+ * ground-truth verification tool in the toolset reachable at all. What used
+ * to be one coarse, never-granted switch is now "this operator may run
+ * project code" × "this project has been promoted".
  *
  * **`route`, not `pageId`.** A Studio page (one parsed screen FILE) does not
  * always correspond to an addressable URL in the project's own dev server —
@@ -51,6 +70,7 @@ import { aiToolError, aiToolOk } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveAppRoot } from '../../../../handlers/studio/appRoot'
+import { TRUST_TIER_REQUIRED_CODE, checkTrustTier } from '../../../../handlers/studio/trustGate'
 import {
   ensureDevServer,
   scheduleDevServerIdleTeardown,
@@ -107,7 +127,7 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
     mutates: true,
     requiredCapabilities: ['studio.run.project'],
     description:
-      'Tier 2: boots the OPEN PROJECT\'s own dev server (its "dev" or "start" script, via the detected package manager) and screenshots `route` through a real headless browser at the given viewport — the ground truth to compare a studio_export_frames capture against. Requires studio.run.project (never granted by default, never implicit) because this EXECUTES the project\'s own code, unlike every other Studio tool. `route` must be a path this project\'s OWN dev server actually serves (its router or URL-state, not necessarily the Studio page slug) — not every parsed Studio page has one; screens reached only via in-app interaction (a tap, a picked option) are not reachable this way. The dev server is reused across calls for the same project and torn down after `idleTimeoutMs` of inactivity. If the dev server fails to boot, returns ok:false with the captured stdout/stderr tail — never a synthetic result.',
+      'Tier 2: boots the OPEN PROJECT\'s own dev server (its "dev" or "start" script, via the detected package manager) and screenshots `route` through a real headless browser at the given viewport — the ground truth to compare a studio_export_frames capture against. Gated TWICE because this EXECUTES the project\'s own code, unlike every other Studio tool: the caller needs studio.run.project, AND the project itself must be promoted to "run-project" trust. A project at "static" or "render-packages" trust refuses with code "trust-tier-required" — ask the user to promote it in Studio and call again; you may never promote it yourself, and calling again without that promotion returns the same refusal. `route` must be a path this project\'s OWN dev server actually serves (its router or URL-state, not necessarily the Studio page slug) — not every parsed Studio page has one; screens reached only via in-app interaction (a tap, a picked option) are not reachable this way. The dev server is reused across calls for the same project and torn down after `idleTimeoutMs` of inactivity. If the dev server fails to boot, returns ok:false with the captured stdout/stderr tail — never a synthetic result.',
     inputSchema: InputSchema,
     handler: async (input, ctx: ToolContext) => {
       const {
@@ -128,6 +148,24 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
 
       const dir = resolveToolProjectDir(dirInput, ctx)
       const appRoot = resolveAppRoot(dir)
+
+      // Gate 2 of 2 — the PROJECT's own tier (A10, `sec-05` finding 1). Gate 1
+      // (`requiredCapabilities: ['studio.run.project']`) was already enforced
+      // by `toolAllowedForCapabilities` before this handler ran; it says the
+      // caller may run project code, not that THIS project may be run.
+      // Read off `dir`, never `appRoot`: `.studio/` lives at the project root,
+      // and a monorepo's nested app root has no meta file of its own.
+      const trust = checkTrustTier(dir, 'run-project')
+      if (!trust.ok) {
+        return {
+          ok: false,
+          code: TRUST_TIER_REQUIRED_CODE,
+          error: `This project is at "${trust.trust}" trust, and booting its dev server runs its own code — that needs the highest tier ("run-project"). Ask the user to promote the project in Studio, then call this again; you may not promote it yourself.`,
+          trust: trust.trust,
+          requiredTrust: trust.required,
+          dir,
+        }
+      }
 
       const server = await ensureDevServer(dir, overrides)
       if (!server.ok) {

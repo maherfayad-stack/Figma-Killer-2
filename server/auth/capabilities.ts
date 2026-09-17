@@ -87,9 +87,24 @@ const adminCapabilities: CoreCapability[] = [
   // `selectStudioTools`. The agent did not refuse to build; it was handed no
   // tool that could. It looked like caution and was missing permission.
   //
-  // `studio.run.project` is deliberately NOT granted: that is Tier 2 —
-  // executing the open project's own code (dev server + Playwright) — and
-  // stays opt-in per its note in `src/core/capabilities.ts`.
+  // `studio.run.project` IS granted, and that is a deliberate reversal
+  // (STUDIO-FIGMA-FEEL-PLAN.md A10, §6 decision 1). It used to be withheld
+  // here, which made `studio_render_reference` — the only tool in the whole
+  // toolset that validates a screen against the project ACTUALLY RUNNING,
+  // rather than against Studio's static parse — unreachable for every real
+  // operator, while the prompt happily described it. "Done" could only ever
+  // be checked against the parse.
+  //
+  // What makes granting it safe is that it is no longer the only gate. The
+  // capability answers "may this operator run project code at all"; the
+  // project's OWN `.studio/meta.json` trust tier answers "may THIS project be
+  // run", and every Tier-2 tool now checks both — `referenceRender.ts` calls
+  // `checkTrustTier(dir, 'run-project')` exactly as the `/admin/api/studio/
+  // dev-server` route does (`handlers/studio/trustGate.ts`). Nothing executes
+  // until a human has deliberately promoted that specific project, which is
+  // the consent click Tier 2 was always built around. Before A10 the MCP tool
+  // had only the capability and the HTTP route had only the tier, so the tool
+  // was strictly the weaker of the two — `sec-05` finding 1.
   //
   // `studio.git.write` (W4-3) is deliberately NOT granted either, for the
   // adjacent reason: a commit carries the user's git identity into a history
@@ -100,6 +115,7 @@ const adminCapabilities: CoreCapability[] = [
   // AGENT tool (`studio_git_commit`). Grant it per connector, or on a custom
   // role, when that delegation is actually wanted.
   'studio.write',
+  'studio.run.project',
 ]
 
 const clientCapabilities: CoreCapability[] = [
