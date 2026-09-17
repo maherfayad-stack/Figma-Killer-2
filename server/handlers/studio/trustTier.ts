@@ -8,9 +8,12 @@
  * it. This is that action.
  *
  *   GET  /admin/api/studio/trust-tier?dir=<abs>
- *     -> `{ trust }` — the CURRENT tier, defaulting to `'static'` (Tier 0,
- *        `meta-03` decision 1: never auto-promoted) exactly like every other
- *        reader of `readStudioMeta(dir).trust` in this codebase.
+ *     -> `{ trust, live }` — the CURRENT tier, defaulting to `'static'`
+ *        (Tier 0, `meta-03` decision 1: never auto-promoted) exactly like
+ *        every other reader of `readStudioMeta(dir).trust` in this codebase,
+ *        plus whether this project's real app could be run at all
+ *        (`./liveCapability.ts`), which is what the `Static · Live` pill
+ *        renders.
  *   POST /admin/api/studio/trust-tier { dir, trust }
  *     -> `{ ok: true, trust }` — persists the requested tier via
  *        `mergeStudioMeta`, which preserves every other `.studio/meta.json`
@@ -18,11 +21,11 @@
  *
  * Deliberately NOT a general-purpose meta-patch endpoint — one field, one
  * job, same "each concern owns its own sub-router" reasoning
- * `STUDIO_SUB_ROUTERS` documents in `studio.ts`. This is an explicit, EXPLICIT
- * user action (a click on "Promote this project"), never something a
- * background fetch triggers on its own — trust promotion is a real consent
- * boundary (`meta-03` decision 1), and consent has to come from a route a
- * button calls, not a side effect of loading a page.
+ * `STUDIO_SUB_ROUTERS` documents in `studio.ts`. This is an explicit user
+ * action (a click on "Promote this project"), never something a background
+ * fetch triggers on its own — trust promotion is a real consent boundary
+ * (`meta-03` decision 1), and consent has to come from a route a button
+ * calls, not a side effect of loading a page.
  *
  * Containment is `resolveProjectDir`'s, once for every project-scoped route:
  * a `dir` outside `studio-workspace/` throws there and the router answers 404,
@@ -36,6 +39,7 @@
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
+import { resolveLiveCapability } from './liveCapability'
 import { DEFAULT_TRUST_TIER, mergeStudioMeta, readStudioMeta, TrustTierSchema } from './studioMeta'
 
 const ROUTE_PATH = '/admin/api/studio/trust-tier'
@@ -53,8 +57,11 @@ export async function tryServeStudioTrustTier(req: Request, url: URL, pathname: 
   if (req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
-      return jsonResponse({ trust })
+      const meta = readStudioMeta(dir)
+      return jsonResponse({
+        trust: meta.trust ?? DEFAULT_TRUST_TIER,
+        live: resolveLiveCapability(dir),
+      })
     } catch (err) {
       rethrowProjectDirRefusal(err)
       console.error('[studio:trustTier]', err)

@@ -1,0 +1,50 @@
+/**
+ * The `Static · Live` runtime pill (P8) — a label inside the canvas-mode
+ * toolbar, so it inherits that pill's own surface and only needs its own
+ * typography and state colour.
+ *
+ * Colour is IDENTITY here, not state: `Live` is the accent because it names
+ * which of two runtimes is showing, not because anything is wrong. `blocked`
+ * is muted rather than `--warning`, deliberately — "this project cannot go
+ * live" is a fact about the project, not a problem with the session, and the
+ * warning vocabulary belongs to the diagnostics badge.
+ */
+
+.group {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4xs);
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--space-4xs) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: var(--text-3xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: default;
+}
+
+.pill:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.pill[data-runtime='live'] {
+    background: var(--accent-3-10);
+    color: var(--accent-3);
+}
+
+.pill[data-runtime='static'] {
+    background: var(--bg-surface-3);
+    color: var(--text);
+}
+
+.pill[data-runtime='blocked'] {
+    color: var(--text-subtle);
+}
