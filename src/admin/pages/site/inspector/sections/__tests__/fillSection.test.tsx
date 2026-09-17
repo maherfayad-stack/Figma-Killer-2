@@ -28,9 +28,17 @@
  *      nothing stores anywhere still opens Fill, muted, no remove button;
  *      a genuinely-initial value does not; the write-target refusal gap in
  *      the muted row's own popover; the Tier 2 loading guard.
+ *  11. `STATE.md` `panel-32` — a value stored at BASE, with no override at
+ *      the active breakpoint/condition, is a DIFFERENT muted case from #10
+ *      (something DOES declare it, just not here): still opens Fill, muted;
+ *      the header's own "Add …" buttons hide once the row is visible; the
+ *      popover states a write creates a NEW override rather than editing the
+ *      declaration shown; an override at the active context is a normal
+ *      stored row, not muted.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { StyleRule } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
@@ -64,12 +72,16 @@ afterEach(() => {
  * matching the real gap this suite exists to close: the CANVAS shows a
  * colour the STORED bag never declared.
  */
-function setUpCanvasFrame(nodeId: string, styleNode: (el: HTMLElement, frameDoc: Document) => void) {
+function setUpCanvasFrame(
+  nodeId: string,
+  styleNode: (el: HTMLElement, frameDoc: Document) => void,
+  breakpointId = 'desktop',
+) {
   const frame = document.createElement('iframe')
   document.body.appendChild(frame)
   const frameDoc = frame.contentDocument!
-  frameDoc.body.setAttribute('data-breakpoint-id', 'desktop')
-  frame.setAttribute('data-breakpoint-id', 'desktop')
+  frameDoc.body.setAttribute('data-breakpoint-id', breakpointId)
+  frame.setAttribute('data-breakpoint-id', breakpointId)
 
   const node = frameDoc.createElement('div')
   node.setAttribute('data-node-id', nodeId)
@@ -587,5 +599,156 @@ describe('FillSection — computed-values loading state (Tier 2 bridge measureme
     const row = screen.getByRole('listitem')
     expect(row.textContent).toContain('rgb(255, 255, 255)')
     expect(row.dataset.muted).toBe('true')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 11. `STATE.md` panel-32 — a class-declared value at BASE, with no override
+//     at the active breakpoint/condition, is a DIFFERENT muted case from
+//     panel-30's (something DOES declare it, just not at the active
+//     context) — repro: a mobile project's `.title` class declares `color`
+//     at base; the user is on a non-desktop breakpoint tab with no override
+//     there. `FillSection.tsx`'s own `storedStyles` (context-only) reads
+//     unset; `SelectionModel.provenanceByProperty` (effective chain) has a
+//     real source, so the OLD single-argument predicate also read "stored,
+//     not this predicate's problem" — the property fell through both checks.
+// ---------------------------------------------------------------------------
+
+function makeClass(id: string, overrides: Partial<StyleRule> = {}): StyleRule {
+  return {
+    id,
+    name: 'title',
+    kind: 'class',
+    selector: '.title',
+    order: 0,
+    styles: {},
+    contextStyles: {},
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides,
+  } as StyleRule
+}
+
+const TITLE_CLASS_ID = 'sc-af44e547b2'
+
+/** A node carrying `TITLE_CLASS_ID`, on a store whose active breakpoint is `breakpointId`. */
+function selectNodeWithBaseDeclaredClass(breakpointId: string) {
+  setStudioStyleRuleSources(
+    { [TITLE_CLASS_ID]: { file: 'pages/Onboarding.module.css', selector: '.title' } },
+    {},
+  )
+  const page = makePage({
+    id: 'page-1',
+    rootNodeId: ROOT_ID,
+    nodes: {
+      [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.body', children: [NODE_ID] }),
+      [NODE_ID]: makeNode({ id: NODE_ID, moduleId: 'base.text', classIds: [TITLE_CLASS_ID] }),
+    },
+  })
+  useEditorStore.setState({
+    site: makeSite({
+      pages: [page],
+      styleRules: { [TITLE_CLASS_ID]: makeClass(TITLE_CLASS_ID, { styles: { color: 'var(--text-base-default)' } }) },
+    }),
+    activePageId: 'page-1',
+    selectedNodeId: NODE_ID,
+    activeBreakpointId: breakpointId,
+  } as Parameters<typeof useEditorStore.setState>[0])
+}
+
+describe('FillSection — declared at another context (panel-32)', () => {
+  // `buildCollapsedCurrentStyles` (`collapsedStyleBag.ts`) prefers the
+  // effective class chain's own literal declaration over the raw computed
+  // value when one exists — the same rule every other migrated section's
+  // popover already reads its own "current" fallback from (`StackedPropertyGrid`,
+  // `ContentFitPopoverBody`, `OrphanSatellitesBody`). The muted row therefore
+  // shows the real `var(--text-base-default)` token, not a resolved RGB — the
+  // canvas frame's OWN computed colour only needs to be a real value (any
+  // value) so `rendersUnstoredValue`'s `computedValue !== undefined` gate is
+  // satisfied; it is not what gets displayed.
+  it('a base-declared colour with no override at this breakpoint opens Fill, muted, and hides "Add text colour"', () => {
+    selectNodeWithBaseDeclaredClass('mobile')
+    setUpCanvasFrame(
+      NODE_ID,
+      (el) => {
+        el.style.color = 'rgb(17, 17, 17)'
+      },
+      'mobile',
+    )
+    render(<FillSection />)
+
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('var(--text-base-default)')
+    expect(row.dataset.muted).toBe('true')
+    expect(within(row).queryByRole('button', { name: 'Remove Text' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /add text colour/i })).toBeNull()
+  })
+
+  it("the popover states a write saves a NEW override, and the write lands there — base is untouched", () => {
+    selectNodeWithBaseDeclaredClass('mobile')
+    setUpCanvasFrame(
+      NODE_ID,
+      (el) => {
+        el.style.color = 'rgb(17, 17, 17)'
+      },
+      'mobile',
+    )
+    render(<FillSection />)
+
+    fireEvent.click(screen.getByText('var(--text-base-default)'))
+    const popover = screen.getByRole('dialog', { name: 'Text colour' })
+    expect(within(popover).getByTestId('source-constraint-notice').textContent).toMatch(
+      /saves a new (override|declaration)/i,
+    )
+
+    const input = within(popover).getByRole('textbox', { name: 'Text colour' })
+    fireEvent.change(input, { target: { value: '#ff0000' } })
+    fireEvent.blur(input)
+
+    const rule = useEditorStore.getState().site?.styleRules[TITLE_CLASS_ID]
+    expect(rule?.contextStyles.mobile?.color).toBe('#ff0000')
+    expect(rule?.styles.color).toBe('var(--text-base-default)')
+  })
+
+  it('an override already declared at the active context renders as a normal stored row, not muted', () => {
+    setStudioStyleRuleSources(
+      { [TITLE_CLASS_ID]: { file: 'pages/Onboarding.module.css', selector: '.title' } },
+      {},
+    )
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: ROOT_ID,
+      nodes: {
+        [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.body', children: [NODE_ID] }),
+        [NODE_ID]: makeNode({ id: NODE_ID, moduleId: 'base.text', classIds: [TITLE_CLASS_ID] }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({
+        pages: [page],
+        styleRules: {
+          [TITLE_CLASS_ID]: makeClass(TITLE_CLASS_ID, {
+            styles: { color: 'var(--text-base-default)' },
+            contextStyles: { mobile: { color: '#00ff00' } },
+          }),
+        },
+      }),
+      activePageId: 'page-1',
+      selectedNodeId: NODE_ID,
+      activeBreakpointId: 'mobile',
+    } as Parameters<typeof useEditorStore.setState>[0])
+    setUpCanvasFrame(
+      NODE_ID,
+      (el) => {
+        el.style.color = 'rgb(0, 255, 0)'
+      },
+      'mobile',
+    )
+    render(<FillSection />)
+
+    const row = screen.getByRole('listitem')
+    expect(row.textContent).toContain('#00ff00')
+    expect(row.dataset.muted).toBeUndefined()
+    expect(within(row).getByRole('button', { name: 'Remove Text' })).toBeTruthy()
   })
 })

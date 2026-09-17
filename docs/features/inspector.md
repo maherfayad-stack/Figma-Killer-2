@@ -124,10 +124,47 @@ ordinary container's inherited black text is not the element's own paint the
 way a body's white background is). The row this reveals is presented per
 §5.0's three-tier vocabulary below, generalized from a scalar field to a
 `PropertyList` row — see that section for the full account, including why
-the section's "N set" INDICATOR still counts only `storedStyles`. Stroke,
-Shadow, and Blur are named follow-ups for the identical treatment
-(`STATE.md` panel-30's own Sequencing) — a future section must reuse
-`rendersUnstoredValue`, not reimplement this check.
+the section's "N set" INDICATOR still counts only `storedStyles`.
+
+**`panel-32` widened the same fact: "nothing stored" is not the only way a
+property's value can be true and invisible — it can be stored SOMEWHERE, just
+not at the ACTIVE EDITING CONTEXT.** `FillSection.tsx`'s `storedStyles` is
+built from `collapsedStyleBag.ts`'s `buildContextOnlyClassChain` — by design,
+it drops a class's BASE declaration entirely once a breakpoint/condition
+context is active (see that module's own doc: "a value set only at BASE reads
+as unset-here"). A user on a mobile project, viewing a non-desktop breakpoint
+tab, whose `.title` class declares `color` at base with no override at that
+breakpoint, hit exactly this: the colour is genuinely their own CSS, plainly
+rendering, and Fill still showed nothing — a DIFFERENT hole than panel-30's
+(that one had NO stored source anywhere; this one has one, just not here).
+`rendersUnstoredValue` now takes a second, required argument —
+`storedAtActiveContext` — and a real class source elsewhere in the node's
+EFFECTIVE (base + override) provenance chain is, on its own, enough reason to
+show the row muted; the CSS-initial-value guard is never consulted for that
+branch (a declared source is never a UA default). The muted row's own popover
+now also states, via an informational `SourceConstraintNotice`
+(`writeTargetNote`), that editing saves a NEW declaration at the active
+context rather than touching the one being shown — the actual write mechanism
+(`commitApi.ts`'s `writeToTarget`: a class target with an active context
+always calls `setClassContextStyles`, never `updateClassStyles`) was already
+honest; only the copy was silent about it. The header's own "Add text
+colour"/"Add solid color fill" buttons are gated on the ROW's visibility
+(stored or muted) now, not on `storedStyles` alone — offering "Add" beside a
+colour that is plainly showing was the same lie in a different control.
+
+Stroke's per-side colour row and Shadow/Blur's structured layer rows have the
+identical class of gap (their own `setAnywhere`/row-visibility checks are
+ALSO context-only), and were deliberately NOT migrated in the same change:
+Stroke's row reads four sides through a uniform/mixed model with its own
+`ColorValueInput`+`placeholder` idiom (distinct from Fill's "show the real
+value, muted" idiom — see `StrokeSection.tsx`), and Shadow/Blur's rows are
+structured multi-field values (offset/blur/spread/colour, or a blur radius)
+with **no muted-rendering concept at all today** (`ShadowSection.tsx`'s own
+doc: "no `currentStyles` bag is built here" — a genuinely separate, larger
+feature: parsing a computed `box-shadow`/`filter` string into a synthetic
+muted layer, then wiring per-synthetic-layer write-target resolution). A
+future session must still reuse `rendersUnstoredValue`, not reimplement this
+check, when it takes those two on.
 
 ### Law 2 — Rare options live in a popover anchored to the thing they modify (F5, F8, F17, F21, F25–F27)
 
@@ -845,17 +882,25 @@ claims about the source. The presentational half travels as `inherited`:
 `AddablePropertyField` / `RevealedField` / `ScrubTokenField`.
 
 Law 1's disclosure is judged on the STORED bag and is untouched by prefill
-for every scalar-field section — **except Fill**, as of `STATE.md` panel-30:
-`FillSection.tsx`'s `setAnywhere` and its `PropertyList` row guards for
-`color`/`backgroundColor` now ALSO consult `renderedNotStored.ts`'s
-`rendersUnstoredValue`, the same three-tier idea above generalized from a
-scalar field to a `PropertyList` ROW (`PropertyListEntry.muted`/`removable`,
-not `resolveStyleFieldDisplay`'s `inherited`/`isSet` pair, since a list row
-has no single "field" to prefill — it either exists, muted, or doesn't exist
-at all). See §4's Law 1 for the full account and the non-inherited "true CSS
-initial value" guard (`cssInitialValues.ts`) that keeps an ordinary element
-from flooding open. Stroke/Shadow/Blur have not been migrated yet and remain
-governed by the STORED-bag-only rule this paragraph originally stated.
+for every scalar-field section — **except Fill**, as of `STATE.md` panel-30
+(widened by `panel-32`): `FillSection.tsx`'s `setAnywhere` and its
+`PropertyList` row guards for `color`/`backgroundColor` now ALSO consult
+`renderedNotStored.ts`'s `rendersUnstoredValue`, the same three-tier idea
+above generalized from a scalar field to a `PropertyList` ROW
+(`PropertyListEntry.muted`/`removable`, not `resolveStyleFieldDisplay`'s
+`inherited`/`isSet` pair, since a list row has no single "field" to prefill —
+it either exists, muted, or doesn't exist at all). `rendersUnstoredValue`
+takes a `storedAtActiveContext` argument (`panel-32`) so it also fires for a
+property declared elsewhere in the node's effective class chain — base, while
+a breakpoint/condition tab is active — not only for a property nothing
+declares anywhere. See §4's Law 1 for the full account, the non-inherited
+"true CSS initial value" guard (`cssInitialValues.ts`) that keeps an ordinary
+element from flooding open (never consulted for the "declared elsewhere"
+branch — a real source is never a UA default), and why Stroke/Shadow/Blur
+remain governed by the STORED-bag-only rule this paragraph originally stated
+for their OWN list rows (their scalar sibling fields, e.g. Stroke's weight
+inputs, already go through `resolveStyleFieldDisplay` and were never affected
+by either gap).
 
 **A prefilled value commits like any other.** Dragging Width from its rendered
 `320px` to `340px` sets `width: 340px` on the target — that is what the user

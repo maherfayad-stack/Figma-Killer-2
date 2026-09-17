@@ -242,6 +242,16 @@ export function FillSection() {
   const effectiveClassChain = buildClassChain(assignedClassRules, activeContextId)
   const currentStyles = buildCollapsedCurrentStyles(computedValues, effectiveClassChain, inlineStyles, storedStyles)
 
+  // "Stored at the ACTIVE CONTEXT" — computed BEFORE `rendersUnstoredValue`
+  // needs it (`panel-32`: the predicate must know whether THIS context's own
+  // bag declares the property, not merely whether it exists somewhere in the
+  // node's effective chain). Also feeds the two rows' own display below —
+  // computed once, not twice.
+  const textValue = readString(storedStyles, 'color')
+  const textStored = hasStyleValue(textValue)
+  const colorValue = readString(storedStyles, 'backgroundColor')
+  const colorStored = hasStyleValue(colorValue)
+
   // Law 1 (`docs/features/inspector-disclosure.md` §4 G1): whether ANYTHING
   // Fill claims is set, on the active tab OR any other breakpoint/condition
   // — a value set only on an inactive tab is still the user's own work and
@@ -251,20 +261,26 @@ export function FillSection() {
     ...assignedClassRules.flatMap((rule) => [rule.styles, ...Object.values(rule.contextStyles)]),
     inlineStyles,
   ]
-  // STATE.md panel-30 — "the bg is white, I don't see that in the fill". A
-  // value the frame genuinely renders but nothing STORES anywhere must still
-  // open Fill; see `renderedNotStored.ts`. Gated on `!computedValuesLoading`
-  // so a Tier 2 bridge measurement still in flight (P5, `panel-26`) never
-  // flickers the section open/closed off a stale or absent read — the OLD
-  // stored-only disclosure applies until that measurement resolves. `color`
-  // is gated additionally by `isTextNode` — an ordinary non-text container's
-  // inherited black text colour is real but not the element's own paint the
-  // way a body's white background is; opening Fill for every such container
-  // would be the flood this guard exists to avoid.
+  // STATE.md panel-30/panel-32 — "the bg is white, I don't see that in the
+  // fill", widened to "the colour is declared in my own CSS and still isn't
+  // shown". A value the frame genuinely renders that the ACTIVE CONTEXT's own
+  // bag does not declare must still open Fill — whether nothing declares it
+  // ANYWHERE (panel-30) or something declares it elsewhere, e.g. at base
+  // while a breakpoint/condition tab is active (panel-32) — see
+  // `renderedNotStored.ts`. Gated on `!computedValuesLoading` so a Tier 2
+  // bridge measurement still in flight (P5, `panel-26`) never flickers the
+  // section open/closed off a stale or absent read — the OLD stored-only
+  // disclosure applies until that measurement resolves. `color` is gated
+  // additionally by `isTextNode` — an ordinary non-text container's inherited
+  // black text colour is real but not the element's own paint the way a
+  // body's white background is; opening Fill for every such container would
+  // be the flood this guard exists to avoid.
   const backgroundColorRendersUnstored =
-    !computedValuesLoading && rendersUnstoredValue(provenanceByProperty.get('backgroundColor'))
+    !computedValuesLoading && rendersUnstoredValue(provenanceByProperty.get('backgroundColor'), colorStored)
   const textColorRendersUnstored =
-    !computedValuesLoading && isTextNode(selectedNode) && rendersUnstoredValue(provenanceByProperty.get('color'))
+    !computedValuesLoading &&
+    isTextNode(selectedNode) &&
+    rendersUnstoredValue(provenanceByProperty.get('color'), textStored)
 
   const setAnywhere =
     FILL_PROPERTIES.some(
@@ -290,7 +306,36 @@ export function FillSection() {
 
   const onClearPreview = commit.clearStylePreview
 
-  const fillActions = <FillSectionActions storedStyles={storedStyles} onChange={onChange} />
+  // "Rendered, not stored" (`docs/features/inspector.md` §5.0's vocabulary,
+  // generalized from a scalar field to a `PropertyList` row): the muted
+  // fallback reads the SAME `currentStyles` bag every other popover body in
+  // this file already threads through — no second value source. Computed
+  // BEFORE the header actions / Law-1 empty check below, since both now need
+  // to know whether the row is VISIBLE (stored or muted), not merely stored.
+  const textMutedValue = !textStored && textColorRendersUnstored ? readString(currentStyles, 'color') : undefined
+  const showTextEntry = textStored || textMutedValue !== undefined
+  const textDisplayValue = textStored ? textValue : textMutedValue
+  // panel-32: is the muted value a REAL declaration elsewhere (base, or
+  // another breakpoint/condition), as opposed to pure inheritance/UA
+  // rendering with nothing declared anywhere? Drives the popover's
+  // informational write-target note — never true while `textStored`.
+  const textDeclaredElsewhere = !textStored && (provenanceByProperty.get('color')?.sources.length ?? 0) > 0
+
+  const colorMutedValue =
+    !colorStored && backgroundColorRendersUnstored ? readString(currentStyles, 'backgroundColor') : undefined
+  const showColorEntry = colorStored || colorMutedValue !== undefined
+  const colorDisplayValue = colorStored ? colorValue : colorMutedValue
+  const colorDeclaredElsewhere =
+    !colorStored && (provenanceByProperty.get('backgroundColor')?.sources.length ?? 0) > 0
+
+  const fillActions = (
+    <FillSectionActions
+      storedStyles={storedStyles}
+      textVisible={showTextEntry}
+      colorVisible={showColorEntry}
+      onChange={onChange}
+    />
+  )
 
   // Law 1's empty state: nothing set anywhere. One static header line, the
   // add buttons, no body, no chevron — matches Penpot's own measured
@@ -311,24 +356,7 @@ export function FillSection() {
     writeBackgroundModel(parsedModel, next, onChange)
   }
 
-  // "Rendered, not stored" (`docs/features/inspector.md` §5.0's vocabulary,
-  // generalized from a scalar field to a `PropertyList` row): the muted
-  // fallback reads the SAME `currentStyles` bag every other popover body in
-  // this file already threads through — no second value source.
-  const textValue = readString(storedStyles, 'color')
-  const textStored = hasStyleValue(textValue)
-  const textMutedValue = !textStored && textColorRendersUnstored ? readString(currentStyles, 'color') : undefined
-  const showTextEntry = textStored || textMutedValue !== undefined
-  const textDisplayValue = textStored ? textValue : textMutedValue
-
   const contentFitVisible = CONTENT_FIT_PROPS.some((prop) => hasStyleValue(storedStyles[prop]))
-
-  const colorValue = readString(storedStyles, 'backgroundColor')
-  const colorStored = hasStyleValue(colorValue)
-  const colorMutedValue =
-    !colorStored && backgroundColorRendersUnstored ? readString(currentStyles, 'backgroundColor') : undefined
-  const showColorEntry = colorStored || colorMutedValue !== undefined
-  const colorDisplayValue = colorStored ? colorValue : colorMutedValue
 
   const shorthandValue = readString(storedStyles, 'background')
   const showShorthandEntry = hasStyleValue(shorthandValue)
@@ -528,6 +556,7 @@ export function FillSection() {
                 stored={textStored}
                 storedDisplayValue={textValue}
                 mutedDisplayValue={textMutedValue}
+                declaredElsewhere={textDeclaredElsewhere}
                 writeTarget={textWriteTarget}
                 onCommit={onChange}
                 onPreview={previewProperty}
@@ -543,6 +572,7 @@ export function FillSection() {
                 stored={colorStored}
                 storedDisplayValue={colorValue}
                 mutedDisplayValue={colorMutedValue}
+                declaredElsewhere={colorDeclaredElsewhere}
                 writeTarget={colorWriteTarget}
                 onCommit={onChange}
                 onPreview={previewProperty}

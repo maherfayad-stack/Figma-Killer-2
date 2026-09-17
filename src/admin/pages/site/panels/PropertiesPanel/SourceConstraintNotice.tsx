@@ -52,6 +52,24 @@
  * different words. Mutually exclusive with `lockReason`/`textOrigin` in
  * practice (a Fill popover's muted row either has a write-target refusal or
  * it doesn't), so no case renders more than one of the three at once.
+ *
+ * ## `writeTargetNote` — a FOURTH, informational fact (`STATE.md` panel-32)
+ *
+ * Not a refusal — a value the panel prefills from somewhere OTHER than the
+ * active editing context (a class declaration at BASE, shown muted while a
+ * breakpoint/condition override tab is active — `renderedNotStored.ts`'s
+ * widened contract). Editing that field does not touch the declaration being
+ * shown; it writes a NEW one at the active context, via the exact same
+ * `resolveWriteTarget`/`commitApi.ts` path every other field already uses
+ * (`commitApi.ts`'s `writeToTarget`: a `class` target always lands on
+ * `setClassContextStyles` when a context is active, never on the base
+ * declaration). Saying so here — instead of a silent prefill that could read
+ * as "you are editing this" — is what closes the "must not lie about what
+ * editing does" gap: a muted row is real information, not an invitation to
+ * mistake it for the row it is about to replace. Informational styling
+ * (`.noticeInfo`, `CodeIcon`), same as `textOrigin`-only — never rendered
+ * alongside `writeTargetReason` (a write-target FACT is either a refusal or a
+ * note, never both for the same field).
  */
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
@@ -98,6 +116,12 @@ interface SourceConstraintNoticeProps {
    * rather than reusing the structural sentence.
    */
   writeTargetReason?: string
+  /**
+   * A non-refusal fact about where a write WOULD land — see this file's own
+   * `writeTargetNote` doc section. Mutually exclusive with `writeTargetReason`
+   * in practice (a field either has an honest target or it doesn't).
+   */
+  writeTargetNote?: string
 }
 
 export function SourceConstraintNotice({
@@ -108,16 +132,25 @@ export function SourceConstraintNotice({
   constraint,
   nodeId,
   writeTargetReason,
+  writeTargetNote,
 }: SourceConstraintNoticeProps) {
   const structural = lockReason !== undefined
   const writeRefused = !structural && textOrigin === undefined && writeTargetReason !== undefined
+  const noteOnly = !structural && !writeRefused && textOrigin === undefined && writeTargetNote !== undefined
 
-  // None of the three facts applies — say nothing. `CodeValueControl` (per
+  // None of the four facts applies — say nothing. `CodeValueControl` (per
   // prop) and `InlineStyleComposer` (per style property, once F1's
   // provenance wiring lands — see `editConstraint.ts`'s
   // `explainStyleConstraint` doc) carry every other fact this component used
   // to repeat.
-  if (!structural && textOrigin === undefined && writeTargetReason === undefined) return null
+  if (
+    !structural &&
+    textOrigin === undefined &&
+    writeTargetReason === undefined &&
+    writeTargetNote === undefined
+  ) {
+    return null
+  }
 
   return (
     <div
@@ -131,7 +164,9 @@ export function SourceConstraintNotice({
             : 'list-row'
           : writeRefused
             ? 'write-target-refused'
-            : 'text-origin-only'
+            : textOrigin !== undefined
+              ? 'text-origin-only'
+              : 'write-target-note'
       }
     >
       {structural || writeRefused ? (
@@ -158,6 +193,7 @@ export function SourceConstraintNotice({
             </>
           ) : null}
           {writeRefused ? writeTargetReason : null}
+          {noteOnly ? writeTargetNote : null}
           {textOrigin ? (
             <>
               {' '}Its text comes from{' '}

@@ -12,6 +12,189 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### panel-32 — Fill collapses a text colour that IS the user's own CSS, because it's declared at BASE and a breakpoint tab is active
+- **Agent:** panel-designer
+- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `fix/inspector-shows-base-declared-values`. Worktree: `.tmp/wt-inspector-base/`.
+- **Updated:** 2026-09-17.
+- **Work order repro:** `studio-workspace/test4 copy`, page `onboarding`, the `<h1>` at
+  `pages/Onboarding.tsx:24:16` (class `.Onboarding_title__83213`, rule `sc-af44e547b2`,
+  `Onboarding.module.css:47` declares `color: var(--text-base-default)` inside `.title`). This
+  is a mobile project (non-`desktop` `activeBreakpointId`). Fill rendered an EMPTY body with
+  header action "Add text colour", even though the colour is real, parsed, and plainly
+  rendering.
+
+#### Hypothesis confirmation
+The work order's `activeContextId` hypothesis was **directionally right, mechanism more
+precise than stated**. Traced with the real code (not hypothetical):
+- `FillSection.tsx`'s `storedStyles` comes from `buildContextOnlyClassChain` (`collapsedStyleBag.ts`)
+  — `activeContextId ? (rule.contextStyles[activeContextId] ?? {}) : rule.styles`. With a
+  breakpoint tab active and no override there, `storedStyles.color` is genuinely unset — correct
+  and intentional per that module's own doc.
+- `SelectionModel.provenanceByProperty` (read by the OLD `rendersUnstoredValue(provenance)`) is
+  built from `buildClassChain` — the EFFECTIVE (base merged with override) chain — so it saw a
+  real source (`rule.styles.color`) and `rendersUnstoredValue`'s own first check
+  (`sources.length > 0 → return false`, "it is stored, not rendered-not-stored") returned false.
+  **The property fell through BOTH the "stored here" bag and the "rendered, not stored
+  anywhere" predicate** — a hole neither check individually was wrong about, that only exists
+  at their seam. Confirmed via the exact code path, not a guess: `setAnywhere` was already
+  `true` (the pre-existing `crossContextStyles` scan in Law 1 already treats base-only values
+  as "the user's own work, keep the section open" — that part was never broken), so the SECTION
+  opened; only the per-ROW `showTextEntry` guard (and its Solid-fill sibling) came back false,
+  collapsing to an empty populated body — exactly what the report described.
+
+#### The one honest predicate
+`renderedNotStored.ts`'s `rendersUnstoredValue` now takes a second, **required** argument,
+`storedAtActiveContext` (the caller's own `hasStyleValue(storedStyles[prop])` fact):
+```ts
+export function rendersUnstoredValue(
+  provenance: PropertyProvenance | undefined,
+  storedAtActiveContext: boolean,
+): boolean {
+  if (storedAtActiveContext) return false
+  if (!provenance) return false
+  if (provenance.computedValue === undefined) return false
+  if (provenance.sources.length > 0) return true   // NEW: declared elsewhere — base, or another context
+  if (provenance.inherited) return true
+  return !isTrueCssInitialValue(provenance.property, provenance.computedValue)
+}
+```
+One function, one predicate, covering both shapes of "the active context's own bag doesn't
+declare this, but something real explains it": nothing declares it anywhere (panel-30's
+original case — inheritance/UA-nondefault, gated by `isTrueCssInitialValue`) OR something DOES
+declare it, just not here (this ticket's case — `sources.length > 0`, never gated by the
+CSS-initial check, since a real declared source is never a UA default). No second predicate
+bolted on beside it, per the work order's own instruction and `renderedNotStored.ts`'s own
+"a section MUST NOT reimplement this check inline" rule.
+
+#### What changed
+- `src/admin/pages/site/inspector/renderedNotStored.ts` — widened signature + doc, as above.
+- `src/admin/pages/site/inspector/__tests__/renderedNotStored.test.ts` — updated existing cases
+  for the new required arg; added a `panel-32` describe block (declared-elsewhere true/false,
+  and the `computedValue === undefined` gate still applies even with a declared source).
+- `src/admin/pages/site/inspector/sections/FillSection.tsx` — `textStored`/`colorStored`
+  (from `storedStyles`, context-only) computed BEFORE the two `rendersUnstoredValue` calls
+  (previously computed after, for display only); both calls now pass the stored-here boolean.
+  New `textDeclaredElsewhere`/`colorDeclaredElsewhere` (`provenance.sources.length > 0`) feed
+  the popover's informational copy. `FillSectionActions` now receives `textVisible`/
+  `colorVisible` (= `showTextEntry`/`showColorEntry`) instead of re-deriving `textSet`/`colorSet`
+  from `storedStyles` alone — the header's "Add text colour"/"Add solid color fill" buttons now
+  hide the moment the row is VISIBLE (stored or muted), not only when it's stored. This was a
+  real, separate half of the reported bug (the header kept offering "Add" beside a colour that,
+  once the row-level fix lands, is plainly showing) and — re-checked against PR1's shipped
+  code — was ALSO true for panel-30's original "nothing stored anywhere" case; fixing the
+  predicate closes it for both.
+- `src/admin/pages/site/inspector/sections/FillSectionActions.tsx` — `textVisible`/`colorVisible`
+  props replace the internal `textSet`/`colorSet` re-derivation; dropped the now-unused
+  `readString`/`hasStyleValue` import.
+- `src/admin/pages/site/inspector/sections/FillSectionParts.tsx` — `ColorPopoverField` gains a
+  `declaredElsewhere: boolean` prop. When true (and the row is muted with an honest write
+  target), it renders an informational `SourceConstraintNotice` naming where the edit would
+  actually land (the class selector, or "this element's own style") and that it saves a NEW
+  declaration for the current view only — closes the work order's "must not lie about what
+  editing does" requirement. The whole popover body is now wrapped in `.popoverBody` (a `flex
+  column` with `gap`) for both the note and the plain stored/muted-writable cases — a no-op
+  visually for the single-child case, needed once a sibling note can appear.
+- `src/admin/pages/site/panels/PropertiesPanel/SourceConstraintNotice.tsx` (+ its test) —
+  additive `writeTargetNote?: string` prop and `'write-target-note'` variant: a FOURTH,
+  informational (not refusal) fact, styled like the existing `textOrigin`-only case
+  (`.noticeInfo`, `CodeIcon`), independent of `writeTargetReason` (a refusal). Doc comment
+  explains why this is a genuinely different fact from the other three.
+- `src/admin/pages/site/inspector/sections/__tests__/fillSection.test.tsx` — new describe block
+  `FillSection — declared at another context (panel-32)`, 3 tests: (1) a base-declared `color`
+  with no override at the active (`mobile`) breakpoint opens Fill, muted, no remove button, AND
+  hides "Add text colour"; (2) the popover's informational note names a NEW override, and the
+  actual write lands in `styleRules[id].contextStyles.mobile.color` — base's own
+  `styles.color` is verified UNCHANGED after the write; (3) an override already present at the
+  active context renders as a normal (non-muted, removable) stored row — the already-correct
+  case stays correct. Added a `makeClass`/`selectNodeWithBaseDeclaredClass` fixture pair
+  (mirrors `selectionModel.test.ts`'s own `makeClass` convention) and an optional third
+  `breakpointId` param on the existing `setUpCanvasFrame` helper (defaults to `'desktop'`,
+  so the 20+ pre-existing calls are unaffected) to register the canvas frame at a non-desktop
+  breakpoint.
+- `docs/features/inspector.md` — §4 Law 1 and §5.0 both extended in place (not rewritten) to
+  describe the widened predicate, and to explain the Stroke/Shadow/Blur scope cut below.
+
+#### A real display nuance worth recording for the next reader
+The muted row's DISPLAYED value for the "declared elsewhere" case is the class chain's own
+**literal declared string** (e.g. `var(--text-base-default)`), not a resolved computed colour
+— because `collapsedStyleBag.ts`'s `buildCollapsedCurrentStyles` has always preferred the
+effective class chain's own value over the raw computed value when one exists (its own doc:
+"computed truth, then the effective … class chain, then … stored values on top" — the chain
+entry, when present, wins the spread order). This is **pre-existing, correct, and consistent**
+with every other muted-fallback consumer of the same `currentStyles` bag
+(`StackedPropertyGrid`, `ContentFitPopoverBody`, `OrphanSatellitesBody`) — not a new decision
+this ticket made. It is also arguably the more useful answer: the user sees their own design
+token, not an opaque `rgb(...)` their canvas happens to compute today. Tests were written
+against this real behaviour, not the `rgb(...)` value the canvas frame in the fixture computes
+(that value only exists to satisfy `rendersUnstoredValue`'s `computedValue !== undefined` gate).
+
+#### Scope cut, named and explained (not forced)
+Stroke's per-side colour row and Shadow/Blur's structured layer rows have the **identical
+class** of gap — their own Law-1 disclosure and row-visibility checks are ALSO built from
+`buildContextOnlyClassChain` alone. They were deliberately **not** migrated in this change,
+after reading their actual code (not assuming symmetry with Fill):
+- **Stroke** (`StrokeSection.tsx`): its per-side WEIGHT fields (Row 2) already go through
+  `resolveStyleFieldDisplay` unconditionally and were NEVER affected by either gap (a scalar
+  field always has a slot to fill; this ticket's whole problem is list-ROW existence). Only
+  the colour `PropertyList` entry (Row 1) has the gap, and it reads through a genuinely
+  different idiom than Fill's rows: a four-side uniform/mixed read (`readSideField`) feeding
+  `ColorValueInput`'s own `value`+`placeholder` split — NOT Fill's "show the real value, muted,
+  no separate placeholder" shape. Reusing `rendersUnstoredValue` here is straightforward for
+  the BOOLEAN gate; correctly wiring the DISPLAY (which side's placeholder wins when sides
+  disagree, per-side write targets) is real, separate design work.
+- **Shadow/Blur** (`ShadowSection.tsx`/`BlurSection.tsx`): their own doc comments already state,
+  predating this ticket, "`PropertyList` rows have no 'inherited from base' placeholder the way
+  a plain field does … no `currentStyles` bag is built here" — a structural decision, not an
+  oversight this ticket could cheaply reverse. Their rows are STRUCTURED multi-field values
+  (X/Y/Blur/Spread/Colour, or a blur radius) parsed from a comma-joined `box-shadow`/single
+  `filter` string. Extending muted disclosure to them means parsing a COMPUTED shadow/filter
+  string into a synthetic muted layer object, then wiring write-target resolution for a layer
+  that doesn't exist in `storedStyles` at all — a genuinely separate, larger feature, not a
+  drop-in reuse of a boolean predicate.
+
+Named explicitly, per the work order's own "if any turns out to need genuinely different
+treatment, say so and explain rather than forcing it." A future session doing Stroke's colour
+row or Shadow/Blur's structured rows MUST still reuse `rendersUnstoredValue`'s boolean core for
+the disclosure gate — do not reimplement it — but should expect real, separate design work for
+the DISPLAY and write-target halves.
+
+#### Gates
+- `bun test src/admin/pages/site/inspector src/admin/pages/site/panels/PropertiesPanel
+  src/ui/components/PropertyList` → 629 pass / 0 fail (this worktree needed `bun install` first
+  — a fresh `git worktree add` has no `node_modules`).
+- `bun test src/__tests__/architecture` → same 20 pre-existing failures as a stash-and-rerun
+  baseline confirmed (19 of them `icon-catalog-integrity.test.ts`/`no-core-barrel-deep-imports.test.ts`
+  — `pixel-art-icons/dist` isn't built in a fresh worktree checkout; one `studio-runtime bundles`
+  drift, also pre-existing and unrelated), none in files this change touches.
+  `module-size-budgets.test.ts` → 5 pass (`FillSection.tsx` 698 lines, `FillSectionParts.tsx`
+  683 lines — both under the 700 ceiling after this change).
+- `bun run build` (`tsc -b && vite build`) → clean.
+- `bun run lint` → the same 6 pre-existing `'os' is defined but never used` errors this plan has
+  logged repeatedly elsewhere (`server/handlers/__tests__/*.test.ts`,
+  `server/handlers/studio/referenceUpload.test.ts`), none in the files this change touches.
+
+#### Human action needed
+Dogfood against `studio-workspace/test4 copy`, page `onboarding`, on a non-desktop breakpoint
+tab (this is a mobile project — confirm the toolbar/breakpoint switcher is NOT on "Desktop"):
+1. **Select the `<h1>`** (`pages/Onboarding.tsx:24:16`, text "adasdasd"). Confirm Fill now shows
+   a **Text** row reading `var(--text-base-default)`, visibly MUTED, with no remove button —
+   the literal reported bug. Confirm the header no longer offers "Add text colour" next to it.
+2. **Open that row's popover.** Confirm an informational note says the colour comes from
+   elsewhere and editing here saves a new declaration for the current view only (not a warning
+   — no lock icon).
+3. **Type a real colour and blur.** Confirm it writes — check the History panel or the file on
+   disk — and that it lands as a **breakpoint override**, not a change to `Onboarding.module.css`'s
+   base `.title` rule (switch back to the desktop/base tab afterward and confirm the ORIGINAL
+   `var(--text-base-default)` still renders there, untouched).
+4. **Switch to the desktop/base tab** (or wherever `activeContextId` is `null`) and reselect the
+   same node. Confirm the Text row now shows NORMAL (non-muted, removable) — this is the
+   already-correct case per `panel-25`, unaffected by this change.
+5. **Select an ordinary `<div>` with nothing set anywhere on this page** — confirm Fill still
+   collapses to its one-line empty header, no flood (Law 1's own anti-flood guard, unchanged).
+
+---
+
 ### canvas-16 — a pinned frame's preview-axes override is now visible and clearable
 - **Agent:** canvas-engineer
 - **Stage:** done — draft PR open against `feat/alm-figma-killer-studio-shell`.

@@ -100,6 +100,24 @@ describe('SourceConstraintNotice', () => {
     expect(container.firstChild).toBeNull()
   })
 
+  // `STATE.md` panel-32 — a muted row prefilled from another editing context
+  // (base, while a breakpoint/condition tab is active) states where a write
+  // WOULD land, so the user never mistakes "shown" for "editing this
+  // declaration". Informational, not a refusal.
+  it('states an informational write-target note without the lock icon/refusal styling', () => {
+    render(
+      <SourceConstraintNotice
+        hasWritableLocation
+        writeTargetNote="This colour comes from .title for another view; editing here saves an override for the current view only."
+      />,
+    )
+
+    const notice = screen.getByTestId('source-constraint-notice')
+    expect(notice.dataset.variant).toBe('write-target-note')
+    expect(notice.textContent).toContain('saves an override for the current view only')
+    expect(notice.textContent).not.toMatch(CANNOT_MOVE)
+  })
+
   it('shows BOTH facts when a node is structurally locked AND has a resolved text origin', () => {
     render(
       <SourceConstraintNotice

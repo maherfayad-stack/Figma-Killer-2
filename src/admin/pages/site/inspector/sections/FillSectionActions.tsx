@@ -17,7 +17,6 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { Image2SolidIcon } from 'pixel-art-icons/icons/image-2-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
-import { readString, hasStyleValue } from '../../panels/PropertiesPanel/styleValueUtils'
 import {
   insertBackgroundLayer,
   parseBackgroundLayers,
@@ -30,12 +29,21 @@ import { writeBackgroundModel } from './writeBackgroundModel'
 
 interface FillSectionActionsProps {
   storedStyles: Record<string, unknown>
+  /**
+   * `panel-32`: whether Fill's own Text/Solid-fill ROW is currently visible —
+   * stored here, OR muted-but-rendered (`renderedNotStored.ts`). The header's
+   * "Add …" button must hide the moment a colour is plainly showing, muted or
+   * not — offering "Add text colour" beside a row that already reads
+   * `var(--text-base-default)` is exactly the lie this ticket closes.
+   * Deliberately NOT re-derived from `storedStyles` here — the caller
+   * (`FillSection.tsx`) already computed the real answer once.
+   */
+  textVisible: boolean
+  colorVisible: boolean
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
 }
 
-export function FillSectionActions({ storedStyles, onChange }: FillSectionActionsProps) {
-  const textSet = hasStyleValue(readString(storedStyles, 'color'))
-  const colorSet = hasStyleValue(readString(storedStyles, 'backgroundColor'))
+export function FillSectionActions({ storedStyles, textVisible, colorVisible, onChange }: FillSectionActionsProps) {
   const model = parseBackgroundLayers(storedStyles)
   // A refused layer list has no known layer count, so there is no honest
   // index to insert at. The button stays visible and says why rather than
@@ -78,7 +86,7 @@ export function FillSectionActions({ storedStyles, onChange }: FillSectionAction
 
   return (
     <>
-      {!textSet && (
+      {!textVisible && (
         <Button
           variant="ghost"
           size="xs"
@@ -91,7 +99,7 @@ export function FillSectionActions({ storedStyles, onChange }: FillSectionAction
           <TextStartTIcon size={12} aria-hidden="true" />
         </Button>
       )}
-      {!colorSet && (
+      {!colorVisible && (
         <Button
           variant="ghost"
           size="xs"
