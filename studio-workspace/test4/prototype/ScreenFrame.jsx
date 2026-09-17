@@ -10,7 +10,7 @@ import { linkForClick } from './Player'
  * about the design and a theft of ~15px of its width. Scrolling still works —
  * this hides the indicator, not the overflow.
  */
-const RESET =
+export const RESET =
   'html,body{margin:0;padding:0;height:100%;}' +
   '*{scrollbar-width:none;}*::-webkit-scrollbar{width:0;height:0;}'
 

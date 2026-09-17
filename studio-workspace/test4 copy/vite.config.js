@@ -1,9 +1,32 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { studioRuntimeIdPlugin } from './prototype/studioRuntime.generated.js'
 
 // The workspace root IS the app root: pages/, components/ and i18n/ sit
 // beside this file, exactly as Studio reads them.
+//
+// studioRuntimeIdPlugin() stamps every host JSX element with the same
+// data-node-id the Studio parser mints for it, so a live frame's DOM can be
+// matched back to the exact source position an edit should land on. It lives
+// in prototype/studioRuntime.generated.js, not inline here, because that file
+// is rewritten on every project open — this file is written once and then
+// left alone the moment you edit it (see Studio's prototype-shell docs).
+//
+// 'base' comes from STUDIO_LIVE_BASE_PATH, an env var the dev-server manager
+// (server/handlers/studio/devServer.ts) sets only when it spawns this process
+// FOR Studio's own live-origin proxy — '/p/<projectKey>/', so every asset URL
+// Vite serves ('/@vite/client', the HMR websocket, index.html's own
+// root-absolute script src) carries the same prefix the proxy forwards
+// requests under. index.html deliberately does NOT also spell this out with
+// '%BASE_URL%' — Vite's dev/build HTML transform already rewrites every
+// root-absolute src/href it finds to carry 'base' automatically; adding
+// '%BASE_URL%' on top of an already-root-absolute path double-prefixes it
+// (confirmed empirically against a real running dev server — see live-06,
+// STATE.md — before this comment was written the wrong way). A bare
+// 'npm run dev' never sets this env var, so 'base' defaults to '/' and
+// nothing here changes for that case.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), studioRuntimeIdPlugin()],
+  base: process.env.STUDIO_LIVE_BASE_PATH || '/',
   server: { open: true },
 })

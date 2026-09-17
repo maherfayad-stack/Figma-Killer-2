@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Separator, TextInput } from '@alm-design/design-system'
+import { Button, Separator, TextInput } from '../design-system'
 // The Apple mark paints from `currentColor` so it follows the button label.
 import appleLogoSvg from '../assets/1540a1e9-9c03-43d2-8d50-477cd174d411.svg?raw'
 import googleLogoSvg from '../assets/77fcc482-0448-425c-9a08-c4e26d4f2bf6.svg?raw'

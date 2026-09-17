@@ -75,10 +75,10 @@
   ],
   "previewAxes": {
     "colorScheme": "light",
-    "direction": "rtl",
-    "locale": "ar"
+    "direction": "ltr",
+    "locale": "en"
   },
-  "lastOpenedAt": 1789042661011,
+  "lastOpenedAt": 1789651298741,
   "agentSession": {
     "byUser": {
       "871c0057755240de": {

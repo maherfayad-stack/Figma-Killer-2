@@ -23,8 +23,8 @@ export const BOARDS = [
     id: "2fd078d6-209f-44df-842e-4bda43d97ed5",
     name: "Test",
     frames: [
-      {"key":"3884d231-f0eb-4dcb-a48b-49e01249f3ad","pageId":"onboarding","label":"Onboarding","x":416,"y":910,"width":393,"height":808},
-      {"key":"d7132d36-dbde-434c-b257-1ff2d0ce909f","pageId":"sms","label":"SMS","x":-2,"y":901,"width":393,"height":804,"axes":{"direction":"ltr","colorScheme":"light","locale":"en"}},
+      {"key":"3884d231-f0eb-4dcb-a48b-49e01249f3ad","pageId":"onboarding","label":"Onboarding","x":416,"y":910,"width":393,"height":875},
+      {"key":"d7132d36-dbde-434c-b257-1ff2d0ce909f","pageId":"sms","label":"SMS","x":-2,"y":901,"width":393,"height":804},
       {"key":"2a978b29-58cf-40b2-bf8c-efb5873db9d3","pageId":"sign-up","label":"SignUp","x":-422,"y":901,"width":393,"height":788},
       {"key":"7d3d15c3-ce92-4901-8411-935a853f8aea","pageId":"page","label":"Page","x":968,"y":985,"width":393,"height":852},
       {"key":"bba6ec51-c87a-4e75-bce9-d4c174a69e01","pageId":"sheet","label":"Sheet","x":0,"y":1760,"width":393,"height":852},
@@ -58,7 +58,7 @@ export const PROJECT_NAME = "test4 copy"
 export const FRAME_DEFAULTS = {"width":393,"height":852}
 
 /** What the board was last previewing in Studio — the shell opens on the same thing. */
-export const PREVIEW_AXES = {"direction":"rtl","colorScheme":"light","locale":"ar"}
+export const PREVIEW_AXES = {"direction":"ltr","colorScheme":"light","locale":"en"}
 
 /** Locale codes this project's dictionary declares. */
 export const LOCALES = ["en","ar"]

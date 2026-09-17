@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import CanvasPanel from './CanvasPanel'
-import ScreenFrame from './ScreenFrame'
+import ScreenFrame, { RESET } from './ScreenFrame'
 import Player from './Player'
 import { BOARDS, FRAME_DEFAULTS, PREVIEW_AXES, PROJECT_NAME, SCREENS, applyColorSchemeGate } from './registry.generated'
 import { Providers, useShellLanguage } from './providers.generated'
 import { getUrlParams, setUrlParams } from './urlState'
 
 const SCREEN_BY_ID = Object.fromEntries(SCREENS.map((screen) => [screen.key, screen]))
+
+/**
+ * Matches '/__screen/<key>' as a PATHNAME SUFFIX, not an exact/prefix match —
+ * load-bearing, not a style choice. Studio's own live-origin proxy
+ * (server/liveOrigin.ts) is transparent: a browser at
+ * '<LIVE_ORIGIN>/p/<projectKey>/__screen/<key>' still sees that full path in
+ * 'window.location.pathname' even though the proxy forwards it upstream
+ * unchanged (see server/liveOrigin.ts's own doc for why the prefix survives).
+ * The SAME generated file also has to work hit directly (downloaded, 'npm run
+ * dev'), where the pathname is exactly '/__screen/<key>' with no prefix at
+ * all. One suffix regex handles both.
+ */
+const SCREEN_ROUTE_PATTERN = /\/__screen\/([^/?#]+)\/?$/
 
 /**
  * The whole prototype: a board tab row, a pan/zoom canvas, and a flow view
@@ -20,6 +33,11 @@ const SCREEN_BY_ID = Object.fromEntries(SCREENS.map((screen) => [screen.key, scr
  * does keep in step are the `.generated` ones this imports.
  */
 export default function App() {
+  const screenMatch = typeof window !== 'undefined'
+    ? SCREEN_ROUTE_PATTERN.exec(window.location.pathname)
+    : null
+  if (screenMatch) return <ScreenRoute screenKey={decodeURIComponent(screenMatch[1])} />
+
   const params = getUrlParams()
   const [boardId, setBoardId] = useState(params.board || (BOARDS[0] && BOARDS[0].id) || null)
   const [pageId, setPageId] = useState(params.page || null)
@@ -63,6 +81,75 @@ export default function App() {
         onOpenFrame={openFrame}
       />
     </Providers>
+  )
+}
+
+/**
+ * '/__screen/<key>' — one screen, full-viewport, no board chrome. This is
+ * what a live Tier-2 canvas frame (or a bookmarked/shared link) actually
+ * loads: `screen.Component` rendered directly at the top level of THIS
+ * document, not nested inside another `ScreenFrame` iframe. `ScreenFrame`
+ * exists so the board/flow UI above gives each preview its own real
+ * viewport; nesting it here would put the screen's real DOM (and its
+ * data-node-id stamps) inside a SECOND, separate contentDocument that
+ * `virtual:studio-runtime` — injected once, into main.jsx, at the top of
+ * THIS page — can never see or measure. The outer element already sizing
+ * this document (Studio's own canvas bridge iframe, sized to the
+ * breakpoint's width/height, or the bare browser window when hit directly)
+ * already IS the device viewport, so there is no second CSS-isolation
+ * problem left for a nested iframe to solve.
+ */
+function ScreenRoute({ screenKey }) {
+  const params = getUrlParams()
+  const screen = SCREEN_BY_ID[screenKey]
+  const dir = params.dir === 'rtl' ? 'rtl' : params.dir === 'ltr' ? 'ltr' : (PREVIEW_AXES.direction || 'ltr')
+  const theme = params.theme === 'dark' ? 'dark' : (PREVIEW_AXES.colorScheme || 'light')
+  const lang = params.lang || undefined
+  return (
+    <Providers>
+      <ScreenRouteInner dir={dir} theme={theme} lang={lang} screen={screen} screenKey={screenKey} />
+    </Providers>
+  )
+}
+
+/**
+ * Split from `ScreenRoute` so it sits INSIDE `Providers` and can therefore
+ * read the language context — same reason `Shell` below needs the split.
+ */
+function ScreenRouteInner({ dir, theme, lang, screen, screenKey }) {
+  const { setLang, locales } = useShellLanguage()
+  // Apply '?lang=' once, same rule Shell already enforces (only a locale the
+  // project actually declares). Unlike Shell's own effect, this one does not
+  // reflect the language back onto the URL — a screen route has no other
+  // shell state (board/view/theme) worth syncing, and reflecting only 'lang'
+  // here would rewrite a query string a caller (Studio's own iframe src)
+  // constructed on purpose.
+  const langAppliedRef = useRef(false)
+  useEffect(() => {
+    if (langAppliedRef.current) return
+    langAppliedRef.current = true
+    if (lang && lang !== '' && locales.indexOf(lang) !== -1) setLang(lang)
+  }, [lang, locales, setLang])
+
+  useEffect(() => {
+    const html = document.documentElement
+    // Independent 'dir' override — sets the CSS attribute only, same
+    // fidelity FramePreview's own per-frame axes override already has (it
+    // does not force the design system's OWN JS-computed direction, which
+    // follows the language context, not this attribute). Pre-existing gap,
+    // not new here.
+    html.setAttribute('dir', dir)
+    if (lang) html.setAttribute('lang', lang)
+    html.setAttribute('data-theme', theme)
+    html.style.colorScheme = theme
+    applyColorSchemeGate(html, theme)
+  }, [dir, theme, lang])
+
+  return (
+    <>
+      <style>{RESET}</style>
+      {screen ? <screen.Component /> : <p className="shell__empty">Unknown screen: {screenKey}</p>}
+    </>
   )
 }
 

@@ -1,7 +1,7 @@
 import phoneImage from '../src/assets/EN-2.png'
-import appLogoColourSvg from '@alm-design/design-system/src/icons/logo/Type=AppLogo, Variant=Colour, LA=EN.svg?raw'
-import appLogoDarkSvg from '@alm-design/design-system/src/icons/logo/Type=AppLogo, Variant=White, LA=NA.svg?raw'
-import whatsappSvg from '@alm-design/design-system/src/icons/logotypes/social/whatsapp.svg?raw'
+import appLogoColourSvg from '../design-system/icons/logo/Type=AppLogo, Variant=Colour, LA=EN.svg?raw'
+import appLogoDarkSvg from '../design-system/icons/logo/Type=AppLogo, Variant=White, LA=NA.svg?raw'
+import whatsappSvg from '../design-system/icons/logotypes/social/whatsapp.svg?raw'
 import styles from './OnboardingHero.module.css'
 import { useLanguage } from '../i18n/LanguageContext'
 

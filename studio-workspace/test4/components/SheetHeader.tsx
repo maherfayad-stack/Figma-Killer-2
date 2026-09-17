@@ -1,4 +1,4 @@
-import { GlassButton } from '@alm-design/design-system'
+import { GlassButton } from '../design-system'
 import IOSStatusBar from './IOSStatusBar'
 import styles from './SheetHeader.module.css'
 import { useLanguage } from '../i18n/LanguageContext'

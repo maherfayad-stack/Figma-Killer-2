@@ -1,0 +1,18 @@
+/* ALM 2.0 — spacing tokens (base unit: 8px) */
+:root {
+  --space-unit: 8px;
+  --space-2xs:  2px;
+  --space-xs:   4px;
+  --space-sm:   8px;
+  --space-md:   12px;
+  --space:      16px;
+  --space-lg:   24px;
+  --space-xl:   32px;
+  --space-2xl:  40px;
+  --space-3xl:  48px;
+  --space-4xl:  64px;
+
+  --space-container: 16px;
+  --space-card-gap:  12px;
+  --space-section:   32px;
+}

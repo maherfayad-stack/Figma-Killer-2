@@ -3,8 +3,7 @@
  * lost; the files that are yours to edit are App.jsx, CanvasPanel.* and
  * shell.css, which Studio writes once and never touches again. */
 import { LanguageProvider, useLanguage } from '../i18n/LanguageContext'
-import { DesignSystemProvider } from '@alm-design/design-system'
-import '@alm-design/design-system/dist/index.css'
+import { DesignSystemProvider } from '../design-system'
 
 /**
  * The project's own language provider, with the design system's direction

@@ -1,5 +1,5 @@
 import type { FormEvent, KeyboardEvent } from 'react'
-import smsSvg from '@alm-design/design-system/src/icons/line-icons/sms.svg?raw'
+import smsSvg from '../design-system/icons/line-icons/sms.svg?raw'
 import SheetHeader from '../components/SheetHeader'
 import styles from './SMS.module.css'
 import { useLanguage } from '../i18n/LanguageContext'
@@ -59,6 +59,7 @@ export default function SMS() {
           </div>
 
           <div className={styles.codeInputs} onInput={advanceCode} onKeyDown={retreatCode}>
+            <input className={styles.codeInput} type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={1} aria-label={t.sMS.digit1} />
             <input className={styles.codeInput} type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={1} aria-label={t.sMS.digit1} />
             <input className={styles.codeInput} type="text" inputMode="numeric" maxLength={1} aria-label={t.sMS.digit2} />
             <input className={styles.codeInput} type="text" inputMode="numeric" maxLength={1} aria-label={t.sMS.digit3} />
