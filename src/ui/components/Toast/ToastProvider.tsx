@@ -62,7 +62,7 @@ function ariaRoleForKind(kind: ToastKind): 'alert' | 'status' {
 }
 
 /**
- * Countdown identity: the toast, at this generation. A `dedupeKey` collapse
+ * Countdown identity: the toast, at this generation. A collapsed repeat
  * keeps the id and refreshes `createdAt`, which is exactly the moment the
  * countdown should start over.
  */
@@ -106,9 +106,9 @@ export function ToastProvider() {
     const remaining = remainingRef.current
     const armedAt = Date.now()
     // Drop countdowns for toasts no longer on the bus, and for the previous
-    // GENERATION of a `dedupeKey`ed toast that was just re-pushed — the key
-    // carries `createdAt`, which a repeat refreshes, so a collapsed repeat
-    // starts its countdown over rather than inheriting the original's.
+    // GENERATION of a toast that was just re-pushed — the key carries
+    // `createdAt`, which a repeat refreshes, so a collapsed repeat starts
+    // its countdown over rather than inheriting the original's.
     const live = new Set(items.map(timerKey))
     for (const key of remaining.keys()) {
       if (!live.has(key)) remaining.delete(key)

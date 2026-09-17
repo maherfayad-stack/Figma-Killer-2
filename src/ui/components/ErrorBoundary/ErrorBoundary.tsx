@@ -7,18 +7,28 @@
  * keep a render-time crash from blanking the whole page. This primitive plugs
  * boundaries into the architectural seams of the CMS (admin shell, canvas,
  * plugin page renderer, per-node module renderer) and wires them into the
- * project's existing logging + toast conventions:
+ * project's existing logging conventions:
  *
  *   1. `console.error('[error-boundary:<location>]', ...)` — matches the
  *      `[<module>]` prefix rule from CLAUDE.md
  *   2. Walks `error.cause` chains so typed domain errors render their full
  *      provenance (SiteValidationError, VisualComponentNameError, etc.)
- *   3. Pushes a toast via the shared toast bus so devs see boundary catches
- *      even when devtools is closed
+ *   3. Renders its fallback **in place**, where the broken subtree was
+ *      (see `silentToast` below)
  *   4. Resets state when `resetKeys` change (route, page id, module id) so
  *      navigation naturally clears stuck error states
- *   5. Dev fallback shows location, error chain, component stack, and Reset.
- *      Prod fallback shows a minimal apology + Reset.
+ *   5. Dev fallback names the location and the error and keeps the cause
+ *      chain / component stack one disclosure away. Prod fallback is one
+ *      line. Both offer "Reload this panel", which resets the boundary.
+ *
+ * Why it does not toast
+ * ─────────────────────
+ * It used to, by default. A boundary is mounted per seam AND per canvas node,
+ * so one bad module meant one identical red card per node — the single
+ * loudest contributor to the "every error has a toast" problem Track Z fixes.
+ * A crash already has somewhere honest to render: the hole it left. Only
+ * `admin-shell` still toasts, because when the shell boundary catches there
+ * is nothing else left on screen to read.
  *
  * Usage
  * ─────
@@ -28,7 +38,7 @@
  *
  * The `location` string ends up in:
  *   - the console prefix
- *   - the toast `data-toast-location` attribute and rendered location chip
+ *   - the fallback's `data-error-location` attribute (and, in dev, its copy)
  *   - the architecture coverage gate (each seam asserts a unique location)
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react'
@@ -71,9 +81,12 @@ interface ErrorBoundaryProps {
   /** Custom fallback. Receives the error context + a reset callback. */
   fallback?: (info: ErrorBoundaryFallbackInfo) => ReactNode
   /**
-   * If true, swallow the toast push for this boundary. Default false. Used
-   * for module-level boundaries that catch *expected* failures (e.g. plugin
-   * runtime probe) where surfacing one toast per node would spam the stack.
+   * Suppress the toast push for this boundary. **Default `true`** — the
+   * fallback renders where the broken subtree was, which is both quieter and
+   * more informative than a card in the corner of the screen.
+   *
+   * Pass `false` only where the boundary's own fallback cannot be read: the
+   * `admin-shell` boundary, whose catch means the entire app tree is gone.
    */
   silentToast?: boolean
   children: ReactNode
@@ -134,7 +147,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     this.setState({ componentStack })
 
-    if (!this.props.silentToast) {
+    // Default: silent. See this file's header — only `admin-shell` opts in,
+    // because only its catch leaves nothing on screen to read.
+    if (this.props.silentToast === false) {
       const head = chain[0]
       pushToast({
         kind: 'error',
@@ -173,6 +188,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 // ─── Default fallback UI ─────────────────────────────────────────────────────
 
+/**
+ * The in-place fallback: a `--bg-surface-2` panel that occupies the hole the
+ * crashed subtree left, one line of copy, and one action that resets the
+ * boundary. Deliberately small — it may land inside a 240 px inspector
+ * section as easily as a full route, so it cannot assume room for a stack
+ * trace. In dev the cause chain and component stack stay one `<details>`
+ * away, collapsed, so the panel is still one line tall at rest.
+ */
 function DefaultErrorFallback({
   location,
   chain,
@@ -181,6 +204,7 @@ function DefaultErrorFallback({
 }: ErrorBoundaryFallbackInfo) {
   const isDev = import.meta.env?.DEV ?? false
   const head = chain[0]
+  const hasDetail = chain.length > 1 || componentStack !== null
 
   async function handleCopy() {
     await copyToClipboard(formatErrorReport(location, chain, componentStack))
@@ -189,56 +213,50 @@ function DefaultErrorFallback({
   return (
     <section
       role="alert"
-      aria-labelledby={`error-boundary-${location}-title`}
       className={styles.fallback}
       data-error-location={location}
     >
-      <div className={styles.head}>
-        <span className={styles.icon} aria-hidden="true">
-          <CircleAlertSolidIcon size={16} />
-        </span>
-        <div className={styles.headText}>
-          <h2 id={`error-boundary-${location}-title`} className={styles.title}>
-            {isDev ? `Render failed in ${location}` : 'This part of the page failed to load.'}
-          </h2>
-          {isDev ? (
-            <p className={styles.message}>
-              <code>{head.name}</code>: {head.message}
-            </p>
-          ) : (
-            <p className={styles.message}>
-              We&apos;ve logged the error. You can try again, or refresh the page.
-            </p>
-          )}
-        </div>
+      <span className={styles.icon} aria-hidden="true">
+        <CircleAlertSolidIcon size={14} />
+      </span>
+      <div className={styles.content}>
+        <p className={styles.message}>
+          {isDev
+            ? `${location} — ${head.name}: ${head.message}`
+            : 'This panel stopped responding.'}
+        </p>
+
+        {isDev && hasDetail && (
+          <details className={styles.details}>
+            <summary>Details</summary>
+            {chain.length > 1 && (
+              <ol className={styles.causeChain}>
+                {chain.slice(1).map((entry, i) => (
+                  <li key={i}>
+                    <code>{entry.name}</code>: {entry.message}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {componentStack && <pre className={styles.stack}>{componentStack.trim()}</pre>}
+          </details>
+        )}
       </div>
 
-      {isDev && chain.length > 1 && (
-        <ol className={styles.causeChain}>
-          {chain.slice(1).map((entry, i) => (
-            <li key={i}>
-              <code>{entry.name}</code>: {entry.message}
-            </li>
-          ))}
-        </ol>
-      )}
-
-      {isDev && componentStack && (
-        <details className={styles.details}>
-          <summary>Component stack</summary>
-          <pre className={styles.stack}>{componentStack.trim()}</pre>
-        </details>
-      )}
-
       <div className={styles.actions}>
-        <Button variant="secondary" size="sm" onClick={reset}>
-          <ReloadIcon size={13} aria-hidden="true" />
-          <span>Reset</span>
+        <Button variant="secondary" size="micro" onClick={reset}>
+          <ReloadIcon size={12} aria-hidden="true" />
+          <span>Reload this panel</span>
         </Button>
         {isDev && (
-          <Button variant="ghost" size="sm" onClick={() => void handleCopy()}>
-            <CopySolidIcon size={13} aria-hidden="true" />
-            <span>Copy details</span>
+          <Button
+            variant="ghost"
+            size="micro"
+            iconOnly
+            aria-label="Copy error details"
+            onClick={() => void handleCopy()}
+          >
+            <CopySolidIcon size={12} aria-hidden="true" />
           </Button>
         )}
       </div>

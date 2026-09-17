@@ -11,7 +11,7 @@ The codebase uses **one** error boundary primitive — `src/ui/components/ErrorB
 - Primitive: `<ErrorBoundary location="...">` from `@ui/components/ErrorBoundary`.
 - Required placements (gated): admin shell, per-route, canvas, per-node renderer, plugin page, plugin editor panel, plugin canvas overlay.
 - React 19 root callbacks (`onCaughtError`, `onUncaughtError`, `onRecoverableError`) wired in `src/admin/main.tsx`.
-- Caught errors log with `[<module>]` prefix; uncaught ones additionally show a toast.
+- Caught errors log with `[<module>]` prefix and render the fallback **in place** — they do not toast. Only `admin-shell` opts back in (`silentToast={false}`), because its catch leaves nothing else on screen to read.
 - `flattenErrorChain(err)` walks `error.cause` so domain-typed errors surface their full provenance.
 
 ---
@@ -28,6 +28,8 @@ interface ErrorBoundaryProps {
   resetKeys?:  unknown[]
   /** Optional custom fallback */
   fallback?:   (info: ErrorBoundaryFallbackInfo) => ReactNode
+  /** Suppress the toast. Default `true` — pass `false` only at `admin-shell` */
+  silentToast?: boolean
   children:    ReactNode
 }
 
@@ -39,8 +41,10 @@ interface ErrorBoundaryProps {
 When the boundary catches an error:
 
 1. It calls `logErrorChain('[my-feature]', flattenErrorChain(err), info.componentStack)`.
-2. It surfaces a `pushToast({ kind: 'error', title: ..., body: ..., location: 'my-feature' })`.
-3. It renders the fallback (or the default — "Something broke in this view. Try refreshing.").
+2. It renders the fallback **where the crashed subtree was** — a compact `--bg-surface-2` panel with one line of copy and a "Reload this panel" button that resets the boundary. In dev the line names the location and the error, and the cause chain + component stack sit in a collapsed `<details>`; in production it reads "This panel stopped responding."
+3. It stays silent on the toast bus, unless the caller passed `silentToast={false}`.
+
+**Why no toast.** A boundary is mounted per seam *and* per canvas node, so a toast-by-default boundary turned one bad module into one identical red card per node — the loudest single contributor to the "every error has a toast" problem (Track Z / `STUDIO-FIGMA-FEEL-PLAN.md` Z2). A crash already has an honest place to render: the hole it left.
 
 When `resetKeys` change, the boundary resets — useful for per-route boundaries that should clear when the route changes.
 
@@ -55,14 +59,14 @@ Gated by `src/__tests__/architecture/error-boundary-coverage.test.ts`. The gate 
 `src/admin/main.tsx`:
 
 ```tsx
-<ErrorBoundary location="admin-shell">
+<ErrorBoundary location="admin-shell" silentToast={false}>
   <Router>
     <AdminRoutes />
   </Router>
 </ErrorBoundary>
 ```
 
-Catches anything not handled by inner boundaries. The fallback is a plain "Something went wrong" full-page surface — at this level, navigation may be unsafe, so the user reloads.
+Catches anything not handled by inner boundaries. **The only placement that toasts** — at this level there is no surviving tree for an in-place fallback to be read in, so the toast is the message. At this level navigation may be unsafe, so the user reloads.
 
 ### 2. `admin-route` — per-section
 
@@ -163,7 +167,7 @@ const root = createRoot(rootElement, {
 
 | Callback           | When it fires                                                    | Toast?      |
 |--------------------|------------------------------------------------------------------|-------------|
-| `onCaughtError`    | After an `<ErrorBoundary>` catches                               | No (the boundary already toasted) |
+| `onCaughtError`    | After an `<ErrorBoundary>` catches                               | No (the boundary rendered its own fallback) |
 | `onUncaughtError`  | No boundary caught — the whole tree is broken                    | Yes — loud  |
 | `onRecoverableError`| React recovered (e.g. failed hydration → client render)         | No (logged) |
 
@@ -207,7 +211,7 @@ Returns a human-readable string of the chain — used in the dev fallback UI and
    </ErrorBoundary>
    ```
 3. If the boundary is at one of the gated seams, update `error-boundary-coverage.test.ts`'s `REQUIRED_BOUNDARIES` array to include the new placement. Otherwise it's not gated (free placement).
-4. The boundary auto-logs and auto-toasts on catch.
+4. The boundary auto-logs on catch and renders its fallback in place. Do not add a toast — see "Why no toast" above.
 
 ### Reset on navigation
 

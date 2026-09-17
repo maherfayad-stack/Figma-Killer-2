@@ -95,9 +95,27 @@ describe('toastBus', () => {
       expect(snapshot().map((t) => t.title)).toEqual(['Refused', 'Saved'])
     })
 
-    it('leaves toasts without a key stacking as they always did', () => {
+    it('collapses a keyless repeat on kind + title + body', () => {
       pushToast({ kind: 'error', title: 'Save failed', durationMs: null })
       pushToast({ kind: 'error', title: 'Save failed', durationMs: null })
+
+      const toasts = snapshot()
+      expect(toasts).toHaveLength(1)
+      expect(toasts[0]?.repeatCount).toBe(2)
+    })
+
+    it('keeps keyless toasts apart when any of kind / title / body differs', () => {
+      pushToast({ kind: 'error', title: 'Save failed', durationMs: null })
+      pushToast({ kind: 'warning', title: 'Save failed', durationMs: null })
+      pushToast({ kind: 'error', title: 'Publish failed', durationMs: null })
+      pushToast({ kind: 'error', title: 'Save failed', body: 'Network down', durationMs: null })
+
+      expect(snapshot()).toHaveLength(4)
+    })
+
+    it('stacks identical copy when the caller opts out with dedupeKey: false', () => {
+      pushToast({ kind: 'error', title: 'Upload failed', dedupeKey: false, durationMs: null })
+      pushToast({ kind: 'error', title: 'Upload failed', dedupeKey: false, durationMs: null })
 
       const toasts = snapshot()
       expect(toasts).toHaveLength(2)
@@ -107,6 +125,13 @@ describe('toastBus', () => {
     it('does not collapse two different refusals', () => {
       pushToast({ kind: 'warning', title: 'Move refused', dedupeKey: 'a', durationMs: null })
       pushToast({ kind: 'warning', title: 'Delete refused', dedupeKey: 'b', durationMs: null })
+
+      expect(snapshot()).toHaveLength(2)
+    })
+
+    it('never collapses an explicit key onto a derived one', () => {
+      pushToast({ kind: 'warning', title: 'Refused', durationMs: null })
+      pushToast({ kind: 'warning', title: 'Refused', dedupeKey: 'explicit', durationMs: null })
 
       expect(snapshot()).toHaveLength(2)
     })

@@ -38,6 +38,7 @@
  */
 import { Toolbar } from '@admin/pages/site/toolbar/Toolbar'
 import { ZoomControls } from '@admin/pages/site/toolbar/ZoomControls'
+import { SaveStatusChip } from '@admin/pages/site/toolbar/SaveStatusChip'
 import { useEditorAppearancePreferences } from '@admin/pages/site/preferences/editorPreferences'
 import { usePersistence } from '@admin/pages/site/hooks/usePersistence'
 import { useSiteEditorUrlSync } from '@admin/pages/site/hooks/useSiteEditorUrlSync'
@@ -248,6 +249,10 @@ export function AdminCanvasLayout() {
           )}
           rightSlot={(
             <>
+              {/* Z6 — the save path is silent on failure by design (it
+                  restores the dirty snapshot and retries three times). The
+                  chip is the only thing that says so; no toast on this path. */}
+              <SaveStatusChip status={persistence.saveStatus} onRetry={persistence.saveSite} />
               <ZoomControls />
               {/* Studio's source of truth is the on-disk .tsx — there is no
                   CMS publish pipeline to target. Studio's own commit-on-idle
