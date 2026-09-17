@@ -54,6 +54,7 @@
  * push, no reset, no clean, no arbitrary passthrough.
  */
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { projectsRootDir } from '../studioProjects'
 import {
@@ -173,19 +174,54 @@ export async function runGit(
 }
 
 /**
- * git's stderr, trimmed to something safe to hand a browser: no absolute
- * paths (they name the server's filesystem layout), no unbounded length.
+ * Replace every spelling of `root` in `text` with `label`.
+ *
+ * Both separator forms, because the two sides disagree on Windows: `resolve`
+ * and `homedir` hand back `C:\Users\me`, while git prints its own paths
+ * forward-slashed (`C:/Users/me/.gitconfig`). Matching only the native form
+ * leaves exactly the paths this function exists to remove.
+ */
+function elideRoot(text: string, root: string, label: string): string {
+  let out = text
+  for (const variant of new Set([root, root.replace(/\\/g, '/'), root.replace(/\//g, '\\')])) {
+    // A root of `/` or `C:\` would turn every path into the label; those are
+    // not real roots to elide anyway.
+    if (variant.length < 4) continue
+    out = out.split(variant).join(label)
+  }
+  return out
+}
+
+/**
+ * git's stderr, trimmed to something safe to hand a browser — or, through
+ * `studio_git_commit`'s `git-failed` refusal, a model: no absolute paths
+ * (they name the server's filesystem layout), no unbounded length.
  * Authentication failures pass through honestly — that message is the whole
  * point of the push route — with the workspace prefix elided.
+ *
+ * The workspace root was the only prefix elided until `sec-12` checked the
+ * claim against what git actually prints. It also names paths OUTSIDE the
+ * workspace: `warning: unable to access 'C:/Users/me/.gitconfig'`,
+ * `core.excludesFile`, a hooks path. Those are the same filesystem-layout
+ * leak one directory up, so the home directory is elided too.
+ *
+ * Still passed through, deliberately: git's identity failure quotes the
+ * detected `user@host` (`got 'me@laptop.(none)'`). That is not a path, it is
+ * the actionable half of the message, and the fix the user needs to apply is
+ * "configure this identity" — redacting it would leave a refusal nobody can
+ * act on.
  */
 export function clientSafeGitError(result: GitRunResult, fallback: string): string {
   if (result.timedOut) return `${fallback}: git did not finish in time and was stopped.`
   const raw = (result.stderr || result.stdout).trim()
   if (!raw) return fallback
   const root = resolve(projectsRootDir())
+  const home = homedir()
   return raw
     .split('\n')
-    .map((line) => line.split(root).join('<workspace>'))
+    // Workspace first: it usually sits INSIDE the home directory, and eliding
+    // the outer one first would leave `<home>/studio-workspace/...` behind.
+    .map((line) => elideRoot(elideRoot(line, root, '<workspace>'), home, '<home>'))
     .join('\n')
     .slice(0, 2000)
 }

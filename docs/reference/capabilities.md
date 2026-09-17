@@ -132,8 +132,31 @@ Studio is a filesystem workspace (a project on disk), not a DB-backed site docum
 | Capability             | Grants                                                              | Roles         |
 |------------------------|-----------------------------------------------------------------------|---------------|
 | `studio.write`         | Install dependencies, apply source edits, run codemods, and rearrange board frames in a Studio project. Gates the Studio agent's write tools (`studio_create_page`, `studio_apply_edits`, `studio_codemod`, `studio_set_frames`, …). | Owner, Admin |
-| `studio.run.project`   | Boot the open project's own dev server and screenshot it for visual comparison — Tier 2, executes the user's code. **Half of a two-part gate:** the target project's own `.studio/meta.json` trust tier must ALSO be exactly `run-project`, checked per call by `checkTrustTier` (`server/handlers/studio/trustGate.ts`). Holding the capability authorises nothing on a project nobody has promoted. | Owner, Admin |
+| `studio.run.project`   | Boot the open project's own dev server and screenshot it for visual comparison — Tier 2, executes the user's code. **Half of a two-part gate:** the target project's own `.studio/meta.json` trust tier must ALSO be exactly `run-project`, checked per call by `checkTrustTier` (`server/handlers/studio/trustGate.ts`). Holding the capability authorises nothing on a project that is not at that tier — see the note below for what that does and does not prove. | Owner, Admin |
 | `studio.git.write`     | Let the AI record a commit in the project's own git repository, under the user's git identity. **Never granted by default**, including to Admin — unlike `studio.run.project`, there is no second per-project gate behind it. A human using the Version control panel is gated by `site.structure.edit` instead, not by this capability. Never implies push, branch, or repository creation. | Owner |
+
+#### What the Tier-2 second gate proves — and what it does not
+
+`checkTrustTier(dir, 'run-project')` proves the **project** is at Tier 2. Read
+that literally, because two things it is often taken to mean are not implied:
+
+- **It is not per-invocation human consent.** Under §6 decision 2 of
+  `STUDIO-FIGMA-FEEL-PLAN.md`, a Vite project with a lockfile is promoted to
+  Tier 2 on **first open**, with a notice and an undo rather than a prompt. For
+  those projects the tier records the project's shape, not a decision anyone
+  made about this call. Anything that genuinely needs the user in the loop has
+  to ask at the point of use.
+- **It does prove no agent promoted itself.** `.studio/` is Studio's consent
+  record and lives inside the directory the CLI driver's native `Write`/`Edit`
+  can reach, so the tier would otherwise be a file the caller it gates can
+  edit. The generated `PreToolUse` hook refuses those writes —
+  `server/handlers/studio/agentWriteScope.ts`. Do not remove that hook while
+  leaving the capability on Admin; the pair is what makes the grant defensible.
+
+This is a single-operator posture. In a multi-user deployment the capability
+would need a per-project authorisation of its own (who may run *which*
+project), because "Admin holds it" x "the project is Vite" is not an
+authorisation decision about a specific user and a specific repository.
 
 ---
 
