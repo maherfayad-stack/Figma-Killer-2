@@ -1512,6 +1512,55 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### meta-13 — plan: "feels like Figma, never shows me an error" — `STUDIO-FIGMA-FEEL-PLAN.md`
+- **Agent:** main session (orchestrator) — seven read-only `studio-scout` audits, no code changed
+- **Stage:** done (plan written) — nothing in it is started
+- **Updated:** 2026-09-17
+- **Goal:** one plan that answers the owner's ask in full — Figma-grade speed and feel, Figma
+  shortcuts (Alt+drag, ⌘D, ⌘G, ⌘[ ], lock, Alt-hover measure), zero noisy errors, no action
+  fanning out into N, a preview that never breaks silently, a fast/creative/honest agent,
+  and GitHub connect/branches/push/pull/PR — plus the defects the owner did not report.
+- **Scope:** `STUDIO-FIGMA-FEEL-PLAN.md` (new, repo root). Read it before dispatching anything
+  on canvas feel, shortcuts, toasts, the agent loop, git, or the preview. Tracks Z/S/K/P/A/G/V;
+  **Track Z (Phase 0) is a barrier** — nothing else starts before its exit dogfood.
+- **Done so far:**
+  - §0 of the plan corrects three stale plan headers: Track P (Penpot inspector), prototype
+    Play, and Track R all shipped; `STUDIO-LIVE-CANVAS-PLAN.md`, `STUDIO-PROTOTYPE-PLAN.md`
+    and WS-14.2 still say otherwise.
+  - Baseline on this checkout (clean tree, `feat/alm-figma-killer-studio-shell`): `tsc -b`
+    clean; `vite build` **fails** because `alm-design-system` (vendored today as a `file:`
+    dep) is not installed — `bun install` has not been run since commit `a26c1f48`;
+    `bun test` = 10,755 pass / 281 fail / 198 errors in 433 s; `bun run lint` = the 6
+    pre-existing unused-`os` errors. Per-file breakdown in the plan's §0 table.
+    **`standing-01`'s "34 failures" is stale** — largest new buckets are an unmocked
+    `studio-session` fetch in `agentPanel.test.tsx` (48) and the half-present
+    `studio-workspace/__canonical-fixture` (26).
+  - The 24 unreported defects are in the plan's §7 with `file:line` and a work-order id each.
+- **Next step:** the owner called all seven §6 decisions on 2026-09-17 (recorded in the plan's
+  §6 table): 1 yes · 2 **promote Vite projects on first open, no prompt** (owner override of the
+  explicit-click rule; needs `security-guard` review and a rule-book amendment in the P8 PR) ·
+  3 device flow + PAT · 4 gitignore the workspace (new Z9) · 5 defer non-Vite · 6 yes ·
+  7 document single-operator now (new Z10), gate routes in a follow-up wave. Next: `bun install`
+  on this checkout, then dispatch Track Z as one wave — Z9 first (so nothing re-commits the
+  generated files), then Z1+Z2+Z6 (`store-engineer`/`panel-designer`), Z3+Z8
+  (`mcp-tooling`/`parser-surgeon`), Z4+Z7+Z10 (`server-engineer`), Z5 (`canvas-engineer`),
+  V2 (`test-engineer`) in parallel.
+- **Decisions:** Track Z before feature work — because every earlier wave shipped a fix green
+  and the owner still saw stacked toasts, restarts and unbounded turns; the four habits in the
+  plan's §1 are what make each new defect visible. Free element movement stays honest (§15.3 of
+  the parity plan holds) — K6 gets Figma's feel via live reflow preview + snap, and writes
+  `left`/`top` only for an already-absolute element or a ⌘-drag inside a relative parent.
+- **Landmines:** the running dev app on this machine is on the same uninstalled checkout —
+  `src/modules/alm/register.tsx` cannot resolve the package until `bun install` runs.
+  `bun --watch` restarting under workspace writes is documented (`server-14`) but the mechanism
+  is unproven — Z4 measures first. The scouts could not prove every bridge-routed `studio_*`
+  write passes `guardAgainstConcurrentStructuralCommit()` — Z3 verifies.
+- **Verification:** `bun run build` (fails, see above) · `bun test` (numbers above) ·
+  `bun run lint` (6 pre-existing). Logs: `.tmp/plan-build.log`, `.tmp/plan-test.log`,
+  `.tmp/plan-lint.log`. No source files changed.
+- **Human action needed:** run `bun install`; confirm decision 2 was meant as "promote, don't ask"
+  (not "keep it manual"); then authorize the Track Z wave.
+
 ### panel-34 — DS-7: the built-in design system's colours as an Assets → Colors section
 - **Agent:** panel-designer (Opus 5)
 - **Stage:** merged into `feat/alm-figma-killer-studio-shell` (PR #132 closed). **Needs human dogfood.**
