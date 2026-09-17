@@ -95,16 +95,32 @@ const adminCapabilities: CoreCapability[] = [
   // operator, while the prompt happily described it. "Done" could only ever
   // be checked against the parse.
   //
-  // What makes granting it safe is that it is no longer the only gate. The
-  // capability answers "may this operator run project code at all"; the
+  // What makes granting it defensible is that it is no longer the only gate.
+  // The capability answers "may this operator run project code at all"; the
   // project's OWN `.studio/meta.json` trust tier answers "may THIS project be
   // run", and every Tier-2 tool now checks both — `referenceRender.ts` calls
   // `checkTrustTier(dir, 'run-project')` exactly as the `/admin/api/studio/
-  // dev-server` route does (`handlers/studio/trustGate.ts`). Nothing executes
-  // until a human has deliberately promoted that specific project, which is
-  // the consent click Tier 2 was always built around. Before A10 the MCP tool
-  // had only the capability and the HTTP route had only the tier, so the tool
-  // was strictly the weaker of the two — `sec-05` finding 1.
+  // dev-server` route does (`handlers/studio/trustGate.ts`). Before A10 the
+  // MCP tool had only the capability and the HTTP route had only the tier, so
+  // the tool was strictly the weaker of the two — `sec-05` finding 1.
+  //
+  // Be precise about what the second gate proves, because it is less than it
+  // reads like (`sec-12`):
+  //
+  //   - It proves the PROJECT is at `run-project`. Under §6 decision 2 a Vite
+  //     project with a lockfile is promoted on first OPEN, so for those
+  //     projects the tier is not evidence that any human considered the
+  //     question — only that the project is of a shape Studio can run.
+  //   - It does prove the agent did not promote itself: `.studio/` is refused
+  //     to the CLI driver's native `Write`/`Edit` by the generated
+  //     `PreToolUse` hook (`handlers/studio/agentWriteScope.ts`). Without that
+  //     refusal this second gate would be a file the caller it gates can edit.
+  //
+  // So the honest reading of the pair is "this operator may run project code"
+  // x "this project is one Studio runs", plus "no agent manufactured either".
+  // That is a real narrowing over the pre-A10 capability alone, and it is NOT
+  // a per-invocation human consent. Anything that needs the latter must ask
+  // for it at the point of use.
   //
   // `studio.git.write` (W4-3) is deliberately NOT granted either, for the
   // adjacent reason: a commit carries the user's git identity into a history

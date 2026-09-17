@@ -79,7 +79,10 @@ export const CORE_CAPABILITIES = [
   // It is held by Owner and Admin, and it is only HALF the Tier-2 gate: the
   // project's own `.studio/meta.json` trust tier must also be `run-project`,
   // checked per call via `handlers/studio/trustGate.ts`. Neither half is
-  // sufficient alone — see `server/auth/capabilities.ts` for why.
+  // sufficient alone. The second half proves the PROJECT is at Tier 2, which
+  // is not the same as a human having consented to this call — see
+  // `server/auth/capabilities.ts` and `docs/reference/capabilities.md` for
+  // exactly what it does and does not establish.
   'studio.write',
   'studio.run.project',
   // Committing to the open project's git repository (W4-3). Separate from

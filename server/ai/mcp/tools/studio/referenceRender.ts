@@ -21,8 +21,16 @@
  * demanded `trust === 'run-project'`. So this handler now ALSO calls
  * `checkTrustTier(dir, 'run-project')` (`handlers/studio/trustGate.ts`, the
  * same helper the route uses) and refuses a Tier-0/1 project with the shared
- * `trust-tier-required` code. Promotion stays a deliberate user action; the
- * agent may ask for it and may never perform it.
+ * `trust-tier-required` code.
+ *
+ * The agent may ask for a promotion and may never perform one — that is
+ * enforced, not merely stated: `.studio/` is refused to its native
+ * `Write`/`Edit` by the generated `PreToolUse` hook
+ * (`handlers/studio/agentWriteScope.ts`), because otherwise the gate below
+ * would be a file the caller it gates could edit. What the tier does NOT
+ * prove is that a human weighed this particular project: §6 decision 2 of
+ * STUDIO-FIGMA-FEEL-PLAN.md promotes a Vite project with a lockfile on first
+ * open. `docs/reference/capabilities.md` states the full boundary.
  *
  * Because both gates exist, the CAPABILITY can now be held by an ordinary
  * operator: `studio.run.project` is granted to the built-in Admin role

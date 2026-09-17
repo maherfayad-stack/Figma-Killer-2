@@ -21,9 +21,17 @@
  * MCP caller must never be able to invoke something the granting
  * capabilities couldn't authorize over HTTP.
  *
- * Together: "this operator may run project code" × "this project has been
- * promoted". This gate asserts BOTH halves are still present, because
- * deleting either one restores one of the two failures above.
+ * Together: "this operator may run project code" × "this project is at Tier
+ * 2". This gate asserts BOTH halves are still present, because deleting
+ * either one restores one of the two failures above.
+ *
+ * **What the second half is worth** (`sec-12`, and read this before leaning on
+ * it): it proves the project's tier, which under §6 decision 2 of
+ * STUDIO-FIGMA-FEEL-PLAN.md a Vite project with a lockfile acquires on first
+ * OPEN — so it is not per-call human consent. It is only a gate at all
+ * because the agent cannot write `.studio/` itself
+ * (`server/handlers/studio/agentWriteScope.ts`); without that refusal the
+ * caller could set the field this gate reads.
  */
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
@@ -32,6 +40,7 @@ import { SYSTEM_ROLES } from '../../../server/auth/capabilities'
 import { selectStudioTools } from '../../../server/ai/tools'
 import { studioAgentTools } from '../../../server/ai/tools/studio'
 import { referenceRenderTool } from '../../../server/ai/mcp/tools/studio/referenceRender'
+import { agentWriteRefusalReason } from '../../../server/handlers/studio/agentWriteScope'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..')
 
@@ -84,6 +93,16 @@ describe('Tier-2 Studio tools — gate 2: the project\'s own trust tier', () => 
       expect(source!, `${tool.name} must call checkTrustTier(dir, 'run-project')`).toContain('checkTrustTier')
       expect(source!).toContain("'run-project'")
     }
+  })
+
+  it('the agent cannot write the file that gate into existence', () => {
+    // The tier is read off `.studio/meta.json`, which sits inside the very
+    // directory the CLI driver's native Write/Edit is allowed to write. If
+    // that stops being refused, gate 2 is a field its own caller can set and
+    // this whole describe block is decoration.
+    const project = join(REPO_ROOT, 'studio-workspace', 'any-project')
+    expect(agentWriteRefusalReason(join(project, '.studio', 'meta.json'), project)).not.toBeNull()
+    expect(agentWriteRefusalReason(join(project, 'src', 'Home.tsx'), project)).toBeNull()
   })
 
   it('the tool description tells the caller about BOTH gates', () => {
