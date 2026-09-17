@@ -151,13 +151,12 @@ const GRANDFATHERED: Record<string, number> = {
   'src/core/markdown/markdownDocument.ts': 748,
   // DashboardPage graduated (732 → 174) when it was rewritten from the CMS
   // widget-grid into the studio Overview project launcher.
-  // `server/handlers/studio/prototypeShell/shellFiles.ts` (738): Track L's
-  // per-screen routing (L6) + the runtime-bridge bootstrap wiring (live-08)
-  // both added generated-shell templates here. Candidate split, not done in
-  // this consolidation pass: the per-screen `App.jsx` template vs. the
-  // bootstrap/`main.jsx` template are two independent generators that
-  // happen to share this file only by history.
-  'server/handlers/studio/prototypeShell/shellFiles.ts': 738,
+  // server/handlers/studio/prototypeShell/shellFiles.ts graduated (738 → 661)
+  // in Z5, by performing the split its own grandfather note had named: the
+  // three BOOTSTRAP templates (`index.html`, `vite.config.js`, `main.jsx` —
+  // how the process starts) moved whole to `bootstrapTemplates.ts`, leaving
+  // this file the per-screen/board templates (what a user looks at). Under
+  // CEILING, so it is held by the normal ceiling rule now.
   // `src/admin/pages/site/store/slices/uiSlice.ts` (723): R2's
   // `structuralRefusalDialog` state + `dismissStructuralRefusalDialog`
   // pushed this over CEILING. Candidate split: the refusal-dialog slice of

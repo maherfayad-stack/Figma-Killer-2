@@ -91,6 +91,10 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
     'BoardFramesLayer/useBoardFrameMoveDrag.ts',
     'K2 — the same Shift/Escape pair for the frame HEADER drag, bound for the length of that gesture. Separate from the element drag because a frame copy is a `boards.json` object rather than a source write.',
   ],
+  [
+    'usePrototypePlayTriggers.ts',
+    'P7 — the `key` prototype trigger, bound on the parent document only while the PLAYER is armed. Play is not the editing surface the scope ladder arbitrates: no editor shortcut is live there, and the listener unmounts the moment Play does.',
+  ],
 ])
 
 function collectTsFiles(dir: string): string[] {

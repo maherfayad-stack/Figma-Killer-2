@@ -45,7 +45,7 @@ import { useInlineRename } from '@site/hooks/useInlineRename'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
-import { CanvasFrameContext, CanvasPageContext } from '../CanvasContexts'
+import { CanvasDiagnosticsScopeContext, CanvasFrameContext, CanvasPageContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { CanvasEmptyPageHint } from '../CanvasEmptyPageHint'
 import { pageHasNoContent } from '../canvasEmptyPage'
@@ -55,6 +55,7 @@ import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
+import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
   getColorSchemeCapability,
@@ -434,6 +435,13 @@ function BoardFrameViewImpl({
             {pinnedAxesLabel}
           </span>
         )}
+        {/* Z5 — this frame's runtime said something went wrong. Renders
+            nothing at all until it did; never a toast. Both tiers publish
+            under this frame's id (a Tier-0 portal frame through
+            `CanvasDiagnosticsInjector`, a Tier-2 live one through
+            `useBridgeFrameDiagnostics`), so the badge does not branch on
+            trust. */}
+        <FrameDiagnosticsBadge scopeKey={frame.id} />
       </div>
 
       {contextMenu && createPortal(
@@ -534,50 +542,56 @@ function BoardFrameViewImpl({
         data-frame-auto-height={!hasManualHeight && mounted ? 'true' : undefined}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
+        {/* `CanvasDiagnosticsScopeContext` (Z5) is where this frame's runtime
+            diagnostics are published, so the header badge above can subscribe
+            to them. Separate from `CanvasFrameContext` on purpose — see that
+            context's own doc. */}
         {mounted ? (
-          <CanvasPageContext.Provider value={page.id}>
-            {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
-                every selection/hover it originates with the frame it came
-                from (`selectedNodeFrameId`/`hoveredFrameId`). Without this a
-                "duplicate as variant" sibling of this page — sharing every
-                node id (trap #2) — would light up from a selection made in
-                THIS frame. See `CanvasFrameContext`'s doc. */}
-            <CanvasFrameContext.Provider value={frame.id}>
-              {trust === 'run-project' ? (
-                // L8 Phase A (`perf-06`, STATE.md) — the ONE Tier-2 branch
-                // this whole work order adds. Tier 0/1 boards never reach
-                // this line: `trust` only ever reads `'run-project'` for a
-                // project explicitly promoted to Tier 2.
-                <LiveBoardFrame
-                  page={page}
-                  breakpoint={buildStudioBreakpoint(width)}
-                  isActive={isActive}
-                  onActivate={activatePage}
-                  frameId={frame.id}
-                  axesOverride={frame.axes}
-                  width={width}
-                />
-              ) : (
-                // Byte-for-byte the SAME call this branch has always made —
-                // no new prop, no new behavior, for every Tier 0/1 board.
-                <BreakpointFrame
-                  page={page}
-                  breakpoint={buildStudioBreakpoint(width)}
-                  isActive={isActive}
-                  onActivate={activatePage}
-                  frameId={frame.id}
-                  axesOverride={frame.axes}
-                  // The board frame carries its own header (title, rename,
-                  // context menu, drag handle) and its own size in the
-                  // Properties panel, so `BreakpointFrame`'s breakpoint row
-                  // would be a second, board-global chrome strip on top of it.
-                  // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
-                  showBreakpointChrome={false}
-                  onContentReadyChange={setContentReady}
-                />
-              )}
-            </CanvasFrameContext.Provider>
-          </CanvasPageContext.Provider>
+          <CanvasDiagnosticsScopeContext.Provider value={frame.id}>
+            <CanvasPageContext.Provider value={page.id}>
+              {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
+                  every selection/hover it originates with the frame it came
+                  from (`selectedNodeFrameId`/`hoveredFrameId`). Without this a
+                  "duplicate as variant" sibling of this page — sharing every
+                  node id (trap #2) — would light up from a selection made in
+                  THIS frame. See `CanvasFrameContext`'s doc. */}
+              <CanvasFrameContext.Provider value={frame.id}>
+                {trust === 'run-project' ? (
+                  // L8 Phase A (`perf-06`, STATE.md) — the ONE Tier-2 branch
+                  // this whole work order adds. Tier 0/1 boards never reach
+                  // this line: `trust` only ever reads `'run-project'` for a
+                  // project explicitly promoted to Tier 2.
+                  <LiveBoardFrame
+                    page={page}
+                    breakpoint={buildStudioBreakpoint(width)}
+                    isActive={isActive}
+                    onActivate={activatePage}
+                    frameId={frame.id}
+                    axesOverride={frame.axes}
+                    width={width}
+                  />
+                ) : (
+                  // Byte-for-byte the SAME call this branch has always made —
+                  // no new prop, no new behavior, for every Tier 0/1 board.
+                  <BreakpointFrame
+                    page={page}
+                    breakpoint={buildStudioBreakpoint(width)}
+                    isActive={isActive}
+                    onActivate={activatePage}
+                    frameId={frame.id}
+                    axesOverride={frame.axes}
+                    // The board frame carries its own header (title, rename,
+                    // context menu, drag handle) and its own size in the
+                    // Properties panel, so `BreakpointFrame`'s breakpoint row
+                    // would be a second, board-global chrome strip on top of it.
+                    // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
+                    showBreakpointChrome={false}
+                    onContentReadyChange={setContentReady}
+                  />
+                )}
+              </CanvasFrameContext.Provider>
+            </CanvasPageContext.Provider>
+          </CanvasDiagnosticsScopeContext.Provider>
         ) : (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
         )}

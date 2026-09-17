@@ -8,9 +8,11 @@
  *     (`messages.ts`) + HMR state survival (`hmrState.ts`) — built into one
  *     ESM file served from the live origin (L2), consumed by nothing inside
  *     the admin app itself.
- *   - the four shared "one implementation" rule modules, consumed BOTH by
+ *   - the five shared "one implementation" rule modules, consumed BOTH by
  *     `runtime.ts` above and by the portal-mode canvas injectors under
- *     `src/admin/pages/site/canvas/`.
+ *     `src/admin/pages/site/canvas/` (hover suppression, scroll unroll,
+ *     animation freeze, selection-chrome CSS, and — Z5 — the runtime-error
+ *     classification predicates in `runtimeErrorRules.ts`).
  *   - the live-frame node-id resolution helpers (`liveNodeResolve.ts`,
  *     `runtimeConfig.ts`) the canvas/adapter layer consumes to map a live
  *     DOM element back to a real tree node id.
@@ -78,6 +80,11 @@ export {
   TextEditMessageSchema,
   MeasureResultMessageSchema,
   FrameResizeMessageSchema,
+  ErrorMessageSchema,
+  RuntimeErrorKindSchema,
+  RUNTIME_ERROR_MESSAGE_MAX,
+  RUNTIME_ERROR_STACK_MAX,
+  RUNTIME_ERROR_SOURCE_MAX,
   toInboundEnvelope,
   toOutboundEnvelope,
   type InboundRuntimeMessage,
@@ -85,10 +92,23 @@ export {
   type InboundEnvelope,
   type OutboundEnvelope,
   type OptimisticMessage,
+  type RuntimeErrorKind,
   type RuntimeMode,
   type NodeRect,
   type NodeMeasurement,
 } from './messages'
+
+export {
+  RESOURCE_ERROR_TAGS,
+  asErrorEventLike,
+  boundDiagnosticText,
+  describeErrorValue,
+  errorStackOf,
+  isElementTarget,
+  isModuleResolutionMessage,
+  requestUrlOf,
+  resourceElementUrl,
+} from './runtimeErrorRules'
 
 export {
   snapshotFrameState,

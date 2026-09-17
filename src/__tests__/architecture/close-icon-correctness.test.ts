@@ -166,17 +166,8 @@ describe('Close-icon correctness — no X/Twitter logo used as close button', ()
     expect(src).toContain('<Kbd>Esc</Kbd>')
   })
 
-  it('CI-4: PreviewOverlay close button uses CloseIcon from pixel-art-icons/icons/close', () => {
-    const overlayPath = join(SRC_ROOT, 'admin/pages/site/preview/PreviewOverlay.tsx')
-    let src: string
-    try {
-      src = readFileSync(overlayPath, 'utf8')
-    } catch {
-      throw new Error(`[CI-4] PreviewOverlay.tsx not found at expected path: ${overlayPath}`)
-    }
-
-    expect(src).toMatch(/import\s*\{[^}]*CloseIcon[^}]*\}\s*from\s*['"]pixel-art-icons\/icons\/close['"]/)
-    expect(src).not.toMatch(X_LOGO_PATTERN)
-    expect(src).toMatch(/<CloseIcon\b/)
-  })
+  // CI-4 covered `PreviewOverlay`'s close button. That surface was deleted in
+  // P8 (the CMS-static preview overlay: neither the canvas nor the real app,
+  // and the one most likely to look broken on a Studio page), so the case is
+  // gone rather than skipped.
 })

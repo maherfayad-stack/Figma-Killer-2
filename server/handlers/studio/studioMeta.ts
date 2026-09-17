@@ -269,6 +269,31 @@ export const StudioMetaSchema = Type.Object({
    */
   styleCompilePromptDismissed: Type.Optional(Type.Boolean()),
   /**
+   * P8 / §6 decision 2 — Studio promoted this project to Tier 2
+   * (`run-project`) BY ITSELF, on first open, because it is a Vite project
+   * with a lockfile. The owner overrode the "promotion is always an explicit
+   * click" rule for exactly that case on 2026-09-17; see `CLAUDE.md`'s
+   * invariant 1 and `PROJECT-BRIEF.md` §2.
+   *
+   * Two fields rather than one, and both load-bearing:
+   *
+   *   - `trustAutoPromoted` records that the promotion's ORIGIN was Studio,
+   *     not a person. `trust` alone cannot answer "who decided this", and an
+   *     audit of a machine that runs a user's code has to be able to.
+   *   - `trustAutoPromotedAt` is the ONCE latch. Auto-promotion is offered
+   *     exactly once per project, ever: the notice's "Undo" writes `trust`
+   *     back to `static` and deliberately leaves BOTH of these in place, so
+   *     the next open sees a project that has already had its one automatic
+   *     promotion and leaves it alone. Clearing them on undo would re-promote
+   *     on the next load and make the undo a no-op with extra steps.
+   *
+   * Never written for an explicit user click — that stays a bare `trust`
+   * write, which is how the two origins stay distinguishable on disk.
+   */
+  trustAutoPromoted: Type.Optional(Type.Boolean()),
+  /** Epoch ms of the one automatic promotion. Presence is the latch — see {@link StudioMetaSchema}'s `trustAutoPromoted`. */
+  trustAutoPromotedAt: Type.Optional(Type.Number()),
+  /**
    * Cached `ProjectProfile` probe result. A cache that no longer matches the
    * schema (an older profile shape, a hand-mangled file) fails validation and
    * `parseJsonWithFallback` drops the whole meta to `{}` — which is the

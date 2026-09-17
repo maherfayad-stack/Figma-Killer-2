@@ -95,16 +95,6 @@ const SettingsModal = lazy(() =>
   import('@admin/modals/Settings/SettingsModal').then((m) => ({ default: m.SettingsModal })),
 )
 
-// Editor-only toolbar surface: preview iframe. It self-gates on store state,
-// but we ALSO conditionally render it at the call site (below) so its chunk
-// isn't fetched on first paint — the preview overlay drags in the entire
-// publisher graph, which is large.
-const PreviewOverlay = lazy(() =>
-  import('@admin/pages/site/preview/PreviewOverlay').then((m) => ({
-    default: m.PreviewOverlay,
-  })),
-)
-
 // Studio toolbar actions. lazy() keeps ImportProjectButton/DownloadCodeButton
 // (plus their `downloadStudioCode.ts` client) out of the eager SitePage route
 // chunk until the toolbar actually mounts. Bundled behind ONE lazy boundary
@@ -138,8 +128,6 @@ export function AdminCanvasLayout() {
   // Toolbar component itself free of editor-store imports.
   const siteName = useEditorStore((s) => s.site?.name ?? null)
   const faviconUrl = useEditorStore((s) => s.site?.settings.faviconUrl ?? null)
-  // Editor-only toolbar surface — gate its lazy chunk on store state.
-  const previewOpen = useEditorStore((s) => s.previewOpen)
   // Settings modal mount gate. adminUi is the canonical source — the
   // editor's `settingsSlice.openSettings` mirrors into it, and the admin
   // shell reads from it too.
@@ -233,20 +221,13 @@ export function AdminCanvasLayout() {
         data-editor-text-scale={appearance.textScale}
       >
         {/* ── Top toolbar (z-60, Guideline #374) ───────────────────────────── */}
-        {/* Toolbar is now a prop-driven shell — this layout supplies the
-            site brand, the preview overlay lazy mount, and
-            the editor-specific right slot (zoom / publish / settings). The
-            lazy mount gates on `previewOpen` so the chunk loads only when the
-            user actually opens preview. */}
+        {/* Toolbar is a prop-driven shell — this layout supplies the site
+            brand and the editor-specific right slot (zoom / publish /
+            settings). */}
         <Toolbar
           siteName={siteName}
           faviconUrl={faviconUrl}
           section="site"
-          overlay={previewOpen && (
-            <Suspense fallback={null}>
-              <PreviewOverlay />
-            </Suspense>
-          )}
           rightSlot={(
             <>
               {/* Z6 — the save path is silent on failure by design (it

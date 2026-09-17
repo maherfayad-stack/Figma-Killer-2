@@ -1,0 +1,48 @@
+/**
+ * One card in the board's bottom-centre banner stack (`../BoardBanners/`),
+ * which owns the positioning and the stacking tier. This file owns only what
+ * the card looks like.
+ *
+ * ONE LINE, and quieter than its neighbours on purpose. The style-compile
+ * banner asks a question and wears `--warning`; this one reports something
+ * that already happened and is fine, so it is achromatic with an accent
+ * glyph. A notice that looks like a problem teaches people to dismiss
+ * notices.
+ */
+
+.notice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    max-width: 560px;
+    padding: var(--space-2xs) var(--space-s);
+    border: 1px solid var(--border);
+    border-radius: var(--panel-radius);
+    background: var(--bg-surface);
+    box-shadow: 0 6px 18px var(--scrim-30);
+    pointer-events: auto;
+}
+
+.icon {
+    flex: none;
+    color: var(--accent-3);
+}
+
+.text {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--text-2xs);
+    white-space: nowrap;
+}
+
+/* On a narrow board the line stops fitting beside the action — let it wrap
+   rather than squeezing the sentence to one word a line. */
+@media (max-width: 900px) {
+    .notice {
+        max-width: min(560px, calc(100vw - var(--space-3xl)));
+    }
+
+    .text {
+        white-space: normal;
+    }
+}

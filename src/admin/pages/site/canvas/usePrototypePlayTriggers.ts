@@ -42,7 +42,7 @@ import { delayTriggersForScreen } from '@core/studio-prototype'
 import { useEditorStore } from '@site/store/store'
 import { resolvedLinkSourceIds } from '@site/store/slices/prototypeSelectors'
 import { followPrototypeKey } from '@site/studio/playNavigation'
-import { isTextInputTarget } from './useCanvasKeyboardShortcuts'
+import { isTextInputTarget } from './editorKeyGuards'
 
 /**
  * A keystroke the player must not read as a prototype trigger.

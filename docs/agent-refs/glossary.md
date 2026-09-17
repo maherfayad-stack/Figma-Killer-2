@@ -194,10 +194,17 @@ toolchain, stored as `.studio/meta.json`'s `trust` field and read/written by
   (Track L, `live-01`: one reused dev-server subprocess per project). Both
   refuse via the shared `requireTrustTier` helper in `trustGate.ts`.
 
-**The parse itself never executes anything at any tier**, and promotion is always
-an explicit user click (`promoteProjectToTier1`, the consent banner, the
-placeholder's promote button) — never a side effect of loading a page. Gates that
-only need "above Tier 0" read `trust !== 'static'`.
+**The parse itself never executes anything at any tier.** Promotion to Tier 1 is
+always an explicit user click (`promoteProjectToTier1`, the consent banner, the
+placeholder's promote button). Promotion to **Tier 2 has one narrow automatic
+case** the owner called on 2026-09-17 (`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision
+2): a Vite project with a lockfile is promoted on first open, once per project,
+with a notice and an Undo in the board chrome
+(`canvas/LiveAutoPromoteNotice/`), the origin recorded on disk
+(`trustAutoPromoted`/`trustAutoPromotedAt`) and every condition re-checked
+server-side (`trustTier.ts`'s `refuseAutoPromotion`,
+`liveCapability.ts`). Gates that only need "above Tier 0" read
+`trust !== 'static'`.
 
 **Unroll** — neutralizing inner scroll containers on the design canvas so a whole
 app screen is visible in one frame (`canvasScrollUnroll.ts`,

@@ -97,8 +97,15 @@ never silently no-ops.
    toolchain compiles in a capped subprocess (`styleCompileTier1.ts`) and its
    package components are bundled and rendered in the canvas
    (`componentBundle.ts`). **The parse itself never executes anything at any
-   tier**, and Tier 2 (`run-project`) is a defined value that no gate yet
-   distinguishes from Tier 1 — both read as `trust !== 'static'`.
+   tier.** Tier 2 (`run-project`) now has its own gates (`trustGate.ts`'s
+   `requireTrustTier`, used by `deploy.ts` and `devServer.ts`), and **one
+   narrow automatic promotion the owner called on 2026-09-17**
+   (`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2): a Vite project with a lockfile
+   is promoted to `run-project` on first open — once per project, ever, with a
+   notice and an **Undo** in the board chrome, the origin recorded on disk, and
+   every condition re-checked server-side in `trustTier.ts`. Tier-1 promotion
+   is still always an explicit click, and a non-Vite project is never promoted
+   by Studio at all.
 2. **A write must have exactly one honest target.** Every lock, every
    `codeProps` entry, every refusal exists because writing an edit there would
    destroy a binding, change N places at once, or write to a file that does not
@@ -145,8 +152,16 @@ never silently no-ops.
   `static` (Tier 0, the never-auto-promoted default), `render-packages`
   (Tier 1), `run-project` (Tier 2) — read/written by
   `server/handlers/studio/trustTier.ts` and driven from the client by
-  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion is an
-  explicit user click, never a side effect of loading a page. Tier 2
+  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion to
+  **Tier 1** is an explicit user click. Promotion to **Tier 2 has one narrow
+  exception the owner called on 2026-09-17** (`STUDIO-FIGMA-FEEL-PLAN.md` §6
+  decision 2): a **Vite project with a lockfile** is auto-promoted to
+  `run-project` on first open — once, ever — with a notice and an **Undo** in
+  the board chrome (`canvas/LiveAutoPromoteNotice/`). The origin and the
+  once-latch live on disk (`trustAutoPromoted`/`trustAutoPromotedAt`), and
+  `trustTier.ts` re-checks every condition server-side. A non-Vite project is
+  never touched — the canvas pill reads "Live needs Vite" (§6 decision 5,
+  deferred). Tier 2
   (`run-project`) now has a real gated consumer beyond the MCP visual-audit
   tool: `server/handlers/studio/devServer.ts`'s dev-server process manager
   (Track L, `live-01`) — one reused, idle-timed subprocess per project,

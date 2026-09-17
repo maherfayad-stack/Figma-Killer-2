@@ -41,8 +41,8 @@ user download by 0 bytes. **Scope this work as maintenance, not performance.**
 Two directories share the name and have **opposite** verdicts:
 
 - **`src/core/publisher/` (3,980 lines) — LOAD-BEARING. Never delete.**
-  Studio's AI executor imports `renderNode` (`executor.ts:75`); `PreviewOverlay.tsx:21`
-  calls `publishPage` client-side; `ClassStyleInjector.tsx:65` imports
+  Studio's AI executor imports `renderNode` (`executor.ts:75`);
+  `ClassStyleInjector.tsx:65` imports
   `PUBLISHER_RESET_CSS`/`collectBackgroundImagePaths`; base image/video modules
   import from it. This is the "single class-CSS emission engine for publish and
   canvas."

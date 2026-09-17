@@ -1,0 +1,111 @@
+/**
+ * The crashed-screen cover on the Live/Play surface (P8).
+ *
+ * `--danger` rather than `--warning`, and deliberately: the frame badge's
+ * warning dot means "not necessarily broken, but do not trust it yet", while
+ * this card only ever appears when the screen's own code threw. What is
+ * underneath is not the screen.
+ *
+ * The cover scrims rather than paints over: whatever the screen DID manage to
+ * render stays visible behind it, because a partially-rendered screen is
+ * evidence about what broke.
+ */
+
+.cover {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-l);
+    background: var(--scrim-50);
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2xs);
+    max-width: 440px;
+    max-height: 100%;
+    padding: var(--space-m);
+    border: 1px solid var(--danger-30);
+    border-radius: var(--panel-radius);
+    background: var(--bg-surface);
+    box-shadow: 0 8px 24px var(--scrim-30);
+    overflow-y: auto;
+}
+
+.icon {
+    flex: none;
+    color: var(--danger);
+}
+
+.title {
+    margin: 0;
+    color: var(--text-bright);
+    font-size: var(--text-s);
+    font-weight: 700;
+}
+
+.lead {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.entry {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4xs);
+    min-width: 0;
+    padding-top: var(--space-2xs);
+    border-top: 1px solid var(--border);
+}
+
+.entryCode {
+    color: var(--danger-text);
+    font-size: var(--text-3xs);
+    font-weight: 700;
+}
+
+.entryCount {
+    color: var(--text-subtle);
+    font-weight: 400;
+}
+
+.entryMessage {
+    color: var(--text);
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.entryUrl {
+    color: var(--text-subtle);
+    font-size: var(--text-3xs);
+    overflow-wrap: anywhere;
+}
+
+.entryStack {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: monospace;
+    font-size: var(--text-3xs);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

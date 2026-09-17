@@ -23,6 +23,10 @@
  * it means anything — a Studio board in design view — because on a CMS page or
  * in live mode there is no board to draw a flow across.
  *
+ * The `Static · Live` pill (P8) rides alongside Play, in live view only, and
+ * is the one thing in this toolbar that is not a control: it NAMES which
+ * runtime is drawing the screen. See `LiveRuntimePill.tsx`.
+ *
  * PLAY is the FOURTH, and it is prototype mode's other half: live view with
  * clicks routed to the player instead of to selection. It appears only in live
  * view for the same "only where it means something" reason, and `setCanvasView`
@@ -47,6 +51,7 @@ import { LaptopSolidIcon } from 'pixel-art-icons/icons/laptop-solid'
 import { TvSolidIcon } from 'pixel-art-icons/icons/tv-solid'
 import { cn } from '@ui/cn'
 import { Tooltip } from '@ui/components/Tooltip'
+import { LiveRuntimePill } from './LiveRuntimePill'
 import styles from './CanvasModeToggle.module.css'
 
 const EMPTY_BREAKPOINTS: Breakpoint[] = []
@@ -166,6 +171,11 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
               <CursorClickSolidIcon size={14} aria-hidden="true" />
             </button>
           </Tooltip>
+          {/* P8 — which runtime is drawing this screen. A label first (Static
+              vs. Live are near-indistinguishable on screen and behave
+              completely differently), an action second. Self-gates: renders
+              nothing until the project's trust status has been read. */}
+          <LiveRuntimePill />
         </>
       )}
 
