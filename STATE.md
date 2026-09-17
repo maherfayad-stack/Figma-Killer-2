@@ -1410,7 +1410,7 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ### panel-34 — DS-7: the built-in design system's colours as an Assets → Colors section
 - **Agent:** panel-designer (Opus 5)
-- **Stage:** done — gates green on touched files, draft PR open against `feat/alm-figma-killer-studio-shell`. **Needs human dogfood.**
+- **Stage:** merged into `feat/alm-figma-killer-studio-shell` (PR #132 closed). **Needs human dogfood.**
 - **Branch:** `feat/assets-colors` off `feat/alm-figma-killer-studio-shell` (`e50303e6`). Worktree `.tmp/wt-assets-colors`.
 - **Updated:** 2026-09-17.
 - **Goal:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` DS-7 — the design system's palette in the Assets panel: grouped swatches showing light AND dark, click-to-copy `var(--name)`, apply-to-selection through the EXISTING commit path, and tokens that participate in the panel's search.
@@ -1450,7 +1450,7 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ### struct-09 — DS-9: the deletion sweep, the no-npm gate, docs, and the standalone-build proof
 - **Agent:** studio-implementer (Opus 5)
-- **Stage:** done
+- **Stage:** merged into `feat/alm-figma-killer-studio-shell` (PR #134 closed). Human dogfood of the migration banner on `test4` still pending.
 - **Updated:** 2026-09-17.
 - **Branch/worktree:** `feat/ds-sweep` in `.tmp/wt-ds-sweep`, off `feat/alm-figma-killer-studio-shell` @ `e50303e6`. Draft PR against that branch.
 - **Goal:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` §3 DS-9 — close everything `meta-12` left open, gate the retired npm so it cannot come back, and PROVE the download story by building a migrated project standalone.
