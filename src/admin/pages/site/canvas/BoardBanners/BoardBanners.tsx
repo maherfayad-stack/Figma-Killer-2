@@ -17,6 +17,7 @@
  * board click; each card turns them back on for itself.
  */
 import { DesignSystemMigrateBanner } from '../DesignSystemMigrateBanner'
+import { LiveAutoPromoteNotice } from '../LiveAutoPromoteNotice'
 import { StyleCompileConsentBanner } from '../StyleCompileConsentBanner'
 import styles from './BoardBanners.module.css'
 
@@ -25,6 +26,10 @@ export function BoardBanners() {
     <div className={styles.stack}>
       <DesignSystemMigrateBanner />
       <StyleCompileConsentBanner />
+      {/* Last: the only card here that reports something that already
+          happened rather than asking for something. The two above are
+          blocking problems and should be read first. */}
+      <LiveAutoPromoteNotice />
     </div>
   )
 }
