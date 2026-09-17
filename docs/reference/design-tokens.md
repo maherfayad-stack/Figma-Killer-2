@@ -408,7 +408,7 @@ Token names: `--z-canvas-floating-toolbar`, `--z-dropdown`, `--spotlight-z-index
 
 | Value | What occupies it |
 |-------|-----------------|
-| 9000  | Spotlight backdrop (`--spotlight-z-index`); Settings modal backdrop; ModuleInserterDialog backdrop |
+| 9000  | Spotlight backdrop (`--spotlight-z-index`); Settings modal backdrop |
 | 9001  | Settings dialog wrapper (`--spotlight-z-index + 1`) |
 | 9050  | MediaPickerModal backdrop (`calc(--spotlight-z-index + 50)`) — sits above Settings because the picker can be opened from inside Settings (e.g. Settings → General → Favicon → Browse library…) |
 | 9500  | `Dialog` primitive backdrop (`--dialog-z-index`) — above every modal shell it can be opened from |

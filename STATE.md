@@ -1553,6 +1553,125 @@ package", click it, confirm `pages/*.tsx` imports became `'../design-system'`, `
 the dependency, `node_modules/@alm-design` is gone, and `vite build` in the migrated folder
 succeeds. Then "Download the code" and `bun install && bun run dev` in the unzipped copy.
 
+### panel-33 — Assets panel, live previews, ranked search, and Add page (DS-4 / DS-5 / DS-6-UI / DS-8)
+- **Id note:** the work order called this `panel-32`, but that id was already taken (above) by
+  the inspector base-declared-Fill fix that landed on this branch. Renumbered to `panel-33`.
+- **Agent:** panel-designer · **Stage:** done (build + lint + targeted tests green; draft PR open) — **needs human dogfood**
+- **Branch:** `feat/assets-panel` off `feat/alm-figma-killer-studio-shell` (`0da8a84b`). Worktree `.tmp/wt-assets-panel`.
+- **Updated:** 2026-09-17.
+- **Goal:** the wave-2 editor half of `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` — replace the
+  full-screen insert dialog with a left-rail **Assets** panel whose cards are live renders of
+  the real components, make its search find components by PURPOSE, and merge the three insert /
+  add-page pluses into one honest affordance each.
+
+**Four commits, in the order each left the app working:**
+
+1. `feat(board): the toolbar + and the Explorer pluses become one Add page picker` — DS-8.
+   `canvas/BoardFramesLayer/AddPagePicker.tsx` + `addPagePickerModel.ts` replace BOTH
+   `NewPageButton.tsx` and `AddFramePicker.tsx`. One popover, one search box, two sections:
+   **New page** (the four `PAGE_KINDS` → `createStudioPage`, server places the frame) and
+   **From files** (every page on disk not framed on this board → `addFrame`, each row showing
+   `rel/path.tsx` and "on <other board>"). Enter takes the first match. Mounted at the canvas
+   notch `+` (`toolbar/ModulePickerDropdown.tsx` deleted), the Explorer *Pages* header (two
+   pluses → one) and the board empty state.
+2. `feat(assets): a left-rail Assets panel replaces the insert dialog` — DS-4.
+   `panels/AssetsPanel/` is the new home; `site/module-picker/` is gone entirely.
+3. `feat(assets): ranked search over name, description and keywords` — DS-6's UI half.
+4. `feat(assets): every asset card is a live render of the real component` — DS-5.
+   The wireframe sketches (`ModuleWireframe`, `moduleWireframes`, `moduleArchetype`,
+   `wireNode`) are deleted with no fallback.
+
+**Decisions a future agent should not re-litigate:**
+- **Portal, not a second `createRoot`.** The preview content is `createPortal`ed into the
+  host's open shadow root, so one React tree keeps the editor store, the error boundary and
+  `FramePreviewAxesContext` reaching the component the ordinary way. The isolation that matters
+  here is CSS isolation, which the shadow root gives either way. (The work order said
+  `createRoot`; this is the deviation, and it is the only one in the mechanism.)
+- **`base.*` modules render in the LIGHT DOM.** They are styled by the admin's own CSS modules,
+  which do not cross a shadow boundary, and they carry no vendor CSS to leak. Only
+  design-system / package components get a shadow root.
+- **Saved layouts and Visual Components keep a mark, not a render.** They are node TREES that
+  only render through `NodeRenderer` against the active document's store — there is nothing
+  standalone to mount. A mark is a label; it is not the fabricated sketch DS-5 deleted.
+- **Clicking an icon copies its markup.** The panel has no slot target, and `moduleAvailability`
+  hides `base.svg` (no `sourceIntrinsic`), so an "insert" would be an insert that could only be
+  refused. The tooltip says Copy.
+- **Icons start collapsed** so the several-hundred-KB catalogue is fetched on first expand only.
+- **Recents survived the dialog.** `moduleInserterPrefs.ts` + `useModuleInserterPreference.ts`
+  merged into `assetsPrefs.ts` (localStorage recents + server-persisted notch favourites), and
+  the Assets panel shows a **Recent** section above the specced six. Without it the storage key
+  and its tracking were dead code, and the favourites shelf the canvas notch reads would have
+  had no UI left that can ADD to it — every card carries the star instead.
+- **`insertPickerOpen` / `openInsertPicker` / `closeInsertPicker` deleted** from `uiSlice.ts`:
+  dead since the picker they served was replaced, and nothing outside that file read them. That
+  deletion is also what paid for the 7 lines the `assets` panel wiring added — `uiSlice.ts` is
+  grandfathered in `module-size-budgets` and may only shrink (715 lines now, cap 723).
+
+**Files.** Created: `panels/AssetsPanel/{AssetsPanel,AssetCard,AssetSection,AssetPreview,IconsSection}.tsx`,
+`{AssetsPanel,AssetCard,AssetPreview}.module.css`, `rankAssets.ts`, `assetPreviewCss.ts`,
+`designSystemPreviewSheet.ts`, `assetPreviewOverrides.tsx`, `assetsPanelFocus.ts`, `index.ts`;
+`canvas/BoardFramesLayer/{AddPagePicker.tsx,AddPagePicker.module.css,addPagePickerModel.ts}`.
+Moved: `module-picker/{moduleInserterModel.ts→panels/AssetsPanel/assetsModel.ts,
+moduleInserterPrefs.ts+useModuleInserterPreference.ts→assetsPrefs.ts, useModuleInsertionContext.ts,
+ModulePicker.tsx+css, PackageBundleNotice.tsx+css, SavedLayoutManageMenu.tsx}`.
+Deleted: the whole `src/admin/pages/site/module-picker/` directory,
+`toolbar/ModulePickerDropdown.tsx`, `canvas/BoardFramesLayer/{NewPageButton,AddFramePicker}.tsx`,
+`vendor/pixel-art-icons/**/calendar-solid.*` (the dialog was its only importer).
+Touched: `uiSlice.ts` (the `assets` panel id + flag, and the dead insert-picker deletion),
+`PanelRail.tsx`, `LeftSidebar.tsx`, `CanvasNotch.tsx`, `CanvasInsertModuleButton.tsx`,
+`useInsertInserterItem.ts`, `DomPanel/{LayerNodeContextMenu,TreeBackgroundContextMenu}.tsx`,
+`StudioPagesTree.tsx`, `BoardFramesLayer.tsx`, `core/module-engine/types.ts` (`keywords?`).
+Docs: `docs/editor.md`, `docs/agent-refs/path-index.md`, `docs/features/modules.md`,
+`docs/reference/{canvas-dnd,persistence-keys,design-tokens}.md`.
+
+**Verification.** `bun run build` green. `bun run lint` → 6 errors, all pre-existing
+(`'os' is defined but never used` in six `server/handlers/**` test files, untouched by this
+branch). `bun test src/__tests__/architecture` → 552 tests, 2 fail, both known-red
+(`no-core-barrel-deep-imports` — two `server/handlers/studio/prototypeShell/*` files;
+`icon-catalog-integrity` — `chevron-left`). `bun test src/__tests__/{canvas,toolbar,panels,dom-panel,agent,layout}`
+→ 1941 pass / 26 fail, and the SAME 26 fail on the base commit `0da8a84b` (verified in a
+throwaway worktree): the canvas iframe-body / pin-unroll / frame-scoped-selection /
+VC-click clusters and `agentBreakpointCapture`. New tests: `panels/{assetsPanel,rankAssets,
+assetPreviewCss,assetPreviewRegistry}.test.*` and `canvas/addPagePickerModel.test.ts`.
+
+**Merge conflicts to expect with the wave-1 branches (NOT bugs):**
+- `designSystemPreviewSheet.ts` imports `@alm-design/design-system/dist/index.css?inline` — the
+  same specifier `canvasVendorCss.ts` still uses on this branch. **DS-1/DS-9 must repoint it to
+  `alm-design-system/dist/index.css?inline`**, or `no-alm-npm-specifier.test.ts` fails on a file
+  it has never seen. One line, one file.
+- `core/module-engine/types.ts` gains the `keywords?: string[]` field verbatim from the shared
+  contract; DS-1 adds the identical snippet, so the merge is a duplicate-hunk, not a conflict.
+- `AssetsPanel.tsx`'s `DESIGN_SYSTEM_GROUP_ORDER` already lists DS-1's nine `design.md` groups;
+  until DS-1 lands, every `alm.*` module is `category: 'Design System'` and renders as one group.
+
+**What remains:**
+- **DS-7 (Colors section)** — not started, deliberately out of scope. Its data contract is
+  `alm-design-system/dist/tokens.generated.json` → `{ name, light, dark, group }[]`. It slots
+  into `AssetsPanel.tsx` as one more `<AssetSection>` after Icons; nothing else needs to change.
+- **DS-9** — point `assets-search-coverage.test.ts` at the real registry (the query→hit table is
+  already written as `PURPOSE_QUERIES` in `src/__tests__/panels/rankAssets.test.ts`, running
+  against synthetic items); repoint the CSS import above; **update the Playwright e2e specs** —
+  `tests/e2e/helpers/editor.ts:70`, `visual-builder.e2e.ts` (7 sites) and
+  `design-system-insert.e2e.ts:133` still click `canvas-notch-add-btn` expecting the deleted
+  "Add to canvas" dialog. That `+` is Add page now; the insert flow is the Assets panel. Left
+  untouched on purpose — no browser tests were run on this branch.
+- **DS-4b (drag from the panel to the canvas)** — still deferred. `useCanvasInsertionDrag.ts`
+  is the mechanism and `canvasInsertionDrop.ts` the resolver; the notch primitives are the
+  working example.
+
+**Human action needed — dogfood at `/admin/site` on `test4`:**
+1. Open the **Assets** rail item (the `box-stack-solid` mark, second, under Explorer). Every
+   Design-system card should be a real render, not a grey box — light + LTR first.
+2. Flip the board's preview axes to **dark + RTL** and confirm the CARDS follow (a Navbar should
+   mirror, not just the canvas). This is the one thing no test covers.
+3. Search `header`, `pill`, `row`. Each should put Navbar / Chip / Cell first once DS-1 has
+   filled the keywords; on this branch alone they will find nothing, which is expected — the
+   ranking is proven by `rankAssets.test.ts`.
+4. Click-insert a `Cell` into a screen and confirm it lands where the selection says.
+5. Notch `+` → **New page** → *Popup*. Then right-click a frame → Remove from board → `+` →
+   **From files** → the page is listed with its path, and picking it brings the frame back.
+6. Expand **Icons** once; confirm it loads and a click toasts "Copied <name>".
+
 ### meta-11 — plan: built-in design system, Assets panel, live previews, Add page
 - **Agent:** orchestrator (plan only — no code written)
 - **Stage:** research complete · plan written · **owner confirmed all three §0 decisions (2026-09-17)** — ready for `studio-architect` to cut wave-1 and wave-2 work orders.

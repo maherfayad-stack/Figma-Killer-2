@@ -1,3 +1,19 @@
+/**
+ * assetsModel — WHAT the Assets panel can offer, and whether each offer is
+ * honest in the current document.
+ *
+ * Moved out of `module-picker/moduleInserterModel.ts` with the insert dialog
+ * it served. Same three item kinds (registry module, saved layout, Visual
+ * Component) and the same `moduleAvailability` rules — those are about what
+ * Studio can WRITE into a user's source, not about which panel is asking, so
+ * every surface that offers an insert (the Assets panel, the DOM panel's
+ * right-click `ModulePicker`, the canvas notch's favourites) still resolves
+ * through this one module.
+ *
+ * Two things the dialog carried are gone: the CSS wireframe (`wire`) — cards
+ * render the real component now (`AssetPreview`) — and the per-category accent
+ * colour, which was decoration, not identity.
+ */
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PALETTE_HIDDEN_ALM_MODULE_IDS } from '@modules/alm/register'
 import { getPaletteHiddenPackageModuleIds } from '@site/studio/registerProjectModules'
@@ -6,28 +22,24 @@ import {
   DEFAULT_MODULE_INSERTER_PREFERENCE,
   type ModuleInserterItemRef,
 } from '@core/persistence/userPreferences'
+
+/**
+ * One ref shape for a module, a saved layout or a Visual Component. Named for
+ * the inserter in `@core/persistence` because that is the stored preference's
+ * key; aliased here so panel code speaks the panel's vocabulary.
+ */
+export type AssetItemRef = ModuleInserterItemRef
 import { wouldCreateCycle, type VisualComponent } from '@core/visualComponents'
 import { firstOutletId } from '@core/templates'
-import {
-  moduleWireForId,
-  wireFromTree,
-  type WireNode,
-} from './moduleWireframes'
 
-export type ModuleInserterAccent = 'mint' | 'lilac' | 'sky' | 'peach' | 'rose'
-export type ModuleInserterSectionId =
-  | 'modules'
-  | 'layouts'
-  | 'components'
-  | 'recent'
-type ModuleInserterItemKind = 'module' | 'savedLayout' | 'component'
-type ModuleInserterRecentRef = ModuleInserterItemRef
+type AssetItemKind = 'module' | 'savedLayout' | 'component'
 
-export interface RegistryModuleForInserter {
+export interface RegistryModuleForAssets {
   id: string
   name: string
   category: string
   description?: string
+  keywords?: string[]
   /**
    * Present when the module has an intrinsic spelling in a user's source
    * (`ModuleDefinition.sourceIntrinsic`). Only its PRESENCE matters here — it
@@ -43,32 +55,31 @@ export interface RegistryModuleForInserter {
   sourceImport?: { name: string }
 }
 
-interface BaseInserterItem {
+interface BaseAssetItem {
   key: string
   id: string
-  kind: ModuleInserterItemKind
+  kind: AssetItemKind
   name: string
   description: string
-  accent: ModuleInserterAccent
-  wire: WireNode
-  searchText: string
+  /** Purposes, synonyms and variant names `rankAssets` matches on. */
+  keywords: string[]
   /**
-   * When set, the item renders greyed-out and cannot be inserted (click, Enter,
-   * drag) — the string explains why, e.g. "Templates only". Disabled items stay
-   * visible so authors learn the module exists and what unlocks it.
+   * When set, the item renders greyed-out and cannot be inserted — the string
+   * explains why, e.g. "Templates only". Disabled items stay visible so authors
+   * learn the module exists and what unlocks it.
    */
   disabledReason?: string
 }
 
-interface ModuleInserterModuleItem<
-  TModule extends RegistryModuleForInserter = AnyModuleDefinition,
-> extends BaseInserterItem {
+interface AssetModuleItem<
+  TModule extends RegistryModuleForAssets = AnyModuleDefinition,
+> extends BaseAssetItem {
   kind: 'module'
   module: TModule
   category: string
 }
 
-interface ModuleInserterSavedLayoutItem extends BaseInserterItem {
+interface AssetSavedLayoutItem extends BaseAssetItem {
   kind: 'savedLayout'
   layout: SavedLayout
   blocks: number
@@ -81,16 +92,16 @@ interface ModuleInserterSavedLayoutItem extends BaseInserterItem {
   pluginId: string | null
 }
 
-interface ModuleInserterComponentItem extends BaseInserterItem {
+interface AssetComponentItem extends BaseAssetItem {
   kind: 'component'
   component: VisualComponent
   uses: number
 }
 
-export type ModuleInserterItem =
-  | ModuleInserterModuleItem
-  | ModuleInserterSavedLayoutItem
-  | ModuleInserterComponentItem
+export type AssetItem =
+  | AssetModuleItem
+  | AssetSavedLayoutItem
+  | AssetComponentItem
 
 const HIDDEN_MODULE_IDS = new Set([
   'base.body',
@@ -104,33 +115,8 @@ const HIDDEN_MODULE_IDS = new Set([
   'studio.instance',
 ])
 
-export const DEFAULT_MODULE_INSERTER_FAVORITES =
-  DEFAULT_MODULE_INSERTER_PREFERENCE.favorites
-
-/**
- * Accent colour per category.
- *
- * The design-system components used to share one flat `'Design System'`
- * category and so one accent; they now carry their PURPOSE group as their
- * category (Navigation, Actions, Inputs, …, from
- * `vendor/alm-design-system/studio/groups.json`). Mapping each group onto the
- * same five accents keeps a component's colour stable — and makes it mean
- * something, since a section now has one colour.
- */
-export function moduleAccentForCategory(category: string): ModuleInserterAccent {
-  if (category === 'Forms' || category === 'Inputs' || category === 'Selection') return 'mint'
-  if (category === 'Media' || category === 'Content & cards' || category === 'Icons') return 'sky'
-  if (category === 'Typography' || category === 'Feedback' || category === 'Progress') return 'peach'
-  if (
-    category === 'Interactive' ||
-    category === 'CMS' ||
-    category === 'Actions' ||
-    category === 'Overlays'
-  ) {
-    return 'rose'
-  }
-  return 'lilac'
-}
+/** Seeded notch favourites for a user who has never customised the shelf. */
+export const DEFAULT_ASSET_FAVORITES = DEFAULT_MODULE_INSERTER_PREFERENCE.favorites
 
 /**
  * Where the picker is inserting into — drives per-module availability
@@ -165,7 +151,7 @@ type ModuleAvailability =
  *   and learn what unlocks it instead of hitting a blocked insert.
  */
 export function moduleAvailability(
-  mod: RegistryModuleForInserter,
+  mod: RegistryModuleForAssets,
   context: ModuleInsertionContext,
 ): ModuleAvailability {
   if (HIDDEN_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
@@ -216,11 +202,11 @@ export function moduleAvailability(
   return { kind: 'insertable' }
 }
 
-export function getVisibleModuleItems<TModule extends RegistryModuleForInserter>(
+export function getVisibleModuleItems<TModule extends RegistryModuleForAssets>(
   modules: readonly TModule[],
   context: ModuleInsertionContext,
-): ModuleInserterModuleItem<TModule>[] {
-  const items: ModuleInserterModuleItem<TModule>[] = []
+): AssetModuleItem<TModule>[] {
+  const items: AssetModuleItem<TModule>[] = []
   for (const mod of modules) {
     const availability = moduleAvailability(mod, context)
     if (availability.kind === 'hidden') continue
@@ -232,10 +218,8 @@ export function getVisibleModuleItems<TModule extends RegistryModuleForInserter>
       name: mod.name,
       description,
       category: mod.category,
-      accent: moduleAccentForCategory(mod.category),
+      keywords: mod.keywords ?? [],
       module: mod,
-      wire: moduleWireForId(mod.id, mod.category),
-      searchText: searchText([mod.name, mod.id, mod.category, description]),
       ...(availability.kind === 'disabled' ? { disabledReason: availability.reason } : {}),
     })
   }
@@ -298,7 +282,7 @@ export function getSavedLayoutItems(
   layouts: readonly SavedLayout[],
   context: ModuleInsertionContext,
   visualComponents: readonly VisualComponent[],
-): ModuleInserterSavedLayoutItem[] {
+): AssetSavedLayoutItem[] {
   return layouts.map((layout) => {
     const disabledReason = savedLayoutDisabledReason(layout, context, visualComponents)
     const pluginId = layoutPluginId(layout)
@@ -308,16 +292,10 @@ export function getSavedLayoutItems(
       kind: 'savedLayout',
       name: layout.name,
       description: pluginId ? 'Plugin layout' : 'Saved layout',
-      accent: 'sky',
+      keywords: pluginId ? ['layout', 'plugin layout', pluginId] : ['layout', 'saved layout'],
       layout,
       blocks: Object.keys(layout.nodes).length,
       pluginId,
-      wire: wireFromTree({ nodes: layout.nodes, rootNodeId: layout.rootNodeId }),
-      searchText: searchText([
-        layout.name,
-        layout.id,
-        pluginId ? `plugin layout ${pluginId}` : 'saved layout',
-      ]),
       ...(disabledReason ? { disabledReason } : {}),
     }
   })
@@ -331,14 +309,14 @@ export function getSavedLayoutItems(
  * each label to its group's first item.
  */
 export function composeLayoutsSection(
-  savedItems: readonly ModuleInserterSavedLayoutItem[],
+  savedItems: readonly AssetSavedLayoutItem[],
   pluginNameFor: (pluginId: string) => string | null,
 ): {
-  items: ModuleInserterSavedLayoutItem[]
+  items: AssetSavedLayoutItem[]
   labelByKey: Map<string, string>
 } {
   const userItems = savedItems.filter((item) => item.pluginId === null)
-  const byPlugin = new Map<string, ModuleInserterSavedLayoutItem[]>()
+  const byPlugin = new Map<string, AssetSavedLayoutItem[]>()
   for (const item of savedItems) {
     if (item.pluginId === null) continue
     const group = byPlugin.get(item.pluginId) ?? []
@@ -368,31 +346,29 @@ export function composeLayoutsSection(
 
 function getComponentItems(
   components: readonly VisualComponent[],
-): ModuleInserterComponentItem[] {
+): AssetComponentItem[] {
   return components.map((component) => ({
     key: recentKey({ kind: 'component', id: component.id }),
     id: component.id,
     kind: 'component',
     name: component.name,
     description: 'Saved Visual Component',
-    accent: 'mint',
+    keywords: ['component', 'visual component'],
     component,
     uses: 0,
-    wire: wireFromTree(component.tree),
-    searchText: searchText([component.name, component.id, 'visual component']),
   }))
 }
 
-interface BuiltModuleInserterItems {
-  moduleItems: ModuleInserterModuleItem[]
+interface BuiltAssetItems {
+  moduleItems: AssetModuleItem[]
   /** User-saved layouts (`SavedLayout` rows) — the sole source of the Layouts section. */
-  savedLayoutItems: ModuleInserterSavedLayoutItem[]
-  componentItems: ModuleInserterComponentItem[]
+  savedLayoutItems: AssetSavedLayoutItem[]
+  componentItems: AssetComponentItem[]
   /** Every visible item — including disabled ones (carrying `disabledReason`). */
-  allItems: ModuleInserterItem[]
+  allItems: AssetItem[]
 }
 
-export function buildModuleInserterItems({
+export function buildAssetItems({
   modules,
   context,
   savedLayouts,
@@ -402,7 +378,7 @@ export function buildModuleInserterItems({
   context: ModuleInsertionContext
   savedLayouts: readonly SavedLayout[]
   visualComponents: readonly VisualComponent[]
-}): BuiltModuleInserterItems {
+}): BuiltAssetItems {
   const moduleItems = getVisibleModuleItems(modules, context)
   const savedLayoutItems = getSavedLayoutItems(savedLayouts, context, visualComponents)
   const componentItems = getComponentItems(visualComponents)
@@ -418,32 +394,23 @@ export function buildModuleInserterItems({
   }
 }
 
-export function filterInserterItems<TItem extends ModuleInserterItem>(
-  items: readonly TItem[],
-  query: string,
-): TItem[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return [...items]
-  return items.filter((item) => item.searchText.includes(q))
-}
-
-export function recentRefForItem(item: ModuleInserterItem): ModuleInserterRecentRef {
+export function refForAssetItem(item: AssetItem): AssetItemRef {
   return { kind: item.kind, id: item.id }
 }
 
-export function resolveRecentItems(
-  recent: readonly ModuleInserterRecentRef[],
-  items: readonly ModuleInserterItem[],
-): ModuleInserterItem[] {
-  return resolveInserterRefs(recent, items)
+export function resolveRecentAssetItems(
+  recent: readonly AssetItemRef[],
+  items: readonly AssetItem[],
+): AssetItem[] {
+  return resolveAssetRefs(recent, items)
 }
 
-export function resolveInserterRefs(
-  refs: readonly ModuleInserterItemRef[],
-  items: readonly ModuleInserterItem[],
-): ModuleInserterItem[] {
+export function resolveAssetRefs(
+  refs: readonly AssetItemRef[],
+  items: readonly AssetItem[],
+): AssetItem[] {
   const byKey = new Map(items.map((item) => [item.key, item]))
-  const resolved: ModuleInserterItem[] = []
+  const resolved: AssetItem[] = []
   const seen = new Set<string>()
   for (const ref of refs) {
     const key = recentKey(ref)
@@ -456,10 +423,10 @@ export function resolveInserterRefs(
   return resolved
 }
 
-export function dedupeModuleInserterRefs(
-  refs: readonly ModuleInserterItemRef[],
-): ModuleInserterItemRef[] {
-  const deduped: ModuleInserterItemRef[] = []
+export function dedupeAssetRefs(
+  refs: readonly AssetItemRef[],
+): AssetItemRef[] {
+  const deduped: AssetItemRef[] = []
   const seen = new Set<string>()
   for (const ref of refs) {
     const key = recentKey(ref)
@@ -470,7 +437,7 @@ export function dedupeModuleInserterRefs(
   return deduped
 }
 
-export function itemDescription(item: ModuleInserterItem): string {
+export function itemDescription(item: AssetItem): string {
   // A disabled item's most useful description is WHY it can't be inserted here.
   if (item.disabledReason) return item.disabledReason
   if (item.kind === 'savedLayout') {
@@ -483,10 +450,6 @@ export function itemDescription(item: ModuleInserterItem): string {
   return item.description
 }
 
-export function recentKey(ref: ModuleInserterItemRef): string {
+export function recentKey(ref: AssetItemRef): string {
   return `${ref.kind}:${ref.id}`
-}
-
-function searchText(parts: readonly string[]): string {
-  return parts.join(' ').toLowerCase()
 }

@@ -97,10 +97,6 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
   //   resolve against either page mode or Visual Component canvas mode.
   'admin/pages/site/hooks/useInsertModule.ts',
 
-  // §A.3 — module inserter toolbar trigger: uses selectActiveCanvasPage for
-  //   Component-ref insertion target resolution.
-  'admin/pages/site/toolbar/ModulePickerDropdown.tsx',
-
   // §A.4 — page preview overlay: publishes the active page via publishPage() to
   //   render it in a sandboxed iframe. VCs are not publishable pages and have no
   //   slug; the preview concept is inherently page-mode-only.

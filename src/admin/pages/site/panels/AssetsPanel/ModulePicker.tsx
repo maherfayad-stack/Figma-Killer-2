@@ -1,8 +1,9 @@
 /**
  * ModulePicker — searchable list of base modules and Visual Components,
  * designed to live inside a `ContextMenuSubmenu` (right-click DOM-panel
- * second level). The toolbar uses `ModuleInserterDialog`; this compact picker
- * stays for anchored context-menu flows.
+ * second level). Browsing lives in the `AssetsPanel`; this compact picker is
+ * the anchored context-menu flow, and reads the SAME `assetsModel` so the two
+ * can never disagree about what is insertable.
  *
  * The picker reuses the dropdown primitives directly:
  *   - rows are `ContextMenuItem` (same hover, padding, typography as any
@@ -18,7 +19,7 @@
  * project's component bundle regardless of board contents, so an empty list
  * is either "this project genuinely has no component-package dependency" or
  * "it has one, but the trust tier/React version/build blocks it." `<PackageBundleNotice>`
- * (shared with `ModuleInserterDialog.tsx`) surfaces that refusal at the
+ * (shared with the Assets panel) surfaces that refusal at the
  * PICKER level — with a "Promote project" action for the one actionable
  * refusal code — instead of just staying quietly empty.
  */
@@ -42,7 +43,7 @@ import {
   ContextMenuSeparator,
 } from '@ui/components/ContextMenu'
 import { ModuleIcon } from '@site/ui/ModuleIcon'
-import { moduleAvailability } from './moduleInserterModel'
+import { moduleAvailability } from './assetsModel'
 import { useModuleInsertionContext } from './useModuleInsertionContext'
 import { PackageBundleNotice } from './PackageBundleNotice'
 import styles from './ModulePicker.module.css'

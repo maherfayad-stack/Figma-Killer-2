@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef, type ReactNode } from 'react'
 import { BreakpointFrame } from '@site/canvas/BreakpointFrame'
+import { AssetsPanel } from '@site/panels/AssetsPanel'
 import { CanvasViewportActionsContext } from '@site/canvas/CanvasContexts'
 import { useEditorStore } from '@site/store/store'
 import type { Page } from '@core/page-tree'
@@ -371,7 +372,7 @@ describe('canvas selection toolbar', () => {
   it('does not bubble toolbar clicks to the canvas background', async () => {
     // Regression: the toolbar is portaled into the canvas root, whose onClick
     // clears the selection on background clicks. A toolbar click must not
-    // bubble up — otherwise opening the Insert-module dialog would clear the
+    // bubble up — otherwise revealing the Assets panel would clear the
     // selection and unmount the toolbar mid-click.
     const { page } = createSelectedTextPage()
     let backgroundClicks = 0
@@ -403,10 +404,7 @@ describe('canvas selection toolbar', () => {
     // The toolbar is portaled into the canvas root, and this Harness mounts
     // that root in the SAME commit as the frame — so the root's ref is not
     // attached yet when the overlay first renders, and the overlay renders no
-    // chrome at all until it resolves (one rAF later). It deliberately does
-    // NOT fall back to `document.body` in the meantime: that would swap the
-    // portal container a frame later, which remounts the toolbar and throws
-    // away the very dialog this test is about. See `portalTarget` in
+    // chrome at all until it resolves (one rAF later). See `portalTarget` in
     // `BreakpointSelectionOverlay`.
     const insertButton = await screen.findByRole('button', { name: 'Insert module' })
 
@@ -415,9 +413,9 @@ describe('canvas selection toolbar', () => {
     })
 
     expect(backgroundClicks).toBe(0)
-    // The module inserter dialog opened and stayed open (selection still intact).
-    // ModuleInserterDialog is lazy-loaded, so it does not resolve synchronously.
-    expect(await screen.findByRole('dialog', { name: 'Add to canvas' })).toBeTruthy()
+    // The Assets panel was revealed and the selection survived the click.
+    expect(useEditorStore.getState().assetsPanelOpen).toBe(true)
+    expect(useEditorStore.getState().selectedNodeId).toBeTruthy()
   })
 
   it('inserts a module inside a nestable selected layer from the toolbar', async () => {
@@ -432,21 +430,19 @@ describe('canvas selection toolbar', () => {
     } as Parameters<typeof useEditorStore.setState>[0])
 
     render(
-      <BreakpointFrame
-        page={page}
-        breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
-        isActive
-        onActivate={() => {}}
-      />,
+      <>
+        <BreakpointFrame
+          page={page}
+          breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
+          isActive
+          onActivate={() => {}}
+        />
+        <AssetsPanel />
+      </>,
     )
 
     act(() => {
-      fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
-    })
-    // ModuleInserterDialog is lazy-loaded — wait for its chunk before querying it.
-    await screen.findByRole('dialog', { name: 'Add to canvas' })
-    act(() => {
-      fireEvent.click(document.querySelector('[data-module-id="base.text"]')!)
+      fireEvent.click(document.querySelector('[data-asset-id="base.text"]')!)
     })
 
     const currentPage = useEditorStore.getState().site!.pages[0]
@@ -462,21 +458,19 @@ describe('canvas selection toolbar', () => {
     const rootId = page.rootNodeId
 
     render(
-      <BreakpointFrame
-        page={page}
-        breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
-        isActive
-        onActivate={() => {}}
-      />,
+      <>
+        <BreakpointFrame
+          page={page}
+          breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
+          isActive
+          onActivate={() => {}}
+        />
+        <AssetsPanel />
+      </>,
     )
 
     act(() => {
-      fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
-    })
-    // ModuleInserterDialog is lazy-loaded — wait for its chunk before querying it.
-    await screen.findByRole('dialog', { name: 'Add to canvas' })
-    act(() => {
-      fireEvent.click(document.querySelector('[data-module-id="base.text"]')!)
+      fireEvent.click(document.querySelector('[data-asset-id="base.text"]')!)
     })
 
     const currentPage = useEditorStore.getState().site!.pages[0]

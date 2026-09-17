@@ -47,7 +47,7 @@
  * here:
  *
  *   - **Page create / delete / rename** (`studioPageRequests.ts`,
- *     `NewPageButton.tsx`) — the frame set, `boards.json`, and the page id
+ *     `AddPagePicker.tsx`) — the frame set, `boards.json`, and the page id
  *     space all change.
  *   - **A new component FILE** (`extractInstanceCopy`, `promote-component`) —
  *     `componentSources` and the module registry are load-time state that a

@@ -10,13 +10,14 @@
  * dispatch that `insertComponentRef` encapsulates.
  *
  * PLACEMENT FLOWS (Phase 4):
- * 1. ModulePickerDropdown.tsx — Components category click in the toolbar picker.
+ * 1. useInsertInserterItem.ts — the ONE handler every picker surface (the
+ *    Assets panel, and any other caller) routes a picked item through.
  * 2. LayerNodeContextMenu.tsx — 'Insert module here' submenu click (which
  *    embeds the compact ModulePicker; picking a Visual Component flows
  *    through this file via the onSelectVC callback).
  *
  * ENFORCED CONSTRAINTS:
- * G1 — ModulePickerDropdown must call insertComponentRef for VC insertion.
+ * G1 — useInsertInserterItem must call insertComponentRef for VC insertion.
  * G3 — LayerNodeContextMenu must call insertComponentRef for VC insertion.
  * G4 — No placement file may call insertNode with 'base.visual-component-ref' directly.
  * G5 — No placement file may call addNodeToVc with 'base.visual-component-ref' directly.
@@ -38,7 +39,7 @@ const PROJECT_ROOT = resolve(import.meta.dir, '../../..')
 
 const PICKER_PATH = resolve(
   PROJECT_ROOT,
-  'src/admin/pages/site/toolbar/ModulePickerDropdown.tsx',
+  'src/admin/pages/site/hooks/useInsertInserterItem.ts',
 )
 const CONTEXT_MENU_PATH = resolve(
   PROJECT_ROOT,
@@ -82,18 +83,18 @@ function containsBypassCall(src: string, callFn: string, windowLines = 10): bool
 }
 
 // ---------------------------------------------------------------------------
-// Gate 1 — ModulePickerDropdown must use insertComponentRef
+// Gate 1 — useInsertInserterItem must use insertComponentRef
 // ---------------------------------------------------------------------------
 
-describe('G1 — ModulePickerDropdown calls insertComponentRef for VC insertion (Phase 4)', () => {
-  test('ModulePickerDropdown.tsx must reference insertComponentRef', () => {
+describe('G1 — useInsertInserterItem calls insertComponentRef for VC insertion (Phase 4)', () => {
+  test('useInsertInserterItem.ts must reference insertComponentRef', () => {
     const src = readSource(PICKER_PATH)
     if (!src.includes('insertComponentRef')) {
       throw new Error(
-        '[Phase 4 / G1] ModulePickerDropdown.tsx does not reference insertComponentRef.\n' +
-        'The Components-category click must route through insertComponentRef — the single\n' +
+        '[Phase 4 / G1] useInsertInserterItem.ts does not reference insertComponentRef.\n' +
+        'Picking a Visual Component must route through insertComponentRef — the single\n' +
         'shared action that handles both page-mode and VC-mode insertion with cycle detection.\n' +
-        'File: src/admin/pages/site/components/Toolbar/ModulePickerDropdown.tsx',
+        'File: src/admin/pages/site/hooks/useInsertInserterItem.ts',
       )
     }
     expect(src).toContain('insertComponentRef')
@@ -130,7 +131,7 @@ describe("G3 — LayerNodeContextMenu calls insertComponentRef for 'Insert modul
 
 describe("G4 — No placement file calls insertNode with 'base.visual-component-ref' directly (Phase 4)", () => {
   const FILES: [string, string][] = [
-    ['ModulePickerDropdown.tsx', PICKER_PATH],
+    ['useInsertInserterItem.ts', PICKER_PATH],
     ['LayerNodeContextMenu.tsx', CONTEXT_MENU_PATH],
   ]
 
@@ -162,7 +163,7 @@ describe("G4 — No placement file calls insertNode with 'base.visual-component-
 
 describe("G5 — No placement file calls addNodeToVc with 'base.visual-component-ref' directly (Phase 4)", () => {
   const FILES: [string, string][] = [
-    ['ModulePickerDropdown.tsx', PICKER_PATH],
+    ['useInsertInserterItem.ts', PICKER_PATH],
     ['LayerNodeContextMenu.tsx', CONTEXT_MENU_PATH],
   ]
 

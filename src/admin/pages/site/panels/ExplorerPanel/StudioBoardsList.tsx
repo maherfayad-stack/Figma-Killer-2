@@ -24,7 +24,7 @@
  * height, never squish individual rows.
  *
  * Adding a FRAME (curating a page onto the active board) is a separate
- * action, homed in `StudioPagesTree`'s section header (`AddFramePicker`) —
+ * action, homed in `StudioPagesTree`'s section header (`AddPagePicker`) —
  * see that component's doc.
  */
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'

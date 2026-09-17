@@ -11,7 +11,7 @@
  * deleted is silently skipped. Membership is managed by `boardSlice`'s
  * `addFrame` / `seedFramesForActiveBoard` / `removeFrameById` — this component
  * only reads `board.frames`, it never invents a page that isn't on the list
- * (see `AddFramePicker` for adding one, and each frame header's right-click
+ * (see `AddPagePicker` for adding one, and each frame header's right-click
  * "Remove from board" for removing one).
  *
  * Position: every `BoardFrame` on the list carries a saved `x`/`y` (assigned
@@ -20,7 +20,7 @@
  * (boardSlice).
  *
  * Empty state: a board with zero frames (e.g. a freshly-created board) shows
- * a centered card instead of a blank canvas, with its own `AddFramePicker` so
+ * a centered card instead of a blank canvas, with its own `AddPagePicker` so
  * the first frame is one click away.
  *
  * Per-frame content: each frame wraps its `BreakpointFrame` in a
@@ -140,8 +140,7 @@ import { useEditorStore, lookupCanvasPageById } from '@site/store/store'
 import { selectActiveBoardFrames, selectHasActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Page } from '@core/page-tree'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
-import { AddFramePicker } from './AddFramePicker'
-import { NewPageButton } from './NewPageButton'
+import { AddPagePicker } from './AddPagePicker'
 import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from '@core/studio-board'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
 import { computeHotFrameIds, LIVE_FRAME_POOL_SIZE } from './liveFramePool'
@@ -294,8 +293,7 @@ export function BoardFramesLayer() {
           <p className={styles.emptyStateTitle}>No screens on this board yet</p>
           <p className={styles.emptyStateBody}>Create a new page, or add an existing one to start laying out this flow.</p>
           <div className={styles.emptyStateActions}>
-            <NewPageButton />
-            <AddFramePicker />
+            <AddPagePicker label="Add page" />
           </div>
         </div>
       ) : (

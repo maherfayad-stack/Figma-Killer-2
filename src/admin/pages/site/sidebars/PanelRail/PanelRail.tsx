@@ -4,6 +4,7 @@ import type { LeftSidebarPanelId } from '@site/store/slices/uiSlice'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { CommentBubbleIcon } from '@ui/components/InspectorIcons'
 import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
+import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
@@ -55,6 +56,15 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     label: 'Explorer',
     icon: DatabaseSolidIcon,
     iconName: 'database-solid',
+    group: 'navigate',
+  },
+  // Assets — the library you insert FROM, next to the explorer you navigate
+  // with. Both are "find the thing", which is why they share the accent.
+  {
+    id: 'assets',
+    label: 'Assets',
+    icon: BoxStackSolidIcon,
+    iconName: 'box-stack-solid',
     group: 'navigate',
   },
   {
@@ -119,6 +129,7 @@ export function PanelRail({
   railOnly = false,
 }: PanelRailProps) {
   const explorerOpen = useEditorStore((s) => s.explorerPanelOpen)
+  const assetsOpen = useEditorStore((s) => s.assetsPanelOpen)
   const selectorsOpen = useEditorStore((s) => s.selectorsPanelOpen)
   const frameworkOpen = useEditorStore((s) => s.frameworkPanelOpen)
   const dependenciesOpen = useEditorStore((s) => s.dependenciesPanelOpen)
@@ -146,6 +157,7 @@ export function PanelRail({
 
   const panelOpenById = {
     explorer: explorerOpen,
+    assets: assetsOpen,
     agent: agentOpen,
     selectors: selectorsOpen,
     framework: frameworkOpen,
