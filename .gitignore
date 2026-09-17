@@ -157,5 +157,12 @@ studio-workspace/*/CLAUDE.md
 # accepts it; generated fresh and `rmSync`'d by the fixture's own `cleanup()`.
 studio-workspace/__bench-live-synth/
 
+# `tests/e2e/studio-feel.e2e.ts`'s ephemeral copy of `studio-workspace/test4`.
+# That spec presses Ctrl+D, which writes to the project's real `.tsx`, so it
+# never opens `test4` itself. Same containment reasoning as the fixture above:
+# it must sit under `studio-workspace/` or `resolveProjectDir` 404s it.
+# Created in `beforeAll`, removed in `afterAll`.
+studio-workspace/__e2e-studio-feel/
+
 # Playwright/E2E run output — generated, not source
 test-results/
