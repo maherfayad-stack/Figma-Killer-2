@@ -98,6 +98,7 @@ describe('RadiusCluster (Measures) — corner radius', () => {
         }}
         currentStyles={{}}
         onChange={noop}
+        onChangeMany={noopMany}
       />,
     )
     collapseCluster('radius')

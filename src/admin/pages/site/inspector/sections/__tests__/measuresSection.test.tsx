@@ -227,7 +227,12 @@ describe('MeasuresSection — constraint writes', () => {
     mountPositionedPair({ position: 'absolute', left: '10px', right: '20px', width: '50px' })
     render(<MeasuresSection />)
 
-    const before = useEditorStore.getState()._historyPast.length
+    // A deterministic baseline: the shared store's past stack is capped
+    // (`MAX_HISTORY`) and coalesces bursts, so "one more entry" is only
+    // measurable from a known-empty stack.
+    useEditorStore.setState({ _historyPast: [], _historyCoalesceKey: null } as Parameters<
+      typeof useEditorStore.setState
+    >[0])
     pickConstraint('X constraint', 'Left and right')
 
     // Both insets land, the size that would fight them is cleared. The exact
@@ -238,7 +243,7 @@ describe('MeasuresSection — constraint writes', () => {
     expect(styles?.left).toBe('10px')
     expect(styles?.right).toBeDefined()
     expect(styles?.width).toBeUndefined()
-    expect(useEditorStore.getState()._historyPast.length).toBe(before + 1)
+    expect(useEditorStore.getState()._historyPast.length).toBe(1)
   })
 
   it('a stretched axis shows an editable field for BOTH of its insets', () => {
@@ -313,7 +318,9 @@ function noop() {}
 type RadiusProps = ComponentProps<typeof RadiusCluster>
 
 function renderRadius(overrides: Partial<RadiusProps> = {}) {
-  return render(<RadiusCluster storedStyles={{}} currentStyles={{}} onChange={noop} {...overrides} />)
+  return render(
+    <RadiusCluster storedStyles={{}} currentStyles={{}} onChange={noop} onChangeMany={noop} {...overrides} />,
+  )
 }
 
 function radiusInput(id: string): HTMLInputElement {
@@ -371,8 +378,8 @@ describe('MeasuresSection — radius cluster (RadiusCluster)', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('linked (uniform corners): editing the collapsed field writes all four corner keys', () => {
-    const calls: Array<[string, unknown]> = []
+  it('linked: editing the collapsed field writes the `border-radius` SHORTHAND and clears the longhands', () => {
+    const patches: Array<Record<string, unknown>> = []
     renderRadius({
       storedStyles: {
         borderTopLeftRadius: '4px',
@@ -380,20 +387,24 @@ describe('MeasuresSection — radius cluster (RadiusCluster)', () => {
         borderBottomRightRadius: '4px',
         borderBottomLeftRadius: '4px',
       },
-      onChange: (p, v) => calls.push([String(p), v]),
+      onChangeMany: (patch) => patches.push(patch),
     })
     setRadiusExpanded(false)
 
     editRadius('all', '10px')
 
-    expect(calls).toContainEqual(['borderTopLeftRadius', '10px'])
-    expect(calls).toContainEqual(['borderTopRightRadius', '10px'])
-    expect(calls).toContainEqual(['borderBottomRightRadius', '10px'])
-    expect(calls).toContainEqual(['borderBottomLeftRadius', '10px'])
-    expect(calls).toHaveLength(4)
+    expect(patches).toEqual([
+      {
+        borderRadius: '10px',
+        borderTopLeftRadius: null,
+        borderTopRightRadius: null,
+        borderBottomRightRadius: null,
+        borderBottomLeftRadius: null,
+      },
+    ])
   })
 
-  it('unlinked (mixed corners): editing one expanded corner writes only that key', () => {
+  it('unlinked (mixed corners): editing one expanded corner writes only that longhand', () => {
     const calls: Array<[string, unknown]> = []
     renderRadius({
       storedStyles: {
@@ -409,6 +420,48 @@ describe('MeasuresSection — radius cluster (RadiusCluster)', () => {
     editRadius('TopRight', '12px')
 
     expect(calls).toEqual([['borderTopRightRadius', '12px']])
+  })
+
+  it('reads a stored `border-radius` shorthand back into the four corners', () => {
+    renderRadius({ storedStyles: { borderRadius: '4px 8px' } })
+
+    setRadiusExpanded(false)
+    expect(radiusInput('all').value).toBe('4px 8px')
+
+    setRadiusExpanded(true)
+    expect(radiusInput('TopLeft').value).toBe('4px')
+    expect(radiusInput('TopRight').value).toBe('8px')
+    expect(radiusInput('BottomRight').value).toBe('4px')
+    expect(radiusInput('BottomLeft').value).toBe('8px')
+  })
+
+  it('unlinking a shorthand materialises all four longhands in ONE patch and drops the shorthand', () => {
+    const patches: Array<Record<string, unknown>> = []
+    renderRadius({ storedStyles: { borderRadius: '4px 8px' }, onChangeMany: (patch) => patches.push(patch) })
+    setRadiusExpanded(true)
+
+    editRadius('TopLeft', '12px')
+
+    expect(patches).toEqual([
+      {
+        borderRadius: null,
+        borderTopLeftRadius: '12px',
+        borderTopRightRadius: '8px',
+        borderBottomRightRadius: '4px',
+        borderBottomLeftRadius: '8px',
+      },
+    ])
+  })
+
+  it('refuses to split an elliptical shorthand — the corner fields disable with the reason', () => {
+    renderRadius({ storedStyles: { borderRadius: '12px 4px / 8px 2px' } })
+
+    setRadiusExpanded(false)
+    expect(radiusInput('all').value).toBe('12px 4px / 8px 2px')
+
+    setRadiusExpanded(true)
+    expect(radiusInput('TopLeft').disabled).toBe(true)
+    expect(screen.getAllByTitle(/elliptical/i).length).toBe(4)
   })
 })
 

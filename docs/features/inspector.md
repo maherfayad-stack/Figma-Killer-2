@@ -260,6 +260,11 @@ stroke sides cannot drift apart.
 - The toggle carries `pressed` while expanded and is persisted in
   `editorPreferences` per cluster id, because the panel remounts on every
   selection change.
+- `collapsedIcon` / `expandedIcon` override the default 2×2 grid glyph per
+  state. Radius passes a chain link while collapsed and the grid while
+  expanded, because for radius the toggle really is Figma's **link** — it
+  decides which declaration is written, not only how many fields are drawn
+  (G5).
 
 ### §3.4 `AddablePropertyField` — used by G2
 
@@ -400,6 +405,22 @@ an `ExpandableFieldCluster`, a droplet button in the header opening a grouped
 `display: none`, which is the layer tree's different hide (**G5.4**). Corner
 smoothing is skipped, and its icon left out rather than filled with an
 invention.
+
+- **G5.5 — The radius link writes the shorthand (P9).** The cluster's toggle is
+  a chain link, and it chooses the *declaration*: **linked** writes
+  `border-radius: 12px` and clears the four longhands, **unlinked** writes the
+  four longhands and clears the shorthand. Never both — a shorthand and a
+  longhand in one rule resolve by source order, which a property bag does not
+  model. Before P9 the linked field wrote four longhands regardless, so a
+  hand-written `border-radius: 12px` came back as four lines the first time
+  anything touched it.
+
+  Unlinking converts from the parsed shorthand (`borderRadiusShorthand.ts`,
+  CSS's own 1/2/3/4-component expansion), in one patch, so no corner is
+  invented and no measurement is needed. That module **refuses** three shapes
+  — the elliptical `/` form, a value containing a function call, and more than
+  four components — and a refused shorthand keeps its text in the collapsed
+  field while the four corner fields disable with the reason.
 
 ### G6 — Fill: a real colour picker and a fill list (F13–F15)
 

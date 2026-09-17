@@ -91,6 +91,15 @@ export interface ExpandableFieldClusterProps {
   expandLabel: string
   /** Toggle's aria-label while expanded — names the collapse action, e.g. "Collapse to horizontal and vertical padding". */
   collapseLabel: string
+  /**
+   * Toggle glyph while COLLAPSED. Defaults to the 2×2 grid mark ("split this
+   * into cells"). A cluster whose collapsed state is genuinely one value for
+   * every side — corner radius — passes a chain link instead, so the button
+   * reads as Figma's link toggle rather than as a generic expander.
+   */
+  collapsedIcon?: ReactNode
+  /** Toggle glyph while EXPANDED. Defaults to the same 2×2 grid mark. */
+  expandedIcon?: ReactNode
   className?: string
 }
 
@@ -101,6 +110,8 @@ export function ExpandableFieldCluster({
   linked,
   expandLabel,
   collapseLabel,
+  collapsedIcon,
+  expandedIcon,
   className,
 }: ExpandableFieldClusterProps) {
   const [isExpanded, setIsExpanded] = useState<boolean>(() => readStickyExpanded(id) ?? !linked)
@@ -128,6 +139,7 @@ export function ExpandableFieldCluster({
 
   const fields = isExpanded ? expanded : collapsed
   const label = isExpanded ? collapseLabel : expandLabel
+  const icon = (isExpanded ? expandedIcon : collapsedIcon) ?? <Grid2x22SolidIcon size={14} aria-hidden="true" />
 
   return (
     <div className={cn(styles.root, className)} data-testid={`expandable-field-cluster-${id}`}>
@@ -154,7 +166,7 @@ export function ExpandableFieldCluster({
         data-testid={`expandable-field-cluster-${id}-toggle`}
         onClick={handleToggle}
       >
-        <Grid2x22SolidIcon size={14} aria-hidden="true" />
+        {icon}
       </Button>
     </div>
   )

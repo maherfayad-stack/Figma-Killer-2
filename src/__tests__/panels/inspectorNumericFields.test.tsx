@@ -226,30 +226,36 @@ describe('fontSize', () => {
 // ---------------------------------------------------------------------------
 
 describe('corner radius', () => {
+  function noop() {}
+
   function renderRadius(
-    onChange: (p: keyof CSSPropertyBag, v: string | number | undefined) => void,
+    onChangeMany: (patch: Record<string, string | number | null>) => void,
     stored: Record<string, unknown> = {},
   ) {
-    return render(<RadiusCluster storedStyles={stored} currentStyles={{}} onChange={onChange} />)
+    return render(
+      <RadiusCluster storedStyles={stored} currentStyles={{}} onChange={noop} onChangeMany={onChangeMany} />,
+    )
   }
 
-  it('the linked field writes all four corners with a coerced value', () => {
-    const onChange = mock((_p: keyof CSSPropertyBag, _v: string | number | undefined) => {})
-    renderRadius(onChange)
+  const LINKED_CLEARS = {
+    borderTopLeftRadius: null,
+    borderTopRightRadius: null,
+    borderBottomRightRadius: null,
+    borderBottomLeftRadius: null,
+  }
+
+  it('the linked field writes the shorthand with a coerced value', () => {
+    const onChangeMany = mock((_patch: Record<string, string | number | null>) => {})
+    renderRadius(onChangeMany)
 
     typeAndBlur(screen.getByLabelText('Corner radius, all corners'), '12')
 
-    expect(onChange.mock.calls).toEqual([
-      ['borderTopLeftRadius', '12px'],
-      ['borderTopRightRadius', '12px'],
-      ['borderBottomRightRadius', '12px'],
-      ['borderBottomLeftRadius', '12px'],
-    ])
+    expect(onChangeMany.mock.calls).toEqual([[{ borderRadius: '12px', ...LINKED_CLEARS }]])
   })
 
   it('the linked field scrubs, clamped at zero', () => {
-    const onChange = mock((_p: keyof CSSPropertyBag, _v: string | number | undefined) => {})
-    renderRadius(onChange, {
+    const onChangeMany = mock((_patch: Record<string, string | number | null>) => {})
+    renderRadius(onChangeMany, {
       borderTopLeftRadius: '4px',
       borderTopRightRadius: '4px',
       borderBottomRightRadius: '4px',
@@ -258,8 +264,8 @@ describe('corner radius', () => {
 
     pointerDrag(screen.getByTestId('measures-radius-all-label'), 0, -40)
 
-    expect(onChange).toHaveBeenLastCalledWith('borderBottomLeftRadius', '0px')
-    expect(onChange.mock.calls.every(([, value]) => value === '0px')).toBe(true)
+    expect(onChangeMany).toHaveBeenLastCalledWith({ borderRadius: '0px', ...LINKED_CLEARS })
+    expect(onChangeMany.mock.calls.every(([patch]) => patch.borderRadius === '0px')).toBe(true)
   })
 })
 
