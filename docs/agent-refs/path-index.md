@@ -344,7 +344,7 @@ source) where a plausible-looking change is how a real bug ships ·
 
 | Path | What it owns |
 |---|---|
-| 🟡 `src/__tests__/architecture/` | 107 gate tests (+ `pathHelpers.ts`), catalogued in `docs/reference/architecture-tests.md`. **If you change a structural rule, change its gate here.** |
+| 🟡 `src/__tests__/architecture/` | 122 gate tests (+ `pathHelpers.ts`), catalogued in `docs/reference/architecture-tests.md`. **If you change a structural rule, change its gate here.** |
 | 🟢 `src/__tests__/architecture/alm-design-system-fresh.test.ts` | The vendored design system's committed artefacts match their source. `dist/` via `BUILD_HASH` (a full Vite build is too slow for `bun test`); the two JSON files byte-for-byte. |
 | 🟢 `src/__tests__/architecture/no-alm-npm-specifier.test.ts` | The retired `@alm-design/design-system` npm stays retired: nothing under `src/`/`server/`/`scripts/` IMPORTS it, no manifest or `bun.lock` declares it, only `designSystemMigrate.ts` spells it in code (the rest is honest prose in comments), and no live doc shows it as an import example. |
 | 🟢 `src/__tests__/architecture/assets-search-coverage.test.ts` | Every palette-visible `alm.*`/`base.*` module has a real description and ≥ 3 keywords, every manifest component has a group, and a query→module probe table (`header` → `alm.Navbar`, …). Pure data; DS-4's `rankAssets` test reuses the same table. |

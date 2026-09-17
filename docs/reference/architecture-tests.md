@@ -199,6 +199,7 @@ Studio's own in-canvas agent (`server/ai/tools/studio/`) and the `studio_*` MCP 
 | `ai-handlers-capability-gated.test.ts`        | Every handler under `server/ai/handlers/` calls `requireCapability` or `requireAnyCapability` before doing work. Prevents unauthenticated access to AI endpoints. |
 | `ai-credentials-never-leak.test.ts`           | AI handler response bodies do not contain credential ciphertext or raw `apiKey` fields. Handlers must project through `toCredentialView()` before serialising a `CredentialRecord`. |
 | `ai-tools-typebox-only.test.ts`               | Every file under `server/ai/tools/` defines schemas with TypeBox, not Zod. Tool files satisfy the gate either by using TypeBox directly or by importing from `@core/ai` (the shared schema leaf). |
+| `failed-tool-result-drops-data.test.ts`       | All four renderers that hand a tool result to a model (`anthropic.ts`, `http/chatCompletions.ts`, `responses-shared.ts`, `mcp/server.ts`) reduce a FAILED result to `output.error` and drop `output.data`. That premise is what makes `duplicateCallOutput`'s and `toolRefusal`'s deliberate double-carry correct rather than redundant; when it stops holding, the failure names the serialised copy to delete. |
 
 See [docs/features/agent.md](../features/agent.md).
 
