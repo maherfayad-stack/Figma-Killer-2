@@ -36,6 +36,23 @@
  * a Tier-0 finding for the same failure would — `isModuleResolutionMessage`
  * (shared with the portal injector and with `runtime.ts` itself) is what makes
  * "the specifier did not resolve" read alike on both paths.
+ *
+ * ## The parent's own rate bound (`sec-06`, `sec-10`)
+ *
+ * `ErrorMessageSchema` bounds the SIZE of each field and
+ * `canvasDiagnosticsBuffer.ts` bounds the COUNT of distinct problems, both on
+ * this side. The RATE was bounded only at the sender (`runtimeErrorTaps.ts`:
+ * 10/second, 50 per document) — and the sender is exactly the thing a
+ * same-realm script co-resident with `runtime.ts` replaces. Every accepted
+ * record costs the trusted parent a `publishScope`: a copy-and-sort of up to
+ * `MAX_DISTINCT_ENTRIES` entries plus a `useSyncExternalStore` notification,
+ * for one cheap cross-process `postMessage`. A flood of forged REPEATS of a
+ * single message rides that amplification indefinitely — a repeat bumps a
+ * count and re-publishes rather than being dropped as a duplicate, so the
+ * distinct-entry cap never engages.
+ *
+ * So {@link admitBridgeDiagnostic} caps the rate here too, independently of
+ * anything the frame promises about itself.
  */
 import { useEffect } from 'react'
 import { isModuleResolutionMessage, type RuntimeErrorKind } from '@core/studio-runtime'
@@ -89,6 +106,47 @@ function classify(kind: RuntimeErrorKind, message: string): { kind: CanvasDiagno
 }
 
 /**
+ * Records per second this side will accept from one frame, deliberately well
+ * ABOVE the honest sender's own 10/second.
+ *
+ * Matching the sender exactly would drop honest findings: the two windows are
+ * started by different clocks, so a frame that legitimately posts its full 10
+ * can straddle a receiver window and present 20 inside one of them. And the
+ * sender's LIFETIME cap (50 per document) resets on every frame navigation
+ * while this hook's budget does not — a cross-origin frame keeps one stable
+ * `WindowProxy` across reloads — so a lifetime cap here would silently stop
+ * reporting a frame the user had merely reloaded a few times. A pure rate cap
+ * with 6x headroom is never reached by an honest frame, and still bounds a
+ * forged flood to a fixed, small amount of parent work per second.
+ */
+export const MAX_BRIDGE_DIAGNOSTICS_PER_SECOND = 60
+const BRIDGE_DIAGNOSTIC_WINDOW_MS = 1000
+
+/**
+ * A fixed-window rate gate, one per mounted frame. Answers `false` for anything
+ * past the budget; the caller drops it without recording, which is the right
+ * answer for traffic that by construction is either forged or a frame claiming
+ * to have observed far more than it honestly could.
+ *
+ * `now` is injectable so the bound can be tested as the security property it is
+ * rather than through a mounted component with a real clock.
+ */
+export function admitBridgeDiagnostic(now: () => number = Date.now): () => boolean {
+  let windowStart = 0
+  let inWindow = 0
+  return () => {
+    const at = now()
+    if (at - windowStart >= BRIDGE_DIAGNOSTIC_WINDOW_MS) {
+      windowStart = at
+      inWindow = 0
+    }
+    if (inWindow >= MAX_BRIDGE_DIAGNOSTICS_PER_SECOND) return false
+    inWindow += 1
+    return true
+  }
+}
+
+/**
  * @param adapter   the frame's adapter — ignored unless it is a bridge one
  *                  (a portal frame collects its own diagnostics from inside).
  * @param scopeKey  the UI subscription key this frame publishes under, so the
@@ -101,7 +159,11 @@ export function useBridgeFrameDiagnostics(adapter: FrameDocumentAdapter | null, 
     const view = frameWindowFor(adapter)
     if (!view) return
     ensureFrameDiagnostics(view, scopeKey)
+    const admit = admitBridgeDiagnostic()
     const unsubscribe = adapter.on('error', (event) => {
+      // Before anything is classified, stored, or published — see "The parent's
+      // own rate bound" in the module doc.
+      if (!admit()) return
       const { kind, code } = classify(event.kind, event.message)
       recordFrameDiagnostic(view, {
         kind,
