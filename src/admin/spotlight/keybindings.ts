@@ -29,6 +29,7 @@
  */
 
 import type { CommandId, CommandShortcut } from './types'
+import { GESTURE_KEYBINDINGS } from './keybindingGestures'
 
 // ─── Key event shape ──────────────────────────────────────────────────────────
 // Subset of KeyboardEvent that both native KeyboardEvent and React.KeyboardEvent<T>
@@ -611,63 +612,7 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // K5 — Alt-hover measurement. A GESTURE, not a chord: holding Alt while the
-  // pointer moves over a node outside the selection draws the distances
-  // between the two boxes (`MeasureLayer.tsx`). No single keystroke can fire
-  // it, so `match` never claims a key and no dispatcher can route to it — the
-  // entry exists so the `?` sheet lists the gesture, which is otherwise
-  // undiscoverable. Appended at the end deliberately: the registry's order is
-  // the sheet's order, and this is the newest canvas affordance.
-  {
-    commandId: 'canvas.measureHover',
-    displayName: 'Measure distance to the hovered element',
-    shortcut: { mac: '⌥+Hover', win: 'Alt+Hover' },
-    match: () => false,
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  // K2 — Alt+drag duplicates. A documented GESTURE, not a keystroke: there is
-  // no `keydown` to match (the modifier is read off the pointer event by
-  // `useCanvasReorderDrag` for elements and `BoardFrameView` for frames), so
-  // `match` is constant-false and no dispatcher will ever fire it.
-  //
-  // It lives here anyway because this array IS the `?` sheet
-  // (`HelpKeybindingsList` renders exactly it), and a modifier nobody can
-  // discover is a feature nobody has. Documenting it in a second place instead
-  // would fork the single source of truth
-  // (`keybindings-registry-single-source.test.ts`).
-  {
-    commandId: 'canvas.altDragDuplicate',
-    displayName: 'Drag a copy instead of moving (elements and frames)',
-    shortcut: { mac: '⌥ + drag', win: 'Alt + drag' },
-    match: () => false,
-    scope: 'canvas',
-  },
-
-  // K6 — the second documented gesture, same never-matching shape and same
-  // reason as the one above. ⌘/Ctrl while dragging places an element by
-  // coordinates instead of reordering it; it refuses, with a one-click
-  // remedy, when the container is `position: static`.
-  {
-    commandId: 'canvas.freeDragPosition',
-    displayName: 'Drag to a position instead of reordering (needs a positioned parent)',
-    shortcut: { mac: '⌘ + drag', win: 'Ctrl + drag' },
-    match: () => false,
-    scope: 'canvas',
-  },
-
-  // Shift constrains a drag to one axis, and Escape abandons it. Both are
-  // real keys, but neither is dispatched — the drag session that owns the
-  // pointer reads them itself, because a cancel must be handled by that
-  // session and by nothing else.
-  {
-    commandId: 'canvas.dragAxisLock',
-    displayName: 'Constrain a drag to one axis',
-    shortcut: { mac: '⇧ + drag', win: 'Shift + drag' },
-    match: () => false,
-    scope: 'canvas',
-  },
+  ...GESTURE_KEYBINDINGS,
 ]
 
 /** Board units one arrow press moves a selected frame, and the Shift step. */
