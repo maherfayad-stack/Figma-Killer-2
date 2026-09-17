@@ -45,10 +45,6 @@
     overflow: hidden;
 }
 
-.previewGlyph {
-    color: var(--text-subtle);
-}
-
 .name {
     font-size: var(--text-2xs);
     font-weight: 600;

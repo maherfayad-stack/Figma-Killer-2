@@ -1,0 +1,53 @@
+/* AssetPreview — the live-render box on an asset card.
+ *
+ * Every rule here is LIGHT-DOM chrome: the frame, the scale, the neutral
+ * fallbacks. The component itself is styled by the design system's own sheet,
+ * adopted into the host's shadow root (`designSystemPreviewSheet`), which is
+ * why none of these class names ever need to reach it. */
+
+.frame {
+    /* Default for the JS-driven scale below, so `var()` never needs a
+       fallback and a card that has not measured yet draws at natural size. */
+    --asset-scale: 1;
+
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    /* The card is the click target; the render inside it is a picture. */
+    pointer-events: none;
+}
+
+.host {
+    display: inline-block;
+    /* Scaled from the centre — the flex parent centres the unscaled box, and
+       a centre origin keeps it centred at any scale. */
+    transform: scale(var(--asset-scale));
+    transform-origin: center center;
+    /* Natural size: a Chip stays chip-sized instead of being blown up to fill
+       the card. `.frame` only ever scales DOWN (see `AssetPreview.tsx`). */
+    max-width: none;
+    white-space: nowrap;
+}
+
+/* Marks for the two kinds that are node TREES, not components. */
+.glyph {
+    color: var(--text-subtle);
+}
+
+/* The honest Tier-0 state for a package component Studio could not bundle. */
+.neutral {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4xs);
+    color: var(--text-subtle);
+}
+
+.neutralLabel {
+    font-size: var(--text-3xs);
+    color: var(--text-subtle);
+    text-align: center;
+}
