@@ -448,11 +448,22 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     that is exactly how the `frameId` branch slipped past the first fix.
     `src/__tests__/store/selectCanvasPageFor.test.ts` is the gate.
 12. **`studio-workspace/*` is user data.** Never `rm -rf` a project directory, and
-    never write outside a workspace root without a containment guard.
+    never write outside a workspace root without a containment guard. It is also
+    **gitignored** except for a named sample list (`__canonical-fixture/`,
+    `test4/`) — see the block in `.gitignore`. Adding a project to that list
+    means committing someone's repository into this one.
 13. **Do not run browser/e2e tests to validate UI changes.** The human dogfoods
     UI. Run static gates (`bun test`, `bun run build`, `bun run lint`) and hand
     off with a "needs human dogfood" note.
 14. **Bun, not Node/npm/pnpm/yarn.** Lockfile is `bun.lock`.
+15. **Generated artefacts are compared byte-for-byte, so line endings matter.**
+    `.gitattributes` forces LF for `vendor/`, the ALM manifest, the
+    studio-runtime bundles and the QuickJS bootstrap. Without it a Windows CRLF
+    checkout makes all four `*:check` gates permanently red, and `bun run
+    alm:sync` *overwrites* the real design-system manifest with 39 propless
+    components — `vendorDocs.ts` matches headings with `/^(#{1,6})\s+(.*)$/`,
+    and JavaScript's `.` does not match `\r`. Never add a `-text` or CRLF rule
+    for those paths.
 
 ---
 
@@ -467,6 +478,11 @@ bun run lint           # eslint incl. react-compiler rules
 bun test src/__tests__/architecture   # gates only, fast
 bun run bench          # perf benchmarks
 ```
+
+`bun run dev` preflights itself (`scripts/lib/devPreflight.ts`): it installs when
+`node_modules/` is missing a `file:` dependency or `bun.lock` moved, and reports
+any stale generated artefact with the `bun run <x>:sync` that fixes it — in the
+background, so it never delays the server.
 
 **Verification is an end-of-task gate, not a per-edit ritual.** Run the three
 (`build`, `test`, `lint`) once, at the end. Pre-existing failures from parallel
