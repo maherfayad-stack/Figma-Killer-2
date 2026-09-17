@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
-import { useRef, useState } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useRef, useState, type ReactNode } from 'react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Button } from '@ui/components/Button'
 import { ColorPickerPopover, type ColorPickerToken } from './ColorPickerPopover'
 
@@ -56,6 +56,7 @@ function Harness({
   appliedTokenId,
   recentColors,
   contrastAgainst,
+  notice,
 }: {
   value: string
   onChange: (next: string) => void
@@ -63,6 +64,7 @@ function Harness({
   appliedTokenId?: string
   recentColors?: ReadonlyArray<string>
   contrastAgainst?: string
+  notice?: ReactNode
 }) {
   const [open, setOpen] = useState(true)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -80,6 +82,7 @@ function Harness({
           appliedTokenId={appliedTokenId}
           recentColors={recentColors}
           contrastAgainst={contrastAgainst}
+          notice={notice}
         />
       )}
     </>
@@ -272,5 +275,41 @@ describe('ColorPickerPopover — eyedropper feature detection', () => {
     } finally {
       win.EyeDropper = original
     }
+  })
+})
+
+// `STATE.md` panel-33 — `notice` is an opaque banner slot for a caller-owned
+// fact (e.g. `SourceConstraintNotice`'s "declared elsewhere"), rendered above
+// the picker's own tabs. This primitive never composes or inspects it — see
+// the prop's own doc for why (a `src/ui/` component must not know what a
+// write target is).
+describe('ColorPickerPopover — notice slot', () => {
+  it('renders an opaque caller-supplied notice above the picker', () => {
+    render(
+      <Harness value="#3355ff" onChange={() => {}} notice={<p data-testid="my-notice">declared elsewhere</p>} />,
+    )
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByTestId('my-notice').textContent).toBe('declared elsewhere')
+  })
+
+  it('renders nothing extra when no notice is supplied', () => {
+    render(<Harness value="#3355ff" onChange={() => {}} />)
+    expect(screen.queryByTestId('my-notice')).toBeNull()
+  })
+})
+
+// The honesty trap named in the work order: opening the picker on a value —
+// resolved from a token the caller couldn't preview directly — and closing
+// it again without touching anything must never fire `onChange`. Nothing in
+// this component calls `onChange` on mount; every commit path requires an
+// explicit user interaction (a drag release, a blurred field, a token pick).
+describe('ColorPickerPopover — never rewrites on open/close alone', () => {
+  it('does not call onChange from mounting or closing without any interaction', async () => {
+    const onChange = mock((_next: string) => {})
+    render(<Harness value="rgb(248, 249, 249)" onChange={onChange} />)
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(onChange).not.toHaveBeenCalled()
   })
 })

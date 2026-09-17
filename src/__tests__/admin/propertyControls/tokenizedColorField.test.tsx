@@ -145,6 +145,84 @@ describe('TokenizedColorField — swatch opens the real colour picker, not the O
   })
 })
 
+describe('TokenizedColorField — resolved-colour swatch (`STATE.md` panel-33)', () => {
+  it('paints the swatch transparent (unresolved) for a var() reference outside the framework catalogue, with no `resolvedValue` supplied', () => {
+    render(
+      <TokenizedColorField
+        value="var(--text-base-default)"
+        inputLabel="Text colour"
+        swatchLabel="Text colour swatch"
+        onTextChange={noop}
+        onTextBlur={noop}
+        onSwatchChange={noop}
+        onTokenSelect={noop}
+      />,
+    )
+
+    const swatchGlyph = screen.getByRole('button', { name: 'Text colour swatch' }).querySelector('span')
+    expect(swatchGlyph?.style.getPropertyValue('--color-token-option-value')).toBe('var(--text-base-default)')
+  })
+
+  it("paints the swatch with `resolvedValue` — the frame's own computed truth — for that same unresolved token", () => {
+    render(
+      <TokenizedColorField
+        value="var(--text-base-default)"
+        inputLabel="Text colour"
+        swatchLabel="Text colour swatch"
+        resolvedValue="rgb(248, 249, 249)"
+        onTextChange={noop}
+        onTextBlur={noop}
+        onSwatchChange={noop}
+        onTokenSelect={noop}
+      />,
+    )
+
+    const swatchGlyph = screen.getByRole('button', { name: 'Text colour swatch' }).querySelector('span')
+    expect(swatchGlyph?.style.getPropertyValue('--color-token-option-value')).toBe('rgb(248, 249, 249)')
+    // The picker itself opens on the RESOLVED colour, never the raw `var()`
+    // string it can't preview.
+    fireEvent.click(screen.getByRole('button', { name: 'Text colour swatch' }))
+    expect(screen.getByRole('textbox', { name: 'Text colour value' })).toHaveProperty('value', 'rgb(248, 249, 249)')
+  })
+
+  it('ignores `resolvedValue` for a literal colour the field can already parse', () => {
+    render(
+      <TokenizedColorField
+        value="#112233"
+        inputLabel="Text colour"
+        swatchLabel="Text colour swatch"
+        resolvedValue="rgb(9, 9, 9)"
+        onTextChange={noop}
+        onTextBlur={noop}
+        onSwatchChange={noop}
+        onTokenSelect={noop}
+      />,
+    )
+
+    const swatchGlyph = screen.getByRole('button', { name: 'Text colour swatch' }).querySelector('span')
+    expect(swatchGlyph?.style.getPropertyValue('--color-token-option-value')).toBe('#112233')
+  })
+
+  it('threads an opaque `notice` node into the picker it opens', () => {
+    render(
+      <TokenizedColorField
+        value="var(--text-base-default)"
+        inputLabel="Text colour"
+        swatchLabel="Text colour swatch"
+        resolvedValue="rgb(248, 249, 249)"
+        notice={<p data-testid="my-notice">declared elsewhere</p>}
+        onTextChange={noop}
+        onTextBlur={noop}
+        onSwatchChange={noop}
+        onTokenSelect={noop}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Text colour swatch' }))
+    expect(screen.getByTestId('my-notice').textContent).toBe('declared elsewhere')
+  })
+})
+
 describe('TokenizedColorField — WCAG contrast badge (T9)', () => {
   it('renders no badge when contrastAgainst is not supplied', () => {
     setFrameworkColors([brandToken()])
