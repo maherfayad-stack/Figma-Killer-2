@@ -74,6 +74,12 @@ const CANVAS_DIR = join(REPO_ROOT, 'src/admin/pages/site/canvas')
  *     exactly the Tier-2 frames most likely to be broken. Nothing is read
  *     off the window; if it were, a cross-origin SecurityError would say so
  *     immediately.
+ *   - `iframeFrameSurfaceContract.ts`: the handle TYPE the file above
+ *     returns. `contentDocument`/`contentOverlayRoot` are declarations, not
+ *     reach-ins — the fields exist because `IframeFrameSurface` performs the
+ *     one sanctioned reach-in and hands the result back. They are migrating
+ *     to `adapter` field by field; when the last one goes, so does this
+ *     entry.
  *   - Three test files that legitimately assert on the raw DOM a portal-mode
  *     `IframeFrameSurface`/adapter construction actually produced.
  */
@@ -81,6 +87,7 @@ const ALLOWLIST = new Set([
   'src/admin/pages/site/canvas/frameAdapter/PortalFrameAdapter.ts',
   'src/__tests__/canvas/frameAdapter/PortalFrameAdapter.test.ts',
   'src/admin/pages/site/canvas/IframeFrameSurface.tsx',
+  'src/admin/pages/site/canvas/iframeFrameSurfaceContract.ts',
   'src/admin/pages/site/canvas/iframeFrameObservers.ts',
   'src/admin/pages/site/canvas/ModuleSandboxFrame.tsx',
   'src/admin/pages/site/canvas/useBridgeFrameDiagnostics.ts',

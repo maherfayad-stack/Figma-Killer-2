@@ -19,7 +19,7 @@
  * Spread LAST into `KEYBINDINGS`, because the registry's order is the
  * sheet's order and these are the newest canvas affordances.
  */
-import type { KeybindingDefinition } from './keybindings'
+import type { KeybindingDefinition } from './keybindingShape'
 
 export const GESTURE_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // K5 — Alt-hover measurement: the distances between the selection and the
