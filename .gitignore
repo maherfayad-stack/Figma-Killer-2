@@ -11,6 +11,12 @@ node_modules
 dist
 !vendor/pixel-art-icons/dist/
 !vendor/pixel-art-icons/dist/**
+# The vendored design system's `dist/` is a COMMITTED build artefact, same
+# contract as pixel-art-icons above: Studio's admin bundle imports `dist/`
+# (never `src/`), and `alm-design-system-fresh.test.ts` gates it against a
+# rebuild. Produced by `bun run alm:sync`.
+!vendor/alm-design-system/dist/
+!vendor/alm-design-system/dist/**
 dist-ssr
 .worktrees/
 .superpowers/

@@ -21,7 +21,8 @@ import { LinkPropsSchema, type LinkStoredProps } from './props'
 export const LinkModule: ModuleDefinition<LinkStoredProps> = {
   id: 'base.link',
   name: 'Link',
-  description: 'An anchor element.',
+  description: 'An anchor element that navigates to a page or an external URL.',
+  keywords: ['anchor', 'href', 'url', 'navigate', 'hyperlink'],
   category: 'Interactive',
   version: '2.0.0',
   icon: LinkIcon,

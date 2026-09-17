@@ -56,6 +56,7 @@ export const LoopModule: ModuleDefinition<LoopProps> = {
   id: 'base.loop',
   name: 'Loop',
   description: 'Iterate a data source and repeat the child template per item.',
+  keywords: ['repeat', 'map', 'collection', 'iterate', 'list', 'each'],
   category: 'Layout',
   version: '1.0.0',
   icon: BoxStackSolidIcon,

@@ -35,6 +35,17 @@ function intrinsicMod(id: string, category: string, name = id): RegistryModuleFo
   return { ...mod(id, category, name), sourceIntrinsic: () => ({ tag: 'div' }) }
 }
 
+/**
+ * A module spelled in a user's source as an IMPORT — every design-system and
+ * package component. Only the field's presence is read by `moduleAvailability`.
+ * It used to be inferred from `category === 'Design System'`; design-system
+ * modules now carry their purpose group as their category (Navigation,
+ * Actions, …) and the spelling is asked for directly.
+ */
+function importedMod(id: string, category: string, name = id): RegistryModuleForInserter {
+  return { ...mod(id, category, name), sourceImport: { name } }
+}
+
 const PAGE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false }
 const TEMPLATE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: true, hasOutlet: false }
 const VC_CTX: ModuleInsertionContext = { isVCMode: true, activeVcId: 'vc-1', isTemplate: false, hasOutlet: false }
@@ -63,8 +74,8 @@ describe('module inserter model', () => {
       intrinsicMod('base.text', 'Typography', 'Text'),
       mod('base.button', 'Interactive', 'Button'),
       mod('base.loop', 'Layout', 'Loop'),
-      mod('alm.Button', 'Design System', 'Button'),
-      mod('alm.Chip', 'Design System', 'Chip'),
+      importedMod('alm.Button', 'Actions', 'Button'),
+      importedMod('alm.Chip', 'Selection', 'Chip'),
     ]
 
     const pageModeIds = getVisibleModuleItems(modules, PAGE_CTX).map((item) => item.id)

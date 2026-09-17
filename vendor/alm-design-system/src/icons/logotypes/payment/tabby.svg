@@ -1,0 +1,28 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Logos">
+<g id="paymentLogos">
+<g id="Brand=tabby, Variant=Square">
+<g clip-path="url(#clip0_29_409)">
+<rect width="24" height="24" rx="4" fill="#6CFF93"/>
+<g id="Clip path group">
+<mask id="mask0_29_409" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<g id="clip0_1_108">
+<path id="Vector" d="M24 0H0V24H24V0Z" fill="white"/>
+</g>
+</mask>
+<g mask="url(#mask0_29_409)">
+<g id="Group">
+<path id="Vector_2" d="M13.4322 10.469V11.6246H17.3364V14.3978H13.4322C13.4514 15.3608 13.9716 15.7844 15.0306 15.7844C15.6918 15.7844 16.392 15.593 17.3358 15.1526V18.311C16.5588 18.728 15.4662 19.0988 14.1378 19.0964C11.703 19.0922 9.6576 17.8358 9.6576 14.648V14.3978H7.0452L6.8718 11.6246H9.6576V10.469H6.8334L6.66 7.6958H9.6576V5H13.4322V7.6958H17.3364V10.469H13.4322Z" fill="black"/>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_29_409">
+<rect width="24" height="24" rx="4" fill="white"/>
+</clipPath>
+</defs>
+</svg>

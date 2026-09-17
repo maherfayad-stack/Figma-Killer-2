@@ -16,6 +16,7 @@ export const ListModule: ModuleDefinition<ListStoredProps> = {
   id: 'base.list',
   name: 'List',
   description: 'An ordered or unordered list.',
+  keywords: ['bullets', 'ul', 'ol', 'items', 'numbered', 'steps'],
   category: 'Typography',
   version: '2.0.0',
   icon: ListBoxSolidIcon,

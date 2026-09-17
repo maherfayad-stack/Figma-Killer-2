@@ -2,7 +2,7 @@
   "components": [
     {
       "name": "Accolade",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Accolade",
       "isDefaultExport": false,
       "props": [
@@ -44,11 +44,24 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Non-interactive label for standout qualities based on verifiable data, reviews, or awards.",
+      "keywords": [
+        "achievement",
+        "award",
+        "highlight",
+        "praise",
+        "rating",
+        "regular",
+        "show a data backed achievement",
+        "small",
+        "top rated"
+      ],
+      "group": "Feedback"
     },
     {
       "name": "Accordion",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Accordion",
       "isDefaultExport": false,
       "props": [
@@ -83,11 +96,22 @@
           "kind": "string",
           "example": "Accordion Item"
         }
-      ]
+      ],
+      "description": "A titled section that expands to reveal its content on tap.",
+      "keywords": [
+        "collapse",
+        "collapse titled sections of content the user opens selectively",
+        "disclosure",
+        "expand",
+        "faq",
+        "fold",
+        "sections"
+      ],
+      "group": "Lists & cells"
     },
     {
       "name": "ActionSheet",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "ActionSheet",
       "isDefaultExport": false,
       "props": [
@@ -146,11 +170,23 @@
           "kind": "string",
           "example": "A Short Title Is Best"
         }
-      ]
+      ],
+      "description": "A short menu of actions tied to the current item or screen, presented over the content.",
+      "keywords": [
+        "action menu",
+        "android",
+        "context menu",
+        "ios",
+        "menu",
+        "more",
+        "offer a short menu of actions on the current item or screen",
+        "options"
+      ],
+      "group": "Overlays"
     },
     {
       "name": "AdBanner",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "AdBanner",
       "isDefaultExport": false,
       "props": [
@@ -303,11 +339,27 @@
           "kind": "string",
           "example": "Ad title"
         }
-      ]
+      ],
+      "description": "A paid, third-party advertising unit — an advertiser's logo and copy, always marked \"Sponsored\".",
+      "keywords": [
+        "ad",
+        "advert",
+        "desktop",
+        "large",
+        "medium",
+        "mobile",
+        "paid",
+        "promo",
+        "show a paid third party ad marked sponsored",
+        "small",
+        "sponsored",
+        "ممول"
+      ],
+      "group": "Content & cards"
     },
     {
       "name": "AlmosaferLogo",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "AlmosaferLogo",
       "isDefaultExport": false,
       "props": [
@@ -349,11 +401,27 @@
           "kind": "number",
           "example": 132
         }
-      ]
+      ],
+      "description": "The brand identity component.",
+      "keywords": [
+        "almosafer",
+        "app icon",
+        "applogo",
+        "ar",
+        "brand",
+        "colour",
+        "en",
+        "logo",
+        "logomark",
+        "show the almosafer brand logo wordmark or app icon",
+        "white",
+        "wordmark"
+      ],
+      "group": "Brand"
     },
     {
       "name": "Badge",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Badge",
       "isDefaultExport": false,
       "props": [
@@ -378,11 +446,21 @@
           "kind": "string",
           "example": "alert"
         }
-      ]
+      ],
+      "description": "Notification indicator.",
+      "keywords": [
+        "count",
+        "new",
+        "notification dot",
+        "pip",
+        "show a notification count or new pip on an icon",
+        "unread"
+      ],
+      "group": "Feedback"
     },
     {
       "name": "Banner",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Banner",
       "isDefaultExport": false,
       "props": [
@@ -466,11 +544,24 @@
           "kind": "string",
           "example": "Title"
         }
-      ]
+      ],
+      "description": "Inline promotional banner with a tinted background, optional icon visual, and a coupon code pill.",
+      "keywords": [
+        "announcement",
+        "coupon",
+        "featured",
+        "info",
+        "neutral",
+        "offer",
+        "promo",
+        "show a persistent contextual offer with a coupon code",
+        "voucher"
+      ],
+      "group": "Content & cards"
     },
     {
       "name": "BottomActionBar",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "BottomActionBar",
       "isDefaultExport": false,
       "props": [
@@ -551,11 +642,24 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Sticky bottom bar for booking and payment flows.",
+      "keywords": [
+        "checkout bar",
+        "cta bar",
+        "funnel",
+        "payment",
+        "price bar",
+        "starting-price",
+        "sticky cta",
+        "sticky footer",
+        "trigger the main action in a booking flow"
+      ],
+      "group": "Actions"
     },
     {
       "name": "BottomSheet",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "BottomSheet",
       "isDefaultExport": false,
       "props": [
@@ -630,11 +734,26 @@
           "kind": "string",
           "example": "Select seat"
         }
-      ]
+      ],
+      "description": "Modal sheet that slides up from the bottom for contextual content, options, or input the user can browse and dismiss freely.",
+      "keywords": [
+        "android",
+        "drawer",
+        "fullscreen",
+        "ios",
+        "medium",
+        "modal sheet",
+        "present a bottom overlay for contextual content or actions",
+        "sheet",
+        "slide up",
+        "small",
+        "tray"
+      ],
+      "group": "Overlays"
     },
     {
       "name": "Button",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Button",
       "isDefaultExport": false,
       "props": [
@@ -725,11 +844,37 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Buttons trigger actions.",
+      "keywords": [
+        "action",
+        "apple-pay",
+        "confirm",
+        "cta",
+        "default",
+        "destructive",
+        "gpay-card",
+        "gpay-checkout-with",
+        "gpay-pay-with",
+        "gpay-personalized",
+        "medium",
+        "payment",
+        "press",
+        "primary",
+        "primary-inverted",
+        "secondary",
+        "secondary-inverted",
+        "skeleton",
+        "small",
+        "submit",
+        "tap",
+        "trigger a labelled action primary cta supporting destructive or payment"
+      ],
+      "group": "Actions"
     },
     {
       "name": "Callout",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Callout",
       "isDefaultExport": false,
       "props": [
@@ -764,11 +909,24 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Non-interactive label for time-sensitive or dynamic information.",
+      "keywords": [
+        "hint",
+        "info box",
+        "notice",
+        "nudge",
+        "regular",
+        "show time sensitive or dynamic data",
+        "small",
+        "tip",
+        "urgency"
+      ],
+      "group": "Feedback"
     },
     {
       "name": "Cell",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Cell",
       "isDefaultExport": false,
       "props": [
@@ -931,11 +1089,29 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Flexible row-based building block for presenting structured information.",
+      "keywords": [
+        "3d-icon",
+        "chevron",
+        "detail row",
+        "icon",
+        "image",
+        "label value",
+        "list row item",
+        "menu item",
+        "none",
+        "present a row of structured information",
+        "row",
+        "setting",
+        "stepper",
+        "toggle"
+      ],
+      "group": "Lists & cells"
     },
     {
       "name": "Checkbox",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Checkbox",
       "isDefaultExport": false,
       "props": [
@@ -990,11 +1166,22 @@
           "kind": "boolean",
           "example": false
         }
-      ]
+      ],
+      "description": "Control that lets users select one or multiple independent options.",
+      "keywords": [
+        "check",
+        "choice",
+        "let user select multiple options",
+        "multi select",
+        "option",
+        "select",
+        "tick"
+      ],
+      "group": "Selection"
     },
     {
       "name": "Chip",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Chip",
       "isDefaultExport": false,
       "props": [
@@ -1052,11 +1239,23 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "An interactive pill the user taps to filter, select, or open a picker.",
+      "keywords": [
+        "choice",
+        "default",
+        "error",
+        "filter",
+        "let user tap to filter or toggle a choice",
+        "pill",
+        "quick filter",
+        "token"
+      ],
+      "group": "Selection"
     },
     {
       "name": "CircularProgressIndicator",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "CircularProgressIndicator",
       "isDefaultExport": false,
       "props": [
@@ -1097,11 +1296,25 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Indeterminate circular loading spinner.",
+      "keywords": [
+        "activity",
+        "android",
+        "busy",
+        "circular loader",
+        "default",
+        "ios",
+        "large",
+        "loading",
+        "show a single operation is loading",
+        "spinner"
+      ],
+      "group": "Progress"
     },
     {
       "name": "Dialog",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Dialog",
       "isDefaultExport": false,
       "props": [
@@ -1210,11 +1423,25 @@
           "kind": "string",
           "example": "A short title is best"
         }
-      ]
+      ],
+      "description": "A modal window that interrupts the user to deliver critical information or ask for a single decision.",
+      "keywords": [
+        "alert",
+        "android",
+        "block the user with a critical decision or confirmation",
+        "confirm",
+        "ios",
+        "modal",
+        "popup",
+        "prompt",
+        "side-by-side",
+        "stacked"
+      ],
+      "group": "Overlays"
     },
     {
       "name": "Expander",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Expander",
       "isDefaultExport": false,
       "props": [
@@ -1255,11 +1482,22 @@
           "required": false,
           "kind": "handler"
         }
-      ]
+      ],
+      "description": "Inline \"Show more / Show less\" toggle for revealing additional items in a truncated list.",
+      "keywords": [
+        "collapse",
+        "disclosure",
+        "read more",
+        "show a long list with a show more control",
+        "show more",
+        "truncate",
+        "عرض المزيد"
+      ],
+      "group": "Lists & cells"
     },
     {
       "name": "Footer",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Footer",
       "isDefaultExport": false,
       "props": [
@@ -1488,11 +1726,23 @@
           "kind": "number",
           "example": 56
         }
-      ]
+      ],
+      "description": "The closing block of a page.",
+      "keywords": [
+        "bottom",
+        "close a web page with brand links contact app promo payments and legal",
+        "contact",
+        "desktop",
+        "legal",
+        "links",
+        "pwa",
+        "site footer"
+      ],
+      "group": "Navigation"
     },
     {
       "name": "GlassButton",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "GlassButton",
       "isDefaultExport": false,
       "props": [
@@ -1556,11 +1806,30 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "A translucent \"liquid glass\" action button for floating controls — primarily the back and trailing actions inside Navbar, and any control that sits over imagery or a blurred surface.",
+      "keywords": [
+        "1-icon",
+        "2-icons",
+        "back",
+        "back-label",
+        "blur",
+        "close",
+        "default",
+        "dim",
+        "floating",
+        "icon button",
+        "label",
+        "overlay button",
+        "primary",
+        "trigger a floating action over imagery or a glass navbar",
+        "x"
+      ],
+      "group": "Actions"
     },
     {
       "name": "IconButton",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "IconButton",
       "isDefaultExport": false,
       "props": [
@@ -1593,11 +1862,28 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "A square, pill-radius button whose entire label is a single icon.",
+      "keywords": [
+        "action",
+        "compact action",
+        "default",
+        "glyph button",
+        "grey",
+        "icon",
+        "medium",
+        "overlay",
+        "primary",
+        "secondary",
+        "small",
+        "square button",
+        "trigger an icon only action"
+      ],
+      "group": "Actions"
     },
     {
       "name": "LinearProgressIndicator",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "LinearProgressIndicator",
       "isDefaultExport": false,
       "props": [
@@ -1628,11 +1914,23 @@
           "kind": "number",
           "example": 40
         }
-      ]
+      ],
+      "description": "Determinate horizontal progress bar driven by a 0–100 value.",
+      "keywords": [
+        "android",
+        "determinate",
+        "download",
+        "ios",
+        "loading",
+        "progress bar",
+        "show measurable progress of one operation",
+        "upload"
+      ],
+      "group": "Progress"
     },
     {
       "name": "ListItem",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "ListItem",
       "isDefaultExport": false,
       "props": [
@@ -1735,11 +2033,25 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "The selectable, scannable list row.",
+      "keywords": [
+        "checkbox",
+        "choice row",
+        "icon",
+        "list",
+        "list row",
+        "menu row",
+        "option",
+        "present a selectable list item",
+        "radio",
+        "selectable row"
+      ],
+      "group": "Lists & cells"
     },
     {
       "name": "MarketingCard",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "MarketingCard",
       "isDefaultExport": false,
       "props": [
@@ -1891,11 +2203,41 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Raises awareness about a feature, campaign, offer, or opportunity.",
+      "keywords": [
+        "apple-pay",
+        "campaign",
+        "card",
+        "cta card",
+        "default",
+        "destructive",
+        "gpay-card",
+        "gpay-checkout-with",
+        "gpay-pay-with",
+        "gpay-personalized",
+        "gradient-large",
+        "gradient-small",
+        "large",
+        "marketing card",
+        "medium",
+        "payment",
+        "primary",
+        "primary-inverted",
+        "promo",
+        "secondary",
+        "secondary-inverted",
+        "show marketing promotional content with image and cta",
+        "skeleton",
+        "small",
+        "solid",
+        "tile"
+      ],
+      "group": "Content & cards"
     },
     {
       "name": "Navbar",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Navbar",
       "isDefaultExport": false,
       "props": [
@@ -1962,11 +2304,28 @@
           "required": false,
           "kind": "collection"
         }
-      ]
+      ],
+      "description": "Top navigation bar that provides context and wayfinding.",
+      "keywords": [
+        "android",
+        "app bar",
+        "back",
+        "default",
+        "give a screen its top bar title back flight or stay summary or search",
+        "gradient",
+        "header",
+        "ios",
+        "nav",
+        "overlay",
+        "title bar",
+        "toolbar",
+        "top bar"
+      ],
+      "group": "Navigation"
     },
     {
       "name": "ProgressStepper",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "ProgressStepper",
       "isDefaultExport": false,
       "props": [
@@ -1984,11 +2343,21 @@
           "kind": "number",
           "example": 5
         }
-      ]
+      ],
+      "description": "Linear progress indicator that shows how many steps in a flow are complete.",
+      "keywords": [
+        "checkout steps",
+        "progress",
+        "show progress through a multi step flow",
+        "stages",
+        "steps",
+        "wizard"
+      ],
+      "group": "Progress"
     },
     {
       "name": "Radio",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Radio",
       "isDefaultExport": false,
       "props": [
@@ -2050,11 +2419,22 @@
           "kind": "boolean",
           "example": false
         }
-      ]
+      ],
+      "description": "Control that lets users select exactly one option from a set.",
+      "keywords": [
+        "choice",
+        "let user select one option from a compact list",
+        "let user select one option from a visible set",
+        "option",
+        "radio button",
+        "select",
+        "single select"
+      ],
+      "group": "Selection"
     },
     {
       "name": "Search",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Search",
       "isDefaultExport": false,
       "props": [
@@ -2128,11 +2508,23 @@
           "tsType": "unknown",
           "required": false
         }
-      ]
+      ],
+      "description": "Platform-aware search bar — an iOS liquid-glass pill or an Android Material docked bar.",
+      "keywords": [
+        "android",
+        "find",
+        "ios",
+        "let user search",
+        "lookup",
+        "query",
+        "search bar",
+        "بحث"
+      ],
+      "group": "Inputs"
     },
     {
       "name": "SegmentedControl",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "SegmentedControl",
       "isDefaultExport": false,
       "props": [
@@ -2181,11 +2573,23 @@
           "example": 0,
           "indexesCollection": "items"
         }
-      ]
+      ],
+      "description": "Horizontal tab-switcher for toggling between 2–4 views of the same content. 36px tall, always controlled.",
+      "keywords": [
+        "android",
+        "ios",
+        "segments",
+        "switch between views on the same screen",
+        "switcher",
+        "tabs",
+        "toggle group",
+        "view switch"
+      ],
+      "group": "Navigation"
     },
     {
       "name": "Separator",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Separator",
       "isDefaultExport": false,
       "props": [
@@ -2233,11 +2637,25 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Full-width 1px horizontal rule.",
+      "keywords": [
+        "cell separator",
+        "dashed",
+        "divider",
+        "hr",
+        "line",
+        "or",
+        "rule",
+        "section separator",
+        "simple",
+        "split"
+      ],
+      "group": "Lists & cells"
     },
     {
       "name": "Slider",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Slider",
       "isDefaultExport": false,
       "props": [
@@ -2292,11 +2710,21 @@
           "kind": "number",
           "example": 40
         }
-      ]
+      ],
+      "description": "Continuous range input.",
+      "keywords": [
+        "drag",
+        "let user pick a value on a continuous range",
+        "min max",
+        "price range",
+        "range",
+        "scrub"
+      ],
+      "group": "Inputs"
     },
     {
       "name": "Snackbar",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Snackbar",
       "isDefaultExport": false,
       "props": [
@@ -2332,11 +2760,21 @@
           "tsType": "unknown",
           "required": false
         }
-      ]
+      ],
+      "description": "Temporary, non-blocking notification for short feedback after a user action.",
+      "keywords": [
+        "feedback",
+        "notification",
+        "show temporary feedback after an action",
+        "toast",
+        "transient message",
+        "undo"
+      ],
+      "group": "Feedback"
     },
     {
       "name": "Stepper",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Stepper",
       "isDefaultExport": false,
       "props": [
@@ -2377,11 +2815,22 @@
           "kind": "number",
           "example": 1
         }
-      ]
+      ],
+      "description": "Numeric increment/decrement control — minus button, count display, plus button.",
+      "keywords": [
+        "counter",
+        "guests",
+        "increment",
+        "let user pick a quantity",
+        "plus minus",
+        "quantity",
+        "travelers"
+      ],
+      "group": "Inputs"
     },
     {
       "name": "SystemBanner",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "SystemBanner",
       "isDefaultExport": false,
       "props": [
@@ -2472,11 +2921,29 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Inline status/message banner — a tinted row with a status icon, a title and description, and an optional action.",
+      "keywords": [
+        "alert strip",
+        "caution",
+        "desktop",
+        "error",
+        "error message",
+        "inline alert",
+        "mobile",
+        "neutral",
+        "show a persistent operational status message",
+        "status message",
+        "success",
+        "system banner",
+        "system message",
+        "visual"
+      ],
+      "group": "Feedback"
     },
     {
       "name": "TabBar",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "TabBar",
       "isDefaultExport": false,
       "props": [
@@ -2531,11 +2998,23 @@
           "example": 0,
           "indexesCollection": "items"
         }
-      ]
+      ],
+      "description": "Persistent bottom navigation for switching between a product's top-level destinations.",
+      "keywords": [
+        "android",
+        "app tabs",
+        "bottom nav",
+        "ios",
+        "navigate between top level product verticals",
+        "navigation",
+        "tabs",
+        "verticals"
+      ],
+      "group": "Navigation"
     },
     {
       "name": "Tag",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Tag",
       "isDefaultExport": false,
       "props": [
@@ -2588,11 +3067,28 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Static, non-interactive label that communicates a fixed property, category, or status.",
+      "keywords": [
+        "attribute",
+        "caution",
+        "default",
+        "filled",
+        "label",
+        "meta",
+        "neutral",
+        "show a factual static property of an item",
+        "static label",
+        "status",
+        "success",
+        "tinted",
+        "warning"
+      ],
+      "group": "Feedback"
     },
     {
       "name": "TextInput",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "TextInput",
       "isDefaultExport": false,
       "props": [
@@ -2698,11 +3194,22 @@
           "tsType": "unknown",
           "required": false
         }
-      ]
+      ],
+      "description": "Floating-label text field with helper/error text and optional leading/trailing icons.",
+      "keywords": [
+        "entry",
+        "field",
+        "form",
+        "input",
+        "let user type text",
+        "text field",
+        "type"
+      ],
+      "group": "Inputs"
     },
     {
       "name": "Toggle",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Toggle",
       "isDefaultExport": false,
       "props": [
@@ -2757,11 +3264,26 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Binary on/off switch.",
+      "keywords": [
+        "android",
+        "default",
+        "disabled",
+        "enable",
+        "flip",
+        "ios",
+        "let user toggle a persistent setting on off immediately",
+        "on off",
+        "setting",
+        "skeleton",
+        "switch"
+      ],
+      "group": "Selection"
     },
     {
       "name": "Tooltip",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "Tooltip",
       "isDefaultExport": false,
       "props": [
@@ -2800,11 +3322,26 @@
           ],
           "kind": "enum"
         }
-      ]
+      ],
+      "description": "Text bubble anchored to a trigger element.",
+      "keywords": [
+        "bottom",
+        "center",
+        "coach mark",
+        "end",
+        "explain",
+        "help",
+        "hint",
+        "popover",
+        "show a contextual hint anchored to an element",
+        "start",
+        "top"
+      ],
+      "group": "Feedback"
     },
     {
       "name": "VisualCard",
-      "file": "@alm-design/design-system",
+      "file": "alm-design-system",
       "exportName": "VisualCard",
       "isDefaultExport": false,
       "props": [
@@ -2899,7 +3436,19 @@
           "kind": "string",
           "example": "Title"
         }
-      ]
+      ],
+      "description": "Full-bleed image card with a gradient overlay and a price/CTA bar.",
+      "keywords": [
+        "campaign",
+        "card",
+        "hero card",
+        "image card",
+        "large",
+        "medium",
+        "promo tile",
+        "show an image led campaign card with a hero image and price cta bar"
+      ],
+      "group": "Content & cards"
     }
   ]
 }

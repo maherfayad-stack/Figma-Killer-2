@@ -107,7 +107,7 @@ describe('ProjectCssInjector', () => {
 
     const css = overlayCss(target, 'mc-vendor')
     expect(css).toContain(CANVAS_CSS_LAYER_ORDER)
-    // The bundled @alm-design/design-system CSS is a second, always-present
+    // The bundled design-system CSS is a second, always-present
     // source (see the module doc) — real component rules are still expected,
     // but a project-supplied vendorCss of '' contributes nothing of its own.
   })

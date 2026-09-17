@@ -3,8 +3,8 @@
  * an icon slot at all.
  *
  * The last case is the one that matters: it takes a REAL icon out of the
- * installed `@alm-design/design-system`, converts it, and hands the result to
- * the REAL codemod (`insertJsxIntoSlotProp`) to write into a fixture file.
+ * vendored design system (`vendor/alm-design-system/`), converts it, and hands
+ * the result to the REAL codemod (`insertJsxIntoSlotProp`) to write into a fixture file.
  * Conversion that produces a plausible-looking object is worth nothing on its
  * own — the question is whether what lands in the user's `.tsx` is valid JSX
  * that React renders as the icon, and only the codemod can answer that.
@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { insertJsxIntoSlotProp } from '@core/ast-codemods'
 import { svgToJsxNode } from '@site/studio/svgToJsxNode'
 
-const ALM_ICON = 'node_modules/@alm-design/design-system/src/icons/line-icons/chevronRight.svg'
+const ALM_ICON = 'vendor/alm-design-system/src/icons/line-icons/chevronRight.svg'
 
 function unwrap(result: ReturnType<typeof svgToJsxNode>) {
   if (!result.ok) throw new Error(`expected a converted node, got: ${result.message}`)
@@ -74,7 +74,6 @@ describe('svgToJsxNode', () => {
 
   // The end-to-end proof — a real package icon, the real codemod, real source.
   it('writes a real design-system icon into a real call site as valid JSX', () => {
-    if (!existsSync(ALM_ICON)) return // the package is a dependency, not a fixture — skip if uninstalled
     const node = unwrap(svgToJsxNode(readFileSync(ALM_ICON, 'utf8')))
 
     const dir = mkdtempSync(join(tmpdir(), 'svg-slot-'))

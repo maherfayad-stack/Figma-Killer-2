@@ -28,10 +28,15 @@ import { buildComponentCallSiteRows } from '@site/panels/PropertiesPanel/compone
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..')
 
-/** The two files that turn a design system's components into canvas modules. */
+/**
+ * The two registration paths that turn a design system's components into canvas
+ * modules. The built-in one is two FILES — `inspectorSchema.ts` builds the
+ * control list and the seeded defaults, `register.tsx` renders — so its entry
+ * is the pair, read as one source.
+ */
 const REGISTRATION_PATHS = [
-  'src/modules/alm/register.tsx',
-  'src/admin/pages/site/studio/registerProjectModules.ts',
+  ['src/modules/alm/register.tsx', 'src/modules/alm/inspectorSchema.ts'],
+  ['src/admin/pages/site/studio/registerProjectModules.ts'],
 ] as const
 
 describe('canvas-driven props', () => {
@@ -51,7 +56,7 @@ describe('canvas-driven props', () => {
   })
 
   it("supplies the frame's `dir`, because stripping alone leaves the component defaulting to ltr", () => {
-    // The regression this pins: `@alm-design/design-system@1.1.2` has ZERO
+    // The regression this pins: the design system at 1.1.2 has ZERO
     // `useDir()` call sites, and 20 of its 26 components declare `dir` as a
     // prop defaulting to the literal `'ltr'` which they write on their own
     // root — beating the frame's inherited `html[dir="rtl"]`. Stripping the
@@ -66,8 +71,8 @@ describe('canvas-driven props', () => {
   })
 
   it('is applied by BOTH design-system registration paths', () => {
-    for (const rel of REGISTRATION_PATHS) {
-      const source = readFileSync(join(REPO_ROOT, rel), 'utf8')
+    for (const paths of REGISTRATION_PATHS) {
+      const source = paths.map((rel) => readFileSync(join(REPO_ROOT, rel), 'utf8')).join('\n')
       // The panel's control list and the persisted defaults must not offer
       // `dir`, and the render path must SUPPLY it — a path that skips any one
       // of the three still renders a component against the board's toggle.

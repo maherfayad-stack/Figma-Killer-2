@@ -1,0 +1,37 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Logos">
+<g id="Flag">
+<g id="Country=Great Britain (United Kingdom)">
+<g id="Great Britain (United Kingdom)" clip-path="url(#clip0_29_409)">
+<g id="Frame 5521">
+<g id="Group">
+<path id="Vector" d="M-6.16675 2.61133V21.3888H30.1182V2.61133H-6.16675Z" fill="#012169"/>
+<path id="Vector_2" d="M-6.16675 2.61133L30.1182 21.3888L-6.16675 2.61133ZM30.1182 2.61133L-6.16675 21.3888L30.1182 2.61133Z" fill="black"/>
+<path id="Vector (Stroke)" fill-rule="evenodd" clip-rule="evenodd" d="M8.02889 12L-7 4.22255L-5.33233 1L11.9763 9.95721L29.2849 1L30.9526 4.22255L15.9237 12L30.9526 19.7774L29.2849 23L11.9763 14.0428L-5.33233 23L-7 19.7774L8.02889 12Z" fill="white"/>
+<g id="Clip path group">
+<mask id="mask0_29_409" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="-7" y="2" width="38" height="20">
+<g id="b">
+<path id="Vector_3" d="M11.9757 12.0001H30.1182V21.3888L11.9757 12.0001ZM11.9757 12.0001V21.3888H-6.16675L11.9757 12.0001ZM11.9757 12.0001H-6.16675V2.61133L11.9757 12.0001ZM11.9757 12.0001V2.61133H30.1182L11.9757 12.0001Z" fill="white"/>
+</g>
+</mask>
+<g mask="url(#mask0_29_409)">
+<path id="Vector_4" d="M-6.16675 2.61133L30.1182 21.3888L-6.16675 2.61133ZM30.1182 2.61133L-6.16675 21.3888L30.1182 2.61133Z" fill="black"/>
+<path id="Vector (Stroke)_2" fill-rule="evenodd" clip-rule="evenodd" d="M9.34507 12L-6.72168 3.68548L-5.6099 1.53711L11.9767 10.6382L29.5633 1.53711L30.675 3.68548L14.6083 12L30.675 20.3146L29.5633 22.4629L11.9767 13.3619L-5.6099 22.4629L-6.72168 20.3146L9.34507 12Z" fill="#C8102E"/>
+</g>
+</g>
+<path id="Vector_5" d="M11.9757 2.61133V21.3888V2.61133ZM-6.16675 12.0001H30.1182H-6.16675Z" fill="black"/>
+<path id="Vector (Stroke)_3" fill-rule="evenodd" clip-rule="evenodd" d="M8.95197 8.97631V2.61133H14.9995V8.97631H30.1182V15.0238H14.9995V21.3888H8.95197V15.0238H-6.16675V8.97631H8.95197Z" fill="white"/>
+<path id="Vector_6" d="M11.9757 2.61133V21.3888V2.61133ZM-6.16675 12.0001H30.1182H-6.16675Z" fill="black"/>
+<path id="Vector (Stroke)_4" fill-rule="evenodd" clip-rule="evenodd" d="M10.1615 10.1858V2.61133H13.79V10.1858H30.1182V13.8143H13.79V21.3888H10.1615V13.8143H-6.16675V10.1858H10.1615Z" fill="#C8102E"/>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_29_409">
+<rect width="24" height="18" fill="white" transform="translate(0 3)"/>
+</clipPath>
+</defs>
+</svg>

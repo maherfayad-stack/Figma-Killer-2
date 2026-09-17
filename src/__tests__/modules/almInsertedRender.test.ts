@@ -1,5 +1,5 @@
 /**
- * Every `@alm-design/design-system` module, inserted, one by one — does it
+ * Every vendored design-system module, inserted, one by one — does it
  * actually draw something?
  *
  * ## The defect this exists to end

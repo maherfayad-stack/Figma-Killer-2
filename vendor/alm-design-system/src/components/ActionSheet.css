@@ -1,0 +1,117 @@
+/* ── overlay + scrim ──
+   `position: absolute` (like BottomSheet) so the sheet is contained by the
+   nearest positioned ancestor — a phone-frame preview, or a full-screen app
+   root in production — rather than escaping to the viewport. */
+.action-sheet-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space);
+}
+
+/* Transparent on both platforms — the scrim only captures tap-to-dismiss, it
+   does not dim the screen behind the sheet. */
+.action-sheet-overlay__scrim {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+
+/* the surface sits above the scrim */
+.action-sheet {
+  position: relative;
+}
+
+/* ───────────────────────── Android (Material menu) ───────────────────────── */
+.action-sheet--android {
+  display: flex;
+  flex-direction: column;
+  min-width: 208px;
+  max-width: 320px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--space-2xs) 0;
+  background: var(--background-base-subtle);
+  border-radius: var(--rounded-lg);
+  box-shadow: var(--elevation-raised);
+}
+
+.action-sheet__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-md);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: start;
+  color: var(--text-base-default);
+}
+
+.action-sheet__item:hover:not(:disabled) {
+  background: var(--background-base-hover);
+}
+.action-sheet__item:active:not(:disabled) {
+  background: var(--background-base-pressed);
+}
+.action-sheet__item:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.action-sheet__item-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--icon-base-default);
+}
+.action-sheet__item-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.action-sheet__item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--type-subtitle-family);
+  font-size: var(--type-subtitle-size);
+  font-weight: var(--type-subtitle-weight);
+  line-height: var(--type-subtitle-lh);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-sheet__item-shortcut {
+  flex-shrink: 0;
+  font-family: var(--type-body-regular-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-subtext);
+}
+
+.action-sheet__item-chevron {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: var(--icon-base-subtle);
+}
+.action-sheet__item-chevron svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.action-sheet__item--destructive .action-sheet__item-label {
+  color: var(--text-warning-default);
+}
+.action-sheet__item--destructive .action-sheet__item-icon {
+  color: var(--icon-primary-default);
+}

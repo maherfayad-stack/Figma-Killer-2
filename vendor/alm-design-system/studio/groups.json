@@ -1,0 +1,12 @@
+{
+  "Navigation": ["Navbar", "TabBar", "SegmentedControl", "Footer"],
+  "Actions": ["Button", "IconButton", "GlassButton", "BottomActionBar"],
+  "Inputs": ["TextInput", "Search", "Stepper", "Slider"],
+  "Selection": ["Checkbox", "Radio", "Toggle", "Chip"],
+  "Lists & cells": ["Cell", "ListItem", "Expander", "Accordion", "Separator"],
+  "Feedback": ["Snackbar", "SystemBanner", "Callout", "Accolade", "Badge", "Tag", "Tooltip"],
+  "Progress": ["ProgressStepper", "CircularProgressIndicator", "LinearProgressIndicator"],
+  "Content & cards": ["Banner", "AdBanner", "VisualCard", "MarketingCard"],
+  "Overlays": ["BottomSheet", "Dialog", "ActionSheet"],
+  "Brand": ["AlmosaferLogo"]
+}

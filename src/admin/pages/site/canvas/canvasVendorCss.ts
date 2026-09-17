@@ -3,10 +3,11 @@
  * every canvas iframe, built once instead of once per frame.
  *
  * The bytes are IDENTICAL in every frame: Studio's own bundled design-system
- * stylesheet (a build-time module constant) concatenated with the open
+ * stylesheet — `vendor/alm-design-system/dist/index.css`, a committed build
+ * artefact imported as a build-time module constant — concatenated with the open
  * project's package CSS, then run through `rewritePrefersColorScheme`. Without
  * a memo each iframe mount re-walked ~122 KB of CSS char-by-char — ~0.40 ms
- * measured on the real `@alm-design/design-system` bundle, which DOES contain
+ * measured on the real design-system bundle, which DOES contain
  * a `prefers-color-scheme` query, so `rewritePrefersColorScheme`'s own cheap
  * short-circuit never fires — and re-allocated the joined string, on the
  * frame-mount critical path that a pan or a zoom-out sweeps through.
@@ -20,9 +21,11 @@
  * (`canvasFastRefreshBoundaries.test.ts`).
  */
 // Vite `?inline` yields the processed CSS as a default string export. This is
-// STUDIO's OWN dependency, bundled at Studio's own build time — see
-// `ProjectCssInjector.tsx`'s module doc, source 1.
-import almDesignSystemCss from '@alm-design/design-system/dist/index.css?inline'
+// STUDIO's OWN vendored design system, bundled at Studio's own build time —
+// see `ProjectCssInjector.tsx`'s module doc, source 1. Imported from `dist/`,
+// never `src/`: the 40 per-component `import './X.css'` side effects in the
+// source would otherwise land in the admin document's cascade.
+import almDesignSystemCss from 'alm-design-system/dist/index.css?inline'
 import { CANVAS_CSS_LAYER_ORDER, VENDOR_LAYER } from './canvasCssLayers'
 import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
 
