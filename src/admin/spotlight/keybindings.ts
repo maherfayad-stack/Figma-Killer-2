@@ -483,6 +483,22 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     scope: 'canvas',
     ignoreInEditableField: true,
   },
+
+  // K5 — Alt-hover measurement. A GESTURE, not a chord: holding Alt while the
+  // pointer moves over a node outside the selection draws the distances
+  // between the two boxes (`MeasureLayer.tsx`). No single keystroke can fire
+  // it, so `match` never claims a key and no dispatcher can route to it — the
+  // entry exists so the `?` sheet lists the gesture, which is otherwise
+  // undiscoverable. Appended at the end deliberately: the registry's order is
+  // the sheet's order, and this is the newest canvas affordance.
+  {
+    commandId: 'canvas.measureHover',
+    displayName: 'Measure distance to the hovered element',
+    shortcut: { mac: '⌥+Hover', win: 'Alt+Hover' },
+    match: () => false,
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
 ]
 
 /** Board units one arrow press moves a selected frame, and the Shift step. */

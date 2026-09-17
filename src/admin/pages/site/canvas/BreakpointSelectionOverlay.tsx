@@ -83,6 +83,7 @@ import { useCanvasAnimationScrub } from './animationScrubStore'
 import { createOverlayMeasureScheduler, type OverlayMeasureScheduler } from './overlayMeasureScheduler'
 import { InPlaceInspector } from './InPlaceInspector'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
+import { MeasureLayer } from './MeasureLayer'
 import {
   createCanvasOverlayMeasureSession,
   measureIframeLocalRect,
@@ -314,6 +315,10 @@ export function BreakpointSelectionOverlay({
     show: showRings,
     hoveredNodeId,
     hoveredBreakpointOrigin,
+    // K5 — the ladder stands down while Alt-hover MEASUREMENT owns the
+    // gesture. The rule lives in `measurementWinsOverTreeLadder`; the ladder
+    // applies it itself so the two can never drift apart.
+    selectedNodeIds,
   })
   // Hover only renders when the hovered node isn't already part of the
   // selection — otherwise the two rings would stack and the hover ring
@@ -689,6 +694,9 @@ export function BreakpointSelectionOverlay({
           drag, and the transform-scaled coordinate path is established for
           them. See `CanvasDropIndicators`. */}
       <CanvasDropIndicators target={reorderDrag.target} invalid={reorderDrag.invalid} />
+      {/* K5 — Alt-hover measurements. Owns its own Alt/visibility state and
+          renders nothing until the gesture is live; see `MeasureLayer`. */}
+      <MeasureLayer iframeElement={iframeElement} overlayRoot={overlayRoot} portalTarget={portalTarget} portalMode={toolbarMode} canvasRoot={portalCanvasRoot} selectedNodeIds={selectedNodeIds} hoveredNodeId={hoveredNodeId} enabled={showRings} />
       {canvasChrome && chromeTarget && createPortal(canvasChrome, chromeTarget)}
       {toolbar && portalTarget && createPortal(toolbar, portalTarget)}
       {inspector && portalTarget && createPortal(inspector, portalTarget)}

@@ -371,7 +371,8 @@ const appliedBadgePlacements = new WeakMap<HTMLElement, AppliedBadgePlacement | 
 /**
  * What the node-name badge SAYS — the node's tag, falling back to its display
  * name; the same fallback order the Alt-hover tree ladder rows use
- * (`CanvasTreeLadderRowButton`). Lives next to `positionNodeBadge` rather than
+ * (`CanvasTreeLadderRowButton`). `null` for a node this frame's page does not
+ * contain, which hides the badge. Lives next to `positionNodeBadge` rather than
  * in the overlay component: "what the badge reads" and "where the badge goes"
  * are one concern, and the component is at its module-size ceiling.
  */
