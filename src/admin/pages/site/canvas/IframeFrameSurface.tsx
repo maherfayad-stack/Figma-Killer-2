@@ -60,8 +60,14 @@
  * forever in a backgrounded tab or a headless runner, because `rAF` never
  * fires there. A transition is ordinary React work — it always runs, it is
  * merely allowed to yield to a higher-priority update (the zoom gesture)
- * first. `onContentReadyChange` reports stage 3's commit so a board frame can
- * keep its frozen poster up until there is real content underneath it.
+ * first. Stage 3's commit is published two ways from ONE state
+ * (`treeMounted`): `onContentReadyChange` so a board frame can keep its frozen
+ * poster up until there is real content underneath it, and
+ * `data-studio-canvas-content-ready` on the iframe element for DOM-only
+ * callers — the agent's capture path (`renderEvidence.ts`) will not hand a
+ * loaded-but-empty frame to a screenshot.
+ *
+ * `interaction === 'capture'` does NOT stage. See the effect for why.
  *
  * What's NOT in this component (yet):
  *  - Per-iframe `getComputedStyle` for code outside the iframe that measures
@@ -272,20 +278,54 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // two land in separate commits and a zoom gesture can interleave between
     // them. Unmounting the document resets the gate so a re-entering frame
     // stages again rather than re-mounting everything at once.
+    //
+    // A CAPTURE frame is the one exception, and it is not a hedge: staging
+    // exists to keep a gesture smooth while MANY board frames mount at once.
+    // A capture frame is exactly one frame, offscreen, `inert`, mounted on
+    // demand by `AgentSnapshotFrame`, with an agent tool call already blocked
+    // on its tree — there is no gesture to yield to, and yielding hands React
+    // licence to leave that one commit behind whatever higher-priority work
+    // the editor is doing (an agent turn streams store updates continuously).
+    // Measured: the transient frame's body held 0 children for the WHOLE 5 s
+    // `waitForAgentRenderFrame` window, so the capture timed out with
+    // "did not become ready" — `agentBreakpointCapture.test.tsx` is the gate.
     useEffect(() => {
       if (!iframeDoc) {
         setTreeMounted(false)
         return
       }
+      if (isCapture) {
+        setTreeMounted(true)
+        return
+      }
       startTransition(() => setTreeMounted(true))
-    }, [iframeDoc])
+    }, [iframeDoc, isCapture])
 
-    // Report stage 3 to the board frame, which keeps its frozen poster on top
-    // of the iframe until there is real content underneath.
+    // Publish stage 3. ONE readiness notion, two transports:
+    //  - `onContentReadyChange` for the board frame, which keeps its frozen
+    //    poster on top of the iframe until there is real content underneath;
+    //  - `data-studio-canvas-content-ready` on the iframe element for callers
+    //    that only hold DOM — `renderEvidence.ts` refuses to hand the agent a
+    //    frame whose document has loaded but whose node tree has not landed,
+    //    which is otherwise a rasterised blank PNG (`studio_export_frames`).
+    //
+    // This effect is the attribute's SOLE owner. `attachIframeDoc` below runs
+    // again whenever the ref re-attaches and clears `studioCanvasDocumentLoaded`
+    // there — but it re-sets that one synchronously in `captureSrcDoc`, which
+    // has no equivalent here, so clearing the readiness stamp from the ref
+    // callback would strip it for good (measured: `contentReady=undefined` on a
+    // frame whose body already held its tree).
     useEffect(() => {
-      if (!onContentReadyChange) return
-      onContentReadyChange(treeMounted)
-      return () => onContentReadyChange(false)
+      const iframe = iframeRef.current
+      if (iframe) {
+        if (treeMounted) iframe.dataset.studioCanvasContentReady = 'true'
+        else delete iframe.dataset.studioCanvasContentReady
+      }
+      onContentReadyChange?.(treeMounted)
+      return () => {
+        if (iframe) delete iframe.dataset.studioCanvasContentReady
+        onContentReadyChange?.(false)
+      }
     }, [onContentReadyChange, treeMounted])
 
     // Bridge the iframe handle out to the parent (selection overlay reads

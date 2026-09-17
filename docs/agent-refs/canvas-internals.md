@@ -937,15 +937,29 @@ it exists, and two of the three biggest items were not the node tree at all:
 
 `IframeFrameSurface` therefore mounts in **three commits**: the `<iframe
 srcDoc>` alone, then the injector chain once `contentDocument` exists, then the
-node tree in a `startTransition`. `onContentReadyChange` reports the third, and
-`BoardFrameView` keeps the frozen poster painted over the iframe until it
-lands, so a frame arriving never flashes an empty document.
+node tree in a `startTransition`. Stage 3's commit is published two ways from
+ONE state (`treeMounted`): `onContentReadyChange`, which `BoardFrameView` uses
+to keep the frozen poster painted over the iframe until the tree lands, and
+`data-studio-canvas-content-ready` on the iframe element, for callers that hold
+only DOM. The agent's frame selection (`agent/renderEvidence.ts`) is the second
+kind: **a loaded document is not a mounted frame**, and without that gate a
+`'visible'` capture — `studio_export_frames`, most of all — rasterises a blank
+page and reports zero nodes.
 
 **`startTransition`, never an rAF/`setTimeout`/`requestIdleCallback` chain.**
 That distinction is why this is not the staging chain a predecessor removed: a
 transition always runs (it may only yield to a higher-priority update), whereas
 `rAF` never fires in a backgrounded tab or a headless runner and could strand a
 frame as a skeleton forever.
+
+**`interaction === 'capture'` does not stage at all.** Staging buys smoothness
+when MANY board frames mount inside one gesture. `AgentSnapshotFrame`'s frame is
+exactly one, offscreen, `inert`, mounted on demand, with a tool call already
+blocked on its tree — there is nothing to yield to, and yielding lets React
+leave that one commit behind whatever else the editor is doing (an agent turn
+streams store updates continuously). Measured: staged, the transient frame's
+body held **0 children for the whole 5 s `waitForAgentRenderFrame` window** and
+the capture failed with "did not become ready".
 
 **`frameMountPool.ts` — leaving the viewport no longer throws a document
 away.** A departed frame stays mounted while the pool has room

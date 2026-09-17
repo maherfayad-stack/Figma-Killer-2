@@ -179,6 +179,16 @@ export async function captureAgentRenderSnapshot({
  * for CMS/VC frames (no `data-page-id` attribute exists there, so passing it
  * for a non-Studio query would just fail to match — callers only pass it for
  * a Studio capture).
+ *
+ * A `'visible'` query never returns anything inside the one-shot capture frame,
+ * even though `IframeFrameSurface` stamps `data-breakpoint-id` on its own
+ * iframe element in BOTH document modes (`panel-26`, so a cross-mode caller can
+ * read a frame's breakpoint without touching `contentDocument`). That stamp
+ * makes the transient frame's inner iframe a `[data-breakpoint-id="…"]` match,
+ * and returning it would hand the caller an `<iframe>` where a frame HOST is
+ * expected — `querySelector('iframe')` on it finds nothing and the capture
+ * silently yields null. "Visible" means a frame the user can see; the transient
+ * frame is `inert`, `aria-hidden`, and offscreen by construction.
  */
 export function findAgentRenderFrame({
   breakpointId,
@@ -212,6 +222,7 @@ export function findAgentRenderFrame({
       )
 
   for (const frame of candidates) {
+    if (source === 'visible' && frame.closest('[data-agent-snapshot-frame]')) continue
     if (!requireReady || isAgentRenderFrameReady(frame, requestId)) return frame
   }
   return null
@@ -241,7 +252,19 @@ function isAgentRenderFrameReady(frame: HTMLElement, requestId?: string): boolea
   if (iframe?.dataset.studioCanvasDocumentLoaded !== 'true') return false
   const body = iframe?.contentDocument?.body
   if (!breakpointId || !body || body.dataset.breakpointId !== breakpointId) return false
-  return !requestId || iframe.dataset.agentSnapshotReady === requestId
+  // A transient capture frame vouches for itself: `agentSnapshotReady` is
+  // written by `AgentSnapshotReadyMarker`, which lives INSIDE the node tree and
+  // only runs after `settleCaptureDocument` — strictly stronger than content
+  // readiness, and request-scoped, so a stale marker from an earlier capture
+  // can never be mistaken for this one's.
+  if (requestId) return iframe.dataset.agentSnapshotReady === requestId
+  // A visible frame has no such marker, so the staged mount (S1 — the document
+  // loads one or more commits BEFORE the node tree lands in it) is what has to
+  // be gated here. Without this, `studio_export_frames` and every `'visible'`
+  // capture can rasterise a loaded-but-empty document into a blank PNG and
+  // report zero nodes. The stamp is written by `IframeFrameSurface` from the
+  // same `treeMounted` state that drives `onContentReadyChange` — one notion.
+  return iframe.dataset.studioCanvasContentReady === 'true'
 }
 
 function agentRenderFrameBreakpointId(frame: HTMLElement): string {
