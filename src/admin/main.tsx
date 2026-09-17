@@ -31,7 +31,7 @@ if (!rootElement) throw new Error('Root element #root not found')
 // errors render their full provenance.
 //
 // `onCaughtError` fires AFTER a boundary catches; we don't toast for those
-// because the boundary itself already toasted with location context.
+// because the boundary renders its own fallback where the subtree was.
 // `onUncaughtError` fires when no boundary caught — these are the dangerous
 // ones; we toast loudly.
 // `onRecoverableError` fires when React recovered (e.g. failed hydration that
@@ -110,7 +110,10 @@ await Promise.resolve()
 flushSync(() => {
   root.render(
     <StrictMode>
-      <ErrorBoundary location="admin-shell">
+      {/* The one boundary that still toasts: when THIS one catches there is
+          no surviving tree for an in-place fallback to be read in. Every
+          other seam is silent by default — see ErrorBoundary's own doc. */}
+      <ErrorBoundary location="admin-shell" silentToast={false}>
         <Router>
           <AdminRoutes />
         </Router>
