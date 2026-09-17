@@ -23,8 +23,9 @@
  */
 import { useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Page } from '@core/page-tree'
+import type { PrototypeLink, PrototypeTriggerKind } from '@core/studio-prototype'
 import { useEditorStore } from '@site/store/store'
-import { followPrototypeLinkAt } from '@site/studio/playNavigation'
+import { followPrototypeLinkAt, releasePrototypePress } from '@site/studio/playNavigation'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
 
 export interface CanvasNodeInteractionOptions {
@@ -67,10 +68,16 @@ export interface CanvasNodeInteraction {
  * the same gesture must not run it a second time — and must not run a
  * DIFFERENT node's link either, which is exactly what happens when the click
  * lands on an ancestor (see below).
+ *
+ * `pressed` is the `press`-triggered link the DOWN already followed, held so
+ * the matching up can undo it. It is kept on the gesture rather than in a
+ * ref of its own so that a release over a different node — the user pressed,
+ * slid off and let go — still reverses the press it belongs to.
  */
 interface PlayGesture {
   nodeId: string
   followed: boolean
+  pressed: PrototypeLink | null
 }
 
 export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions): CanvasNodeInteraction {
@@ -81,11 +88,35 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
   const startInlineEdit = useEditorStore((s) => s.startInlineEdit)
   const playGesture = useRef<PlayGesture | null>(null)
 
-  const followLinkAt = (nodeId: string): void => {
-    if (!options.canvasPage) return
+  const followLinkAt = (nodeId: string, triggerKind: PrototypeTriggerKind): PrototypeLink | null => {
+    if (!options.canvasPage) return null
     // Overlay first: it is on top, and a node id alone does not say which of
-    // the two mounted surfaces the click came from.
-    followPrototypeLinkAt(nodeId, [options.overlayPage?.id ?? null, options.canvasPage.id])
+    // the two mounted surfaces the gesture came from.
+    return followPrototypeLinkAt(
+      nodeId,
+      [options.overlayPage?.id ?? null, options.canvasPage.id],
+      triggerKind,
+    )
+  }
+
+  /**
+   * Undo a "while pressing" link the previous gesture followed and never
+   * released — the pointer went up outside any node, or outside the frame
+   * entirely, so no release ever reached us.
+   *
+   * Doing it at the START of the next gesture rather than from a window-level
+   * pointerup is deliberate: a release inside a live iframe does not reach the
+   * parent window at all (`useIframeEventForwarding`'s whole reason to exist),
+   * so a listener there would be a guard that silently never runs. Bounding the
+   * failure to "the peek stays until you touch something else" is a claim this
+   * code can actually keep.
+   */
+  const releaseStalePress = (): void => {
+    const previous = playGesture.current
+    const stale = previous?.pressed
+    if (!previous || !stale) return
+    previous.pressed = null
+    releasePrototypePress(stale)
   }
 
   /**
@@ -107,15 +138,28 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
    */
   const onNodePointerDown = (nodeId: string) => {
     if (!options.playMode) return
-    playGesture.current = { nodeId, followed: false }
+    releaseStalePress()
+    // A `press` link fires HERE, on the way down — that is the whole
+    // difference between it and a click, and it is why it cannot wait for the
+    // release the way `click` has to.
+    const pressed = followLinkAt(nodeId, 'press')
+    playGesture.current = { nodeId, followed: false, pressed }
   }
 
   const onNodePointerUp = (nodeId: string) => {
     if (!options.playMode) return
     const gesture = playGesture.current
-    if (!gesture || gesture.nodeId !== nodeId) return
+    if (!gesture) return
+    // A "while pressing" link comes back on release wherever the finger
+    // ended up — sliding off the button before letting go is still letting go.
+    if (gesture.pressed) {
+      const pressed = gesture.pressed
+      gesture.pressed = null
+      releasePrototypePress(pressed)
+    }
+    if (gesture.nodeId !== nodeId) return
     gesture.followed = true
-    followLinkAt(nodeId)
+    followLinkAt(nodeId, 'click')
   }
 
   const onNodeClick = (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => {
@@ -138,7 +182,7 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
       if (gesture?.followed) return
       // No press was latched: a keyboard Enter/Space, or a gesture that began
       // before the player was armed. The click is all there is.
-      followLinkAt(nodeId)
+      followLinkAt(nodeId, 'click')
       return
     }
     if (breakpointId && breakpointId !== options.activeBreakpointId) {
@@ -165,7 +209,13 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     // component's OWN hover state and nothing of ours. Standing it down also
     // takes a store commit off every pointer arrival mid-playback.
     // `setPlayMode` clears the ring that was showing when Play was armed.
-    if (options.playMode) return
+    if (options.playMode) {
+      // The one thing the player DOES do with a hover: follow a `hover` link.
+      // Only on arrival — `null` is the pointer leaving, and a link that fired
+      // on the way out would fire twice per pass over the element.
+      if (nodeId !== null) followLinkAt(nodeId, 'hover')
+      return
+    }
     hoverNode(nodeId, breakpointId, frameId)
   }
 

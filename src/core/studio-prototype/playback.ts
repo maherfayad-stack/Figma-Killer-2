@@ -14,7 +14,7 @@
  * belonged to the screen being left. Keeping it would leave a sheet floating
  * over a page it was never opened from.
  */
-import type { PrototypeLink, PrototypeTransition } from './types'
+import { actionTakesTarget, type PrototypeLink, type PrototypeTransition, type PrototypeTriggerKind } from './types'
 
 /**
  * The two stacks.
@@ -198,13 +198,19 @@ export function applyPlayAction(state: PlayState, link: PrototypeLink): PlayOutc
 }
 
 /**
- * The link a click should follow, given the clicked element and everything it
- * sits inside.
+ * The link a GESTURE on an element should follow, given the element and
+ * everything it sits inside.
  *
- * `ancestorNodeIds` runs INNERMOST FIRST — the clicked element, then its
+ * `ancestorNodeIds` runs INNERMOST FIRST — the touched element, then its
  * parent, and so on. Innermost wins, which is the only rule that makes a link
  * on a button inside a linked card behave the way anyone expects: you followed
- * the thing you actually clicked.
+ * the thing you actually touched.
+ *
+ * `triggerKind` is matched EXACTLY, and that is what lets one element carry a
+ * hover link and a click link at once. It also means a click never falls back
+ * to "well, there was a hover link here": two triggers on one element are two
+ * statements the user made separately, and collapsing them would fire the wrong
+ * one on the gesture the other was for.
  *
  * `resolvedSourceIds` maps a link id to the node id its source hint resolves to
  * RIGHT NOW. A link whose source is `detached` has no entry and can never be
@@ -212,16 +218,108 @@ export function applyPlayAction(state: PlayState, link: PrototypeLink): PlayOutc
  * the player refusing it silently would be indistinguishable from a link that
  * was never there.
  */
-export function linkForClick(
+export function linkForTrigger(
   links: readonly PrototypeLink[],
   resolvedSourceIds: ReadonlyMap<string, string>,
   ancestorNodeIds: readonly string[],
   pageId: string,
+  triggerKind: PrototypeTriggerKind,
 ): PrototypeLink | null {
-  const onPage = links.filter((link) => link.source.pageId === pageId)
+  const onPage = links.filter(
+    (link) => link.source.pageId === pageId && link.trigger.kind === triggerKind,
+  )
   for (const nodeId of ancestorNodeIds) {
     const match = onPage.find((link) => resolvedSourceIds.get(link.id) === nodeId)
     if (match) return match
   }
   return null
+}
+
+/**
+ * The link a keystroke follows on the screen currently showing.
+ *
+ * NOT anchored to the pointer, unlike every other trigger: a keystroke lands
+ * wherever focus is, which in a live frame is usually nothing in particular. So
+ * the whole screen is the scope, and the FIRST live match wins — a screen with
+ * two links on the same key is an authoring mistake, and picking the first is
+ * at least stable between runs.
+ *
+ * Matching is case-insensitive because `KeyboardEvent.key` reports the SHIFTED
+ * character: a link authored on `k` would otherwise stop working the moment
+ * caps lock was on, which is not a distinction anybody meant to draw.
+ */
+export function linkForKey(
+  links: readonly PrototypeLink[],
+  resolvedSourceIds: ReadonlyMap<string, string>,
+  pageId: string,
+  key: string,
+): PrototypeLink | null {
+  const wanted = key.toLowerCase()
+  return (
+    links.find(
+      (link) =>
+        link.source.pageId === pageId &&
+        link.trigger.kind === 'key' &&
+        link.trigger.key.toLowerCase() === wanted &&
+        resolvedSourceIds.has(link.id),
+    ) ?? null
+  )
+}
+
+/**
+ * A timer the player owes a screen: the link to follow, and how long after the
+ * screen arrived to follow it.
+ */
+export interface PendingDelayTrigger {
+  link: PrototypeLink
+  ms: number
+}
+
+/**
+ * Every `after-delay` link that arriving on `pageId` starts.
+ *
+ * A TIMER IS A SIDE EFFECT, SO THIS FUNCTION DOES NOT OWN ONE. It answers what
+ * the screen owes and nothing else; the caller schedules and cancels. That is
+ * what keeps this module pure and unit-testable without fake timers, and it is
+ * the same split `applyPlayAction` already makes with the store: the rules are
+ * here, the effects are at the edge.
+ */
+export function delayTriggersForScreen(
+  links: readonly PrototypeLink[],
+  resolvedSourceIds: ReadonlyMap<string, string>,
+  pageId: string,
+): PendingDelayTrigger[] {
+  const pending: PendingDelayTrigger[] = []
+  for (const link of links) {
+    if (link.source.pageId !== pageId) continue
+    if (link.trigger.kind !== 'after-delay') continue
+    if (!resolvedSourceIds.has(link.id)) continue
+    pending.push({ link, ms: link.trigger.ms })
+  }
+  return pending
+}
+
+/**
+ * What letting go of a `press` link undoes, as a link the machine can apply —
+ * or `null` when the release means nothing.
+ *
+ * Expressed as a synthetic `PrototypeLink` rather than a new action verb so
+ * `applyPlayAction` stays the single place that knows what pops what. The
+ * reverse of a `navigate` is a `back` and the reverse of an `overlay` is a
+ * `close`; a link that was ALREADY a back or a close has nothing to undo, and
+ * neither does a press the user chose not to make reversible.
+ *
+ * The synthetic link keeps the original's id: nothing persists it, and the id
+ * is what the caller uses to tell "this release belongs to that press" from
+ * "some other link".
+ */
+export function releaseActionFor(link: PrototypeLink): PrototypeLink | null {
+  if (link.trigger.kind !== 'press' || !link.trigger.reverseOnRelease) return null
+  if (!actionTakesTarget(link.action)) return null
+  return {
+    ...link,
+    action: link.action === 'overlay' ? 'close' : 'back',
+    targetPageId: null,
+    transition: undefined,
+  }
 }

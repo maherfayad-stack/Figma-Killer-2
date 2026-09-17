@@ -10,6 +10,11 @@
  * is the chokepoint every surface already runs through (the explorer's context
  * menu, its multi-select bulk delete, spotlight, the agent executor), so one
  * commit here is one commit for all of them.
+ *
+ * It reaches past the document TWICE, for the same reason: a page has a source
+ * file, a set of board frames, and a set of prototype links — and only the
+ * chokepoint knows about all three. See `pruneLinksForDeletedPage` for why the
+ * prune cannot be the server's job.
  */
 
 import {
@@ -23,6 +28,7 @@ import {
 } from '@core/page-tree'
 import { isStudioPageRootId } from '@core/page-tree'
 import { deleteStudioPage } from '@site/studio/studioPageRequests'
+import { pruneLinksForDeletedPage } from '@site/studio/prototypePrune'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
@@ -103,6 +109,24 @@ export function createPageActions({
       if (activePageId === pageId && site) {
         set((state) => { state.activePageId = site.pages[0]?.id ?? null })
       }
+
+      // The prototype file is the page's third half, and this is the one edit
+      // that orphans a link without touching the link's own source: a link
+      // FROM the page and a link TO it are both left naming something that no
+      // longer exists. Pruning happens here, on the client, because the `prune`
+      // op carries the list of pages that still exist and the server cannot
+      // enumerate those without parsing the project.
+      //
+      // The page list is read AFTER the splice — the survivors are exactly what
+      // the op means. `prototypePrune` touches no store (it would close an
+      // import cycle through this file), so the adopt is ours.
+      void pruneLinksForDeletedPage(
+        get().prototype.links,
+        pageId,
+        get().site?.pages.map((page) => page.id) ?? [],
+      ).then((pruned) => {
+        if (pruned) get().adoptPrototype(pruned)
+      })
 
       if (!isStudioPage) return
       // The board is the page's other half. Dropping its frames here rather

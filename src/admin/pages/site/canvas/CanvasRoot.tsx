@@ -57,6 +57,7 @@ import { useEditorHistoryShortcuts } from './useEditorHistoryShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
 import { usePrototypeLinkKeyboard } from './usePrototypeLinkKeyboard'
+import { usePrototypePlayTriggers } from './usePrototypePlayTriggers'
 import { usePrototypePlayback } from './usePrototypePlayback'
 import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
@@ -106,6 +107,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     overlayTransition: playOverlayTransition,
     overlayLeaveTransition: playOverlayLeaveTransition,
     playMode,
+    stackDepth: playStackDepth,
   } = usePrototypePlayback(editingPage)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
@@ -364,6 +366,18 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // `board` — ⌘⇧C copies the selection as a PNG. Not gated on `editable`:
   // photographing a screen reads the board, it never writes to it.
   useCopyAsPngShortcut(isLive)
+
+  // The two screen-scoped prototype triggers — `after-delay` and `key`. The
+  // other three arrive as pointer events on a node and belong to
+  // `useCanvasNodeInteraction`; these have no element under them when they
+  // fire. Mounted here because this is where the player's current screen and
+  // overlay are already derived.
+  usePrototypePlayTriggers({
+    playMode,
+    screenPageId: canvasPage?.id ?? null,
+    overlayPageId: overlayPage?.id ?? null,
+    stackDepth: playStackDepth,
+  })
 
   // `board` — arrow-key frame nudge. Also broadcasts the keyup that closes an
   // arrow-nudge undo burst, for annotations as well as frames.

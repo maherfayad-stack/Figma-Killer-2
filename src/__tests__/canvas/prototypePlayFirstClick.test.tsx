@@ -86,7 +86,7 @@ function armPlayerOneScreenDeep(homePageId: string, screenPageId: string, nodeId
   const link: PrototypeLink = {
     id: 'back-link',
     source: { pageId: screenPageId, node: captureNodeHint(page, nodeId)! },
-    trigger: 'click',
+    trigger: { kind: 'click' },
     action: 'back',
     targetPageId: null,
   }
@@ -216,7 +216,7 @@ describe('prototype player — a link on a component that has its own interactio
           {
             id: 'go',
             source: { pageId: home.id, node: captureNodeHint(homePage, goId)! },
-            trigger: 'click',
+            trigger: { kind: 'click' },
             action: 'navigate',
             targetPageId: second.id,
             transition: 'slide-left',
@@ -224,7 +224,7 @@ describe('prototype player — a link on a component that has its own interactio
           {
             id: 'back',
             source: { pageId: second.id, node: captureNodeHint(secondPage, backId)! },
-            trigger: 'click',
+            trigger: { kind: 'click' },
             action: 'back',
             targetPageId: null,
           },

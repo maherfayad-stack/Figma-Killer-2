@@ -264,6 +264,59 @@ visitor clicking through a prototype should see the component's own hover state
 and nothing of ours — so `setPlayMode` clears whatever was lit and
 `useCanvasNodeInteraction` stops writing it.
 
+### Five triggers, and where each one is delivered
+
+A link says WHERE it goes and HOW it gets there. The trigger says **what makes
+it fire**, and it is a tagged union rather than a string enum because two of the
+five carry data — a parallel `triggerMs`/`triggerKey` pair beside a string would
+let a `click` link hold a duration nothing reads.
+
+| Trigger | Fires on | Delivered by |
+|---|---|---|
+| `click` | press **and** release on the node | `useCanvasNodeInteraction`'s press/release pair |
+| `hover` | the pointer ARRIVING (never leaving) | the one branch of `onNodeHover` an armed player does not stand down |
+| `press { reverseOnRelease }` | the pointer going DOWN | `onNodePointerDown` — and the release reverses it: a `navigate` comes back, an `overlay` closes |
+| `after-delay { ms }` | nothing — the screen arrived | `usePrototypePlayTriggers`' timers, from the pure `delayTriggersForScreen` |
+| `key { key }` | a keystroke, case-insensitively | a parent-document listener, plus the live-frame bridge below |
+
+Triggers are matched **exactly**: a click never falls back to a hover link on
+the same element. Two triggers on one element are two statements the user made
+separately, and collapsing them would fire the wrong one on the gesture the
+other was for — which is also what lets a card carry "hover to peek" and "click
+to open" at once.
+
+Every trigger is legal for every action. There is deliberately no
+`ACTION_TRIGGERS` table beside `ACTION_TRANSITIONS`: a transition describes how
+two screens move, which an action can genuinely make meaningless; a trigger only
+describes what the user did, and "go back after 3 seconds" is a real screen.
+
+**A timer is a side effect, so the machine does not own one.**
+`delayTriggersForScreen` answers what arriving on a screen OWES — the links and
+their delays — and the hook owns the `setTimeout` that pays it. Same split
+`applyPlayAction` already makes with the store, and it is what keeps the rule
+unit-testable without fake timers.
+
+**A `key` trigger needs its own bridge out of the live frame.** A keystroke
+inside a play iframe never reaches the parent document, and clicking into the
+running prototype focuses that iframe on the first press. It is bridged in
+`useIframeEventForwarding` by **calling the one consumer directly**, never by
+cloning a `KeyboardEvent` onto the parent document the way the design canvas
+does: a live frame is the page as a visitor gets it, so the user may be typing
+into a real form field, and a clone would hand every one of those keystrokes to
+the editor's undo, save, spotlight and panel-rail shortcuts. A modifier held, or
+a text input under the cursor, stands the trigger down for the same reason.
+
+**A press that is never released is bounded, not guarded.** A pointer-up outside
+any node — or outside the frame entirely — never reaches the canvas, so the
+reverse is applied at the START of the next gesture instead of from a
+window-level listener that would silently never run. The peek stays until you
+touch something else, which is a claim the code can actually keep.
+
+A repaired trigger never costs the link. Anything unreadable — the bare
+`"click"` string Phase 1 wrote, a kind from a newer build, a `key` naming no key
+— becomes a plain click: the destination is what the user drew, and what makes
+it fire is one pick in the inspector.
+
 ### The gesture, and why it is not a `click`
 
 A linked element usually has interactions of its OWN — a hover state, a pressed
@@ -313,6 +366,70 @@ into them: `EASE_IOS` is the curve the DS `BottomSheet` uses (a sheet the DS
 animates and a sheet Studio animates have to move identically), and dismissal is
 quicker than presentation (arriving is the moment worth drawing out; leaving
 should get out of the way).
+
+### Smart animate, and why it runs on ghosts
+
+`smart-animate` is a `navigate` transition: the two screens are matched element
+by element, the pairs that MOVED travel between their two positions, and
+everything else cross-dissolves. Only a `navigate` can wear it — an overlay
+presents *over* a screen that stays put, so there is no second layout to match
+against.
+
+**Matching is `NodeHint` re-resolution, the same primitive `.studio/prototype.json`
+anchors use.** Figma matches smart-animate layers by NAME, because a Figma layer
+has a stable name and a stable id. A Studio node has neither: its id is
+`relFile:line:col`, a source *position*, and its "name" is whatever the JSX
+element is called — `<div>`, several hundred times per screen. So
+`matchScreenNodes` (`@core/studio-prototype/smartAnimate.ts`) captures each
+outgoing node's hint and re-resolves it against the INCOMING tree, which asks
+exactly the right question ("is there a node of the same kind at the same
+structural address?") and already separates the three answers:
+
+| Confidence | Meaning | Pair? |
+|---|---|---|
+| `exact` | the two screens share a source position — the same imported component | yes, the strongest |
+| `moved` | same address, same module, same text — a shared header | yes |
+| `drifted` | same address, same module, **different text** — a title whose words changed | yes, and it is the case most worth animating |
+| `detached` | nothing of the kind is there | no |
+
+Matching is **one-to-one** (two elements animating into one box is a visibly
+wrong answer), never pairs the **root** (that is the screen, not an element on
+it), and is **capped at 24 pairs, breadth-first** — a screen is routinely
+hundreds of nodes and the FLIP measures both sides of every pair, so an uncapped
+match would make the one transition meant to look expensive the one that
+stutters. Breadth-first means the cap keeps the outermost, biggest boxes. A pair
+past the cap is still a match, not a departure: calling it `leaving` would claim
+an element vanished when it is standing on the new screen.
+
+**Nothing is written into either screen.** Both are live iframes rendering the
+user's own components. A transform on a matched element would be a transform in
+the user's document — changing what their `%`/flex chains and `backdrop-filter`s
+resolve against, and left behind if the animation is cancelled. Animating the
+iframes is equally out: they are the two screens, and a smart animate is
+precisely the transition in which the screens do not move as wholes.
+
+So the travel happens on **ghosts** in `.smartAnimateLayer`, a parent-document
+overlay inside `PrototypeScreenStack` — over both slots and inside neither,
+because a matched pair spans two iframes and neither contains the travel between
+them. A ghost is a box and at most one line of text, painted from a snapshot of
+the incoming element's computed style; `importNode` would copy the subtree
+*without* the iframe's stylesheets, so a deep clone renders as unstyled markup —
+visibly worse than a rectangle with the right colour, radius, border, shadow and
+type. The two real screens cross-dissolve underneath, which IS "unmatched nodes
+dissolve" — and it is why a matched element that did **not** move gets no ghost
+at all: identical pixels cross-fading are invisible.
+
+**Two `requestAnimationFrame`s, both load-bearing.** The first lets the incoming
+slot commit and lay out (on the first navigation into the back slot its iframe
+is still mounting, and measuring before that yields zeros). The second separates
+the READ (`planSmartAnimate`) from the WRITE (`runSmartAnimate`): building an
+element inside a measurement loop is a forced reflow per pair, across two
+documents. `prefers-reduced-motion` collapses the duration here too, explicitly
+— the global CSS clamp cannot see a script-driven animation.
+
+A screen that cannot be measured — a bridge-mode (Tier 2, cross-origin) frame,
+or a layout that has not settled — produces no ghosts and the transition is the
+cross-dissolve the screens are already playing. Quieter, never broken.
 
 ### The overlay owns its own unmounting
 
@@ -385,6 +502,26 @@ deliberately **no POST counterpart for `/flow`**.
 enumerate pages without parsing the project, and a prune naming no pages is
 indistinguishable from a caller that failed to load its pages.
 
+**Deleting a page is what calls it**, from `deletePage`
+(`store/slices/site/pageActions.ts` → `studio/prototypePrune.ts`). It is the one
+edit that orphans a link without touching the link's own source — a link FROM
+the page and a link TO it both end up naming something that is gone, and neither
+the serializer nor the `NodeHint` re-resolution can notice, because both are
+about an element *inside* a page. The store is the right caller for the same
+reason it already commits the source delete and drops the board frames: it is
+the chokepoint every surface runs through, and it holds the page list the op
+needs. `prototypePrune.ts` is a separate module from `prototypeActions.ts`,
+where every other round trip lives, for one reason worth stating: its caller is
+inside the store and `prototypeActions` imports the store, so putting it there
+closes an import cycle `no-circular-dependencies.test.ts` catches. It therefore
+touches no store at all — it takes the links and the page list and hands the
+merged file back, the same shape `studioStructuralCommits` has. Two cases make
+no request at all — nothing named the deleted page (a
+project with no prototype must not pay a round trip per delete), and no pages
+would be left to name (asking would be asking for a 400 on purpose). A failed
+prune is logged, never toasted: the page IS deleted, and a red box about the
+flow file is noise on an operation that succeeded.
+
 ---
 
 ## Where the code is
@@ -402,8 +539,11 @@ indistinguishable from a caller that failed to load its pages.
 | `server/handlers/studio/prototypeCodeFlow.ts` | discovery, orchestration, mtime memo |
 | `server/handlers/studio/prototypeRoutes.ts` | the three routes |
 | `src/admin/pages/site/store/slices/prototypeSlice.ts` | both collections + `boardMode` |
-| `src/admin/pages/site/studio/prototypeActions.ts` | every round trip |
+| `src/admin/pages/site/studio/prototypeActions.ts` | every round trip but one |
+| `src/admin/pages/site/studio/prototypePrune.ts` | the page-delete prune — store-free, because the store calls it |
 | `src/core/studio-prototype/playback.ts` | the player's stack machine |
+| `src/core/studio-prototype/smartAnimate.ts` | which element on one screen is which on the next — pure |
+| `src/admin/pages/site/canvas/smartAnimateFlip.ts` | measuring those pairs and flying ghosts between them |
 | `src/admin/pages/site/canvas/BoardFlowLayer/` | the derived connectors |
 | `src/admin/pages/site/canvas/BoardPrototypeLayer/` | the authored connectors, the `+` handle, the drag |
 | `src/admin/pages/site/canvas/playbackMotion.ts` | every animation the player runs |
@@ -411,6 +551,7 @@ indistinguishable from a caller that failed to load its pages.
 | `src/admin/pages/site/canvas/PrototypeOverlay.tsx` | a sheet or popup over the screen that opened it |
 | `src/admin/pages/site/canvas/usePrototypePlayback.ts` | which page the live frame shows while armed |
 | `src/admin/pages/site/canvas/usePrototypeLinkKeyboard.ts` | Delete removes a link, Escape deselects |
+| `src/admin/pages/site/canvas/usePrototypePlayTriggers.ts` | the two screen-scoped triggers: `after-delay` timers and `key` |
 | `src/admin/pages/site/studio/playNavigation.ts` | a click in the armed frame → the machine |
 | `src/admin/pages/site/canvas/useCanvasNodeInteraction.ts` | what a pointer gesture on a node does, armed or not |
 | `src/admin/pages/site/canvas/canvasNodeGestureLatch.ts` | one press = one activation, across every event it raises |
@@ -425,10 +566,3 @@ Tracked in [`STUDIO-PROTOTYPE-PLAN.md`](../../STUDIO-PROTOTYPE-PLAN.md).
 
 - **`back`-shaped code flows.** `router.back()` is a real fact with no drawable
   destination and, today, no consumer.
-- **Pruning on page delete.** `prunePrototypeLinks` exists and
-  `server/handlers/studio/prototypeStore.ts` runs it for the `prune` op, but
-  nothing in the editor sends that op — `prototypeApi.ts` declares its shape and
-  no caller dispatches it. A link to a deleted page simply draws nothing, and
-  the inspector's list shows it pointing at "Deleted page".
-- **A trigger other than `click`.** The schema has one, and the reader repairs
-  anything else to it.

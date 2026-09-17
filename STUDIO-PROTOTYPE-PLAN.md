@@ -1,6 +1,8 @@
 # Studio Prototype Mode — plan
 
-**Status:** every phase (1a–7) has landed. What remains is the two items in §9 ·
+**Status:** every phase (1a–7) has landed, richer triggers and
+`smart-animate` with `STUDIO-FIGMA-FEEL-PLAN.md`'s P7. What remains is the
+one item in §9 ·
 **Opened:** 2026-09-02 · **Last updated:** 2026-09-17
 
 Shipped behaviour is documented in
@@ -82,12 +84,20 @@ visibly broken connector rather than disappearing.
 
 | Action | What it does | Transitions |
 |---|---|---|
-| `navigate` | replaces the screen | `instant`, `dissolve`, `slide-left`, `slide-right`, `push-left`, `push-right` |
+| `navigate` | replaces the screen | `instant`, `dissolve`, `smart-animate`, `slide-left`, `slide-right`, `push-left`, `push-right` |
 | `overlay` | presents on top, base screen stays | `popup` (centred + scrim), `sheet` (bottom, slides up) |
 | `back` | pops the history stack | reverses whatever brought you here |
 | `close` | dismisses the top overlay | reverses its presentation |
 
-Trigger is `click` in Phase 1. The overlay transitions line up with the existing
+Trigger was `click` in Phase 1. It is now one of five — `click`, `hover`,
+`press { reverseOnRelease }`, `after-delay { ms }`, `key { key }` — a tagged
+union rather than a string enum, because two of them carry data. Every trigger
+is legal for every action; the table above is about what a link DOES, and that
+is a separate question from what makes it fire. See
+`docs/features/studio-prototype.md` → "Five triggers, and where each one is
+delivered".
+
+The overlay transitions line up with the existing
 `PageKind` vocabulary (`screen | popup | sheet-small | sheet-large`,
 `@core/studio-board/pageKinds.ts`), so a link to a sheet page can default its
 transition from the target's kind instead of asking.
@@ -190,17 +200,21 @@ in `canvas-12` and are described under Phases 4 and 5 above. The `+` handle's
 open design question ("where does it live, given the selection ring is portaled
 *into* the frame's iframe?") was answered by putting the authored layer in the
 parent document: `BoardPrototypeLayer/` composes `frame origin + element rect`
-and inserts nothing into a frame. Richer triggers and smart-animate are specced
-in `STUDIO-FIGMA-FEEL-PLAN.md` work order P7, not here.
+and inserts nothing into a frame. Richer triggers and smart-animate were
+specced in `STUDIO-FIGMA-FEEL-PLAN.md` work order P7 rather than here, and have
+since landed — see the note at the end of this section.
 
-Two are left. Nothing here blocks anything above it.
+One is left. Nothing here blocks anything above it. Pruning on page delete
+landed with P7 — `deletePage` calls `pruneLinksForDeletedPage`
+(`studio/prototypePrune.ts`), client-side because the `prune` op carries the
+page list by design.
 
-1. **Pruning on page delete.** `prunePrototypeLinks` exists and
-   `server/handlers/studio/prototypeStore.ts:103` runs it for the `prune` op,
-   but nothing in the editor ever sends that op — `prototypeApi.ts:52` declares
-   its shape and no caller dispatches it. A link to a deleted page draws nothing
-   today, so this is cruft rather than a bug; the caller has to be client-side,
-   because the op carries the page list by design.
-2. **`back`-shaped derived flows.** `router.back()` / `navigate(-1)` /
+1. **`back`-shaped derived flows.** `router.back()` / `navigate(-1)` /
    `history.goBack()` are real facts with no drawable destination. Worth
    surfacing once there is a flows list to surface them in.
+
+Landed since, from `STUDIO-FIGMA-FEEL-PLAN.md` work order **P7**: the trigger is
+no longer only `click` (§4), and a `navigate` can wear **`smart-animate`** —
+matched element by element through the same `NodeHint` re-resolution
+`.studio/prototype.json` anchors use, flown on ghosts in the parent overlay
+because both screens are live iframes and neither may be written into.

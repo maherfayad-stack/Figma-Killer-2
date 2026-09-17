@@ -25,8 +25,9 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Page } from '@core/page-tree'
-import type { PrototypeTransition } from '@core/studio-prototype'
-import { play, screenMotion } from './playbackMotion'
+import { matchScreenNodes, type PrototypeTransition } from '@core/studio-prototype'
+import { DUR_SMART_ANIMATE, play, screenMotion } from './playbackMotion'
+import { planSmartAnimate, runSmartAnimate } from './smartAnimateFlip'
 import styles from './CanvasLiveSurface.module.css'
 
 type SlotName = 'a' | 'b'
@@ -60,6 +61,7 @@ export function PrototypeScreenStack({ page, transition, renderScreen }: Prototy
   }))
   const aRef = useRef<HTMLDivElement | null>(null)
   const bRef = useRef<HTMLDivElement | null>(null)
+  const ghostLayerRef = useRef<HTMLDivElement | null>(null)
 
   // Adjusting state during render — the documented React pattern for "a prop
   // changed and derived state has to follow", and the reason this is not an
@@ -77,6 +79,11 @@ export function PrototypeScreenStack({ page, transition, renderScreen }: Prototy
   }
 
   const { front, leaving, nav } = stack
+  // Derived here rather than read off `stack` inside the effect: they change
+  // exactly when `nav` does, so naming them lets the effect declare what it
+  // actually depends on instead of the whole stack object.
+  const incomingPage = stack[front]
+  const outgoingPage = leaving ? stack[leaving] : null
 
   // `nav` counts navigations, so this runs once per one. `front` moves only
   // with it, and `transition` only changes when the link being followed does —
@@ -128,6 +135,49 @@ export function PrototypeScreenStack({ page, transition, renderScreen }: Prototy
     }
   }, [nav, front, transition])
 
+  // ── Smart animate ────────────────────────────────────────────────────────
+  //
+  // A SECOND effect, on the same trigger, because it is a different claim with
+  // a different shape: the one above animates the two screen slots and settles
+  // the stack, this one measures matched elements across two documents and
+  // flies ghosts between them. Merging them would put a two-frame measurement
+  // pass inside the effect that has to start the dissolve on frame one.
+  useEffect(() => {
+    if (nav === 0 || transition !== 'smart-animate') return
+    const layer = ghostLayerRef.current
+    if (!layer || !outgoingPage || !incomingPage) return
+
+    const matches = matchScreenNodes(outgoingPage, incomingPage).matched
+    if (matches.length === 0) return
+
+    let cancelled = false
+    let stop: (() => void) | null = null
+    // TWO frames, and both are load-bearing. The first lets the incoming slot
+    // commit and lay out — on the very first navigation its iframe is mounting,
+    // and measuring before that yields zeros. The second separates the READ
+    // (`planSmartAnimate`) from the WRITE (`runSmartAnimate`): building an
+    // element in the middle of a measurement loop is a forced reflow per pair,
+    // across two documents.
+    const measureFrame = requestAnimationFrame(() => {
+      if (cancelled) return
+      const fromSlot = leaving === 'a' ? aRef.current : bRef.current
+      const toSlot = front === 'a' ? aRef.current : bRef.current
+      const ghosts = planSmartAnimate(matches, fromSlot, toSlot, layer)
+      if (ghosts.length === 0) return
+      const runFrame = requestAnimationFrame(() => {
+        if (cancelled) return
+        stop = runSmartAnimate(layer, ghosts, DUR_SMART_ANIMATE)
+      })
+      stop = () => cancelAnimationFrame(runFrame)
+    })
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(measureFrame)
+      stop?.()
+    }
+  }, [nav, front, leaving, transition, outgoingPage, incomingPage])
+
   return (
     <>
       <Slot
@@ -142,6 +192,13 @@ export function PrototypeScreenStack({ page, transition, renderScreen }: Prototy
         state={front === 'b' ? 'front' : leaving === 'b' ? 'leaving' : 'back'}
         renderScreen={renderScreen}
       />
+      {/* Where a smart animate's ghosts fly. Editor chrome in the PARENT
+          document, over both screens and inside neither — a matched pair spans
+          two iframes and neither of them contains the travel between them.
+          Always mounted: it costs one empty div, and a layer created at the
+          moment a transition starts would have no laid-out rect to measure
+          against on the frame the measurement happens. */}
+      <div ref={ghostLayerRef} className={styles.smartAnimateLayer} aria-hidden="true" />
     </>
   )
 }

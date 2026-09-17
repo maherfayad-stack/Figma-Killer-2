@@ -30,8 +30,12 @@
  */
 import type { PrototypeTransition } from '@core/studio-prototype'
 
-/** Navigation pushes and sheet presentation — the design system's own curve. */
-const EASE_IOS = 'cubic-bezier(0.32, 0.72, 0, 1)'
+/**
+ * Navigation pushes and sheet presentation — the design system's own curve.
+ * Exported for `smartAnimateFlip.ts`: a ghost travelling over a cross-dissolve
+ * has to be on the same curve as the dissolve, or the two read as two events.
+ */
+export const EASE_IOS = 'cubic-bezier(0.32, 0.72, 0, 1)'
 /** Colour, opacity, elevation. */
 const EASE_OUT = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
 
@@ -41,6 +45,13 @@ const DUR_SELECT = 340
 const DUR_SHEET_OUT = 320
 const DUR_NAV = 420
 const DUR_SHEET = 500
+/**
+ * A smart animate. Slower than a push because the eye is TRACKING something —
+ * a header that stays, a card that grows into a screen — and a travel it cannot
+ * follow reads as a cut, which is the one thing this transition exists not to
+ * be.
+ */
+export const DUR_SMART_ANIMATE = 480
 
 /**
  * How far the departing screen parallaxes back under the arriving one. UIKit
@@ -79,6 +90,19 @@ export function screenMotion(transition: PrototypeTransition): ScreenMotion | nu
       }
     // A leftward navigation brings the new screen in from the right; the
     // departing screen, when it moves at all, goes the same way.
+    // A smart animate moves the MATCHED elements, so the two screens
+    // themselves only cross-dissolve — that dissolve IS "unmatched nodes
+    // dissolve", and the matched pairs ride over it as ghosts in the parent
+    // overlay (`smartAnimateFlip.ts`). Same duration as the FLIP, or the
+    // travelling ghost would land on a screen that is still fading in.
+    case 'smart-animate':
+      return {
+        incoming: [{ opacity: 0 }, { opacity: 1 }],
+        outgoing: [{ opacity: 1 }, { opacity: 0 }],
+        dim: null,
+        duration: DUR_SMART_ANIMATE,
+        easing: EASE_IOS,
+      }
     case 'slide-left':
       return slide('100%')
     case 'slide-right':
@@ -176,7 +200,13 @@ export function overlayExitMotion(transition: PrototypeTransition): OverlayMotio
   }
 }
 
-function prefersReducedMotion(): boolean {
+/**
+ * Exported for `smartAnimateFlip.ts`, which runs its own `element.animate`
+ * calls and has to honour the same preference — the global CSS rule that clamps
+ * `animation-duration` cannot see a script-driven animation, so every WAAPI
+ * caller in the player has to ask, and there must be exactly one place to ask.
+ */
+export function prefersReducedMotion(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
