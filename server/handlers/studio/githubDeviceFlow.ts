@@ -38,6 +38,15 @@
  * the longer one it demands after a `slow_down`). Polling faster gets the
  * whole flow rejected, and a client that polls in a tight loop would do
  * exactly that — so the pacing lives here, on the server, not in the panel.
+ *
+ * ## The registry is bounded
+ *
+ * `device/start` is the only route in this feature that allocates without a
+ * database write, so the map is the thing that grows. Two bounds, both
+ * enforced here: an entry expires (clamped to {@link FLOW_TTL_MS} whatever
+ * GitHub's `expires_in` claims) and is pruned on the next start, and
+ * one account may hold at most {@link MAX_PENDING_FLOWS_PER_USER} pending
+ * flows — its own oldest is dropped to make room, never anyone else's.
  */
 import { randomUUID } from 'node:crypto'
 import { Type } from '@core/utils/typeboxHelpers'
@@ -49,8 +58,26 @@ const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 export const GITHUB_OAUTH_SCOPE = 'repo'
 /** GitHub's own default when it sends no `interval`. */
 const DEFAULT_POLL_INTERVAL_SECONDS = 5
-/** A flow nobody finishes is forgotten well before GitHub's own 15-minute expiry lapses. */
+/**
+ * The longest a pending flow may sit in memory, whatever `expires_in` says.
+ * GitHub's own device codes last 15 minutes; this is the ceiling applied to
+ * the number in the response, so a wrong (or hostile) `expires_in` cannot
+ * pin an entry in the map forever.
+ */
 const FLOW_TTL_MS = 20 * 60 * 1000
+/**
+ * How many pending sign-ins one account may hold at once. `device/start` does
+ * real work — a GitHub round trip and a map entry — and nothing else bounds
+ * how often an authenticated caller may ask for one, so the oldest of that
+ * user's flows is dropped to make room.
+ *
+ * Per USER, and evicting only that user's own entries, deliberately: a global
+ * cap that evicted the oldest entry would let one account's loop cancel
+ * everyone else's sign-in. Three is well past "I misclicked and started
+ * again"; the map's size is then bounded by the number of accounts, which on a
+ * self-hosted install is a number the operator chose.
+ */
+const MAX_PENDING_FLOWS_PER_USER = 3
 const REQUEST_TIMEOUT_MS = 15_000
 
 /**
@@ -115,7 +142,22 @@ const flows = new Map<string, PendingDeviceFlow>()
 
 function pruneExpiredFlows(now: number): void {
   for (const [id, flow] of flows) {
-    if (flow.expiresAt <= now || now - flow.expiresAt > FLOW_TTL_MS) flows.delete(id)
+    if (flow.expiresAt <= now) flows.delete(id)
+  }
+}
+
+/**
+ * Drops this user's oldest pending flows until they hold fewer than the cap,
+ * so the one about to be created fits. Touches nobody else's entries — see
+ * {@link MAX_PENDING_FLOWS_PER_USER}.
+ */
+function evictOldestFlowsForUser(userId: string): void {
+  // A `Map` iterates in insertion order and a flow is only ever appended, so
+  // this list is already oldest-first — no timestamp to sort by, and no
+  // ambiguity when several flows were started in the same millisecond.
+  const mine = [...flows.values()].filter((flow) => flow.userId === userId)
+  for (let i = 0; i <= mine.length - MAX_PENDING_FLOWS_PER_USER; i++) {
+    flows.delete(mine[i]!.id)
   }
 }
 
@@ -203,8 +245,13 @@ export async function startGithubDeviceFlow(
     // so the first answer is certainly `authorization_pending`, and getting it
     // is how the panel knows the flow is alive.
     nextPollAt: now,
-    expiresAt: now + Math.max(60, Math.trunc(parsed.expires_in)) * 1000,
+    // Clamped at BOTH ends. The floor keeps a nonsense-small `expires_in` from
+    // producing a flow that is already dead; the ceiling keeps a nonsense-large
+    // one from pinning a map entry forever, since `pruneExpiredFlows` is the
+    // only thing that reclaims an abandoned flow.
+    expiresAt: now + Math.min(FLOW_TTL_MS, Math.max(60_000, Math.trunc(parsed.expires_in) * 1000)),
   }
+  evictOldestFlowsForUser(userId)
   flows.set(flow.id, flow)
 
   return {
@@ -246,6 +293,9 @@ export async function pollGithubDeviceFlow(
   deps: GithubDeviceFlowDeps = {},
 ): Promise<DeviceFlowPollResult | null> {
   const now = (deps.now ?? Date.now)()
+  // Deliberately NOT pruned here: an expired flow the caller is asking about
+  // must answer `expired` (the branch below deletes it), not the 404 a pruned
+  // entry would produce. Reclaiming everyone else's is `device/start`'s job.
   const flow = flows.get(flowId)
   if (!flow || flow.userId !== userId) return null
 

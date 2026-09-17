@@ -440,6 +440,55 @@ describe('github auth — rejections', () => {
     const res = await call('/admin/api/studio/github/repos', { cookie: cookieA, fetchImpl: githubStub() })
     expect(res.status).toBe(409)
   })
+
+  /**
+   * `device/start` is the one route here that allocates without a database
+   * write, and nothing else bounds how often an authenticated caller may ask.
+   * The cap is per USER and evicts only that user's own oldest flow — a global
+   * one would let a single account's loop cancel everyone else's sign-in.
+   */
+  it('bounds how many pending sign-ins one account may hold, without touching another account’s', async () => {
+    const otherUsersFlow = await (
+      await call('/admin/api/studio/github/device/start', {
+        method: 'POST',
+        cookie: cookieB,
+        fetchImpl: githubStub(),
+      })
+    ).json()
+
+    const mine: string[] = []
+    for (let i = 0; i < 6; i++) {
+      const started = await (
+        await call('/admin/api/studio/github/device/start', {
+          method: 'POST',
+          cookie: cookieA,
+          fetchImpl: githubStub(),
+        })
+      ).json()
+      mine.push(started.flowId)
+    }
+
+    // The earliest ones were dropped to make room…
+    const oldest = await call(`/admin/api/studio/github/device/poll?flowId=${mine[0]}`, {
+      cookie: cookieA,
+      fetchImpl: githubStub(),
+    })
+    expect(oldest.status).toBe(404)
+
+    // …the most recent still works…
+    const newest = await call(`/admin/api/studio/github/device/poll?flowId=${mine[mine.length - 1]}`, {
+      cookie: cookieA,
+      fetchImpl: githubStub(),
+    })
+    expect(newest.status).toBe(200)
+
+    // …and the other account's flow was never a candidate for eviction.
+    const other = await call(`/admin/api/studio/github/device/poll?flowId=${otherUsersFlow.flowId}`, {
+      cookie: cookieB,
+      fetchImpl: githubStub(),
+    })
+    expect(other.status).toBe(200)
+  })
 })
 
 // ---------------------------------------------------------------------------
