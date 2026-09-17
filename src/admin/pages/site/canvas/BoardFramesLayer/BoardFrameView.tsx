@@ -56,6 +56,7 @@ import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
+import { describePinnedAxes } from './pinnedAxesLabel'
 import {
   getColorSchemeCapability,
   getLocalesCapability,
@@ -225,6 +226,11 @@ function BoardFrameViewImpl({
   // a no-op flip instead of producing the LTR sibling the label promises.
   const boardAxes = useEditorStore((s) => s.previewAxes)
   const effectiveAxes: PreviewAxes = { ...boardAxes, ...frame.axes }
+  // Header badge — the ONLY thing that makes a pinned frame visibly
+  // different from an unpinned one (see `pinnedAxesLabel.ts`'s doc). `null`
+  // whenever `frame.axes` is absent or empty, so an ordinary frame renders
+  // no badge at all rather than an empty one.
+  const pinnedAxesLabel = describePinnedAxes(frame.axes)
   const colorSchemeCapability = useSyncExternalStore(
     subscribeColorSchemeCapability,
     getColorSchemeCapability,
@@ -381,6 +387,15 @@ function BoardFrameViewImpl({
   /** WS-10 Phase 2 — "duplicate as variant": create a sibling frame of this page with the given axis override. */
   const handleDuplicateAsVariant = (axes: Partial<PreviewAxes>) =>
     useEditorStore.getState().duplicateFrameAsVariant(frame.id, axes)
+  /**
+   * `canvas-16` — the inverse of "duplicate as variant": clears this frame's
+   * OWN axes override so it goes back to following the board/toolbar preview
+   * axes. Goes through the same `setFrameAxes` store action every MCP write
+   * uses (`boardFrameSliceActions.ts`), so it lands on the same undo stack
+   * and autosave (`commitBoardChange`) as every other frame mutation — no
+   * second write path.
+   */
+  const handleResetAxes = () => useEditorStore.getState().setFrameAxes(frame.id, undefined)
 
   const endResize = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (resizeRef.current?.pointerId === e.pointerId) {
@@ -427,6 +442,24 @@ function BoardFrameViewImpl({
           />
         ) : (
           <span className={styles.title}>{page.title}</span>
+        )}
+        {/* `canvas-16` — this frame carries its OWN preview-axes override
+            (`frame.axes`), which always wins over the board/toolbar axes
+            (see `effectiveAxes` above). Without this badge a pinned frame is
+            indistinguishable from an unpinned one, and the toolbar silently
+            stops explaining what's on screen. Shown next to the title in
+            BOTH states (renaming or not) so the pin doesn't disappear mid-
+            rename; `flex-shrink: 0` keeps it from being squeezed by a long
+            title/rename input, which truncates instead (`.title`'s own
+            `min-width: 0`). */}
+        {pinnedAxesLabel && (
+          <span
+            className={styles.axesBadge}
+            data-testid="board-frame-axes-badge"
+            title={`This frame is pinned to ${pinnedAxesLabel} — it ignores the board's preview toolbar`}
+          >
+            {pinnedAxesLabel}
+          </span>
         )}
       </div>
 
@@ -480,6 +513,20 @@ function BoardFrameViewImpl({
             >
               <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
               Duplicate as {otherLocale?.toUpperCase()}
+            </ContextMenuItem>
+          )}
+          {/* `canvas-16` — the inverse of every "Duplicate as …" item above:
+              clears this frame's own override so it goes back to following
+              the board/toolbar preview axes. Omitted (not disabled) when
+              there is nothing to reset, matching the omission convention the
+              variant items above already use — never a dead item on an
+              unpinned frame. */}
+          {frame.axes && (
+            <ContextMenuItem
+              data-testid="board-frame-reset-axes"
+              onClick={() => { setContextMenu(null); handleResetAxes() }}
+            >
+              Follow board preview axes
             </ContextMenuItem>
           )}
           {hasManualHeight && (

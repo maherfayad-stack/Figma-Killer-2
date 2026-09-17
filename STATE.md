@@ -12,6 +12,109 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### canvas-16 — a pinned frame's preview-axes override is now visible and clearable
+- **Agent:** canvas-engineer
+- **Stage:** done — draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `feat/frame-axes-override-visible`. Worktree: `.tmp/wt-frame-axes-visible/`.
+- **Updated:** 2026-09-17.
+- **Goal:** a per-frame `axes` override (`BoardFrame.axes`, `Partial<PreviewAxes>`) always
+  wins over the board/toolbar preview axes — that precedence is correct and untouched — but
+  it was invisible (no UI signal a frame was pinned) and unclearable (`setFrameAxes` had zero
+  UI callers; only the MCP tool and "Duplicate as variant" ever WROTE an override). A user's
+  `sms` frame stuck on LTR/light/English while the toolbar said RTL/dark/Arabic, with no way
+  to fix it short of hand-editing `.studio/boards.json`.
+- **Scope:**
+  - `src/admin/pages/site/canvas/BoardFramesLayer/pinnedAxesLabel.ts` (new) — pure
+    `describePinnedAxes(axes)`, formats ONLY the keys present in a `Partial<PreviewAxes>`, in
+    a fixed order (`direction`, `colorScheme`, `locale`), matching the toolbar's own value
+    vocabulary (`PreviewAxesControls.tsx`: `RTL`/`LTR`, `Dark`/`Light`, locale upper-cased).
+    Returns `null` for `undefined`/`{}` so "no override" renders no badge.
+  - `src/admin/pages/site/canvas/BoardFramesLayer/BoardFrameView.tsx` — renders the badge
+    (`data-testid="board-frame-axes-badge"`) next to the title/rename-input in the header, and
+    adds a `frame.axes`-gated context-menu item, `data-testid="board-frame-reset-axes"`,
+    labelled **"Follow board preview axes"**, that calls
+    `useEditorStore.getState().setFrameAxes(frame.id, undefined)` — the model-layer clear path
+    (`boardsModel.ts:269`) already existed and already goes through `commitBoardChange`
+    (undo + `boardsDirty` autosave, `store-09`); this just adds the first UI caller. Placed
+    directly after the "Duplicate as …" variant items (its inverse) and before "Fit height to
+    content".
+  - `src/admin/pages/site/canvas/BoardFramesLayer/BoardFramesLayer.module.css` — new
+    `.axesBadge` (small, `--text-subtle`, `flex-shrink: 0` — secondary to the title, never
+    competing with it, same treatment as `BreakpointFrame.module.css`'s `.pxBadge`). Gave
+    `.title`/`.titleInput` `min-width: 0` (+ `.title` `flex: 1`) so a long page title actually
+    truncates now that it has a sibling in the flex row, instead of pushing the badge off — a
+    real fix, not incidental, since before this change `.title` had no sibling to compete with.
+  - `server/ai/mcp/tools/studio/frameAxesTools.ts` — reworded `studio_set_frame_axes`'s
+    description: it previously claimed to be "the same … control the toolbar's own
+    preview-axes UI drives", which is false (the toolbar sets the BOARD default; this tool
+    pins a PER-FRAME override that outranks it) and never mentioned the override persists
+    until cleared. No behavior change, no schema change.
+  - `src/__tests__/canvas/boardFrameAxesOverride.test.tsx` (new).
+- **Badge exact behavior:** `{ direction: 'rtl' }` → `"RTL"`. `{ colorScheme: 'dark' }` →
+  `"Dark"`. `{ direction: 'ltr', locale: 'en', colorScheme: 'light' }` (the diagnosed `sms`
+  shape) → `"LTR · Light · EN"` — three keys, three labels, in that fixed order regardless of
+  the object's own key order. No `frame.axes` → no badge, no reset item.
+- **Menu item:** label **"Follow board preview axes"** — describes the resulting state (same
+  register as the existing "Fit height to content" item, not an imperative "Clear/Reset…").
+  Rendered ONLY when `frame.axes` is present — omitted, never disabled, matching this same
+  menu's existing convention for the color-scheme/locale duplicate items (omitted when the
+  probe found nothing to offer).
+- **Out of scope, deliberately not done:** did not touch `effectiveAxes = { ...boardAxes,
+  ...frame.axes }` (per-frame-wins precedence, correct as-is); did not add a per-frame axes
+  *editor* (setting arbitrary axes on an existing frame from the UI) — this is visibility +
+  clear only, per the work order; did not touch `studio-workspace/` (the user's live project
+  data — their `sms` frame's `axes` in `boards.json` is untouched, as instructed).
+- **Landmines:**
+  - `PreviewAxes` (`@core/studio-board/previewAxes.ts`) has exactly three keys
+    (`direction`/`colorScheme`/`locale`) — if a fourth axis is ever added, both
+    `pinnedAxesLabel.ts`'s `AXIS_ORDER` array and `PreviewAxesControls.tsx`'s own display
+    vocabulary need the same new branch, or the badge silently drops the new axis while the
+    toolbar shows it.
+  - The MCP tool's `axes` input field is a required object with all-optional keys (not
+    `Partial<PreviewAxes> | undefined`) — calling it with `axes: {}` would leave
+    `frame.axes = {}` sitting on the frame (an empty-but-present override object) rather than
+    deleting the key the way the store's `setFrameAxes(id, undefined)` does. `describePinnedAxes`
+    returns `null` for `{}` so the BADGE reads correctly either way, but the frame's own JSON
+    would carry a vestigial empty `axes: {}` if an agent ever did this — not fixed here
+    (out of scope: no MCP schema/behavior change), just recorded so nobody is surprised by an
+    empty-but-present `axes` key in `boards.json` on a "clean" frame.
+  - `.title`'s new `flex: 1; min-width: 0` only matters once there's a sibling flex item in
+    `.header` (the badge, or the rename `Input`, which already had `flex: 1`) — if a future
+    change adds ANOTHER header chip, check it doesn't also need `flex-shrink: 0` or it'll start
+    stealing width from the title instead of the title truncating first.
+- **Verification:**
+  - `bun test src/__tests__/canvas/boardFrameAxesOverride.test.tsx` — 7 pass / 0 fail (new file).
+  - `bun test src/__tests__/canvas` (full directory, 825 tests/114 files) — 800 pass / 25 fail /
+    16–17 errors (varies slightly run-to-run). **Confirmed pre-existing, not mine**: stashed
+    this diff and re-ran the identical full-directory command on unmodified
+    `feat/alm-figma-killer-studio-shell` → 803 pass / 15 fail / 8 errors, same failure names
+    (5000ms render timeouts under batch load — `B3 — NodeRenderer lock-down`, `canvas breakpoint
+    activation`, `pin ⇄ unroll interaction`, `canvas iframe body presentation`, etc. — none in
+    `BoardFrameView`/axes/badge code) — this is the documented batch-run isolation flake, worse
+    under a big combined run; running just the touched-file-adjacent tests
+    (`boardFrameViewTierFork`, `boardFrameVariantSelection`, `boardFramesLayerRenderScope`,
+    `liveBoardFrame`, my new file) in one small batch reproduces the SAME 2-fail/1-error
+    baseline with or without this diff (a `HTMLCanvasElement is not defined` in
+    `useFramePosterCapture`'s `html-to-image` call under happy-dom, and a 5000ms hover-scoping
+    timeout — both present on unmodified `main`, neither touches axes).
+  - `bun test server/ai/mcp/tools/studio/frameAxesTools.test.ts` — 9 pass / 0 fail (description
+    text isn't pinned by any test; behavior unchanged).
+  - `bun run build` — clean (`tsc -b && vite build`, had to `bun install` first in this fresh
+    worktree).
+  - `bun run lint` — 6 pre-existing errors, all `'os' is defined but never used' in
+    `server/handlers/__tests__/*.ts` / `server/handlers/studio/referenceUpload.test.ts`, exactly
+    the named pre-existing set; zero errors in any file this diff touched.
+  - `bun test src/__tests__/architecture` — 550 pass / 2 fail, both the named pre-existing ones
+    (`icon-catalog-integrity` chevron-left, `no-core-barrel-deep-imports`).
+- **Human action needed (dogfood):** open `/admin/site` with a board that has a frame carrying
+  a per-frame `axes` override (the user's own `test4 copy` project's `sms` frame already does —
+  `{ direction: 'ltr', locale: 'en', colorScheme: 'light' }`). Confirm the frame's header shows
+  `LTR · Light · EN` next to the title (any zoom level; one frame is enough). Right-click that
+  frame's header, confirm "Follow board preview axes" appears in the context menu (near
+  "Duplicate as …"), click it, and confirm the badge disappears and the frame now renders using
+  the toolbar's current axes instead. Then right-click an ORDINARY (unpinned) frame on the same
+  board and confirm neither the badge nor the menu item appear at all.
+
 ### panel-31 — Transform/Animations/Interaction move to Prototype; Attributes retired (direct user feedback)
 - **Agent:** panel-designer
 - **Stage:** done — draft PR open against `feat/alm-figma-killer-studio-shell`.
