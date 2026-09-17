@@ -79,6 +79,18 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
     'Escape cancels an in-flight prototype-link pick, bound only while the ' +
       'pick is running.',
   ],
+  [
+    'MeasureLayer.tsx',
+    'K5 Alt-hover measurement tracks the Alt KEY ITSELF, on the parent document AND every frame document, only while a selection exists. It is a modifier gesture, not a chord: it claims no key, prevents no default and cannot shadow a shortcut — `canvas.measureHover` is in `keybindings.ts` with `match: () => false` purely so the `?` sheet lists it.',
+  ],
+  [
+    'useCanvasReorderDrag.ts',
+    'S2 — Shift constrains the axis and Escape abandons the drag, read by the session that owns the pointer, bound for the length of that one gesture. A cancel must be handled by the session and by nothing else, which is exactly the in-flight-gesture exemption above.',
+  ],
+  [
+    'BoardFramesLayer/useBoardFrameMoveDrag.ts',
+    'K2 — the same Shift/Escape pair for the frame HEADER drag, bound for the length of that gesture. Separate from the element drag because a frame copy is a `boards.json` object rather than a source write.',
+  ],
 ])
 
 function collectTsFiles(dir: string): string[] {
