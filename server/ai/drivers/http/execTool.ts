@@ -9,10 +9,19 @@
  * Defence in depth: every raw tool input is re-validated against the
  * canonical TypeBox `inputSchema` before dispatch — the model's argument JSON
  * is untrusted no matter which provider produced it.
+ *
+ * It is also the ONE choke point every tool round passes through — the HTTP
+ * drivers reach it through `toolLoop.ts` and the `claude` CLI reaches it
+ * through `server/ai/mcp/server.ts` — which is why A9's per-round telemetry
+ * (`.studio/agent-turns.jsonl`, `agentTurnLog.ts`) is recorded here and
+ * nowhere else. Instrumenting the two loops separately would have produced
+ * two logs that disagree about what a round is.
  */
 
+import { performance } from 'node:perf_hooks'
 import { parseValue, safeParseValue } from '@core/utils/typeboxHelpers'
 import { AiToolOutputSchema } from '@core/ai'
+import { appendAgentTurnLogEntry } from '../../../handlers/studio/agentTurnLog'
 import { toolAllowedForCapabilities } from '../../tools/capabilityGate'
 import type {
   AiBrowserBridge,
@@ -83,6 +92,17 @@ export async function executeAiTool(
     }
   }
 
+  // A9 — one telemetry line per round, so "the agent is slow" becomes "which
+  // tool". Measured around BOTH execution classes: a browser-bridged call's
+  // cost is the round trip, which is exactly the number a bridged tool is
+  // suspected of. The recorder swallows its own failures, so nothing below
+  // needs to defend against it.
+  const startedAt = performance.now()
+  const record = (result: AiToolOutput): AiToolOutput => {
+    recordToolRound(aiTool, toolContextBase, validated, result, performance.now() - startedAt)
+    return result
+  }
+
   if (aiTool.execution === 'server') {
     if (!aiTool.handler) {
       return { ok: false, error: `Tool ${aiTool.name} declares execution='server' but has no handler.` }
@@ -90,17 +110,81 @@ export async function executeAiTool(
     try {
       const ctx: ToolContext = { ...toolContextBase, signal }
       const result = await aiTool.handler(validated, ctx)
-      return normaliseToolOutput(result)
+      return record(normaliseToolOutput(result))
     } catch (err) {
       const message = err instanceof Error ? err.message : `Tool ${aiTool.name} failed.`
-      return { ok: false, error: message }
+      return record({ ok: false, error: message })
     }
   }
 
   // Browser execution: forward to the bridge and wait for the POST-back.
   // A resolved `{ ok: false }` remains a recoverable domain failure. Rejection
-  // means the transport itself is unavailable and deliberately propagates.
-  return await bridge.callBrowser(aiTool.name, validated)
+  // means the transport itself is unavailable and deliberately propagates —
+  // and is deliberately NOT recorded: a round that never reached a tool has no
+  // tool latency to report, and logging it as one would poison the p95.
+  return record(await bridge.callBrowser(aiTool.name, validated))
+}
+
+/**
+ * Was this result served from a Studio-side cache?
+ *
+ * Two shapes, because two shapes exist: a whole-call `fromCache` and the
+ * per-page `results[].fromCache` the batched tools (`studio_compare`) report.
+ * A batch counts as a cache hit only when EVERY page was served from cache —
+ * a batch that recaptured one page paid a capture, and calling that a hit
+ * would hide the cost the log exists to surface.
+ *
+ * Deliberately shallow: this reads two known field names and never walks an
+ * arbitrary payload. A deep scan of every tool result on every round is real
+ * work to answer a question only these two shapes ever ask.
+ */
+function resultWasCacheHit(result: AiToolOutput): boolean {
+  if (!result.ok) return false
+  const data: unknown = (result as { data?: unknown }).data ?? result
+  if (typeof data !== 'object' || data === null) return false
+  const record = data as { fromCache?: unknown; results?: unknown }
+  if (record.fromCache === true) return true
+  if (!Array.isArray(record.results) || record.results.length === 0) return false
+  return record.results.every((entry) => typeof entry === 'object' && entry !== null && (entry as { fromCache?: unknown }).fromCache === true)
+}
+
+/** Serialized byte size, or 0 for anything that will not serialize (a circular payload is a bug elsewhere, not a reason to fail a tool call). */
+function serializedBytes(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Append one round to `.studio/agent-turns.jsonl`. No-op without an open
+ * workspace — an external MCP client driving a tool against no project has
+ * nowhere to write, and inventing a directory for it would put timing data in
+ * somebody else's project.
+ */
+function recordToolRound(
+  aiTool: AiTool,
+  toolContextBase: ToolContextBase,
+  validatedInput: unknown,
+  result: AiToolOutput,
+  ms: number,
+): void {
+  const dir = toolContextBase.workspaceDir
+  if (!dir) return
+  appendAgentTurnLogEntry(dir, {
+    at: Date.now(),
+    conversationId: toolContextBase.conversationId,
+    tool: aiTool.name,
+    ms: Math.round(ms),
+    bytesIn: serializedBytes(validatedInput),
+    bytesOut: serializedBytes(result),
+    ok: result.ok,
+    cacheHit: resultWasCacheHit(result),
+    execution: aiTool.execution === 'server' ? 'server' : 'browser',
+    ...(toolContextBase.fidelityMode ? { fidelityMode: toolContextBase.fidelityMode } : {}),
+    ...(toolContextBase.designPolicy ? { designPolicy: toolContextBase.designPolicy } : {}),
+  })
 }
 
 /** The only properties the canonical envelope carries. Anything else marks a raw payload. */

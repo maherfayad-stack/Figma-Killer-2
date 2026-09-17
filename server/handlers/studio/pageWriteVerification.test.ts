@@ -15,7 +15,7 @@ import { createScaffoldedPage } from './pageScaffold'
 import { resolvePageSourceFile } from './pageSourceFile'
 import { CHAT_ATTACHMENT_REFERENCE_SOURCE } from './designReferenceSchema'
 import { registerDesignReference } from './designReferenceStore'
-import { recordPassingCompare } from './pageVerificationStore'
+import { compareRegionLabel, recordCompareVerdict, recordPassingCompare, recordPassingQualityCheck } from './pageVerificationStore'
 import { appendTurnWrite, resetTurnWriteLog } from './turnWriteLog'
 
 /** Writes and compares are both per ACCOUNT within a project (W10). */
@@ -73,7 +73,7 @@ describe('computePageWriteVerification', () => {
     if (!registered.ok) throw new Error(registered.error)
 
     const t0 = Date.now()
-    recordPassingCompare(dir, USER, page.id, registered.reference.id, t0)
+    recordPassingCompare(dir, USER, page.id, registered.reference.id, 'balanced', t0)
     appendTurnWrite(dir, USER, path.join(dir, rel), t0 + 1000)
 
     const [entry] = computePageWriteVerification(dir, USER, [page])
@@ -88,7 +88,7 @@ describe('computePageWriteVerification', () => {
 
     const t0 = Date.now()
     appendTurnWrite(dir, USER, path.join(dir, rel), t0)
-    recordPassingCompare(dir, USER, page.id, registered.reference.id, t0 + 1000)
+    recordPassingCompare(dir, USER, page.id, registered.reference.id, 'balanced', t0 + 1000)
 
     const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(true)
@@ -105,9 +105,9 @@ describe('computePageWriteVerification', () => {
       const registered = await registerDesignReference(dir, ONE_PIXEL_PNG, { pageId: page.id, label, role: 'spec' })
       if (!registered.ok) throw new Error(registered.error)
     }
-    appendTurnWrite(dir, path.join(dir, rel))
+    appendTurnWrite(dir, USER, path.join(dir, rel))
 
-    const [entry] = computePageWriteVerification(dir, [page])
+    const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(false)
     expect(entry!.referenceAmbiguity).toBeDefined()
     expect(entry!.referenceAmbiguity).toContain('referenceId')
@@ -127,9 +127,9 @@ describe('computePageWriteVerification', () => {
       source: CHAT_ATTACHMENT_REFERENCE_SOURCE,
     })
     if (!pasted.ok) throw new Error(pasted.error)
-    appendTurnWrite(dir, path.join(dir, rel))
+    appendTurnWrite(dir, USER, path.join(dir, rel))
 
-    const [entry] = computePageWriteVerification(dir, [page])
+    const [entry] = computePageWriteVerification(dir, USER, [page])
     expect(entry!.hasReference).toBe(true)
     expect(entry!.referenceId).toBe(spec.reference.id)
     expect(entry!.referenceAmbiguity).toBeUndefined()
@@ -155,6 +155,129 @@ describe('computePageWriteVerification', () => {
 
     resetTurnWriteLog(dir, USER)
     expect(computePageWriteVerification(dir, USER, [page])).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A9 — the two mode-specific halves of the Stop gate. Each mode defines
+// "verified" differently, and the gate must never ask for a measurement the
+// mode does not define.
+// ---------------------------------------------------------------------------
+
+describe('computePageWriteVerification — creative mode', () => {
+  it('is verified by a clean studio_quality_check, with no design reference anywhere', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+    recordPassingQualityCheck(dir, USER, page.id, 0, 'balanced', t0 + 1000)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], { fidelityMode: 'creative' })
+    expect(entry!.hasReference).toBe(false)
+    expect(entry!.qualityCheckedSinceWrite).toBe(true)
+    expect(entry!.verifiedSinceWrite).toBe(true)
+  })
+
+  it('is NOT verified by a quality check that predates the write', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    recordPassingQualityCheck(dir, USER, page.id, 0, 'balanced', t0 - 1000)
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], { fidelityMode: 'creative' })
+    expect(entry!.verifiedSinceWrite).toBe(false)
+    expect(describeUnverifiedPage(entry!, false)).toContain('studio_quality_check')
+  })
+
+  it('asks for the quality check by name and never for a design reference', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    appendTurnWrite(dir, USER, path.join(dir, rel))
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], { fidelityMode: 'creative' })
+    const message = describeUnverifiedPage(entry!, true)
+    expect(message).toContain('CREATIVE')
+    expect(message).not.toContain('studio_register_design_reference')
+  })
+})
+
+describe('computePageWriteVerification — balanced mode', () => {
+  it('is verified when every differing region the last compare reported is named in the reply', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+    recordCompareVerdict(dir, USER, page.id, false, ['R1@y412', 'R2@y880'], t0 + 1000)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], {
+      fidelityMode: 'balanced',
+      replyText: 'R1@y412 is a deliberate wider hero; R2@y880 keeps the taller footer the brief asked for.',
+    })
+    expect(entry!.verifiedSinceWrite).toBe(true)
+    expect(entry!.unnamedRegions).toBeUndefined()
+  })
+
+  it('blocks on the regions the reply did not name, and lists them by label', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+    recordCompareVerdict(dir, USER, page.id, false, ['R1@y412', 'R2@y880'], t0 + 1000)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], {
+      fidelityMode: 'balanced',
+      replyText: 'R1@y412 is a deliberate wider hero.',
+    })
+    expect(entry!.verifiedSinceWrite).toBe(false)
+    expect(entry!.unnamedRegions).toEqual(['R2@y880'])
+    const message = describeUnverifiedPage(entry!, false)
+    expect(message).toContain('R2@y880')
+    expect(message).toContain('BALANCED')
+  })
+
+  it('a PASSING compare needs no naming — nothing differs, so there is nothing to name', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+    recordCompareVerdict(dir, USER, page.id, true, [], t0 + 1000)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], { fidelityMode: 'balanced' })
+    expect(entry!.verifiedSinceWrite).toBe(true)
+  })
+
+  it('a compare that predates the write proves nothing', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    recordCompareVerdict(dir, USER, page.id, true, [], t0 - 1000)
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], { fidelityMode: 'balanced' })
+    expect(entry!.verifiedSinceWrite).toBe(false)
+  })
+
+  it('with no reply text to read, nothing counts as named — the safe direction', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+    recordCompareVerdict(dir, USER, page.id, false, ['R1@y412'], t0 + 1000)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], { fidelityMode: 'balanced' })
+    expect(entry!.verifiedSinceWrite).toBe(false)
+    expect(entry!.unnamedRegions).toEqual(['R1@y412'])
+  })
+
+  it('matches the label the compare tool actually hands the model, not a second format', async () => {
+    const { page, rel } = await scaffold('Onboarding')
+    const t0 = Date.now()
+    // Built by the SAME helper `studio_compare` uses to label its regions —
+    // the gate looking for one string while the tool prints another is the
+    // failure this shared function exists to prevent.
+    const label = compareRegionLabel(0, 411.6)
+    expect(label).toBe('R1@y412')
+    appendTurnWrite(dir, USER, path.join(dir, rel), t0)
+    recordCompareVerdict(dir, USER, page.id, false, [label], t0 + 1000)
+
+    const [entry] = computePageWriteVerification(dir, USER, [page], {
+      fidelityMode: 'balanced',
+      replyText: `Left ${label} alone deliberately — the design's hero is shorter than the copy needs.`,
+    })
+    expect(entry!.verifiedSinceWrite).toBe(true)
   })
 })
 

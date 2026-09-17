@@ -13,6 +13,7 @@
  * notices (it is only visible while a turn is in flight).
  */
 
+import { formatTurnProgress } from '@core/ai'
 import type { AgentMessage, AgentToolCall } from '@site/agent'
 import { getToolCallDisplay } from './toolCallDisplay'
 
@@ -30,6 +31,18 @@ export interface ActivitySummary {
   steps: ActivityStep[]
   /** Steps already finished, for the "3 of 7" style summary. */
   completedCount: number
+  /**
+   * A9's progress line — "step 3 of 6" from the model's own reported plan
+   * when it reported one, else "2 of 3 steps done" from the tool ledger, plus
+   * the round count against the turn budget once the turn is near the
+   * ceiling. `null` before anything has happened, where the headline is
+   * already the whole answer.
+   *
+   * It is passive: it sits in the activity strip's meta line beside the
+   * elapsed clock and never becomes a toast. A turn that is working is not an
+   * event.
+   */
+  progress: string | null
 }
 
 /**
@@ -42,7 +55,9 @@ export interface ActivitySummary {
 const STARTING_HEADLINE = 'Getting started — reading your project'
 
 export function summarizeAgentActivity(message: AgentMessage | null): ActivitySummary {
-  if (!message) return { headline: STARTING_HEADLINE, steps: [], completedCount: 0 }
+  if (!message) {
+    return { headline: STARTING_HEADLINE, steps: [], completedCount: 0, progress: null }
+  }
 
   const steps: ActivityStep[] = []
   for (const block of message.blocks) {
@@ -57,7 +72,19 @@ export function summarizeAgentActivity(message: AgentMessage | null): ActivitySu
   }
   const completedCount = steps.filter((step) => step.status !== 'pending').length
 
-  return { headline: headlineFor(message, steps), steps, completedCount }
+  return {
+    headline: headlineFor(message, steps),
+    steps,
+    completedCount,
+    // The budget, the parse and the phrasing all live in `@core/ai` because
+    // the same budget number is stated to the model by the server prompt —
+    // a second copy here is how the control starts lying.
+    progress: formatTurnProgress({
+      reported: message.reportedStep ?? null,
+      roundsStarted: steps.length,
+      roundsDone: completedCount,
+    }),
+  }
 }
 
 /**

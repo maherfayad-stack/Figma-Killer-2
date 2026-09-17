@@ -152,6 +152,13 @@ export {
 } from './documentRefs'
 export type { AgentDocumentDescriptor } from './documentRefs'
 export {
+  AGENT_TURN_ROUND_BUDGET,
+  AGENT_TURN_ROUND_WARN_AT,
+  formatTurnProgress,
+  parseTurnStepReport,
+} from './turnBudget'
+export type { AgentTurnStepReport, TurnProgressInput } from './turnBudget'
+export {
   renderAgentDocument,
 } from './readSurface'
 export type {

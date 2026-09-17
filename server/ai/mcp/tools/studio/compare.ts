@@ -122,7 +122,7 @@ import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
-import { recordPassingCompare } from '../../../../handlers/studio/pageVerificationStore'
+import { compareRegionLabel, recordCompareVerdict, recordPassingCompare } from '../../../../handlers/studio/pageVerificationStore'
 import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
@@ -221,6 +221,14 @@ function captureDprFor(dir: string, pageId: string, referenceWidth: number): num
   return Math.round(Math.min(DPR_MAX, Math.max(DPR_MIN, ideal)) * 10_000) / 10_000
 }
 
+/** One differing region as the model sees it — the diff engine's rectangle plus the quotable label the Stop gate reads back. */
+type LabelledDiffRegion = CachedCompareVerdict['regions'][number] & { label: string }
+
+/** Attach `compareRegionLabel` to each region, worst first. Pure and one-liner-sized, but named because BOTH the cached and the freshly-computed path have to do exactly this — two inline maps would be two chances to number them differently. */
+function labelRegions(regions: CachedCompareVerdict['regions']): LabelledDiffRegion[] {
+  return regions.map((region, index) => ({ ...region, label: compareRegionLabel(index, region.y) }))
+}
+
 interface PageCompareSuccess {
   ok: true
   page: { id: string; title: string }
@@ -233,7 +241,15 @@ interface PageCompareSuccess {
   thresholds: { fidelityMode: FidelityMode; passScore: number; maxRegionCoverage: number; maxRegionPixels: number | null }
   capture: CachedCompareVerdict['capture']
   structuralRegionCount: number
-  regions: CachedCompareVerdict['regions']
+  /**
+   * Each differing region, worst first, carrying the stable `label`
+   * (`R1@y412`, `compareRegionLabel`) the balanced Stop gate looks for in the
+   * reply. The label is added here rather than stored on the cached verdict
+   * because it is derived from the region's own index and geometry — a cached
+   * verdict and a fresh one therefore produce identical labels, which is the
+   * property the gate depends on.
+   */
+  regions: LabelledDiffRegion[]
   regionsTruncated: boolean
   worstRegionNodeIds?: string[]
   images?: { screen: number; reference: number; diff: number }
@@ -463,7 +479,7 @@ export const studioCompareTool: AiTool = {
           },
           capture: c.capture,
           structuralRegionCount: c.structuralRegionCount,
-          regions: c.regions,
+          regions: labelRegions(c.regions),
           regionsTruncated: c.regionsTruncated,
           ...(c.worstRegionNodeIds ? { worstRegionNodeIds: c.worstRegionNodeIds } : {}),
         }
@@ -592,7 +608,7 @@ export const studioCompareTool: AiTool = {
         },
         capture: captureMeta,
         structuralRegionCount: structuralRegions.length,
-        regions,
+        regions: labelRegions(regions),
         regionsTruncated: diff.regionsTruncated,
         ...(worstRegion && !pass ? { worstRegionNodeIds: worstRegion.nodeIds } : {}),
       }
@@ -637,6 +653,14 @@ export const studioCompareTool: AiTool = {
     // that account's Stop gate, and must never unblock anybody else's.
     const agentUserKey = studioAgentUserKey(ctx.userId)
     for (const result of results) {
+      // A9 — EVERY ok verdict is recorded, pass or fail, with its region
+      // labels. The balanced Stop gate's bar is "every differing region is
+      // fixed or named", so it needs the failing case; `recordPassingCompare`
+      // below deliberately still records only passes, because the strict gate
+      // asks a different question and a fail is not an answer to it.
+      if (result.ok) {
+        recordCompareVerdict(dir, agentUserKey, result.page.id, result.pass, result.pass ? [] : result.regions.map((r) => r.label))
+      }
       if (result.ok && result.pass) {
         // The mode is recorded WITH the pass, not inferred later: the Stop
         // gate reads this file from a different process and has no way to

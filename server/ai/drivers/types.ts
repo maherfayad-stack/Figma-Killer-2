@@ -208,6 +208,16 @@ export interface ToolContextBase {
    */
   readonly fidelityMode?: FidelityMode
   /**
+   * This turn's resolved design policy (A12) — how much of the project's own
+   * design system the agent is held to. `studio_quality_check` reads it as
+   * tier 2 of `resolveDesignPolicy`, below its own argument and above the
+   * project default on disk.
+   *
+   * Same availability rule as `fidelityMode`: `undefined` for a call that did
+   * not come from a chat turn, which simply starts the chain one tier lower.
+   */
+  readonly designPolicy?: import('../../handlers/studio/designPolicy').DesignPolicy
+  /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's
    * onSnapshot) so later server read tools see post-mutation state.
