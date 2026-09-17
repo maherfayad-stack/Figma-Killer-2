@@ -51,18 +51,26 @@ export {
   refuseMintedNodeInsert,
   refuseStructuralEdit,
   refusePlacement,
-  previewStructuralMove,
-  resolveContainerAnchor,
-  resolveSourceContainer,
 } from './sourceStructure'
 export type {
   SourceStructureNode,
   StructuralEditKind,
   StructuralRefusal,
   StructuralRefusalReason,
+} from './sourceStructure'
+// The same rule asked of a live tree: which sibling a move lands beside, which
+// element "inside the page" means, and whether a selection is one run (K3).
+export {
+  previewStructuralGroup,
+  previewStructuralMove,
+  resolveContainerAnchor,
+  resolveSourceContainer,
+} from './sourceStructurePreview'
+export type {
+  StructuralGroupPreview,
   StructuralMoveCommit,
   StructuralMovePreview,
-} from './sourceStructure'
+} from './sourceStructurePreview'
 // Track F2 — the refusal model. Wraps the two predicates above (plus B2/B1's
 // className/CSS vocabularies and Detach's) into one typed shape every refusal
 // surface renders: reason + human explanation + a way forward. See the
@@ -205,9 +213,9 @@ export {
   duplicateNode,
   buildSubtreeNodeIdMap,
   pasteSubtree,
-  wrapNode,
-  wrapNodes,
 } from './mutations'
+// Nesting mutations — wrap one, wrap a selection, dissolve a container (K3).
+export { wrapNode, wrapNodes, unwrapNode } from './wrapMutations'
 export { applyTreeOperation } from './treeOperations'
 
 export {

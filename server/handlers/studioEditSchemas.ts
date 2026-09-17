@@ -334,6 +334,13 @@ export interface StudioEditRefusal {
     | 'move'
     | 'delete'
     | 'insert'
+    | 'duplicate'
+    | 'wrap'
+    | 'reparent'
+    // K3 — ⌘G on a run of siblings, and ⌘⇧G. Both refuse for reasons only the
+    // AST can see (`not-contiguous`, `mixed-indentation`, `has-behaviour`).
+    | 'group'
+    | 'ungroup'
     | 'css'
     | 'class'
     | 'style'

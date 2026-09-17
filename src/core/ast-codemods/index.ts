@@ -41,6 +41,20 @@ export type {
 } from './duplicateJsxElement'
 export { wrapJsxElement } from './wrapJsxElement'
 export type { WrapJsxElementParams, WrapJsxElementResult } from './wrapJsxElement'
+export { wrapJsxElements } from './wrapJsxElements'
+export type {
+  WrapJsxElementsParams,
+  WrapJsxElementsRefusal,
+  WrapJsxElementsRefusalReason,
+  WrapJsxElementsResult,
+} from './wrapJsxElements'
+export { unwrapJsxElement } from './unwrapJsxElement'
+export type {
+  UnwrapJsxElementParams,
+  UnwrapJsxElementResult,
+  UnwrapJsxRefusal,
+  UnwrapJsxRefusalReason,
+} from './unwrapJsxElement'
 export { deleteJsxElement } from './deleteJsxElement'
 export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
 export type { ImportPruneSession } from './pruneOrphanedImports'

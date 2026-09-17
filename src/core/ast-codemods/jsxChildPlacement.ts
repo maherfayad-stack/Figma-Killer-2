@@ -30,7 +30,7 @@
  * than assumed, so a file written with tabs or four spaces keeps its own style
  * and no unrelated line is reformatted.
  */
-import { Node, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
+import { Node, type JsxElement, type JsxFragment, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
 import { resolveJsxChildRange, type TextEdit } from './jsxChildRange'
 import { refuse, type InsertJsxRefusal } from './jsxSubtree'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
@@ -190,8 +190,16 @@ function isWithin(node: Node, range: { start: number; end: number } | null | und
   return node.getStart() >= range.start && node.getEnd() <= range.end
 }
 
-/** The element children of a JSX element, in source order — whitespace and expression children excluded. */
-export function elementChildren(element: JsxElement): (JsxElement | JsxSelfClosingElement)[] {
+/**
+ * The element children of a JSX element or fragment, in source order —
+ * whitespace and expression children excluded.
+ *
+ * A FRAGMENT is accepted because `resolveJsxChildRange` already treats one as
+ * an ordinary JSX parent (`<>…</>` holds children exactly the way an element
+ * does), and K3's group needs the sibling list of whichever of the two the run
+ * sits in to answer "is anything unnamed between these".
+ */
+export function elementChildren(element: JsxElement | JsxFragment): (JsxElement | JsxSelfClosingElement)[] {
   const children: (JsxElement | JsxSelfClosingElement)[] = []
   for (const child of element.getJsxChildren()) {
     if (Node.isJsxElement(child) || Node.isJsxSelfClosingElement(child)) children.push(child)

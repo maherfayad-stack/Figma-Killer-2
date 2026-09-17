@@ -583,6 +583,34 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
+  // ── Group / ungroup (K3) ────────────────────────────────────────────────
+  // Figma's own pair, on Figma's own chord. They share a letter and are
+  // separated by Shift ALONE, which is why `layers.group` rejects it
+  // explicitly — the same discipline `layers.copy` follows against
+  // `export.copySelectionPng`.
+  //
+  // Appended at the END of the registry on purpose: entries are resolved by
+  // `getKeybindingForCommand(id)`, never by position, so a new pair goes at
+  // the bottom rather than in the middle of a block another change is
+  // restructuring.
+  {
+    commandId: 'layers.group',
+    shortcut: { mac: '⌘G', win: 'Ctrl+G' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+G' : 'Control+G',
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'layers.ungroup',
+    shortcut: { mac: '⌘⇧G', win: 'Ctrl+Shift+G' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+Shift+G' : 'Control+Shift+G',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
   // K5 — Alt-hover measurement. A GESTURE, not a chord: holding Alt while the
   // pointer moves over a node outside the selection draws the distances
   // between the two boxes (`MeasureLayer.tsx`). No single keystroke can fire

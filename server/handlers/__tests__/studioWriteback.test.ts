@@ -1689,3 +1689,117 @@ describe('applyStudioEditBatch — duplicate / wrap / reparent on a real importe
     }
   })
 })
+
+// K3 — group / ungroup through the same batch entry, on the same real page.
+// Group is the first structural write that names SEVERAL elements, so the
+// tests that matter most are the ones asserting it refuses rather than
+// widening its own span: a gap in the run, and a run that crosses files.
+describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)', () => {
+  const REL = 'pages/Onboarding.tsx'
+  const at = (tag: string, occurrence = 1): string => {
+    const { line, col } = locateTag(IMPORTED_PAGE, tag, occurrence)
+    return `${REL}:${line}:${col}`
+  }
+
+  beforeEach(() => {
+    write(REL, IMPORTED_PAGE)
+  })
+
+  it('writes ONE container around a run of siblings', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.shifted).toBe(true)
+    const after = read(REL)
+    expect(after).toContain('              <div>\n                <li className={styles.feature}>')
+    expect(after).toContain('                </li>\n              </div>')
+    // One container, not one per element.
+    expect(after.split('<div>').length - 1).toBe(1)
+  })
+
+  it('REFUSES a run with an unselected sibling in the middle, and writes nothing', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 3)], name: 'div' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('not-contiguous')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES a group whose other members are in a different file', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: ['pages/Home.tsx:4:5'], name: 'div' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('cross-file')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('ungroups a plain container, hoisting its children into its place', () => {
+    write(REL, IMPORTED_PAGE)
+    const grouped = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+    ])
+    expect(grouped.written).toBe(1)
+
+    const after = read(REL)
+    const wrapper = locateTag(after, 'div', 4)
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'ungroup', nodeId: `${REL}:${wrapper.line}:${wrapper.col}` },
+    ])
+
+    expect(result.written).toBe(1)
+    // Group then ungroup is the identity on this file, byte for byte.
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES ungrouping a container that carries behaviour, and writes nothing', () => {
+    // `<span … dangerouslySetInnerHTML={{…}} />` is a container doing more than
+    // holding children: dissolving it would drop the markup it injects.
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('span', 1) }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
+    expect(result.refusals?.[0]?.message).toContain('dangerouslySetInnerHTML')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES ungrouping a COMPONENT — that would delete a usage, not a group', () => {
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('IOSStatusBar') }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('treats both as shared, and never collapses two groups on one element', () => {
+    for (const kind of ['group', 'ungroup'] as const) {
+      expect(isSharedSourceNodeId(`${REL}:5:6`, kind)).toBe(true)
+    }
+    // Two groups keyed on the same first element are two nested containers the
+    // user asked for, not one write repeated — `dedupeStudioEdits` must keep
+    // both. (Applied one after the other here through two batches, because the
+    // second names a run the first has already re-indented.)
+    const first = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+    ])
+    expect(first.written).toBe(1)
+    const after = read(REL)
+    const li = locateTag(after, 'li', 1)
+    const li2 = locateTag(after, 'li', 2)
+    const second = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'group',
+        nodeId: `${REL}:${li.line}:${li.col}`,
+        siblingNodeIds: [`${REL}:${li2.line}:${li2.col}`],
+        name: 'section',
+      },
+    ])
+    expect(second.written).toBe(1)
+    expect(read(REL)).toContain('<section>')
+  })
+})

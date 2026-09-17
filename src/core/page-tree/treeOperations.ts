@@ -1,6 +1,6 @@
 /**
  * `applyTreeOperation` — the single entry point that turns one tagged-union
- * `TreeOperation` into one of the 11 named node-level mutations.
+ * `TreeOperation` into one of the 13 named node-level mutations.
  *
  * Split out of `mutations.ts`, which is a library of pure Mutative-compatible
  * primitives; this is a dispatcher over them, with a policy of its own. Two
@@ -34,8 +34,8 @@ import {
   toggleNodeHidden,
   toggleNodeLocked,
   updateNodeProps,
-  wrapNode,
 } from './mutations'
+import { unwrapNode, wrapNode, wrapNodes } from './wrapMutations'
 import {
   SourceStructureError,
   refuseMintedNodeCopy,
@@ -73,7 +73,7 @@ function assertSourceStructureWritable(
  */
 function assertNotMintedCopy(
   tree: NodeTree<PageNode>,
-  kind: 'duplicate' | 'wrap' | 'reparent',
+  kind: 'duplicate' | 'wrap' | 'reparent' | 'group' | 'ungroup',
   nodeId: string,
 ): void {
   const node = tree.nodes[nodeId]
@@ -157,6 +157,28 @@ export function applyTreeOperation(
       assertNotMintedCopy(tree, 'wrap', op.nodeId)
       const wrapperId = wrapNode(tree, op.nodeId, op.wrapper.moduleId, op.wrapper.defaults)
       return { tree, affectedNodeIds: [op.nodeId, wrapperId] }
+    }
+    case 'groupNodes': {
+      // K3 — one container around several nodes mints a wrapper exactly the
+      // way `wrapNode` does, so it is refused here for exactly the same
+      // reason: this dispatcher persists a TREE, and a wrapper minted on a
+      // studio-imported tree would never reach the `.tsx`.
+      for (const nodeId of op.nodeIds) assertNotMintedCopy(tree, 'group', nodeId)
+      const wrapperId = wrapNodes(tree, [...op.nodeIds], op.wrapper.moduleId, op.wrapper.defaults)
+      return { tree, affectedNodeIds: [...op.nodeIds, wrapperId] }
+    }
+    case 'ungroupNode': {
+      // Ungroup mints nothing, but it DELETES a node the source describes and
+      // re-parents the rest — a change the `.tsx` would never see through this
+      // path, which is the same silent no-op the other three refuse.
+      assertNotMintedCopy(tree, 'ungroup', op.nodeId)
+      const parent = getParent(tree, op.nodeId)
+      const hoisted = tree.nodes[op.nodeId]?.children ?? []
+      const changed = unwrapNode(tree, op.nodeId)
+      return {
+        tree,
+        affectedNodeIds: changed ? [...(parent ? [parent.id] : []), ...hoisted] : [],
+      }
     }
     case 'deleteNode': {
       const parent = getParent(tree, op.nodeId)

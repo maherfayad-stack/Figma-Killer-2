@@ -70,6 +70,23 @@ function runMoveShortcut(direction: 'up' | 'down', selectedNodeId: string, curre
   }
 }
 
+/**
+ * `⌘G` / `⌘⇧G` (`layers.group` / `layers.ungroup`, K3) — the same two store
+ * actions the palette commands call, for the same reason `runMoveShortcut`
+ * above calls `moveNode`: both actions already run the structural
+ * write-back gate (`previewStructuralGroup` / `refuseStructuralEdit`), so a
+ * selection that is not a contiguous run of siblings refuses with the same
+ * sentence here as it does from the palette or the layers-tree menu.
+ *
+ * Ungroup takes the selection ANCHOR, not the whole selection: each ungroup
+ * shifts the source position of everything below it, so a multi-selection
+ * would plan its second write against lines the first already moved.
+ */
+function runGroupShortcut(selectedNodeId: string, currentIds: readonly string[]): void {
+  const ids = currentIds.length > 0 ? [...currentIds] : [selectedNodeId]
+  useEditorStore.getState().groupNodes(ids)
+}
+
 interface CanvasNodeShortcutsOptions {
   editable: boolean
   isLive: boolean
@@ -168,6 +185,21 @@ export function useCanvasNodeShortcuts({
         // 'auto' — that one names a container and means "into it".
         // Anchors to the multi-selection's anchor — same single target.
         store.pasteNode(selectedNodeId, 'after')
+        return true
+      }
+
+      // K3 — ⌘⇧G is tested BEFORE ⌘G: the two differ by Shift alone, and
+      // `layers.group`'s own match rejects Shift, so the order is belt and
+      // braces rather than load-bearing.
+      if (getKeybindingForCommand('layers.ungroup')?.match(event)) {
+        event.preventDefault()
+        store.ungroupNode(selectedNodeId)
+        return true
+      }
+
+      if (getKeybindingForCommand('layers.group')?.match(event)) {
+        event.preventDefault()
+        runGroupShortcut(selectedNodeId, currentIds)
         return true
       }
 

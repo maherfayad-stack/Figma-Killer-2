@@ -7,7 +7,8 @@
  *      literal `kind === 'visualComponent'`. All mutations operate on a bare
  *      `NodeTree<TNode>` and are unaware of whether the caller is editing a page or VC.
  *
- *   2. The 11 named tree-mutation actions in `site/nodeActions.ts` must NOT contain
+ *   2. The 13 named tree-mutation actions (`site/nodeActions.ts`, plus K3's
+ *      `groupNodes`/`ungroupNode` in `site/groupActions.ts`) must NOT contain
  *      `kind === 'visualComponent'` for tree routing. The ONLY place that branch may
  *      live is `mutateActiveTree` (in `site/helpers.ts`), the single shared routing
  *      helper that knows whether to write into page.nodes or vc.tree.nodes.
@@ -61,9 +62,15 @@ describe('Gate 1 — mutations.ts has no VC mode branch', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * The 11 named tree-mutation store actions listed in CLAUDE.md §"Mutation API".
+ * The 13 named tree-mutation store actions listed in CLAUDE.md §"Mutation API".
  * Each of these must delegate to `mutateActiveTree` and must not contain its own
  * `kind === 'visualComponent'` branch.
+ *
+ * `groupNodes`/`ungroupNode` (K3 — ⌘G / ⌘⇧G) are the 12th and 13th. They live
+ * in `groupActions.ts` rather than `nodeActions.ts` — the same split
+ * `deleteNodes` already has — so the action → file map below is what this gate
+ * walks. A named action's HOME is not the invariant; delegating to
+ * `mutateActiveTree` instead of branching on the document kind is.
  *
  * `insertComponentRef` is intentionally excluded — it uses `kind === 'visualComponent'`
  * for the cycle guard (not tree routing), and it is not a raw tree-mutation action.
@@ -82,6 +89,8 @@ const NAMED_TREE_MUTATION_ACTIONS: string[] = [
   'moveNode',
   'duplicateNode',
   'wrapNode',
+  'groupNodes',
+  'ungroupNode',
 ]
 
 /**
@@ -93,6 +102,17 @@ const NAMED_TREE_MUTATION_ACTIONS: string[] = [
  * object property).
  */
 const NODE_ACTIONS_PATH = 'src/admin/pages/site/store/slices/site/nodeActions.ts'
+
+/** Named actions that live in their own module beside `nodeActions.ts`. */
+const ACTION_PATHS: Record<string, string> = {
+  groupNodes: 'src/admin/pages/site/store/slices/site/groupActions.ts',
+  ungroupNode: 'src/admin/pages/site/store/slices/site/groupActions.ts',
+}
+
+/** The file that owns a named action's body. */
+function actionPath(actionName: string): string {
+  return ACTION_PATHS[actionName] ?? NODE_ACTIONS_PATH
+}
 
 /**
  * Extract a named action's body from the action object literal in
@@ -117,25 +137,24 @@ function extractActionBody(content: string, actionName: string): string {
   return nextEntryMatch === -1 ? fromMarker : fromMarker.slice(0, nextEntryMatch)
 }
 
-describe('Gate 2 — named tree-mutation actions in site/nodeActions.ts have no VC branch', () => {
-  const nodeActionsContent = src(NODE_ACTIONS_PATH)
-
+describe('Gate 2 — the 13 named tree-mutation actions have no VC branch', () => {
   for (const actionName of NAMED_TREE_MUTATION_ACTIONS) {
     it(`${actionName} body does NOT contain \`kind === 'visualComponent'\``, () => {
-      const body = extractActionBody(nodeActionsContent, actionName)
+      const path = actionPath(actionName)
+      const body = extractActionBody(src(path), actionName)
 
       if (body === '') {
         throw new Error(
           `[no-vc-mode-branches-in-mutations] Could not find action "${actionName}" in ` +
-          `${NODE_ACTIONS_PATH}. Either the action was renamed or its indentation ` +
-          'changed. Update this gate to match.',
+          `${path}. Either the action was renamed, it moved to another module ` +
+          '(add it to ACTION_PATHS), or its indentation changed. Update this gate to match.',
         )
       }
 
       const found = body.includes("kind === 'visualComponent'")
       if (found) {
         throw new Error(
-          `[no-vc-mode-branches-in-mutations] ${NODE_ACTIONS_PATH} action "${actionName}" ` +
+          `[no-vc-mode-branches-in-mutations] ${path} action "${actionName}" ` +
           `contains \`kind === 'visualComponent'\` for tree routing. ` +
           'This routing must live ONLY in `mutateActiveTree` (site/helpers.ts). ' +
           'Refactor the action to call `mutateActiveTree(fn)` and let the helper ' +

@@ -44,6 +44,7 @@
 import {
   describeStructuralRefusal,
   isSourceDerivedNodeId,
+  previewStructuralGroup,
   previewStructuralMove,
   refuseStructuralEdit,
   resolveContainerAnchor,
@@ -341,6 +342,64 @@ export function planSourceWrap(
   return { ok: true, commit: only !== undefined && isSourceDerivedNodeId(only) ? only : null }
 }
 
+/**
+ * Whether `nodeIds` may be GROUPED into one new container, and if so around
+ * which run of source nodes (K3, ⌘G).
+ *
+ * A thin wrapper over `previewStructuralGroup` (`@core/page-tree`), for the
+ * same reason `planSourceMove` is one over `previewStructuralMove`: the rule —
+ * same parent, no gap, every member writable on its own — is pure and belongs
+ * next to the other structural rules, and the only thing the store adds is the
+ * `EditConstraint` dressing, which needs the NODE in hand to derive `origin`.
+ *
+ * `commit` is the run in SOURCE order. One id in it is an ordinary single
+ * `wrap`; several are `wrapJsxElements`' one-container-around-a-span. `null`
+ * means an ordinary CMS tree — mutate it and do not write.
+ */
+export function planSourceGroup(
+  tree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+): StructuralPlan<string[]> {
+  const preview = previewStructuralGroup(tree, nodeIds)
+  if (preview.ok) return { ok: true, commit: preview.commit }
+  // The member the refusal is about when it is about one (a `.map` row inside
+  // an otherwise fine run) — that node is where `origin` and the retry closure
+  // come from. A refusal about the SELECTION (a gap, two parents) names none,
+  // and falls back to the first node so the constraint still carries a file.
+  const refusedId = preview.nodeId
+  const node = refusedId === undefined
+    ? nodeIds.map((id) => tree.nodes[id]).find((candidate) => candidate !== undefined)
+    : tree.nodes[refusedId]
+  return {
+    ok: false,
+    constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
+    ...(node ? { nodeId: node.id } : {}),
+  }
+}
+
+/**
+ * Whether the container `nodeId` may be DISSOLVED (K3, ⌘⇧G).
+ *
+ * One node, so this asks `refuseStructuralEdit` directly rather than through a
+ * tree preview — `unwrapJsxElement` replaces the container's own range with its
+ * children, in the same file and the same scope, so an ordinary element at a
+ * known location is the whole requirement here. The question only the AST can
+ * answer — is this container ONLY a container, or does it carry a handler, a
+ * ref, a `key`, a spread — arrives at save time as `has-behaviour`.
+ */
+export function planSourceUngroup(
+  tree: NodeTree<PageNode>,
+  nodeId: string,
+): StructuralPlan<string> {
+  const node = tree.nodes[nodeId]
+  if (!node) return { ok: true, commit: null }
+  const refusal = refuseStructuralEdit({ kind: 'ungroup', node })
+  if (refusal) {
+    return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
+  }
+  return { ok: true, commit: isSourceDerivedNodeId(node.id) ? node.id : null }
+}
+
 /** Titles the refusal toasts use, one per gesture. Matches the `Detach refused` / `Swap refused` vocabulary. */
 export const STRUCTURAL_REFUSAL_TITLE = {
   move: 'Move refused',
@@ -348,6 +407,8 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   insert: 'Cannot add this to imported code',
   duplicate: 'Duplicate refused',
   wrap: 'Wrap refused',
+  group: 'Group refused',
+  ungroup: 'Ungroup refused',
   /**
    * K6 — a ⌘-drag that asked to place an element by coordinates. The only
    * entry here that is not a source-writability refusal: the file would take

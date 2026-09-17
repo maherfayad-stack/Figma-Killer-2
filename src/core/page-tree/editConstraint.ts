@@ -45,10 +45,10 @@ import {
   refuseStructuralEdit,
   type SourceStructureNode,
   type StructuralEditKind,
-  type StructuralMovePreview,
   type StructuralRefusal,
   type StructuralRefusalReason,
 } from './sourceStructure'
+import type { StructuralMovePreview } from './sourceStructurePreview'
 import { decodeSourceNodeId, hasWritableSourceLocation } from './sourceNodeId'
 
 /**
@@ -382,7 +382,7 @@ function jumpToSourceAction(node?: SourceStructureNode): EditConstraintAction[] 
 /**
  * Which `EditConstraintAction`s make sense for a given structural reason —
  * a compile-time-exhaustive table (`Record<StructuralRefusalReason, ...>`,
- * no `default` branch): a 12th reason added to `sourceStructure.ts` without a
+ * no `default` branch): a new reason added to `sourceStructure.ts` without a
  * matching entry here fails `tsc`, rather than silently falling through to an
  * unreviewed `default: []`.
  *
@@ -443,6 +443,17 @@ const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructur
   'duplicate': () => [],
   'wrap': () => [],
   'no-sibling-anchor': () => [],
+  // K3 — the two ⌘G/⌘⇧G members of the same family: a gesture this caller
+  // cannot write (the plugin/agent dispatcher), or a selection that is not a
+  // run. Nothing on disk to jump to, so the sentence is the whole answer.
+  'group': () => [],
+  'ungroup': () => [],
+  // K3 — the container carries behaviour (a handler, a ref, a `key`, a
+  // spread, or it is a component). Dissolving it would drop that, and the one
+  // honest way forward is to look at what it is doing: `origin` is the
+  // wrapper's own `rel:line:col`, so this is the R1 jump every other
+  // "the code decides this" refusal already offers.
+  'has-behaviour': jumpToSourceAction,
 }
 
 function structuralActions(
