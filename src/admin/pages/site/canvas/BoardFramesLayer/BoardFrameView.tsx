@@ -170,8 +170,14 @@ interface BoardFrameViewProps {
    * mounted so panning back to them costs nothing. A mounted-but-offscreen
    * frame is simply outside the visible area — it renders exactly as it did
    * on screen, it just isn't being looked at.
+   *
+   * Optional, defaulting to `isOnScreen`: a caller that does not take part
+   * in the pool — a unit test, or any future surface rendering one frame
+   * outside `BoardFramesLayer` — means "mounted exactly while visible",
+   * which is the pre-S1 behaviour and the only honest default. Required
+   * here once, it silently unmounted every such caller.
    */
-  isMounted: boolean
+  isMounted?: boolean
   /**
    * L8 Phase B (`perf-06`, STATE.md) — the live-frame pool's hot-set
    * membership flag, computed by `BoardFramesLayer.tsx` via
@@ -183,9 +189,9 @@ interface BoardFrameViewProps {
    * for a Tier-2 (`trust === 'run-project'`) frame's `LiveBoardFrame` branch
    * below — Tier 0/1's portal `BreakpointFrame` is same-origin and cheap, so
    * it stays gated on S1's `isMounted` alone.
-   * Optional and defaults to `isMounted` so any test or call site that
-   * omits it (a Tier 0/1 board, or a unit test exercising this component in
-   * isolation) reproduces S1's mount-pool behaviour byte-for-byte.
+   * Optional and defaults to the pooled flag above so any test or call site
+   * that omits it (a Tier 0/1 board, or a unit test exercising this
+   * component in isolation) reproduces S1's mount-pool behaviour.
    */
   isLiveMounted?: boolean
 }
@@ -221,7 +227,8 @@ function BoardFrameViewImpl({
   // is free. A Tier-2 frame costs a real dev-server-backed process, so L8
   // Phase B's narrower, capped hot set (`liveFramePool.ts`) governs that
   // one instead. `isLiveMounted` is `undefined` on every Tier 0/1 board.
-  const mounted = trust === 'run-project' ? (isLiveMounted ?? isMounted) : isMounted
+  const pooled = isMounted ?? isOnScreen
+  const mounted = trust === 'run-project' ? (isLiveMounted ?? pooled) : pooled
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),

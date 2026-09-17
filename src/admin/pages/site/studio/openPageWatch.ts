@@ -28,6 +28,15 @@ import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { resolveOpenPageFile, setOpenPageFile } from './cssInsertDestination'
 
+/**
+ * Stable empty fallback. This one is read through `getState()` inside a
+ * LISTENER, not from a selector, so a fresh literal could not actually spin
+ * the store — but `selectorStability.test.ts` scans for the shape rather
+ * than the call site, and a gate that has to be read before it is believed
+ * is worth less than one constant.
+ */
+const EMPTY_PAGES: readonly Page[] = []
+
 /** Whether the subscription below is already live — see `watchOpenPageForCssDestination`. */
 let watching = false
 
@@ -51,7 +60,7 @@ export function watchOpenPageForCssDestination(pages: readonly Page[]): void {
   useEditorStore.subscribe(
     (state) => state.activePageId,
     (activePageId) => {
-      setOpenPageFile(resolveOpenPageFile(useEditorStore.getState().site?.pages ?? [], activePageId))
+      setOpenPageFile(resolveOpenPageFile(useEditorStore.getState().site?.pages ?? EMPTY_PAGES, activePageId))
     },
   )
 }
