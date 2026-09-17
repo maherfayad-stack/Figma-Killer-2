@@ -16,11 +16,26 @@ interface PointerPanOptions {
   spaceHeld: boolean
 }
 
-type CanvasSpacePanSource = 'parentDocument' | 'iframe'
+/**
+ * Who currently says "the canvas is panning".
+ *
+ * Three sources, one flag, because the browser gives each of them a different
+ * event realm and there is exactly one answer:
+ *
+ * - `parentDocument` — Space held with focus in the editor document.
+ * - `iframe` — Space held with focus inside a frame's iframe. A native keydown
+ *   does not cross that boundary, so the frame reports its own.
+ * - `handTool` — `K4`'s latched H tool. It is a LATCH, not a key state: no
+ *   keyup ends it, only picking another tool does. Reusing this flag rather
+ *   than adding a parallel "pan mode" is what keeps the cursor, the pointer
+ *   gating and the iframe relay from having two definitions of panning.
+ */
+type CanvasSpacePanSource = 'parentDocument' | 'iframe' | 'handTool'
 
 const CANVAS_SPACE_PAN_DATA_KEYS: Record<CanvasSpacePanSource, string> = {
   parentDocument: 'studioCanvasParentSpacePan',
   iframe: 'studioCanvasIframeSpacePan',
+  handTool: 'studioCanvasHandTool',
 }
 
 const PRIMARY_MOUSE_BUTTON = 0
@@ -77,7 +92,8 @@ export function isCanvasSpacePanActive(doc: Document): boolean {
   const { dataset } = doc.documentElement
   return (
     dataset[CANVAS_SPACE_PAN_DATA_KEYS.parentDocument] === '1' ||
-    dataset[CANVAS_SPACE_PAN_DATA_KEYS.iframe] === '1'
+    dataset[CANVAS_SPACE_PAN_DATA_KEYS.iframe] === '1' ||
+    dataset[CANVAS_SPACE_PAN_DATA_KEYS.handTool] === '1'
   )
 }
 

@@ -58,9 +58,20 @@ interface ElementResizeDragOptions {
   iframeDoc: Document | null
   /** The single selected node, or `null` when resize is not offered. */
   nodeId: string | null
+  /**
+   * `K4` — the scale tool (`K`) is armed: keep the element's aspect ratio and
+   * commit BOTH dimensions. Captured in the closure at `pointerdown`, so
+   * pressing `K` mid-drag cannot change the gesture already under the cursor.
+   */
+  proportional: boolean
 }
 
-export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResizeDragOptions): void {
+export function useElementResizeDrag({
+  frame,
+  iframeDoc,
+  nodeId,
+  proportional,
+}: ElementResizeDragOptions): void {
   useEffect(() => {
     if (!frame || !iframeDoc || !nodeId) return
 
@@ -133,6 +144,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
             moveEvent.clientX - startX,
             moveEvent.clientY - startY,
             MIN_ELEMENT_SIZE,
+            proportional,
           )
           pendingFrame ??= requestAnimationFrame(applyPending)
         }
@@ -159,7 +171,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
           // `style.width`; both happen inside this one event handler, so the
           // browser paints once and the intermediate state is never seen.
           clearPreview()
-          const patch = commit ? resizeStylePatch(handle, start, last) : null
+          const patch = commit ? resizeStylePatch(handle, start, last, proportional) : null
           if (patch) useEditorStore.getState().setNodeInlineStyles(nodeId, patch)
           // Unfreeze AFTER the commit, so the single settle pass measures the
           // final size rather than the last previewed one.
@@ -185,5 +197,5 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
     return () => {
       for (const cleanup of cleanups) cleanup()
     }
-  }, [frame, iframeDoc, nodeId])
+  }, [frame, iframeDoc, nodeId, proportional])
 }

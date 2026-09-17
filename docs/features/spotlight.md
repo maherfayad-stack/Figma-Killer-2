@@ -300,6 +300,22 @@ Used by destructive commands: delete user, sign out all devices, revoke session,
 
 Selected-layer shortcuts are command shortcuts too. `⌘C` / `Ctrl+C`, `⌘X` / `Ctrl+X`, `⌘V` / `Ctrl+V`, and `⌘D` / `Ctrl+D` run when focus is on the canvas or the Layers tree. `⌘⌫` / `Ctrl+Backspace` deletes the selected layer from either surface through the normal delete confirmation flow; plain Delete / Backspace remains accepted by the canvas handler for selected canvas nodes.
 
+### Canvas tools (`K4`)
+
+| Key | Action |
+|---|---|
+| `T` / `F` | Insert a text node / a container **inside** the selection |
+| `R` / `O` | Insert a box / a round box (`border-radius: 50%`) **beside** the selection |
+| `H` | Latch the hand tool — drag anywhere pans. Press `H` again to put it away |
+| `K` | Latch the scale tool — the selection's resize handles keep its aspect ratio and write both `width` and `height` |
+| `C` | Comment mode |
+| `⌘]` / `⌘[` | Move the selected layer up / down among its siblings (alias of `⌥↑` / `⌥↓`) |
+| `⌘⇧L` | Lock / unlock the selected layer |
+
+The bare letters are safe to bind because each `match` rejects **every** modifier and every one carries `ignoreInEditableField` — so `⌘K` stays the palette, `⌘R` stays rename, and typing an `o` in any field is just an `o`. The two latched tools toggle on their own key; Escape also disarms, but only as a second chance (with anything selected the `node` rung claims Escape first, to deselect).
+
+`H` does not implement panning. It becomes a third source on the shared `data-*` space-pan flag (`canvasPanInput.ts`), which the pan gesture, the grab cursor, the frames' `pointer-events`, the marquee and the reorder drag already read — so there is exactly one definition of "the canvas is panning".
+
 The keybindings registry is **the single source of truth** for shortcuts — gated by `keybindings-registry-single-source.test.ts`. Register each command shortcut in `keybindings.ts`; component-owned handlers may consume those registered bindings when a surface needs local selection or confirmation behavior, but they must not hard-code a second shortcut definition.
 
 ### Who hears the key, in the editor workspace

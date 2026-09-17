@@ -38,6 +38,7 @@ import { measureCanvasFrameRects, measureCanvasSelectionRects } from '@site/canv
 import {
   CANVAS_DRAG_PAN_BUTTONS,
   isCanvasPointerPanActive,
+  isCanvasSpacePanActive,
   isMiddleMousePointerPan,
   panDeltaFromWheel,
   setCanvasSpacePanActive,
@@ -131,7 +132,6 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const animatingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const willChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const spaceActiveRef = useRef(false)
   const isDraggingRef = useRef(false)
   const lastPinchMovementRef = useRef(1)
 
@@ -395,13 +395,11 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
           target.isContentEditable
         ) return
         e.preventDefault()
-        spaceActiveRef.current = true
         setCanvasSpacePanActive(document, 'parentDocument', true)
       }
     }
     function onKeyUp(e: KeyboardEvent) {
       if (e.code === 'Space') {
-        spaceActiveRef.current = false
         setCanvasSpacePanActive(document, 'parentDocument', false)
       }
     }
@@ -452,12 +450,10 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // `K1` — inherited from the canvas div's old combined shortcut handler,
-    // and load-bearing: a React synthetic event crosses the iframe boundary
+    // `K1` — load-bearing: a React synthetic event crosses the iframe boundary
     // through the fiber tree even though a native one does not, and the target
     // check below can't see it (the event is retargeted at the iframe element,
-    // whose `isContentEditable` is false). So `-` typed mid-edit would zoom the
-    // canvas out. The dispatcher's `inline-edit` rung covers the rest.
+    // whose `isContentEditable` is false). `-` typed mid-edit would zoom out.
     if (useEditorStore.getState().activeInlineEdit) return
 
     // Don't intercept typing — let inputs and contenteditables consume keys.
@@ -578,9 +574,12 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     {
       onDrag: ({ delta: [dx, dy], buttons, first, last, event }) => {
         if (first) {
+          // `isCanvasSpacePanActive`, not a private ref: three sources say
+          // "panning" — Space here, Space in a frame, `K4`'s hand tool — and
+          // all write one `data-*` flag. A ref saw only the first.
           isDraggingRef.current = isCanvasPointerPanActive(
             { buttons },
-            { spaceHeld: spaceActiveRef.current },
+            { spaceHeld: isCanvasSpacePanActive(document) },
           )
           if (isDraggingRef.current && isMiddleMousePointerPan({ buttons }) && event.cancelable) {
             event.preventDefault()

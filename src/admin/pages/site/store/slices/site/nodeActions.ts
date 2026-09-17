@@ -151,15 +151,19 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     createStudioSourceWrites(helpers, readTree)
 
   const actions: NodeActions = {
-    insertNode: (moduleId, defaults, parentId, index) => {
+    insertNode: (moduleId, defaults, parentId, index, inlineStyles) => {
       // On a studio-imported tree the insert is a SOURCE write, not a tree
       // mutation — see `writeInsertToSource`. It returns true for both of its
       // outcomes (written, or refused out loud); either way nothing is minted
       // here, so there is no id to hand back.
-      if (writeInsertToSource(moduleId, defaults, parentId, index)) return ''
+      if (writeInsertToSource(moduleId, defaults, parentId, index, inlineStyles)) return ''
       const mod = registry.get(moduleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       const newNode = createNode(moduleId, resolvedDefaults)
+      // Set BEFORE the node enters the tree, so the insert is one mutation and
+      // therefore one undo step — the same reason `pasteNode` restores classes
+      // inside its own recipe rather than after it.
+      if (inlineStyles && Object.keys(inlineStyles).length > 0) newNode.inlineStyles = { ...inlineStyles }
       let inserted = false
       let blockedByOutlet = false
       mutateActiveTree((tree) => {

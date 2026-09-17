@@ -61,6 +61,7 @@ import { usePrototypePlayback } from './usePrototypePlayback'
 import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
+import { useCanvasHandTool } from './useCanvasHandTool'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
 import { useCopyAsPngShortcut } from './useCopyAsPngShortcut'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
@@ -368,8 +369,13 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // arrow-nudge undo burst, for annotations as well as frames.
   useBoardFrameNudge(editable, isLive)
 
-  // `board` — bare-letter tool keys: T (text), F (container), C (comment mode).
+  // `board` — bare-letter tool keys: T (text), F (container inside), C
+  // (comment mode), H (hand), K (scale), R / O (box beside the selection).
   useCanvasToolShortcuts(editable, isLive)
+
+  // Not a key scope: mirrors the latched hand tool onto the shared space-pan
+  // flag, which is what every pan-aware surface already reads.
+  useCanvasHandTool()
 
   // `global`, the bottom rung — undo / redo: what you get when nothing more
   // specific claimed the key. Moved off `UndoRedoButtons` so it survives the

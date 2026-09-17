@@ -650,6 +650,38 @@ the generic dispatcher runs it (that is how ⌘⇧H → `layers.toggleVisibility
 ⌘⇧L → `layers.toggleLock` work). Anything the canvas must own itself goes in
 `COMPONENT_OWNED_SHORTCUTS` so it can't double-fire.
 
+### The latched tools (`K4`)
+
+`canvasTool: 'move' | 'hand' | 'scale'` on the canvas slice is what a plain drag
+currently means. Two rules keep it from becoming a second input system:
+
+- **The hand tool does not implement panning.** `useCanvasHandTool` mirrors
+  `canvasTool === 'hand'` onto the SAME `data-*` flag holding Space already sets
+  (`canvasPanInput.ts`, now three sources: `parentDocument`, `iframe`,
+  `handTool`). Everything pan-aware already reads
+  `isCanvasSpacePanActive(document)` — the drag gate in `useCanvas`, the grab
+  cursor, `IframeFrameSurface`'s `pointer-events: none`, `useMarqueeSelection`
+  and `useCanvasReorderDrag` — so arming the tool suppresses selection and
+  reordering for free. `useCanvas` lost its private `spaceActiveRef` in the
+  process: a ref saw one of the three sources.
+- **The scale tool is a flag on the existing handles, not new handles.**
+  `CanvasResizeHandles` reads the store and passes `proportional` into
+  `useElementResizeDrag`, which captures it at `pointerdown` — so pressing `K`
+  mid-drag never changes a gesture already under the cursor. The geometry is
+  pure (`elementResize.ts`): the ratio comes from the START size, a corner
+  follows the larger relative movement, and a zero-sized element (a
+  `display: contents` host) degrades to a free resize instead of dividing by
+  zero.
+
+`R` / `O` insert a `base.container` as the **next sibling** of the selection via
+`resolveSiblingAfterLocation` (`store/insertLocation.ts`), where `F` still
+inserts *inside*. `O` carries `borderRadius: 50%` **into the insert itself** —
+`insertNode(…, inlineStyles)` sets the bag before the node enters the tree, and
+`writeInsertToSource` passes it to `commitStudioInsert` as a `style` prop. A
+follow-up `setNodeInlineStyles` could not work on a studio tree: there the
+insert is an async source write that returns `''`, so no id exists to style
+until the resync lands.
+
 **During an inline edit both keyboard paths must stand down.** The `inline-edit`
 rung claims every keystroke and acts on none, and
 `useIframeEventForwarding.onKeyDown` returns early without forwarding —
