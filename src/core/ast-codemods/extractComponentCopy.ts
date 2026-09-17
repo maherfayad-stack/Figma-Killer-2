@@ -14,8 +14,8 @@
  */
 import * as path from 'node:path'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
-import { createWorkspaceProject } from '@core/page-parser'
+import { NewLineKind, Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
+import { EolPreservingFileSystem, createWorkspaceProject } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
@@ -100,7 +100,12 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   const copyProject = new Project({
     useInMemoryFileSystem: false,
     compilerOptions: { allowJs: true },
-    manipulationSettings: { quoteKind: QuoteKind.Single },
+    manipulationSettings: { quoteKind: QuoteKind.Single, newLineKind: NewLineKind.LineFeed },
+    // The copy was written byte-for-byte above, so it carries the original's
+    // line ending; reading it back through this host records that ending and
+    // `saveSync()` below restores it after the rename. See `@core/page-parser`'s
+    // `eolFileSystem.ts`.
+    fileSystem: new EolPreservingFileSystem(),
   })
   const copySourceFile = copyProject.addSourceFileAtPath(newPath)
   renameDeclaration(copySourceFile, target.exportedName ?? baseName, newName)
