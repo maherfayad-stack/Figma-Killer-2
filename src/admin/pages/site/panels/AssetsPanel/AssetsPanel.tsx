@@ -20,6 +20,8 @@
  *   - **Layouts** — saved layouts, then one group per plugin pack.
  *   - **Saved components** — the project's Visual Components.
  *   - **Icons** — the design system's own icon set (`IconsSection`).
+ *   - **Colors** — the built-in design system's palette (`ColorsSection`).
+ *     Copy a variable, or apply one to the selected layer's fill or text.
  *
  * Clicking a card inserts through `useInsertInserterItem` — the same handler
  * every other insert surface uses, so the target resolution (selected
@@ -49,6 +51,8 @@ import { rankAssets, type RankedAsset } from './rankAssets'
 import { useModuleInsertionContext } from './useModuleInsertionContext'
 import { AssetCard } from './AssetCard'
 import { AssetGrid, AssetGroupLabel, AssetSection } from './AssetSection'
+import { buildColorAssetItems } from './colorTokens'
+import { ColorsSection } from './ColorsSection'
 import { IconsSection } from './IconsSection'
 import { PackageBundleNotice } from './PackageBundleNotice'
 import { SavedLayoutManageMenu, type SavedLayoutMenuState } from './SavedLayoutManageMenu'
@@ -57,6 +61,13 @@ import styles from './AssetsPanel.module.css'
 
 const EMPTY_COMPONENTS: VisualComponent[] = []
 const EMPTY_LAYOUTS: SavedLayout[] = []
+
+/**
+ * The palette is a build-time constant — it describes the design system, not
+ * the open project — so it is built once for the module rather than per
+ * render of a panel that re-renders on every keystroke.
+ */
+const COLOR_ASSET_ITEMS = buildColorAssetItems()
 
 /**
  * The design system's own purpose groups, in the order its `design.md` states
@@ -77,7 +88,14 @@ const DESIGN_SYSTEM_GROUP_ORDER = [
   'Brand',
 ]
 
-type SectionId = 'recent' | 'designSystem' | 'elements' | 'layouts' | 'components' | 'icons'
+type SectionId =
+  | 'recent'
+  | 'designSystem'
+  | 'elements'
+  | 'layouts'
+  | 'components'
+  | 'icons'
+  | 'colors'
 
 export function AssetsPanel() {
   const setLeftSidebarPanel = useEditorStore((s) => s.setLeftSidebarPanel)
@@ -88,11 +106,12 @@ export function AssetsPanel() {
   const { isFavorite, toggleFavorite } = useAssetFavorites()
 
   const [query, setQuery] = useState('')
-  // Icons starts collapsed on purpose: its catalogue is a few hundred KB
-  // (each icon's markup travels with it) and `IconsSection` only fetches on
-  // first expand, so opening Assets costs nothing until you ask for icons.
+  // Icons and Colors start collapsed on purpose. Icons' catalogue is a few
+  // hundred KB (each icon's markup travels with it) and `IconsSection` only
+  // fetches on first expand; Colors' grid is where `useSelectionModel` mounts,
+  // so leaving it closed keeps the panel's cost at zero until you ask for it.
   const [collapsed, setCollapsed] = useState<ReadonlySet<SectionId>>(
-    () => new Set<SectionId>(['icons']),
+    () => new Set<SectionId>(['icons', 'colors']),
   )
   const [recentRefs, setRecentRefs] = useState(() => readAssetPrefs().recent)
   const [layoutMenu, setLayoutMenu] = useState<SavedLayoutMenuState | null>(null)
@@ -126,12 +145,14 @@ export function AssetsPanel() {
   const rankedLayouts = rankAssets(query, layoutsSection.items)
   const rankedComponents = rankAssets(query, componentItems)
   const rankedRecent = searching ? [] : rankAssets('', recentItems)
+  const rankedColors = rankAssets(query, COLOR_ASSET_ITEMS)
 
   const totalMatches =
     rankedDesignSystem.length +
     rankedElements.length +
     rankedLayouts.length +
-    rankedComponents.length
+    rankedComponents.length +
+    rankedColors.length
 
   function toggleSection(id: SectionId) {
     setCollapsed((current) => {
@@ -191,7 +212,7 @@ export function AssetsPanel() {
           ref={searchRef}
           value={query}
           onValueChange={setQuery}
-          placeholder="Search components, elements & icons…"
+          placeholder="Search components, icons & colors…"
           aria-label="Search assets"
         />
       </div>
@@ -283,6 +304,12 @@ export function AssetsPanel() {
           query={query}
           collapsed={collapsed.has('icons')}
           onToggle={() => toggleSection('icons')}
+        />
+
+        <ColorsSection
+          ranked={rankedColors}
+          collapsed={collapsed.has('colors')}
+          onToggle={() => toggleSection('colors')}
         />
 
         {searching && totalMatches === 0 && (

@@ -1,0 +1,103 @@
+/* ColorsSection — the design system's palette as swatches.
+
+   The only colours this file names are the two JS-driven custom properties
+   the swatch paints with; both default to the panel's own surface here, in a
+   rule, rather than through a `var(--x, fallback)` at every use. */
+
+.hint {
+    margin: 0;
+    padding: var(--space-3xs);
+    font-size: var(--text-3xs);
+    line-height: 1.35;
+    color: var(--text-subtle);
+}
+
+/* Swatches are smaller than component cards — a colour needs no room to be
+   read, and the palette runs to ~150 entries. */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+    gap: var(--space-4xs);
+}
+
+.cell {
+    position: relative;
+    min-width: 0;
+}
+
+.swatch {
+    width: 100%;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-4xs);
+    padding: var(--space-4xs);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius);
+    text-align: start;
+    overflow: hidden;
+}
+
+.swatch:hover:not(:disabled) {
+    background: var(--bg-surface-3);
+}
+
+/* The two halves. A darker plate under them means a token whose value carries
+   alpha composites over something known instead of over whatever the panel
+   happens to be. */
+.paint {
+    --swatch-light: var(--bg-surface);
+    --swatch-dark: var(--bg-surface);
+
+    display: flex;
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    overflow: hidden;
+}
+
+.paintLight,
+.paintDark {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.paintLight {
+    background: var(--swatch-light);
+}
+
+.paintDark {
+    background: var(--swatch-dark);
+}
+
+.name {
+    font-size: var(--text-3xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: ltr;
+}
+
+/* Outside the swatch button — a button inside a button is invalid, and
+   applying must never be mistaken for copying. */
+.actions {
+    position: absolute;
+    top: var(--space-4xs);
+    inset-inline: var(--space-4xs);
+    display: flex;
+    gap: var(--space-4xs);
+    opacity: 0;
+}
+
+.cell:hover .actions,
+.actions:focus-within {
+    opacity: 1;
+}
+
+.action {
+    flex: 1 1 0;
+    min-width: 0;
+}

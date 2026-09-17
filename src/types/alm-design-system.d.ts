@@ -15,3 +15,18 @@
  * imports used by `curatedDefaults.ts` are typed by `vite/client`, not here.
  */
 declare module 'alm-design-system'
+
+/**
+ * The generated colour palette (`bun run alm:sync`), read by the Assets
+ * panel's Colors section (`colorTokens.ts`).
+ *
+ * Typed `unknown` on purpose: `resolveJsonModule` is off, and a hand-written
+ * shape here would be a second source of truth competing with
+ * `DesignSystemColorTokensSchema`. The reader validates against the schema
+ * and gets its type from `Static<…>`, exactly as it would for a file read off
+ * disk.
+ */
+declare module 'alm-design-system/dist/tokens.generated.json' {
+  const tokens: unknown
+  export default tokens
+}
