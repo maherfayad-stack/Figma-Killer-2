@@ -32,9 +32,9 @@
  */
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { isArgvSafeBranchName } from './gitPaths'
 import { clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_MS } from './gitRunner'
 import {
+  assertUsableBranchName,
   commitFiles,
   gitFailure,
   hasOriginRemote,
@@ -188,11 +188,14 @@ async function runCommitAndSwitch(
   files: readonly string[],
   branch: string,
 ): Promise<GitCommitAndSwitchResult | GitOperationFailure> {
-  // Validate the branch name BEFORE committing: refusing after a commit that
-  // only existed to enable the switch would be the worst of both.
-  if (!isArgvSafeBranchName(branch)) {
-    return gitFailure('invalid-branch-name', `"${branch}" is not a usable branch name.`)
-  }
+  // BOTH halves of the branch-name judgement run BEFORE the commit — argv
+  // safety and git's own `check-ref-format`. Checking only the first here left
+  // the second to `switchBranch`, which runs after `commitFiles`: a name like
+  // `feat..x` or `x.lock` passes argv safety, so the commit landed and the
+  // switch then refused, which is exactly the "worst of both" this comment
+  // used to promise it prevented.
+  const unusable = await assertUsableBranchName(dir, branch)
+  if (unusable) return unusable
 
   const committed = await commitFiles(dir, message, files)
   if (isGitFailure(committed)) return committed
