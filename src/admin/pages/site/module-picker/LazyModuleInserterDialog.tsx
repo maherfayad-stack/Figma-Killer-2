@@ -5,9 +5,8 @@
  * sandboxed module-preview iframe, and their own ~28 kB stylesheet) is
  * Studio's single heaviest chunk — see `bundle-size-budgets.test.ts` — yet it
  * is closed on first paint everywhere it is used. Three always-mounted
- * components open it: the toolbar "+ Add" button (`ModulePickerDropdown`),
- * the canvas selection toolbar's "Insert module" action
- * (`CanvasInsertModuleButton`), and the Layers panel's insert affordance
+ * components open it: the canvas selection toolbar's "Insert module" action
+ * (`CanvasInsertModuleButton`) and the Layers panel's insert affordance
  * (`DomPanel`). Because those were the only static importers of the module,
  * the bundler grouped its whole graph into the eager bundle regardless of the
  * closed-by-default render gate.

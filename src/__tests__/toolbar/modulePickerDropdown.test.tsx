@@ -1,7 +1,7 @@
 /**
  * modulePickerDropdown.test.tsx
  *
- * Tests for the site-VC integration in ModulePickerDropdown:
+ * Tests for the site-VC integration in the module inserter dialog:
  * - VCs appear in the Components section with name + param count
  * - Search filter matches VC names
  * - Clicking a VC tile calls insertComponentRef
@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { ModulePickerDropdown } from '@site/toolbar/ModulePickerDropdown'
+import { CanvasInsertModuleButton } from '@site/canvas/CanvasInsertModuleButton'
 import { useEditorStore } from '@site/store/store'
 import { __resetModuleInserterPreferenceForTests } from '@site/module-picker/useModuleInserterPreference'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -108,7 +108,7 @@ function loadSite(
 beforeEach(resetStore)
 
 async function openInserter(): Promise<HTMLElement> {
-  fireEvent.click(screen.getByTestId('toolbar-add-module-btn'))
+  fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
   // ModuleInserterDialog is lazy-loaded (LazyModuleInserterDialog) — its
   // chunk resolves asynchronously even in tests, so the dialog cannot be
   // found synchronously right after the click.
@@ -119,10 +119,10 @@ function clickSection(name: string) {
   fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}\\b`) }))
 }
 
-describe('ModulePickerDropdown — Visual Components', () => {
+describe('Module inserter dialog — Visual Components', () => {
   it('exposes stable names for inserter category buttons when labels are visually hidden', async () => {
     loadSite()
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
 
     const dialog = await openInserter()
     const categories = within(dialog).getByRole('navigation', { name: 'Module categories' })
@@ -139,7 +139,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
       makeVC('vc-1', 'HeroCard', 3),
       makeVC('vc-2', 'PricingTable', 1),
     ])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
 
     const dialog = await openInserter()
     clickSection('Components')
@@ -150,7 +150,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('renders data-vc-id attribute on VC items', async () => {
     loadSite([makeVC('vc-abc', 'MyComponent', 0)])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
     clickSection('Components')
 
@@ -163,7 +163,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
       makeVC('vc-1', 'HeroCard', 2),
       makeVC('vc-2', 'PricingTable', 1),
     ])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
     clickSection('Components')
 
@@ -176,7 +176,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('calls insertComponentRef with correct parent when a VC item is clicked', async () => {
     loadSite([makeVC('vc-1', 'HeroCard', 0)])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
     clickSection('Components')
 
@@ -197,7 +197,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('closes the inserter after clicking a VC item', async () => {
     loadSite([makeVC('vc-1', 'HeroCard', 0)])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
     clickSection('Components')
 
@@ -209,7 +209,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('closes the inserter after clicking a module item', async () => {
     loadSite([])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     const textItem = dialog.querySelector('[data-module-id="base.text"]') as HTMLElement
@@ -228,7 +228,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('does not expose unfinished community catalog affordances', async () => {
     loadSite([])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     expect(screen.queryByRole('button', { name: /^Community\b/ })).toBeNull()
@@ -241,7 +241,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
   it('drops into the breakpoint frame under the pointer and activates that frame', async () => {
     loadSite([])
     useEditorStore.getState().setActiveBreakpoint('desktop')
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
     installCanvasViewport('desktop', { left: 0, top: 0, width: 200, height: 300 })
     installCanvasViewport('mobile', { left: 240, top: 0, width: 120, height: 300 })
@@ -266,7 +266,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('does not let idle hover replace the selected item', async () => {
     loadSite([])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     // `base.container`/`base.text` — not `base.loop` (an editor-only
@@ -285,7 +285,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('does preview the item under actual pointer movement', async () => {
     loadSite([])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     const containerItem = dialog.querySelector('[data-module-id="base.container"]') as HTMLElement
@@ -301,7 +301,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('hides base.visual-component-ref from the picker in page mode', async () => {
     loadSite([])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     // base.visual-component-ref should not appear as a module item
@@ -313,7 +313,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('hides base.slot-outlet in page mode (name: Slot)', async () => {
     loadSite([])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     // base.slot-outlet (display name: "Slot") should not appear in page mode
@@ -331,7 +331,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
     // test invents; see `moduleInserterModel.test.ts`'s matching gate test.
     const vc = makeVC('vc-1', 'HeroCard', 0)
     loadSite([vc], { kind: 'visualComponent', vcId: vc.id })
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     const slotItem = within(dialog).queryAllByRole('button').find(
@@ -342,7 +342,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
 
   it('hides base.slot-instance in page mode (auto-materialized only)', async () => {
     loadSite([])
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     // base.slot-instance is materialized as a VC ref child by syncSlotInstances —
@@ -358,7 +358,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
   it('hides base.slot-instance in VC edit mode (auto-materialized only)', async () => {
     const vc = makeVC('vc-1', 'HeroCard', 0)
     loadSite([vc], { kind: 'visualComponent', vcId: vc.id })
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
     const dialog = await openInserter()
 
     // Same rule as page mode — slot-instance is structural-only, never picker-visible.

@@ -17,7 +17,7 @@ import { useModuleInsertionContext } from "@site/module-picker/useModuleInsertio
 import { resolveInsertLocation } from "@site/store/insertLocation";
 import { CUSTOM_HTML_TAG_VALUE } from "@modules/base/utils/htmlTag";
 import { selectActiveCanvasPage, useEditorStore } from "@site/store/store";
-import { ModulePickerDropdown } from "@site/toolbar/ModulePickerDropdown";
+import { AddPagePicker } from "./BoardFramesLayer/AddPagePicker";
 import { ModuleIcon } from "@site/ui/ModuleIcon";
 import type { IconComponent } from "pixel-art-icons/types";
 import { BracesIcon } from "pixel-art-icons/icons/braces";
@@ -67,8 +67,9 @@ export type CanvasNotchAction = {
 interface CanvasNotchProps {
   actions?: CanvasNotchAction[];
   /**
-   * Replaces the default Site-editor module picker. Leave undefined to show
-   * it; pass null when reusing the notch for a non-site canvas.
+   * Replaces the default Add-page picker. Leave undefined to show it; pass
+   * null when reusing the notch for a non-site canvas (one with no board to
+   * add a page to).
    */
   addControl?: ReactNode;
   floatingControl?: ReactNode;
@@ -124,7 +125,11 @@ export function CanvasNotch({
           )}
 
           {addControl === undefined ? (
-            <ModulePickerDropdown
+            <AddPagePicker
+              iconOnly
+              accentFill
+              variant="primary"
+              size="sm"
               triggerClassName={styles.addButton}
               triggerTestId={ADD_TRIGGER_TEST_ID}
             />

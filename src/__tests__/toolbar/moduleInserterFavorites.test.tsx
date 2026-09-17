@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { ModulePickerDropdown } from '@site/toolbar/ModulePickerDropdown'
+import { CanvasInsertModuleButton } from '@site/canvas/CanvasInsertModuleButton'
 import { useEditorStore } from '@site/store/store'
 import { __resetModuleInserterPreferenceForTests } from '@site/module-picker/useModuleInserterPreference'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -65,9 +65,9 @@ describe('ModuleInserterDialog favorites', () => {
     }) as typeof fetch
 
     loadSite()
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
 
-    fireEvent.click(screen.getByTestId('toolbar-add-module-btn'))
+    fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
     await waitFor(() => {
       expect(
         screen.getByRole('button', { name: 'Add Text to notch favorites' }),
@@ -98,9 +98,9 @@ describe('ModuleInserterDialog favorites', () => {
     }) as typeof fetch
 
     loadSite()
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
 
-    fireEvent.click(screen.getByTestId('toolbar-add-module-btn'))
+    fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
     const activeToggle = await screen.findByRole('button', {
       name: 'Remove Text from notch favorites',
     })
@@ -124,9 +124,9 @@ describe('ModuleInserterDialog favorites', () => {
     }) as typeof fetch
 
     loadSite()
-    render(<ModulePickerDropdown />)
+    render(<CanvasInsertModuleButton />)
 
-    fireEvent.click(screen.getByTestId('toolbar-add-module-btn'))
+    fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
     const toggle = await screen.findByRole('button', {
       name: 'Add Text to notch favorites',
     })

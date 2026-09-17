@@ -447,10 +447,10 @@ describe('Toolbar — structural requirements', () => {
     expect(layoutSrc).toContain('persistence.saveStatus')
   })
 
-  it('module picker trigger has data-testid for Playwright', () => {
+  it('Add page trigger has data-testid for Playwright', () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/ModulePickerDropdown.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/BoardFramesLayer/AddPagePicker.tsx', import.meta.url),
       'utf-8',
     )
     expect(src).toContain('triggerTestId')
@@ -470,16 +470,18 @@ describe('Toolbar — structural requirements', () => {
     expect(src).not.toContain('NewComponentButton')
   })
 
-  it('Add inserter is module-only — no in-toolbar page/component create actions', () => {
-    // Page / Component creation lives in the Site Explorer panel (the dedicated
-    // place for site structure). The toolbar "+ Add" inserter is module-only.
+  it('the Add picker creates pages through the server scaffold, never a file dialog', () => {
+    // The "+" is Add page now (DS-8): a page is scaffolded by the server
+    // (`createStudioPage`) or curated onto the board (`addFrame`). No modal
+    // file-creation dialog, and no hand-built `src/pages/` path — the server
+    // owns where a page file lands.
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/ModulePickerDropdown.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/BoardFramesLayer/AddPagePicker.tsx', import.meta.url),
       'utf-8',
     )
-    expect(src).not.toContain('toolbar-add-page-action')
-    expect(src).not.toContain('toolbar-add-component-action')
+    expect(src).toContain('createStudioPage')
+    expect(src).toContain('addFrame')
     expect(src).not.toContain('SiteCreateDialog')
     expect(src).not.toContain('NewFileModal')
     expect(src).not.toContain('src/pages/')
