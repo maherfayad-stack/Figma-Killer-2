@@ -5,8 +5,17 @@
  * real, and no row is silently missing a status.
  */
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { STUDIO_CANVAS_PARITY_MATRIX } from './parityMatrix'
 import { studioAgentTools } from './index'
+
+const AGENT_DOC = join(import.meta.dir, '..', '..', '..', '..', 'docs', 'features', 'agent.md')
+
+/** Every tool name any `tool` row names — the set the inverse direction is checked against. */
+function referencedToolNames(): string[] {
+  return STUDIO_CANVAS_PARITY_MATRIX.flatMap((r) => (r.status.kind === 'tool' ? r.status.toolNames : []))
+}
 
 describe('canvas parity matrix', () => {
   it('has at least one row', () => {
@@ -45,15 +54,47 @@ describe('canvas parity matrix', () => {
     }
   })
 
-  it('every registered mutating tool is referenced by at least one parity row', () => {
+  it('every registered mutating tool is referenced by at least one parity row, or declares why it is headless-only', () => {
     // The inverse direction: a write tool that maps to no editor action at
     // all is either undocumented here or shouldn't exist — this catches a
-    // tool added later without updating the matrix.
-    const referenced = new Set(
-      STUDIO_CANVAS_PARITY_MATRIX.flatMap((r) => (r.status.kind === 'tool' ? r.status.toolNames : [])),
+    // tool added later without updating the matrix. The ONLY way out is
+    // `headlessOnly` on the tool definition itself; there is no allowlist
+    // here on purpose (see `parityMatrix.ts`'s module doc).
+    const accounted = new Set(referencedToolNames())
+    const unaccountedWriteTools = studioAgentTools.filter(
+      (t) => t.mutates && !accounted.has(t.name) && t.headlessOnly === undefined,
     )
-    const unreferencedWriteTools = studioAgentTools.filter((t) => t.mutates && !referenced.has(t.name))
-    expect(unreferencedWriteTools.map((t) => t.name)).toEqual([])
+    expect(
+      unaccountedWriteTools.map((t) => t.name),
+      'Give each of these a parity row, or declare headlessOnly on the tool with the reason.',
+    ).toEqual([])
+  })
+
+  it('a headless-only tool states a real reason and does NOT also claim a parity row', () => {
+    // Both at once means one of the two statements is false: either the row
+    // names an editor action that does not exist, or the tool is not actually
+    // headless-only.
+    const referenced = new Set(referencedToolNames())
+    for (const tool of studioAgentTools) {
+      if (tool.headlessOnly === undefined) continue
+      expect(tool.headlessOnly.trim().length, `${tool.name}'s headlessOnly reason is empty`).toBeGreaterThan(0)
+      expect(referenced.has(tool.name), `${tool.name} declares headlessOnly AND appears in a parity row`).toBe(false)
+    }
+  })
+
+  it('every headless-only tool is rendered in docs/features/agent.md, and the doc invents none', () => {
+    // Same doc-parity discipline the refusal-code table runs under: the
+    // escape hatch is only honest if it is visible outside the source file
+    // that uses it.
+    const doc = readFileSync(AGENT_DOC, 'utf8')
+    const start = doc.indexOf('<!-- headless-only-tools:start -->')
+    const end = doc.indexOf('<!-- headless-only-tools:end -->')
+    expect(start, 'the headless-only-tools table markers are missing from agent.md').toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    const table = doc.slice(start, end)
+    const documented = [...table.matchAll(/^\| `([a-z0-9_]+)` \|/gm)].map((m) => m[1]!)
+    const declared = studioAgentTools.filter((t) => t.headlessOnly !== undefined).map((t) => t.name)
+    expect(documented.slice().sort()).toEqual(declared.slice().sort())
   })
 
   it('reports the current, honest gap count — a regression here means a "missing" row was silently marked "withheld"', () => {

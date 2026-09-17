@@ -1056,6 +1056,20 @@ Both frame tools address a frame by `pageId` (the id every other Studio tool alr
 
 The matrix now has **zero `missing` rows** — every editor action a Studio project agent needs is either a real tool or explicitly, permanently withheld with a stated reason (trust-tier promotion, undo/redo, viewport pan/zoom/marquee, project deletion, a raw shell command, a full-file overwrite — see the six `withheld` rows in `parityMatrix.ts` for why each one stays that way on purpose).
 
+`studio_import_figma_frame` has its own row — *arm a screen against a supplied design*. The user's version of that action is two gestures: attach the design through the reference-upload panel (`uploadDesignReference.ts` → `POST /admin/api/studio/reference-upload`), then drag the board frame to the design's own size so the comparison is exact rather than resampled. The tool exists because the ORDER was what a weaker model got wrong, not any single leg — see its own section above.
+
+#### Headless-only tools
+
+The gate runs the matrix backwards too: every registered `mutates: true` tool must be named by some row. A tool that genuinely has no canvas counterpart declares **`headlessOnly`** on its own `AiTool` definition — a sentence saying why — and the gate reads that field. There is deliberately no allowlist inside `parityMatrix.test.ts`: a name on a list in a test file is a gate switched off, while a sentence on the tool is a claim the next reader can check. Declaring `headlessOnly` **and** appearing in a parity row fails the gate, because one of the two statements is then untrue.
+
+<!-- headless-only-tools:start -->
+
+| Tool | Why there is no canvas action to be parity with |
+|---|---|
+| `studio_plan_variants` | Nothing in the editor plans variants. Its only artefact is `.studio/variants.json`, which no panel reads, renders or can create — it exists so a LATER turn can edit variant B's recorded density instead of re-rolling the set. The editor's equivalent of "try three directions" is the user writing three screens by hand, which produces no seed record at all. |
+
+<!-- headless-only-tools:end -->
+
 ---
 
 ## Flow

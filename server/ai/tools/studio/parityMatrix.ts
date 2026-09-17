@@ -21,6 +21,17 @@
  * are still what the canvas PANELS write through (`studioWriteback.ts`); they
  * are simply not part of the agent's surface, so they cannot appear as a
  * `tool` status here.
+ *
+ * ## The inverse direction, and the one escape from it
+ *
+ * The gate also runs the table backwards: every registered `mutates: true`
+ * tool must be named by some row, because a write tool that maps to no editor
+ * action is either undocumented here or should not exist. A tool that
+ * genuinely has no canvas counterpart says so on ITSELF —
+ * `AiTool.headlessOnly`, a sentence stating why — and the gate reads that
+ * field. There is deliberately no allowlist in the test: a name on a list
+ * inside a test file is a gate switched off, while a sentence on the tool is
+ * a claim the next reader can check and `docs/features/agent.md` renders.
  */
 
 export type ParityStatus =
@@ -112,6 +123,16 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   {
     action: "Record a design's own declared variable table so a measurement resolves by lookup instead of by pixel inference",
     status: { kind: 'tool', toolNames: ['studio_ingest_design_variables', 'studio_list_design_variables', 'studio_read_design_variable_set'] },
+  },
+  {
+    // The composite of three rows above, and a real editor action in its own
+    // right: the user's version is attach the design (the reference-upload
+    // panel, `uploadDesignReference.ts` -> `POST /admin/api/studio/
+    // reference-upload`), then drag the board frame to the design's own size
+    // so the comparison is exact rather than resampled. One tool because the
+    // ORDER is what a weaker model got wrong, not any single leg.
+    action: 'Arm a screen against a supplied design — attach it, record its variables, and size the board frame to it',
+    status: { kind: 'tool', toolNames: ['studio_import_figma_frame'] },
   },
   {
     action: 'Read the board\'s review comment threads, reply in one, and resolve it',
