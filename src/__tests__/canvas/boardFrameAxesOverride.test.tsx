@@ -57,6 +57,15 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   globalThis.fetch = originalFetch
+  // Reset on the way OUT as well as on the way in. `bun test --parallel=4`
+  // gives each WORKER a process, not each file, and `useEditorStore` is a
+  // module singleton — so the board this file loads (`board-1`, holding a
+  // frame for page `sms`) survived into the next canvas file in the same
+  // worker. `CanvasRoot` then painted THAT board instead of the new file's
+  // page, no `data-node-id` element ever appeared, and five unrelated tests
+  // in `nodeRendererLockdown.test.tsx` timed out in `waitFor`. A file that
+  // seeds the shared store clears it.
+  resetStore()
 })
 
 function buildPage() {
