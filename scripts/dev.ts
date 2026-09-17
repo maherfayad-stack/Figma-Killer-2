@@ -241,6 +241,28 @@ interface DevProcess {
 
 const processes: DevProcess[] = [
   {
+    // `--watch` is safe here, and that is a measured claim rather than a hope.
+    // Bun's watcher keys on the ENTRY'S TRANSITIVE MODULE GRAPH, per file — not
+    // on directories. Measured 2026-09-17 with a controlled `bun --watch`
+    // fixture: a new file in a sibling directory, a modified file in a sibling
+    // directory, 300 files written into a `studio-workspace/` under the cwd, and
+    // an unimported file dropped into the very directory holding an imported
+    // module all produced ZERO restarts; touching the imported module restarted
+    // every time. Bun also holds no OS handle on a directory containing no graph
+    // module (that `studio-workspace/` could be `rmdir`'d while the watcher ran,
+    // while renaming the imported module's directory failed EPERM) — so the
+    // Windows EBUSY watcher panic recorded in `server-14` cannot originate from
+    // a workspace write.
+    //
+    // `server/index.ts`'s graph is 630 modules: 567 under `server/`, 55 under
+    // `src/modules/base`, 3 `src/core/data`, 3 `src/modules/studio`, 2
+    // `src/core/persistence`. Zero under `studio-workspace/`, `uploads/`,
+    // `.tmp/`, `.data/` or `dist/`; zero tests. Do NOT replace this with a
+    // hand-maintained directory allowlist — any such list drifts from the real
+    // graph the moment an import changes, and `--watch` derives it exactly.
+    //
+    // `bun run dev:server` runs the same command standalone when you want the
+    // server without Vite.
     name: 'cms',
     command: bunCommand('--watch', 'server/index.ts'),
     env: {

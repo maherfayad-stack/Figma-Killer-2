@@ -102,6 +102,20 @@ describe('development workflow', () => {
     expect(viteConfig).toContain('proxyPublicSiteRequest')
   })
 
+  it('Vite ignores every runtime-written path, including the user workspaces', () => {
+    const viteConfig = readSiteFile('vite.config.ts')
+
+    // Vite's watcher is rooted at the project root, so it sees paths the client
+    // module graph never references. It full-reloads on any watched `.html`
+    // change that maps to no module, and every React app Studio imports ships
+    // its own root `index.html` — so an unignored `studio-workspace/` reloads
+    // the editor out from under the user on import and on save.
+    expect(viteConfig).toContain("'**/studio-workspace/**'")
+    expect(viteConfig).toContain("'**/.tmp/**'")
+    expect(viteConfig).toContain("'**/uploads/**'")
+    expect(viteConfig).toContain("'**/dist/**'")
+  })
+
   it('Vite forwards published runtime assets to the CMS server in local dev', () => {
     const viteConfig = readSiteFile('vite.config.ts')
 
