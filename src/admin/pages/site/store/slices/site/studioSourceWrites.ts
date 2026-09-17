@@ -37,6 +37,7 @@ import {
 import {
   STRUCTURAL_REFUSAL_TITLE,
   planSourceDuplicate,
+  planSourceDuplicateTo,
   planSourceInsert,
   planSourceWrap,
   presentStructuralRefusal,
@@ -62,7 +63,14 @@ export interface StudioSourceWrites {
     parentId: string,
     index?: number,
   ) => boolean
-  writeDuplicateToSource: (nodeIds: readonly string[]) => boolean
+  /**
+   * `destination` (K2 — Alt+drag) puts the copy INSIDE a container instead of
+   * beside the original. Omitted for ⌘D and the toolbar button.
+   */
+  writeDuplicateToSource: (
+    nodeIds: readonly string[],
+    destination?: { parentId: string; index: number },
+  ) => boolean
   writeWrapToSource: (
     nodeIds: readonly string[],
     containerModuleId: string,
@@ -210,26 +218,59 @@ export function createStudioSourceWrites(
    * caller must stop — written, or refused out loud; either way nothing is
    * minted here. Same shape as `writeInsertToSource`.
    */
-  const writeDuplicateToSource = (nodeIds: readonly string[]): boolean => {
+  const writeDuplicateToSource = (
+    nodeIds: readonly string[],
+    destination?: { parentId: string; index: number },
+  ): boolean => {
     // `store-11` — this is the exact gesture the race was found on: a rapid
     // double-click/keypress on Duplicate before the first click's resync
     // lands used to plan a SECOND duplicate against the still-unshifted
     // original, writing two real copies for one gesture and pushing two
     // "Written to your project source" toasts. See
     // `guardAgainstConcurrentStructuralCommit`'s doc for the full mechanism.
+    // K2's Alt+drag rides the identical guard, and needs it for the identical
+    // reason: two Alt-drops in quick succession are two independent writes
+    // planned against one unshifted original.
     if (guardAgainstConcurrentStructuralCommit()) return true
     const tree = readTree()
     if (!tree) return false
+
+    const retryOn = (refusedNodeId: string | undefined) =>
+      refusedNodeId
+        ? (newNodeId: string) => {
+            void writeDuplicateToSource(
+              nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
+              destination,
+            )
+          }
+        : undefined
+
+    // K2 — Alt+drag: the copy lands INSIDE a container the user pointed at,
+    // which is a second question (`planSourceDuplicateTo`) rather than a flag
+    // on the first. See that function for why the anchor is an insert's, not
+    // a move's.
+    if (destination) {
+      const plan = planSourceDuplicateTo(tree, nodeIds, destination.parentId, destination.index)
+      if (!plan.ok) {
+        presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
+          nodeId: plan.nodeId,
+          retry: retryOn(plan.nodeId),
+          getState: get,
+          set,
+        })
+        return true
+      }
+      if (!plan.commit) return false // an ordinary CMS tree — nothing to write
+      const { nodeId, ...where } = plan.commit
+      void commitStudioDuplicate([nodeId], where)
+      return true
+    }
+
     const plan = planSourceDuplicate(tree, nodeIds)
     if (!plan.ok) {
-      const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
-        nodeId: refusedNodeId,
-        retry: refusedNodeId
-          ? (newNodeId) => {
-              void writeDuplicateToSource(nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)))
-            }
-          : undefined,
+        nodeId: plan.nodeId,
+        retry: retryOn(plan.nodeId),
         getState: get,
         set,
       })

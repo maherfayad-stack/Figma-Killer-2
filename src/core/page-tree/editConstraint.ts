@@ -161,6 +161,10 @@ export type ConstraintReason =
   | 'unsupported-call'
   | 'unsupported-expression'
   | 'spread-attribute'
+  // K6 — a ⌘-drag asked to place an element by coordinates inside a
+  // `position: static` container. Not a source-writability question (the file
+  // would take the write); a CSS one. See `explainStaticParentConstraint`.
+  | 'static-parent'
 
 /** A way forward out of a refusal — the thing that turns a dead end into progress. */
 export interface EditConstraintAction {
@@ -177,6 +181,15 @@ export interface EditConstraintAction {
     | 'style-inline-instead'
     | 'preview-branch'
     | 'choose-stylesheet'
+    /**
+     * K6 — write `position: relative` onto the container the refusal names, so
+     * a ⌘-drag can place its child by coordinates. The only action kind whose
+     * handler is a WRITE rather than a navigation, which is why the engine
+     * cannot run it: the handler is supplied by the surface that renders the
+     * button (`ConstraintActionButtons`), the same way `jump-to-source`'s
+     * `openSource` already is.
+     */
+    | 'position-parent-relative'
   /**
    * Where this action points, when it points at a file — `origin`'s own
    * shape, so a caller can wire `jump-to-source` without re-deriving it.
@@ -521,6 +534,34 @@ export function explainMintedInsertConstraint(input: {
 export function explainGestureConstraint(preview: StructuralMovePreview, node: SourceStructureNode): EditConstraint | null {
   if (preview.ok) return null
   return describeStructuralRefusal({ refusal: preview.refusal, node, scope: 'gesture' })
+}
+
+/**
+ * K6 — `scope: 'gesture'`. A ⌘-drag asked to place an element by coordinates
+ * inside a container that is `position: static`.
+ *
+ * This is the one refusal in this module that is NOT a source-writability
+ * question: the file could take the write perfectly well. It is a CSS
+ * question. Absolutely positioning an element inside a static parent does not
+ * place it in that parent at all — the browser hands it to the nearest
+ * POSITIONED ancestor, or to the viewport — so writing `position: absolute;
+ * left: …; top: …` here would put the element somewhere the user did not
+ * point at, which is the silent-wrong-target failure the whole refusal
+ * vocabulary exists to prevent.
+ *
+ * It is also the one refusal whose remedy is a WRITE rather than a
+ * navigation, and the write is small, reversible and exactly what the user
+ * would type: one `position: relative` on the container. `parentLabel` is in
+ * the sentence because "the container" is not something a person can find on
+ * a busy page.
+ */
+export function explainStaticParentConstraint(parentLabel: string): EditConstraint {
+  return {
+    reason: 'static-parent',
+    scope: 'gesture',
+    explanation: `\`<${parentLabel}>\` is \`position: static\`, so placing this element by coordinates inside it would hand it to a different ancestor instead — it would not land where you dropped it.`,
+    actions: [{ label: `Make <${parentLabel}> position: relative`, kind: 'position-parent-relative' }],
+  }
 }
 
 // ---------------------------------------------------------------------------

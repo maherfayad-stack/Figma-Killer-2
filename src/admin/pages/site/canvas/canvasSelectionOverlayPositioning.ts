@@ -431,7 +431,16 @@ export function positionNodeBadge(
   appliedBadgePlacements.set(badge, { x: ringRect.x, y: ringRect.y, label })
 }
 
-export function dropIndicatorStyle(target: CanvasDropTarget): CSSProperties {
+/**
+ * The `--canvas-drop-*` custom-property bag a drop indicator is positioned
+ * by. A plain string map rather than a React `CSSProperties`: since S2 the
+ * only consumer is `canvasDragPainter.ts`, which writes these through
+ * `style.setProperty` on elements React never owns — and a custom property
+ * is not expressible in `CSSProperties` without a cast anyway.
+ */
+export type CanvasDropVars = Record<string, string>
+
+export function dropIndicatorStyle(target: CanvasDropTarget): CanvasDropVars {
   if (target.position === 'inside') return rectStyle(target.rect)
   return lineStyle(target.rect, target.position, target.axis)
 }
@@ -440,7 +449,7 @@ function lineStyle(
   rect: CanvasRect,
   position: 'before' | 'after',
   axis: CanvasDropAxis,
-): CSSProperties {
+): CanvasDropVars {
   if (axis === 'horizontal') {
     const x = position === 'before' ? rect.left : rect.right
     return indicatorVars(x, rect.top, 2, rect.height)
@@ -450,15 +459,24 @@ function lineStyle(
   return indicatorVars(rect.left, y, rect.width, 2)
 }
 
-export function rectStyle(rect: CanvasRect): CSSProperties {
+export function rectStyle(rect: CanvasRect): CanvasDropVars {
   return indicatorVars(rect.left, rect.top, rect.width, rect.height)
 }
 
-function indicatorVars(x: number, y: number, width: number, height: number): CSSProperties {
+/**
+ * The drag GHOST's anchor — a zero-size point its label hangs off, so it
+ * carries only x/y. Same property channel as the indicators, so one painter
+ * writes all four without branching on which shape it is holding.
+ */
+export function pointStyle(x: number, y: number): CanvasDropVars {
+  return { '--canvas-drop-x': `${x}px`, '--canvas-drop-y': `${y}px` }
+}
+
+function indicatorVars(x: number, y: number, width: number, height: number): CanvasDropVars {
   return {
     '--canvas-drop-x': `${x}px`,
     '--canvas-drop-y': `${y}px`,
     '--canvas-drop-w': `${width}px`,
     '--canvas-drop-h': `${height}px`,
-  } as CSSProperties
+  }
 }

@@ -35,8 +35,6 @@ interface SelectionToolbarProps {
   toolbarRef: React.RefObject<HTMLDivElement | null>
   /** `scoped` when portaled into the canvas root, `fixed` in the body fallback. */
   mode: 'scoped' | 'fixed'
-  /** True while a reorder drag started from this toolbar's handle is in flight. */
-  dragging: boolean
   onDragPointerDown: (event: React.PointerEvent<HTMLElement>) => void
 }
 
@@ -71,7 +69,7 @@ function deleteSelectedLayers() {
   state.clearSelection()
 }
 
-export function SelectionToolbar({ toolbarRef, mode, dragging, onDragPointerDown }: SelectionToolbarProps) {
+export function SelectionToolbar({ toolbarRef, mode, onDragPointerDown }: SelectionToolbarProps) {
   const inPrototypeMode = useEditorStore((s) => s.boardMode === 'prototype')
   const picking = useEditorStore((s) => s.linkDraft?.mode === 'pick' || s.pendingLinkSource !== null)
 
@@ -83,7 +81,6 @@ export function SelectionToolbar({ toolbarRef, mode, dragging, onDragPointerDown
       className={styles.selectionToolbar}
       data-canvas-selection-toolbar="true"
       data-canvas-toolbar-mode={mode}
-      data-canvas-dragging={dragging ? 'true' : undefined}
       // The toolbar is portaled into the canvas root, whose onClick clears the
       // selection on background clicks. Without this guard a toolbar click
       // bubbles up, clears the selection, and unmounts the toolbar mid-action

@@ -265,6 +265,12 @@ Native mouse movement is also surfaced for editor chrome that must follow the cu
 
 Live frames skip wheel/pointer/keyboard forwarding — they scroll natively, have no pan/zoom, and host real interactive controls (forms, links) that must keep their own keystrokes. Overlay dismiss listeners still apply in live mode (menus can be open while the canvas is in live view).
 
+**A gesture that can be cancelled listens on BOTH documents.** Escape during an element drag (`useCanvasReorderDrag`) and during an element resize (`useElementResizeDrag`) is a native `keydown` handler attached to the parent `window` *and* to the frame's own `contentDocument`, because the cursor may be over either when the key is pressed and a keystroke raised inside an iframe never reaches the parent window. This is deliberately NOT routed through the keyboard clone bridge above: the clone exists to reach the editor's global shortcut listeners, while a cancel must be handled by the session that owns the pointer and by nothing else.
+
+**A drag measures the frame, it does not re-render it.** The element drag builds its `frameCandidateIndex` once from the frame's `contentDocument` (`measureCanvasDropCandidates`'s `[data-node-id]` scan), then rebuilds it only when a `ResizeObserver` on the **frame body** reports a real reflow. **Nothing is ADDED to the frame's DOM at any point** — the drop line, the refusal chip, the alignment guides and the ghost are all painted into the parent document's per-frame overlay layer, which is already transform-scaled with the board. See `docs/reference/canvas-dnd.md` → "The drag session (S2)".
+
+The one thing a drag writes inside the frame is a **free move's preview** (K6): `left`/`top` (and `position`) on the dragged element's own `style`, the same preview-then-commit shape `useElementResizeDrag` uses for `width`/`height`. No element is created, no attribute is added, and the preview is dropped before the store commit — so React's re-render is the last thing to touch the property, and the frame's DOM is byte-identical to what the source says the moment the gesture ends.
+
 ---
 
 ## Inline text editing (in-place `contentEditable`)

@@ -336,6 +336,8 @@ export function BreakpointSelectionOverlay({
     bodyDragEnabled: canEditStructureHere,
     panBy: viewportActions?.panBy,
     canvasRootRef: viewportActions?.canvasRootRef,
+    // D1's LIVE transform — see `canvasDragSession.ts` for why not the store's.
+    transformRef: viewportActions?.transformRef,
   })
 
   // One measurement pass. Reads the freshest selection / hover / toolbar inputs
@@ -559,7 +561,6 @@ export function BreakpointSelectionOverlay({
     <SelectionToolbar
       toolbarRef={toolbarRef}
       mode={toolbarMode}
-      dragging={reorderDrag.dragging}
       onDragPointerDown={reorderDrag.handlePointerDown}
     />
   ) : null
@@ -689,11 +690,10 @@ export function BreakpointSelectionOverlay({
 
   return (
     <>
-      {/* Drop indicators (and the reason a position is refused) stay inside
-          the breakpoint viewport — they only appear transiently during a
-          drag, and the transform-scaled coordinate path is established for
-          them. See `CanvasDropIndicators`. */}
-      <CanvasDropIndicators target={reorderDrag.target} invalid={reorderDrag.invalid} />
+      {/* React renders an EMPTY layer inside the breakpoint viewport; the drag
+          session paints the drop line, the refusal chip and the ghost into it.
+          See `CanvasDropIndicators` / `canvasDragPainter`. */}
+      <CanvasDropIndicators layerRef={reorderDrag.dropLayerRef} />
       {/* K5 — Alt-hover measurements. Owns its own Alt/visibility state and
           renders nothing until the gesture is live; see `MeasureLayer`. */}
       <MeasureLayer iframeElement={iframeElement} overlayRoot={overlayRoot} portalTarget={portalTarget} portalMode={toolbarMode} canvasRoot={portalCanvasRoot} selectedNodeIds={selectedNodeIds} hoveredNodeId={hoveredNodeId} enabled={showRings} />

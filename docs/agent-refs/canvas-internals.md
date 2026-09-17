@@ -898,7 +898,36 @@ reads this ref, never the store selector, during an active gesture. See
 transform"; it cannot answer "is a gesture running"** — it never changes
 identity, so detecting a gesture from it means polling. For that, subscribe to
 `canvasViewportActivity.ts` (S4), which `applyTransformToDOM` marks on every
-write.
+write. The element drag
+(`useCanvasReorderDrag`) is one such consumer: its `frameCandidateIndex`
+compares the transform it measured its viewport origin under against this
+ref, and re-reads the origin only when they differ — which is how auto-pan
+stays correct without a `getBoundingClientRect()` per frame.
+
+**A canvas gesture measures once and paints imperatively.** The element drag
+(S2) does zero forced layout reads and zero React commits PER POINTERMOVE:
+`canvasDragSession.ts` holds the measurements, `canvasDragPainter.ts` writes
+the indicator/ghost into a React-rendered but never-React-populated layer, and
+the store is written exactly once, on release. React commits twice per
+gesture, at its two edges (`dragging` on at activation, off at release) —
+that flag is state rather than a ref because the overlay's measurement
+scheduler renders from it. The same shape as `useElementResizeDrag`'s
+one-write-per-rAF coalescing, extended with the measurement half a hit-test
+needs, and it takes the same `canvasGesture` freeze — here to stop the frame's
+auto-height refit reflowing the page under a stationary pointer and
+invalidating the candidate index. Full contract:
+`docs/reference/canvas-dnd.md` → "The drag session (S2)".
+
+**⌘-drag is the ONE gesture allowed to write a position (K6).** It writes
+`left`/`top` — or `inset-inline-start` under `direction: rtl` — as an inline
+style on one element, plus `position: absolute` when the element was in flow
+(without it the offsets do nothing, and a declaration with no effect is a
+silent no-op). It **refuses** when the container is `position: static`,
+because absolute positioning there hands the element to a different ancestor
+than the one it was dropped in; the refusal carries a one-click "make the
+container `position: relative`" remedy. Studio still does not fake absolute
+placement — an ordinary drag is still a reorder. See
+`docs/reference/canvas-dnd.md` → "Free movement (K6)".
 
 **Chrome outside `CanvasRoot` reaches the canvas through the store, not the
 context.** The toolbar is painted eagerly by `AdminCanvasLayout`, *above* the

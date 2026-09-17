@@ -73,6 +73,7 @@ export {
   explainCssRuleConstraint,
   explainDetachConstraint,
   explainGestureConstraint,
+  explainStaticParentConstraint,
   explainMintedInsertConstraint,
   explainPropConstraint,
   explainStructuralConstraint,

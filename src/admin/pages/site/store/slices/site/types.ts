@@ -404,6 +404,20 @@ export interface SiteSlice {
   duplicateNode: (nodeId: string) => string
   /** Multi-duplicate: duplicates every id in place (single undo step). Returns the new ids. */
   duplicateNodes: (nodeIds: string[]) => string[]
+  /**
+   * K2 — Alt+drag: copy `nodeIds` INTO `newParentId` at `newIndex`, rather
+   * than beside the original.
+   *
+   * A distinct action, not a flag on `duplicateNodes`, because on a
+   * studio-imported tree it is a genuinely different source write
+   * (`duplicateJsxElement`'s destination form) planned against a genuinely
+   * different question (`planSourceDuplicateTo` — may this element be copied,
+   * AND may it land there). On a CMS / Visual Component tree it degrades to
+   * exactly what it says: duplicate in place, then move the copies.
+   * Returns the new ids (empty on a studio tree, where the copies do not
+   * exist until the commit's resync brings them in).
+   */
+  duplicateNodesTo: (nodeIds: string[], newParentId: string, newIndex: number) => string[]
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor
