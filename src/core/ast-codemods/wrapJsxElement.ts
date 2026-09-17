@@ -116,7 +116,7 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
   const importEdits = resolveImportEdits(
     sourceFile,
     verbatim,
-    importSpecifier === undefined ? new Map() : new Map([[name, importSpecifier]]),
+    importSpecifier === undefined ? new Map() : new Map([[name, { specifier: importSpecifier }]]),
   )
 
   writeVerbatimSource(

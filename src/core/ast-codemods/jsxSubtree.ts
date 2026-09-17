@@ -13,6 +13,7 @@
 import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import type { JsxChildRangeReason } from './jsxChildRange'
+import type { ImportRequirement } from './jsxImportEdits'
 
 /**
  * A prop written onto the new element.
@@ -242,13 +243,18 @@ function* walkPropElements(value: InsertableJsxPropValue): Generator<InsertJsxNo
  * Every `(componentName, importSpecifier)` the subtree needs in scope,
  * deduplicated. Intrinsic tags contribute nothing.
  *
+ * Always a NAMED import: this subtree is one Studio itself is writing, and a
+ * component Studio writes is named on the line it writes. Mirroring a binding
+ * the USER already wrote — which may be a default or a namespace import — is
+ * `transplantJsxElement.ts`'s job, and it builds its own requirements.
+ *
  * Exported for `insertJsxIntoSlotProp.ts` — a slot fill needs the identical
  * "what imports does this subtree require" answer.
  */
-export function collectSubtreeImports(root: InsertJsxNode): Map<string, string> {
-  const required = new Map<string, string>()
+export function collectSubtreeImports(root: InsertJsxNode): Map<string, ImportRequirement> {
+  const required = new Map<string, ImportRequirement>()
   for (const node of walkSubtree(root)) {
-    if (node.importSpecifier !== undefined) required.set(node.name, node.importSpecifier)
+    if (node.importSpecifier !== undefined) required.set(node.name, { specifier: node.importSpecifier })
   }
   return required
 }
