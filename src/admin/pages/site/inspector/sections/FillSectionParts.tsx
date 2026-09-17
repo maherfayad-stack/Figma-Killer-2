@@ -14,7 +14,10 @@
  *
  * Components only — `react-refresh/only-export-components` is on for `src/`,
  * which is also why the transforms these editors call live in `fillModel.ts`
- * rather than beside them here.
+ * rather than beside them here. The Text/Solid-fill rows' OWN swatch and
+ * inline chrome (`ColorFieldRow`, `ColorWriteRefusalBody`, `ColorSwatch`)
+ * moved to `FillColorField.tsx` when panel-33 grew them enough to threaten
+ * this file's own budget — see that file's doc for why they're not here.
  */
 import { type CSSProperties } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -61,119 +64,8 @@ import {
 } from '../../panels/PropertiesPanel/gradientValue'
 import { imageFillPreviewSrc, useProjectImageAssets } from '@site/studio/projectAssets'
 import { formatColor, parseCssColor } from '@ui/components/ColorPickerPopover'
-import { SourceConstraintNotice } from '../../panels/PropertiesPanel/SourceConstraintNotice'
-import type { WriteTarget } from '../resolveWriteTarget'
 import { ImageFillEditor } from './ImageFillEditorParts'
 import styles from './FillSection.module.css'
-
-// ---------------------------------------------------------------------------
-// Swatches
-// ---------------------------------------------------------------------------
-
-export function ColorSwatch({ color }: { color: string }) {
-  return (
-    <span
-      className={styles.swatch}
-      style={{ '--fill-swatch-color': color } as CSSProperties}
-      aria-hidden="true"
-    />
-  )
-}
-
-// ---------------------------------------------------------------------------
-// ColorPopoverField — the Text / Solid-fill popover body (`STATE.md`
-// panel-30, widened by panel-32). Three cases:
-//   - stored: `ColorValueInput` exactly as before this ticket.
-//   - muted (not stored at the active context), but a target exists: same
-//     `ColorValueInput`, prefilled with the RENDERED value; committing the
-//     SAME value writes nothing — the `docs/features/inspector.md` §5.0 rule
-//     this ticket reuses, not reinvents. A bare focus/blur on a
-//     prefilled-but-unstored field must never fabricate a declaration
-//     (`prefilledFieldCommitGuard.test.tsx`'s own precedent for why this
-//     comparison is load-bearing and belongs to the FIELD, not the panel).
-//     `panel-32`: when the muted value is DECLARED ELSEWHERE (a class source
-//     exists, just not at the active context — e.g. set at base while a
-//     breakpoint tab is active), an informational `SourceConstraintNotice`
-//     names where the edit would actually land, so a muted prefill never
-//     reads as "you are editing that declaration".
-//   - muted, no honest write target: `SourceConstraintNotice` states why,
-//     the colour field disables — never a silently inert control that eats
-//     a keystroke (`resolveWriteTarget.ts`'s `{ kind: 'none' }`).
-// ---------------------------------------------------------------------------
-
-export function ColorPopoverField({
-  property,
-  ariaLabel,
-  swatchLabel,
-  stored,
-  storedDisplayValue,
-  mutedDisplayValue,
-  declaredElsewhere,
-  writeTarget,
-  onCommit,
-  onPreview,
-  onClearPreview,
-}: {
-  property: 'color' | 'backgroundColor'
-  ariaLabel: string
-  swatchLabel: string
-  /** Does the active target declare this property? Only `false` for the "rendered, not stored here" case. */
-  stored: boolean
-  storedDisplayValue: string | undefined
-  /** The frame's rendered value — populated only when `!stored` and `rendersUnstoredValue` said so. */
-  mutedDisplayValue: string | undefined
-  /**
-   * `panel-32`: true when the muted value comes from a REAL declaration
-   * elsewhere (base, or another breakpoint/condition), not from pure
-   * inheritance/UA rendering with nothing declared anywhere. Drives the
-   * informational write-target note — never set when `stored` is true.
-   */
-  declaredElsewhere: boolean
-  /** Only resolved by the caller when `!stored` — a stored row already has a real source. */
-  writeTarget: WriteTarget | null
-  onCommit: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
-  onPreview: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
-  onClearPreview: () => void
-}) {
-  if (!stored && writeTarget?.kind === 'none') {
-    return (
-      <div className={styles.popoverBody}>
-        <SourceConstraintNotice hasWritableLocation writeTargetReason={writeTarget.reason} />
-        <ColorValueInput
-          value={mutedDisplayValue ?? ''}
-          ariaLabel={ariaLabel}
-          swatchLabel={swatchLabel}
-          disabled
-          onChange={() => {}}
-        />
-      </div>
-    )
-  }
-
-  const writeTargetNote =
-    !stored && declaredElsewhere && writeTarget
-      ? writeTarget.kind === 'class'
-        ? `This colour is declared elsewhere (base, or another view) on ${writeTarget.selector}. Editing here saves a new override for the current view only.`
-        : "This colour is declared elsewhere (base, or another view). Editing here saves it on this element's own style, for the current view only."
-      : undefined
-
-  return (
-    <div className={styles.popoverBody}>
-      {writeTargetNote ? <SourceConstraintNotice hasWritableLocation writeTargetNote={writeTargetNote} /> : null}
-      <ColorValueInput
-        value={(stored ? storedDisplayValue : mutedDisplayValue) ?? ''}
-        ariaLabel={ariaLabel}
-        swatchLabel={swatchLabel}
-        onChange={(next) => {
-          if (!stored && next === mutedDisplayValue) return
-          onCommit(property, next || undefined)
-        }}
-        onPreview={(next) => onPreview(property, next)}
-        onClearPreview={onClearPreview}
-      />
-    </div>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // ColorOpacityField — the "% opacity" cell of the Fill row chrome

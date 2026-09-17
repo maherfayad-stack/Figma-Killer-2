@@ -414,6 +414,23 @@ element with no image is the exact defect this page exists to prevent.
   `window.EyeDropper`), the contrast readout, and an "On this page" recents strip
   that for us is the project's own colour tokens — strictly better than Figma's,
   so `TokenizedColorField`'s token integration stays as the **first** tab.
+- **G6.2b — one click, not two (`STATE.md` panel-33).** The Text and
+  Solid-fill rows' `summary` slot IS the swatch-plus-hex/token field
+  (`ColorFieldRow`, `FillColorField.tsx`): the row's own swatch opens
+  `ColorPickerPopover` directly, the same primitive G6.2 describes, with no
+  intermediate "Text colour"/"Solid fill" popover in between. The row's text
+  field stays free-typeable for a hex value or a `var(--token)` name, exactly
+  as `ColorControl` behaves everywhere else in this panel. The one row shape
+  that still opens the section's own row-activation popover is
+  `writeTarget.kind === 'none'` (no honest place to land a write): a disabled
+  swatch cannot open its own picker to explain why it's disabled, so
+  `ColorWriteRefusalBody` states the reason there instead — that path was
+  already a single click, never the reported defect. The swatch itself paints
+  the RESOLVED colour (`ColorPickerPopover`'s own `value`/`resolvedValue`
+  contract), never the raw `var(--token)` string — a project custom property
+  has no meaning in the admin's own document, only inside the canvas iframe
+  that declares it, so painting it verbatim left the swatch blank even though
+  the frame rendered a real colour.
 - **G6.3** — gradients round-trip or refuse: parse the user's existing gradient
   into stops, and if it does not round-trip losslessly, **refuse to open the
   visual editor and say why** (`gradientValue.ts`).
@@ -1172,8 +1189,11 @@ interactions for each, matching: `f1_resizeViaWidthField`,
 `f1_addStrokeFromEmpty`, `f2_changeFontSize`, `f3_changeGapOnBoard`.
 `f1_changeFillColor` is not automated — the P0 baseline's own capture
 already failed to automate the equivalent Penpot popover, and this spec does
-not re-attempt what that capture couldn't do reliably; the Fill row's colour
-editor only opens inside a popover triggered by activating the row.
+not re-attempt what that capture couldn't do reliably. (As of `STATE.md`
+panel-33 the Fill row's colour editor no longer requires activating the row
+first — the row's own text field commits directly, and its swatch opens
+`ColorPickerPopover` on the first click — so this line is a candidate for a
+future spec update, not a description of a current limitation.)
 `f4_downloadSourceImage` is skipped — no F4 image fixture exists in this
 project, and Export-section parity was not in this pass's scope.
 
@@ -1583,7 +1603,13 @@ an icon), `boundary-validation` (the gradient, box-shadow, background-layer and
 numeric-expression parsers are boundaries — TypeBox them, no `as`),
 `module-size-budgets` (several section files sit near the 700-line ceiling:
 extract, don't grow — `FillSection` split into `FillSectionParts.tsx` +
-`fillModel.ts` + `backgroundLayers.ts` for exactly this reason).
+`fillModel.ts` + `backgroundLayers.ts` for exactly this reason, then further
+into `FillColorField.tsx` (the colour rows' own chrome — `ColorFieldRow`,
+`ColorWriteRefusalBody`, `ColorSwatch`), `buildColorFillEntry.tsx` (the row
+object itself), and `colorWriteTargetNote.ts` (the shared note-string
+builder, its own file because `react-refresh/only-export-components` forbids
+mixing a plain function export with a component export) when G6.2b grew it
+again).
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` owns the multi-select surface (§9) and is needed for G8.3

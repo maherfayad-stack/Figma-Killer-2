@@ -12,6 +12,193 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### panel-33 — one click to the colour picker, and a swatch that finally paints a `var()` value
+- **Agent:** panel-designer
+- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.
+- **Branch:** `fix/one-click-colour-editing`. Worktree: `.tmp/wt-colour-click/`.
+- **Updated:** 2026-09-17.
+- **Goal:** two owner-reported Fill defects, same components: (1) editing a colour took the
+  row click → intermediate "Text colour" popover → its own swatch click → the real picker — 2
+  clicks, not 1; (2) a `var(--token)` colour's swatch painted `rgba(0,0,0,0)` even though the
+  frame rendered a real colour, because a project CSS custom property has no meaning in the
+  admin's own document (a different DOM tree from the canvas iframe that declares it).
+
+#### Interaction settled on
+The Text/Solid-fill rows' `PropertyList` `summary` slot **is** the swatch-plus-hex/token field
+now — `ColorFieldRow` (`FillColorField.tsx`) renders the SAME `ColorValueInput`/
+`TokenizedColorField` a `ColorControl` renders everywhere else in this panel, directly in the
+row, guarded with `stopPropagation` (the established "nested control that must not also
+activate the row" pattern `ColorOpacityField` already used) so it never also fires
+`PropertyList`'s row `onActivate`. `TokenizedColorField`'s own swatch button already opened
+`ColorPickerPopover` directly (one click) — it was just buried a level too deep behind
+`FillSection`'s own intermediate popover. Removing that outer layer for the EDITABLE case is
+the whole fix for defect 1.
+- **The one case that still opens a row-activation popover:** `writeTarget.kind === 'none'`
+  (no honest place for a new declaration to land). A disabled swatch can't open its own picker
+  to explain why it's disabled, so `ColorWriteRefusalBody` still renders inside
+  `FillSection.tsx`'s own `InspectorPopover`, triggered by a plain row click — this path was
+  ALREADY one click before this ticket (a `ColorSwatch` glyph + plain text summary, unguarded),
+  never the reported defect, so it is untouched in shape, only renamed.
+- **`handleActivate` guard:** `if (entry.data.kind === 'text' && !textRefused) return` (+
+  `color`/`colorRefused`) — a defensive second layer behind `ColorFieldRow`'s own click guard,
+  so a stray click on bare row padding outside the field's own DOM can't pop an empty dialog.
+
+#### Where the three honesty behaviours now live
+- **`writeTargetNote` (panel-32's "declared elsewhere" informational note):** still built from
+  the exact same `stored`/`declaredElsewhere`/`writeTarget` facts (now via a shared pure
+  `colorWriteTargetNote()` — one function, called once per colour property instead of a
+  duplicated 6-line ternary), rendered as a `SourceConstraintNotice` and handed to
+  `ColorValueInput`/`TokenizedColorField` as a NEW, opaque `notice?: ReactNode` prop, threaded
+  straight into `ColorPickerPopover`'s own NEW `notice` slot — rendered above its tabs. `src/ui/`
+  primitives stay admin-agnostic: `ColorPickerPopover` never imports `SourceConstraintNotice`,
+  it just renders whatever `ReactNode` the caller hands it. The note is now reachable the moment
+  the swatch opens the real picker — one click, not a stop-then-a-click.
+- **`writeTarget.kind === 'none'`:** unchanged in substance — `ColorWriteRefusalBody`
+  (`FillColorField.tsx`, the disabled-field-plus-reason case renamed off `ColorPopoverField`)
+  still renders `SourceConstraintNotice` + a disabled `ColorValueInput`, still reachable in one
+  row click.
+- **The prefilled-but-unstored commit guard:** moved verbatim into `ColorFieldRow`'s own
+  `onChange` — `if (skipIfEquals !== undefined && next === skipIfEquals) return` before calling
+  `onCommit`. `skipIfEquals` is `mutedValue` when `!stored`, `undefined` when stored (identical
+  semantics to the old `if (!stored && next === mutedDisplayValue) return`). Verified this
+  guard fires REGARDLESS of whether the blur happens on the row's own outer text field or
+  inside the picker's nested value field — `ColorValueInput`'s `handleTextBlur` calls `onChange`
+  unconditionally on a valid value, and `ColorPickerPopover`'s own `commitValueField` does too;
+  the guard sits at the ONE place both paths funnel through.
+
+#### Defect 2 — how token resolution gets its value
+`resolveSwatchColor(authored, resolved)` (new, `colorParsing.ts`, exported from
+`@ui/components/ColorPickerPopover`): paints `authored` verbatim when `parseCssColor` can
+already parse it (a literal hex/rgb/hsl, or a token this field's own catalogue resolves takes
+priority ahead of this call); falls back to `resolved` ONLY for a reference nothing else can
+resolve. `resolved` comes from `SelectionModel.computedValues` (`model.computedValues?.color` /
+`?.backgroundColor` in `FillSection.tsx`) — the frame's real `getComputedStyle` truth, read
+through the existing bridge/portal machinery, NEVER a re-implemented CSS-variable lookup or a
+guessed token table. Wired into BOTH swatch call sites that can receive a `var()` value:
+- `TokenizedColorField`'s own swatch trigger (`swatchValue = appliedVariable?.value ??
+  resolveSwatchColor(value, resolvedValue)`) — the swatch INSIDE the picker flow, used by every
+  `ColorValueInput` caller project-wide (Fill, Stroke, Shadow, `SelectionColorsSection`,
+  `ColorControl`). New optional `resolvedValue`/`notice` props on `ColorValueInput` →
+  `TokenizedColorField` → `ColorPickerPopover`.
+- `ColorSwatch` (`FillColorField.tsx`, the REFUSED row's plain leading glyph) — new optional
+  `resolvedColor` prop, same helper.
+- **Scope actually shipped:** only `FillSection.tsx`'s Text/Solid-fill rows pass a real
+  `resolvedColor`/`resolvedValue` (from `model.computedValues`), since that's the reported repro
+  and the only call site with a live "what does the frame actually render" fact on hand.
+  Stroke/Shadow/`SelectionColorsSection`/generic `ColorControl` callers still have the SAME
+  latent blank-swatch gap for a `var()` value outside Studio's own framework colour catalogue —
+  the shared PLUMBING now exists (`resolvedValue`/`notice` props, `resolveSwatchColor`), but
+  wiring a real resolved value into each of those call sites needs each one's own "what's the
+  live computed value here" fact, which none of them currently have on hand. Follow-up, not
+  done here — flagging honestly rather than claiming a blanket fix the work order's own "not
+  Fill-only" scope note asked for.
+
+#### Files touched
+- `src/ui/components/ColorPickerPopover/colorParsing.ts` (+`.test.ts`) — new
+  `resolveSwatchColor`, exported via `index.ts`.
+- `src/ui/components/ColorPickerPopover/ColorPickerPopover.tsx` (+`.test.tsx`) — new optional
+  `notice?: ReactNode` prop, rendered at the top of `.root`.
+- `src/admin/pages/site/property-controls/TokenizedColorField.tsx` — new `resolvedValue`/
+  `notice` props, `swatchValue` computation now falls back to `resolveSwatchColor`.
+- `src/admin/pages/site/property-controls/ColorValueInput.tsx` — same two props threaded
+  through.
+- `src/__tests__/admin/propertyControls/tokenizedColorField.test.tsx` — new describe block:
+  blank-without-`resolvedValue`, painted-with-it, ignored-for-an-already-parseable-literal,
+  `notice` reaches the picker.
+- `src/admin/pages/site/inspector/sections/FillSectionParts.tsx` — `ColorPopoverField` deleted
+  (its logic moved/split, below); doc comment updated. Down to 575 lines from 683.
+- `src/admin/pages/site/inspector/sections/FillColorField.tsx` (NEW) — `ColorFieldRow`,
+  `ColorWriteRefusalBody`, `ColorSwatch` (moved from `FillSectionParts.tsx`). Split into its own
+  file (not just moved into `FillSectionParts.tsx`) because BOTH `FillSection.tsx` and
+  `FillSectionParts.tsx` were independently pushed toward/past the 700-line
+  `module-size-budgets.test.ts` ceiling by this ticket's own growth.
+- `src/admin/pages/site/inspector/sections/buildColorFillEntry.tsx` (NEW) — the
+  `PropertyListEntry` factory shared by the Text/Solid-fill rows (generic over `TData`, no
+  dependency on `FillSection.tsx`'s private `FillEntryData` type). A plain function, not a
+  component — kept in a file with NO component export, since
+  `react-refresh/only-export-components` forbids mixing the two (confirmed empirically:
+  `bun x eslint` on this exact file is clean).
+- `src/admin/pages/site/inspector/sections/colorWriteTargetNote.ts` (NEW) — the pure
+  note-string builder, same "no component in this file" constraint, same reason.
+- `src/admin/pages/site/inspector/sections/FillSection.tsx` — `handleActivate`, entry
+  construction, and the popover render switch reworked per above. 683 lines (was 698 before
+  this ticket; peaked at 777 mid-edit before the module-size split above).
+- `src/admin/pages/site/inspector/sections/FillSection.module.css` — new `.colorFieldGuard`
+  class (mirrors `.opacityFieldGuard`'s stopPropagation-wrapper pattern, sized `flex:1;
+  min-width:0` to fill the row's `summary` slot).
+- `src/admin/pages/site/inspector/sections/__tests__/fillSection.test.tsx` — every assertion
+  that used to read a colour off `row.textContent` now reads the row's own
+  `getByRole('textbox', {name: <ariaLabel>}).value` (the value moved from static text into a
+  live `<input>`). New tests: row field commits with no popover; swatch opens the real picker
+  on the FIRST click (proven by the picker's OWN differently-named "value" field, e.g. "Text
+  colour value" vs the row's "Text colour"); the honesty trap (open+close a token value without
+  picking leaves it untouched); the resolved-swatch-paint fix, both as an isolated
+  `inlineStyles: {color: 'var(--brand)'}` case and re-using the existing panel-32 fixture
+  (`.title` class, `color: var(--text-base-default)`) to also assert the swatch resolves.
+- `docs/features/inspector.md` — new G6.2b bullet (one-click model + why the swatch needs
+  `resolvedValue`); `module-size-budgets` gate note extended with the three new files; corrected
+  a stale line claiming the Fill colour editor "only opens inside a popover triggered by
+  activating the row" (no longer true for the editable case).
+
+#### Landmines for the next agent touching this area
+- **The picker's OWN internal "Value" text field is named `"<ariaLabel> value"`** (e.g. "Text
+  colour value"), DISTINCT from the row's outer field (`"<ariaLabel>"` exactly, e.g. "Text
+  colour"). Both can be on screen at once (row field always mounted; picker field only while
+  open) — query by the right name or `within(dialog)`/`within(row)` will silently pick the
+  wrong one.
+- **A value typed into the picker's own "Value" field reformats to whatever `ColorModel` the
+  picker seeded from** (hex/rgb/hsl, inferred from `parseCssColor` on the value it opened with)
+  — NOT verbatim like the row's outer field. `#ff0000` typed there after opening on a
+  `rgb(...)`-resolved value commits as `rgb(255, 0, 0)`, not `#ff0000`. Not a bug — the row's
+  own outer field is what preserves whatever format the user types; a test asserting an exact
+  written string needs to know which field it drove.
+- **`ColorPickerPopover`'s own `commitValueField`/`handlePickerChange` call their `onChange`
+  prop UNCONDITIONALLY on a valid parse** — the prefilled-field commit guard is NOT inside this
+  primitive. It lives one layer up, in whoever wires `onChange` (here, `ColorFieldRow`). Any new
+  caller of `ColorPickerPopover`/`ColorValueInput` for a MUTED/prefilled value must supply its
+  own equivalent guard, or a bare focus/blur will write a redundant-but-real declaration.
+- `module-size-budgets.test.ts`'s `react-refresh/only-export-components` interaction is real
+  and easy to trip: a file exporting even ONE component forbids co-exporting a plain function
+  from that SAME file. Verified empirically this round (moved `buildColorFillEntry` in and back
+  out of a components-only file while checking `bun x eslint`) rather than assumed.
+
+#### Verification
+- `bun x tsc --noEmit -p tsconfig.app.json` — clean.
+- `bun run build` — clean (had to `bun install` first; this worktree's `node_modules` was
+  effectively empty on creation).
+- `bun test src/__tests__/architecture/module-size-budgets.test.ts` — 5/5 pass.
+- `bun x eslint <every file touched>` — clean, including the two new plain-function-only files
+  (confirms the `react-refresh` risk above was avoided, not just assumed away).
+- `bun test src/admin/pages/site/inspector src/admin/pages/site/property-controls src/ui/components/ColorPickerPopover src/ui/components/PropertyList src/__tests__/admin/propertyControls` —
+  390/390 pass.
+- `bun test src/admin/pages/site/panels/PropertiesPanel` — 346/346 pass (unaffected surface,
+  checked for regressions since `SourceConstraintNotice` gained a new caller shape).
+- `bun test src/__tests__/architecture` — 550/552 pass. The 2 failures
+  (`icon-catalog-integrity.test.ts` chevron-left, `no-core-barrel-deep-imports.test.ts`) match
+  the pre-existing, not-mine list named in the work order verbatim.
+- `bun run lint` — 6 pre-existing `'os' is defined but never used` failures in
+  `server/handlers/__tests__/*` / `server/handlers/studio/referenceUpload.test.ts`, none in a
+  file this ticket touched — matches the pre-existing list.
+- **Browser verification: NOT RUN.** This agent's toolset in this session had no browser/MCP
+  driving capability (Read/Bash/Write/Edit only, no Chrome/Playwright tool exposed) — could not
+  log in to `:5173`, select the `Onboarding.tsx:24:16` node, or take the four live measurements
+  the work order asked for (resolved `rgb(248, 249, 249)` swatch paint, one-click picker open,
+  write-target note reachable, close-without-picking leaves the token intact). All four are
+  covered by the new automated tests above using the SAME fixture shape (`.title` /
+  `var(--text-base-default)` / a canvas frame set to `rgb(17, 17, 17)` or `rgb(248, 249, 249)`),
+  but that is a jsdom proxy, not the real measurement the work order required. Saying so plainly
+  rather than declaring it verified.
+- **Human action needed:** dogfood in a browser at `http://localhost:5173/admin/site`, project
+  `test4 copy`, page `onboarding`, the `<h1>` node (`pages/Onboarding.tsx:24:16`,
+  `.Onboarding_title__83213`). Confirm via `getComputedStyle`/`getBoundingClientRect` (not
+  eyeballing): the Fill → Text row's swatch computed `background-color` is `rgb(248, 249, 249)`,
+  not transparent; ONE click on that swatch opens the colour picker; the write-target note is
+  visible inside that picker; opening and closing the picker without picking a colour leaves the
+  stored value as `var(--text-base-default)` (check via the row's own text field, or re-open the
+  picker and confirm the note is still shown).
+
+---
+
 ### panel-32 — Fill collapses a text colour that IS the user's own CSS, because it's declared at BASE and a breakpoint tab is active
 - **Agent:** panel-designer
 - **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.

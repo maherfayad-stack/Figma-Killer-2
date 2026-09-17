@@ -52,12 +52,14 @@
  * gradient layer's per-stop colours each carry their own alpha inside
  * `GradientEditor` already, and an image layer has no colour at all.
  *
- * This section deliberately does NOT go further and make the hex text itself
- * directly editable inline (still a click-to-open popover, `PropertyList`'s
- * existing row-activation model, unchanged from Stroke/Effects) — `PropertyList`
- * is a SHARED primitive across all three list sections, and rewriting its
- * interaction model for Fill alone would silently change Stroke/Effects too,
- * well outside this section's own scope.
+ * ONE CLICK TO THE REAL PICKER (`STATE.md` panel-33) — the Text/Solid-fill
+ * rows' `summary` slot IS the hex/token field (`ColorFieldRow`,
+ * `FillColorField.tsx`): its own swatch opens `ColorPickerPopover` on the
+ * FIRST click, guarded so it never also fires `PropertyList`'s row
+ * `onActivate`. `writeTarget.kind === 'none'` (`ColorWriteRefusalBody`) is
+ * the one case still behind the row-activation popover below — a disabled
+ * swatch can't open its own picker to explain itself, and that path was
+ * already one click, never the reported 2-click defect.
  *
  * NO VISIBILITY EYE, STILL
  * ------------------------
@@ -101,14 +103,14 @@
  *
  * WHERE THE REST LIVES
  * ---------------------
- * This file owns which ROWS exist. `FillSectionParts.tsx` draws the swatches,
- * the opacity field, and the popover bodies; `backgroundLayers.ts` is the
- * pure layer-stack model (parse / serialise / refuse / add / remove /
- * reorder); `fillModel.ts` holds the colour-channel defaults and the
- * gradient transforms; `gradientValue.ts` parses/serialises one gradient
- * value; `imageFillValue.ts` maps an image fill's URL payload. All four stay
- * in `panels/PropertiesPanel/`, unchanged, per this work order's own
- * instruction to reuse them verbatim — only the RENDERING moved.
+ * This file owns which ROWS exist. `FillSectionParts.tsx` draws the opacity
+ * field and the layer/gradient/content-fit popover bodies. `FillColorField.tsx`
+ * owns the colour rows' own chrome; `buildColorFillEntry.tsx` builds the row
+ * object itself; `colorWriteTargetNote.ts` is the shared note-string builder —
+ * all three split out purely for `module-size-budgets.test.ts`. `backgroundLayers.ts`,
+ * `fillModel.ts`, `gradientValue.ts`, `imageFillValue.ts` stay in
+ * `panels/PropertiesPanel/`, unchanged, per the P3 work order's own
+ * instruction to reuse them verbatim.
  *
  * IMAGE FILL
  * ----------
@@ -145,14 +147,14 @@ import { readString, hasStyleValue } from '../../panels/PropertiesPanel/styleVal
 import {
   BackgroundImageRawBody,
   BackgroundLayerPopoverBody,
-  ColorOpacityField,
-  ColorPopoverField,
-  ColorSwatch,
   ContentFitPopoverBody,
   ImageSwatch,
   OrphanSatellitesBody,
   ShorthandEscapeHatchBody,
 } from './FillSectionParts'
+import { ColorWriteRefusalBody } from './FillColorField'
+import { buildColorFillEntry } from './buildColorFillEntry'
+import { colorWriteTargetNote } from './colorWriteTargetNote'
 import { FillSectionActions } from './FillSectionActions'
 import { writeBackgroundModel } from './writeBackgroundModel'
 import {
@@ -328,6 +330,21 @@ export function FillSection() {
   const colorDeclaredElsewhere =
     !colorStored && (provenanceByProperty.get('backgroundColor')?.sources.length ?? 0) > 0
 
+  // `STATE.md` panel-33: `writeTarget` decides refused vs. inline
+  // (`ColorWriteRefusalBody` vs. `ColorFieldRow`); `computedValues` is the
+  // frame's real `getComputedStyle` truth, the only honest paint for a
+  // `var(--token)` value the admin's own document can't resolve
+  // (`resolveSwatchColor` falls back to it only when nothing else parses);
+  // `colorWriteTargetNote` is panel-32's "declared elsewhere" fact.
+  const textWriteTarget = textStored ? null : model.writeTargetFor('color')
+  const colorWriteTarget = colorStored ? null : model.writeTargetFor('backgroundColor')
+  const textRefused = !textStored && textWriteTarget?.kind === 'none'
+  const colorRefused = !colorStored && colorWriteTarget?.kind === 'none'
+  const textResolvedColor = computedValues?.color
+  const colorResolvedColor = computedValues?.backgroundColor
+  const textNote = colorWriteTargetNote(textStored, textDeclaredElsewhere, textWriteTarget)
+  const colorNote = colorWriteTargetNote(colorStored, colorDeclaredElsewhere, colorWriteTarget)
+
   const fillActions = (
     <FillSectionActions
       storedStyles={storedStyles}
@@ -365,22 +382,15 @@ export function FillSection() {
   const entries: PropertyListEntry<FillEntryData>[] = []
 
   if (showTextEntry) {
-    entries.push({
-      id: 'fill-text',
-      label: 'Text',
-      leading: <ColorSwatch color={textDisplayValue!} />,
-      summary: textDisplayValue,
-      value: (
-        <ColorOpacityField
-          value={textDisplayValue!}
-          ariaLabel="Text colour opacity"
-          onChange={(next) => onChange('color', next)}
-        />
-      ),
-      data: { kind: 'text' },
-      muted: !textStored,
-      removable: textStored,
-    })
+    entries.push(
+      buildColorFillEntry({
+        id: 'fill-text', label: 'Text', property: 'color', data: { kind: 'text' },
+        ariaLabel: 'Text colour', swatchLabel: 'Text colour swatch', opacityAriaLabel: 'Text colour opacity',
+        displayValue: textDisplayValue!, resolvedColor: textResolvedColor, refused: textRefused,
+        stored: textStored, mutedValue: textMutedValue, note: textNote,
+        onCommit: onChange, onPreview: previewProperty, onClearPreview,
+      }),
+    )
   }
 
   if (contentFitVisible) {
@@ -432,22 +442,15 @@ export function FillSection() {
   const layerCount = parsedModel.spine.kind === 'layers' ? layers.length : 0
 
   if (showColorEntry) {
-    entries.push({
-      id: 'fill-color',
-      label: 'Solid fill',
-      leading: <ColorSwatch color={colorDisplayValue!} />,
-      summary: colorDisplayValue,
-      value: (
-        <ColorOpacityField
-          value={colorDisplayValue!}
-          ariaLabel="Solid fill opacity"
-          onChange={(next) => onChange('backgroundColor', next)}
-        />
-      ),
-      data: { kind: 'color' },
-      muted: !colorStored,
-      removable: colorStored,
-    })
+    entries.push(
+      buildColorFillEntry({
+        id: 'fill-color', label: 'Solid fill', property: 'backgroundColor', data: { kind: 'color' },
+        ariaLabel: 'Solid fill colour', swatchLabel: 'Solid fill colour swatch', opacityAriaLabel: 'Solid fill opacity',
+        displayValue: colorDisplayValue!, resolvedColor: colorResolvedColor, refused: colorRefused,
+        stored: colorStored, mutedValue: colorMutedValue, note: colorNote,
+        onCommit: onChange, onPreview: previewProperty, onClearPreview,
+      }),
+    )
   }
 
   if (showShorthandEntry) {
@@ -461,6 +464,10 @@ export function FillSection() {
   }
 
   function handleActivate(entry: PropertyListEntry<FillEntryData>, anchorRef: RefObject<HTMLElement | null>) {
+    // `text`/`color` need this popover only when refused — a defensive
+    // second layer behind `ColorFieldRow`'s own click guard.
+    if (entry.data.kind === 'text' && !textRefused) return
+    if (entry.data.kind === 'color' && !colorRefused) return
     setEditing({ id: entry.id, anchorRef })
   }
 
@@ -520,15 +527,6 @@ export function FillSection() {
 
   const editingEntry = editing ? entries.find((entry) => entry.id === editing.id) : undefined
 
-  // Only resolved for a MUTED row (`!stored`) — a stored row already has a
-  // real source, so a real target almost always resolves, and this ticket's
-  // scope is closing the refusal gap for the NEW muted rows specifically
-  // (`STATE.md` panel-30's own "Editing a shown-but-not-stored value"). The
-  // popover rendering itself (three cases: stored / muted-but-writable /
-  // muted-and-refused) lives in `ColorPopoverField`, `FillSectionParts.tsx`.
-  const textWriteTarget = textStored ? null : model.writeTargetFor('color')
-  const colorWriteTarget = colorStored ? null : model.writeTargetFor('backgroundColor')
-
   return (
     <Section title="Fill" icon={PaintBucketSolidIcon} forceOpen flush actions={fillActions}>
       <div className={styles.fillSection} key={contextKey}>
@@ -548,35 +546,21 @@ export function FillSection() {
             title={popoverTitle(editingEntry)}
             width={editingEntry.data.kind === 'layer' ? 264 : undefined}
           >
-            {editingEntry.data.kind === 'text' && (
-              <ColorPopoverField
-                property="color"
+            {editingEntry.data.kind === 'text' && textWriteTarget?.kind === 'none' && (
+              <ColorWriteRefusalBody
                 ariaLabel="Text colour"
                 swatchLabel="Text colour swatch"
-                stored={textStored}
-                storedDisplayValue={textValue}
-                mutedDisplayValue={textMutedValue}
-                declaredElsewhere={textDeclaredElsewhere}
-                writeTarget={textWriteTarget}
-                onCommit={onChange}
-                onPreview={previewProperty}
-                onClearPreview={onClearPreview}
+                value={textMutedValue}
+                reason={textWriteTarget.reason}
               />
             )}
 
-            {editingEntry.data.kind === 'color' && (
-              <ColorPopoverField
-                property="backgroundColor"
+            {editingEntry.data.kind === 'color' && colorWriteTarget?.kind === 'none' && (
+              <ColorWriteRefusalBody
                 ariaLabel="Solid fill colour"
                 swatchLabel="Solid fill colour swatch"
-                stored={colorStored}
-                storedDisplayValue={colorValue}
-                mutedDisplayValue={colorMutedValue}
-                declaredElsewhere={colorDeclaredElsewhere}
-                writeTarget={colorWriteTarget}
-                onCommit={onChange}
-                onPreview={previewProperty}
-                onClearPreview={onClearPreview}
+                value={colorMutedValue}
+                reason={colorWriteTarget.reason}
               />
             )}
 

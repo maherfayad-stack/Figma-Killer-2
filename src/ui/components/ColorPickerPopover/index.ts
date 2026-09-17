@@ -6,6 +6,7 @@ export {
   hsvaToRgba,
   isColorToken,
   parseCssColor,
+  resolveSwatchColor,
   rgbaToHsla,
   rgbaToHsva,
   type ColorModel,
