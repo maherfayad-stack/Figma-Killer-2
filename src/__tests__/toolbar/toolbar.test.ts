@@ -8,8 +8,14 @@
  *      Undo/Redo only appears on the visual editor, not on Content / Plugins
  *      admin pages.
  *   2. ZoomControls — zoom percentage rendering, correct store subscriptions.
- *   3. ModulePickerDropdown — search filter pure logic.
- *   4. Toolbar — overall structure (role, testid, always-rendered sub-components).
+ *   3. Toolbar — overall structure (role, testid, always-rendered sub-components).
+ *   4. ModulePicker — the DOM panel's right-click submenu, ArrowDown bridge.
+ *
+ * The picker's own search filter used to be re-implemented here as a local
+ * pure function standing in for a `useMemo` inside `ModulePickerDropdown`.
+ * That component is deleted (the Assets panel replaced it) and the ranking it
+ * became has its own tests — `src/__tests__/panels/rankAssets.test.ts` and
+ * `src/__tests__/architecture/assets-search-coverage.test.ts`.
  *
  * React component rendering tests use renderToStaticMarkup (same pattern as
  * canvas/accessibility.test.tsx) so no JSDOM or browser is needed.
@@ -286,105 +292,7 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
 })
 
 // ---------------------------------------------------------------------------
-// 3 — ModulePickerDropdown — search filter logic
-// ---------------------------------------------------------------------------
-
-// The filtering logic is extracted here for pure-function testing.
-// It mirrors what the useMemo in ModulePickerDropdown computes.
-function filterModules(
-  grouped: Record<string, Array<{ id: string; name: string }>>,
-  query: string,
-): Record<string, Array<{ id: string; name: string }>> {
-  const q = query.trim().toLowerCase()
-  if (!q) return grouped
-  const result: Record<string, Array<{ id: string; name: string }>> = {}
-  for (const [cat, mods] of Object.entries(grouped)) {
-    const matching = mods.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.id.toLowerCase().includes(q) ||
-        cat.toLowerCase().includes(q),
-    )
-    if (matching.length > 0) result[cat] = matching
-  }
-  return result
-}
-
-const MOCK_REGISTRY: Record<string, Array<{ id: string; name: string }>> = {
-  Layout: [
-    { id: 'base.container', name: 'Container' },
-  ],
-  Typography: [
-    { id: 'base.text', name: 'Text' },
-  ],
-  Interactive: [
-    { id: 'base.button', name: 'Button' },
-    { id: 'base.link', name: 'Link' },
-  ],
-}
-
-describe('ModulePickerDropdown — search filter', () => {
-  it('returns all modules when query is empty', () => {
-    const result = filterModules(MOCK_REGISTRY, '')
-    expect(Object.keys(result)).toHaveLength(3)
-    expect(result['Layout']).toHaveLength(1)
-    expect(result['Typography']).toHaveLength(1)
-  })
-
-  it('filters by module name (case-insensitive)', () => {
-    const result = filterModules(MOCK_REGISTRY, 'text')
-    expect(Object.keys(result)).toHaveLength(1)
-    expect(result['Typography']).toHaveLength(1)
-    expect(result['Typography'][0].name).toBe('Text')
-  })
-
-  it('filters by module ID', () => {
-    const result = filterModules(MOCK_REGISTRY, 'base.button')
-    expect(result['Interactive']).toHaveLength(1)
-    expect(result['Interactive'][0].id).toBe('base.button')
-  })
-
-  it('filters by category name', () => {
-    const result = filterModules(MOCK_REGISTRY, 'layout')
-    expect(result['Layout']).toHaveLength(1)
-    expect(Object.keys(result)).toHaveLength(1)
-  })
-
-  it('returns empty object when no modules match', () => {
-    const result = filterModules(MOCK_REGISTRY, 'xyznonexistent')
-    expect(Object.keys(result)).toHaveLength(0)
-  })
-
-  it('is case-insensitive for all match types', () => {
-    expect(filterModules(MOCK_REGISTRY, 'BUTTON')['Interactive']).toHaveLength(1)
-    expect(filterModules(MOCK_REGISTRY, 'TEXT')['Typography']).toHaveLength(1)
-    expect(filterModules(MOCK_REGISTRY, 'LAYOUT')['Layout']).toHaveLength(1)
-  })
-
-  it('trims whitespace from query before filtering', () => {
-    const result = filterModules(MOCK_REGISTRY, '  container  ')
-    expect(result['Layout']).toHaveLength(1)
-    expect(result['Layout'][0].id).toBe('base.container')
-  })
-
-  it('partial match works (prefix, suffix, substring)', () => {
-    // "tex" should match "Text" (prefix)
-    const byPrefix = filterModules(MOCK_REGISTRY, 'tex')
-    expect(byPrefix['Typography']).toHaveLength(1)
-    expect(byPrefix['Typography'][0].name).toBe('Text')
-
-    // "ext" suffix — unique to Text, does NOT appear in category name "Typography"
-    const bySuffix = filterModules(MOCK_REGISTRY, 'ext')
-    expect(bySuffix['Typography']).toHaveLength(1)
-    expect(bySuffix['Typography'][0].name).toBe('Text')
-
-    // Note: "raph" is a substring of "typography" (the category), so it matches
-    // the whole category — we do NOT use "raph" for suffix testing here.
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 4 — Toolbar shell structure
+// 3 — Toolbar shell structure
 // ---------------------------------------------------------------------------
 
 describe('Toolbar — structural requirements', () => {
@@ -425,7 +333,6 @@ describe('Toolbar — structural requirements', () => {
     )
     // Toolbar.tsx must not import the editor-only sub-components.
     expect(toolbarSrc).not.toContain('UndoRedoButtons')
-    expect(toolbarSrc).not.toContain('ModulePickerDropdown')
     expect(toolbarSrc).not.toContain('ExportButton')
     expect(toolbarSrc).not.toContain('SaveIndicator')
     expect(toolbarSrc).not.toContain("from './ZoomControls'")
@@ -605,7 +512,7 @@ describe('Toolbar — structural requirements', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7 — ModulePickerDropdown keyboard navigation: ArrowDown from search input
+// 4 — ModulePicker keyboard navigation: ArrowDown from search input
 //     Regression test for the WCAG 2.1.1 gap found in UX Review #343.
 //
 //     Bug: handleMenuKeyDown was attached to the menu container div, NOT the

@@ -6,13 +6,14 @@
  *
  * Two sources, concatenated into one bucket
  * ──────────────────────────────────────────
- * 1. `@alm-design/design-system`'s bundled stylesheet — Studio's OWN
- *    dependency (not the open project's), imported once at Studio's own
- *    build time via Vite `?inline`. This is what `AlmDesignSystemCssInjector`
- *    used to inject on its own; `standing-07` in `STATE.md` keeps this
- *    dependency and `src/modules/alm/` alive until the generic package-
- *    component pipeline is proven to render the eSIM board equivalently —
- *    this injector still needs to feed it CSS in the meantime.
+ * 1. The BUILT-IN design system's bundled stylesheet — Studio's own vendored
+ *    copy (`vendor/alm-design-system/dist/index.css`, a committed build
+ *    artefact), not anything the open project installed, imported once at
+ *    Studio's own build time via Vite `?inline` (`canvasVendorCss.ts`). It is
+ *    injected into EVERY frame, at every trust tier, because the `alm.*`
+ *    module pack renders from Studio's own code — a project's own
+ *    `design-system/` folder exists so its repository builds standalone, and
+ *    is never read back for the canvas.
  * 2. The OPEN project's own package CSS, reached through a bare-specifier
  *    import (`import '@acme/ui/dist/style.css'`) inside ITS source, resolved
  *    against ITS OWN `node_modules` server-side

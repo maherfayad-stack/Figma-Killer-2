@@ -113,6 +113,7 @@ never silently no-ops.
 | Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the feature plan (WS-1…WS-9). **Intent, not status** — most of it has shipped; check §0a below before believing a "not built" claim there. [`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md) carries the workstreams beyond it (WS-10…WS-14) |
 | Defect + parity plan | [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) — **§0a is the granular per-track status ledger.** When you need finer detail than the two lists below, read it there, not here |
 | Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — Tier 2 live runtime frames, refusals-as-choices, and the Penpot-measured inspector rebuild. Proposed 2026-09-08, nothing started |
+| Built-in design system | [`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`](STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md) — **shipped (DS-1…DS-9)**, 2026-09-17. The `@alm-design/design-system` npm is retired: the design system is vendored at `vendor/alm-design-system/`, projects carry their own `design-system/` folder, the insert dialog is an **Assets** panel of live previews, and the toolbar `+` is **Add page**. Only DS-4b (drag a card to the canvas) is open |
 | Live coordination | [`STATE.md`](STATE.md) — **read at the start of every task, write at the end** |
 | Entry point in the app | `/admin/site` — `src/admin/router.tsx` renders the studio editor there unconditionally; there is no mode flag and no `?studio` param. Which project is open comes from `src/admin/pages/site/studio/studioWorkspaceDir.ts` (localStorage-sticky, set by the Overview launcher; the server falls back to the first project on disk) |
 | Test projects on disk | `studio-workspace/` — `test`, `esim-journey`, `my-workspace`, `untitled*` |
@@ -148,18 +149,36 @@ never silently no-ops.
   (Track L, `live-01`) — one reused, idle-timed subprocess per project,
   exposed as a polled `status`/`start`/`stop` route family and prewarmed the
   instant a Tier-2 project's canvas mounts.
+- **A built-in design system, and an Assets panel to insert from**
+  (`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`, DS-1…DS-9). The 39-component ALM
+  design system is **vendored into Studio** at `vendor/alm-design-system/` and
+  registered as the `alm.*` pack (`src/modules/alm/register.tsx`) — it renders
+  at **Tier 0**, with no npm, no install and no promotion, because it is
+  Studio's own code. A DS-backed project carries a Studio-written
+  `<project>/design-system/` folder (`designSystemFiles.ts`) and imports it
+  relatively, so the downloaded repository builds with react + vite and nothing
+  else; the parser treats that folder as a black box
+  (`src/core/page-parser/designSystemDir.ts`). A project that still imports the
+  retired npm gets a board banner offering a one-click source rewrite
+  (`designSystemMigrate.ts`) — never automatic. The left rail's **Assets**
+  panel (`src/admin/pages/site/panels/AssetsPanel/`) replaced the full-screen
+  insert dialog: design-system components grouped by purpose, elements,
+  layouts, saved components and icons, **every card a live render of the real
+  component** inside a shadow root, searched by name, description and purpose
+  keywords (`rankAssets.ts`). The toolbar / notch `+` is now **Add page**
+  (`AddPagePicker.tsx`).
 - npm package components (`pkg-01`/`pkg-02`/E4): manifest → bundle → register
-  → render is wired end to end for **any** installed package, not just
-  `@alm-design/design-system` — `server/handlers/studio/componentBundle.ts`
+  → render is wired end to end for **any** installed package —
+  `server/handlers/studio/componentBundle.ts`
   (`tryServeStudioComponentBundle`),
   `src/admin/pages/site/studio/registerProjectModules.ts`
   (`useRegisterProjectModules`). Registration fires on every project-dir /
   trust-tier transition and is **not** gated on the board already containing a
   `pkg.*` node, so a package with zero call sites in the imported source is
-  still draggable from the picker. Rendering stays gated on trust tier ≥ 1 —
+  still listed in Assets. Rendering stays gated on trust tier ≥ 1 —
   Tier 0 gets `PackageComponentPlaceholder`'s "promote this project" surface
-  and the picker's own "N components need this project promoted" notice, never
-  a silent empty palette, and never a fetch or an execution.
+  and the Assets panel's own "N components need this project promoted" notice,
+  never a silent empty palette, and never a fetch or an execution.
 - **Dependency install** (E3): the Dependencies panel's Add/Remove run a real
   `bun add`/`bun remove` (or the project's own detected package manager)
   against the on-disk project, as a polled job —
@@ -242,9 +261,12 @@ never silently no-ops.
   element *and* its `import` — and the board re-reads the file, so what lands is
   a real parsed node with a real `rel:line:col`. What cannot be written refuses
   out loud (`refuseStructuralEdit`)
-- Creating a new page, in four shapes: the `+` button (`NewPageButton.tsx`)
-  offers **Screen**, **Popup**, **Bottom sheet — small** and **Bottom sheet —
-  big** (MCP `studio_create_page` takes the same `kind`). Each writes a
+- Creating a new page, in four shapes: the `+` picker (`AddPagePicker.tsx`, one
+  popover mounted at the canvas notch, the Explorer *Pages* header and the
+  board empty state) offers **Screen**, **Popup**, **Bottom sheet — small** and
+  **Bottom sheet — big** under *New page*, and every page already on disk but
+  not on this board under *From files* (MCP `studio_create_page` takes the same
+  `kind`). Each writes a
   canonical starter component + stylesheet and auto-places its board frame, end
   to end — `server/handlers/studio/pageScaffold.ts` (`createScaffoldedPage`),
   templates in `pageTemplates.ts`, the shared vocabulary in
@@ -319,11 +341,12 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
   CSS animations/transitions, smooth scroll and media; it makes no attempt to
   intercept `requestAnimationFrame`, so framer-motion and GSAP keep running on
   the canvas.
-- **The insert picker is not seeded from the component catalog.**
-  `ModuleInserterDialog.tsx` / `ModulePicker.tsx` list `registry.list()` — the
-  module registry, i.e. first-party modules plus registered package
-  components. The project's own local components (which E1's catalog knows
-  about, and which the *swap* picker already uses) have no picker rows.
+- **The Assets panel does not list the project's own local components.** It
+  lists `registry.list()` — the `alm.*` built-in design system, the `base.*`
+  elements, registered `pkg.*` package components — plus saved layouts, Visual
+  Components and the icon catalog. A component the user wrote in their own
+  `components/` folder (which E1's catalog knows about, and which the *swap*
+  picker already uses) still has no card.
 - **A package-sourced instance cannot be detached** —
   `detachComponent.ts` refuses with `package-component` and points at the
   extract-a-copy action instead.

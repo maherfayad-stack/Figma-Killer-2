@@ -1,7 +1,13 @@
 # Studio built-in design system — plan
 
-**Status:** proposed and decisions confirmed 2026-09-17. Nothing implemented yet;
-ready for wave 1 + wave 2 work orders.
+**Status:** **shipped (DS-1…DS-9), 2026-09-17.** DS-4b (drag an Assets card
+onto the canvas) is the one workstream still open — it was deferred on purpose
+in §7. Handoffs: `struct-08` (DS-1 + DS-6 data), `parser-12` (DS-3),
+`server-23` (DS-2), `panel-33` (DS-4/5/6-UI/8), `meta-12` (the integration
+merge), `struct-09` (DS-9: the sweep, the `no-alm-npm-specifier` gate, and the
+standalone-build proof). §1 below is the "what exists today" survey the plan
+was written from and is deliberately left as written — read `PROJECT-BRIEF.md`
+§3 for what is true now.
 
 **The ask, in the owner's words:** "we are deleting the design system npm. Have
 all the components from it — rather than being in the module — in an Assets

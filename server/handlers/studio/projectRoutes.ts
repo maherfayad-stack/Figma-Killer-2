@@ -95,7 +95,8 @@
  * route — this module only moved the wiring, not the meaning.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type } from '@core/utils/typeboxHelpers'
 import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
 import type { DbClient } from '../../db/client'
@@ -107,7 +108,6 @@ import { SampleProjectError, createSampleProject } from './sampleProject'
 import { readOnboardingFacts } from './onboardingFacts'
 import { serveProjectThumbnail } from './projectThumbnailRoute'
 import { projectThumbnailQueue } from './projectThumbnailQueue'
-import { designSystemImportSpecifier } from './designSystemFiles'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
@@ -354,11 +354,12 @@ export async function tryServeStudioProjectRoutes(
       // A brand-new folder has no `design-system/` yet (the seed lands further
       // down), so this is always the plain kit — which is what a screen
       // scaffolds as under either one.
+      const homeFile = join(pagesDir, 'Home.tsx')
       const home = starterPage('Home', DEFAULT_PAGE_KIND, {
         kit: detectPageTemplateKit(dir),
-        designSystemImport: designSystemImportSpecifier(dir, pagesDir),
+        designSystemImport: designSystemImportSpecifier(relative(dir, homeFile).split(sep).join('/')),
       })
-      writeFileSync(join(pagesDir, 'Home.tsx'), home.component)
+      writeFileSync(homeFile, home.component)
       if (home.styles !== undefined && home.stylesFileName !== undefined) {
         writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
       }

@@ -53,14 +53,14 @@
  */
 import { existsSync, lstatSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { listWorkspaceFiles } from '@core/page-parser'
+import { designSystemImportSpecifier, listWorkspaceFiles } from '@core/page-parser'
 import { createProject, rewriteImportSpecifier } from '@core/ast-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback, safeParseJson } from '@core/utils/jsonValidate'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { PROJECT_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from './builtinDesignSystem'
-import { designSystemImportSpecifier, ensureDesignSystemFiles } from './designSystemFiles'
+import { ensureDesignSystemFiles } from './designSystemFiles'
 import { PackageJsonSchema, hasDependency } from './packageJsonRead'
 import { mergeStudioMeta } from './studioMeta'
 import { isRealpathContained } from './workspacePackageResolve'
@@ -70,12 +70,12 @@ const ROUTE_PATH = '/admin/api/studio/design-system/migrate'
 /**
  * The npm this migration exists to remove.
  *
- * The LAST place in `server/` that names it, deliberately: DS-1 deletes the
- * dependency and DS-3 deletes `designSystemDetect.ts`'s
- * `ALM_DESIGN_PACKAGE_SPECIFIER`, after which the only code that may still
- * mention the string is the migration that retires it (and its test).
+ * The LAST place in the repository that spells it as CODE, deliberately, and
+ * the one entry in `no-alm-npm-specifier.test.ts`'s allowlist. Module-private:
+ * nothing else has a reason to name a package that no longer exists, and an
+ * exported constant is an invitation to.
  */
-export const RETIRED_DESIGN_SYSTEM_PACKAGE = '@alm-design/design-system'
+const RETIRED_DESIGN_SYSTEM_PACKAGE = '@alm-design/design-system'
 
 /** Source files worth rewriting. Anything else in the project has no module graph to fix. */
 const CODE_FILE_RE = /\.(tsx|jsx|ts|js|mts|cts|mjs|cjs)$/
@@ -167,7 +167,7 @@ function rewriteProjectImports(dir: string): { filesRewritten: number; importsRe
       const sourceFile = project.addSourceFileAtPath(abs)
       const changed = rewriteImportSpecifier(sourceFile, {
         from: RETIRED_DESIGN_SYSTEM_PACKAGE,
-        to: designSystemImportSpecifier(dir, dirname(abs)),
+        to: designSystemImportSpecifier(relPath),
       })
       const total = changed.rewritten + changed.removed
       if (total === 0) {
@@ -261,6 +261,15 @@ export function migrateProjectToBuiltinDesignSystem(dir: string): DesignSystemMi
   mergeStudioMeta(dir, { designSystem: 'alm' })
   ensureDesignSystemFiles(dir)
   const { filesRewritten, importsRewritten } = rewriteProjectImports(dir)
+  // Written a SECOND time, deliberately. `ensureDesignSystemFiles` copies only
+  // the icon SVGs something actually imports, and the project's own demand is
+  // spelled `'../design-system/icons/…'` — which is exactly what the rewrite
+  // above has just created. Before it, a page still named the retired package
+  // and its icons were invisible to the scan, so the folder shipped without
+  // them and `vite build` in the migrated project failed on a missing file.
+  // (The first call stays: if the rewrite throws, a project with a folder and
+  // unrewritten imports is a better place to be than the reverse.)
+  ensureDesignSystemFiles(dir)
   const removedDependency = removeDependency(dir)
   removeInstalledCopy(dir)
   return { filesRewritten, importsRewritten, removedDependency }

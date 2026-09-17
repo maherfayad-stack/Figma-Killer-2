@@ -21,8 +21,8 @@
  * `usedFiles` list out of `inlineLocalComponents` instead; reading `loc.file`
  * needs no new plumbing and cannot drift out of sync, because the set of files
  * that contributed nodes is exactly the set whose CSS matters — a component
- * that was NOT inlined (an `alm.*` package component) contributes no nodes and
- * correctly contributes no CSS.
+ * that was NOT inlined (an `alm.*` design-system component, a `pkg.*` package
+ * one) contributes no nodes and correctly contributes no CSS.
  *
  * ## Order
  *
@@ -34,10 +34,15 @@
  * ## What is deliberately NOT collected
  *
  * Only relative specifiers (`./x.css`, `../y.css`). A bare package specifier
- * (`@alm-design/design-system/dist/styles.css`) is skipped here: pulling a
- * dependency's whole stylesheet into the site's EDITABLE class list would
- * bury the user's own classes. Anything resolving outside the workspace root
- * is rejected outright.
+ * (`@acme/ui/dist/styles.css`) is skipped here: pulling a dependency's whole
+ * stylesheet into the site's EDITABLE class list would bury the user's own
+ * classes. Anything resolving outside the workspace root is rejected outright.
+ *
+ * So is everything under the project's own `design-system/` folder, even
+ * though it IS a relative import: that folder is Studio's copy of the built-in
+ * design system (`isDesignSystemPath`), the canvas already injects the same
+ * CSS as a read-only `@layer vendor` bucket, and collecting its ~400 rules
+ * again would bury the user's classes exactly as a package's would.
  *
  * Bare-specifier `.css` imports are NOT simply dropped, though — WS-2.3
  * collects them through a completely separate path,

@@ -68,6 +68,13 @@ export function isDesignSystemPath(relPath: string): boolean {
  * the tree the file being written actually sits, and a specifier guessed from
  * the browser would be a path that resolves to nothing (or, worse, to a
  * different folder). See `studioStructuralWriteback.ts`'s `designSystemImport`.
+ *
+ * The ONE implementation of that rule. `designSystemFiles.ts` used to carry a
+ * second one taking two absolute directories; it agreed on every case, which
+ * is exactly why it was a liability — two spellings of one rule that a future
+ * change only has to touch one of. Server callers hand this the workspace-
+ * relative path of the file being written (`pageScaffold.ts`, `projectRoutes.ts`,
+ * `designSystemMigrate.ts`, `studioStructuralWriteback.ts`).
  */
 export function designSystemImportSpecifier(fromFileRel: string): string {
   const fromDir = fromFileRel.split('/').filter((segment) => segment.length > 0).slice(0, -1)

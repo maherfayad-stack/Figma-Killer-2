@@ -237,7 +237,7 @@ The finding stays `violation` however cleanly a template extracts: CSS-in-JS is 
 ```jsx
 // canonical
 import { PlanCard } from '../components/PlanCard'
-import { Button } from '@alm-design/design-system'
+import { Button } from '../design-system'
 ```
 
 ```jsx
@@ -275,7 +275,7 @@ import { Button } from '@alm-design/design-system'
 
 ---
 
-## npm design systems are the best case, not an exception
+## Design systems are the best case, not an exception
 
 Nothing in the ten rules above restricts design-system usage — a design-system call with literal props is **the single most canonical shape there is**:
 
@@ -285,23 +285,24 @@ Nothing in the ten rules above restricts design-system usage — a design-system
 
 Every prop is a literal, so Tier A resolves every one of them, every prop is writable, the node is unlocked, and no fidelity code fires at all. Compared with a hand-rolled `<div>` carrying a computed `className`, this is strictly better on every axis the subset cares about — the canonical subset actively pushes toward design systems, not away from them.
 
-Three mechanisms are involved when a design-system component is used, and only one is trust-gated:
+Four mechanisms are involved when a design-system component is used, and only one is trust-gated:
 
 | | What | Trust |
 |---|---|---|
-| **The package's CSS** | A bare-specifier `.css` import resolved against the project's own `node_modules`, injected read-only as `@layer vendor`, ordered *below* the editable `user-authored` layer | **Tier 0** — a text scan and a file read |
-| **`@alm-design/design-system` components** | Compiled into Studio's own bundle (`src/modules/alm/register.tsx`) | **Tier 0** — works on a fresh import, no promotion |
-| **Any other npm package's components** | `componentBundle.ts` runs `Bun.build` over the workspace's real code | **Tier 1** — refuses at Tier 0 with `trust-tier-required`, because a package can execute a macro at build time |
+| **A package's CSS** | A bare-specifier `.css` import resolved against the project's own `node_modules`, injected read-only as `@layer vendor`, ordered *below* the editable `user-authored` layer | **Tier 0** — a text scan and a file read |
+| **The built-in design system's CSS** | Studio's own vendored bundle (`vendor/alm-design-system/dist/index.css`), injected into every frame as `@layer vendor` by `ProjectCssInjector` — nothing is resolved against the project at all | **Tier 0** — a build-time constant |
+| **Built-in design-system components** (`import { Button } from '../design-system'`) | Compiled into Studio's own bundle (`src/modules/alm/register.tsx`) and rendered as `alm.<Name>`; the project's own `design-system/` folder exists so its repository builds standalone, and is never read back for the canvas | **Tier 0** — works on a fresh import, no promotion |
+| **Any npm package's components** | `componentBundle.ts` runs `Bun.build` over the workspace's real code | **Tier 1** — refuses at Tier 0 with `trust-tier-required`, because a package can execute a macro at build time |
 
-So: ALM works today with no trust promotion. Another design system needs one consent click to promote the project, and then works the same way. Either way their CSS renders at Tier 0.
+So: the built-in design system works with no trust promotion and no install. A third-party design system needs one consent click to promote the project, and then works the same way. Either way their CSS renders at Tier 0.
 
-The `@layer vendor` / `user-authored` split is why rule 7 says *authored* — a package's stylesheet lives in a read-only layer beneath the user's own, so it never counts as a second styling mechanism under rule 7. A screen's own CSS Module and a design system's shipped CSS coexist by design.
+The `@layer vendor` / `user-authored` split is why rule 7 says *authored* — a design system's stylesheet lives in a read-only layer beneath the user's own, so it never counts as a second styling mechanism under rule 7. A screen's own CSS Module and a design system's shipped CSS coexist by design.
 
 **The one genuinely restricted case** is a design-system prop that takes a runtime value — `<Chip label={t(key)}>`. That prop comes back read-only under rule 2, same as anywhere else in the subset. Pass a literal, or a module-scope const (with rule 2's caveat above in mind).
 
-**The instance stays linked to the package.** Inserting a design-system component writes a real `import` into the user's source (`sourceImport: { specifier, name }` on the module definition) — there is no generated copy and no inlined markup. Bumping the package version updates every screen that uses it, because each screen references the package the same way any hand-written React file would.
+**The instance stays linked to its source.** Inserting a design-system component writes a real `import` into the user's source (`ModuleDefinition.sourceImport` — `{ kind: 'design-system', name }` for the built-in one, which the SERVER spells as the relative path to the project's own `design-system/` folder, or `{ kind: 'package', specifier, name }` for a third-party package) — there is no generated copy and no inlined markup. Updating the design system updates every screen that uses it, because each screen references it the same way any hand-written React file would.
 
-**Restyling it, in order of preference:** the package's own design tokens (`tokenExtract.ts` reads a `vendor-css` `:root` layer into the Framework panel), then the screen's own CSS (the `user-authored` layer sits above `@layer vendor`, so it overrides without `!important`), then props exposed as variants — the most canonical of the three.
+**Restyling it, in order of preference:** the design system's own tokens (`tokenExtract.ts` reads them into the Framework panel — from Studio's vendored `dist/index.css` for the built-in system, from a `vendor-css` `:root` layer for a package), then the screen's own CSS (the `user-authored` layer sits above `@layer vendor`, so it overrides without `!important`), then props exposed as variants — the most canonical of the three.
 
 ---
 

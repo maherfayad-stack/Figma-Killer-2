@@ -247,8 +247,10 @@ describe('studio_list_components', () => {
   it('carries the built-in manifest\'s description, keywords and group through to the catalog', async () => {
     write('design-system/index.js', 'export {}\n')
 
+    // Not optional: a built-in entry comes off `DesignSystemComponentSpec`,
+    // which requires all three. An entry missing one is a broken manifest.
     const result = (await call('studio_list_components')) as {
-      components: Array<{ name: string; apiSource: string; description?: string; keywords?: string[]; group?: string }>
+      components: Array<{ name: string; apiSource: string; description: string; keywords: string[]; group: string }>
     }
 
     const builtin = result.components.filter((c) => c.apiSource === 'builtin')
@@ -256,13 +258,13 @@ describe('studio_list_components', () => {
     // Every one of them, not just the one we spot-check below.
     for (const entry of builtin) {
       expect(typeof entry.description).toBe('string')
-      expect(entry.description!.length).toBeGreaterThan(0)
+      expect(entry.description.length).toBeGreaterThan(0)
       // The placeholder DS-6 replaced named the retired npm.
       expect(entry.description).not.toContain('@alm-design/design-system')
       expect(Array.isArray(entry.keywords)).toBe(true)
-      expect(entry.keywords!.length).toBeGreaterThanOrEqual(3)
+      expect(entry.keywords.length).toBeGreaterThanOrEqual(3)
       expect(typeof entry.group).toBe('string')
-      expect(entry.group!.length).toBeGreaterThan(0)
+      expect(entry.group.length).toBeGreaterThan(0)
     }
 
     const button = builtin.find((c) => c.name === 'Button')

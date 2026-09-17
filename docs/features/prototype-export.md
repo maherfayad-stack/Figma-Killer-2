@@ -98,10 +98,11 @@ contract the shell's static files have:
 
 | Fact | Where |
 |---|---|
-| What is written | `index.js`, `components/`, `context/`, `tokens/`, `icons/LineIcons.jsx`, **only** the `icons/**/*.svg` a component or `LineIcons.jsx` actually imports (≈20 of 568, read statically with a regex — nothing is executed), plus `README.md` and `VERSION` |
+| What is written | `index.js`, `components/`, `context/`, `tokens/`, `icons/LineIcons.jsx`, **only** the icon assets something actually imports (≈20 of 568, read statically with a regex — nothing is executed), plus `README.md` and `VERSION`. Files are copied as BYTES, because three of those assets are `.png` |
+| "Something", precisely | **two** demand sources. (a) The design system's own components — `.svg` icons AND the three `.png` logotypes (`Button.jsx` -> `card-sample.png`). (b) The PROJECT'S own source: a page carrying `import smsSvg from '../design-system/icons/line-icons/sms.svg?raw'` — which is what the migration writes when it rewrites a deep import of the retired npm — demands an icon no component does. Each source, alone, shipped a project whose `vite build` died on a missing file |
 | When | `loadStudioPages` (beside `ensurePrototypeShell`) and `buildStudioDownloadResponse` |
 | Who gets it | only a project whose `.studio/meta.json` carries `designSystem: 'alm'` — set by "New project" and by the migration route, never by a GitHub import |
-| How staleness is known | `.studio/design-system.json` — `{ version, hash, files }`, a SHA-256 over the whole source set. A matching hash writes nothing at all; a differing one rewrites the folder in place and removes the files that left the source set |
+| How staleness is known | `.studio/design-system.json` — `{ version, hash, files }`, a SHA-256 over the whole source set, the project's demanded icons included. A matching hash writes nothing at all; a differing one rewrites the folder in place and removes the files that left the source set — so adding an icon import to a page brings the file in on the next load, and deleting the last import of it takes the file back out |
 | What it will never touch | anything outside `<project>/design-system/` and `.studio/design-system.json`. The delete list is the manifest's own `files` array, nothing else |
 | Containment | every write target and every source read is checked on its **real** path (`isRealpathContainedAllowingMissing` / `isRealpathContained`), so a planted symlink cannot carry a read or a write out |
 
@@ -114,10 +115,18 @@ a version bump is a hash change and therefore a rewrite.
 
 `GET/POST /admin/api/studio/design-system/migrate`
 (`server/handlers/studio/designSystemMigrate.ts`) moves a project off
-`@alm-design/design-system`: it marks the meta, writes the folder, rewrites
-every import in the project's own source with the formatting-preserving
-`rewriteImportSpecifier` codemod, drops the dependency from `package.json`, and
-deletes `node_modules/@alm-design/design-system`.
+the retired npm: it marks the meta, writes the folder, rewrites every import in
+the project's own source with the formatting-preserving
+`rewriteImportSpecifier` codemod, **writes the folder again**, drops the
+dependency from `package.json`, and deletes the installed copy under
+`node_modules/`.
+
+The folder is written twice on purpose. Before the rewrite, the project's pages
+still name the retired package, so the icons they demand are invisible to
+`ensureDesignSystemFiles`' scan and the folder ships without them. After it,
+the demand is spelled `'../design-system/icons/…'` and is picked up. The first
+write stays because if the rewrite throws, a project with a folder and
+unrewritten imports is a better place to be than the reverse.
 
 It runs **from a click and never on load** — the board shows
 `DesignSystemMigrateBanner` and a source rewrite is a user action, the same
@@ -239,7 +248,7 @@ independent of that workspace's own freeze state:
 |---|---|
 | `server/handlers/studio/__tests__/prototypeShell.test.ts` | the write policy: user edits survive, unedited files update, `package.json` merges, `.studio/` awkward cases, `main.jsx`'s bridge-boot imports/gate, `studioRuntimeBridge.generated.js` always coming back |
 | `server/handlers/studio/__tests__/prototypeShellBoards.test.ts` | two-board generator output, board order, empty boards, deleted pages, the tab row in `App.jsx`, and the zip actually containing a board created after the last load |
-| `server/handlers/studio/__tests__/designSystemFiles.test.ts` | the `design-system/` folder: the exact written set, only-imported icons, idempotence, stale rewrite, stale removal, and every refusal (not DS-backed, no vendored source, a symlinked source file, a symlinked target folder) |
+| `server/handlers/studio/__tests__/designSystemFiles.test.ts` | the `design-system/` folder: the exact written set, only-imported assets (including a `.png` copied byte-for-byte), the project's OWN icon demand (added, then removed when the last import goes), idempotence, stale rewrite, stale removal, and every refusal (not DS-backed, no vendored source, a symlinked source file, a symlinked target folder) |
 | `server/handlers/studio/__tests__/designSystemMigrate.test.ts` | the migration: relative rewrites at each depth, the dropped stylesheet import, `package.json` formatting, the guarded `node_modules` delete, a refused symlinked install, and a whole-tree hash proving nothing else changed |
 | `src/core/ast-codemods/__tests__/rewriteImportSpecifier.test.ts` | the codemod: default/named/namespace imports, sub-paths, quote style, and full-file byte equality where it had nothing to do |
 | `server/handlers/studio/__tests__/devServer.test.ts` | `spawnEntry` injecting `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV` (present only when `PUBLIC_ORIGIN` is set) alongside the existing `STUDIO_LIVE_BASE_PATH_ENV` |

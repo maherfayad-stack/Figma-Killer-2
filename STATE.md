@@ -1261,6 +1261,87 @@ None blocking — this design is directly implementable by `panel-designer` (the
 4. **Select a node whose colour comes from code** (a `pkg.*`/`alm.*` instance, or any node whose `style:color` is in `codeProps`) → the matching button is disabled and its tooltip says why. Nothing must happen on click.
 5. Search `coral`, `aqua-100`, `#E9666F` in the Assets search box — the Colors header count updates for each (expand to see the hits).
 
+### struct-09 — DS-9: the deletion sweep, the no-npm gate, docs, and the standalone-build proof
+- **Agent:** studio-implementer (Opus 5)
+- **Stage:** done
+- **Updated:** 2026-09-17.
+- **Branch/worktree:** `feat/ds-sweep` in `.tmp/wt-ds-sweep`, off `feat/alm-figma-killer-studio-shell` @ `e50303e6`. Draft PR against that branch.
+- **Goal:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` §3 DS-9 — close everything `meta-12` left open, gate the retired npm so it cannot come back, and PROVE the download story by building a migrated project standalone.
+
+#### Done so far
+- **Deleted the root `design-system/` template folder** (13 files). Its README said it was not what renders; `vendor/alm-design-system/` superseded it. Its only live reference was `eslint.config.js`'s `globalIgnores` entry + the paragraph explaining it — both gone (`eslint.config.js:18`). No `tsconfig`, `package.json` workspace or `.gitignore` reference existed.
+- **Fixed every stale reference `meta-12` listed.** Code: `ProjectCssInjector.tsx:9` (source 1 is Studio's VENDORED bundle, and the dead `standing-07` sentence is gone), `packageModuleId.ts:31`, `sourceWritability.ts:156`, `collectPageStylesheets.ts:35` (+ a sentence saying the project's own `design-system/` folder is skipped too, which was only documented inline). Docs: `canvas-iframe-per-frame.md:153,190`, `canvas-internals.md:51,222,719`, `studio-import.md:18,1316`, `canonical-jsx.md:240,288–303` (the live `import … from '@alm-design/…'` example, the trust table — now four rows including the built-in system's own CSS — and the `sourceImport` union), `PROJECT-BRIEF.md:153,245,323`.
+- **`src/__tests__/architecture/no-alm-npm-specifier.test.ts` (new, green).** **It does not ban the string** — see "Landmines". Four rules: (1) nothing under `src/`/`server/`/`scripts/` IMPORTS an `@alm-design/*` specifier, no allowlist; (2) no `package.json` (root or vendored) dependency block and no `bun.lock` entry names one; (3) outside a comment, only `server/handlers/studio/designSystemMigrate.ts` may spell it — one allowlist entry with its justification, plus a test that fails when an allowlist entry goes stale; (4) no line in `docs/agent-refs|features|reference/`, `PROJECT-BRIEF.md`, `CLAUDE.md` or `vendor/alm-design-system/{README.md,package.json}` presents it as an import or a dependency entry. Registered in `docs/reference/architecture-tests.md` and `path-index.md`.
+- **Tightened the MCP catalog's manifest types** (`componentCatalogTools.ts`). The hand-copied `BuiltinManifest` interface is deleted; the committed manifest is typed as `DesignSystemManifest` from `@core/design-system-manifest` (the same move `register.tsx` already makes on the same file), so `description`/`keywords`/`group` are REQUIRED. New `BuiltinCatalogEntry` carries them non-optionally and `builtinDesignSystemEntries` returns it, so `parser-12`'s three `...(x === undefined ? {} : …)` spreads are gone. `CatalogEntry` keeps them optional **on purpose** — a `types`/`code-connect` entry has no honest source for a description. Tool description reworded ("always carries"), test type tightened (`!` gone).
+- **One `designSystemImportSpecifier`.** `server/handlers/studio/designSystemFiles.ts`'s `(projectDir, fromDir)` copy is deleted; `@core/page-parser`'s `(fromFileRel)` is the only implementation. Callers: `designSystemMigrate.ts:170` (already had the workspace-relative path in hand — this one got *simpler*), `pageScaffold.ts:89` and `projectRoutes.ts:360` (`relative(dir, file)`, posix-ified). One test file — `designSystemDir.test.ts` absorbed the server test's cases (components/, prototype/, always-dot-prefixed).
+- **Two real DS-2 defects, found by the standalone build and fixed here** (see the transcript below). `designSystemFiles.ts` now copies files as **bytes** (`SourceFile.contents: Buffer`) and collects **assets**, not just `.svg`; and it scans the PROJECT'S own source for icon imports landing in the folder (`collectProjectIconDemand`). `migrateProjectToBuiltinDesignSystem` calls `ensureDesignSystemFiles` a second time, after the rewrite, because the rewrite is what creates that demand. Both cases are now tests (`designSystemFiles.test.ts` gained a whole `what the PROJECT itself demands` describe + a binary-asset assertion; `designSystemMigrate.test.ts` gained the `sms.svg` case).
+- **Dead code.** `RETIRED_DESIGN_SYSTEM_PACKAGE` and the two schemas in `designSystemMigrateRequests.ts` un-exported (no importer). `fallow dead-code` reports **nothing** in `src/admin/pages/site/panels/AssetsPanel/` or `src/modules/alm/` — see "For DS-7".
+- **Stale tests retargeted.** `toolbar.test.ts`'s `ModulePickerDropdown — search filter` block (a local re-implementation of a deleted component's `useMemo`) deleted, with the `not.toContain('ModulePickerDropdown')` assertion it left behind. Playwright: `helpers/editor.ts` gained `openAssetsPanel` and `insertModuleViaPicker` now drives the docked panel; `visual-builder.e2e.ts`'s SITE-005 search test, its mobile test and its four saved-layout helpers target `assets-panel` / `data-asset-id` / `data-asset-kind`; `design-system-insert.e2e.ts`'s fixture became a DS-BACKED project (a stub `design-system/index.js` + relative imports) because the retired npm now classifies as `pkg.*`, which at Tier 0 renders a placeholder and would have failed every assertion in that spec.
+- **Docs + standing notes.** `PROJECT-BRIEF.md` — the plan added to the §3 table as shipped, a new "What works" bullet for the built-in design system + Assets panel + Add page, the npm-components bullet rewritten, `NewPageButton.tsx` → `AddPagePicker.tsx`, and the insert-picker "does NOT work" bullet replaced with what is still true (no cards for the project's OWN local components). `STATE.md` — `standing-07` retired in place, `meta-11` → done. `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` status → shipped. `STUDIO-IMPORT-V2-PLAN.md` and `STUDIO-FIGMA-PARITY-PLAN.md` both claimed the `src/modules/alm/` deletion was still deferred under `standing-07` — corrected in place (it was closed a different way). `prototype-export.md` §3.1 documents both demand sources and the double write.
+
+#### The standalone-build proof — exact transcript
+Run against a COPY. Nothing under `studio-workspace/` was written; the copy lives in the session scratchpad.
+
+```sh
+cp -R "studio-workspace/test4 copy" <scratch>/ds9-test4
+# the server function called DIRECTLY, no HTTP, no dev server:
+#   migrateProjectToBuiltinDesignSystem(dir) from server/handlers/studio/designSystemMigrate.ts
+#   BUILTIN_DESIGN_SYSTEM_DIR = resolve(cwd, 'vendor', 'alm-design-system') -> this worktree
+bun run <scratch>/ds9-run-migration.ts <scratch>/ds9-test4
+cd <scratch>/ds9-test4 && rm -rf node_modules bun.lock && bun install && bun run build
+```
+
+| Check | Result |
+|---|---|
+| `migrateProjectToBuiltinDesignSystem` | `{ filesRewritten: 7, importsRewritten: 13, removedDependency: true }` |
+| status after | `declaresDependency:false · hasInstalledCopy:false · importsRetiredPackage:false · designSystemBacked:true` |
+| `node_modules/@alm-design` | **absent** |
+| `package.json` dependencies | `react`, `react-dom` only (+ vite / plugin-react in dev) |
+| every `pages|components|prototype` import | `'../design-system'` and `'../design-system/icons/…'`; **zero** `@alm-design` left in source |
+| `bun install` | 65 packages, public registry only |
+| `bun run build` (`vite build`) | **✓ built in 885 ms** — 431 kB JS, 145 kB CSS, every icon SVG and the three PNGs emitted |
+
+**Three failures on the way there, in order.** (1) `Could not resolve "../design-system/icons/line-icons/sms.svg"` — the folder copied only the icons a COMPONENT imports, and `test4`'s own pages import six more. (2) `Could not resolve "../icons/logotypes/payment/card-sample.png"` from `design-system/components/Button.jsx` — the collector was `.svg`-only, and the design system imports three `.png` logotypes; fixing that also required copying bytes instead of UTF-8 strings. Both are fixed in this branch and both are now tests. (3) `"SheetHeader" is not exported by "components/SheetHeader.tsx"` — **a pre-existing defect in the user's own source** (`studio-workspace/test4 copy/pages/Sheet.tsx:3` does a NAMED import of a default-only export, committed in `cf29727a`, nothing to do with this work). Patched in the scratch copy only, to get past it; the real project is untouched and still carries the bug.
+
+#### Verification
+- `bun run build` — **pass**, 14.63 s (tsc -b && vite build).
+- `bun run lint` — 6 errors, all `'os' is defined but never used` in six `server/**` test files outside this diff. Known-red.
+- `bun test` (full) vs. a throwaway detached worktree at `e50303e6` with its own `bun install`:
+
+  | | baseline `e50303e6` | `feat/ds-sweep` |
+  |---|---|---|
+  | pass | 11 116 | 11 126 |
+  | fail | 220 | 219 |
+  | unique failing names | 89 | 89 |
+
+  The name sets differ by exactly one entry in each direction, and **both are `standing-01` batch-isolation flakes verified per-file**: mine fails `bridgeApplyOverlayGlueLatency` (a 16 ms perf budget; passes per-file twice on this tree and once on baseline, and this diff touches no canvas file), baseline fails `agentBreakpointCapture` and mine does not. **Zero new real failures.**
+- `bun test src/__tests__/architecture` — 566 pass / 2 fail, both known-red (`no-core-barrel-deep-imports` → two `prototypeShell/*` files; `icon-catalog-integrity` → `chevron-left`). **`no-alm-npm-specifier` is green: 7/7.**
+- Suites covering this change, together — `designSystemFiles`, `designSystemMigrate`, `pageTemplates`, `pageScaffold`, `designSystemDir`, `componentCatalogTools`, `toolbar`, `no-alm-npm-specifier`, `rewriteImportSpecifier` → **197 pass / 0 fail**.
+- **Playwright was NOT run** (`standing-02`). The three e2e specs were retargeted to the DOM the components actually render, read out of `AssetsPanel.tsx` / `AssetCard.tsx` / `AddPagePicker.tsx` / `PanelRail.tsx` — they typecheck under `tests/e2e`'s own tsconfig project, and that is the whole of the evidence for them.
+
+#### Landmines
+- **The `no-alm-npm-specifier` gate deliberately does NOT ban the string, and the work order asked it to.** The premise was that ~10 files still carried it; the real number is **49 non-test files**, almost all honest prose — doc comments recording measurements against the real package ("27 of 226 colour tokens"), explanations of what a module replaced — plus ~20 test files whose FIXTURES import it, because an unmigrated project genuinely does and that is what the `kind: 'package'` path is for. A 50-entry exact-path allowlist would churn on every doc-comment edit and catch nothing. The gate bans REACHABLE positions instead (import, manifest, non-comment code, live doc example), which is the shape that actually breaks a build — and is exactly what `meta-12`'s `designSystemPreviewSheet.ts` incident was.
+- **`ensureDesignSystemFiles` had never been run against the real 40-component vendored source** before this branch. `server-23` says so in its own landmines ("every test builds its own fake vendor directory"), and both defects above were invisible to those fakes: the real source imports `.png`, and a real migrated project imports icons of its own. **A fixture built to match the code will not find what the code got wrong about the world.**
+- **`ensureDesignSystemFiles` now walks the project's source on every board open** (`listWorkspaceFiles` + a regex over code files, bounded at 4 000 files / 2 MB each). That is the price of the demand set riding the content hash — which is what makes adding an icon import to a page bring the file in, and deleting the last one take it out. It is cheap beside the ts-morph parse that runs next to it, but it is not free: do not add a second scan beside it.
+- **A `.css` import is an asset import too.** Generalizing `collectSvgImports` to any non-code extension immediately double-counted `components/Button.css`, which the wholesale copy already had, and wrote duplicate entries into `.studio/design-system.json`'s `files` array. The demand set is now subtracted from what is already collected.
+- **`@core/design-system-manifest`'s barrel exports its whole internal surface**, and `fallow` flags most of it. **Left alone on purpose** — DS-7 is building the Assets Colors section against exactly those names right now (`struct-08` handed them over explicitly). Prune it after `feat/assets-colors` lands, not before.
+- **The retired npm now classifies as `pkg.*`, not `alm.*`.** Any fixture that imports `@alm-design/design-system` and expects `alm.Button` is wrong today and was already wrong before this branch — `design-system-insert.e2e.ts` was. For `alm.*` the import must RESOLVE under `<root>/design-system/`; a stub `index.js` is enough, because Studio renders from its own vendored copy and never reads the project's.
+
+#### For DS-7 (`feat/assets-colors`), reported not fixed
+`npx fallow dead-code` finds **nothing** in `src/admin/pages/site/panels/AssetsPanel/` or `src/modules/alm/` — no unused files, exports, types or class members. The only findings in the design-system area are the `@core/design-system-manifest` barrel re-exports named above, which are DS-7's to consume. Nothing in this branch touches `AssetsPanel/**`, `FrameworkPanel/**`, `property-controls/**` or `docs/editor.md`.
+
+#### Still open
+- **DS-4b — drag an Assets card onto the canvas.** Deferred on purpose (plan §7). Its e2e test (`drags a module picker item into a canvas container`) was DELETED with the dialog rather than left red, and the deletion carries a comment saying to re-add it with the feature. `useCanvasInsertionDrag.ts` + `canvasInsertionDrop.ts` are the mechanism; the notch primitives are the working example.
+- **`PALETTE_HIDDEN_ALM_MODULE_IDS` still carries its "ALM" naming** (`src/modules/alm/register.tsx:56`). The plan wanted it renamed to the pack's own `PALETTE_HIDDEN_MODULE_IDS`; its only consumer is `panels/AssetsPanel/assetsModel.ts:18`, which DS-7 owns, so renaming it here would have collided. One rename, two files, after `feat/assets-colors` merges.
+- **`studio-workspace/test4 copy/pages/Sheet.tsx:3` does not compile** — `import { SheetHeader }` from a default-only export. User data, pre-existing, not touched.
+- **The plan's §5 reference-render parity** (pixel-diff `test4` before/after the vendored source) has still never been run by anyone; `struct-08`'s byte-identical `dist/index.css` is the strongest evidence that exists.
+
+#### Human action needed — dogfood, because this is visual
+Open `/admin/site` on **`test4`** (the real one, which still imports the retired npm):
+1. The board should show **"This project imports the retired design-system package."** Click it. Then check `git status` in `studio-workspace/test4`: `pages/*.tsx` imports became `'../design-system'`, `package.json` lost the dependency, `node_modules/@alm-design` is gone, and `design-system/icons/line-icons/` contains the icons **your own pages** import (`sms.svg`, `discount.svg`, `lightning.svg`) — that last one is what this branch fixed.
+2. Then **Download the code**, unzip, `bun install && bun run build`. It must succeed. (Proven here on a copy of `test4 copy`; `test4` has not been run.)
+3. Assets panel: every design-system card a real render, in light+LTR and dark+RTL. Still unverified by anyone — `panel-33`'s open item, unchanged.
+
 ### meta-12 — the four built-in-design-system branches merged into one integration branch
 - **Agent:** integration (Opus 5)
 - **Stage:** done — pushed to `feat/alm-figma-killer-studio-shell`; PRs #128–#131 closed as superseded.
@@ -1792,7 +1873,7 @@ assetPreviewCss,assetPreviewRegistry}.test.*` and `canvas/addPagePickerModel.tes
 
 ### meta-11 — plan: built-in design system, Assets panel, live previews, Add page
 - **Agent:** orchestrator (plan only — no code written)
-- **Stage:** research complete · plan written · **owner confirmed all three §0 decisions (2026-09-17)** — ready for `studio-architect` to cut wave-1 and wave-2 work orders.
+- **Stage:** **done** — DS-1…DS-9 all shipped (2026-09-17). DS-4b (drag an Assets card onto the canvas) was deferred on purpose in the plan's §7 and is the only workstream left. Handoffs: `struct-08`, `parser-12`, `server-23`, `panel-33`, `meta-12`, `struct-09`.
 - **Updated:** 2026-09-17.
 - **Goal:** the owner is retiring the `@alm-design/design-system` npm. The design system's
   components and colours move INTO Studio (vendored source at `vendor/alm-design-system/`),
@@ -10842,17 +10923,17 @@ in branch names, commit subjects, or PR titles. Stage explicit pathspecs and
 inspect `git status -sb` first: a parallel agent's files must never ride along
 in your commit.
 
-### standing-07 — WS-3 may not delete `@alm-design` on schedule
-`STUDIO-IMPORT-V2-PLAN.md` WS-3 says to delete `src/modules/alm/`,
-`scripts/gen-alm-manifest.mjs`, and the `@alm-design/design-system` dependency
-once generic package modules land. **That deletion is gated on evidence, not on
-WS-3 landing:** the generic package pipeline must first render the eSIM board
-*visually equivalently*. That package supplies 39 components and is what
-actually renders the main corpus today; the local `design-system/` folder has 1.
+### standing-07 — RETIRED 2026-09-17. `@alm-design` is gone; there are no longer two paths.
+It said: `src/modules/alm/` and the `@alm-design/design-system` npm may not be
+deleted on WS-3's schedule, because the generic `pkg.*` pipeline had not been
+proven to render the corpus equivalently — a time-boxed exception to
+CLAUDE.md's no-old-and-new rule.
 
-This is a deliberate, time-boxed exception to CLAUDE.md's no-old-and-new rule —
-the two paths coexist only until the generic one is proven, then the old one
-goes. Do not let it calcify, and do not build new features on `alm.*`.
+It is closed because the answer turned out to be neither path: the design
+system is now **built in** (vendored at `vendor/alm-design-system/`, rendered
+as `alm.*` at Tier 0, never a project dependency), the npm is deleted, and the
+generic `pkg.*` path serves genuinely third-party packages only. See `meta-12`
+and `struct-09`; `no-alm-npm-specifier.test.ts` is the gate that keeps it gone.
 
 ### standing-03 — the canvas has two known, specced performance defects
 Both are diagnosed in `docs/agent-refs/canvas-internals.md` §Perf and specced in

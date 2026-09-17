@@ -18,7 +18,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 const ROUTE = '/admin/api/studio/design-system/migrate'
 
-export const DesignSystemMigrateStatusSchema = Type.Object({
+const DesignSystemMigrateStatusSchema = Type.Object({
   /** The project's `package.json` names the retired package. */
   declaresDependency: Type.Boolean(),
   /** A copy of it is still sitting in the project's own `node_modules`. */
@@ -30,7 +30,7 @@ export const DesignSystemMigrateStatusSchema = Type.Object({
 })
 export type DesignSystemMigrateStatus = Static<typeof DesignSystemMigrateStatusSchema>
 
-export const DesignSystemMigrateResultSchema = Type.Object({
+const DesignSystemMigrateResultSchema = Type.Object({
   /** Source files whose imports changed. */
   filesRewritten: Type.Number(),
   /** Import declarations rewritten or removed across those files. */
