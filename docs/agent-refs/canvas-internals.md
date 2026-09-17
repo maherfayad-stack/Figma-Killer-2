@@ -48,8 +48,9 @@ The order is **`reset` → `vendor` → `user-authored`**, pinned by a bare
 `@layer reset, vendor, user-authored;` pre-declaration every canvas injector
 opens with.
 
-`@layer vendor` (`ProjectCssInjector` — `@alm-design/design-system`'s bundled
-CSS plus the open project's own bare-specifier package CSS, e.g. `import
+`@layer vendor` (`ProjectCssInjector` — the built-in design system's bundled
+CSS, from Studio's own `vendor/alm-design-system/dist/`, plus the open
+project's own bare-specifier package CSS, e.g. `import
 '@acme/ui/dist/style.css'`) is deliberately ordered BELOW `@layer
 user-authored` so the user's own edits win over a package default.
 
@@ -220,7 +221,7 @@ ALREADY-MOUNTED `iframeDoc.documentElement`:
   `darkSchemeCssTransform.ts`'s rewritten CSS matches against.
 - `data-theme` (`VENDOR_THEME_ATTR`) — always set, to `light` or `dark`,
   **never removed**. This is the convention design systems shipped as vendor
-  CSS gate on, and absence is NOT neutral: `@alm-design/design-system`, which
+  CSS gate on, and absence is NOT neutral: the built-in design system, which
   `ProjectCssInjector.tsx` injects into every frame, declares its light tokens
   under `:root:not([data-theme=light])`, so an unset attribute reads as DARK.
   Removing the attribute for "light" previewed light as dark — the same
@@ -716,10 +717,12 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
   While it is unresolved the chrome renders **nowhere**; it must never be
   parked in `document.body` "for now". React re-creates a portal's entire child
   subtree when the container identity changes, so a body→root relocation is a
-  REMOUNT: it silently discards that chrome's own state. Measured — clicking
-  "Insert module" in that window opened `ModuleInserterDialog` and the
-  relocation closed it again a frame later (`open` reset to `false` on a fresh
-  `CanvasInsertModuleButton`) with the click already consumed; focus inside the
+  REMOUNT: it silently discards that chrome's own state. Measured back when
+  "Insert module" opened a full-screen inserter dialog of its own: clicking it
+  in that window opened the dialog, and the relocation closed it again a frame
+  later (`open` reset to `false` on a fresh `CanvasInsertModuleButton`) with the
+  click already consumed. That button now only reveals the Assets panel and
+  holds no state, but the rule it proved is unchanged — focus inside the
   inspector is lost the same way. `document.body` remains the target only for
   frames with **no** viewport context at all (CMS/VC), where it is the answer
   from the first render and therefore never swaps. Consequence for tests: a

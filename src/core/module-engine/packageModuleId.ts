@@ -29,7 +29,7 @@ export function packageModuleId(pkg: string, componentName: string): string {
  * Overlay/portal component NAMES the insert palette hides by heuristic — they
  * render detached from the canvas flow and are confusing to place by hand
  * (mirrors `src/modules/alm/register.tsx`'s hardcoded `PALETTE_HIDDEN_COMPONENTS`
- * list for the one `@alm-design/design-system` carve-out). Shared between the
+ * list for Studio's own built-in design system). Shared between the
  * CLIENT (`registerProjectModules.ts`, which unions this with
  * `.studio/meta.json`'s `paletteHiddenModuleIds` override to decide what the
  * live palette shows) and the SERVER (`studio_list_components`/

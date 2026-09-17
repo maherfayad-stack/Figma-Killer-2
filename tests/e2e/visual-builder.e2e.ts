@@ -8,6 +8,7 @@ import {
   insertModuleViaPicker,
   insertNotchModule,
   login,
+  openAssetsPanel,
   openLayersPanel,
   openSitePanel,
   openSiteEditor,
@@ -42,24 +43,26 @@ test.describe('visual builder', () => {
     await expect(tree.getByRole('treeitem', { name: 'Image' })).toBeVisible()
   })
 
-  test('searches the module picker, inserts by keyboard, and remembers recents/view (SITE-005)', async ({
+  test('searches the Assets panel, inserts by click, and remembers recents (SITE-005)', async ({
     page,
   }) => {
-    await openBlankPage(page, 'Module picker')
+    await openBlankPage(page, 'Assets panel')
 
-    await page.getByTestId('canvas-notch-add-btn').click()
-    let dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-    await expect(dialog).toBeVisible()
-    await expect(dialog.getByRole('button', { name: 'Grid view' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
+    // The Assets panel is a DOCKED left-rail panel, not a modal: it stays open
+    // after an insert, and there is no view toggle and no section tab row to
+    // assert — the sections are collapsible headers, and the cards are always
+    // a grid. (Before DS-4 this test drove `ModuleInserterDialog`, which had
+    // Grid/List, Modules/Recent tabs and Enter-to-insert; all four are gone
+    // with it, and the ranking that replaced the substring filter has its own
+    // tests in `src/__tests__/panels/rankAssets.test.ts`.)
+    await openAssetsPanel(page)
+    const assets = page.getByTestId('assets-panel')
+    const search = assets.getByRole('searchbox', { name: 'Search assets' })
 
-    await dialog.getByRole('searchbox', { name: 'Search modules' }).fill('button')
-    await expect(dialog.locator('[data-module-id="base.button"]')).toBeVisible()
-    await expect(dialog.locator('[data-module-id="base.text"]')).toHaveCount(0)
-    await page.keyboard.press('Enter')
-    await expect(dialog).toBeHidden()
+    await search.fill('button')
+    await expect(assets.locator('[data-asset-id="base.button"]')).toBeVisible()
+    await expect(assets.locator('[data-asset-id="base.text"]')).toHaveCount(0)
+    await assets.locator('[data-asset-id="base.button"]').first().click()
 
     await openLayersPanel(page)
     await expect(
@@ -68,80 +71,21 @@ test.describe('visual builder', () => {
       }),
     ).toBeVisible()
 
-    await page.getByTestId('canvas-notch-add-btn').click()
-    dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-    await expect(dialog).toBeVisible()
-    await dialog.getByRole('button', { name: 'Recent' }).click()
-    await expect(dialog.locator('[data-module-id="base.button"]')).toBeVisible()
-
-    await dialog.getByRole('button', { name: 'List view' }).click()
-    await expect(dialog.getByRole('button', { name: 'List view' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    // Moving off the view toggle dismisses its tooltip so Escape reaches the
-    // picker dialog instead of being capture-consumed by the tooltip.
-    await page.mouse.move(0, 0)
-    await expect(page.getByRole('tooltip')).toHaveCount(0)
-    await page.keyboard.press('Escape')
-    await expect(dialog).toBeHidden()
-
-    await page.getByTestId('canvas-notch-add-btn').click()
-    dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-    await expect(dialog).toBeVisible()
-    await expect(dialog.getByRole('button', { name: 'List view' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    await page.keyboard.press('Escape')
-    await expect(dialog).toBeHidden()
+    // Recents survived the dialog: the section is shown above the others when
+    // nothing is typed, and hidden during a search.
+    await openAssetsPanel(page)
+    await search.fill('')
+    const recent = assets.getByRole('button', { name: /^Recent/ })
+    await expect(recent).toBeVisible()
+    await expect(assets.locator('[data-asset-id="base.button"]').first()).toBeVisible()
   })
 
-  test('drags a module picker item into a canvas container (SITE-005 drag)', async ({
-    page,
-  }) => {
-    const nestedText = `Dropped into container ${Date.now().toString(36)}`
-
-    await openBlankPage(page, 'Module picker drag')
-    await insertNotchModule(page, 'container')
-    await openLayersPanel(page)
-
-    const containerRow = page
-      .getByRole('tree', { name: 'Page element tree' })
-      .getByRole('treeitem', { name: 'Container' })
-    const containerNodeId = await containerRow.getAttribute('data-studio-node-id')
-    expect(containerNodeId, 'Container row should expose a canvas node id').toBeTruthy()
-
-    const containerCanvas = canvasFrame(page).locator(
-      `[data-node-id="${containerNodeId}"]`,
-    )
-    await expect(containerCanvas.getByText('Empty container', { exact: true })).toBeVisible()
-    const containerBox = await containerCanvas.boundingBox()
-    expect(containerBox, 'Canvas Container needs a measurable drop target').not.toBeNull()
-
-    await page.getByTestId('canvas-notch-add-btn').click()
-    const dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-    await expect(dialog).toBeVisible()
-    await dialog.getByRole('searchbox', { name: 'Search modules' }).fill('text')
-
-    const textItem = dialog.locator('[data-module-id="base.text"]')
-    await expect(textItem).toBeVisible()
-    const start = await centerOf(textItem)
-    await page.mouse.move(start.x, start.y)
-    await page.mouse.down()
-    await page.mouse.move(start.x + 10, start.y + 10, { steps: 4 })
-    await page.mouse.move(
-      containerBox!.x + containerBox!.width / 2,
-      containerBox!.y + containerBox!.height / 2,
-      { steps: 12 },
-    )
-    await expect(page.locator('[data-position="inside"]')).toBeVisible()
-    await page.mouse.up()
-    await expect(dialog).toBeHidden()
-
-    await setPropValue(page, 'text', nestedText)
-    await expect(containerCanvas.getByText(nestedText, { exact: true })).toBeVisible()
-  })
+  // DELETED with the inserter dialog: 'drags a module picker item into a
+  // canvas container (SITE-005 drag)'. Dragging a card onto the canvas is
+  // DS-4b and is not built — the Assets panel inserts on CLICK, through the
+  // same `resolveInsertLocation` the notch primitives use. The notch's own
+  // drag is still covered by its primitives; re-add a panel drag test with the
+  // feature, not before it.
 
   test('selects a node in the tree and edits its text (BUILDER-002)', async ({
     page,
@@ -645,11 +589,11 @@ test.describe('visual builder', () => {
         target.name = nextPage.name
         target.slug = nextPage.slug
 
+        // The narrow check that used to prove the modal fitted a phone now
+        // proves the docked panel does: the card is reachable at 390px.
         await page.setViewportSize({ width: 390, height: 800 })
         await openSavedLayoutSection(page)
         await expect(expectSavedLayoutItem(page, layoutName)).toBeVisible()
-        await page.keyboard.press('Escape')
-        await expect(page.getByRole('dialog', { name: 'Add to canvas' })).toBeHidden()
         await page.setViewportSize({ width: 1280, height: 900 })
 
         await insertSavedLayoutViaPicker(page, layoutName)
@@ -675,19 +619,14 @@ test.describe('visual builder', () => {
         await openSavedLayoutSection(page)
         await expect(expectSavedLayoutItem(page, renamedLayoutName)).toBeVisible()
         await expect(expectSavedLayoutItem(page, layoutName)).toHaveCount(0)
-        await page.keyboard.press('Escape')
-        await expect(page.getByRole('dialog', { name: 'Add to canvas' })).toBeHidden()
 
         await openSavedLayoutContextMenu(page, renamedLayoutName)
-        const inserterDialog = page.getByRole('dialog', { name: 'Add to canvas' })
         await page
           .getByRole('menu', { name: `${renamedLayoutName} options` })
           .getByRole('menuitem', { name: 'Delete' })
           .click()
         await expect(page.getByText(`Deleted layout "${renamedLayoutName}"`)).toBeVisible()
         await expect(expectSavedLayoutItem(page, renamedLayoutName)).toHaveCount(0)
-        await page.keyboard.press('Escape')
-        await expect(inserterDialog).toBeHidden()
 
         await expect(canvasFrame(page).getByText(layoutText, { exact: true })).toBeVisible()
         await saveDraft(page)
@@ -1229,31 +1168,26 @@ test.describe('visual builder', () => {
   test.describe('responsive', () => {
     test.use({ storageState: ANONYMOUS_STATE })
 
-    test('keeps the full module picker usable at phone width (SITE-005 mobile)', async ({
+    test('keeps the Assets panel usable at phone width (SITE-005 mobile)', async ({
       page,
     }) => {
       await login(page)
-      await openBlankPage(page, 'Module picker mobile')
+      await openBlankPage(page, 'Assets panel mobile')
       await page.setViewportSize({ width: 390, height: 844 })
 
-      await page.getByTestId('canvas-notch-add-btn').click()
-      const dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-      await expect(dialog).toBeVisible()
-      await expectMobileDialogContained(page, dialog)
-      await expect(dialog.getByRole('button', { name: 'Modules' })).toBeVisible()
-      await expect(dialog.getByRole('button', { name: 'Recent' })).toBeVisible()
-      await expectMobileLocatorContained(
-        page,
-        dialog.getByRole('searchbox', { name: 'Search modules' }),
-        'Search modules',
-      )
+      await openAssetsPanel(page)
+      const assets = page.getByTestId('assets-panel')
+      await expectMobileLocatorContained(page, assets, 'Assets panel')
+      await expectNoMobilePageOverflow(page)
 
-      await dialog.getByRole('searchbox', { name: 'Search modules' }).fill('button')
-      const buttonItem = dialog.locator('[data-module-id="base.button"]')
-      await expect(buttonItem).toBeVisible()
-      await expectMobileLocatorContained(page, buttonItem, 'Button picker item')
-      await page.keyboard.press('Enter')
-      await expect(dialog).toBeHidden()
+      const search = assets.getByRole('searchbox', { name: 'Search assets' })
+      await expectMobileLocatorContained(page, search, 'Search assets')
+
+      await search.fill('button')
+      const buttonCard = assets.locator('[data-asset-id="base.button"]').first()
+      await expect(buttonCard).toBeVisible()
+      await expectMobileLocatorContained(page, buttonCard, 'Button asset card')
+      await buttonCard.click()
 
       await page.setViewportSize({ width: 1280, height: 900 })
       await openLayersPanel(page)
@@ -1428,7 +1362,14 @@ async function expectComputedCustomProperty(
     .toBe(expectedValue)
 }
 
-async function expectMobileDialogContained(page: Page, dialog: Locator): Promise<void> {
+/**
+ * The phone viewport is the size it was asked to be and the document does not
+ * scroll sideways. Split out of the old `expectMobileDialogContained` when the
+ * inserter dialog it measured was replaced by a docked panel — the panel's own
+ * containment is `expectMobileLocatorContained`, which every other mobile
+ * assertion already uses.
+ */
+async function expectNoMobilePageOverflow(page: Page): Promise<void> {
   const metrics = await page.evaluate(() => {
     const doc = document.documentElement
     return {
@@ -1440,13 +1381,6 @@ async function expectMobileDialogContained(page: Page, dialog: Locator): Promise
   expect(metrics.viewportWidth).toBe(390)
   expect(metrics.viewportHeight).toBe(844)
   expect(metrics.pageOverflow).toBeLessThanOrEqual(1)
-
-  const box = await dialog.boundingBox()
-  if (!box) throw new Error('Add to canvas dialog was visible but had no bounding box')
-  expect(box.x).toBeGreaterThanOrEqual(-1)
-  expect(box.y).toBeGreaterThanOrEqual(-1)
-  expect(box.x + box.width).toBeLessThanOrEqual(metrics.viewportWidth + 1)
-  expect(box.y + box.height).toBeLessThanOrEqual(metrics.viewportHeight + 1)
 }
 
 async function expectMobileLocatorContained(
@@ -1469,26 +1403,31 @@ async function expectMobileLocatorContained(
   expect(box.y + box.height).toBeLessThanOrEqual(metrics.viewportHeight + 1)
 }
 
+/**
+ * Reveal the Assets panel's **Layouts** section. Every section is expanded by
+ * default except Icons, so this only has to open the panel and make sure the
+ * band is there — the old version had to click a tab in a modal dialog.
+ */
 async function openSavedLayoutSection(page: Page): Promise<void> {
-  await page.getByTestId('canvas-notch-add-btn').click()
-  const dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-  await expect(dialog).toBeVisible()
-  await dialog.getByRole('button', { name: /^Layouts/ }).click()
+  await openAssetsPanel(page)
+  const header = page.getByTestId('assets-panel').getByRole('button', { name: /^Layouts/ })
+  await expect(header).toBeVisible()
+  if ((await header.getAttribute('aria-expanded')) === 'false') await header.click()
+  await expect(header).toHaveAttribute('aria-expanded', 'true')
 }
 
+/** A saved-layout card. `data-asset-kind` is what tells it from a module card of the same name. */
 function expectSavedLayoutItem(page: Page, layoutName: string): Locator {
   return page
-    .getByRole('dialog', { name: 'Add to canvas' })
-    .locator('[data-saved-layout-id]')
+    .getByTestId('assets-panel')
+    .locator('[data-asset-kind="savedLayout"]')
     .filter({ hasText: layoutName })
     .first()
 }
 
 async function insertSavedLayoutViaPicker(page: Page, layoutName: string): Promise<void> {
   await openSavedLayoutSection(page)
-  const dialog = page.getByRole('dialog', { name: 'Add to canvas' })
   await expectSavedLayoutItem(page, layoutName).click()
-  await expect(dialog).toBeHidden()
 }
 
 async function openSavedLayoutContextMenu(page: Page, layoutName: string): Promise<void> {

@@ -16,11 +16,6 @@ import { fileURLToPath } from 'node:url'
 const configDir = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig([
-  // `design-system/` is a standalone package with its own tsconfig, eslint, and
-  // test scripts — it is a library, not part of the Vite app, so app-only rules
-  // (notably `react-refresh/only-export-components`, which is about HMR
-  // boundaries) do not apply to it. Lint it with its own `bun run lint` there.
-  //
   // `studio-workspace/` holds arbitrary user React projects — real imports and
   // the `__canonical-fixture` reference project alike. Studio PARSES that code
   // with ts-morph; it never builds or lints it, and React Compiler purity rules
@@ -60,7 +55,6 @@ export default defineConfig([
     '.data',
     '.tmp',
     '.tmp-lint',
-    'design-system',
     'studio-workspace',
     'examples/studio-sample-project',
   ]),

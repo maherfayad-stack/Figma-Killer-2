@@ -58,20 +58,39 @@ export async function insertNotchModule(
 }
 
 /**
- * Insert any registered module through the full module picker dialog. Modules
- * that are not notch favourites (button, link, …) go through here. The dialog
- * items carry a stable `data-module-id`, so we pick by module id rather than by
- * the localized item label.
+ * Open the left rail's **Assets** panel — the library every insert comes from
+ * since the full-screen inserter dialog was deleted. Idempotent: the rail
+ * button TOGGLES, so clicking it while the panel is open would close it.
+ */
+export async function openAssetsPanel(page: Page): Promise<void> {
+  const panel = page.getByTestId('assets-panel')
+  if (!(await panel.isVisible().catch(() => false))) {
+    await page.getByTestId('panel-rail-assets').click()
+  }
+  await expect(panel).toBeVisible()
+}
+
+/**
+ * Insert any registered module from the Assets panel. Modules that are not
+ * notch favourites (button, link, …) go through here. Cards carry a stable
+ * `data-asset-id` (the module id), so we pick by id rather than by the
+ * localized card label.
+ *
+ * Note for whoever runs this in a browser next: the panel is DOCKED, not a
+ * modal — it stays open after an insert, so there is no "dialog is hidden"
+ * assertion to make here any more. The insert is observed where it lands (the
+ * canvas or the layers tree), which is what every caller already does.
  */
 export async function insertModuleViaPicker(
   page: Page,
   moduleId: string,
 ): Promise<void> {
-  await page.getByTestId('canvas-notch-add-btn').click()
-  const dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-  await expect(dialog).toBeVisible()
-  await dialog.locator(`[data-module-id="${moduleId}"]`).first().click()
-  await expect(dialog).toBeHidden()
+  await openAssetsPanel(page)
+  await page
+    .getByTestId('assets-panel')
+    .locator(`[data-asset-id="${moduleId}"]`)
+    .first()
+    .click()
 }
 
 /**

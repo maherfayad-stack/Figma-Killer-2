@@ -7,8 +7,8 @@ import * as path from 'node:path'
  * Adding a design-system component to a studio board, and rendering one with
  * its own package CSS. Two defects, both of which only a real browser can see.
  *
- *   1. **Vendor CSS was annihilated by the publisher reset.** Every `@alm-design`
- *      / `pkg.*` component on the board rendered as unstyled text. The classes
+ *   1. **Vendor CSS was annihilated by the publisher reset.** Every `alm.*` /
+ *      `pkg.*` component on the board rendered as unstyled text. The classes
  *      and the 120 KB of package CSS were both present and correct — but the
  *      reset was emitted inside `@layer user-authored`, one cascade layer ABOVE
  *      `@layer vendor`, and layer order beats specificity outright. So
@@ -19,7 +19,7 @@ import * as path from 'node:path'
  *      the button was invisible. Only `getComputedStyle` in a real engine
  *      distinguishes "the rule is in the document" from "the rule applies".
  *
- *   2. **Insert was refused outright.** Picking a component from "Add to canvas"
+ *   2. **Insert was refused outright.** Picking a component from the palette
  *      toasted "Studio cannot add a new element to imported code yet" and did
  *      nothing. It now writes the element AND its import into the `.tsx` and
  *      the board re-reads it, so what lands on the canvas is a real parsed node
@@ -30,17 +30,26 @@ import * as path from 'node:path'
  * SAFETY — this spec WRITES, so it never points at real user data. The fixture
  * is created fresh in an OS temp directory, opened by absolute path, and removed
  * afterwards. Nothing under `studio-workspace/` is read or written.
+ *
+ * The fixture is a DESIGN-SYSTEM-BACKED project: it carries a
+ * `design-system/index.js` and imports it relatively, which is what makes
+ * `componentSources` classify `<Button/>` as `{ kind: 'design-system' }` and
+ * `moduleMapping` render it as `alm.Button` out of Studio's OWN vendored pack.
+ * The retired npm would classify as `kind: 'package'` -> `pkg.*`, which at
+ * Tier 0 draws a "promote this project" placeholder and nothing this spec
+ * asserts would hold. Only the RESOLVED path matters, so the stub below does
+ * not have to be the real design system — Studio never renders from it.
  */
 
 const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
-const DS = '@alm-design/design-system'
+const DS = '../design-system'
 
 /**
  * Two components already in the source, so the render assertions have something
  * that came through the ordinary parse, and the insert has a real sibling to be
  * appended after.
  */
-const FIXTURE_PAGE = `import { Button, Chip } from '@alm-design/design-system'
+const FIXTURE_PAGE = `import { Button, Chip } from '../design-system'
 
 export default function Home() {
   return (
@@ -52,6 +61,11 @@ export default function Home() {
 }
 `
 
+/** The project's own copy of the design system. Only its RESOLVABILITY matters — see the spec doc. */
+const DESIGN_SYSTEM_INDEX = `export function Button() { return null }
+export function Chip() { return null }
+`
+
 let fixtureDir: string
 
 const pagePath = (): string => path.join(fixtureDir, 'pages', 'Home.tsx')
@@ -61,6 +75,8 @@ test.beforeAll(() => {
   fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-ds-insert-'))
   fs.mkdirSync(path.join(fixtureDir, 'pages'), { recursive: true })
   fs.writeFileSync(pagePath(), FIXTURE_PAGE, 'utf8')
+  fs.mkdirSync(path.join(fixtureDir, 'design-system'), { recursive: true })
+  fs.writeFileSync(path.join(fixtureDir, 'design-system', 'index.js'), DESIGN_SYSTEM_INDEX, 'utf8')
 })
 
 test.afterAll(() => {
@@ -103,8 +119,9 @@ test.describe('design-system components on a studio board', () => {
       }
     })
 
-    // The exact values come from `@alm-design/design-system`'s own
-    // `.btn--primary` rule. Asserting them (rather than merely "not the
+    // The exact values come from the built-in design system's own
+    // `.btn--primary` rule (Studio's vendored `dist/index.css`, injected into
+    // every frame by `ProjectCssInjector` — not resolved against the project). Asserting them (rather than merely "not the
     // default") is what proves the VENDOR layer won, not just that something
     // did — a stray editor-chrome rule could otherwise satisfy a loose check.
     expect(computed.backgroundColor, 'the button has no fill — vendor CSS lost to the reset').not.toBe(
@@ -130,10 +147,14 @@ test.describe('design-system components on a studio board', () => {
     const contentFrame = await openStudioBoard(page, fixtureDir)
     expect(readPage(), 'the fixture was modified before the test ran').toBe(FIXTURE_PAGE)
 
-    await page.getByTestId('canvas-notch-add-btn').click()
-    const dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-    await expect(dialog).toBeVisible({ timeout: 10_000 })
-    await dialog.locator('[data-module-id="alm.Button"]').first().click()
+    // The Assets panel replaced the full-screen inserter dialog. It is docked,
+    // so it stays open after the click — the round trip is observed on the
+    // canvas and on disk, below.
+    await page.getByTestId('panel-rail-assets').click()
+    const assets = page.getByTestId('assets-panel')
+    await expect(assets).toBeVisible({ timeout: 10_000 })
+    await assets.getByRole('searchbox', { name: 'Search assets' }).fill('Button')
+    await assets.locator('[data-asset-id="alm.Button"]').first().click()
 
     // The write is what makes the board reload, so waiting for the new node in
     // the canvas is waiting for the whole round trip.
@@ -148,9 +169,11 @@ test.describe('design-system components on a studio board', () => {
     await expect(inserted.locator('button.btn')).toBeVisible()
 
     // The bytes on disk are the actual claim. Everything the fixture already
-    // had survives verbatim; the import gains one name, the JSX one line.
+    // had survives verbatim and the JSX gains one line; the import declaration
+    // is untouched because `Button` was already imported — reusing it rather
+    // than writing a second declaration is the assertion at the end.
     expect(readPage()).toBe(
-      `import { Button, Chip } from '@alm-design/design-system'
+      `import { Button, Chip } from '../design-system'
 
 export default function Home() {
   return (
