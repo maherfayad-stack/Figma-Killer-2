@@ -41,7 +41,8 @@ import {
 } from '@site/store/clipboard/clipboardStorage'
 import { resolveInsertLocation, resolveSiblingAfterLocation } from '@site/store/insertLocation'
 import type { EditorStoreSliceCreator } from '@site/store/types'
-import { buildSiteHelpers } from './site/helpers'
+import { buildSiteHelpers, resolveActiveTreeTarget } from './site/helpers'
+import { createStudioSourceWrites } from './site/studioSourceWrites'
 
 /** Where a paste lands relative to its target. See `pasteNode`. */
 export type PastePlacement = 'auto' | 'after'
@@ -149,7 +150,13 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
   set,
   get,
 ) => {
-  const { mutateSiteState } = buildSiteHelpers(set, get)
+  const helpers = buildSiteHelpers(set, get)
+  const { mutateSiteState } = helpers
+  // `store-13` — the same source-write gate `nodeActions.ts` builds, for the
+  // one structural gesture that never consulted it. A second instance is free:
+  // `createStudioSourceWrites` holds no state of its own, it only closes over
+  // the helpers and a read-only view of the active tree.
+  const { writePasteToSource } = createStudioSourceWrites(helpers, () => resolveActiveTreeTarget(get())?.tree ?? null)
 
   // Hydrate the in-memory entry from localStorage at slice creation. The
   // store is built once per session, so this runs at editor mount only.
@@ -264,6 +271,16 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
 
       if (!state.site) return null
 
+      // `store-13` — on a studio-imported tree the paste is a SOURCE write (or
+      // a refusal), never a snapshot restore: nodes minted from the clipboard
+      // carry nanoid ids that no codemod can write back, and the next parse
+      // deletes them without a word. Returns true for both of its outcomes;
+      // either way nothing is minted here, and the copy that DOES land is
+      // selected by the commit's own resync
+      // (`pendingCreatedSelection.ts`) rather than at the bottom of this
+      // function.
+      if (writePasteToSource(entry.rootNodeIds, location.parentId, location.index)) return null
+
       // Commit history once; the entire paste — restored classes + every
       // pasted subtree — is a single undo step. The class plan (scoped clone,
       // framework name-match, regular reuse/import) lives in the shared
@@ -285,6 +302,8 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
 
       if (newRootIds.length === 0) return null
       // `K7` — the paste IS the new selection, and the inspector follows it.
+      // (The studio-imported path returned above; its copy is selected once
+      // the source write's resync lands — see `writePasteToSource`.)
       // A pasted node that leaves the ORIGINAL selected is a node the user has
       // to go hunt for in the layer tree before they can style it, and the
       // first thing anyone does after ⌘V is adjust what they just pasted.

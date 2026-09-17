@@ -138,8 +138,11 @@ export function useCanvasNodeShortcuts({
         //
         // On a studio-imported tree the duplicate is an async SOURCE write and
         // returns `''` — the copy's id is the `line:col` the codemod produces
-        // and does not exist until the resync lands. Nothing is selected in
-        // that case rather than something wrong. See `writeDuplicateToSource`.
+        // and does not exist until the resync lands, so there is nothing to
+        // select HERE. `store-13` closes that half elsewhere: the save route
+        // reports what it created and the board selects it the moment the
+        // resync brings it in (`pendingCreatedSelection.ts`). Both paths end
+        // with the copy selected; only the timing differs.
         if (currentIds.length > 1) {
           const newIds = store.duplicateNodes([...currentIds]).filter(Boolean)
           if (newIds.length > 0) store.selectMany(newIds)
