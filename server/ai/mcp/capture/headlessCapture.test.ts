@@ -140,7 +140,20 @@ function makeFakePage() {
   }
 }
 
+// Snapshotted as a plain object BEFORE mocking (a live namespace object is
+// itself rewritten by `mock.module`), and handed back in `afterAll` below.
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file, so
+// without this every later file in the worker that reaches `playwright-core`
+// gets this file's fake browser. Gated by `mock-module-must-restore.test.ts`.
+const realPlaywrightCore = { ...(await import('playwright-core')) }
+
+afterAll(() => {
+  mock.module('playwright-core', () => realPlaywrightCore)
+})
+
 mock.module('playwright-core', () => ({
+  ...realPlaywrightCore,
   chromium: {
     launch: async () => {
       if (launchShouldFail) throw new Error(launchShouldFail)

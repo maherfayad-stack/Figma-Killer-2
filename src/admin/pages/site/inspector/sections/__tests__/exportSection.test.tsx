@@ -26,7 +26,7 @@
  *   5. Copy CSS reads the winner's value out of provenance and writes it to
  *      the clipboard through the (mocked) client, never the network.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
@@ -37,13 +37,25 @@ const downloadNodePng = mock(() => Promise.resolve())
 const downloadNodeSvg = mock(() => Promise.resolve())
 const readNodeJsxSource = mock(() => Promise.resolve('<div />'))
 
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file. The
+// real namespace is snapshotted as a plain object BEFORE mocking (the
+// namespace object itself is live and gets rewritten) and handed back in
+// `afterAll`. Gated by `mock-module-must-restore.test.ts`.
+const realNodeExportClient = { ...(await import('../../../panels/PropertiesPanel/nodeExportClient')) }
+
 mock.module('../../../panels/PropertiesPanel/nodeExportClient', () => ({
+  ...realNodeExportClient,
   copyTextToClipboard,
   copyPngToClipboard,
   downloadNodePng,
   downloadNodeSvg,
   readNodeJsxSource,
 }))
+
+afterAll(() => {
+  mock.module('../../../panels/PropertiesPanel/nodeExportClient', () => realNodeExportClient)
+})
 
 const { ExportSection } = await import('../ExportSection')
 const { makeSite, makePage, makeNode } = await import('../../../../../../__tests__/fixtures')

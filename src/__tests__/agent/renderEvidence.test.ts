@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 
 interface RasterOptions {
   backgroundColor?: string
@@ -79,7 +79,19 @@ const toCanvasMock = mock(async (root: HTMLElement, options: RasterOptions = {})
   return canvas
 })
 
-mock.module('html-to-image', () => ({ toCanvas: toCanvasMock }))
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file. The
+// replacement below publishes exactly one of `html-to-image`'s exports.
+// Snapshot the real namespace as a plain object BEFORE mocking (the namespace
+// object itself is live and gets rewritten). Gated by
+// `mock-module-must-restore.test.ts`.
+const realHtmlToImage = { ...(await import('html-to-image')) }
+
+mock.module('html-to-image', () => ({ ...realHtmlToImage, toCanvas: toCanvasMock }))
+
+afterAll(() => {
+  mock.module('html-to-image', () => realHtmlToImage)
+})
 
 const { captureAgentRenderSnapshot, SnapshotNodeNotFoundError, findAgentRenderFrame } = await import('@site/agent')
 

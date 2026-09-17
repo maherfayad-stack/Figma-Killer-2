@@ -14,7 +14,7 @@
  * mock that cannot re-render cannot exercise the flow. `server` is the fixture
  * standing in for what the next listing would return.
  */
-import { afterEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 
@@ -52,7 +52,7 @@ const server: { projects: typeof ALPHA[] | null; error: string | null } = {
   error: null,
 }
 
-const studioProjects = await import('./hooks/useStudioProjects')
+const studioProjects = { ...(await import('./hooks/useStudioProjects')) }
 mock.module('./hooks/useStudioProjects', () => ({
   ...studioProjects,
   useStudioProjects: () => {
@@ -89,23 +89,37 @@ mock.module('./hooks/useStudioProjects', () => ({
 // The page chrome is not under test, and rendering it drags in the whole admin
 // shell — `AccountMenuButton` alone requires a `StepUpProvider`. A passthrough
 // keeps the test about the project grid.
-const adminPageLayout = await import('@admin/layouts/AdminPageLayout')
+const adminPageLayout = { ...(await import('@admin/layouts/AdminPageLayout')) }
 mock.module('@admin/layouts/AdminPageLayout', () => ({
   ...adminPageLayout,
   AdminPageLayout: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }))
 
-const sessionContext = await import('@admin/sessionContext')
+const sessionContext = { ...(await import('@admin/sessionContext')) }
 mock.module('@admin/sessionContext', () => ({
   ...sessionContext,
   useAuthenticatedAdminUser: () => ({ displayName: 'Tester' }),
 }))
 
-const adminNavigate = await import('@admin/lib/useAdminNavigate')
+const adminNavigate = { ...(await import('@admin/lib/useAdminNavigate')) }
 mock.module('@admin/lib/useAdminNavigate', () => ({
   ...adminNavigate,
   useAdminNavigate: () => () => {},
 }))
+
+// `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
+// it, and `bun test --parallel=4` gives each worker a process, not a file, so
+// every mock above stays in force for every later file in the same worker
+// unless it is handed the real namespace back here. The four snapshots above
+// are plain-object COPIES for the same reason: the ESM namespace object is
+// live and `mock.module` rewrites it in place, so `() => ns` would hand back
+// the mock. Gated by `mock-module-must-restore.test.ts`.
+afterAll(() => {
+  mock.module('./hooks/useStudioProjects', () => studioProjects)
+  mock.module('@admin/layouts/AdminPageLayout', () => adminPageLayout)
+  mock.module('@admin/sessionContext', () => sessionContext)
+  mock.module('@admin/lib/useAdminNavigate', () => adminNavigate)
+})
 
 const { DashboardPage } = await import('./DashboardPage')
 
