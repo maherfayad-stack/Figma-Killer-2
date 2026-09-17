@@ -1221,6 +1221,46 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### panel-34 — DS-7: the built-in design system's colours as an Assets → Colors section
+- **Agent:** panel-designer (Opus 5)
+- **Stage:** done — gates green on touched files, draft PR open against `feat/alm-figma-killer-studio-shell`. **Needs human dogfood.**
+- **Branch:** `feat/assets-colors` off `feat/alm-figma-killer-studio-shell` (`e50303e6`). Worktree `.tmp/wt-assets-colors`.
+- **Updated:** 2026-09-17.
+- **Goal:** `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` DS-7 — the design system's palette in the Assets panel: grouped swatches showing light AND dark, click-to-copy `var(--name)`, apply-to-selection through the EXISTING commit path, and tokens that participate in the panel's search.
+
+**Scope — files touched**
+- New: `panels/AssetsPanel/colorTokens.ts` (palette load + validation + grouping + search items), `panels/AssetsPanel/ColorsSection.tsx`, `panels/AssetsPanel/ColorsSection.module.css`, `src/__tests__/panels/colorsSection.test.tsx`.
+- Changed: `panels/AssetsPanel/AssetsPanel.tsx` (section mount, `SectionId` gains `'colors'`, collapsed-by-default set, `totalMatches`, search placeholder), `inspector/commitApi.ts` (extracted + exported `lockedStyleProperties`), `src/types/alm-design-system.d.ts` (ambient shim for the JSON subpath), `src/__tests__/panels/rankAssets.test.ts` (colour cases), `docs/editor.md` (one paragraph under the Assets panel bullet).
+- **Tokens added to `globals.css`: NONE.** Everything reuses `--bg-surface`/`-2`/`-3`, `--radius`, `--radius-sm`, `--space-3xs`/`--space-4xs`, `--text-3xs`, `--text-muted`/`--text-subtle`. The only colour values in the CSS module are the two JS-driven custom properties (`--swatch-light`/`--swatch-dark`), defaulted in a rule, never in a `var()` fallback.
+
+**Apply-to-selection SHIPPED — through `useInspectorCommit`, not a new write path.**
+`apply-variable` added no store action of its own: "binding a field to a variable" is just committing the string `var(--x)` through the field's normal commit. So the swatch's Fill / Text buttons call `useInspectorCommit(useSelectionModel()).commitStyle('backgroundColor' | 'color', 'var(--token)')` — the same call the inspector's own Fill field makes. That buys the write-target rule (the element's one editable class, else `style=`), the code-lock refusal, and the shared history, for free, and makes it impossible for the panel and the inspector to disagree about where a colour lands.
+
+**Decisions a later agent should not re-litigate**
+- **Colour items are NOT `AssetItem`s.** Every kind in `assetsModel.ts` is something `useInsertInserterItem` inserts as a node; a colour is not. `ColorAssetItem` satisfies `RankableAsset` instead, so it rides `rankAssets` unchanged — `rankAssets.ts` needed **no edit at all**, which is the point of its generic signature.
+- **`lockedStyleProperties(node)` is exported from `commitApi.ts`.** `writeTargetFor` does NOT know about `codeProps`; `commitStyleMany` drops a code-valued key separately and silently. A panel button that ignored that would toast "Applied var(--x)" while writing nothing. The rule now has one implementation and two callers, rather than two copies.
+- **The grid is its own component.** `useSelectionModel` reads `getComputedStyle` off the live frame on every render and (Tier 2) mounts a bridge measurement. `ColorSwatchGrid` only mounts while the section is EXPANDED, and Colors ships collapsed — so the panel's cost is unchanged until someone opens it.
+- **Deep import, deliberately:** `@core/design-system-manifest/designSystemSchemas`, not the barrel — the barrel also exports `buildDesignSystemManifest`/`extractColorTokens`, which import `node:fs`. That module is not in `no-core-barrel-deep-imports`'s gated list, and the gate is green.
+- **`TokenImportStatus`'s label was left alone.** DS-3 already added `'builtin-design-system': 'the built-in design system'`, which renders as "Imported 41 colors from the built-in design system." — the sentence-fitting form. Capitalising it would break the sentence; nothing to fix.
+
+**Landmines**
+- **The "Gradients" group holds gradient STOP COLOURS, not gradients.** No token in `tokens.generated.json` has a `linear-gradient(...)` value, so there is nothing to render as a gradient. The swatch paints with `background: var(--swatch-light)`, which would render a gradient value correctly if one ever appears — no code change needed, but do not go looking for a gradient-specific branch.
+- **One hex can belong to several tokens.** Semantic tokens carry the RESOLVED value of the raw token they point at, so `#E9666F` legitimately returns `--color-coral-100` plus four semantic names. The test asserts "the raw token first, and every hit really holds that value", not a single result.
+- **Colors does not auto-expand on a search hit.** Typing `coral` with the section collapsed shows `COLORS 3` in the header and nothing else — exactly what Icons already does. If that reads as a bug in dogfood, the fix is a panel-wide "expand sections with hits while searching" rule, not a Colors-only special case.
+
+**Verification**
+- `bun run build` — pass.
+- `bun test src/__tests__/architecture` — 559 pass, 2 fail: `no-core-barrel-deep-imports` (two `server/handlers/studio/prototypeShell/*` files) and `icon-catalog-integrity` — both pre-existing, `standing-01`.
+- `bun test src/__tests__/panels src/__tests__/inspector src/admin/pages/site` — 1768 pass, 0 fail (16 of them new).
+- `bun run lint` — the six pre-existing `'os' is defined but never used` errors in `server/handlers/**/__tests__`; nothing in a file I touched.
+
+**Human action needed: dogfood `/admin/site` on `test4`, left rail → Assets → Colors.**
+1. Open Assets, scroll to **Colors** (below Icons), expand it. Every swatch is split light/dark; the static and gradient-stop families render as one block. Group order reads Neutral · Aqua · Coral · Forest · Butter · Purple · Brand · Alpha · Gradients · Semantic background · text · border · icon.
+2. Click any swatch → toast "Copied var(--color-…)" → paste into the code editor and confirm the string.
+3. **Select a text node on the canvas**, hover a swatch → **Fill** and **Text** appear → click **Text** → the inspector's Fill section shows `var(--color-…)`, and the toast names where it landed (`.someClass` or `this element's style=`). Undo puts it back in one step.
+4. **Select a node whose colour comes from code** (a `pkg.*`/`alm.*` instance, or any node whose `style:color` is in `codeProps`) → the matching button is disabled and its tooltip says why. Nothing must happen on click.
+5. Search `coral`, `aqua-100`, `#E9666F` in the Assets search box — the Colors header count updates for each (expand to see the hits).
+
 ### meta-12 — the four built-in-design-system branches merged into one integration branch
 - **Agent:** integration (Opus 5)
 - **Stage:** done — pushed to `feat/alm-figma-killer-studio-shell`; PRs #128–#131 closed as superseded.
