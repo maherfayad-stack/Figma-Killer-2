@@ -283,7 +283,7 @@ import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
-import { applyStudioEditBatch } from './studioWriteback'
+import { applyStudioEditBatchLocked } from './studioWriteback'
 import { tryServeStudioProbe } from './studio/projectProbe'
 import { tryServeStudioInstall } from './studio/installDeps'
 import { tryServeStudioIngest } from './studio/importUpload'
@@ -520,7 +520,7 @@ export async function tryServeStudio(
       // detection all live in `applyStudioEditBatch` — the single engine both
       // this route and `studio_apply_edits` (MCP) run through.
       const { written, skipped, shifted, sharedComponents, refusals, swapDetails, createdStylesheets, unexplainedSkips, touchedFiles } =
-        applyStudioEditBatch(dir, edits)
+        await applyStudioEditBatchLocked(dir, edits)
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically

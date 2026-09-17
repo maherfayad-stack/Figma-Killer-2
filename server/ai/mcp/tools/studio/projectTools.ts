@@ -44,7 +44,7 @@ import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../handlers/studio/installDeps'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
-import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
+import { scaffoldPageLocked } from '../../../../handlers/studio/pageScaffold'
 import { DEFAULT_PAGE_KIND, PageKindSchema, type PageKind } from '@core/studio-board'
 import { readTextCapped } from '../../../../handlers/studio/cappedFileRead'
 import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
@@ -403,7 +403,7 @@ const createPageTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, name, kind } = input as { dir?: string; name?: string; kind?: PageKind }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const result = createScaffoldedPage(dir, name ?? '', kind ?? DEFAULT_PAGE_KIND)
+    const result = await scaffoldPageLocked(dir, name ?? '', kind ?? DEFAULT_PAGE_KIND)
     if (!result.ok) return { ok: false, error: result.conflict }
     // A scaffolded page always writes BOTH a new page file AND a new board
     // frame (`autoPlaceBoardFrame`, `pageScaffold.ts`'s own doc) — never one

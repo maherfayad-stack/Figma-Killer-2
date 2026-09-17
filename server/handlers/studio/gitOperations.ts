@@ -32,6 +32,11 @@
  * - **Restoring a file requires a raw sha** (`gitPaths.isCommitSha`), not git's
  *   revision grammar — the only shas that exist in the UI are ones `git log`
  *   printed.
+ * - **Every mutating verb holds the project write lock** (G7,
+ *   `projectWriteLock.ts`, via `withGitWriteLock` below) so a canvas save
+ *   cannot land between two of its subprocesses, and two git verbs cannot race
+ *   into git's own `index.lock`. A verb that waits more than five seconds
+ *   refuses with `code: 'busy'`. Reads take no lock — see `withGitWriteLock`.
  *
  * ## What the status view hides, and says it hides
  *
@@ -54,6 +59,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import { isArgvSafeBranchName } from './gitPaths'
+import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
 import {
   clientSafeGitError,
   runGit,
@@ -80,6 +86,7 @@ export interface GitOperationFailure {
     | 'detached-head'
     | 'empty-file-list'
     | 'already-a-repository'
+    | 'busy'
     | 'git-failed'
   message: string
   /** Present only for `dirty-tree` — the paths that must be dealt with first. */
@@ -235,6 +242,37 @@ export async function readGitLog(dir: string, limit: number): Promise<GitLogEntr
     })
 }
 
+/**
+ * Runs one MUTATING git verb with exclusive write access to the project.
+ *
+ * A git verb is a sequence of subprocesses with real `await` points between
+ * them, and a canvas save is synchronous — so without this, a save lands
+ * BETWEEN the staging step and the commit step, and the commit contains
+ * content the user never reviewed. Two overlapping git verbs produce git's own
+ * `index.lock` error, which carries a filesystem path and has no business
+ * reaching a browser. See `projectWriteLock.ts`.
+ *
+ * Five seconds, then `busy` — a 409 at the route. A person who clicked Commit
+ * would rather be told the project is busy than watch a spinner for the length
+ * of a dependency install.
+ *
+ * READS (`readGitStatus`, `readGitFileDiff`, `readGitLog`, `listGitBranches`)
+ * deliberately do NOT go through here: they mutate nothing, the panel re-reads
+ * status after every action, and a read that could answer `busy` would turn
+ * the whole panel into an error state for the duration of an install.
+ */
+async function withGitWriteLock<T>(
+  dir: string,
+  run: () => Promise<T | GitOperationFailure>,
+): Promise<T | GitOperationFailure> {
+  try {
+    return await withProjectWriteLock(dir, run, { waitMs: GIT_LOCK_WAIT_MS })
+  } catch (err) {
+    if (err instanceof ProjectWriteLockBusyError) return failure('busy', err.message)
+    throw err
+  }
+}
+
 export interface GitBranchResult {
   ok: true
   branch: string
@@ -249,7 +287,15 @@ export interface GitBranchResult {
  * flag) and then git's own `check-ref-format`, which is the authority on what
  * a ref may be called.
  */
-export async function switchBranch(
+export function switchBranch(
+  dir: string,
+  name: string,
+  mode: 'create' | 'switch',
+): Promise<GitBranchResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runSwitchBranch(dir, name, mode))
+}
+
+async function runSwitchBranch(
   dir: string,
   name: string,
   mode: 'create' | 'switch',
@@ -307,7 +353,15 @@ export interface GitCommitResult {
  *
  * `files` must already have been through `resolveWorkspaceRelativePath`.
  */
-export async function commitFiles(
+export function commitFiles(
+  dir: string,
+  message: string,
+  files: readonly string[],
+): Promise<GitCommitResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runCommitFiles(dir, message, files))
+}
+
+async function runCommitFiles(
   dir: string,
   message: string,
   files: readonly string[],
@@ -343,7 +397,11 @@ export interface GitPushResult {
  * through, because "Support for password authentication was removed" is
  * exactly what the user needs to read.
  */
-export async function pushCurrentBranch(dir: string): Promise<GitPushResult | GitOperationFailure> {
+export function pushCurrentBranch(dir: string): Promise<GitPushResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runPushCurrentBranch(dir))
+}
+
+async function runPushCurrentBranch(dir: string): Promise<GitPushResult | GitOperationFailure> {
   const status = await readGitStatus(dir)
   if ('ok' in status) return status
   if (!status.hasOrigin) {
@@ -388,7 +446,11 @@ export interface GitInitResult {
  * only refuses the cases that are wrong regardless of consent (a repository
  * already exists).
  */
-export async function initRepository(dir: string, message: string): Promise<GitInitResult | GitOperationFailure> {
+export function initRepository(dir: string, message: string): Promise<GitInitResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runInitRepository(dir, message))
+}
+
+async function runInitRepository(dir: string, message: string): Promise<GitInitResult | GitOperationFailure> {
   if (existsSync(join(dir, '.git'))) {
     return failure('already-a-repository', 'This project already has a git repository.')
   }
@@ -424,7 +486,15 @@ export interface GitRestoreResult {
  * path must survive `resolveWorkspaceRelativePath`, and the client puts a
  * danger-styled confirmation in front of it.
  */
-export async function restoreFileFromCommit(
+export function restoreFileFromCommit(
+  dir: string,
+  sha: string,
+  relPath: string,
+): Promise<GitRestoreResult | GitOperationFailure> {
+  return withGitWriteLock(dir, () => runRestoreFileFromCommit(dir, sha, relPath))
+}
+
+async function runRestoreFileFromCommit(
   dir: string,
   sha: string,
   relPath: string,

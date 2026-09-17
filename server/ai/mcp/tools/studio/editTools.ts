@@ -39,7 +39,7 @@ import {
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import {
-  applyStudioEditBatch,
+  applyStudioEditBatchLocked,
   StudioEditSchema,
   studioEditLocation,
   type StudioEdit,
@@ -79,7 +79,7 @@ const applyEditsTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, edits } = input as { dir?: string; edits: StudioEdit[] }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const { touchedFiles, ...result } = applyStudioEditBatch(dir, edits)
+    const { touchedFiles, ...result } = await applyStudioEditBatchLocked(dir, edits)
     const pageIds = touchedFilesToPageIds(dir, touchedFiles)
     // Best-effort — a failed/absent bridge never affects this tool's own result.
     pushStudioLiveReload(ctx.userId, { dir, pageIds })

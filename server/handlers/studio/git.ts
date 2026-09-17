@@ -141,7 +141,14 @@ const RestoreBodySchema = Type.Object({
 
 export type GitCommitBody = Static<typeof CommitBodySchema>
 
-/** Refusal → HTTP status. A refusal is a 409 (the request was well-formed, the repository's state says no); a git invocation failure is a 500. */
+/**
+ * Refusal → HTTP status. A refusal is a 409 (the request was well-formed, the
+ * repository's state says no); a git invocation failure is a 500.
+ *
+ * `code: 'busy'` is a 409 like the rest: something else is writing to this
+ * project right now (a save, an install, another git verb). It is the
+ * project's state answering, and the next action is simply "try again".
+ */
 function failureResponse(failure: GitOperationFailure): Response {
   const status = failure.code === 'git-failed' ? 500 : 409
   return jsonResponse(

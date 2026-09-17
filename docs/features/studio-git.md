@@ -23,6 +23,7 @@ same panel.
 | Route | `server/handlers/studio/git.ts` | Dir resolution, body validation, refusal → HTTP status. **No argv is built here.** |
 | Operations | `server/handlers/studio/gitOperations.ts` | The eight things Studio may ask git to do |
 | Subprocess + guard | `server/handlers/studio/gitRunner.ts` | `Bun.spawn` discipline, env allowlist, the "is this the project's own repository" guard |
+| Write lock | `server/handlers/studio/projectWriteLock.ts` | One writer per project — saves, scaffolds, installs and git verbs |
 | Parser | `server/handlers/studio/gitStatusParse.ts` | `--porcelain=v2 --branch -z` → typed status. Pure. |
 | Input judgement | `server/handlers/studio/gitPaths.ts` | Every caller-supplied path, branch name, sha, message |
 | Wire contract | `src/admin/pages/site/studio/gitRequests.ts` | TypeBox schemas + `apiRequest` calls |
@@ -52,9 +53,10 @@ offer "Create a repository" rather than showing a failure for a project nobody
 has put under version control yet.
 
 A refusal based on the repository's *state* (dirty tree, no `origin`, detached
-HEAD, repository already exists) answers **409** with
-`{ error, code, dirtyFiles? }`. A git invocation that actually failed answers
-**500**. Anything rejected by a guard answers a bare **404**.
+HEAD, repository already exists, another writer holds the project write lock)
+answers **409** with `{ error, code, dirtyFiles? }`. A git invocation that
+actually failed answers **500**. Anything rejected by a guard answers a bare
+**404**.
 
 ---
 
@@ -109,6 +111,46 @@ one.
   `@{-1}`.
 - **Errors never carry a filesystem path.** `clientSafeGitError` elides the
   workspace root and caps length.
+- **One writer at a time, per project.** See below.
+
+### The project write lock
+
+`server/handlers/studio/projectWriteLock.ts` — an async mutex keyed by the
+**real** project path (symlinks resolved, so one project is one lock), FIFO,
+reentrant.
+
+It exists because a git verb is a *sequence* of subprocesses with real `await`
+points between them, while a canvas save is one synchronous burst of writes.
+Without it, a save lands between the staging step and the commit step and the
+commit carries content nobody reviewed; two overlapping git verbs surface git's
+own `index.lock` error, which has a filesystem path in it.
+
+Every mutation of a project's files takes it:
+
+| Holder | Where | Wait |
+|---|---|---|
+| A canvas save | `applyStudioEditBatchLocked` (`studioWriteback.ts`) | unbounded |
+| A page scaffold | `scaffoldPageLocked` (`pageScaffold.ts`) | unbounded |
+| A dependency install | the package-manager subprocess only (`installDeps.ts`) | unbounded |
+| Every mutating git verb | `withGitWriteLock` (`gitOperations.ts`) | 5 s, then `busy` |
+
+A save waits as long as it has to, because the user's alternative to waiting is
+losing the edit. A git verb waits five seconds and then answers **409
+`{ code: 'busy' }`** — a person who clicked Commit would rather be told the
+project is busy than watch a spinner for the length of an install.
+
+**Reads take no lock**: `status`, `diff`, `log`, and `branches` mutate nothing,
+the panel re-reads status after every action, and a read that could answer
+`busy` would turn the whole panel into an error state for the duration of an
+install.
+
+The lock is **reentrant** — the held keys travel with the async context
+(`AsyncLocalStorage`), across `await`s and subprocess waits — so a verb that
+reads status inside its own critical section (`push`, `pull`) does not deadlock
+on itself.
+
+`studioCssWriteback.ts` needs no lock of its own: `applyCssEdit`'s only caller
+is the edit batch, so a `css` edit is already inside the save's lock.
 
 ### Credentials
 
@@ -214,6 +256,7 @@ in-canvas turn loop is a product call that has not been made.
 |---|---|
 | `server/handlers/__tests__/gitStatusParse.test.ts` | The porcelain-v2 parser against real captured output: renames spanning two NUL fields, paths with spaces, initial/detached/diverged branch headers, unmerged records, unknown record types |
 | `server/handlers/__tests__/gitPaths.test.ts` | Every rejection: traversal on both separators, absolute/UNC/drive-letter paths, excluded directories, **symlink escape** (leaf and parent), flag-looking branch names, revision expressions where a sha is required |
+| `server/handlers/__tests__/projectWriteLock.test.ts` | Ordering (a save and a commit resolve in arrival order, FIFO), the `busy` refusal and its path-free message, per-project isolation, the symlink key, reentrancy across a subprocess wait |
 | `server/handlers/__tests__/git.test.ts` | End-to-end against real git: edit → status → diff → branch → commit → **push to a local bare remote**. Plus the rejections: dir outside the workspace, a project with no `.git` (never Studio's own repo), the workspace root itself, unusable paths in every path-taking route, dirty-tree switch refusal, empty commit, push with no origin, no filesystem path in an error body |
 | `server/ai/mcp/tools/studio/gitTools.test.ts` | The capability declaration (invisible with `studio.write` alone, invisible without `ai.tools.write`) and the tool's own refusals |
 | `src/__tests__/studio/gitDiffLines.test.ts` | Unified-diff line numbering, `---`/`+++` not read as content, hunk-header counter resets, the no-newline marker |
