@@ -20,14 +20,13 @@
  * readonly getter (so assigning to it throws `Attempted to assign to readonly
  * property`). Both halves are browser-only. Planning is read-only, so the
  * cross-document property above is testable here; the rewrite itself is
- * covered by `hoverSuppression.test.ts` at the selector level and by the
+ * covered by `hoverSuppressionRules`' own selector tests and by the
  * canvas in a real browser.
  *
  * @see src/core/studio-runtime/hoverSuppressionRules.ts
  */
 import { afterEach, describe, expect, it } from 'bun:test'
-import { planHoverRewrites } from '@core/studio-runtime'
-import { HOVER_DISABLED_CLASS, disableHoverInSelector } from '@site/canvas/hoverSuppression'
+import { HOVER_DISABLED_CLASS, disableHoverInSelector, planHoverRewrites } from '@core/studio-runtime'
 
 const SHEET = [
   '.plain { color: red }',
