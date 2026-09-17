@@ -53,6 +53,38 @@ export interface ClientPoint {
 }
 
 /**
+ * Everything opening a drag session needs, in whichever coordinate space the
+ * press was captured.
+ *
+ * Lives here rather than in `useCanvasReorderDrag` because it is the contract
+ * between the session and BOTH of its activation points — the selection
+ * toolbar's hand-grab handle (parent document) and `useCanvasBodyDragTrigger`
+ * (inside the frame's iframe) — and a shape one of them imported from the
+ * other would make the two look asymmetrical when they are not.
+ */
+export interface CanvasDragOrigin {
+  pointerId: number
+  /**
+   * PARENT-document client coordinates, always. Every subsequent pointermove
+   * reaches the session's window listeners in that space (either natively, or
+   * translated by `IframeFrameSurface`'s relay), so an origin measured in any
+   * other space would make the activation distance and the first resolved
+   * drop target wrong by the iframe's offset.
+   */
+  clientX: number
+  clientY: number
+  /** Node ids this gesture proposes to move, before locked/root filtering. */
+  candidateIds: readonly string[]
+  /** The one of `candidateIds` the gesture is "about", when it has an opinion. */
+  preferredDraggedId: string | null
+  /** Node to select once the gesture stops being a click — see the session's own doc. */
+  selectOnActivate: string | null
+  frameId: string | null
+  /** K2 — Alt was already held at `pointerdown`, so the ghost reads `+` from the first frame. */
+  altKey: boolean
+}
+
+/**
  * Everything a drag session measures once and then reuses: the drop
  * candidates of one frame, plus the conversion from parent-document client
  * coordinates into the frame-space those rects live in.

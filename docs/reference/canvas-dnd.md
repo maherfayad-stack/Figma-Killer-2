@@ -36,9 +36,13 @@ topology below first.
   re-render.** `pointerdown` measures everything the gesture needs once;
   every `pointermove` writes a ref; ONE `requestAnimationFrame` resolves the
   drop target and paints the indicator straight into the DOM; `pointerup`
-  writes the store once. Between `pointerdown` and `pointerup` there is **no
-  React commit and no forced layout read**. See
-  "[The drag session](#the-drag-session-s2)" below.
+  writes the store once. **Per pointermove: zero React commits and zero forced
+  layout reads** — the gesture commits React exactly twice, at its two edges.
+  See "[The drag session](#the-drag-session-s2)" below.
+- **Alt+drag drops a copy** — for canvas elements (one source write through
+  `duplicateJsxElement`'s destination form) and for board frames (a cheap
+  `boards.json` copy). Refuses for exactly the reasons the same drag without
+  Alt would. See "[Alt+drag duplicates (K2)](#altdrag-duplicates-k2)".
 - `@dnd-kit/core` genuinely IS used — but only on one surface that never
   crosses an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s
   `<DndContext>`). The Site Explorer used to be the second such surface; its
@@ -289,8 +293,27 @@ regardless of trigger, so there is little for one to do yet.
 | File | Owns |
 |---|---|
 | `useCanvasReorderDrag.ts` | The session: listeners, activation distance, the single rAF, the one store write |
+| `useCanvasBodyDragTrigger.ts` | The second activation point — "does this press mean a drag at all" |
 | `canvasDragSession.ts` | `frameCandidateIndex` — the measurements, and when they go stale |
 | `canvasDragPainter.ts` | Everything the drag draws, written straight into the DOM |
+
+**The two React commits.** `dragging` flips on when the press clears the
+activation distance and off at release / Escape / cancel — and never in
+between. It stays React state rather than a ref because a consumer genuinely
+renders from it: the selection overlay's measurement scheduler keeps measuring
+while a continuous gesture is in flight, and a ref would leave that loop off
+for the whole drag.
+
+**The session also holds a `canvasGesture`** (`beginCanvasGesture` at
+`pointerdown`, `endCanvasGesture` in the reset). Not because a reorder mutates
+the page — it writes nothing until `pointerup` — but because the two things
+that gesture flag freezes, the frame's **auto-height refit** and the
+parent-document **selection anchor**, are exactly the two that would otherwise
+reflow the frame mid-drag and invalidate the candidate index from underneath a
+pointer the user has not moved. The `ResizeObserver` below and the frozen
+auto-height are therefore cooperating, not racing: the observer exists for
+reflows the drag does not control (an image finishing, an HMR patch), and the
+one reflow source the editor DOES control is held still.
 
 **What is measured, and when it is re-measured.** `beginDrag` builds a
 `frameCandidateIndex`: every `[data-node-id]` rect in the frame (in
@@ -330,6 +353,93 @@ pointer position the resolution used, in the same frame.
 **`pointerup` resolves any still-pending frame synchronously** before
 committing, so a flick whose last move and release land inside one animation
 frame commits the position the user actually pointed at.
+
+---
+
+## Alt+drag duplicates (K2)
+
+Hold Alt and the same drag drops a **copy**. Two surfaces, one gesture,
+different mechanics because they write to different places.
+
+### Elements
+
+Alt is read off **every pointer event**, never latched at `pointerdown`:
+release it mid-drag and the drop is a move again; press it mid-drag and the
+same drop becomes a copy. The ghost shows a `+` while it is held, which is
+therefore an honest readout rather than a decoration. The commit reads the
+modifier state at **release**.
+
+`pointerup` routes to `duplicateNodesTo(ids, parentId, index)` instead of
+`moveNodes`. On a studio-imported tree that is **one source write**:
+
+```
+duplicateNodesTo
+  └─ writeDuplicateToSource(ids, { parentId, index })
+       ├─ guardAgainstConcurrentStructuralCommit()   ← same store-11 guard as ⌘D
+       ├─ planSourceDuplicateTo(tree, ids, parentId, index)
+       └─ commitStudioDuplicate([nodeId], { parentNodeId, anchorNodeId, position })
+            └─ POST /studio/save  { kind: 'duplicate', nodeId, parentNodeId, … }
+                 └─ duplicateJsxElement({ …, destinationLine, destinationCol, anchorLine, … })
+```
+
+`planSourceDuplicateTo` composes the two questions the gesture is made of, so
+**Alt+drag refuses for exactly the reasons the same drag without Alt would**:
+
+| Question | Answered by | Refusals it carries |
+|---|---|---|
+| May this element be copied at all? | `refuseStructuralEdit({ kind: 'duplicate' })` — the identical question ⌘D asks | `list-row`, `shared-component`, `route-chrome`, `code-placed` |
+| May it land *there*? | `previewStructuralMove` — the identical question a plain drag asks | `cross-file`, a container that is not an ordinary element, `insert` |
+
+Plus one of its own: a **multi-node** Alt+drag refuses as `multi-select` — the
+session resolves one drop target, and N copies dropped at one position would
+have to be ordered against each other inside a child list each of them is
+shifting. All of these reach the user through `RefusalDialog` (or the toast,
+for the remedy-less reasons) — the same channel a refused move uses.
+
+The **commit** is an insert's, not a move's. `previewStructuralMove` resolves
+its anchor from the child list with the dragged node *removed*, because that is
+what a move does to it; a copy removes nothing, so the same index names a
+different neighbour. `resolveContainerAnchor` — `planSourceInsert`'s own
+resolver — is the honest one here, and a duplicate-to is precisely an insert of
+markup that already exists.
+
+`duplicateJsxElement` grew a second form to match (`destinationLine` /
+`destinationCol`, mirroring `moveJsxElement`'s reorder/reparent split). It is
+**one text edit**, not two — there is nothing to remove, so no last-first
+`applyTextEdits` ordering and no `exclude` range for the placement to step
+around. It refuses `into-own-descendant` (the copy would land inside itself)
+and `out-of-scope` (markup lifted out of a `.map` callback loses the row it
+read) — the latter through the same `freeVariablesOutOfScopeAt` a reparent
+uses, because a copy landing where its bindings do not exist breaks the file
+exactly as a move would.
+
+On a CMS / Visual Component tree there is no file to disagree with, so
+`duplicateNodesTo` degrades to "duplicate in place, then move the copies" —
+reusing `duplicateNodes` (which already owns per-node scoped-class cloning and
+the one-outlet guard) rather than re-implementing either.
+
+### Board frames
+
+Alt is **latched at `pointerdown`**, not read live — a frame copy is a real
+object in `boards.json` the moment it exists, so letting the modifier toggle
+mid-gesture would mean creating and destroying a board frame on every keypress.
+
+The copy is spawned on the **first pointermove**, not at `pointerdown`, so a
+plain Alt+click that never travels leaves no stray frame. From then on the
+drag moves the copy (`DragState.movingFrameId`) and the original never hears
+about the gesture again. Escape removes the copy outright.
+
+`duplicateFrameAt(sourceFrameId, x, y)` is a cheap `boards.json` write through
+the same pure `duplicateFrame` transform "duplicate as variant" uses — it
+never touches the user's source. It is coalesced under the copy's own move key
+so the spawn and every subsequent move collapse into one undo entry: ⌘Z after
+an Alt+drag removes the copy rather than walking it back across the board
+first.
+
+The gesture is documented in the `?` sheet as a virtual, never-matching
+`keybindings.ts` entry (`canvas.altDragDuplicate`) — that array *is* the sheet,
+and documenting a gesture anywhere else would fork the registry's
+single-source-of-truth gate.
 
 ---
 

@@ -794,13 +794,18 @@ ref, and re-reads the origin only when they differ — which is how auto-pan
 stays correct without a `getBoundingClientRect()` per frame.
 
 **A canvas gesture measures once and paints imperatively.** The element drag
-(S2) does zero forced layout reads and zero React commits between
-`pointerdown` and `pointerup`: `canvasDragSession.ts` holds the measurements,
-`canvasDragPainter.ts` writes the indicator/ghost into a React-rendered but
-never-React-populated layer, and the store is written exactly once, on
-release. The same shape as `useElementResizeDrag`'s one-write-per-rAF
-coalescing, extended with the measurement half a hit-test needs. Full
-contract: `docs/reference/canvas-dnd.md` → "The drag session (S2)".
+(S2) does zero forced layout reads and zero React commits PER POINTERMOVE:
+`canvasDragSession.ts` holds the measurements, `canvasDragPainter.ts` writes
+the indicator/ghost into a React-rendered but never-React-populated layer, and
+the store is written exactly once, on release. React commits twice per
+gesture, at its two edges (`dragging` on at activation, off at release) —
+that flag is state rather than a ref because the overlay's measurement
+scheduler renders from it. The same shape as `useElementResizeDrag`'s
+one-write-per-rAF coalescing, extended with the measurement half a hit-test
+needs, and it takes the same `canvasGesture` freeze — here to stop the frame's
+auto-height refit reflowing the page under a stationary pointer and
+invalidating the candidate index. Full contract:
+`docs/reference/canvas-dnd.md` → "The drag session (S2)".
 
 **Chrome outside `CanvasRoot` reaches the canvas through the store, not the
 context.** The toolbar is painted eagerly by `AdminCanvasLayout`, *above* the

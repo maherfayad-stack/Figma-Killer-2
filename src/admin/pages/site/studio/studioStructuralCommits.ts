@@ -168,10 +168,40 @@ export async function commitStudioReparent(reparent: {
  * bottom-to-top, so a copy written lower in the file cannot move the line of one
  * still pending above it.
  */
-export async function commitStudioDuplicate(nodeIds: readonly string[]): Promise<void> {
+export async function commitStudioDuplicate(
+  nodeIds: readonly string[],
+  /**
+   * K2 — Alt+drag. Where the copy lands, when it is not beside the original:
+   * the container, and optionally the existing child to write it next to
+   * (`null` appends, which is a real position). Omitted entirely for ⌘D and
+   * the toolbar button, which copy in place.
+   *
+   * Single-node only by construction: the Alt+drag session resolves ONE drop
+   * target, and a multi-selection Alt-dragged to one place would need N copies
+   * ordered against each other inside a container whose child list is shifting
+   * under them. `planSourceDuplicateTo` refuses that as `multi-select` rather
+   * than copying the first and pretending.
+   */
+  destination?: {
+    parentNodeId: string
+    anchorNodeId: string | null
+    position: 'before' | 'after'
+  },
+): Promise<void> {
   if (nodeIds.length === 0) return
   await commitStructural(
-    nodeIds.map((nodeId) => ({ kind: 'duplicate', nodeId })),
+    nodeIds.map((nodeId) => ({
+      kind: 'duplicate',
+      nodeId,
+      ...(destination
+        ? {
+            parentNodeId: destination.parentNodeId,
+            ...(destination.anchorNodeId
+              ? { anchorNodeId: destination.anchorNodeId, position: destination.position }
+              : {}),
+          }
+        : {}),
+    })),
     'Duplicate refused',
     {
       title: nodeIds.length === 1 ? 'Duplicated' : `Duplicated ${nodeIds.length} elements`,

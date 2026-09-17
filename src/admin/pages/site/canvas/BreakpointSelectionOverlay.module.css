@@ -374,3 +374,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* K2 — Alt held: the drop writes a COPY, not a move. Generated content rather
+   than a second element, so the painter writes one attribute instead of
+   mounting and unmounting a badge mid-gesture. */
+.dragGhost[data-duplicating="true"] .dragGhostLabel::before {
+    content: "+ ";
+    color: var(--accent-3);
+    font-weight: 700;
+}

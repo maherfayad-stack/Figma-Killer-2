@@ -53,6 +53,8 @@ export interface CanvasDragGhost {
   point: ClientPoint
   /** What is being dragged — the node's display name, or "N layers". */
   label: string
+  /** K2 — Alt is held, so the drop writes a COPY. Renders the `+` badge. */
+  duplicating: boolean
 }
 
 export interface CanvasDragPaint extends CanvasDropResolution {
@@ -122,6 +124,7 @@ export function paintCanvasDrag(layer: HTMLElement | null, paint: CanvasDragPain
   const ghost = paint.ghost
   if (ghost) {
     applyIndicatorVars(parts.ghost, pointStyle(ghost.point.x, ghost.point.y))
+    setAttribute(parts.ghost, 'data-duplicating', ghost.duplicating ? 'true' : null)
     setText(parts.ghostLabel, ghost.label)
     show(parts.ghost)
   } else {

@@ -483,6 +483,24 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     scope: 'canvas',
     ignoreInEditableField: true,
   },
+
+  // K2 — Alt+drag duplicates. A documented GESTURE, not a keystroke: there is
+  // no `keydown` to match (the modifier is read off the pointer event by
+  // `useCanvasReorderDrag` for elements and `BoardFrameView` for frames), so
+  // `match` is constant-false and no dispatcher will ever fire it.
+  //
+  // It lives here anyway because this array IS the `?` sheet
+  // (`HelpKeybindingsList` renders exactly it), and a modifier nobody can
+  // discover is a feature nobody has. Documenting it in a second place instead
+  // would fork the single source of truth
+  // (`keybindings-registry-single-source.test.ts`).
+  {
+    commandId: 'canvas.altDragDuplicate',
+    displayName: 'Drag a copy instead of moving (elements and frames)',
+    shortcut: { mac: '⌥ + drag', win: 'Alt + drag' },
+    match: () => false,
+    scope: 'canvas',
+  },
 ]
 
 /** Board units one arrow press moves a selected frame, and the Shift step. */

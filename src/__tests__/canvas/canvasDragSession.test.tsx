@@ -125,24 +125,31 @@ function renderDrag() {
 }
 
 describe('useCanvasReorderDrag — one session, one rAF, one store write', () => {
-  it('renders React zero times across a whole stream of pointer moves', async () => {
+  it('commits React exactly twice across a whole stream of pointer moves', async () => {
     const drag = renderDrag()
     act(() => {
       drag.result.current.handlePointerDown(pointerDownEvent(viewport.element, 500, 400))
     })
-    const before = drag.renders()
+    // A press alone is still a click: no commit, and nothing advertising a drag.
+    const afterPress = drag.renders()
+    expect(drag.result.current.dragging).toBe(false)
 
     act(() => {
       for (let i = 0; i < 40; i++) dispatchPointer('pointermove', 500 + i, 400 + i)
     })
     await flushFrames()
 
-    // The gesture is live...
     expect(drag.result.current.dragging).toBe(true)
-    // ...and not one of those 40 events produced a commit. This is the whole
-    // work order: `dragging` is read from the session ref, and everything the
-    // drag draws is painted straight into the DOM.
-    expect(drag.renders()).toBe(before)
+    // ONE commit for those 40 events — the `dragging` flip at activation, which
+    // the selection overlay's measurement scheduler renders from. The other 39
+    // moves produced nothing: the drop line, the refusal chip and the ghost are
+    // painted straight into the DOM.
+    expect(drag.renders()).toBe(afterPress + 1)
+
+    act(() => { dispatchPointer('pointerup', 540, 440) })
+    // And one more at release, closing the gesture.
+    expect(drag.result.current.dragging).toBe(false)
+    expect(drag.renders()).toBe(afterPress + 2)
   })
 
   it('measures the viewport ONCE, not twice per pointermove', async () => {

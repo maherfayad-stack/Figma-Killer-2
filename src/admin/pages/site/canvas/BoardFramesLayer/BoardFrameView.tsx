@@ -37,7 +37,6 @@ import {
 import { createPortal } from 'react-dom'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Breakpoint, Page } from '@core/page-tree'
 import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
@@ -51,7 +50,7 @@ import { BreakpointFrame } from '../BreakpointFrame'
 import { CanvasEmptyPageHint } from '../CanvasEmptyPageHint'
 import { pageHasNoContent } from '../canvasEmptyPage'
 import { resizeRect, RESIZE_HANDLES, type ResizeRect, type ResizeHandle } from '../rectResize'
-import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
+import { useBoardFrameMoveDrag } from './useBoardFrameMoveDrag'
 import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
@@ -126,14 +125,6 @@ function buildStudioBreakpoint(width: number): Breakpoint {
   const breakpoint: Breakpoint = { ...STUDIO_BREAKPOINT_BASE, width }
   studioBreakpointsByWidth.set(width, breakpoint)
   return breakpoint
-}
-
-interface DragState {
-  pointerId: number
-  startClientX: number
-  startClientY: number
-  frameX: number
-  frameY: number
 }
 
 interface ResizeDragState {
@@ -213,7 +204,6 @@ function BoardFrameViewImpl({
   // starts passing a real, decoupled hot-set flag.
   const liveMounted = isLiveMounted ?? isOnScreen
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  const dragRef = useRef<DragState | null>(null)
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
@@ -275,88 +265,16 @@ function BoardFrameViewImpl({
     if (!isActive) activatePage()
   }
 
-  const handleHeaderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    // Only the primary (left) button starts a move-drag — a right-click's
-    // pointerdown must fall through to `onContextMenu` untouched, never
-    // arming drag state (see the module doc's "Drag-to-reposition" note).
-    if (e.button !== 0) return
-    // WS-7.1 — select on pointerDOWN (not click/mouseup), matching Figma:
-    // pressing a frame's header selects it immediately, and a drag that
-    // follows moves the now-selected frame. Plain click replaces the
-    // selection; Shift-click extends it (toggle-add).
-    useEditorStore.getState().selectFrame(page.id, e.shiftKey ? 'toggle' : 'replace')
-    e.currentTarget.setPointerCapture(e.pointerId)
-    dragRef.current = {
-      pointerId: e.pointerId,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      frameX: x,
-      frameY: y,
-    }
-  }
+  // The header move-drag, end to end (press, snap, Alt-copy, Escape,
+  // release) — its own hook so this view keeps owning what a frame LOOKS
+  // like. See `useBoardFrameMoveDrag`.
+  const moveDrag = useBoardFrameMoveDrag({ frameId: frame.id, pageId: page.id, x, y, width, height })
 
   const handleHeaderContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
     setContextMenu({ x: e.clientX, y: e.clientY })
   }
-
-  const handleHeaderPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== e.pointerId) return
-    const zoom = useEditorStore.getState().zoom
-    const dx = (e.clientX - drag.startClientX) / zoom
-    const dy = (e.clientY - drag.startClientY) / zoom
-    const rawX = drag.frameX + dx
-    const rawY = drag.frameY + dy
-
-    // Snap to the OTHER furniture on the board (Phase 6B) — every other
-    // frame, note, and doc, excluding this frame's own page.
-    const board = selectActiveBoard(useEditorStore.getState())
-    const peers = board ? collectPeerRects(board, { kind: 'frame', pageId: page.id }) : []
-    const snapped = computeSnap({ x: rawX, y: rawY, width, height }, peers, SNAP_THRESHOLD_BOARD_UNITS)
-    useEditorStore.getState().setBoardSnapGuides(snapped.guides)
-    useEditorStore.getState().setFramePosition(frame.id, snapped.x, snapped.y)
-  }
-
-  const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) {
-      dragRef.current = null
-      useEditorStore.getState().setBoardSnapGuides([])
-      // `store-09` — close the undo-coalescing burst this drag opened, so a
-      // second drag of the SAME frame is its own ⌘Z step.
-      useEditorStore.getState().endBoardGesture()
-    }
-  }
-
-  /**
-   * D2 G8 — Escape abandons a frame drag.
-   *
-   * Unlike the element drag (which writes nothing until `pointerup`), a frame
-   * drag writes its position live, so cancelling has to put the frame back
-   * where the press started — `DragState` is already carrying exactly that.
-   * The coalescing burst is closed too, so the cancelled drag does not fold
-   * into whatever the user does next.
-   *
-   * On `window` rather than the header: the pointer is captured by the header
-   * but keyboard focus is not, so a keydown during the drag lands wherever
-   * focus already was.
-   */
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const drag = dragRef.current
-      if (event.key !== 'Escape' || !drag) return
-      event.preventDefault()
-      event.stopPropagation()
-      dragRef.current = null
-      const store = useEditorStore.getState()
-      store.setFramePosition(frame.id, drag.frameX, drag.frameY)
-      store.setBoardSnapGuides([])
-      store.endBoardGesture()
-    }
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [frame.id])
 
   // Resize handles — same pointer-capture + screenDelta/zoom pattern as the
   // header drag above, so a handle tracks the cursor 1:1 at any zoom. The
@@ -446,10 +364,10 @@ function BoardFrameViewImpl({
       <div
         className={styles.header}
         data-testid="board-frame-header"
-        onPointerDown={handleHeaderPointerDown}
-        onPointerMove={handleHeaderPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        onPointerDown={moveDrag.onPointerDown}
+        onPointerMove={moveDrag.onPointerMove}
+        onPointerUp={moveDrag.onPointerUp}
+        onPointerCancel={moveDrag.onPointerUp}
         onContextMenu={handleHeaderContextMenu}
         onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); rename.start(page.title) }}
       >

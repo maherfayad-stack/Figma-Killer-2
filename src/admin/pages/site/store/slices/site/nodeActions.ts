@@ -77,6 +77,7 @@ type NodeActions = Pick<
   | 'moveNodes'
   | 'duplicateNode'
   | 'duplicateNodes'
+  | 'duplicateNodesTo'
   | 'wrapNode'
   | 'wrapNodes'
 >
@@ -638,6 +639,17 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           'Duplicating the content outlet was skipped — a document can hold just one.',
         )
       }
+      return newIds
+    },
+
+    // K2 — Alt+drag's commit; contract in `types.ts`. The in-memory fallback
+    // is deliberately "duplicate, then move": `duplicateNodes` already owns
+    // scoped-class cloning and the one-outlet guard.
+    duplicateNodesTo: (nodeIds, newParentId, newIndex) => {
+      if (nodeIds.length === 0) return []
+      if (writeDuplicateToSource(nodeIds, { parentId: newParentId, index: newIndex })) return []
+      const newIds = actions.duplicateNodes(nodeIds)
+      if (newIds.length > 0) actions.moveNodes(newIds, newParentId, newIndex)
       return newIds
     },
 

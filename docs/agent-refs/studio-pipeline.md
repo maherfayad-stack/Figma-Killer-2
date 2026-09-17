@@ -214,7 +214,12 @@ the editor invented. W4-1 generalised that write-then-re-read shape to the last
 three Figma verbs, which is why they stopped refusing: a duplicate is the
 element's own bytes written in again, a wrap replaces its range with itself
 inside a container, and a reparent splices its bytes into a different parent in
-the same file. The module declares its own source spelling via
+the same file. **K2 gave `duplicate` a second form**: with a `parentNodeId` the
+copy lands INSIDE that container instead of beside the original (Alt+drag),
+through the same `jsxChildPlacement` resolver an insert and a reparent use.
+That form answers the questions a reparent answers — `cross-file`,
+`into-own-descendant`, `out-of-scope` — and a plain in-place duplicate still
+answers none of them. The module declares its own source spelling via
 `ModuleDefinition.sourceImport` / `sourceIntrinsic`, so nothing in the store is
 coupled to a particular design system. The plugin/agent dispatcher
 (`applyTreeOperation`) still refuses — `refuseMintedNodeInsert` for an insert,
@@ -239,8 +244,8 @@ from the node id and `lockReason` alone:
 | `route-chrome` | a Next `layout`/`template` — one file, many frames |
 | `code-placed` | the parser recorded a structural `lockReason` |
 | `insert` | asked about the CONTAINER, not a node — it refuses only when the container itself is a `.map` row / inlined / route chrome / code-placed |
-| `reparent` | no container to write into, or one that is not an ordinary element. `duplicate`/`wrap` carry no refusal of their own beyond the four above |
-| `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or DUPLICATE is fine — the batch is ordered bottom-to-top |
+| `reparent` | no container to write into, or one that is not an ordinary element. An in-place `duplicate`/`wrap` carries no refusal of its own beyond the four above; a `duplicate` WITH a destination (K2's Alt+drag) asks the reparent question about that destination too |
+| `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or in-place DUPLICATE is fine — the batch is ordered bottom-to-top. A multi Alt+DRAG is not: N copies at one drop position have no single order in the code (`planSourceDuplicateTo`) |
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file |
 
 The AST adds the refusals only it can answer: `not-siblings`,

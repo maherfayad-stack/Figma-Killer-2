@@ -192,14 +192,28 @@ const InsertEditSchema = Type.Object({
 })
 
 /**
- * One element copied in place (W4-1) — `duplicateJsxElement`. `nodeId` is the
- * element being copied, and it is the ONLY field: the copy lands as its own next
- * sibling, in the same scope, so there is no anchor to resolve and no import to
- * reconcile (every binding the markup reads was already in scope one line up).
+ * One element copied (W4-1, extended by K2) — `duplicateJsxElement`. `nodeId`
+ * is the element being copied.
+ *
+ * With no `parentNodeId` the copy lands as its own next sibling, in the same
+ * scope — the ⌘D / toolbar gesture, and the only form that existed before K2.
+ * With one, the copy lands INSIDE that container instead (Alt+drag), and the
+ * optional `anchorNodeId`/`position` name an existing child of it to land
+ * beside, for the same reason `move` uses an anchor rather than an index.
+ * Without them the copy is appended as the last child, which is a real
+ * position — the same reading `insert` and `reparent` already give.
+ *
+ * Cross-FILE is refused before it reaches here, exactly as it is for
+ * `reparent`: `applyStudioEdit` drops a `parentNodeId` that decodes to another
+ * file, and the store refuses the gesture with `cross-file` from the two ids
+ * alone.
  */
 const DuplicateEditSchema = Type.Object({
   kind: Type.Literal('duplicate'),
   nodeId: Type.String(),
+  parentNodeId: Type.Optional(Type.String()),
+  anchorNodeId: Type.Optional(Type.String()),
+  position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
 })
 
 /**
@@ -414,7 +428,25 @@ export function applyStructuralEdit(
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'duplicate': {
-      const result = duplicateJsxElement(loc)
+      // K2 — `parentNodeId` present means Alt+drag: the copy goes INTO that
+      // container, not beside the original. A `parentNodeId` that decoded to
+      // another file arrives here as `null` (the caller's cross-file guard),
+      // which must refuse rather than silently fall back to an in-place copy:
+      // the user asked for the copy to land somewhere else, and quietly
+      // putting it next to the original is a different edit.
+      if (edit.parentNodeId !== undefined && !destination) {
+        return {
+          ok: false,
+          reason: 'cross-file',
+          message:
+            'The container this copy would go into is in a different file. Studio can copy an element into a new parent within one file; across files the markup would land where the values it reads do not exist.',
+        }
+      }
+      const result = duplicateJsxElement({
+        ...loc,
+        ...(destination ? { destinationLine: destination.line, destinationCol: destination.col } : {}),
+        ...(destination && anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
+      })
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'wrap': {
