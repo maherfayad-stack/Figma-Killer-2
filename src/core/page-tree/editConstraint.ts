@@ -176,6 +176,7 @@ export interface EditConstraintAction {
     | 'promote-tier1'
     | 'style-inline-instead'
     | 'preview-branch'
+    | 'choose-stylesheet'
   /**
    * Where this action points, when it points at a file — `origin`'s own
    * shape, so a caller can wire `jump-to-source` without re-deriving it.
@@ -184,6 +185,16 @@ export interface EditConstraintAction {
    * (`detach`/`extract`/`preview-branch` all mutate editor state).
    */
   target?: { rel: string; line: number; col: number }
+  /**
+   * For `choose-stylesheet` (Z8) — the destination this remedy picks.
+   *
+   * A separate field from `target` because it is a FILE, not a position: an
+   * `ambiguous-stylesheet` refusal knows which stylesheets exist but nothing
+   * about where in them a rule would land (that is postcss's answer at write
+   * time, server-side), and inventing a `1:1` to fit `target`'s shape would
+   * claim a location this module cannot honestly name.
+   */
+  stylesheet?: { ruleId: string; file: string }
 }
 
 export interface EditConstraint {
@@ -585,16 +596,38 @@ export function explainClassNameConstraint(reason: string, message: string): Edi
 /**
  * Explains a CSS rule/breakpoint-override save-time refusal — B1/B1b's
  * `classifyStylesheetEditability` vocabulary, passed through by value.
+ *
+ * Z8 — `ambiguous-stylesheet` is the one refusal in this family that is a
+ * QUESTION: N hand-editable stylesheets exist, every one of them is a real
+ * write target, and Studio refuses to pick. Given the candidate list (and the
+ * rule to write), it becomes one runnable remedy per file: the user names the
+ * destination and the same write is re-issued against it. Without them the
+ * function is unchanged and still offers only the inline hatch — a caller that
+ * cannot supply a rule id (the `StyleTargetChip` preview, which is explaining
+ * a class nobody has asked to write yet) gets exactly what it got before.
  */
-export function explainCssRuleConstraint(reason: string, message: string): EditConstraint {
+export function explainCssRuleConstraint(
+  reason: string,
+  message: string,
+  destination?: { ruleId: string; candidates: readonly string[] },
+): EditConstraint {
+  const chooseActions: EditConstraintAction[] =
+    reason === 'ambiguous-stylesheet' && destination
+      ? destination.candidates.map((file) => ({
+          label: `Write it into ${file}`,
+          kind: 'choose-stylesheet' as const,
+          stylesheet: { ruleId: destination.ruleId, file },
+        }))
+      : []
+  const inlineHatch: EditConstraintAction[] =
+    reason === 'no-editable-stylesheet' || reason === 'ambiguous-stylesheet' || reason === 'stylesheet-import-shape-mismatch'
+      ? [{ label: 'Style the element instead', kind: 'style-inline-instead' }]
+      : []
   return {
     reason: reason as ConstraintReason,
     scope: 'node',
     explanation: message,
-    actions:
-      reason === 'no-editable-stylesheet' || reason === 'ambiguous-stylesheet' || reason === 'stylesheet-import-shape-mismatch'
-        ? [{ label: 'Style the element instead', kind: 'style-inline-instead' }]
-        : [],
+    actions: [...chooseActions, ...inlineHatch],
   }
 }
 

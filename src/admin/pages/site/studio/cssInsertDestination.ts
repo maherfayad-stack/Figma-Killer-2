@@ -23,7 +23,14 @@
  * somewhere the page does not import, and the canvas and the repo disagree
  * forever. So it resolves, or it refuses by name.
  */
-import { decodeSourceNodeId, isImportedStyleRuleId, type Page, type StyleRule } from '@core/page-tree'
+import {
+  callSitePosition,
+  decodeSourceNodeId,
+  isImportedStyleRuleId,
+  isRouteChromeNodeId,
+  type Page,
+  type StyleRule,
+} from '@core/page-tree'
 import { classifyStylesheetEditability } from '@core/css-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
 
@@ -61,6 +68,62 @@ export function getStudioStyleRuleSources(): Record<string, StyleRuleSource> {
 /** Replaces the whole registry — called once per `loadSite`, through `setStudioStyleRuleSources`. */
 export function replaceStyleRuleSources(sources: Record<string, StyleRuleSource>): void {
   styleRuleSources = sources
+  // A pin answers ONE `ambiguous-stylesheet` refusal against ONE registry. A
+  // fresh load re-resolves every rule's source from disk, so a pin that
+  // survived it would be a destination decision made against a project state
+  // that no longer exists.
+  pinnedDestinations = {}
+}
+
+/**
+ * The page open on the board, as a project-relative source file (`Z8`).
+ *
+ * This module used to refuse a freestanding class outright because it "has no
+ * notion of which page is open". The CLIENT does, and that is the whole gap:
+ * a user creates a class in the Selectors panel while looking at one screen,
+ * and the only page it could reasonably belong to is the one they are looking
+ * at. Held as module state rather than threaded through a parameter for the
+ * same reason `styleRuleSources` is: FIVE call sites ask
+ * `resolveCssInsertDestination` the same question — the save planner, the
+ * baseline's source synthesis, the `@keyframes` planner, the class-token
+ * speller, and the Properties panel's `StyleTargetChip` preview — and a
+ * parameter only the save path passed would make the panel grey out rows for
+ * a write that now lands. One fact, one place, every surface agreeing.
+ */
+let openPageFile: string | null = null
+
+/** Publishes which page is open — see `openPageFile`. `null` clears it (no page, or one with no source). */
+export function setOpenPageFile(file: string | null): void {
+  openPageFile = file
+}
+
+/** The page open on the board, as a project-relative source file — `null` when there is none. */
+export function getOpenPageFile(): string | null {
+  return openPageFile
+}
+
+/**
+ * `StyleRule.id -> the stylesheet the USER chose for it`, from the
+ * `ambiguous-stylesheet` refusal's remedies (`RefusalDialog`).
+ *
+ * `ambiguous-stylesheet` is the one destination refusal that is a QUESTION
+ * rather than a dead end: N hand-editable stylesheets exist, all of them are
+ * real write targets, and Studio will not pick one for the user. Recording
+ * their answer here — and consulting it before anything else below — is what
+ * turns that refusal into a choice: the next save resolves the same rule to
+ * `{ kind: 'existing', file }` and the declarations land.
+ */
+let pinnedDestinations: Record<string, string> = {}
+
+/**
+ * Records the stylesheet the user picked for `ruleId` out of an
+ * `ambiguous-stylesheet` refusal's candidate list. Only ever called with a
+ * file that WAS one of those candidates; `resolveCssInsertDestination`
+ * re-checks that it still is before honouring it, so a pin can never outlive
+ * the fact that made it honest.
+ */
+export function pinCssInsertDestination(ruleId: string, file: string): void {
+  pinnedDestinations[ruleId] = file
 }
 
 /**
@@ -103,7 +166,20 @@ export function isEditorAuthoredRuleId(ruleId: string): boolean {
 export type CssInsertDestination =
   | { ok: true; kind: 'existing'; file: string }
   | { ok: true; kind: 'create'; pageFile: string }
-  | { ok: false; reason: 'no-editable-stylesheet' | 'ambiguous-stylesheet'; message: string }
+  | {
+      ok: false
+      reason: 'no-editable-stylesheet' | 'ambiguous-stylesheet'
+      message: string
+      /**
+       * Every stylesheet that WOULD have been an honest target, for the
+       * refusal that is a question rather than a dead end. `ambiguous-stylesheet`
+       * carries all N of them so the user can pick one (`RefusalDialog` renders
+       * one remedy per entry, `pinCssInsertDestination` records the answer);
+       * `no-editable-stylesheet` carries none, because there were none —
+       * that is what makes it terminal.
+       */
+      candidates: string[]
+    }
 
 /**
  * One rule the user changed that could not be written, and the specific
@@ -125,6 +201,35 @@ export interface UnmappedStyleRule {
   label: string
   /** A complete, user-readable sentence, or `null` for "no source, no more specific reason". */
   reason: string | null
+}
+
+/**
+ * One brand-new class whose first declarations had nowhere honest to go —
+ * `resolveCssInsertDestination` refused (Z8).
+ *
+ * Reported separately from `unmapped`, which it used to be folded into,
+ * because the two are opposite kinds of fact and the user can only act on one
+ * of them. An `unmapped` rule is a Tailwind utility or a compiled build
+ * artefact: permanently unwritable, nothing to decide. A destination refusal
+ * is about a class that IS writable the moment somebody names a file — and for
+ * `ambiguous-stylesheet` the answer is a list of real files sitting right
+ * there in `candidates`. Folding that into a toast threw the choice away.
+ *
+ * Carrying `ruleId` is what makes the choice re-runnable: the caller pins it
+ * (`pinCssInsertDestination`) and the next save resolves the same rule to
+ * `{ kind: 'existing' }`. It is also how the caller holds this rule's diff
+ * BASELINE back — nothing reached disk, so adopting the new value would make
+ * the user's answer land on a diff that reads "no change".
+ */
+export interface CssDestinationRefusal {
+  ruleId: string
+  /** The class as the user sees it — `rule.selector` or its name. */
+  label: string
+  reason: 'no-editable-stylesheet' | 'ambiguous-stylesheet'
+  /** The refusal's own complete sentence, from `resolveCssInsertDestination`. */
+  message: string
+  /** Every stylesheet the user may choose between — empty for the terminal refusal. */
+  candidates: string[]
 }
 
 /**
@@ -176,10 +281,12 @@ export function buildClassPageIndex(pages: readonly Page[]): Map<string, string>
  * — which is what makes co-location work for the ordinary `createClass`
  * flow, where the rule carries no `scope` at all.
  *
- * `null` when neither answers: a class that exists but is on no element yet
- * genuinely has no page to co-locate a brand-new stylesheet with, and
- * `resolveCssInsertDestination` refuses rather than guessing "the currently
- * open page" (this module has no notion of which page is open).
+ * `null` when neither answers — a class that exists but is on no element yet.
+ * That is no longer the end of the road: `resolveCssInsertDestination` falls
+ * back to the page the user has OPEN (`openPageFile`, Z8), which is the one
+ * page such a class can honestly be said to belong to. The rule's own page
+ * still outranks it, so a class already used on Home never follows the board
+ * to Onboarding.
  */
 function pageFileForRule(rule: StyleRule, pageIndex: ReadonlyMap<string, string>): string | null {
   if (rule.scope?.type === 'node') {
@@ -187,6 +294,45 @@ function pageFileForRule(rule: StyleRule, pageIndex: ReadonlyMap<string, string>
     if (scoped) return scoped
   }
   return pageIndex.get(rule.id) ?? null
+}
+
+/**
+ * The ONE source file a board page's own markup lives in, or `null` when
+ * there is not exactly one — what `setOpenPageFile` should be fed for
+ * `activePageId`.
+ *
+ * Deliberately NOT `server/handlers/studio/pageSourceFile.ts`'s
+ * `resolvePageSourceFile`, which answers a deliberately looser question ("a
+ * file to READ for this page": first decodable node id wins, tail-first, so
+ * an inlined `<Header/>` as the first child answers `components/Header.tsx`).
+ * A destination for a WRITE cannot be best-effort — co-locating a new
+ * stylesheet next to `Header.tsx` because it happened to be rendered first is
+ * exactly the "N places the user didn't ask for" failure. So this reads the
+ * CALL SITE of every node (`callSitePosition`, the head of a composite id —
+ * always a position in the page's own file, never in the component inlined
+ * there) and answers only when they agree on one file.
+ *
+ * Route chrome is skipped: a Next `layout.tsx`/`template.tsx` is composed into
+ * every route beneath it, so a stylesheet co-located with it is a stylesheet
+ * every frame imports — one edit, N pages, which is the same refusal one level
+ * up. `.map` rows and the synthetic `<pageId>:body` root contribute nothing;
+ * neither decodes to a source location at all.
+ */
+export function resolveOpenPageFile(
+  pages: readonly Page[],
+  activePageId: string | null | undefined,
+): string | null {
+  if (!activePageId) return null
+  const page = pages.find((entry) => entry.id === activePageId)
+  if (!page) return null
+  const files = new Set<string>()
+  for (const node of Object.values(page.nodes)) {
+    const callSite = callSitePosition(node.id)
+    if (isRouteChromeNodeId(callSite)) continue
+    const rel = decodeSourceNodeId(callSite)?.rel
+    if (rel) files.add(rel)
+  }
+  return files.size === 1 ? [...files][0]! : null
 }
 
 /**
@@ -206,6 +352,12 @@ function isCoLocatedStylesheet(pageFile: string, cssFile: string): boolean {
  * Where a rule with no write-back source at all should have its first
  * declarations written. Resolution order:
  *
+ *   0. The stylesheet the USER already chose for this rule out of an
+ *      `ambiguous-stylesheet` refusal (`pinCssInsertDestination`, Z8).
+ *      Consulted first and honoured only while it is still one of the
+ *      project's editable stylesheets — an answer the user gave outranks
+ *      every heuristic below it, and nothing else in this function is
+ *      allowed to second-guess it.
  *   1. The stylesheet CO-LOCATED WITH THE RULE'S OWN PAGE, when the rule
  *      names one and such a file is already a known write target
  *      (`pages/Home.tsx` -> `pages/Home.module.css`). This is not a guess
@@ -228,10 +380,23 @@ function isCoLocatedStylesheet(pageFile: string, cssFile: string): boolean {
  *      `ambiguous-stylesheet`, naming every candidate — Studio will not
  *      guess which file a new class belongs in. This branch NEVER creates:
  *      the ambiguity is about multiple EXISTING choices, not about needing
- *      a new one.
- *   4. Else (zero candidates) — try to name the rule's PAGE
- *      (`pageFileForRule`). If one resolves, offer `kind: 'create'`. If not,
- *      refuse with `no-editable-stylesheet`.
+ *      a new one. Z8: the refusal now carries those candidates as data, so
+ *      the caller can ASK (a `RefusalDialog` with one remedy per file)
+ *      instead of reporting a dead end the user cannot act on.
+ *   4. Else (zero candidates) — try to name the anchor page. If one
+ *      resolves, offer `kind: 'create'`. If not, refuse with
+ *      `no-editable-stylesheet`.
+ *
+ * ## The anchor page, and why step 1 is no longer a near-miss
+ *
+ * Steps 1 and 4 both ask "which page is this class's?". That used to be the
+ * rule's OWN page and nothing else, so a class created in the Selectors panel
+ * before being assigned to anything — the ordinary way to make one — answered
+ * `null` and fell through to a refusal in every project with either zero or
+ * two-plus stylesheets. Z8 gives that question a second answer: the page the
+ * user has OPEN (`openPageFile`). Strictly a FALLBACK, never an override — a
+ * class already assigned on Home resolves to Home whichever frame the board is
+ * showing.
  */
 export function resolveCssInsertDestination(
   rule: StyleRule,
@@ -242,32 +407,42 @@ export function resolveCssInsertDestination(
     if (classifyStylesheetEditability(source.file).kind === 'plain-css') files.add(source.file)
   }
 
-  // The rule's own page answers this before any counting does.
-  const rulePageFile = pageFileForRule(rule, pageIndex)
-  if (rulePageFile) {
-    const coLocated = [...files].sort().find((file) => isCoLocatedStylesheet(rulePageFile, file))
+  // The user's own answer to an earlier ambiguity outranks every heuristic
+  // below — but only while it names a stylesheet this project still writes to.
+  const pinned = pinnedDestinations[rule.id]
+  if (pinned && files.has(pinned)) return { ok: true, kind: 'existing', file: pinned }
+
+  // The rule's own page answers this before any counting does; the open page
+  // answers for a rule that has no page of its own yet (Z8).
+  const anchorPageFile = pageFileForRule(rule, pageIndex) ?? openPageFile
+  if (anchorPageFile) {
+    const coLocated = [...files].sort().find((file) => isCoLocatedStylesheet(anchorPageFile, file))
     if (coLocated) return { ok: true, kind: 'existing', file: coLocated }
   }
 
   if (files.size === 1) return { ok: true, kind: 'existing', file: [...files][0]! }
 
   if (files.size > 1) {
+    const candidates = [...files].sort()
     return {
       ok: false,
       reason: 'ambiguous-stylesheet',
+      candidates,
       message:
-        `Studio found ${files.size} candidate stylesheets in this project (${[...files].sort().join(', ')}) ` +
+        `Studio found ${candidates.length} candidate stylesheets in this project (${candidates.join(', ')}) ` +
         'and will not guess which one a new class belongs in.',
     }
   }
 
-  if (rulePageFile) return { ok: true, kind: 'create', pageFile: rulePageFile }
+  if (anchorPageFile) return { ok: true, kind: 'create', pageFile: anchorPageFile }
 
   return {
     ok: false,
     reason: 'no-editable-stylesheet',
+    candidates: [],
     message:
-      'Studio could not find a hand-editable .css file in this project, and this class has no page to co-locate ' +
-      'a new one with. Select the element while styling it, or add a .css file to the project, then try again.',
+      'Studio could not find a hand-editable .css file in this project, and neither this class nor the page on ' +
+      'screen names one to co-locate a new one with. Open the page this class belongs to, or add a .css file to ' +
+      'the project, then try again.',
   }
 }
