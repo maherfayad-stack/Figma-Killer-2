@@ -55,6 +55,7 @@ import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
+import { resolveFrameMount } from './framePool'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
@@ -165,35 +166,23 @@ interface BoardFrameViewProps {
    */
   isOnScreen: boolean
   /**
-   * Whether this frame holds a live iframe. A superset of `isOnScreen`: the
-   * mount pool (S1, `frameMountPool.ts`) keeps recently-departed frames
-   * mounted so panning back to them costs nothing. A mounted-but-offscreen
-   * frame is simply outside the visible area — it renders exactly as it did
-   * on screen, it just isn't being looked at.
+   * Whether the mount pool (`framePool.ts`) is holding this frame. A
+   * superset of `isOnScreen`: the pool keeps recently-departed frames
+   * mounted so panning back to them costs nothing. A pooled, offscreen frame
+   * is simply outside the visible area — it renders exactly as it did on
+   * screen, it just isn't being looked at. The budget that decided this is
+   * the board's, not this component's: one pool, sized by what a frame costs
+   * on this tier.
    *
-   * Optional, defaulting to `isOnScreen`: a caller that does not take part
-   * in the pool — a unit test, or any future surface rendering one frame
-   * outside `BoardFramesLayer` — means "mounted exactly while visible",
-   * which is the pre-S1 behaviour and the only honest default. Required
-   * here once, it silently unmounted every such caller.
+   * Optional, defaulting to `isOnScreen` (through `resolveFrameMount`): a
+   * caller that does not take part in the pool — a unit test, or any future
+   * surface rendering one frame outside `BoardFramesLayer` — means "mounted
+   * exactly while visible", which is the pre-pool behaviour and the only
+   * honest default. Required here once, it silently unmounted every such
+   * caller (`meta-14` landmine 1; `boardFrameViewTierFork.test.tsx` is the
+   * gate).
    */
   isMounted?: boolean
-  /**
-   * L8 Phase B (`perf-06`, STATE.md) — the live-frame pool's hot-set
-   * membership flag, computed by `BoardFramesLayer.tsx` via
-   * `computeHotFrameIds` (`liveFramePool.ts`) and decoupled from
-   * `isOnScreen`: every on-screen frame is always hot, plus up to
-   * `LIVE_FRAME_POOL_SIZE` more recently-visible-but-now-offscreen frames
-   * (an LRU warm cache) stay `isLiveMounted` too, so their bridge iframe
-   * doesn't have to re-boot the moment the user pans back. Only meaningful
-   * for a Tier-2 (`trust === 'run-project'`) frame's `LiveBoardFrame` branch
-   * below — Tier 0/1's portal `BreakpointFrame` is same-origin and cheap, so
-   * it stays gated on S1's `isMounted` alone.
-   * Optional and defaults to the pooled flag above so any test or call site
-   * that omits it (a Tier 0/1 board, or a unit test exercising this
-   * component in isolation) reproduces S1's mount-pool behaviour.
-   */
-  isLiveMounted?: boolean
 }
 
 /**
@@ -218,17 +207,14 @@ function BoardFrameViewImpl({
   isSelected,
   isOnScreen,
   isMounted,
-  isLiveMounted,
 }: BoardFrameViewProps) {
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  // Two pools decide this, and which one applies depends on the tier.
-  // S1's mount pool (`frameMountPool.ts`) governs every portal frame: an
-  // iframe that has just left the viewport stays mounted so panning back
-  // is free. A Tier-2 frame costs a real dev-server-backed process, so L8
-  // Phase B's narrower, capped hot set (`liveFramePool.ts`) governs that
-  // one instead. `isLiveMounted` is `undefined` on every Tier 0/1 board.
-  const pooled = isMounted ?? isOnScreen
-  const mounted = trust === 'run-project' ? (isLiveMounted ?? pooled) : pooled
+  // ONE module answers "does this frame hold an iframe, and why"
+  // (`framePool.ts`). The tier no longer enters here at all: it picked the
+  // pool's budget back in `BoardFramesLayer`, which is the only place a
+  // frame's cost is a question. `reason` is stamped on the frame element
+  // below so the answer is legible from the DOM.
+  const { mounted, reason: mountReason } = resolveFrameMount({ isOnScreen, isPooled: isMounted })
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
@@ -386,10 +372,15 @@ function BoardFrameViewImpl({
   }
 
   return (
+    // `data-frame-mount` is `FRAME_MOUNT_ATTR` spelled out — JSX cannot take
+    // a computed attribute name without a spread. The two spellings are tied
+    // together by `framePoolMountReason.test.tsx`, which reads this element
+    // back through `readFrameMountReason`.
     <div
       className={styles.frame}
       data-page-id={page.id}
       data-frame-id={frame.id}
+      data-frame-mount={mountReason}
       data-active={isActive ? 'true' : undefined}
       data-selected={isSelected ? 'true' : undefined}
       style={{ '--frame-x': `${x}px`, '--frame-y': `${y}px` } as CSSProperties}
