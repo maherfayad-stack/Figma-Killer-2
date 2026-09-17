@@ -1221,6 +1221,30 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### meta-11 — plan: built-in design system, Assets panel, live previews, Add page
+- **Agent:** orchestrator (plan only — no code written)
+- **Stage:** research complete · plan written · **owner confirmed all three §0 decisions (2026-09-17)** — ready for `studio-architect` to cut wave-1 and wave-2 work orders.
+- **Updated:** 2026-09-17.
+- **Goal:** the owner is retiring the `@alm-design/design-system` npm. The design system's
+  components and colours move INTO Studio (vendored source at `vendor/alm-design-system/`),
+  the insert popup is replaced by a left-rail **Assets** panel whose cards are live renders of
+  the real components (the grey wireframe "shimmer" sketches are deleted), every asset gets a
+  description + purpose keywords for search, and the toolbar `+` becomes **Add page** (new
+  Screen/Popup/Bottom sheet, or a page on disk that was removed from the board).
+- **Plan:** [`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`](STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md) —
+  nine workstreams DS-1…DS-9, file-level, with agent routing, waves and gates. §0 records the
+  confirmed decisions: projects import the Studio-written `design-system/` folder; base
+  elements, layouts and saved components move to Assets and the insert popup is deleted; the
+  toolbar `+` becomes Add page.
+- **Facts a future agent should not rediscover:** the npm ships only a bundle; the exact 1.1.2
+  source is at `~/Documents/Github/ALM-2.0` @ `c35fc3c` (React-only runtime deps; its
+  `mcp/` folder pulls `zod`, do not vendor it). Only `studio-workspace/test4` and
+  `test4 copy` import the npm. The picker's thumbnails are `moduleArchetype.ts` sketches, not
+  loading skeletons. `AddFramePicker.tsx` already lists pages on disk that are not on the board.
+- **Retires when done:** `standing-07` (the two-paths exception) — the old path is the one
+  being deleted.
+
+
 **M1 — "It opens" is complete.** Every WS-1.x/WS-8.x work order for M1 has
 landed: WS-1.1/1.2/1.4/8.1/8.2 (`meta-04`) and WS-1.3 (`server-04`, below).
 M2 is now in progress: WS-2.1/WS-2.2 (styles) landed, see `style-01` below.
