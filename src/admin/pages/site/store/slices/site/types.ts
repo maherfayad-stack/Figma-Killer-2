@@ -353,6 +353,19 @@ export interface SiteSlice {
    * exist until the commit's resync brings them in).
    */
   duplicateNodesTo: (nodeIds: string[], newParentId: string, newIndex: number) => string[]
+  /**
+   * D2 G3 — the element leaves the page it is written in and lands in a
+   * container on ANOTHER page: a drag that crossed a board-frame boundary.
+   *
+   * Returns nothing, and mutates no tree. A cross-PAGE move is two files, so
+   * there is no in-memory equivalent to fall back to and no node id to hand
+   * back — the element that appears in the destination frame is a different
+   * node from the one that left, with the `rel:line:col` id the write
+   * produces. Either the source takes the write (and the commit's resync
+   * brings both pages back) or the gesture refuses out loud. See
+   * `transplantActions.ts`.
+   */
+  transplantNodes: (nodeIds: string[], destination: TransplantDestination) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor
@@ -572,6 +585,28 @@ export type SiteMutationResult = void | boolean
  * one function it takes.
  */
 export type EditorStoreSetter = (recipe: SiteSliceRecipe) => void
+
+/**
+ * Where a cross-frame drop landed, and where it came from — the argument
+ * `transplantNodes` takes.
+ *
+ * `originPageId` is named explicitly rather than derived from the active
+ * document: a cross-frame drag ACTIVATES the destination frame on the way
+ * (`openPageInCanvas` fires from `onPointerDownCapture`), so by the time the
+ * drop commits, "the active page" is already the wrong end of the gesture.
+ */
+export interface TransplantDestination {
+  /** The page the dragged element is written in. */
+  originPageId: string
+  /** The page the drop landed in — a DIFFERENT page. */
+  pageId: string
+  /** The container the drop resolved to, in `pageId`'s tree. */
+  parentId: string
+  /** Where among that container's canvas children the drop landed. */
+  index: number
+  /** Alt held: copy across frames instead of moving. */
+  copy?: boolean
+}
 
 export interface SiteSliceHelpers {
   /** Raw set/get from the slice creator. Use only when no helper covers the case. */

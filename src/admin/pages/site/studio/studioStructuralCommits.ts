@@ -178,6 +178,56 @@ export async function commitStudioReparent(reparent: {
 }
 
 /**
+ * D2 G3 — an element leaving the file it is written in and landing in a
+ * container in another one: the commit behind a drag that crossed a frame
+ * boundary.
+ *
+ * ONE edit, not a delete plus an insert. Two edits would be two writes the
+ * batch could land half of, and the second one has no markup to insert —
+ * the element's own source text only exists in the file the first one just
+ * removed it from. `transplantJsxElement` reads both ends, refuses before
+ * writing either, and writes both.
+ *
+ * Nothing is moved on the canvas first, for `commitStudioDuplicate`'s reason
+ * one step further: the element's id IS its `rel:line:col`, so the node that
+ * appears in the destination frame is a DIFFERENT node from the one that left
+ * the origin frame, and no optimistic tree edit could mint it. The resync
+ * covers both files (the batch reports both as touched), so the two frames
+ * update together.
+ *
+ * The success toast is pushed here for the same reason the duplicate's is:
+ * until the write lands there is nothing on screen to report.
+ */
+export async function commitStudioTransplant(transplant: {
+  nodeId: string
+  parentNodeId: string
+  anchorNodeId: string | null
+  position: 'before' | 'after'
+  copy: boolean
+  /** What the toast says the element landed in — the destination page's own title. */
+  destinationLabel: string
+}): Promise<void> {
+  await commitStructural(
+    [
+      {
+        kind: 'transplant',
+        nodeId: transplant.nodeId,
+        parentNodeId: transplant.parentNodeId,
+        ...(transplant.anchorNodeId
+          ? { anchorNodeId: transplant.anchorNodeId, position: transplant.position }
+          : {}),
+        ...(transplant.copy ? { copy: true } : {}),
+      },
+    ],
+    'Cannot move this between frames',
+    {
+      title: transplant.copy ? 'Copied into another frame' : 'Moved into another frame',
+      body: `Written to ${transplant.destinationLabel}.`,
+    },
+  )
+}
+
+/**
  * W4-1 — copying elements in the user's `.tsx`.
  *
  * Nothing is minted on the canvas first, for the reason `commitStudioInsert`
