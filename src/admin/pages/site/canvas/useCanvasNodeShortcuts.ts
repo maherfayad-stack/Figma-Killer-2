@@ -108,8 +108,28 @@ export function useCanvasNodeShortcuts({
 
       if (getKeybindingForCommand('layers.duplicate')?.match(event)) {
         event.preventDefault()
-        if (currentIds.length > 1) store.duplicateNodes([...currentIds])
-        else store.duplicateNode(selectedNodeId)
+        // `K7` — the copy becomes the selection, so ⌘D ⌘D ⌘D builds a row
+        // instead of stamping three copies of the same original on top of one
+        // another, and the inspector is already pointed at the thing you just
+        // made. `duplicateJsxElement` already places the copy as the next
+        // sibling, so the two halves of "lands where the eye expects" agree.
+        //
+        // Selected HERE and not inside `duplicateNode`: that action is one of
+        // the eleven tree mutations, reachable from the agent, the palette and
+        // `applyTreeOperation`, and a background tool must never move the
+        // user's selection out from under them.
+        //
+        // On a studio-imported tree the duplicate is an async SOURCE write and
+        // returns `''` — the copy's id is the `line:col` the codemod produces
+        // and does not exist until the resync lands. Nothing is selected in
+        // that case rather than something wrong. See `writeDuplicateToSource`.
+        if (currentIds.length > 1) {
+          const newIds = store.duplicateNodes([...currentIds]).filter(Boolean)
+          if (newIds.length > 0) store.selectMany(newIds)
+        } else {
+          const newId = store.duplicateNode(selectedNodeId)
+          if (newId) store.selectNode(newId)
+        }
         return true
       }
 
@@ -141,8 +161,13 @@ export function useCanvasNodeShortcuts({
 
       if (getKeybindingForCommand('layers.paste')?.match(event)) {
         event.preventDefault()
-        // Paste anchors to the multi-selection's anchor — same single target.
-        store.pasteNode(selectedNodeId)
+        // `K7` — 'after', not the default 'auto': ⌘V is a gesture about the
+        // SELECTION, and the eye expects the copy beside the selected element
+        // rather than appended to the end of its children (where, on a tall
+        // container, it lands off-screen). The right-click "Paste here" keeps
+        // 'auto' — that one names a container and means "into it".
+        // Anchors to the multi-selection's anchor — same single target.
+        store.pasteNode(selectedNodeId, 'after')
         return true
       }
 

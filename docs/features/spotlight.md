@@ -300,6 +300,8 @@ Used by destructive commands: delete user, sign out all devices, revoke session,
 
 Selected-layer shortcuts are command shortcuts too. `⌘C` / `Ctrl+C`, `⌘X` / `Ctrl+X`, `⌘V` / `Ctrl+V`, and `⌘D` / `Ctrl+D` run when focus is on the canvas or the Layers tree. `⌘⌫` / `Ctrl+Backspace` deletes the selected layer from either surface through the normal delete confirmation flow; plain Delete / Backspace remains accepted by the canvas handler for selected canvas nodes.
 
+`⌘V` and `⌘D` land the new node as the **next sibling of the selection**, not appended inside it, and select it (`K7`). The right-click "Paste here" menus keep the older "into the container" placement — they name a container, while the keystroke names a selection. The split is `pasteNode(targetNodeId, placement)`: `'after'` for the selection-anchored callers (⌘V, the palette's `layers.paste`, the multi-selection inspector's Paste button), `'auto'` for the two right-click menus. `⌘D` selects at the call site, never inside `duplicateNode` — that action is reachable from the agent and from `applyTreeOperation`, and a background tool must not move the user's selection.
+
 ### Canvas tools (`K4`)
 
 | Key | Action |

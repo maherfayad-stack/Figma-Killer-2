@@ -137,10 +137,12 @@ export function MultiSelectionInspector({
   }
 
   // Paste anchors to the multi-selection's anchor (last id) — same as
-  // single-paste against the selected node.
+  // single-paste against the selected node, and 'after' for the same reason
+  // ⌘V is (`K7`): this button acts on the SELECTION, so the copy belongs
+  // beside it, not appended inside it.
   const handlePaste = () => {
     const anchor = selectedNodeIds[selectedNodeIds.length - 1]
-    if (anchor) pasteNode(anchor)
+    if (anchor) pasteNode(anchor, 'after')
   }
 
   const handlers = {
