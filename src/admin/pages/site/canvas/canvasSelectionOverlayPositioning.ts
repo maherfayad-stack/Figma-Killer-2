@@ -1,4 +1,7 @@
 import type { CSSProperties } from 'react'
+import { registry } from '@core/module-engine'
+import { getNodeDisplayName, getNodeHtmlTag, type Page } from '@core/page-tree'
+import type { VisualComponent } from '@core/visualComponents'
 import type {
   CanvasOverlayRect,
 } from './canvasOverlayGeometry'
@@ -364,6 +367,24 @@ interface AppliedBadgePlacement {
 
 /** Last placement + label applied per badge — same no-op-when-unchanged idea as `appliedOverlayPlacements`. */
 const appliedBadgePlacements = new WeakMap<HTMLElement, AppliedBadgePlacement | 'hidden'>()
+
+/**
+ * What the node-name badge SAYS — the node's tag, falling back to its display
+ * name; the same fallback order the Alt-hover tree ladder rows use
+ * (`CanvasTreeLadderRowButton`). Lives next to `positionNodeBadge` rather than
+ * in the overlay component: "what the badge reads" and "where the badge goes"
+ * are one concern, and the component is at its module-size ceiling.
+ */
+export function resolveNodeBadgeLabel(
+  page: Page | null,
+  nodeId: string,
+  visualComponents: ReadonlyArray<VisualComponent>,
+): string | null {
+  const node = page?.nodes[nodeId]
+  if (!node) return null
+  const definition = registry.get(node.moduleId)
+  return getNodeHtmlTag(node, definition) || getNodeDisplayName(node, definition, visualComponents) || null
+}
 
 /**
  * Position the node-name badge (WS-5.1) just above its ring's top-left

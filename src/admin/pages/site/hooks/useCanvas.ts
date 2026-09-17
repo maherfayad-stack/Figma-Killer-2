@@ -35,6 +35,7 @@ import {
 import { panToCenterBreakpointFrame } from '@site/canvas/canvasDomGeometry'
 import { computeZoomToFitTransform, DEFAULT_ZOOM_FIT_PADDING_PX, type CanvasFitRect, type ZoomFitMode } from '@site/canvas/canvasZoomFit'
 import { measureCanvasFrameRects, measureCanvasSelectionRects } from '@site/canvas/canvasViewportCommands'
+import { markCanvasViewportActivity } from '@site/canvas/canvasViewportActivity'
 import {
   CANVAS_DRAG_PAN_BUTTONS,
   isCanvasPointerPanActive,
@@ -182,6 +183,15 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       // attribute so wheel/pinch/drag updates land instantly.
       el.removeAttribute('data-animating')
     }
+
+    // S4 — publish "the viewport is moving" to the consumers that cannot poll
+    // `transformRef` (it never changes identity) and cannot wait for the 100 ms
+    // debounced store commit: today the selection overlay's measurement pump,
+    // which is otherwise event-driven and idle. This is the ONE funnel every
+    // transform write goes through, gesture and animated alike. An animated
+    // write keeps painting for `ANIMATED_TRANSFORM_MS` after this call returns,
+    // so it holds the flag for that long instead of the default idle window.
+    markCanvasViewportActivity(animated ? ANIMATED_TRANSFORM_MS : 0)
 
     // setProperty avoids the same property-assignment lint trip as above.
     el.style.setProperty('transform', `translate(${t.panX}px, ${t.panY}px) scale(${t.zoom})`)
