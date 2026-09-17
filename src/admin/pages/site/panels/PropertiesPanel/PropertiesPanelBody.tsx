@@ -2,17 +2,25 @@
  * PropertiesPanelBody — selects which inspector surface to show inside the
  * scrollable content area of the Properties panel.
  *
- * Five branches, in priority order:
+ * Four branches, in priority order:
  *   1. A class is selected via the Selectors panel → global selector inspector
  *      (no node context, just the rule + style sections).
- *   2. Multiple nodes are selected → multi-select inspector.
- *   3. No node + no selector, but we're inside a Visual Component canvas →
+ *   2. No node + no selector, but we're inside a Visual Component canvas →
  *      show the VC's param surface.
- *   4. No node at all (page canvas with nothing selected) → empty hint.
- *   5. A `base.visual-component-ref` is selected → instance view (params +
+ *   3. No node at all (page canvas with nothing selected) → empty hint.
+ *   4. A `base.visual-component-ref` is selected → instance view (params +
  *      override matrix). Other nodes → unconditional `StyleSurface`
  *      (ClassPicker + the `INSPECTOR_SECTIONS` manifest, one continuous
  *      scroll).
+ *
+ * **There is no multi-select branch any more (S5).** Selecting N layers used
+ * to route here to `MultiSelectionInspector` — an action bar, a layer list,
+ * and a parallel style surface that could render exactly one editing section.
+ * `useSelectionModel()` describes N nodes now, so N falls through to the same
+ * branch 4 that one node takes and gets the whole manifest, with Mixed
+ * wherever the selection disagrees. What this file still gates on cardinality
+ * is the per-node CHROME above the sections (component/slot/source notices,
+ * ClassPicker) — see `singleNodeChrome` below.
  *
  * This component is the branch router for the inspector surfaces.
  * PropertiesPanel still composes the moduleTabContent JSX once (via
@@ -20,15 +28,12 @@
  * dispatch reusable across surfaces.
  *
  * The Styles/Attributes node-view switch this file used to own was deleted
- * in P3 item 11 (`STATE.md` `panel-25`, Studio extras) — Attributes briefly
- * became its own `INSPECTOR_SECTIONS` manifest entry (`AttributesSection.
- * tsx`), rendered inline in the same scroll as every other section instead
- * of behind a tab. Direct user feedback while dogfooding ("remove
- * attributes") retired that manifest entry outright — `AttributesSection.
- * tsx` and `htmlAttributesModel.ts` are kept in place, unmounted, since
- * `htmlAttributes` is a real prop other consumers (publisher, `htmlImport`,
- * every base module's renderer) still read — see `inspector/sections/
- * index.ts`'s own doc for the full reasoning.
+ * in P3 item 11 (`STATE.md` `panel-25`, Studio extras); direct user feedback
+ * while dogfooding ("remove attributes") then retired the `attributes`
+ * manifest entry outright, and S5 deleted its now-unmounted components and
+ * model. The `htmlAttributes` PROP is untouched — the publisher,
+ * `htmlImport`, and every base module's renderer still read it; only its
+ * retired editor UI is gone.
  */
 import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
@@ -42,8 +47,8 @@ import { StyleSurface } from './StyleSurface'
 import { ComponentRefView } from './ComponentRefView'
 import { ComponentParamsOverview } from './ComponentParamsOverview'
 import { ConvertToComponentButton } from './ConvertToComponentButton'
-import { MultiSelectionInspector } from './MultiSelectionInspector'
 import { MultiSelectorInspector } from './MultiSelectorInspector'
+import { MultiSelectTargetProvider } from '@site/inspector/MultiSelectTargetProvider'
 import { SelectorInspector } from './SelectorInspector'
 import { canComponentizeNode } from '@site/componentization'
 import { BranchChoiceNotice } from './BranchChoiceNotice'
@@ -61,7 +66,6 @@ interface PropertiesPanelBodyProps {
   isSelectorMultiSelect: boolean
   activeBreakpointId: string | undefined
   isMultiSelect: boolean
-  selectedNodeIds: string[]
   selectedNode: PageNode | null
   selectedNodeId: string | null
   definition: AnyModuleDefinition | null | undefined
@@ -80,7 +84,6 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     isSelectorMultiSelect,
     activeBreakpointId,
     isMultiSelect,
-    selectedNodeIds,
     selectedNode,
     selectedNodeId,
     definition,
@@ -116,10 +119,6 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     return (
       <SelectorInspector cls={selectedSelectorClass} activeBreakpointId={activeBreakpointId} />
     )
-  }
-
-  if (isMultiSelect) {
-    return <MultiSelectionInspector selectedNodeIds={selectedNodeIds} />
   }
 
   if (!selectedNode || !definition) {
@@ -178,38 +177,51 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
         return refusal ? describeStructuralRefusal({ refusal, node: selectedNode }) : null
       })()
 
+  // Every block above `StyleSurface` describes ONE node — which component a
+  // node came from, which slot it fills, which source constraint it carries,
+  // which classes it has. For a multi-selection each of those would be the
+  // anchor's story told as if it were the whole selection's, and ClassPicker
+  // would silently edit one layer's `classIds` out of N. So they are the
+  // single-selection half of this surface; the sections below, which DO have
+  // an honest N-node collapse, are the shared half.
+  const singleNodeChrome = !isMultiSelect
+
   return (
+    <MultiSelectTargetProvider>
     <div className={styles.nodeArea}>
-      {selectedNode?.fromComponent && selectedNodeId ? (
+      {singleNodeChrome && selectedNode?.fromComponent && selectedNodeId ? (
         <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
       ) : null}
       {/* E2.5 — the selected node IS the content filling another component's
           slot (a `header={<Icon/>}` fill, or a fragment-slot child). States
           which slot/instance it belongs to; renders nothing for every other
           node (the common case). */}
-      {selectedNodeId ? <SlotFillNotice nodeId={selectedNodeId} /> : null}
+      {singleNodeChrome && selectedNodeId ? <SlotFillNotice nodeId={selectedNodeId} /> : null}
       {/* Track F2 / R7 — the ONLY two whole-node facts left here: a
           structural lock, and where a resolved text's own literal lives. Every
           other per-field fact (`CodeValueControl`'s per-prop hint,
           `propLockReason`'s per-prop source — R2) lives next to the control
           it's about instead of repeating itself in a node-level paragraph. */}
-      <SourceConstraintNotice
-        lockReason={selectedNode.lockReason}
-        textOrigin={selectedNode.textOrigin}
-        sharedWith={sharedTextOriginCount}
-        hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
-        constraint={structuralConstraint}
-        nodeId={selectedNodeId ?? undefined}
-      />
+      {singleNodeChrome && (
+        <SourceConstraintNotice
+          lockReason={selectedNode.lockReason}
+          textOrigin={selectedNode.textOrigin}
+          sharedWith={sharedTextOriginCount}
+          hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
+          constraint={structuralConstraint}
+          nodeId={selectedNodeId ?? undefined}
+        />
+      )}
       {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
           its structure), but the fact that OTHER branches exist and weren't
           shown is still worth surfacing. */}
-      {selectedNode.branchAlternatives?.length ? (
+      {singleNodeChrome && selectedNode.branchAlternatives?.length ? (
         <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
       ) : null}
       {/* ClassPicker — always visible to style-edit-capable callers. Hidden
-          for content-only Clients. */}
-      {(permissions.canEditStyle || showConvertToComponent) && (
+          for content-only Clients, and for a multi-selection (it writes ONE
+          node's `classIds`). */}
+      {singleNodeChrome && (permissions.canEditStyle || showConvertToComponent) && (
         <div className={styles.headerClassPicker}>
           {permissions.canEditStyle ? (
             <ClassPicker
@@ -235,15 +247,15 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           `codeProps` props — see `selectionModel.ts`'s own doc). Only the
           module/panel-chrome concerns SelectionModel deliberately doesn't
           own are still passed down. P3 item 11 (`STATE.md` `panel-25`) deleted
-          the Styles/Attributes switcher that used to gate this — Attributes
-          is now `AttributesSection.tsx`, one of `StyleSurface`'s own
-          `INSPECTOR_SECTIONS` entries, rendered unconditionally alongside
-          every other section in the same scroll. */}
+          the Styles/Attributes switcher that used to gate this — every
+          section now mounts from `INSPECTOR_SECTIONS`, in one continuous
+          scroll with a single collapsed More group at its end. */}
       <StyleSurface
         definition={definition}
         moduleContent={moduleTabContent}
         onFocusClassPicker={onFocusClassPicker}
       />
     </div>
+    </MultiSelectTargetProvider>
   )
 }

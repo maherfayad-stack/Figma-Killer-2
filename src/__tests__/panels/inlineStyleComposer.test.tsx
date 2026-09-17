@@ -11,7 +11,7 @@
  *    the composer used to offer a full editor for it anyway.
  */
 import { describe, it, expect, afterEach, afterAll, beforeEach } from 'bun:test'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel/PropertiesPanel'
 import { useEditorStore } from '@site/store/store'
 import { registry, type AnyModuleDefinition } from '@core/module-engine'
@@ -114,6 +114,14 @@ describe('InlineStyleComposer — per-property lock notice', () => {
       codeProps: ['style:gridAutoFlow'],
     })
     render(<PropertiesPanel />)
+
+    // S5 — Custom properties lives inside the Design tab's one collapsed
+    // `More` disclosure now (the 900px budget, `docs/features/inspector.md`
+    // §6), so this notice is one click in rather than always on screen. That
+    // is the correct scope for it: it is a statement about the uncurated long
+    // tail, not about the node as a whole — a locked CURATED property still
+    // reports itself on its own always-visible row.
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
 
     const notice = screen.getByTestId('custom-properties-locked-properties-notice')
     expect(notice.textContent).toMatch(/grid auto flow/i)

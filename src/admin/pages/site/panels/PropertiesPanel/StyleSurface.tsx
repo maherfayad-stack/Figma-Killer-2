@@ -18,15 +18,21 @@
  * computes `inlineWritable`/`classChain`/`computedValues`/
  * `provenanceByProperty`/`classLockInfo`/`writableClasses`/`writeTargetChips`
  * itself — it reads `useSelectionModel()` once for those facts and renders
- * `INSPECTOR_SECTIONS.filter((s) => (s.tab ?? 'design') === 'design' &&
- * s.appliesTo(model))` sections, each a bare, prop-less `<Component />` that
+ * `designPrimarySections(model)`, each a bare, prop-less `<Component />` that
  * reads the same model/commit hooks itself. This is the mount mechanism P3
  * (the section-by-section re-skin) consumes — growing `INSPECTOR_SECTIONS`
- * never needs to touch this file again. The `tab` filter is additive
- * (direct user feedback moved Transform/Animations/Interaction to the
- * Prototype tab — see `inspector/sections/index.ts`'s own "tab" doc and
- * `panels/PrototypePanel/PrototypePanel.tsx`, which mounts the rest of the
- * same manifest array).
+ * never needs to touch this file again.
+ *
+ * ## The one More disclosure (S5 — the 900px budget)
+ *
+ * `designMoreSections(model)` is the SAME mount loop, run a second time
+ * inside a single collapsed `Section title="More"` at the very end of the
+ * tab. Four Studio-extras sections live there (Transform, Animations,
+ * Interaction, Custom properties) — see `inspector/sections/index.ts`'s own
+ * `designGroup` doc for why those four and no others, and
+ * `docs/features/inspector.md` §6 for the budget this buys back. Nothing
+ * about a section changes by being in the group: same component, same
+ * `data-section-id` wrapper, same order.
  *
  * ## What this file still owns
  *
@@ -51,9 +57,15 @@ import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
+import { Section } from '@ui/components/Section'
 import { WriteTargetRow, type WriteTargetChipInfo } from '@site/inspector/WriteTargetRow'
-import { useSelectionModel } from '@site/inspector/selectionModel'
-import { INSPECTOR_SECTIONS } from '@site/inspector/sections'
+import { MultiSelectTargetBar } from '@site/inspector/MultiSelectTargetBar'
+import { useSelectionModel, type SelectionModel } from '@site/inspector/selectionModel'
+import {
+  designMoreSections,
+  designPrimarySections,
+  type InspectorSectionDefinition,
+} from '@site/inspector/sections'
 import styles from './StyleSurface.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
 
@@ -135,20 +147,30 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
     // build.
     <div className={styles.surface} data-testid="properties-panel-scroll">
       <div className={styles.surfaceContent}>
-        {nodeId != null && (
-          <WriteTargetRow
-            classChips={writeTargetChips}
-            inlineReachable={canToggleElement}
-            inlineLockReason={inlineLockReason}
-            defaultTargetKey={defaultTargetKey}
-          />
+        {/* One target row per cardinality. `WriteTargetRow` is informational
+            — it lists the targets ONE node's properties can resolve to. A
+            multi-selection's target is a CHOICE with a blast radius, so it
+            gets the interactive chip + gate instead, and the same row would
+            just be a second, weaker statement of the same fact. */}
+        {model.isMultiSelect ? (
+          <MultiSelectTargetBar model={model} />
+        ) : (
+          nodeId != null && (
+            <WriteTargetRow
+              classChips={writeTargetChips}
+              inlineReachable={canToggleElement}
+              inlineLockReason={inlineLockReason}
+              defaultTargetKey={defaultTargetKey}
+            />
+          )
         )}
 
         {/* Module section — P2 rule 2 ("everything is at rest"): a fixed
             block, not an accordion. `hasModuleContent` still hides it
             entirely when there is genuinely nothing to show (global
-            selector mode). */}
-        {hasModuleContent && (
+            selector mode), and for a multi-selection, whose module props
+            belong to one call site each (`commitApi.ts`). */}
+        {hasModuleContent && !model.isMultiSelect && (
           <div data-style-section="module">
             <div className={styles.moduleHeader}>
               {ModuleIcon && <ModuleIcon size={14} aria-hidden="true" />}
@@ -177,22 +199,54 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
                 <GeneratedUtilityLockedState cls={soleGeneratedUtility} />
               </div>
             )}
-            {INSPECTOR_SECTIONS.filter(
-              (section) => (section.tab ?? 'design') === 'design' && section.appliesTo(model),
-            )
-              .sort((a, b) => a.order - b.order)
-              .map((section) => (
-                // `data-section-id` is additive/queryable-only — no visual or
-                // behavioral change. It gives Playwright a stable per-section
-                // root (`tests/e2e/inspector-panel-measurement.e2e.ts`) since
-                // this loop otherwise has no wrapper around each section.
-                <div data-section-id={section.id} key={section.id}>
-                  <section.Component />
-                </div>
-              ))}
+            <MountedSections sections={designPrimarySections(model)} />
+            <MoreDisclosure model={model} />
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// MountedSections — the ONE mount loop, used by both the continuous scroll
+// and the More disclosure so a section's wrapper/keying can never differ
+// between the two groups.
+//
+// `data-section-id` is additive/queryable-only — no visual or behavioral
+// change. It gives Playwright a stable per-section root
+// (`tests/e2e/inspector-panel-measurement.e2e.ts`,
+// `tests/e2e/inspector-height.e2e.ts`) since this loop otherwise has no
+// wrapper around each section.
+// ---------------------------------------------------------------------------
+
+function MountedSections({ sections }: { sections: ReadonlyArray<InspectorSectionDefinition> }) {
+  return (
+    <>
+      {sections.map((section) => (
+        <div data-section-id={section.id} key={section.id}>
+          <section.Component />
+        </div>
+      ))}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// MoreDisclosure — the single collapsed group holding every `designGroup:
+// 'more'` section. Renders nothing at all when the selection mounts none of
+// them, rather than an empty "More" header that discloses nothing (Law 1,
+// `docs/features/inspector.md` §1).
+// ---------------------------------------------------------------------------
+
+function MoreDisclosure({ model }: { model: SelectionModel }) {
+  const sections = designMoreSections(model)
+  if (sections.length === 0) return null
+  return (
+    <div data-section-id="more" data-testid="inspector-more-disclosure">
+      <Section title="More" flush>
+        <MountedSections sections={sections} />
+      </Section>
     </div>
   )
 }

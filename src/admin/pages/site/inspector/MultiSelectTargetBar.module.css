@@ -1,0 +1,40 @@
+/* MultiSelectTargetBar — the write-target chip, its blast-radius gate, and
+   the two partial-write notices, above the same sections a single selection
+   renders. */
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-2xs);
+}
+
+/* Class-target gate. Stated inline, directly under the chip that raised the
+   question, rather than in a modal: the user is being asked about the surface
+   they are already looking at. */
+.classGate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-2xs);
+  margin: var(--inspector-space-2xs) var(--inspector-space-xs) 0;
+  padding: var(--inspector-space-xs);
+  border-radius: var(--radius);
+  background: var(--warning-10);
+}
+
+.classGateText {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--warning-text);
+}
+
+.classGateIcon {
+  vertical-align: -2px;
+  margin-right: var(--inspector-space-3xs);
+}
+
+.classGateActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--inspector-space-2xs);
+}

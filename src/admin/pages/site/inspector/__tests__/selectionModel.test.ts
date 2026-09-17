@@ -10,6 +10,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import type { StyleRule } from '@core/page-tree'
+import { MIXED } from '@ui/components/MixedValue'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 import { useSelectionModel } from '../selectionModel'
@@ -247,5 +248,130 @@ describe('useSelectionModel — class write target', () => {
     // is code-locked, so the rule falls through to the sole writable class —
     // never silently rewrites a DIFFERENT source than the one rendering.
     expect(result.current.writeTargetFor('color')).toEqual({ kind: 'class', classId: 'class-1', selector: '.card' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// S5 — the multi-selection widening. `docs/features/inspector.md` §9.0.
+// ---------------------------------------------------------------------------
+
+describe('useSelectionModel — N nodes', () => {
+  /** Two sibling layers under one root, both selected (anchor last). */
+  function loadTwoSelected(
+    a: ReturnType<typeof makeNode>,
+    b: ReturnType<typeof makeNode>,
+    styleRules: Record<string, StyleRule> = {},
+  ) {
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [a.id, b.id] }),
+        [a.id]: a,
+        [b.id]: b,
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page], styleRules }),
+      activePageId: 'page-1',
+      selectedNodeId: b.id,
+      selectedNodeIds: [a.id, b.id],
+    } as Parameters<typeof useEditorStore.setState>[0])
+  }
+
+  it('resolves every selected id, and collapses agreeing inline values to the shared one', () => {
+    loadTwoSelected(
+      { ...makeNode({ id: 'a', moduleId: 'base.div' }), inlineStyles: { color: 'red' } },
+      { ...makeNode({ id: 'b', moduleId: 'base.div' }), inlineStyles: { color: 'red' } },
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.isMultiSelect).toBe(true)
+    expect(result.current.selectedNodes.map((n) => n.id)).toEqual(['a', 'b'])
+    expect(result.current.selectedNode?.inlineStyles?.color).toBe('red')
+  })
+
+  it('collapses a disagreement to the MIXED sentinel, never to one layer value', () => {
+    loadTwoSelected(
+      { ...makeNode({ id: 'a', moduleId: 'base.div' }), inlineStyles: { color: 'red' } },
+      { ...makeNode({ id: 'b', moduleId: 'base.div' }), inlineStyles: { color: 'blue' } },
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.selectedNode?.inlineStyles?.color).toBe(MIXED)
+  })
+
+  it('treats "set on one, absent on the other" as a disagreement', () => {
+    loadTwoSelected(
+      { ...makeNode({ id: 'a', moduleId: 'base.div' }), inlineStyles: { color: 'red' } },
+      makeNode({ id: 'b', moduleId: 'base.div' }),
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.selectedNode?.inlineStyles?.color).toBe(MIXED)
+  })
+
+  it('keeps a code lock only when EVERY selected layer carries it, and counts the rest', () => {
+    loadTwoSelected(
+      { ...makeNode({ id: 'a', moduleId: 'base.div' }), codeProps: ['style:color', 'style:width'] },
+      { ...makeNode({ id: 'b', moduleId: 'base.div' }), codeProps: ['style:color'] },
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    // `color` is locked on both -> the control refuses. `width` is locked on
+    // one of two -> the write still lands on the other, so it stays offered.
+    expect(result.current.selectedNode?.codeProps).toEqual(['style:color'])
+    expect(result.current.blockedPropertyCounts.get('color')).toBe(2)
+    expect(result.current.blockedPropertyCounts.get('width')).toBe(1)
+  })
+
+  it('excludes a layer whose module takes no inline style from the write, and names it', () => {
+    loadTwoSelected(
+      makeNode({ id: 'a', moduleId: 'base.div' }),
+      makeNode({ id: 'b', moduleId: 'pkg.SomeComponent' }),
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.inlineWritableNodeIds).toEqual(['a'])
+    expect(result.current.inlineUnwritableNodes.map((n) => n.id)).toEqual(['b'])
+    // One layer still takes the write, so the control is NOT disabled.
+    expect(result.current.inlineWritable).toBe(true)
+  })
+
+  it('offers no class target until one is picked, and pins to Element meanwhile', () => {
+    loadTwoSelected(
+      makeNode({ id: 'a', moduleId: 'base.div', classIds: ['class-1'] }),
+      makeNode({ id: 'b', moduleId: 'base.div', classIds: ['class-1'] }),
+      { 'class-1': makeClass('class-1') },
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    // The shared class is REPORTED (the chip needs it) but is not a write
+    // target until the user picks it and clears the blast-radius gate.
+    expect(result.current.sharedClassRules.map((r) => r.id)).toEqual(['class-1'])
+    expect(result.current.assignedClassRules).toEqual([])
+    expect(result.current.writeTargetFor('color')).toEqual({ kind: 'inline' })
+  })
+
+  it('reports no shared class when only one layer carries it', () => {
+    loadTwoSelected(
+      makeNode({ id: 'a', moduleId: 'base.div', classIds: ['class-1'] }),
+      makeNode({ id: 'b', moduleId: 'base.div' }),
+      { 'class-1': makeClass('class-1') },
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.sharedClassRules).toEqual([])
+  })
+
+  it('never claims a computed value it could not measure across N elements', () => {
+    loadTwoSelected(
+      makeNode({ id: 'a', moduleId: 'base.div' }),
+      makeNode({ id: 'b', moduleId: 'base.div' }),
+    )
+
+    const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.computedValues).toBeNull()
   })
 })

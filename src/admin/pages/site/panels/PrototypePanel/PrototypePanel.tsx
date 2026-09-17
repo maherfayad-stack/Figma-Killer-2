@@ -52,10 +52,12 @@
  * prototype")
  * ─────────────────────────────────────────────────────────────────────────
  * Transform/Animations/Interaction (`../../inspector/sections/index.ts`,
- * tagged `tab: 'prototype'`) mount here too, via the same `INSPECTOR_SECTIONS`
- * array `StyleSurface.tsx` reads for the Design tab — `PrototypeManifestSections`
- * below filters+sorts the `'prototype'`-tagged subset instead of importing
- * each component by name (avoids a real naming collision: this file already
+ * tagged `tabs: ['design', 'prototype']`) mount here EXPANDED, at rest —
+ * this is the tab that exists for exactly that material. They stay reachable
+ * from Design too, but only inside its one collapsed More disclosure (S5,
+ * the 900px budget). `PROTOTYPE_TAB_SECTIONS` — the manifest's own
+ * pre-filtered, pre-sorted constant — is what this file mounts, instead of
+ * importing each component by name (avoids a real naming collision: this file already
  * has its own unrelated local `InteractionSection` — the link "On click"
  * editor below — so importing the CSS `InteractionSection` by name would
  * shadow it). They mount unconditionally at the end of `.panel`, after
@@ -80,14 +82,8 @@ import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { deleteLink, saveLink, updateLink } from '@site/studio/prototypeActions'
-import { INSPECTOR_SECTIONS } from '@site/inspector/sections'
+import { PROTOTYPE_TAB_SECTIONS } from '@site/inspector/sections'
 import styles from './PrototypePanel.module.css'
-
-/** The `tab: 'prototype'` subset of the same manifest `StyleSurface.tsx`
- *  reads for the Design tab — see this file's own doc above. */
-const PROTOTYPE_MANIFEST_SECTIONS = INSPECTOR_SECTIONS.filter((s) => s.tab === 'prototype').sort(
-  (a, b) => a.order - b.order,
-)
 
 const ACTION_OPTIONS: ReadonlyArray<{ value: PrototypeAction; label: string }> = [
   { value: 'navigate', label: 'Navigate to' },
@@ -173,10 +169,10 @@ export function PrototypePanel() {
  * OTHER branches above (the bare top-level `EmptyState`s) still rely on.
  */
 function PrototypeManifestSections() {
-  if (PROTOTYPE_MANIFEST_SECTIONS.length === 0) return null
+  if (PROTOTYPE_TAB_SECTIONS.length === 0) return null
   return (
     <div className={styles.manifestSections}>
-      {PROTOTYPE_MANIFEST_SECTIONS.map((section) => (
+      {PROTOTYPE_TAB_SECTIONS.map((section) => (
         <div data-section-id={section.id} key={section.id}>
           <section.Component />
         </div>

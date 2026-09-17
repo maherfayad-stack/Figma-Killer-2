@@ -791,27 +791,49 @@ repository.
 > properties") and still don't; this is where Studio's own additions live,
 > at the tail of the Design-tab scroll, after Export.
 
-P3's last item folds the five remaining "no Penpot home" concerns into six
-`INSPECTOR_SECTIONS` manifest entries (order 10–15, a contiguous tail block
-— `export` stays `order: 9`) — the same one-continuously-scrolling column
-every other section renders in, no separate tab:
+P3's last item folded the remaining "no Penpot home" concerns into their own
+`INSPECTOR_SECTIONS` manifest entries — the same one-continuously-scrolling
+column every other section renders in, no separate tab. **S5 then moved four
+of them off the Design tab's always-mounted height**, because none of them is
+something a designer reaches for often enough to pay 164px for on every
+selection (see §6):
 
-| order | id | Component | `appliesTo` | Claims |
+| order | id | Component | Where it mounts | Claims |
 |---|---|---|---|---|
-| 10 | `component` | `ComponentSection.tsx` | `studio.instance` nodes only | call-site props |
-| 11 | `attributes` | `AttributesSection.tsx` | any selected node | `htmlAttributes` |
-| 12 | `transform` | `TransformSection.tsx` | any selected node | `transform`, `transformOrigin` |
-| 13 | `animations` | `AnimationsSection.tsx` | any selected node | `animation*`, `transition` |
-| 14 | `interaction` | `InteractionSection.tsx` | any selected node | `cursor`, `pointerEvents`, `userSelect`, `scrollBehavior` |
-| 15 | `customProperties` | `CustomPropertiesSection.tsx` (manifest wrapper) | any selected node | every uncurated key |
+| 10 | `component` | `ComponentSection.tsx` | Design, inline — `studio.instance` nodes only | call-site props |
+| 11 | `transform` | `TransformSection.tsx` | Design **More**, and Prototype expanded | `transform`, `transformOrigin` |
+| 12 | `animations` | `AnimationsSection.tsx` | Design **More**, and Prototype expanded | `animation*`, `transition` |
+| 13 | `interaction` | `InteractionSection.tsx` | Design **More**, and Prototype expanded | `cursor`, `pointerEvents`, `userSelect`, `scrollBehavior` |
+| 14 | `customProperties` | `CustomPropertiesSection.tsx` (manifest wrapper) | Design **More** | every uncurated key |
 
-**Six entries, not one "Studio extras" component** — Component only applies
-to `studio.instance` nodes (the other five apply to any node), and cramming
-five different `appliesTo` predicates behind one component's internal `if`
+Two manifest fields carry that, and nothing else changed about any of these
+components:
+
+- **`tabs`** (default `['design']`) — which `InspectorShell` tabs mount the
+  section. The three motion/behaviour sections are `['design', 'prototype']`:
+  expanded on Prototype, which is the tab that exists for exactly this
+  material, and still reachable from Design so a CSS `transform` doesn't
+  require knowing to switch tabs.
+- **`designGroup`** (default `'primary'`) — `'more'` means "render inside the
+  ONE collapsed `Section title="More"` at the end of the Design tab", which
+  `StyleSurface.tsx` mounts with the same loop it uses for the continuous
+  scroll. Collapsed, the four of them cost one 32px header between them.
+
+The retired `attributes` entry is gone entirely: `panel-29` removed it from
+the manifest on direct user feedback and parked `AttributesSection.tsx` /
+`.module.css` / `htmlAttributesModel.ts` "unmounted but intact", which is the
+`No dead code` rule's exact failure mode. S5 deleted all three and their
+tests. The `htmlAttributes` **prop** is untouched — the publisher,
+`htmlImport`, and every base module's renderer still read it; only its
+retired editor UI is gone.
+
+**Separate entries, not one "Studio extras" component** — Component only applies
+to `studio.instance` nodes (the others apply to any node), and cramming
+several different `appliesTo` predicates behind one component's internal `if`
 ladder would reintroduce the per-node-kind branching this whole series spent
-eleven sections removing. `component`/`attributes` are near-verbatim moves
-(`InstanceCallSiteView.tsx`/`HtmlAttributesPanel.tsx`, renamed) off their old
-bespoke Module-section / tab-switcher homes; `transform`/`interaction` follow
+eleven sections removing. `component` is a near-verbatim move
+(`InstanceCallSiteView.tsx`, renamed) off its old bespoke Module-section
+home; `transform`/`interaction` follow
 Law 1's empty-header/`forceOpen` disclosure exactly like Stroke/Shadow/Blur;
 `animations` is the heaviest port, combining what used to be two exports
 (`AnimationsSection` the body, `AnimationsSectionActions` the header "+"
@@ -824,11 +846,11 @@ migrated section narrows its own bag to the handful of properties it claims;
 this one instead claims "every uncurated key" (`!isCuratedProperty`), the
 Webflow/Framer-style escape hatch `CustomPropertiesSection.tsx` (kept at its
 original path, widened with an additive `forceOpen` prop) has always been.
-It is genuinely shared by three call sites now — the manifest wrapper here
-(`forceOpen` always on), plus `StyleRuleComposer.tsx` (ambient/global-
-selector) and `MultiInlineStyleComposer.tsx` (multi-select), both of which
-call it directly now that `StyleSectionsEditor.tsx` — the registry-driven
-renderer every curated section (G1–G11) used to share — is deleted.
+It has two call sites — the manifest wrapper here (`forceOpen` always on,
+serving one node and N alike since S5), plus `StyleRuleComposer.tsx`
+(ambient/global-selector), which calls it directly now that
+`StyleSectionsEditor.tsx` — the registry-driven renderer every curated section
+(G1–G11) used to share — is deleted.
 
 **`StyleSectionsEditor.tsx` and `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`
 array are retired, not both deleted.** `StyleSectionsEditor.tsx` (the last
@@ -839,20 +861,16 @@ category" loop, now rendering zero buttons — a disclosed, by-construction
 narrowing, not a bug) and `cssControlTypes.ts` (`ALL_CURATED_CSS_PROPERTIES`)
 still import from that file.
 
-**Multi-select narrows with it — a further step, not a first one.** By the
-time P3 reached item 11, `CLASS_STYLE_SECTIONS` (and therefore what
-`MultiInlineStyleComposer.tsx`/`StyleRuleComposer.tsx` could still render
-across a multi-selection or an ambient selector) was already down to three
-entries — `transform`/`animations`/`interaction` — every OTHER curated
-category having already migrated to its own single-node
-`INSPECTOR_SECTIONS` entry in items 1–9 and become invisible to these two
-composers along the way. Item 11 finishes that migration for the last
-three, so both composers now render only `CustomPropertiesSection` — bulk-
-editing `transform`, an animation, or `cursor` across a multi-selection (or
-from the ambient/global-selector surface) is no longer possible; bulk-
-editing an uncurated property still is. `useSelectionModel()`, which every
-migrated section reads instead, is built for exactly one selected node, so
-there is no manifest-entry home for any of them to fall back to here.
+**Multi-select narrowed with it, and S5 reversed that.** By the time P3
+reached item 11, every curated category had migrated to a manifest entry
+reading `useSelectionModel()` — which was built for exactly one node — so the
+legacy composers were left rendering only `CustomPropertiesSection`, and a
+multi-selection lost every other section. That was never a design decision,
+just the far end of a migration. S5 widened the model to N (§9.0) and deleted
+the multi-select composer entirely; the ambient/global-selector surface
+(`StyleRuleComposer.tsx` + `StyleCategoryRail.tsx`) is the only caller of the
+now-empty `CLASS_STYLE_SECTIONS` left, and closing that one is its own
+ticket.
 
 ---
 
@@ -954,13 +972,13 @@ on a text layer, rather than one that is promoted to the top of a fixed list
 — by gating its `appliesTo` on this file's own `isTextNode`, reused (not
 duplicated) from `styleSectionOrder.ts`. `orderStyleSections`/
 `isTextSelection`/this section's own "Typography renders first" reordering
-stays live, unchanged, for the two surfaces this migration didn't touch:
-`MultiInlineStyleComposer.tsx` (multi-select) and `StyleRuleComposer.tsx`/
-`StyleCategoryRail.tsx` (`SelectorInspector.tsx`'s ambient global-selector
-surface) — both still render the legacy `CLASS_STYLE_SECTIONS` list directly
-and neither has a `typography` entry left to promote, so the reordering is
-now an inert no-op there, not a bug. It resolves for real when P6 deletes
-this whole mechanism alongside `classStyleSections.ts`.
+stays live, unchanged, for the one surface this migration didn't touch:
+`StyleRuleComposer.tsx`/`StyleCategoryRail.tsx` (`SelectorInspector.tsx`'s
+ambient global-selector surface), which still renders the legacy
+`CLASS_STYLE_SECTIONS` list directly and has no `typography` entry left to
+promote, so the reordering is now an inert no-op there, not a bug. (The other
+former caller, the multi-select composer, is deleted — see §9.0.) It resolves
+for real when the ambient surface joins the manifest too.
 
 ### §5.1 Commit coerces; it never writes what CSS rejects
 
@@ -1113,48 +1131,67 @@ edge, not an oversight.
 > Typography/Fill/Stroke/Effects). Both are gone from the single-node
 > surface: P1 deleted the rail entirely (`SelectorInspector.tsx`'s separate
 > ambient/global surface is the only place `StyleCategoryRail` still mounts),
-> and P3 replaced the category registry with the 16-entry
+> and P3 replaced the category registry with the
 > `INSPECTOR_SECTIONS` manifest (`src/admin/pages/site/inspector/sections/
 > index.ts`) `StyleSurface.tsx` mounts as one continuous scroll. Rewritten
 > below against that current reality, with real measured numbers — not the
-> old table's, and not guessed.
+> old table's, and not guessed. S5 (WS-14.5) then made the 900px number in
+> the original claim reachable again, and gave it a spec.
 
 Do not start a density change without a baseline, and do not close one without
 a re-measure. Fabricated height numbers are how a density plan drifts.
 
-**The gate is two files, not one**, because `bun test`'s `happy-dom`
+**The gate is three files, not one**, because `bun test`'s `happy-dom`
 environment builds a DOM but does not lay it out — `scrollHeight`/
 `scrollWidth`/a real rendered row offset are unavailable there (see
 `src/__tests__/inspector/measurement.test.ts`'s own header comment for the
 full explanation):
 
 - **`src/__tests__/inspector/measurement.test.ts`** (`bun test`, static) —
-  asserts the manifest shape (16 entries, in order, `order` 0–15 with no gaps
-  or dupes), the frozen `--inspector-*` token table (`--inspector-row-h`/
-  `--inspector-header-h` = 32px each, no `clamp()`/`vw`, no section CSS module
-  reaching back into the fluid `--space-*` scale), and a COMPUTED (not
-  measured) per-section rest-height budget built from those same frozen
-  tokens and each section's own minimal/collapsed-state row count, read from
-  its source.
-- **`tests/e2e/inspector-panel-measurement.e2e.ts`** (Playwright, real
-  browser, real dev server) — the real half, against a throwaway project
-  reproducing the P0 baseline's F1 (rectangle)/F2 (text)/F3 (flex board)
-  fixtures. Four gates, with the real numbers they measured:
+  asserts the manifest shape (15 entries, in order, `order` 0–14 with no gaps
+  or dupes, plus which entries carry `tabs`/`designGroup`), the frozen
+  `--inspector-*` token table (`--inspector-row-h`/`--inspector-header-h` =
+  32px each, no `clamp()`/`vw`, no section CSS module reaching back into the
+  fluid `--space-*` scale), and a COMPUTED (not measured) per-section
+  rest-height budget built from those same frozen tokens and each section's
+  own minimal/collapsed-state row count, read from its source — now summed
+  into a **Design-tab total** for the F2 text fixture.
+- **`tests/e2e/inspector-height.e2e.ts`** (Playwright) — WS-14.5, the 900px
+  gate itself: `scrollHeight <= clientHeight` at 900px for all four baseline
+  fixtures (F1 rectangle, F2 text, F3 flex board, F4 image), plus a check
+  that the four Studio-extras sections are folded at rest and one click
+  reaches them. It writes the MEASURED per-section height table to
+  `docs/audits/penpot-inspector-baseline/05-section-heights.json`.
+- **`tests/e2e/inspector-panel-measurement.e2e.ts`** (Playwright) — the older
+  gate, still live and measuring different things: row rhythm, the 260px
+  width invariant, and click counts, at its own tall viewport.
 
-**900px was stale — the real number is ~1400px, and that's not a bug.** The
-old F28 claim ("a text node's entire inspector… fits in one 900px viewport
-with no scroll") was measured against **seven** pre-P3 categories (Position,
-Layout, Appearance, Typography, Fill, Stroke, Effects). P3 item 11 (`STATE.md`
-`panel-25`, "Studio extras") added six more sections that always mount for
-any selected node — `attributes`, `transform`, `animations`, `interaction`,
-`customProperties`, and `component` (gated off for a non-instance node) — none
-of which the 900px number ever budgeted for. Measured for real against the
-e2e spec's F2 text fixture: **~1400px total** (`attributes`'s own empty-state
-alone is ~245px — a `variant="centered"` `EmptyState`, not a compact row).
-The gate itself is real and still enforced — the panel must render with no
-internal scrollbar, and must not silently regress past ~1400px — just
-calibrated against the current, correct total instead of a sum that predates
-six of the panel's sixteen sections.
+**900px is real again, and S5 is what made it reachable.** The old F28 claim
+("a text node's entire inspector… fits in one 900px viewport with no scroll")
+was measured against **seven** pre-P3 categories. P3 item 11 (`STATE.md`
+`panel-25`, "Studio extras") added six more always-mounted sections nobody
+had budgeted for, and `fix/inspector-spacing-audit`'s real between-section
+gap grew it further: the F2 text node measured **~1826px** at that spec's own
+2100px-tall viewport. S5 did not shrink a single control to fix that. It moved
+`transform`/`animations`/`interaction`/`customProperties` behind one collapsed
+**More** disclosure and deleted the retired `attributes` code outright, which
+removes **164px** of always-mounted Design-tab height — computed from the
+frozen tokens and asserted in the static half:
+
+| | Design-tab sections, F2 text, at rest |
+|---|---:|
+| 11 inline sections + 4 Studio extras inline | **920px** |
+| 10 inline sections + 1 collapsed `More` header | **756px** |
+
+`docs/audits/penpot-inspector-baseline/05-section-heights.md` carries the
+full per-section table, both computed and measured, and explains why neither
+replaces the other.
+
+**The panel chrome is not in that number and cannot be.** The write-target
+chip row, ClassPicker, the Module block, and `.surface`'s own padding are
+fluid `--space-*` values with no fixed px, so no static sum can see them.
+That is exactly why the 900px assertion is a Playwright spec measuring the
+real scroll container, not an arithmetic claim.
 
 **The width invariant still holds, verbatim in spirit.** Every section
 shrinks or truncates rather than overflowing its column — the e2e spec
@@ -1258,8 +1295,49 @@ kept because the alternatives are the part that does not survive in the diff.
 
 Select two or more layers and the inspector shows the same sections it shows
 for one, with **Mixed** wherever the selection disagrees; the first edit writes
-one value to all of them. Phase 1 of W8-3 shipped this for the **Element
-(inline)** target only.
+one value to all of them.
+
+**S5 made that literally true.** W8-3 shipped the contract on a parallel
+surface (`MultiSelectionInspector` → `MultiSelectionStyleArea` →
+`MultiInlineStyleComposer`), and by the time P3 finished, that surface could
+render exactly *one* editing section — Custom properties — because every other
+section had migrated to `INSPECTOR_SECTIONS`, which reads `useSelectionModel()`,
+which assumed one node. Selecting two layers therefore **lost** Fill, Stroke,
+Text, Measures and the rest. S5 widened the model instead of widening the
+parallel surface, and deleted all three files.
+
+### §9.0 One model, no second section tree
+
+`useSelectionModel()` describes N nodes. The widening is shaped so that **no
+section file changed**: every section already reads
+`selectedNode.inlineStyles` + `assignedClassRules` and builds its bags with
+`collapsedStyleBag.ts`, so the model hands it —
+
+| Field | For N nodes |
+|---|---|
+| `selectedNode` | the anchor, with `inlineStyles` replaced by the selection's collapsed bag (`MIXED` where layers disagree) |
+| `selectedNode.codeProps` | only the `style:<prop>` locks present on **every** node — a lock on one of five must not disable a control that works for four |
+| `computedValues` | `null`. `useFrameComputedStyleValues` reads ONE mounted element; showing the anchor's as the selection's placeholder would claim agreement nobody measured |
+| `assignedClassRules` | `[]` (Element/inline), or the one shared class once the user picks it and clears its gate — see §9.4 |
+| `selectedNodes`, `inlineWritableNodeIds`, `inlineUnwritableNodes`, `blockedPropertyCounts`, `sharedClassRules` | the N-node facts the target bar and its notices state |
+
+`commitApi.ts` is the other half: an inline write for N dispatches to
+`setNodesInlineStyles` instead of `setNodeInlineStyles`. A class write needs no
+branch — one class write already reaches everything carrying the class.
+
+`PropertiesPanelBody` has no multi-select branch any more. What it still gates
+on cardinality is the per-node CHROME above the sections — the
+component/slot/source notices and ClassPicker, each of which would otherwise
+tell the anchor's story as if it were the selection's, or edit one layer's
+`classIds` out of N. The panel header still reads "N layers selected".
+
+**What the deleted action bar took with it.** `MultiSelectionInspector` also
+carried Duplicate / Wrap… / Copy / Cut / Paste / Delete buttons and a
+removable list of the selected layers. Figma's right panel has no such bar;
+those actions live on the canvas context menu and the keyboard, which is where
+they stay. `commitProp` also stops at one node: a module prop belongs to one
+call site's schema, and fanning one key across N nodes of possibly different
+modules is a guess, not a Mixed collapse.
 
 ### §9.1 One patch, one undo step
 
@@ -1272,16 +1350,18 @@ shares its merge/clear semantics with the single-node `setNodeInlineStyles`
 through `applyInlineStylePatch`, so "clear this property" cannot mean two
 things. A node that individually refuses the write — a stale id, or a
 `style:<prop>` this node resolved from an expression in source — is skipped
-without aborting the rest; `MultiInlineStyleComposer` names those properties
+without aborting the rest; `MultiSelectTargetBar` names those properties
 above the sections so the refusal is never silent.
 
 ### §9.2 Two collapsed bags, no new section tree
 
-`StyleSectionsEditor` is already target-agnostic — it renders whatever
-`storedStyles` / `currentStyles` pair it is handed. Multi-select therefore adds
-no second copy of the section tree, only `buildMultiSelectStyleBags`
-(`multiSelectStyleBags.ts`), which collapses N nodes into that same pair using
-`collapseValues` from `@ui/components/MixedValue`:
+Every section is already target-agnostic — it builds its own bags from
+whatever `inlineStyles` + `assignedClassRules` the model hands it
+(`collapsedStyleBag.ts`). Multi-select therefore adds no second copy of the
+section tree, only `buildMultiSelectStyleBags` (`multiSelectStyleBags.ts`),
+which collapses N nodes using `collapseValues` from
+`@ui/components/MixedValue` and which `useSelectionModel` calls once per
+render:
 
 - **`storedStyles`** — the inline editing target. A property is present when at
   least one selected node sets it inline; its value is the shared value when
@@ -1296,6 +1376,16 @@ the editor asks that question — Law 1's disclosure, the indicator dot, the "N
 set" meta. There is no `getComputedStyle` layer here: that hook reads ONE
 mounted element, and provenance runs with `computedValue: undefined`, which
 means an ambiguous multi-class cascade crowns nobody rather than guessing.
+
+**Since S5 the model uses `storedStyles` only.** It is the bag that becomes
+the collapsed anchor's `inlineStyles`, and each section then derives its own
+`currentStyles` from that plus the class chain, exactly as it does for one
+node. The deliberate loss is the class-sourced placeholder layer for a
+multi-selection: a field whose value comes only from a class reads unset
+rather than showing that class's value muted. Under-stating is the safe
+direction — the alternative, feeding a `MIXED` Symbol through a
+`computedValues: Record<string, string>` channel, is exactly the "control that
+lies" bug class.
 
 ### §9.3 Mixed rendering
 
@@ -1414,6 +1504,16 @@ only** (a class-sourced colour's honest target is the class, and a swatch must
 not silently perform a class edit), and **literal text matching** — `#fff` and
 `rgb(255,255,255)` are separate swatches, because bucketing them would mean
 rewriting text the user never asked us to touch.
+
+**WS-14.4 closed it as a manifest section (S5).** `SelectionColorsSection`
+moved to `inspector/sections/` and became the `selectionColors` entry
+(`order: 5`, directly under Fill — the per-property answer to the same
+question), wearing Fill's own icon and `Section` chrome. It is the only entry
+with a multi-only `appliesTo`: for one node, Fill already says everything it
+would. Its field is `ColorValueInput`, the same one `ColorFieldRow`
+(`STATE.md` `panel-33`) wraps for Fill's rows, so the swatch opens the real
+picker on the FIRST click here too. A selection whose colours all come from
+classes renders Law 1's empty header rather than an empty list.
 
 ### §9.5 A multi-selection needs two members
 
