@@ -60,6 +60,7 @@
  */
 import postcss, { type AtRule, type Root, type Rule } from 'postcss'
 import { applyDeclaration } from './setDeclaration'
+import { preservingLineEndings } from './preserveLineEndings'
 import type { SetDeclarationResult } from './setDeclaration'
 import type { RemoveDeclarationResult } from './removeDeclaration'
 import type { InsertRuleResult } from './insertRule'
@@ -259,22 +260,24 @@ export function setDeclarationAtKeyframe(
   property: string,
   value: string,
 ): SetDeclarationResult {
-  const root: Root = postcss.parse(cssText)
-  const atRule = findKeyframesAtRules(root, name)[0]
+  return preservingLineEndings(cssText, (source) => {
+    const root: Root = postcss.parse(source)
+    const atRule = findKeyframesAtRules(root, name)[0]
 
-  if (!atRule) {
-    appendKeyframes(root, name, [{ keyText, declarations: { [property]: value } }])
+    if (!atRule) {
+      appendKeyframes(root, name, [{ keyText, declarations: { [property]: value } }])
+      return { css: root.toString(), changed: true }
+    }
+
+    const step = findStep(atRule, keyText)
+    if (step) {
+      const changed = applyDeclaration(step, property, value)
+      return { css: changed ? root.toString() : source, changed }
+    }
+
+    atRule.append(buildStep(keyText, { [property]: value }))
     return { css: root.toString(), changed: true }
-  }
-
-  const step = findStep(atRule, keyText)
-  if (step) {
-    const changed = applyDeclaration(step, property, value)
-    return { css: changed ? root.toString() : cssText, changed }
-  }
-
-  atRule.append(buildStep(keyText, { [property]: value }))
-  return { css: root.toString(), changed: true }
+  })
 }
 
 /**
@@ -293,30 +296,32 @@ export function removeDeclarationAtKeyframe(
   keyText: string,
   property: string,
 ): RemoveDeclarationResult {
-  const root: Root = postcss.parse(cssText)
-  const atRule = findKeyframesAtRules(root, name)[0]
-  if (!atRule) return { css: cssText, changed: false }
+  return preservingLineEndings(cssText, (source) => {
+    const root: Root = postcss.parse(source)
+    const atRule = findKeyframesAtRules(root, name)[0]
+    if (!atRule) return { css: source, changed: false }
 
-  const step = findStep(atRule, keyText)
-  if (!step) return { css: cssText, changed: false }
+    const step = findStep(atRule, keyText)
+    if (!step) return { css: source, changed: false }
 
-  const propLower = property.toLowerCase()
-  let removed = false
-  step.each((node) => {
-    if (node.type === 'decl' && node.prop.toLowerCase() === propLower) {
-      node.remove()
-      removed = true
-      return false
+    const propLower = property.toLowerCase()
+    let removed = false
+    step.each((node) => {
+      if (node.type === 'decl' && node.prop.toLowerCase() === propLower) {
+        node.remove()
+        removed = true
+        return false
+      }
+      return undefined
+    })
+    if (!removed) return { css: source, changed: false }
+
+    if (step.nodes.length === 0) {
+      step.remove()
+      if ((atRule.nodes?.length ?? 0) === 0) atRule.remove()
     }
-    return undefined
+    return { css: root.toString(), changed: true }
   })
-  if (!removed) return { css: cssText, changed: false }
-
-  if (step.nodes.length === 0) {
-    step.remove()
-    if ((atRule.nodes?.length ?? 0) === 0) atRule.remove()
-  }
-  return { css: root.toString(), changed: true }
 }
 
 /**
@@ -335,25 +340,27 @@ export function insertKeyframes(
   name: string,
   steps: readonly KeyframeStep[],
 ): InsertRuleResult {
-  const root: Root = postcss.parse(cssText)
-  const atRule = findKeyframesAtRules(root, name)[0]
+  return preservingLineEndings(cssText, (source) => {
+    const root: Root = postcss.parse(source)
+    const atRule = findKeyframesAtRules(root, name)[0]
 
-  if (!atRule) {
-    appendKeyframes(root, name, steps)
-    return { css: root.toString(), changed: true }
-  }
+    if (!atRule) {
+      appendKeyframes(root, name, steps)
+      return { css: root.toString(), changed: true }
+    }
 
-  let changed = false
-  for (const step of steps) {
-    const existing = findStep(atRule, step.keyText)
-    if (!existing) {
-      atRule.append(buildStep(step.keyText, step.declarations))
-      changed = true
-      continue
+    let changed = false
+    for (const step of steps) {
+      const existing = findStep(atRule, step.keyText)
+      if (!existing) {
+        atRule.append(buildStep(step.keyText, step.declarations))
+        changed = true
+        continue
+      }
+      for (const [property, value] of Object.entries(step.declarations)) {
+        if (applyDeclaration(existing, property, value)) changed = true
+      }
     }
-    for (const [property, value] of Object.entries(step.declarations)) {
-      if (applyDeclaration(existing, property, value)) changed = true
-    }
-  }
-  return { css: changed ? root.toString() : cssText, changed }
+    return { css: changed ? root.toString() : source, changed }
+  })
 }
