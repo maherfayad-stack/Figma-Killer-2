@@ -56,6 +56,20 @@ export interface KeybindingDefinition {
   /** Human-readable shortcut labels rendered in the UI and help screen. */
   shortcut: CommandShortcut
   /**
+   * A SECOND keystroke the same `match` accepts, shown alongside `shortcut` in
+   * the help sheet.
+   *
+   * One binding per command is the rule — `HelpKeybindingsList` keys its rows
+   * by `commandId`, and two rows for one action is exactly the duplication this
+   * registry exists to prevent. But some actions honestly have two keys the
+   * user might reach for (`⌥↑` is the a11y-safe reorder, `⌘]` is what a Figma
+   * user's hands already know), and a key the sheet does not list is a key
+   * nobody discovers. So the alias lives on the binding it belongs to, and the
+   * `match` predicate accepts both — the same shape `editor.redo` uses for its
+   * Ctrl+Y alias, promoted to something the help screen can render.
+   */
+  aliasShortcut?: CommandShortcut
+  /**
    * Machine-readable ARIA keyshortcuts attribute value, e.g. "Meta+I".
    * Used on buttons that have an associated aria-keyshortcuts attribute.
    */
@@ -298,13 +312,24 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   //     its ladder is actively showing, i.e. Alt held AND hovering a valid
   //     node — see its own `handleKeyDown`; a bare Alt+↑ tap while not
   //     hovering falls through to this binding untouched).
+  //
+  // `K4` added `⌘]` / `⌘[` as ALIASES on these same two bindings, not as two
+  // more entries: it is Figma's own reorder pair and the first thing a
+  // designer's hands try, while ⌥↑/↓ stays because it is the one that works
+  // without a meta key. Both live in one `match` so the help sheet keeps ONE
+  // row per action (it keys rows by `commandId`) and shows both keycaps.
+  // ⌘[ / ⌘] is browser back/forward on macOS and IS cancellable from page
+  // script, which is why the handler `preventDefault`s.
   {
     // Real spotlight Command (`spotlight/commands/layers.ts`) — no
     // `displayName` needed, the command's own `title` is the help-screen label.
     commandId: 'layers.moveUp',
     shortcut: { mac: '⌥↑', win: 'Alt+↑' },
+    aliasShortcut: { mac: '⌘]', win: 'Ctrl+]' },
     ariaKeyshortcuts: 'Alt+ArrowUp',
-    match: (e) => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowUp',
+    match: (e) =>
+      (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowUp') ||
+      ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === ']'),
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -312,8 +337,11 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   {
     commandId: 'layers.moveDown',
     shortcut: { mac: '⌥↓', win: 'Alt+↓' },
+    aliasShortcut: { mac: '⌘[', win: 'Ctrl+[' },
     ariaKeyshortcuts: 'Alt+ArrowDown',
-    match: (e) => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowDown',
+    match: (e) =>
+      (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowDown') ||
+      ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '['),
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -384,6 +412,23 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
+  // ⌘⇧L, Figma's own lock/unlock key, and `layers.toggleVisibility`'s exact
+  // twin: `layers.toggleLock` has existed as a spotlight Command since the
+  // palette shipped (`commands/layers.ts`) and simply had no key, so locking a
+  // layer meant the palette or the DOM panel's row button. Argument-free and
+  // non-destructive, so — like ⌘⇧H — it needs NO bespoke handler: the generic
+  // dispatcher in `shortcutDispatch.ts` runs it against the multi-selection
+  // ANCHOR, exactly as the palette entry does. Adding a canvas handler here
+  // would double-fire it.
+  {
+    commandId: 'layers.toggleLock',
+    shortcut: { mac: '⌘⇧L', win: 'Ctrl+Shift+L' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+Shift+L' : 'Control+Shift+L',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
   // ── Tools (bare-letter tool switches — Figma's own T / F / C) ───────────
   // Bare letters, no modifier: these are the muscle-memory keys every design
   // tool binds, and the cost of getting them wrong is high (a stray `c` while
@@ -420,6 +465,60 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: 'C', win: 'C' },
     ariaKeyshortcuts: 'C',
     match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // `K4` — the four Figma tool letters Studio was missing. Same two guards as
+  // T / F / C above: `ignoreInEditableField` plus a `match` that rejects every
+  // modifier, so ⌘K stays the palette, ⌘R stays rename and ⌘H/⌘O stay the
+  // browser's. All four are LATCHED TOGGLES on their own key — pressing H
+  // again puts the hand tool away. A latched tool with no way back out from
+  // the keyboard is how a canvas ends up feeling stuck, and Escape is not
+  // reliably available here (the selection ladder claims it first whenever
+  // anything is selected — see `editorKeyDispatcher.ts`).
+  {
+    commandId: 'tools.hand',
+    displayName: 'Hand tool (drag to pan)',
+    shortcut: { mac: 'H', win: 'H' },
+    ariaKeyshortcuts: 'H',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'h',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'tools.scale',
+    displayName: 'Scale tool (resize proportionally)',
+    shortcut: { mac: 'K', win: 'K' },
+    ariaKeyshortcuts: 'K',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // R and O are Figma's rectangle and ellipse. Studio's document is a React
+  // tree, not a shape canvas, so both insert a `base.container` — the box every
+  // layout is built from — as the NEXT SIBLING of the selection rather than
+  // arming a draw gesture. `O` adds `border-radius: 50%` inline, which is what
+  // an ellipse IS in CSS. `F` stays "container inside the selection", so the
+  // pair is genuinely distinct: F nests, R/O extend the row you are in.
+  {
+    commandId: 'tools.rectangle',
+    displayName: 'Insert a box beside the selection',
+    shortcut: { mac: 'R', win: 'R' },
+    ariaKeyshortcuts: 'R',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'r',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'tools.ellipse',
+    displayName: 'Insert a round box beside the selection',
+    shortcut: { mac: 'O', win: 'O' },
+    ariaKeyshortcuts: 'O',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o',
     scope: 'canvas',
     ignoreInEditableField: true,
   },

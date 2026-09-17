@@ -164,6 +164,79 @@ describe('clipboardSlice.pasteNode — smart placement', () => {
     const idxB = root.children.indexOf(b)
     expect(root.children[idxB + 1]).toBe(newIds![0])
   })
+})
+
+/**
+ * `K7` — ⌘V lands where the eye expects.
+ *
+ * "Smart placement" above answers the RIGHT-CLICK question ("paste here",
+ * where `here` names a container). ⌘V asks a different one: it is a gesture
+ * about the SELECTION, and appending the copy to the end of a tall container's
+ * child list puts it off-screen. `placement: 'after'` is that second answer.
+ */
+describe('clipboardSlice.pasteNode — placement: after', () => {
+  it('lands beside a container target instead of inside it', () => {
+    const store = useEditorStore.getState()
+    const site = store.createSite('Clip Site')
+    const rootId = site.pages[0].rootNodeId
+
+    const sourceText = useEditorStore.getState().insertNode('base.text', {}, rootId)
+    const target = useEditorStore.getState().insertNode('base.container', {}, rootId)
+
+    useEditorStore.getState().copyNode(sourceText)
+    const newIds = useEditorStore.getState().pasteNode(target, 'after')
+    expect(newIds).not.toBeNull()
+
+    const root = useEditorStore.getState().site!.pages[0].nodes[rootId]
+    // The whole difference from 'auto': NOT a child of the container.
+    expect(useEditorStore.getState().site!.pages[0].nodes[target].children).toEqual([])
+    expect(root.children[root.children.indexOf(target) + 1]).toBe(newIds![0])
+  })
+
+  it('falls back to inside the page root, which has nothing to sit beside', () => {
+    const store = useEditorStore.getState()
+    const site = store.createSite('Clip Site')
+    const rootId = site.pages[0].rootNodeId
+
+    const sourceText = useEditorStore.getState().insertNode('base.text', {}, rootId)
+    useEditorStore.getState().copyNode(sourceText)
+    const newIds = useEditorStore.getState().pasteNode(rootId, 'after')
+
+    expect(newIds).not.toBeNull()
+    expect(useEditorStore.getState().site!.pages[0].nodes[rootId].children).toContain(newIds![0])
+  })
+
+  it('selects the paste, so the inspector is already on what you just made', () => {
+    const store = useEditorStore.getState()
+    const site = store.createSite('Clip Site')
+    const rootId = site.pages[0].rootNodeId
+
+    const a = useEditorStore.getState().insertNode('base.text', {}, rootId)
+    const b = useEditorStore.getState().insertNode('base.text', {}, rootId)
+    useEditorStore.getState().copyNode(a)
+    useEditorStore.getState().selectNode(b)
+
+    const newIds = useEditorStore.getState().pasteNode(b, 'after')
+    expect(newIds).not.toBeNull()
+    expect(useEditorStore.getState().selectedNodeId).toBe(newIds![0])
+    expect(useEditorStore.getState().selectedNodeIds).toEqual([newIds![0]!])
+  })
+
+  it('selects every root of a multi-root paste', () => {
+    const store = useEditorStore.getState()
+    const site = store.createSite('Clip Site')
+    const rootId = site.pages[0].rootNodeId
+
+    const a = useEditorStore.getState().insertNode('base.text', {}, rootId)
+    const b = useEditorStore.getState().insertNode('base.text', {}, rootId)
+    const anchor = useEditorStore.getState().insertNode('base.text', {}, rootId)
+    useEditorStore.getState().copyNodes([a, b])
+
+    const newIds = useEditorStore.getState().pasteNode(anchor, 'after')
+    expect(newIds).not.toBeNull()
+    expect(newIds!.length).toBe(2)
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(newIds!)
+  })
 
   it('returns null when the clipboard is empty', () => {
     const store = useEditorStore.getState()

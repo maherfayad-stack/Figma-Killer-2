@@ -72,11 +72,24 @@ export function HelpKeybindingsList(): ReactNode {
                   kb.commandId
 
                 const shortcutLabel = isMac ? kb.shortcut.mac : kb.shortcut.win
+                // Some actions honestly answer to two keystrokes (⌥↑ and ⌘]
+                // both reorder). Render the alias as a second keycap group on
+                // the SAME row rather than a second row — the registry keeps
+                // one entry per command, and a key the sheet never lists is a
+                // key nobody discovers. See `aliasShortcut` in keybindings.ts.
+                const aliasLabel = kb.aliasShortcut
+                  ? (isMac ? kb.aliasShortcut.mac : kb.aliasShortcut.win)
+                  : null
 
                 return (
                   <div key={kb.commandId} className={styles.row}>
                     <span className={styles.rowTitle}>{title}</span>
-                    <ShortcutKeys label={shortcutLabel} className={styles.shortcutHint} />
+                    <span className={styles.shortcutGroup}>
+                      <ShortcutKeys label={shortcutLabel} className={styles.shortcutHint} />
+                      {aliasLabel ? (
+                        <ShortcutKeys label={aliasLabel} className={styles.shortcutHint} />
+                      ) : null}
+                    </span>
                   </div>
                 )
               })}

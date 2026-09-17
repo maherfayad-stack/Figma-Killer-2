@@ -306,7 +306,19 @@ export interface SiteSlice {
   setPageAsHomepage: (pageId: string) => void
 
   // Node mutations (operate on the active page)
-  insertNode: (moduleId: string, defaults: Record<string, unknown>, parentId: string, index?: number) => string
+  /**
+   * `inlineStyles` is the node's `style={{ … }}` bag, applied as part of the
+   * SAME insert (`K4`'s `O`). A follow-up `setNodeInlineStyles` cannot work on
+   * a studio tree: the insert is an async source write, this returns `''`, and
+   * no id exists to style until the resync lands.
+   */
+  insertNode: (
+    moduleId: string,
+    defaults: Record<string, unknown>,
+    parentId: string,
+    index?: number,
+    inlineStyles?: Record<string, string>,
+  ) => string
 
   /**
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.

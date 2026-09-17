@@ -62,6 +62,8 @@ export interface StudioSourceWrites {
     defaults: Record<string, unknown> | undefined,
     parentId: string,
     index?: number,
+    /** React-style inline styles written into the new element's own `style={{ … }}`. */
+    inlineStyles?: Record<string, string>,
   ) => boolean
   /**
    * `destination` (K2 — Alt+drag) puts the copy INSIDE a container instead of
@@ -122,7 +124,13 @@ export function createStudioSourceWrites(
    * "one-shot commit, then re-sync with disk" shape `move`/`delete` use, minus
    * the optimistic mutation they can afford and this cannot.
    */
-  const writeInsertToSource = (moduleId: string, defaults: Record<string, unknown> | undefined, parentId: string, index?: number): boolean => {
+  const writeInsertToSource = (
+    moduleId: string,
+    defaults: Record<string, unknown> | undefined,
+    parentId: string,
+    index?: number,
+    inlineStyles?: Record<string, string>,
+  ): boolean => {
     // `store-11` — refuse a second structural gesture while a prior one is
     // still being written+resynced; see `guardAgainstConcurrentStructuralCommit`.
     if (guardAgainstConcurrentStructuralCommit()) return true
@@ -134,7 +142,7 @@ export function createStudioSourceWrites(
         nodeId: plan.nodeId,
         // The refused node here is the CONTAINER (`parentId`) — re-issue the
         // same insert against whatever replaces it once detach/extract lands.
-        retry: (newParentId) => writeInsertToSource(moduleId, defaults, newParentId, index),
+        retry: (newParentId) => writeInsertToSource(moduleId, defaults, newParentId, index, inlineStyles),
         getState: get,
         set,
       })
@@ -188,7 +196,13 @@ export function createStudioSourceWrites(
       void commitStudioInsert({
         ...plan.commit,
         name: intrinsic.tag,
-        props: {},
+        // `K4` — a caller-supplied inline-style bag is written as part of THIS
+        // element, not as a follow-up edit: the node does not exist until the
+        // codemod runs, and its id is the `line:col` that write produces, so
+        // there is nothing to style afterwards until the resync lands. Keys
+        // are React-style camelCase (`borderRadius`), which is the spelling
+        // `renderJsxNode` emits into `style={{ … }}` and the parser reads back.
+        props: inlineStyles && Object.keys(inlineStyles).length > 0 ? { style: { ...inlineStyles } } : {},
         ...(intrinsic.text === undefined ? {} : { children: intrinsic.text }),
       })
       return true

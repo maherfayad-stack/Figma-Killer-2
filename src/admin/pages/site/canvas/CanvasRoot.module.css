@@ -38,6 +38,20 @@
     outline: none;
 }
 
+/* `K4` — the latched hand tool (H) reads as an open hand until the drag starts.
+   Keyed off the same `data-*` flag the pointer gating uses (`canvasPanInput.ts`)
+   rather than a React class, so the cursor and the behaviour can never
+   disagree — and so holding Space, which sets a sibling flag, keeps its own
+   unchanged look. Latched only: a held Space is transient and deliberately
+   does NOT repaint every cursor in the editor. */
+:global(html[data-studio-canvas-hand-tool='1']) .canvas {
+    cursor: grab;
+}
+
+:global(html[data-studio-canvas-hand-tool='1']) .canvas:active {
+    cursor: grabbing;
+}
+
 /* B1 — VC edit mode accent frame: inset ring using the canvas selection token.
    Achromatic only — uses existing --canvas-selection-ring; no new colors. */
 .canvas[data-vc-mode="true"] {

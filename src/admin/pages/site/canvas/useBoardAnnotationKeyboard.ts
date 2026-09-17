@@ -1,27 +1,32 @@
 /**
- * useBoardAnnotationKeyboard — Delete / Cmd+D / Cmd+C / Cmd+V / arrow-nudge for
- * the selected sticky notes and doc cards.
+ * useBoardAnnotationKeyboard — the `annotation` scope: Delete / ⌘D / ⌘C / ⌘V /
+ * arrow-nudge for the selected sticky notes and doc cards.
  *
- * A `document`-level listener rather than a React `onKeyDown` on the canvas,
- * for exactly the reason `useCanvasSelectionKeyboard.ts` documents at length:
- * a `onKeyDown` prop only fires while a canvas descendant holds DOM focus, and
- * selecting anything on the board tends to move focus into a panel. Scoped by
- * INTENT instead — it stands down unless annotations are actually selected.
+ * Scoped by INTENT, not focus — it is inert unless annotations are actually
+ * selected (or, for paste, unless the annotation clipboard has something in
+ * it). That is what keeps it from stealing keys from every other surface.
  *
- * It also stands down for a text field, a contentEditable (a note or doc being
- * edited is a text field, and Cmd+C there means "copy the text"), an open
- * dialog/menu, and an already-claimed keystroke. Those four checks are what
- * keep it from stealing keys from every other surface in the app.
+ * ## Why it sits ABOVE `node` and `board` on the ladder
  *
- * The node-tree equivalents of these shortcuts live in
- * `useCanvasKeyboardShortcuts.ts`, which is React-`onKeyDown`-based and keyed
- * off `selectedNodeId`. The two never both fire: node selection and annotation
- * selection are mutually exclusive when made by clicking, and this hook
- * requires a non-empty annotation selection.
+ * A marquee can leave notes AND frames selected at once. The rule
+ * `useBoardFrameNudge` used to document as "mounted AFTER the annotation hook
+ * on purpose" is now the ladder itself (`editorKeyDispatcher.ts`): a mixed
+ * selection nudges the ANNOTATIONS only. Accepted, and unchanged — the two are
+ * separate selection lists with separate inspectors, and silently moving
+ * furniture the user did not see selected is worse than moving less than they
+ * asked.
+ *
+ * The node-tree equivalents of these shortcuts live in `useCanvasNodeShortcuts`
+ * on the `node` rung below.
+ *
+ * The keyup that ends an arrow-nudge undo burst (`store-09`) is broadcast by
+ * `useBoardFrameNudge`'s registration — `endBoardGesture` is one idempotent
+ * store call for both selection kinds, and the dispatcher delivers keyup to
+ * every registered scope regardless of which one is active.
  */
-import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { isTextInputTarget } from './useCanvasKeyboardShortcuts'
+import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
+import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
 /** Board units an arrow key moves the selection, and the larger step Shift gives. */
 const NUDGE_STEP = 1
@@ -34,75 +39,68 @@ const ARROW_DELTAS: Record<string, { dx: number; dy: number }> = {
   ArrowDown: { dx: 0, dy: 1 },
 }
 
-/** Overlays that own the keyboard while open — mirrors `useCanvasSelectionKeyboard`'s list. */
-const OVERLAY_SELECTOR = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]'
-
-function isInsideOverlay(target: EventTarget | null): boolean {
-  const element = target instanceof Element ? target : document.activeElement
-  return element instanceof Element && element.closest(OVERLAY_SELECTOR) !== null
-}
-
-/** Mounts the listener. No-op while live, read-only, or with nothing selected. */
+/** Registers the scope. Inert while live, read-only, or with nothing to act on. */
 export function useBoardAnnotationKeyboard(editable: boolean, isLive: boolean): void {
-  useEffect(() => {
-    if (isLive || !editable) return
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      if (isTextInputTarget(event.target)) return
-      if (isInsideOverlay(event.target)) return
+  useEditorKeyScope(
+    'annotation',
+    () => {
+      if (isLive || !editable) return false
+      const state = useEditorStore.getState()
+      if (state.selectedAnnotations.length > 0) return true
+      // Paste is the one action that works with NOTHING selected — the
+      // clipboard is what it needs, not a selection.
+      const clipboard = state.annotationClipboard
+      return clipboard.notes.length > 0 || clipboard.docs.length > 0
+    },
+    (event) => {
+      if (isTextInputTarget(event.target)) return false
+      if (isInsideKeyOwningOverlay(event.target)) return false
 
       const state = useEditorStore.getState()
       const hasSelection = state.selectedAnnotations.length > 0
       const mod = event.metaKey || event.ctrlKey
 
-      // Paste is the one action that works with NOTHING selected — the
-      // clipboard is what it needs, not a selection.
       if (mod && event.key.toLowerCase() === 'v') {
         const clipboard = state.annotationClipboard
-        if (clipboard.notes.length === 0 && clipboard.docs.length === 0) return
+        if (clipboard.notes.length === 0 && clipboard.docs.length === 0) return false
         event.preventDefault()
         state.pasteAnnotations()
-        return
+        return true
       }
 
-      if (!hasSelection) return
+      if (!hasSelection) return false
 
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault()
         state.deleteSelectedAnnotations()
-        return
+        return true
       }
 
       if (mod && event.key.toLowerCase() === 'd') {
         event.preventDefault()
         state.duplicateSelectedAnnotations()
-        return
+        return true
       }
 
-      if (mod && event.key.toLowerCase() === 'c') {
+      // `!event.shiftKey` is load-bearing, and it is what the ladder made
+      // necessary: ⌘⇧C is `export.copySelectionPng` on the `board` rung BELOW
+      // this one, so without the guard a copy-as-PNG press would be swallowed
+      // here as "copy the sticky note". It used to be saved by mount order —
+      // `useCopyAsPngShortcut` registered first and left the event
+      // `defaultPrevented`. The same guard already lives on `layers.copy`'s
+      // own `match` in the registry, for the same reason.
+      if (mod && !event.shiftKey && event.key.toLowerCase() === 'c') {
         event.preventDefault()
         state.copySelectedAnnotations()
-        return
+        return true
       }
 
       const delta = ARROW_DELTAS[event.key]
-      if (delta) {
-        event.preventDefault()
-        const step = event.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP
-        state.nudgeSelectedAnnotations(delta.dx * step, delta.dy * step)
-      }
-    }
-
-    // `store-09` — a key RELEASE ends the arrow-nudge undo burst, so the next
-    // hold is its own ⌘Z step. No-op when no burst is open.
-    const onKeyUp = () => useEditorStore.getState().endBoardGesture()
-
-    document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('keyup', onKeyUp)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('keyup', onKeyUp)
-    }
-  }, [editable, isLive])
+      if (!delta) return false
+      event.preventDefault()
+      const step = event.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP
+      state.nudgeSelectedAnnotations(delta.dx * step, delta.dy * step)
+      return true
+    },
+  )
 }

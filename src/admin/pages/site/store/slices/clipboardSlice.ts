@@ -39,9 +39,12 @@ import {
   readClipboardPayload,
   writeClipboardPayload,
 } from '@site/store/clipboard/clipboardStorage'
-import { resolveInsertLocation } from '@site/store/insertLocation'
+import { resolveInsertLocation, resolveSiblingAfterLocation } from '@site/store/insertLocation'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { buildSiteHelpers } from './site/helpers'
+
+/** Where a paste lands relative to its target. See `pasteNode`. */
+export type PastePlacement = 'auto' | 'after'
 
 /**
  * In-memory snapshot of the latest copy/cut. Mirrors the persisted payload
@@ -75,14 +78,22 @@ interface ClipboardSlice {
   cutNodes: (nodeIds: string[]) => boolean
   /**
    * Paste the clipboard subtree(s) relative to `targetNodeId`.
-   * If the target accepts children, the subtree is appended inside it;
-   * otherwise it's inserted as the next sibling under the target's parent.
+   *
+   * `placement` answers "relative HOW", and the two callers genuinely differ:
+   *
+   * - `'auto'` — the right-click / palette answer. If the target accepts
+   *   children the subtree is appended INSIDE it; otherwise it lands as the
+   *   next sibling. "Paste here" on a container means into the container.
+   * - `'after'` — the ⌘V answer (`K7`). The keystroke is about a SELECTION,
+   *   and a user watching a selected box expects the pasted copy to appear
+   *   beside it, not swallowed by it and scrolled out of view at the bottom of
+   *   its child list.
+   *
    * For multi-root payloads, every root is placed consecutively in selection
-   * order at the resolved location (single undo step).
-   * Returns the new root node IDs (in selection order), or null if paste was
-   * a no-op.
+   * order at the resolved location (single undo step). Returns the new root
+   * node IDs (in selection order), or null if paste was a no-op.
    */
-  pasteNode: (targetNodeId: string) => string[] | null
+  pasteNode: (targetNodeId: string, placement?: PastePlacement) => string[] | null
 
   /** Clear the clipboard from memory + localStorage. */
   clearClipboard: () => void
@@ -225,14 +236,16 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
       return true
     },
 
-    pasteNode: (targetNodeId) => {
+    pasteNode: (targetNodeId, placement = 'auto') => {
       const state = get()
       const entry = state.clipboardEntry
       if (!entry || entry.rootNodeIds.length === 0) return null
 
       const page = getActivePage(state)
       if (!page) return null
-      const location = resolveInsertLocation(page, targetNodeId)
+      const location = placement === 'after'
+        ? resolveSiblingAfterLocation(page, targetNodeId)
+        : resolveInsertLocation(page, targetNodeId)
       if (!location) return null
 
       // One-outlet-per-document invariant: a copied payload can carry a
@@ -270,7 +283,16 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
         return newRootIds.length > 0
       })
 
-      return newRootIds.length > 0 ? newRootIds : null
+      if (newRootIds.length === 0) return null
+      // `K7` — the paste IS the new selection, and the inspector follows it.
+      // A pasted node that leaves the ORIGINAL selected is a node the user has
+      // to go hunt for in the layer tree before they can style it, and the
+      // first thing anyone does after ⌘V is adjust what they just pasted.
+      // Selecting here (not at each call site) means the right-click paste,
+      // the DOM-panel paste and ⌘V all agree.
+      if (newRootIds.length === 1) get().selectNode(newRootIds[0]!)
+      else get().selectMany(newRootIds)
+      return newRootIds
     },
 
     clearClipboard: () => {

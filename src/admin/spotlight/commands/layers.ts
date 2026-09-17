@@ -169,7 +169,11 @@ export function getLayersCommands(): Command[] {
         if (!nodeId) return
         try {
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().pasteNode(nodeId)
+          // `K7` — 'after', matching ⌘V: this command acts on the SELECTION,
+          // so the paste belongs beside it. `'auto'` (paste into a container
+          // target) is the right answer only for the right-click "Paste here"
+          // menus, which name a container rather than the selection.
+          useEditorStore.getState().pasteNode(nodeId, 'after')
         } catch (err) {
           console.error('[spotlight] pasteNode failed:', err)
         }
