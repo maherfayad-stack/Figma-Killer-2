@@ -87,6 +87,21 @@ export const AiChatRequestBodySchema = Type.Object(
       Type.Literal('default'), Type.Literal('acceptEdits'), Type.Literal('plan'), Type.Literal('bypassPermissions'),
     ])),
     /**
+     * Z3 — per-turn overrides of the two loop ceilings, on the same session-
+     * controls wire as `effort`. Both are OVERRIDES of a default that already
+     * bounds the turn, so omitting them is the normal case and a caller can
+     * never remove a ceiling by leaving one out.
+     *
+     * Bounded at the schema rather than clamped in a driver: a caller that
+     * asks for a thousand rounds or a week-long turn is asking for the thing
+     * these ceilings exist to prevent, and a validation refusal says so
+     * instead of quietly substituting a different number.
+     *   - `maxToolRounds` — provider rounds in the shared HTTP tool loop.
+     *   - `turnCapMs` — total wall time for one `claude` CLI turn.
+     */
+    maxToolRounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+    turnCapMs: Type.Optional(Type.Integer({ minimum: 60_000, maximum: 2 * 60 * 60_000 })),
+    /**
      * W9-2 — how strictly this turn is meant to match the design, and how
      * much invention it is allowed. Tier 3 of `resolveFidelityMode`'s
      * precedence (`server/handlers/studio/fidelityMode.ts`): an explicit

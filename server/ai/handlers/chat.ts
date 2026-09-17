@@ -136,7 +136,17 @@ async function handleAiChat(
     throw err
   }
   if (!chatBody) return badRequest('Invalid request body.')
-  const { conversationId, content, snapshot, workspaceDir, effort, permissionMode, fidelityMode: turnFidelityMode } = chatBody
+  const {
+    conversationId,
+    content,
+    snapshot,
+    workspaceDir,
+    effort,
+    permissionMode,
+    maxToolRounds,
+    turnCapMs,
+    fidelityMode: turnFidelityMode,
+  } = chatBody
   // Validated once, reused for both tool selection and prompt assembly below
   // — a client-supplied path is never trusted twice with two different
   // checks that could drift. `null` means either no project is open or the
@@ -497,6 +507,8 @@ async function handleAiChat(
           workspaceDir,
           effort,
           permissionMode,
+          maxToolRounds,
+          turnCapMs,
           fidelityMode: resolvedFidelityMode,
           sessionEpoch: latestConversation.sessionEpoch,
         }

@@ -7,7 +7,7 @@
  * (only `useLiveOrigin`/`useDevServerReadiness` are stubbed, so this proves
  * the actual wiring, not a mocked stand-in for it).
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { resolveLiveFrameSrc } from '@site/canvas/resolveLiveFrameSrc'
 import { setFramePoster } from '@site/canvas/BoardFramesLayer/frameSnapshotCache'
@@ -21,12 +21,39 @@ const PROJECT_KEY = 'dogfood-project'
 // `projectKey` into `/p/<projectKey>` — see that component's own doc.
 const LIVE_ORIGIN = `${BARE_LIVE_ORIGIN}/p/${PROJECT_KEY}`
 
+// `mock.module` is GLOBAL to the whole `bun test` process, not scoped to this
+// file, and it is not undone when this file finishes. Both stubs below replace
+// modules that other files test FOR REAL — `useDevServerReadiness.test.tsx`
+// imported this file's stub and watched a hook that never polls, which is
+// exactly the "the poll loop is broken" symptom it exists to catch. Capture
+// the real implementations first (destructured, so the values survive the
+// registry being replaced) and put them back in `afterAll`.
+const { useLiveOrigin: realUseLiveOrigin } = await import('@site/studio/useLiveOrigin')
+const {
+  useDevServerReadiness: realUseDevServerReadiness,
+  nextPollDelayMs: realNextPollDelayMs,
+  POLL_INTERVAL_START_MS: realPollIntervalStartMs,
+  POLL_INTERVAL_MAX_MS: realPollIntervalMaxMs,
+  __resetDevServerReadinessForTests: realResetDevServerReadiness,
+} = await import('@site/studio/useDevServerReadiness')
+
 mock.module('@site/studio/useLiveOrigin', () => ({
   useLiveOrigin: () => BARE_LIVE_ORIGIN,
 }))
 mock.module('@site/studio/useDevServerReadiness', () => ({
   useDevServerReadiness: () => ({ phase: 'ready' as const, log: '' }),
 }))
+
+afterAll(() => {
+  mock.module('@site/studio/useLiveOrigin', () => ({ useLiveOrigin: realUseLiveOrigin }))
+  mock.module('@site/studio/useDevServerReadiness', () => ({
+    useDevServerReadiness: realUseDevServerReadiness,
+    nextPollDelayMs: realNextPollDelayMs,
+    POLL_INTERVAL_START_MS: realPollIntervalStartMs,
+    POLL_INTERVAL_MAX_MS: realPollIntervalMaxMs,
+    __resetDevServerReadinessForTests: realResetDevServerReadiness,
+  }))
+})
 
 const { LiveBoardFrame } = await import('@site/canvas/BoardFramesLayer/LiveBoardFrame')
 

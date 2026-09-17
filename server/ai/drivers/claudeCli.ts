@@ -536,6 +536,9 @@ export async function* streamClaudeCli(
           stdin: new TextEncoder().encode(prompt),
           signal: req.signal,
           spawn: options.spawn,
+          // Z3 — the total-turn ceiling. Omitted means the driver default
+          // (`TOTAL_TURN_CAP_MS`); it is never absent.
+          ...(req.turnCapMs !== undefined ? { totalTurnCapMs: req.turnCapMs } : {}),
         }),
       )
     } catch (err) {

@@ -145,6 +145,22 @@ export interface AiStreamRequest {
   readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
   /**
+   * Z3 — the two per-turn ceilings, both optional overrides of a default that
+   * already bounds the turn. They ride the same session-controls wire as
+   * `effort`, and each is read by exactly one half of the driver family:
+   *
+   *   - `maxToolRounds` — how many provider rounds the shared HTTP tool loop
+   *     may spend (`toolLoop.ts`'s `MAX_TOOL_ROUNDS`). The `claudeCli` driver
+   *     does not own its own loop, so it ignores this.
+   *   - `turnCapMs` — total wall time one `claude` CLI turn may run before the
+   *     driver interrupts it (`claudeCliSpawn.ts`'s `TOTAL_TURN_CAP_MS`). Not
+   *     an idle window: that is a separate, longer-standing bound. Every HTTP
+   *     driver ignores this — an HTTP turn is bounded by rounds, not by a
+   *     subprocess that can sit there.
+   */
+  readonly maxToolRounds?: number
+  readonly turnCapMs?: number
+  /**
    * W9-2's fidelity mode for this turn, AFTER the chat handler resolved it
    * through `resolveFidelityMode`. Carried on the request purely so a driver
    * can report it; no driver maps it onto a provider flag, because the mode

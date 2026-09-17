@@ -386,6 +386,66 @@ describe('spawnClaudeCliNdjson — the timeout is an idle window, not a total ca
   })
 })
 
+/**
+ * Z3. The idle window above is deliberately blind to a turn that keeps
+ * streaming, and that blindness IS the "twenty minutes on one page" failure: a
+ * model looping over the same edit writes output the whole time, so every
+ * chunk re-arms the idle timer and nothing ever stops it. The total cap is the
+ * second, differently-shaped bound that does.
+ */
+describe('spawnClaudeCliNdjson — the total turn cap', () => {
+  it('ends a turn that runs past the cap even though it is never idle', async () => {
+    const killable = { wasKilled: () => false }
+    const events = await collect(spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      stdin: new TextEncoder().encode('hi'),
+      signal: new AbortController().signal,
+      // A line every 10ms against a 400ms idle window — never idle, not once.
+      idleTimeoutMs: 400,
+      totalTurnCapMs: 60,
+      spawn: pacedSpawn({
+        chunks: Array.from({ length: 40 }, (_, i) => [10, `{"n":${i}}\n`] as [number, string]),
+        killable,
+      }),
+    }))
+
+    // Terminal event is the cap itself, NOT an exit — "we stopped this" is a
+    // different fact from "the process died", and the translator words it so.
+    expect(events.at(-1)).toEqual({ kind: 'turnCapped', capMs: 60 })
+    expect(events.filter((e) => e.kind === 'exit')).toEqual([])
+    expect(killable.wasKilled()).toBe(true)
+
+    // The lines it did stream before the cap are real output and were yielded;
+    // the cap truncates the turn, it does not discard it.
+    const lines = events.filter((e) => e.kind === 'line')
+    expect(lines.length).toBeGreaterThan(0)
+    expect(lines.length).toBeLessThan(40)
+  })
+
+  it('leaves a turn that finishes inside the cap completely alone', async () => {
+    const killable = { wasKilled: () => false }
+    const events = await collect(spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      stdin: new TextEncoder().encode('hi'),
+      signal: new AbortController().signal,
+      idleTimeoutMs: 400,
+      totalTurnCapMs: 5_000,
+      spawn: pacedSpawn({
+        chunks: [[5, '{"a":1}\n'], [5, '{"type":"result","is_error":false}\n']],
+        killable,
+      }),
+    }))
+
+    expect(events.at(-1)).toMatchObject({ kind: 'exit', timedOut: false })
+    expect(events.some((e) => e.kind === 'turnCapped')).toBe(false)
+    expect(killable.wasKilled()).toBe(false)
+  })
+})
+
 /** A fake process that reports a `pid`, so `killDescendants` doesn't early-return. Every assertion against `process.kill`/`Bun.spawn` below goes through a mock — this never signals or spawns anything real. */
 function fakeSpawnWithPid(pid: number): SubprocessSpawnFn {
   return () => {
