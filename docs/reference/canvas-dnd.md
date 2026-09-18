@@ -50,8 +50,10 @@ topology below first.
   same chip a same-frame refusal shows — when the element reads a binding local
   to the component it is leaving (`captured-scope`), when the destination
   already means something else by a name it would carry
-  (`binding-conflict`), or for any of the four reasons a same-frame move
-  refuses on either end. **Two frames of the same PAGE are not cross-frame** —
+  (`binding-conflict`), when it reads a helper or local component the origin
+  declares but does not export (`unexported-binding`, `sec-17` — the import it
+  would carry would resolve to nothing), or for any of the four reasons a
+  same-frame move refuses on either end. **Two frames of the same PAGE are not cross-frame** —
   a "duplicate as variant" sibling keeps going through `moveNodes`. See
   "[Dragging an element BETWEEN frames](../agent-refs/canvas-internals.md)" in
   canvas-internals.
@@ -60,7 +62,11 @@ topology below first.
   then one structural insert at the drop point. This is the canvas's one
   native-HTML5 gesture, by necessity: a file from outside the browser is only
   ever delivered through `DataTransfer.files`. Dropping on the empty board, or
-  dropping a non-image, is a refusal toast and no write.
+  dropping a non-image, is a refusal toast and no write. Inside a design
+  frame's document every native drag is cancelled, files or not
+  (`canvasFrameDragRelay.ts`, `sec-17`): the browser's default is to navigate
+  the document that received the drop, and a dropped link would replace the
+  rendered page with an arbitrary site inside the editor's own chrome.
 - **⌘/Ctrl+drag places by coordinates** instead of reordering — an inline
   `left`/`top` (or `inset-inline-start` in RTL) on one element, snapped to its
   siblings' edges and centres. Refuses, with a one-click remedy, when the

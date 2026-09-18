@@ -666,10 +666,15 @@ events. Five cases are bridged explicitly:
 3. **Keyboard** — a cloned `keydown` is dispatched on the **parent `document`**
    (not the iframe element — that would double-fire the canvas-root handler that
    already gets it via fiber bubbling). `Tab` is blocked, never forwarded.
-4. **OS file drag/drop** (D2 G15) — a `dragover`/`drop` carrying files from the
-   desktop is re-dispatched on the iframe element and cancelled inside the
-   frame, so the browser does not navigate that document to the dropped file.
-   Only for a drag carrying FILES; an in-page `@dnd-kit` drag is untouched.
+4. **OS file drag/drop** (D2 G15, `canvasFrameDragRelay.ts`) — **every**
+   `dragover`/`drop` in a design frame's document is cancelled there, because
+   the browser's default is to navigate the document that received it and that
+   tears the portal's React root out. A dropped LINK is as destructive as a
+   dropped file, so the cancel is unconditional (`sec-17`); only the
+   **file-carrying** ones are then re-dispatched on the iframe element for
+   `useCanvasFileDrop`. Design frames only — a live (Tier 2) frame's document
+   belongs to the running app. An in-page `@dnd-kit` drag is pointer-based and
+   untouched.
 5. **Overlay dismiss** — `ContextMenu` attaches dismiss listeners to every
    same-origin document via `collectSameOriginDocuments`. Cross-realm
    `instanceof Node` fails, so use `isNode` (`src/ui/lib/sameOriginDocuments.ts`).

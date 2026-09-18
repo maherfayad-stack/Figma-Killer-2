@@ -114,7 +114,13 @@ const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
   'admin/pages/site/canvas/useCanvasFileDrop.ts',
   // The same gesture's iframe relay: a native `dragover`/`drop` does not
   // cross the iframe boundary, so it is re-dispatched on the iframe element.
-  'admin/pages/site/canvas/useIframeEventForwarding.ts',
+  // `sec-17` lifted the RULE out of `useIframeEventForwarding.ts` (which is
+  // therefore no longer on this list — it now owns only the lifecycle) so it
+  // could be driven directly: cancel every drag's default inside a design
+  // frame, because the browser's default is to navigate the portal's document
+  // away and a dropped LINK is as destructive there as a dropped file; relay
+  // only the file-carrying ones.
+  'admin/pages/site/canvas/canvasFrameDragRelay.ts',
 ])
 
 // ─── File collection ─────────────────────────────────────────────────────────

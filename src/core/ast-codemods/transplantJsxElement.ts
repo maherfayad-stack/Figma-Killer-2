@@ -60,6 +60,7 @@
  * save route's existing post-batch prune pass covers a transplant exactly as
  * it covers a delete — see `applyStudioEditBatch`.
  */
+import { realpathSync } from 'node:fs'
 import * as path from 'node:path'
 import { Project, type Node, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
@@ -82,7 +83,11 @@ export interface TransplantJsxElementParams {
   /** 1-based line/col of the moved element's tag-name start. */
   line: number
   col: number
-  /** Absolute path to the file the element is moving INTO. Must differ from `file`. */
+  /**
+   * Absolute path to the file the element is moving INTO. Must be a different
+   * file from `file` — compared on the REAL path, so a case variant or a
+   * symlink/junction naming the same bytes refuses as `same-file` too.
+   */
   destinationFile: string
   /** 1-based line/col of the container element in `destinationFile`. */
   destinationLine: number
@@ -107,6 +112,9 @@ export type TransplantJsxRefusalReason =
   | InsertJsxRefusalReason
   | 'same-file'
   | 'captured-scope'
+  // `sec-17` — the origin declares the binding but does not export it, so
+  // there is no import the destination could carry that would resolve.
+  | 'unexported-binding'
 
 export interface TransplantJsxRefusal {
   reason: TransplantJsxRefusalReason
@@ -125,10 +133,36 @@ function refuseTransplant(
   return { ok: false, refusal: { reason, message } }
 }
 
+/**
+ * The identity of a file ON DISK, not the identity of the string naming it.
+ *
+ * `realpathSync.native` resolves symlinks AND — on Windows and macOS —
+ * canonicalises the case, so `pages/Home.tsx`, `pages/home.tsx` and
+ * `mirror/Home.tsx` (a junction) all collapse to one answer. Falls back to a
+ * plain `resolve` for a path that does not exist yet, which for this codemod's
+ * two ends means "one of them is about to refuse as `not-found` anyway".
+ */
+function fileIdentity(file: string): string {
+  try {
+    return realpathSync.native(file)
+  } catch {
+    return path.resolve(file)
+  }
+}
+
 export function transplantJsxElement(params: TransplantJsxElementParams): TransplantJsxElementResult {
   const { file, line, col, destinationFile, destinationLine, destinationCol } = params
 
-  if (file === destinationFile) {
+  // Compared on the REAL path, never on the two strings. A same-file gesture
+  // that slips through here is not a no-op: both ends load as SEPARATE ts-morph
+  // source files backed by the same bytes, the destination's spliced text is
+  // written first, and the origin's — computed from the pre-edit text with the
+  // element cut out — then overwrites it wholesale. The element is deleted from
+  // the user's repository and never inserted anywhere, and the codemod returns
+  // `ok`. `studioEditLocation`'s guard is lexical (`sec-17`), so two node ids
+  // can legitimately name one file: a case difference on a case-insensitive
+  // filesystem, or a symlink/junction of the kind git itself stores.
+  if (fileIdentity(file) === fileIdentity(destinationFile)) {
     return refuseTransplant(
       'same-file',
       'Both ends of this move are in the same file, which is an ordinary reparent — this write exists only for the cross-file case.',
@@ -249,6 +283,17 @@ function resolveCarriedBindings(
   const requirements = new Map<string, ImportRequirement>()
   for (const variable of free) {
     const requirement = resolveCarriedBinding(variable.name, originSource, destinationFile)
+    if (requirement === UNEXPORTED) {
+      return {
+        ok: false,
+        refusal: {
+          reason: 'unexported-binding',
+          message:
+            `This element reads "${variable.name}", which the file it is leaving declares but does not export — so the other file has no way to import it, and writing the move anyway would leave that file with an import of a name that is not there. ` +
+            `Export "${variable.name}" from its own file first, then drag again.`,
+        },
+      }
+    }
     if (!requirement) continue // a global, or a name nothing here can trace — left to the compiler to report
     const binding = conflictingBinding(destinationSource, variable.name, requirement.specifier)
     if (binding) {
@@ -267,10 +312,17 @@ function resolveCarriedBindings(
 }
 
 /**
+ * The origin declares this name but keeps it to itself — see
+ * {@link resolveCarriedBinding}.
+ */
+const UNEXPORTED = Symbol('unexported')
+
+/**
  * Where `name` comes from, expressed as an import the DESTINATION file can
  * carry — or `undefined` when the origin file neither imports nor declares it
  * (a global, or a name this walk cannot trace, which `analyzeFreeVariables`
- * has already narrowed to almost nothing).
+ * has already narrowed to almost nothing), or {@link UNEXPORTED} when the
+ * origin declares it but does not export it.
  *
  * The same resolution `addReconciledImports` performs, expressed as a
  * REQUIREMENT rather than applied as a ts-morph mutation: this codemod writes
@@ -281,7 +333,7 @@ function resolveCarriedBinding(
   name: string,
   originSource: SourceFile,
   destinationFile: string,
-): ImportRequirement | undefined {
+): ImportRequirement | typeof UNEXPORTED | undefined {
   for (const declaration of originSource.getImportDeclarations()) {
     const specifierText = declaration.getModuleSpecifierValue()
     const specifier = specifierText.startsWith('.')
@@ -297,15 +349,20 @@ function resolveCarriedBinding(
   }
 
   // A helper the origin file declares itself: the destination imports it FROM
-  // the origin. This only works when the origin exports it — when it does not,
-  // the compiler says so loudly, which is strictly better than this codemod
-  // silently dropping the binding.
-  const declaredInOrigin =
-    originSource.getFunction(name) !== undefined ||
-    originSource.getVariableDeclaration(name) !== undefined ||
-    originSource.getClass(name) !== undefined
-  if (declaredInOrigin) {
-    return { specifier: relativeSpecifier(destinationFile, originSource.getFilePath()), style: 'named' }
+  // the origin. That only works when the origin EXPORTS it, and `sec-17` is
+  // where this stopped being "the compiler will say so loudly". By the time
+  // the compiler says anything the gesture has already written both files:
+  // the markup is gone from the origin, the destination has an import of a
+  // name that is not there, neither is undoable with ⌘Z (this whole edit
+  // family mints no history entry), and the user's repo does not build. A
+  // write that cannot land honestly in both files refuses — which is the
+  // invariant, and the refusal names the one-line remedy.
+  const declaration =
+    originSource.getFunction(name) ?? originSource.getVariableDeclaration(name) ?? originSource.getClass(name)
+  if (declaration) {
+    return declaration.isExported()
+      ? { specifier: relativeSpecifier(destinationFile, originSource.getFilePath()), style: 'named' }
+      : UNEXPORTED
   }
 
   return undefined
