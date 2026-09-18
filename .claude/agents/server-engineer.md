@@ -46,7 +46,7 @@ Everything added since is a module in the `server/handlers/studio/`
 | `projectRoutes.ts`, `projectSeed.ts`, `projectProbe.ts` | project CRUD, seeding, profile probes |
 | `trustTier.ts`, `styleCompile*.ts` | trust tiers 0/1/2 and the Tier-1 style-toolchain subprocess |
 | `componentBundle*.ts`, `components.ts`, `installDeps.ts` | package components, the catalog, `bun add`/`remove` jobs |
-| `git.ts`, `gitOperations.ts`, `gitRunner.ts`, `gitStatusParse.ts`, `gitPaths.ts` | git integration |
+| `git.ts`, `gitOperations.ts`, `gitRunner.ts`, `gitOutputParse.ts`, `gitPaths.ts` | git integration |
 | `deploy*.ts` | deploy previews and their job store |
 | `shareRoutes.ts`, `shareStore.ts`, `shareSnapshot.ts`, `sharePublic.ts` | share links |
 | `commentsRoutes.ts`, `commentsStore.ts` | board comments |

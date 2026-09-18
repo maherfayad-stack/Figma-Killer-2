@@ -3,6 +3,7 @@ import { Type } from '@sinclair/typebox'
 import { Value } from '@sinclair/typebox/value'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { WORKSPACE_ROOT } from './helpers/constants'
 
 /**
  * `STATE.md` `panel-27` (Track P, P6) — the REAL half of the inspector
@@ -181,11 +182,12 @@ function readBaseline() {
 let fixtureDir: string
 
 test.beforeAll(() => {
-  // A real, throwaway project directly inside `studio-workspace/` — the one
+  // A real, throwaway project directly inside the workspace root — the one
   // shape `resolveProjectDir`'s containment check accepts. See this file's
   // own "Fixture convention" doc above for why an OS temp dir no longer
-  // works here.
-  fixtureDir = path.join(process.cwd(), 'studio-workspace', FIXTURE_PROJECT_NAME)
+  // works here. `WORKSPACE_ROOT` is this run's throwaway copy of
+  // `studio-workspace/`, so the fixture never touches the tracked tree.
+  fixtureDir = path.join(WORKSPACE_ROOT, FIXTURE_PROJECT_NAME)
   fs.mkdirSync(path.join(fixtureDir, 'pages'), { recursive: true })
   fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.css'), FIXTURE_CSS, 'utf8')
   fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.tsx'), FIXTURE_PAGE, 'utf8')

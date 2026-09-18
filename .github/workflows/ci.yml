@@ -101,44 +101,27 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
 
-      # Started here rather than left to `playwright.config.ts`'s `webServer`
-      # block: that block waits 120s, and a COLD Vite (no pre-bundled deps in a
-      # fresh checkout) can spend longer than that compiling the editor chunk
-      # before it answers. The wait below is explicit and generous, and the log
-      # is kept as an artifact so a failure to boot is readable rather than a
-      # bare timeout.
-      - name: Start the disposable e2e stack
-        run: |
-          mkdir -p .tmp
-          bun run e2e:dev > .tmp/e2e-dev.log 2>&1 &
-          echo "E2E_DEV_PID=$!" >> "$GITHUB_ENV"
-
-      - name: Wait for the stack
-        run: |
-          for attempt in $(seq 1 90); do
-            if curl -fsS -o /dev/null http://127.0.0.1:5174/admin && curl -fsS -o /dev/null http://127.0.0.1:3002/; then
-              echo "stack up after ~$((attempt * 2))s"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::the e2e stack never came up on 127.0.0.1:5174 / :3002"
-          cat .tmp/e2e-dev.log
-          exit 1
-
+      # The stack is NOT started here. `playwright.config.ts`'s `webServer`
+      # block starts `bun run e2e:dev` itself, waits up to 300s for the admin
+      # origin, sets `VITE_ALLOWED_ORIGIN` for the ports it chose, and relays
+      # the stack's output into this job's log — so a failure to boot is
+      # readable rather than a bare timeout.
+      #
+      # This job deliberately uses the DEFAULT path rather than starting the
+      # stack by hand and setting `E2E_REUSE_SERVER=1`. CI is the only place
+      # that proves `webServer` works on Linux; a job that bypasses it would
+      # let the bypass rot into the only thing that works (the shape that hid
+      # the Windows `webServer` bug for seven weeks — `verify-01` finding 3).
+      #
       # Only paths that exist are passed to Playwright: a path it cannot
       # resolve fails the whole run with "no tests found", so a spec that has
-      # not landed yet (`inspector-height.e2e.ts` is S5's) would turn this job
-      # red for the wrong reason. A missing spec costs coverage and says so.
+      # not landed yet would turn this job red for the wrong reason. A missing
+      # spec costs coverage and says so.
       #
-      # `studio-board-perf.e2e.ts` SELF-SKIPS here: the corpus it measures
-      # (`studio-workspace/maherfayad-stack-eSIM`) is not tracked by git, so a
-      # clean checkout does not have it. `studio-feel.e2e.ts` measures the same
-      # zoom against `studio-workspace/test4`, which IS tracked — that is the
-      # canvas budget this job actually gates today.
+      # `studio-board-perf.e2e.ts` no longer self-skips: its corpus is the
+      # committed `studio-workspace/__board-perf-fixture`, so this job measures
+      # the canvas mount budgets on every run.
       - name: Run the budget specs
-        env:
-          E2E_REUSE_SERVER: '1'
         run: |
           specs=""
           for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
@@ -155,9 +138,13 @@ jobs:
           echo "running:$specs"
           bunx playwright test $specs
 
-      - name: Stop the e2e stack
-        if: always()
-        run: kill "$E2E_DEV_PID" 2>/dev/null || true
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: .tmp/playwright-report
+          retention-days: 7
 
       - name: Upload the Playwright report
         if: always()

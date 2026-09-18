@@ -598,11 +598,18 @@ layout — measured rects, `scrollHeight`, computed styles after layout.
 The budget slice of that suite — `studio-board-perf`,
 `inspector-panel-measurement`, `inspector-height`, `studio-feel` — also runs
 in CI as the `e2e-budgets` job (`.github/workflows/ci.yml`). Locally it is
-cheaper to run just those four by path than the whole suite. Note that
-`studio-board-perf.e2e.ts` measures `studio-workspace/maherfayad-stack-eSIM`,
-which is **not tracked by git**: it self-skips on a clean checkout, and
-`studio-feel.e2e.ts` (against the tracked `studio-workspace/test4`) is what
-gates the canvas budget in CI.
+cheaper to run just those four by path than the whole suite.
+
+`bun run test:e2e` **starts its own stack**; do not hand-start one first. It
+resets a disposable database, copies `studio-workspace/` to `.tmp/e2e-workspace`
+and points the servers there (so a run leaves `git status` clean), and
+supervises Vite's boot rather than letting a stuck one expire as a bare
+timeout. `E2E_REUSE_SERVER=1` against a stack you started yourself still works
+for iteration. All four budget specs measure tracked corpora:
+`studio-board-perf.e2e.ts` runs against the committed twelve-frame
+`studio-workspace/__board-perf-fixture` (nine frames is the floor — below that
+the mount pool keeps every frame mounted and there is no mount to measure), and
+`studio-feel.e2e.ts` against `studio-workspace/test4`.
 
 ### What watches what in `bun run dev`
 

@@ -159,6 +159,10 @@ docs/superpowers/
 #                         server/handlers/studio/canonicalPageCheck.test.ts
 #                         server/handlers/studio/pageSourceFile.test.ts
 #                         scripts/bench/benches/agent-turn.ts
+#   __board-perf-fixture/ tests/e2e/studio-board-perf.e2e.ts -- the canvas perf
+#                         gate, which had no corpus on a clean checkout at all
+#                         until this one existed (`verify-01` finding 1). Its
+#                         own README says why it is twelve frames.
 #   test4/                the Phase 0 dogfood target (plan §3) and the project
 #                         `PropertiesPanel/imageFillValue.ts` documents against
 #
@@ -169,6 +173,7 @@ docs/superpowers/
 # is not on disk, which is the intended contract for real user data.
 studio-workspace/*
 !studio-workspace/.ignore
+!studio-workspace/__board-perf-fixture/
 !studio-workspace/__canonical-fixture/
 !studio-workspace/test4/
 
