@@ -248,6 +248,7 @@ work that was never folded into that matrix at all — each spec below cites the
 | `perf-01` (WS-5.3/5.4) | Board pan/zoom frame time and iframe virtualization against the real eSIM corpus. **Self-skips on a clean checkout** — `studio-workspace/maherfayad-stack-eSIM` is not tracked by git | `studio-board-perf.e2e.ts`; `_perf-diagnostic-studioboard.e2e.ts` is the underlying diagnostic, explicitly not a permanent spec |
 | V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
 | Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
+| G8 dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §3 G8, `git-21`/`git-22`) | The twelve claims no local bare repository can settle: paste-a-token sign-in, *Keep history* clone of a PRIVATE repo, branching over a dirty tree, commit + push landing on GitHub, a real pull request, `1↓` → Pull, `1↑ 1↓` → rebase-or-merge, a same-line conflict, Abort, the write lock's `busy` refusal, commit-and-switch, and sign-out actually deleting the credential. **Self-skips without `gh auth token`** | `github-sync.e2e.ts` (+ `helpers/githubScratchRepo.ts`) |
 
 #### `studio-feel-phase0.e2e.ts` runs four cases that are EXPECTED to fail
 
@@ -264,6 +265,87 @@ copies `studio-workspace/test4` to `studio-workspace/__e2e-phase0` **before each
 case** and removes it afterwards. Per-case, not per-file: a shared copy made
 case 4 group whatever case 3 had left behind, and the defect it finds appeared
 and disappeared between runs because of it.
+
+### `github-sync.e2e.ts` — the G8 dogfood, against a REAL GitHub repository
+
+The only spec in this suite that talks to a third party. It exists because the
+whole git track (G1–G7, `git-21`/`git-22`) is otherwise covered by unit tests
+that use a **local bare repository** — correctly, since those must not need the
+network, and just as certainly unable to answer the questions G8 asks: is the
+branch on GitHub, is that a real pull request, is the file on disk after Pull
+the one GitHub has.
+
+It drives the Version control panel through `git-22`'s twelve-step script and
+checks every claim twice — once in the UI, once against GitHub (`gh api`, or a
+fresh `git clone` into a temp dir) or against the `.git` on disk.
+
+**What it needs, and what happens without it.** A `gh` CLI signed in with a
+`repo`-scoped token (`gh auth login`). The spec calls `gh auth token` at
+collection time and **skips itself, annotated**, when that fails — no
+credential, no run, and the skip says so rather than reporting green coverage
+that did not happen. Nothing else is configured: `GITHUB_OAUTH_CLIENT_ID` is
+not required, because step 1 deliberately exercises the **paste-a-token**
+sign-in fallback, which is the path an install with no OAuth App has.
+
+**The token never leaves `gh`.** Every authenticated call is made by `gh`
+itself; git's network verbs borrow gh's credential for one invocation with
+`-c credential.helper='!gh auth git-credential'`. The single place it exists in
+the spec's own process is `readGithubTokenForSignIn()` → `locator.fill()` —
+step 1 typing it into Studio's sign-in field — and that function **refuses to
+run under `E2E_TRACE=1` or `E2E_VIDEO=1`**, because a Playwright trace records
+the value of every `fill()`. The field is `type="password"`, which is what keeps
+the always-on failure screenshot harmless.
+
+**The cleanup guarantee.** `beforeAll` creates a private
+`studio-g8-scratch-<unix-ms>`; `afterAll` destroys it, and deals with the
+REMOTE first — the local directories are throwaways inside `.tmp/e2e-workspace`,
+the repository is the only thing that outlives the run. Nothing in that hook
+throws (a Windows `EPERM` on a read-only git pack file once skipped the delete
+and left a private repository behind).
+
+`gh repo delete` needs the **`delete_repo`** scope, which a plain `repo` token
+does not have and which `gh auth refresh -s delete_repo` can only grant
+interactively. When the delete is refused the repository is **archived** — so a
+later run cannot push into it — and the name is printed as an annotation on the
+last case, with the exact command to finish the job:
+
+```sh
+gh repo delete <owner>/studio-g8-scratch-<unix-ms> --yes
+```
+
+Grant `delete_repo` once (`gh auth refresh -h github.com -s delete_repo`) and
+teardown completes on its own.
+
+#### Three of its cases are EXPECTED to fail
+
+Same convention as `studio-feel-phase0.e2e.ts`: `test.fail()` with the defect
+named in a docblock, so Playwright fails the run if one starts passing. All
+three are one defect — **`proto-01`**: `loadStudioPages` calls
+`ensurePrototypeShell(dir)` on every board open, which writes Studio's own
+preview shell (`prototype/`, `index.html`, `vite.config.js`, `package.json`)
+into the user's working tree, where none of those paths is in git's excluded
+set.
+
+| Case | What it measures |
+|---|---|
+| `2b` | Opening a freshly cloned project dirties 16 paths the user never touched — and Studio refuses to pull or switch branches over a dirty tree |
+| `6b` | The board reload that FOLLOWS a pull re-dirties it, so the second pull of a session refuses too |
+| `8` | Everything through *Keep mine* holds; `Continue` cannot finish, because `git rebase --continue` refuses while any tracked file has unstaged changes and Studio has just written one |
+
+The steps after each of those commit the scaffolding first
+(`absorbStudioScaffolding`) — a workaround, labelled as one, because without it
+none of G8's remaining steps can be measured at all. How much it had to absorb,
+and when, is reported as `proto-01 — Studio rewrote the project` annotations on
+the last case.
+
+Run it alone (it is not in the `e2e-budgets` CI slice, and it needs a
+credential CI does not have):
+
+```sh
+bun run test:e2e tests/e2e/github-sync.e2e.ts
+# or, on an isolated stack alongside other agents:
+E2E_VITE_PORT=5223 E2E_CMS_PORT=3223 bun run test:e2e tests/e2e/github-sync.e2e.ts
+```
 
 ### Intentionally left agent-run only
 

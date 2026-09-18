@@ -254,8 +254,27 @@ export function makeTempDir(label: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `studio-g8-${label}-`))
 }
 
-export function removeDir(dir: string): void {
-  fs.rmSync(dir, { recursive: true, force: true })
+/**
+ * Delete a directory, and **never throw**.
+ *
+ * On Windows this is not a formality. A cloned project carries git's pack
+ * files, which are created read-only, and after a dependency install it
+ * carries `node_modules`, which the package manager may still have handles
+ * open on — so `rmSync` answers `EPERM`, and a teardown that lets that
+ * propagate skips everything after it. In this spec that meant the GitHub
+ * repository survived a run whose only real problem was a locked file.
+ *
+ * `maxRetries` covers the transient handles; the `catch` covers the rest. What
+ * is left behind is a directory inside the run's own throwaway workspace,
+ * which `scripts/e2e-dev.ts` recreates from scratch on the next start.
+ */
+export function removeDir(dir: string): boolean {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 150 })
+  } catch {
+    return false
+  }
+  return !fs.existsSync(dir)
 }
 
 /**

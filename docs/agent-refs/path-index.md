@@ -372,6 +372,8 @@ source) where a plausible-looking change is how a real bug ships ·
 | 🟡 `tests/e2e/` | Playwright. Studio-relevant specs only. |
 | 🟡 `tests/e2e/studio-feel-phase0.e2e.ts` | The plan's Phase 0 exit dogfood, machine-checked. Four of its seven cases are `test.fail()` with the defect named — see `docs/e2e/README.md`. |
 | 🟡 `tests/e2e/helpers/studioFixtureProject.ts` | Copy a workspace project, open the copy, read its `.tsx` off disk, delete it. Any spec that drives a gesture which WRITES the user's source starts here. |
+| 🟡 `tests/e2e/github-sync.e2e.ts` | The G8 dogfood against a REAL private GitHub repository — the only spec that talks to a third party. Self-skips without `gh auth token`. Three cases are `test.fail()` naming `proto-01`. |
+| 🟡 `tests/e2e/helpers/githubScratchRepo.ts` | Create/seed/read/destroy a throwaway private GitHub repo, and run `git` with gh's credential for one invocation. The token never enters this process except for the one `fill()` step 1 needs. |
 | 🟡 `src/admin/pages/site/inspector/PanelCrashProbe.tsx` | Dev-only, build-time-erased seam that makes a panel throw on demand, so Z2's "renders in place, never toasts" is checkable in a browser. |
 
 ## Not ours (dormant CMS)

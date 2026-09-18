@@ -229,11 +229,14 @@ const MAX_NAMED_PATHS = 4
  */
 function namePaths(paths: readonly string[]): string {
   if (paths.length === 0) return 'some files are'
-  if (paths.length === 1) return `${paths[0]} is`
+  return `${listPaths(paths)} ${paths.length === 1 ? 'is' : 'are'}`
+}
+
+/** The bounded path list itself: `"a.tsx, b.tsx and 3 more files"`. */
+function listPaths(paths: readonly string[]): string {
   const named = paths.slice(0, MAX_NAMED_PATHS)
   const rest = paths.length - named.length
-  const list = rest > 0 ? `${named.join(', ')} and ${rest} more file${rest === 1 ? '' : 's'}` : named.join(', ')
-  return `${list} are`
+  return rest > 0 ? `${named.join(', ')} and ${rest} more file${rest === 1 ? '' : 's'}` : named.join(', ')
 }
 
 // ---------------------------------------------------------------------------
@@ -537,14 +540,26 @@ async function runContinueConflictResolution(dir: string): Promise<GitConflictAb
   // rewrites the preview shell into the project while a conflict is open
   // (`tests/e2e/github-sync.e2e.ts`, cases 2b/6b/8).
   if (state.kind === 'rebase') {
-    const unstaged = await runGit(dir, ['diff', '--name-only'])
-    const changed = unstaged.ok ? unstaged.stdout.split(/\r?\n/).filter(Boolean) : []
+    // Read through `readGitStatus`, not `git diff --name-only`. Measured in the
+    // G8 dogfood: mid-rebase, `git status --porcelain` reported
+    // ` M prototype/registry.generated.jsx` while `git diff --name-only`
+    // reported nothing at the same instant — and `rebase --continue` agreed
+    // with `status`. The porcelain worktree column is the authority, and this
+    // is the project's own parser for it.
+    const status = await readGitStatus(dir)
+    const changed =
+      'ok' in status
+        ? []
+        : status.entries
+            .filter((entry) => entry.unstaged !== null && !entry.unmerged && !entry.untracked)
+            .map((entry) => entry.path)
     if (changed.length > 0) {
       return {
         ok: false,
         code: 'dirty-tree',
         message:
-          'These files have changed since the conflict was resolved, and a rebase cannot continue over uncommitted changes. Commit or discard them, then continue.',
+          `A rebase cannot continue over uncommitted changes, and ${listPaths(changed)} changed since the ` +
+          `conflict was resolved. Commit or discard ${changed.length === 1 ? 'it' : 'them'}, then continue.`,
         dirtyFiles: changed,
       }
     }

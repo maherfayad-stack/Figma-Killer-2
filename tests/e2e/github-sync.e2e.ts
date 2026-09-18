@@ -24,10 +24,12 @@
  *   which a normal `repo`-scoped token does not have; when that happens the
  *   repository is archived and the name is printed as a step annotation, so
  *   it is never quietly abandoned. See `helpers/githubScratchRepo.ts`.
- * - **The project is a throwaway too.** Studio clones the scratch repository
- *   into `studio-workspace/<owner>-<repo>`, which `afterAll` removes; the
- *   tracked corpus (`test4`, `__canonical-fixture`) is only ever READ, as the
- *   seed for the scratch repository's first commit.
+ * - **The project is a throwaway too, twice over.** Studio clones the scratch
+ *   repository into `<WORKSPACE_ROOT>/<owner>-<repo>`, which `afterAll`
+ *   removes — and `WORKSPACE_ROOT` is already `verify-2`'s per-run copy of
+ *   `studio-workspace/` under `.tmp/`, so nothing this spec or the PRODUCT
+ *   writes can reach the tracked corpus. `test4` is only ever READ, out of that
+ *   copy, as the seed for the scratch repository's first commit.
  * - **The token is never printed, logged or written to disk.** Every
  *   authenticated call is made by `gh`; git's network verbs borrow gh's
  *   credential helper for one invocation. The single place the token exists in
@@ -49,9 +51,8 @@
 import { expect, test, type Browser, type Locator, type Page, type Response } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { OWNER_STATE_FILE } from './helpers/constants'
+import { OWNER_STATE_FILE, WORKSPACE_ROOT } from './helpers/constants'
 import { expectEditorReady } from './helpers/editor'
-import { WORKSPACE_ROOT } from './helpers/studioFixtureProject'
 import {
   cloneFresh,
   closeRemotePullRequest,
@@ -98,6 +99,16 @@ const DOGFOOD_BRANCH = 'feat/dogfood'
  */
 const MARKER_PREFIX = '// g8-dogfood:'
 const MARKER_LINE = /\r?\n\/\/ g8-dogfood:.*$/
+
+/**
+ * Anything a client-facing refusal must never contain.
+ *
+ * `clientSafeGitError` elides the workspace root and the OS temp root; this is
+ * the spec's own statement of what "elided" has to mean. Both workspace names
+ * are listed because the e2e stack reads a throwaway copy under `.tmp/` while a
+ * developer's stack reads the tracked tree.
+ */
+const PATH_LEAK = /[A-Za-z]:\\|e2e-workspace|studio-workspace/
 
 /** Unique per run, so a marker can never be confused with one a previous run left on GitHub. */
 const RUN_ID = `${Date.now()}`
@@ -488,6 +499,16 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
     await installToastRecorder(page)
   })
 
+  /**
+   * Teardown, ordered so that **the remote repository is dealt with first**.
+   *
+   * The local directories are throwaways inside a throwaway workspace; the
+   * GitHub repository is the only thing here that outlives the run. An earlier
+   * version deleted the clone first, and a Windows `EPERM` on a git pack file
+   * threw before `deleteScratchRepo` was ever reached — leaving a private
+   * repository behind because a file was read-only. Nothing in this hook is
+   * allowed to throw for that reason.
+   */
   test.afterAll(async () => {
     test.setTimeout(300_000)
     if (openedPullRequest !== null) {
@@ -498,11 +519,11 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
         // closed is not worth failing teardown over.
       }
     }
-    if (page) await page.context().close()
-    if (projectDir && fs.existsSync(projectDir)) fs.rmSync(projectDir, { recursive: true, force: true })
+    if (repo) cleanup = deleteScratchRepo(repo)
+    if (page) await page.context().close().catch(() => undefined)
+    if (projectDir) removeDir(projectDir)
     if (seedWorkDir) removeDir(seedWorkDir)
     for (const dir of tempDirs) removeDir(dir)
-    if (repo) cleanup = deleteScratchRepo(repo)
   })
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -957,7 +978,7 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
     expect(rebase.status(), 'the rebase did not stop on the conflict both sides created').toBe(409)
     const refusal = (await rebase.json()) as { code: string; error: string; conflictFiles?: string[] }
     expect(refusal.code).toBe('conflict')
-    expect(refusal.error, 'the refusal named a filesystem path').not.toMatch(/[A-Za-z]:\\|studio-workspace/)
+    expect(refusal.error, 'the refusal named a filesystem path').not.toMatch(PATH_LEAK)
 
     // The conflict has to be ON SCREEN without the user closing and reopening
     // the panel — scoped to the conflict list, because the same path also
@@ -974,11 +995,21 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
       'the conflicted file is not offered with a per-file choice after the rebase stopped',
     ).toBeVisible({ timeout: 30_000 })
 
+    // `Keep mine` also fires `onWorkingTreeChanged` → `requestCmsSiteReload`,
+    // and THAT board load is what rewrites the preview shell into the project
+    // (`proto-01`). Waiting for it before touching Continue is what turns this
+    // step's outcome from a race between two writers into a decision: either
+    // Studio can finish a rebase over its own writes, or it says so.
+    const boardReloaded = page.waitForResponse(
+      (response) => response.url().includes('/admin/api/studio/load'),
+      { timeout: 120_000 },
+    )
     const kept = await clickAndAwait(
       () => conflictRow.getByRole('button', { name: 'Keep mine' }).click(),
       '/admin/api/studio/git/conflict/resolve',
     )
     expect(kept.status()).toBe(200)
+    await boardReloaded
     const onDisk = normalize(fs.readFileSync(absolute(dogfoodFile), 'utf8'))
     expect(onDisk, 'conflict markers are still in the file after resolving it').not.toContain('<<<<<<<')
     expect(readLocalMarker(dogfoodFile), '"Keep mine" did not put the local text on disk').toBe(
@@ -992,7 +1023,21 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
       timeout: 30_000,
     })
     const indexBeforeContinue = gitOut(projectDir, ['ls-files', '-u'])
-    const statusBeforeContinue = localStatusLines(projectDir).join(' | ')
+    // Raw, NOT trimmed: the leading two columns are the whole point here —
+    // `M ` is staged, ` M` is unstaged, and only the second kind stops a
+    // rebase. Trimming them away is how the first version of this diagnostic
+    // reported the same string for two very different repositories.
+    const statusBeforeContinue = gitOut(projectDir, ['status', '--porcelain'])
+    const unstagedBeforeContinue = gitOut(projectDir, ['diff', '--name-only'])
+    test.info().annotations.push({
+      type: 'the repository when Continue was pressed',
+      description:
+        `git status --porcelain:
+${statusBeforeContinue || '(clean)'}
+` +
+        `git diff --name-only (unstaged):
+${unstagedBeforeContinue || '(none)'}`,
+    })
     const continued = await clickAndAwait(
       () => continueButton.click(),
       '/admin/api/studio/git/conflict/continue',
@@ -1002,6 +1047,25 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
       type: 'what Continue answered',
       description: `${continued.status()} ${continueAnswer.slice(0, 300)}`,
     })
+    // When it refuses, the refusal has to be Studio's own and has to name what
+    // is in the way — not git's terminal message arriving as a 500. Guarded on
+    // the status so that a future fix which lets Continue SUCCEED makes the
+    // `toBe(200)` below pass, which fails this `test.fail()` case loudly
+    // instead of letting the docblock rot.
+    if (continued.status() !== 200) {
+      const refusal = JSON.parse(continueAnswer) as { code?: string; error?: string; dirtyFiles?: string[] }
+      expect(refusal.code, 'Continue refused with something other than the named dirty-tree refusal').toBe(
+        'dirty-tree',
+      )
+      expect(
+        refusal.dirtyFiles ?? [],
+        'the refusal did not name the files standing in the way of the rebase',
+      ).not.toEqual([])
+      expect(refusal.error ?? '', 'the refusal leaked a filesystem path').not.toMatch(
+        PATH_LEAK,
+      )
+    }
+
     expect(
       continued.status(),
       `Continue did not finish the rebase: ${continueAnswer}
@@ -1009,7 +1073,10 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
         `git ls-files -u:
 ${indexBeforeContinue || '(nothing unmerged)'}
 ` +
-        `git status --porcelain: ${statusBeforeContinue || '(clean)'}`,
+        `git status --porcelain:
+${statusBeforeContinue || '(clean)'}
+` +
+        `git diff --name-only: ${unstagedBeforeContinue || '(none)'}`,
     ).toBe(200)
 
     expect(fs.existsSync(path.join(projectDir, '.git', 'rebase-merge')), 'the rebase is still in progress').toBe(false)
@@ -1137,7 +1204,7 @@ ${indexBeforeContinue || '(nothing unmerged)'}
     expect(refused.status(), 'the commit was not refused while another writer held the project').toBe(409)
     const body = (await refused.json()) as { code: string; error: string }
     expect(body.code).toBe('busy')
-    expect(body.error, 'the busy refusal named a filesystem path').not.toMatch(/[A-Za-z]:\\|studio-workspace|\.git/)
+    expect(body.error, 'the busy refusal named a filesystem path').not.toMatch(PATH_LEAK)
     expect(localHeadSha(projectDir), 'the refused commit landed anyway').toBe(headBefore)
 
     const toasts = await drainToasts(page)
