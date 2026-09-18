@@ -3885,6 +3885,401 @@ E2E_EXIT=1
 
 ---
 
+### server-26 — every line-wise read of subprocess output is CRLF-safe, through one helper
+
+- **Agent:** server-engineer (Opus 5, wave 3, parallel-wave protocol `standing-05`)
+- **Stage:** done — branch pushed, draft PR open. Not dogfooded in a browser (`standing-02`: server/parser work, static gates only).
+- **Branch:** `fix/server-crlf-subprocess-output` off `58c0efe3` · one commit `91e8059e`
+- **PR:** https://github.com/maherfayad-stack/Figma-Killer-2/pull/179 (draft, base `feat/alm-figma-killer-studio-shell`)
+- **Merged:** into `feat/alm-figma-killer-studio-shell` as 24193637 (PR #179) on 2026-09-18, ahead of the wave-3 integration (build + lint re-run clean on the merged tree).
+- **Updated:** 2026-09-18
+- **Work order:** `STUDIO-FIGMA-FEEL-PLAN.md` "Wave 3 — candidates"; `STATE.md` `parser-13` landmine 7.
+- **Setup note:** the worktree was seeded at `8ab00ae0` again — **197 commits behind**, the same defect `store-13` and `parser-13` both recorded. `git reset --hard origin/feat/alm-figma-killer-studio-shell` before starting. `git status` was clean afterwards (no CR-only noise this time, because the reset re-checked-out the whole tree rather than a subset). **Fourth wave in a row.** Worth fixing in whatever cuts the worktrees.
+
+#### Goal
+
+`parser-13` made the *parse/probe* path CRLF-safe and deliberately left the
+subprocess readers, naming `deployRunner.ts`/`deployProviders.ts`. Close that,
+through ONE helper, and gate it.
+
+#### What I actually found
+
+Grepping the whole surface rather than the two named files turned up **three
+live defects, not one**, and the two named files were the *least* broken of the
+set. All three are silent — no throw, no log, just a value that compares unequal
+to the one it should equal.
+
+| Read | Symptom on a CRLF stream |
+|---|---|
+| `for-each-ref` `%(HEAD)` (`listGitBranches`) | `%(HEAD)` is the LAST field of the format. `head === '*'` is false for **every** branch → `current` is `null` → the Version-control panel reports **no checked-out branch at all** |
+| `log --format=…%x1e` (`readGitLog`) | git writes its own newline AFTER `%x1e`, so every record but the first starts with it and is stripped by `/^\n/`. `\r\n` slips past → the `\r` lands at the front of `%H` → **every commit but the first has a 41-character sha** |
+| `tsc --pretty false` (`parseTscDiagnostics`) | the header pattern ends `(.*)$` and `.` does not match `\r`. This one already had a hand-rolled `.replace(/\r$/, '')` at the call site — the work order's "delete it in favour of the helper" |
+
+The two files the order named (`deployRunner`/`deployProviders`) turned out to be
+*accidentally* correct in their URL/account reads — `\S+` and `\s*$` happen to
+absorb a `\r`. I made that a rule rather than an accident (`toLf` once at each
+parse entry, `splitLines` for the line cut) rather than leaving it, for the same
+reason `parser-13` recorded about `parseGithubRemoteUrl`'s HTTPS branch: a
+pattern that is safe by coincidence reopens the hole the day someone edits it.
+The genuinely wrong half there was `clientSafeDeployOutput`, which handed the
+browser `\r`s in every line of the log it displays.
+
+#### Scope — every file touched
+
+**Product**
+- `server/handlers/studio/gitStatusParse.ts` → **`gitOutputParse.ts`** (`git mv`). Widened module doc; gains `parseGitRemoteLines`, `parseGitLogRecords`, `parseGitBranchRefs`, their row types (`GitRemote`, `GitLogEntry`, `GitBranchSummary`) and the two `--format` strings (`GIT_LOG_FORMAT`, `GIT_BRANCH_REF_FORMAT`) their callers used to hold.
+- `server/handlers/studio/gitOperations.ts` — `readRemotes`/`readGitLog` call the extracted parsers; `splitLines` on `remote`/`rev-parse` reads. **689 → 659 lines.**
+- `server/handlers/studio/gitSyncOperations.ts` — `listGitBranches` calls `parseGitBranchRefs`; `splitLines` on `readBranchCommitSubjects`. 613 → 555.
+- `server/handlers/studio/gitRunner.ts` — `clientSafeGitError` cuts with `splitLines`.
+- `server/handlers/studio/tscDiagnostics.ts` — `splitLines`; hand-rolled `\r` strip **deleted**.
+- `server/handlers/studio/deployRunner.ts` — `clientSafeDeployOutput` cuts with `splitLines` (and therefore hands the browser LF).
+- `server/handlers/studio/deployProviders.ts` — `toLf` before the `/m`-anchored reads in `parsePreviewUrl`/`parseAuthProbe`; `splitLines` for the vercel account line.
+- `server/ai/credentials/cliMcpConnectionProbe.ts` — `parseCliMcpList` cuts with `splitLines`.
+- `server/handlers/studio/git.ts` — two doc references re-pointed.
+
+**Gate (new)**
+- `src/__tests__/architecture/subprocess-output-line-endings.test.ts` (3 tests). It **derives** its file set from the source — every non-test `server/**/*.ts` importing `subprocessRunner`/`gitRunner`/`deployRunner` or calling `Bun.spawn` — plus a named list of the pure text parsers (which take a `string` and so have no import to detect), with an existence assertion so a rename cannot silently drop coverage. **Zero allowlist entries.**
+
+**Tests**
+- `server/handlers/__tests__/gitStatusParse.test.ts` → **`gitOutputParse.test.ts`** (`git mv`), 11 → 24 tests. Verbatim transcripts for `remote -v`, `log`, `for-each-ref`, plus a CRLF twin of each asserting identical output.
+- `server/handlers/__tests__/deploy.test.ts` — new `describe`, 8 cases (30 → 38 tests).
+- `server/handlers/studio/tscDiagnostics.test.ts` — a whole-transcript CRLF case (the existing one covered a single header line only; the folded continuation block and the summary trailer were uncovered).
+- `server/handlers/studio/gitRunner.test.ts` — `clientSafeGitError` on a CRLF stream.
+- `server/handlers/studio/__tests__/devServer.test.ts` — a CRLF "Local:" transcript.
+- `server/ai/credentials/cliMcpConnectionProbe.test.ts` — a CRLF `claude mcp list` transcript.
+
+**Docs**
+- `docs/server.md` — new "Line endings — subprocess output" section (the table of the three defects, the rule, the two documented exceptions).
+- `docs/agent-refs/conventions-quickref.md` §8 — one bullet under Subprocesses.
+- `docs/agent-refs/path-index.md`, `docs/features/studio-git.md` (×2), `docs/features/studio-deploy.md` — re-pointed at `gitOutputParse.ts`.
+- `docs/features/studio-import.md` — a cross-reference from the parser's "Line endings" rule to the subprocess half.
+
+#### Decisions a later agent should not re-litigate
+
+1. **The module rename is not motion for its own sake.** `runGit` spawns the real `git`, and the real `git` on this machine will not print a CRLF stream, a detached HEAD, or a `gone` upstream on demand. Splitting the parse out of the spawn is the ONLY way those cases become testable — and `gitStatusParse.ts` was already that module, so widening it (rather than adding a second parser module beside it) is the one-way-to-do-it answer. It dropped `gitOperations.ts` 30 lines below the 700 ceiling as a bonus; it was at 689 and I needed to add to it.
+2. **The runner does NOT normalise.** `captureSubprocess` returning LF-normalised stdout would have been one line instead of nine call sites — and would have silently rewritten `git diff` output for a CRLF file. Normalisation belongs at each line-wise READ, never at the capture.
+3. **Incremental NDJSON framing is deliberately out of scope**, and the gate says so rather than allowlisting it. `claudeCliSpawn.ts`/`claudeCliWarmSession.ts` frame on `buffer.indexOf('\n')` over a live stream; you cannot `splitLines` a stream that has not finished arriving, and both hand each framed line to `JSON.parse`, for which a trailing `\r` is legal whitespace. They are already correct. The gate therefore bans `.split` on a newline literal, not `indexOf`.
+4. **`devServer.ts` needed no product change** — its `URL_PATTERN` tail is `[^\s"'<>]*` and `\r` IS `\s`, so the carriage return can never be swallowed into the host. It is the one subprocess reader under `server/` that matches raw CHUNKS rather than lines, which is exactly why `splitLines` cannot help it. Asserted with a CRLF transcript rather than assumed.
+5. **`installDeps.ts`/`installJobStore.ts` have no line-wise read at all.** The work order asked for an "install progress lines" test; there is nothing to test — the job log is accumulated and served verbatim, byte for byte. Stated here so the next agent does not go looking for the bug that is not there. (`installJobStore.ts` is `sec-18`'s anyway — read, not edited.)
+6. **`toLf` in `deployProviders.ts`, not just `splitLines`.** Its reads are `/m`-anchored regexes, not line cuts. Whether a given pattern's `\s*$` tail happens to absorb the `\r` is a property of that pattern, and the next person to edit it will not know that.
+7. **`REF_FIELD_SEP` moved as the escape `''`, not as the literal byte it was.** The old file held a raw 0x1F in a string literal — the same class of trap as the literal NUL `sec-15` swept. Its sibling in `gitOperations.ts` was already the escape form; they agree now.
+
+#### Landmines
+
+1. **`.claude/agents/server-engineer.md` line 49 still names `gitStatusParse.ts`.** I did not edit it — that file is this agent's own configuration, and the dispatch forbids an agent changing its own config. **The orchestrator owns that one-word fix.** (`docs/state-archive/2026-Q3.md` also names it twice; archive, deliberately left.)
+2. **The worktree seeding defect is now four-for-four** (`store-13`, `parser-13`, this one, and whatever else in this wave). Seeded at `8ab00ae0`, 197 behind. Every agent pays 5 minutes and one confusing `git log` to discover it.
+3. **The scratchpad is NOT per-agent in this wave.** I wrote a PR body to `scratchpad/pr-body.md` and another wave-3 agent overwrote it with theirs between my `Write` and my next read. No damage here (the PR was already created), but **use a uniquely-named scratch file**, and never re-read a shared scratch path expecting your own content back.
+4. **The 700-line ceiling is real and `gitOperations.ts` was 11 lines from it** before this change. Anyone adding a git verb should extract to `gitOutputParse.ts` (for a parse) or a new sibling, not append.
+5. `bun run test` with `--parallel=4` writes **no run summary** when its stdout is redirected to a file — only the per-test `(fail)` lines survive. Count `(fail)` lines; do not expect `N pass / M fail` at the tail.
+
+#### Verification — real numbers, this machine, 2026-09-18
+
+- `bun run build` — **exit 0** (`tsc -b` clean, `vite build` ✓ 38.50 s).
+- `bun run lint` — **clean**, zero errors.
+- `bun test src/__tests__/architecture` — **626 pass / 0 fail** on a quiet machine (623 baseline + this change's 3). Matches the dispatch's 623/0 expectation exactly.
+- `bun test server/handlers server/ai/drivers` — **2634 pass / 1 skip / 3 fail**. All 3 are `localizedPage.test.ts`, which passes **4 / 0** run alone (21.8 s against the 5 s default) — the load artefact `parser-13` and `server-25` both recorded.
+- `bun run test` (FULL, `--parallel=4`) — **13 `(fail)` lines, zero new reds.** Every one re-run ALONE and passing, verified individually rather than assumed:
+  - `no-circular-dependencies` (60 s), `no-core-barrel-deep-imports` (41 s), `no-css-var-fallbacks` ×2, `no-third-party-icons`, `selectorStability` (22 s) — all inside the **626 / 0** architecture run above.
+  - `useDevServerReadiness` → **6 / 0** alone (4.1 s). *New name, not on any previous agent's list — checked first for exactly that reason.*
+  - `publicSdkExports` → **5 / 0** alone · `authStepUp` → **17 / 0** alone (both fail when run together — fixture contention, not order).
+  - `git.test.ts` write-lock 409 → **39 / 0** alone (19.8 s).
+  - `localizedPage` ×3 → **4 / 0** alone.
+  - `cmsPlugins`'s `Unhandled SQL` error is the documented pre-existing one (92 occurrences of the scheduler's tick noise, no `(fail)` line).
+- `git status --porcelain` **empty** after the full run — no fixture dirtied, `studio-workspace/` untouched.
+- `git diff --numstat` and `git diff --numstat --ignore-cr-at-eol` are **identical** — no CR-only line-ending noise anywhere in the diff (`parser-13` landmine 4's failure mode).
+- **Every new assertion verified failing without its fix**, not just passing with it:
+  - the gate, with `listGitBranches`/`readBranchCommitSubjects` reverted to a bare split → **2 of 3 gate tests red**, naming `gitSyncOperations.ts:122` and `:607`.
+  - `gitOutputParse.test.ts`'s CRLF block, with both parsers reverted → **2 fail** (`log` and `for-each-ref`; shas 41 chars, `current` null).
+  - `clientSafeGitError` / `clientSafeDeployOutput`'s `not.toContain('\r')` → red without `splitLines`.
+
+#### Human action needed
+
+None blocking. Static gates only per `standing-02` — happy-dom models none of this, and every parser here is pure.
+
+One **optional** dogfood, worth ~2 minutes and the only thing a unit test cannot see: on a Windows machine with a project whose git output passes through a wrapper (`git` shimmed by a pager, or `core.autocrlf` with a smudge filter), open the Version-control panel and confirm it names the checked-out branch and that the commit shas in the history list are 40 characters. Before this change both were wrong and neither said so.
+
+#### Rule-book note
+
+Nothing in `CLAUDE.md` needs to change for this work. Carried forward from
+`parser-13`, still open and still not mine to edit: `CLAUDE.md` §"Mutation API"
+says **11** named tree-mutation actions; `struct-10` made it **13**.
+
+
+---
+
+### panel-40 — a panel that throws takes out that panel, and hidden/locked fan out over the selection
+
+**Agent:** `panel-designer` (Opus 5, wave 3, `standing-05`) · own worktree
+`.claude/worktrees/agent-ac8aa880d75087fe5`
+**Stage:** done — every gate run, browser pass recorded, draft PR open
+**Branch / PR:** `fix/inspector-error-boundary-and-fanout` off `58c0efe3`
+(contains `be13d46f`, the wave-2 merge) · commit `f9ef3b70` ·
+**PR [#180](https://github.com/maherfayad-stack/Figma-Killer-2/pull/180)**
+(draft, base `feat/alm-figma-killer-studio-shell`)
+**Updated:** 2026-09-18
+
+---
+
+## Goal
+
+Two wave-3 candidates from `STUDIO-FIGMA-FEEL-PLAN.md` §7:
+
+1. **`verify-3` case 5, defect (c)** — the inspector had no error boundary of
+   its own, so the nearest one was `AdminCanvasLayout`'s `LazyChunkBoundary
+   location="site-editor-body"`, which wraps the canvas **and** every panel. One
+   section throwing replaced the whole editor body with "Editor chunk failed to
+   load"; `canvas-root` and `canvas-notch` were measured GONE.
+2. **`panel-38`'s recorded landmine** — `node.hidden` / `node.locked` in
+   `LayerSection` acted on the anchor only under a multi-selection.
+
+---
+
+## Scope
+
+### New
+
+- `src/admin/pages/site/ui/PanelBoundary/` — `PanelBoundary.tsx` (164),
+  `PanelBoundary.module.css`, `index.ts`, `__tests__/panelBoundary.test.tsx`
+  (7 cases).
+- `src/admin/pages/site/store/slices/site/visibilityActions.ts` — `setNodesHidden`
+  / `setNodesLocked`.
+- `src/__tests__/editor-store/multiSelectHiddenLocked.test.ts` (10 cases).
+- `src/admin/pages/site/inspector/sections/__tests__/layerSectionFanout.test.tsx`
+  (6 cases).
+
+### Touched — boundaries
+
+- `inspector/InspectorShell.tsx` — one `PanelBoundary` per tab; the ad-hoc
+  `<PanelCrashProbe panel="inspector" />` mount is gone (the boundary owns it).
+- `panels/PropertiesPanel/StyleSurface.tsx` — `MountedSections` wraps each entry
+  (2 lines + doc; deliberately the smallest possible edit inside `panel-41`'s
+  territory).
+- `sidebars/LeftSidebar/LeftSidebar.tsx`, `sidebars/RightSidebar/RightSidebar.tsx`,
+  `layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx` — one boundary per panel
+  mount.
+- `inspector/PanelCrashProbe.tsx` — doc only: `detail` is now the boundary's
+  `location`.
+- `inspector/sections/index.ts` — `InspectorSectionDefinition.label`, 16 entries.
+
+### Touched — fan-out
+
+- `core/page-tree/mutations.ts` + `index.ts` — `setNodeHidden` / `setNodeLocked`
+  (absolute); `toggleNode*` reimplemented on top of them and kept, because they
+  are the `applyTreeOperation` op kinds plugins dispatch.
+- `store/slices/site/nodeActions.ts` / `types.ts` — the two toggle store actions
+  deleted, `createVisibilityActions(helpers)` spread in.
+- `inspector/sections/LayerSection.tsx` — eye + lock fan out, Mixed labels.
+- `panels/DomPanel/LayerNodeContextMenu.tsx` — one call instead of a toggle loop.
+- `spotlight/commands/layers.ts` — both commands act on the whole selection.
+- Doc-comment-only: `inspector/sections/AlignSection.tsx`,
+  `ui/components/InspectorIcons/InspectorIcons.tsx`.
+
+### Gates
+
+- `error-boundary-coverage.test.ts` — new `panel-40` block (6 cases): every
+  panel seam mounts a `PanelBoundary`, `InspectorShell` wraps all three tabs, the
+  component never opts out of `silentToast`, the fallback carries
+  `role="alert"` + `data-error-location` + a reset, the probe is behind
+  `import.meta.env.DEV`, and every manifest entry has a `label`.
+- `no-vc-mode-branches-in-mutations.test.ts` — `toggleNodeLocked`/
+  `toggleNodeHidden` → `setNodesLocked`/`setNodesHidden`; `ACTION_PATHS` gained
+  `visibilityActions.ts`. Still **13** named actions.
+- `src/__tests__/panels/domPanel.test.tsx` — one line, the removed action.
+
+### Tests / docs
+
+- `tests/e2e/studio-feel-phase0.e2e.ts` — case 5's `test.fail()` off, docblock
+  rewritten, probe `detail` → `panel:design`.
+- `docs/features/inspector.md` (§9.3 rewritten, new §12, gates paragraph),
+  `docs/reference/error-boundaries.md` (new "Editor panels and inspector
+  sections" section + TL;DR), `docs/reference/page-tree.md`,
+  `docs/reference/architecture-tests.md`, `docs/architecture.md`,
+  `docs/editor.md`, `docs/agent-refs/{conventions-quickref,editor-store,path-index}.md`,
+  `docs/e2e/README.md`, `STUDIO-FIGMA-FEEL-PLAN.md` §7 (both bullets struck).
+
+**Not touched:** `LayoutSection`, `WriteTargetRow`, the Module block,
+`PropertiesPanel.tsx`/`PropertiesPanelBody.tsx` (`panel-41`), structural commit
+paths (`store-14`), `playwright.config.ts`, `auth.setup.ts`, `STATE.md`,
+`CLAUDE.md`. **No token added to `globals.css`** — the fallback CSS uses the
+existing `--inspector-space-*` / `--bg-surface-2` / `--danger-light` /
+`--text-*` / `--radius` vocabulary only.
+
+---
+
+## Done so far
+
+1. **`PanelBoundary`, two frames.** `frame="panel"` draws its own title row;
+   `frame="section"` reuses the `Section` primitive with `forceOpen flush`, so
+   the header row is byte-identical to the one the working section draws and
+   only the body is replaced. Both bodies carry `role="alert"` and
+   `data-error-location={location}` — the handles case 5 already read.
+2. **`location` is `panel:<id>` / `inspector:<id>`.** The shared primitive
+   already logs once per catch as `[error-boundary:<location>]`, so the single
+   line reads `[error-boundary:inspector:fill]` and names both the mechanism and
+   the section. No second `console.error` was added — see Decisions 2.
+3. **The probe moved into the boundary.** One `PanelCrashProbe` per seam, named
+   after that seam's `location`, all dev-only and build-time-erased. A spec can
+   now crash one *section*, not just "the inspector".
+4. **`setNodesHidden` / `setNodesLocked` replaced the toggles** across the whole
+   store surface: four call sites rewired, none left on the old shape.
+5. **Mixed on the Layer row.** Counted from `model.selectedNodes` (not from the
+   collapsed anchor — `hidden`/`locked` are not style cells and carry no `MIXED`
+   sentinel). Disagreement → unpressed button, `"Hide on canvas — currently
+   Mixed"` in the label, click hides all.
+
+---
+
+## Decisions
+
+1. **The boundary is a Studio-local component, not a `src/ui/components/`
+   primitive.** It mounts `PanelCrashProbe` and the `Section` primitive and
+   knows what an inspector section is — that is editor knowledge, not shared-UI
+   knowledge. It lives beside `ConstraintNotice`/`RefusalDialog` in
+   `site/ui/`, which is the existing home for exactly this class of thing.
+2. **One console line per catch, and it is the primitive's.** The work order
+   asked for `console.error('[inspector:<section>]', err)` once. Adding one
+   would have produced *two* lines for one error (the primitive already logs)
+   and would have broken `studio-feel-phase0.e2e.ts` case 7, whose allowlist is
+   pinned to `^\[error-boundary:…PanelCrashProbe`. Encoding the seam in
+   `location` gets the requested identification with no second report.
+   `logErrorChain` may still add `… caused by` / `… componentStack`
+   continuations off the same prefix; those are detail, not a second error.
+3. **A section boundary takes no `resetKeys`.** Keying it on `selectedNodeId`
+   would clear a section that crashes on *every* node at the next canvas click,
+   making a permanent crash look like a flicker. The fallback's own "Reload this
+   panel" is the way back. Panels with a genuinely different context do get one
+   (`plugin` → `[effectivePluginPanelId]`).
+4. **The store action is ABSOLUTE, not a toggle — and the toggle is gone.** N
+   independent toggles over a selection that disagrees just swap which half is
+   hidden; they never reach "all hidden", which is the only thing the user
+   asked for. Keeping `toggleNodeHidden` beside `setNodesHidden` would have been
+   two ways to do one thing (CLAUDE.md's rule), so the store-level toggles are
+   deleted and every caller decides the next state with the same rule: *any
+   still visible → hide them all*. The **core** `toggleNode*` mutations stay —
+   they are the `applyTreeOperation` op kinds in `operationSchema.ts` that
+   plugins dispatch — and are now implemented on `setNode*`.
+5. **`label` moved into the section manifest.** A section's own component is
+   precisely what is NOT running when the boundary has to name it, so reading
+   the title off the crashed component was never an option.
+6. **Left/right sidebar panels got boundaries too.** The work order said "check
+   whether the layers/DOM panel shares the same fate" — it does: the Layers tree
+   lives in `ExplorerPanel` under the same `site-editor-body` boundary. Nine
+   left-sidebar mounts, two right-sidebar mounts and the floating inspector are
+   now independent.
+7. **No toast anywhere on this path**, hide/lock included. `node.hidden` /
+   `node.locked` are Studio's own view facts, never a source write, so there is
+   no refusal to report.
+
+---
+
+## Landmines
+
+1. **`CLAUDE.md` §"Mutation API" is now stale and I am not allowed to fix it.**
+   It lists `toggleNodeLocked`, `toggleNodeHidden` among the 13 named actions;
+   they are `setNodesLocked`, `setNodesHidden`. The count is unchanged (13).
+   Every other doc that carried the list was updated in this PR
+   (`docs/architecture.md`, `docs/editor.md`, `docs/reference/page-tree.md`,
+   `docs/agent-refs/conventions-quickref.md`, `docs/agent-refs/editor-store.md`
+   — three of which also said "11", already stale before this PR).
+   **Orchestrator action: one-line rename in `CLAUDE.md`.**
+2. **A dev build now mounts ~30 `PanelCrashProbe`s**, one per seam, each with a
+   `window` listener. All of it is erased at build time. If a future change
+   makes the probe do anything more than `addEventListener` + throw, count the
+   mounts first.
+3. **The probe's `detail` is the boundary's `location`, not a panel word.**
+   Any spec that dispatches `'inspector'` now arms nothing. The one caller
+   (`studio-feel-phase0.e2e.ts` case 5) was updated; `PanelCrashProbe.tsx`'s
+   header documents the shape.
+4. **Do not give `PanelBoundary` a `silentToast` prop.** Silence is the default
+   and the gate asserts the string never appears in that file — an opt-out would
+   put a red card in the corner *as well as* the in-place fallback.
+5. **`InspectorSectionDefinition` now requires `label`.** A new manifest entry
+   without one fails `error-boundary-coverage.test.ts`, not a type error at the
+   place you'd expect.
+6. **The boundary adds no DOM at rest** (`ErrorBoundary` returns `children`
+   directly, the probe returns `null`), which is why `inspector-height.e2e.ts`
+   is untouched at 4/4. Anything that gives `PanelBoundary` a wrapper element
+   will move `panel-39`'s budget — measure before you do.
+7. **`ai-driver-isolation` and `alm-design-system-fresh` (and, in the full run,
+   `admin-router-usage`) fail only in a large batch and pass alone** on this box.
+   `standing-01` / `store-12` document the cause. Nothing in this branch touches
+   them.
+8. `LayerSection.tsx` is at 368 lines and `StyleSurface.tsx` at 345 — both fine,
+   but `FillSectionParts.tsx` (660) and `fsCodemodAdapter.ts` (700) remain the
+   files that must extract before they grow (`panel-38`, `style-06`).
+
+---
+
+## Verification (real numbers, this machine, this worktree)
+
+| Gate | Result |
+|---|---|
+| `bun run build` (`tsc -b && vite build`) | **clean**, 28.3 s |
+| `bun run lint` | **clean** (only the Babel "deoptimised the styling" note on the 500 KB generated `vitePluginBundle.ts`) |
+| `bun test src/__tests__/architecture` | **627 pass / 2 fail** — `ai-driver-isolation`, `alm-design-system-fresh`; re-run together in isolation → **10 / 0** |
+| `bun test src/__tests__/inspector src/__tests__/panels src/admin/pages/site/inspector` | **1131 / 0**, 84 files |
+| `bun test src/__tests__/editor-store src/__tests__/dom-panel src/__tests__/page-tree src/__tests__/core` | **997 / 0** |
+| `bun test src/__tests__/admin` | **125 / 0** |
+| `bun test src/__tests__/layout src/__tests__/editor src/admin/pages/site` | **1668 / 0** |
+| `bun run test` (full, `--parallel=4`) | two `(fail)` lines only: `admin-router-usage`, `ai-driver-isolation`; re-run together in isolation → **9 / 0**. `cmsPlugins.test.ts`'s `Unhandled SQL` is the documented pre-existing error. **No new red.** |
+| styling gates (`css-token-policy`, `button-primitive-usage`, `no-css-var-fallbacks`, `css-token-vocabulary`, `admin-typography/spacing-token-policy`, `module-size-budgets`, `ui-primitives-location`) | **24 / 0** |
+
+**Browser** — own supervisor copy at
+`scratchpad/panel40-stack.sh` (the shared `meta16-stack.sh` is pinned to another
+agent's worktree), isolated ports **5279 / 3279**, `VITE_ALLOWED_ORIGIN`,
+`E2E_REUSE_SERVER=1`:
+
+- `tests/e2e/inspector-height.e2e.ts` — **4 / 4** (1.6 m). `panel-39`'s budget
+  and both structural pins hold.
+- `tests/e2e/studio-feel-phase0.e2e.ts` — **8 passed (5.0 m)**: 5 real passes,
+  3 remaining expected failures (cases 1, 4, 7). **Case 5 is now a real pass** —
+  `[phase0] fallback location: panel:design`, `[phase0] toasts after the crash:
+  (none)`, canvas and canvas-notch still visible. Case 7 still records 14 events
+  with **12 matched**, identical to `verify-3`'s reading, so the new `location`
+  string orphaned no allowlist entry.
+- `studio-workspace/` restored to clean (`git status --porcelain
+  studio-workspace` empty) after the run.
+
+---
+
+## Human action needed — dogfood at `/admin/site`
+
+**A. The boundaries.** `bun run dev`, open a project, select any element.
+
+1. In DevTools console: `window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'inspector:fill' }))`.
+   The **Fill** section — and only Fill — must become its header row plus
+   *"Fill stopped responding."* and a **Reload this panel** button. Layer,
+   Measures, Layout, Stroke and everything else keep working; the canvas does
+   not move; **no red toast appears anywhere**. Click Reload this panel — Fill
+   comes back.
+2. Same with `detail: 'panel:design'` — the whole Design tab is replaced, but
+   the Design/Prototype/Inspect strip above it still switches tabs and Prototype
+   still renders.
+3. Same with `detail: 'panel:explorer'` — the Layers panel alone shows the
+   fallback; the canvas and the inspector are untouched.
+4. Check the console: **one** `[error-boundary:…]` line per crash (plus its
+   `componentStack` continuation), never a second report.
+
+**B. The fan-out.** Shift-click a second and third layer so three are selected.
+
+5. Click the **eye** in the Layer row: all three disappear from the canvas.
+   **One ⌘Z brings all three back.**
+6. Hide *one* layer, then select all three. The eye reads unpressed and its
+   tooltip says **"Hide on canvas — currently Mixed"**. One click hides all
+   three (it must not un-hide the one that was already hidden).
+7. Same two steps for the **lock** button: *"Lock element — currently Mixed"*,
+   one click locks all, one ⌘Z unlocks all.
+8. Right-click a multi-selection in the Layers panel → **Hide selected**: same
+   result, and **one** ⌘Z — not one undo per layer, which is what it used to be.
+9. Spotlight → "Toggle layer visibility" with three layers selected: all three,
+   not just the last one clicked.
+10. **Single-selection regression sweep:** select one layer and confirm the eye
+    and the lock behave exactly as before, and that the small secondary eye
+    (CSS `visibility`) is still a separate control with its own tooltip.
+
+
+---
+
 ### meta-16 — wave 2 integrated: 13 merges, 6 named reds closed, `verify-2` never opened a PR
 
 - **Agent:** studio-implementer (integrator), own worktree
