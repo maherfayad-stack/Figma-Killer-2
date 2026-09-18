@@ -10,6 +10,17 @@
  * one structural commit — and the success toast is the commit's own, so the
  * user never gets two for one gesture.
  *
+ * ## The answer arrives before release
+ *
+ * Every `dragover` writes a ref and asks for a rAF; ONE rAF resolves which
+ * frame the pointer is over, where in it the image would land, and whether the
+ * gesture would be refused — and paints that straight into the DOM
+ * (`canvasFileDragPreview.ts` decides, `canvasDragPainter.ts` writes). **Zero
+ * React commits per `dragover`**, the same contract S2 gives the element drag,
+ * which is why this hook holds no state at all. The verdict painted is the
+ * verdict `planCanvasFileDrop` will give on release: both call the same
+ * refusal functions.
+ *
  * ## Why the listeners are on `window`, not on the canvas root
  *
  * A native `dragover`/`drop` does NOT cross the iframe boundary (the canvas
@@ -27,13 +38,31 @@
  * a file — and it is cancelled only for a drag that actually carries files, so
  * an ordinary in-page HTML5 drag (the DOM panel's layer tree still uses
  * `@dnd-kit`) is left entirely alone.
+ *
+ * ## Why the preview is torn down on THREE events
+ *
+ * `drop` ends a gesture that landed, `dragleave` one that left the window, and
+ * `dragend` one the SOURCE abandoned (Escape, or a drag released outside the
+ * browser). Miss any of them and the chip is left painted over the board with
+ * no pointer near it — and `dragleave` alone is not enough, because it also
+ * fires on every internal boundary crossing.
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
 import { dropStudioAsset } from '@site/studio/dropStudioAsset'
+import { measureBoardDropSurfaces } from './canvasDragBoard'
+import { paintCanvasDrag } from './canvasDragPainter'
+import type { ClientPoint } from './canvasDragSession'
+import {
+  beginCanvasFileDragSession,
+  readDraggedFileFacts,
+  resolveCanvasFileDragPaint,
+  type CanvasFileDragSession,
+} from './canvasFileDragPreview'
 import { planCanvasFileDrop } from './canvasFileDrop'
+import type { DroppedFileFacts } from './canvasFileDrop'
 import type { CanvasTransform } from './math'
 
 /** Title every refusal and every failure of this gesture shares. */
@@ -46,37 +75,99 @@ interface UseCanvasFileDropOptions {
   transformRef?: React.RefObject<CanvasTransform>
 }
 
-/** True when this drag is carrying files from outside the browser. */
-function carriesFiles(transfer: DataTransfer | null): boolean {
-  if (!transfer) return false
-  return Array.from(transfer.types).includes('Files')
+export interface UseCanvasFileDropResult {
+  /** Handed to `CanvasFileDropHint`; the preview paints the empty-board chip through it. */
+  hintLayerRef: React.RefObject<HTMLDivElement | null>
 }
 
-export function useCanvasFileDrop({ enabled, transformRef }: UseCanvasFileDropOptions): void {
+export function useCanvasFileDrop({
+  enabled,
+  transformRef,
+}: UseCanvasFileDropOptions): UseCanvasFileDropResult {
+  const hintLayerRef = useRef<HTMLDivElement | null>(null)
+  const sessionRef = useRef<CanvasFileDragSession | null>(null)
+  const pointRef = useRef<ClientPoint>({ x: 0, y: 0 })
+  const factsRef = useRef<DroppedFileFacts>({ count: 0, type: '' })
+  const hintOriginRef = useRef<ClientPoint | null>(null)
+  const frameRef = useRef<number | null>(null)
+
   useEffect(() => {
     if (!enabled) return
 
+    const readPage = (pageId: string) => {
+      const site = useEditorStore.getState().site
+      return site ? lookupCanvasPageById(site, pageId) : null
+    }
+
+    const endPreview = () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current)
+        frameRef.current = null
+      }
+      const session = sessionRef.current
+      sessionRef.current = null
+      hintOriginRef.current = null
+      if (session?.paintedLayer) paintCanvasDrag(session.paintedLayer, null)
+      paintCanvasDrag(hintLayerRef.current, null)
+    }
+
+    const runFrame = () => {
+      frameRef.current = null
+      const session = sessionRef.current
+      if (!session) return
+      const next = resolveCanvasFileDragPaint(session, {
+        point: pointRef.current,
+        facts: factsRef.current,
+        transform: transformRef?.current ?? null,
+        readPage,
+        hintLayer: hintLayerRef.current,
+        hintOrigin: hintOriginRef.current,
+      })
+      // Only one layer ever carries chrome — the frame's or the board's. Clear
+      // the one being left BEFORE writing the new one, the same discipline the
+      // element drag's `session.paintedLayer` follows for the same reason.
+      if (session.paintedLayer && session.paintedLayer !== next.layer) {
+        paintCanvasDrag(session.paintedLayer, null)
+      }
+      session.paintedLayer = next.layer
+      paintCanvasDrag(next.layer, next.paint)
+    }
+
     const onDragOver = (event: DragEvent) => {
-      if (!carriesFiles(event.dataTransfer)) return
+      const facts = readDraggedFileFacts(event.dataTransfer)
+      if (!facts) return
       // Without this the browser refuses the drop outright and `drop` never
       // fires at all — see this module's own doc.
       event.preventDefault()
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+
+      pointRef.current = { x: event.clientX, y: event.clientY }
+      factsRef.current = facts
+      if (!sessionRef.current) {
+        sessionRef.current = beginCanvasFileDragSession(
+          measureBoardDropSurfaces(transformRef?.current ?? null),
+        )
+        // The hint layer's own client origin, read ONCE per gesture: it is a
+        // sibling of the transform layer, so nothing the drag does can move
+        // it, and re-reading it per `dragover` would be a forced layout read
+        // per pointer event — the exact cost S2 removed from the element drag.
+        const rect = hintLayerRef.current?.getBoundingClientRect()
+        hintOriginRef.current = rect ? { x: rect.left, y: rect.top } : null
+      }
+      frameRef.current ??= requestAnimationFrame(runFrame)
     }
 
     const onDrop = (event: DragEvent) => {
       const transfer = event.dataTransfer
-      if (!carriesFiles(transfer)) return
+      if (!readDraggedFileFacts(transfer)) return
       event.preventDefault()
+      endPreview()
 
       const plan = planCanvasFileDrop({
         files: Array.from(transfer?.files ?? []),
         point: { x: event.clientX, y: event.clientY },
         transform: transformRef?.current ?? null,
-        readPage: (pageId) => {
-          const site = useEditorStore.getState().site
-          return site ? lookupCanvasPageById(site, pageId) : null
-        },
+        readPage,
       })
 
       if (!plan.ok) {
@@ -94,13 +185,26 @@ export function useCanvasFileDrop({ enabled, transformRef }: UseCanvasFileDropOp
       void landAndInsert(plan.file, plan.pageId, plan.target.parentId, plan.target.index)
     }
 
+    // `relatedTarget === null` is the drag leaving the WINDOW; every other
+    // dragleave is an internal boundary crossing the next dragover re-answers.
+    const onDragLeave = (event: DragEvent) => {
+      if (event.relatedTarget === null) endPreview()
+    }
+
     window.addEventListener('dragover', onDragOver)
     window.addEventListener('drop', onDrop)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('dragend', endPreview)
     return () => {
+      endPreview()
       window.removeEventListener('dragover', onDragOver)
       window.removeEventListener('drop', onDrop)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('dragend', endPreview)
     }
   }, [enabled, transformRef])
+
+  return { hintLayerRef }
 }
 
 /**

@@ -33,39 +33,132 @@ import { canvasSurfaceAtPoint, measureBoardDropSurfaces } from './canvasDragBoar
 import { buildFrameCandidateIndex, indexLocalPoint, type ClientPoint } from './canvasDragSession'
 import type { CanvasTransform } from './math'
 
-export type CanvasFileDropRefusal =
+export type CanvasFileDropRefusalReason =
   /** The pointer was over the empty board, not over a frame. */
-  | { reason: 'no-frame'; message: string }
+  | 'no-frame'
   /** More than one file at once — each write moves the next one's line numbers. */
-  | { reason: 'multiple-files'; message: string }
+  | 'multiple-files'
   /** The browser says this is not an image, and names what it says it is. */
-  | { reason: 'not-an-image'; message: string }
+  | 'not-an-image'
   /** A frame was under the pointer but nothing in it could take a child. */
-  | { reason: 'no-position'; message: string }
+  | 'no-position'
+
+export interface CanvasFileDropRefusal {
+  reason: CanvasFileDropRefusalReason
+  /**
+   * The clause the cursor chip shows WHILE the file is still in the air
+   * (`canvasFileDragPreview.ts`). One line, because it is read at a glance
+   * next to a pointer that is still moving.
+   */
+  headline: string
+  /** The whole sentence, for the toast a completed drop's refusal raises. */
+  message: string
+}
 
 export type CanvasFileDropPlan =
   | { ok: true; file: File; pageId: string; target: CanvasInsertionTarget }
   | { ok: false; refusal: CanvasFileDropRefusal }
 
 /**
- * Whether the browser thinks this file is an image. See this module's doc for
- * why this is a courtesy, not the gate.
+ * What a dragged file is, reduced to the three things BOTH halves of the
+ * gesture can see.
+ *
+ * The drop has real `File`s. The drag over the board does not, and cannot:
+ * the HTML drag-and-drop spec puts the drag data store in "protected mode"
+ * for every event before `drop`, so `DataTransfer.files` is empty and
+ * `DataTransferItem.getAsFile()` returns `null` there. What IS exposed is
+ * `items[i].kind` and `items[i].type` — a count and a declared MIME type, and
+ * **no file name and no size**. That is why the in-flight chip names the type
+ * rather than the file: naming a file Studio cannot see would be an invented
+ * fact, and the whole point of showing a verdict before release is that it is
+ * the same verdict.
+ */
+export interface DroppedFileFacts {
+  /** How many file entries the drag carries. */
+  count: number
+  /** The browser's declared MIME type of the first entry, or `''` when it declares none. */
+  type: string
+  /** The first entry's file name — present only at DROP time. */
+  name?: string
+}
+
+/**
+ * Whether the browser thinks this is an image. See this module's doc for why
+ * this is a courtesy, not the gate.
  *
  * An EMPTY declared type is treated as an image on purpose: some platforms
  * hand a dragged file over with no type at all, and refusing those would
  * refuse real images on the strength of a missing string. The server's byte
  * sniff catches whatever this lets through.
  */
-export function looksLikeImage(file: File): boolean {
-  return file.type === '' || file.type.startsWith('image/')
+export function looksLikeImage(facts: DroppedFileFacts): boolean {
+  return facts.type === '' || facts.type.startsWith('image/')
+}
+
+/**
+ * Everything about a dropped file that is decidable from the file ALONE —
+ * how many there are and what the browser says they are.
+ *
+ * Its own function because it is the one part of the verdict both halves of
+ * the gesture can reach: `planCanvasFileDrop` asks it at `drop` with real
+ * `File`s, and the in-flight preview asks it on every `dragover` with the
+ * protected-mode facts above. One rule, one sentence, two moments.
+ */
+export function refuseDroppedFile(facts: DroppedFileFacts): CanvasFileDropRefusal | null {
+  if (facts.count === 0) {
+    return {
+      reason: 'not-an-image',
+      headline: 'Studio could not read that file',
+      message: 'That drop carried no file Studio could read.',
+    }
+  }
+  if (facts.count > 1) {
+    return {
+      reason: 'multiple-files',
+      headline: 'One image at a time',
+      message:
+        'Studio adds one image at a time: each one is written into your source, and that moves the line numbers the next one would be written against. Drop them one by one.',
+    }
+  }
+  if (!looksLikeImage(facts)) {
+    const described = describeFileType(facts)
+    return {
+      reason: 'not-an-image',
+      headline: `${described} is not an image`,
+      message: `${facts.name ? `"${facts.name}"` : 'That file'} is ${described}, and Studio only adds images this way. Drop a PNG, JPEG, WebP, AVIF, GIF or SVG.`,
+    }
+  }
+  return null
 }
 
 /** How a file with the wrong type is described back to the user. */
-function describeFileType(file: File): string {
-  if (file.type) return file.type
-  const dot = file.name.lastIndexOf('.')
-  return dot === -1 ? 'a file with no extension' : `a ${file.name.slice(dot + 1).toLowerCase()} file`
+function describeFileType(facts: DroppedFileFacts): string {
+  if (facts.type) return facts.type
+  const dot = facts.name ? facts.name.lastIndexOf('.') : -1
+  if (dot === -1 || !facts.name) return 'a file with no declared type'
+  return `a ${facts.name.slice(dot + 1).toLowerCase()} file`
 }
+
+/** The two refusals that need geometry, so they read the same from both halves. */
+export const CANVAS_FILE_DROP_REFUSAL = {
+  noFrame: {
+    reason: 'no-frame',
+    headline: 'Drop onto a frame',
+    message:
+      'Drop the image onto a frame. The empty board is not a file, so there is nowhere for Studio to write the element.',
+  },
+  frameGone: {
+    reason: 'no-frame',
+    headline: 'That frame is gone',
+    message: 'That frame is no longer on the board. Reload the project and try again.',
+  },
+  noPosition: {
+    reason: 'no-position',
+    headline: 'Nothing here can hold an image',
+    message:
+      'Nothing under the pointer in that frame can hold an image. Drop it inside a container element instead.',
+  },
+} as const satisfies Record<string, CanvasFileDropRefusal>
 
 export interface CanvasFileDropInput {
   files: readonly File[]
@@ -83,55 +176,25 @@ export interface CanvasFileDropInput {
  * toast and nothing else.
  */
 export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPlan {
-  const [file, ...rest] = input.files
-  if (!file) {
-    return {
-      ok: false,
-      refusal: { reason: 'not-an-image', message: 'That drop carried no file Studio could read.' },
-    }
-  }
-  if (rest.length > 0) {
-    return {
-      ok: false,
-      refusal: {
-        reason: 'multiple-files',
-        message:
-          'Studio adds one image at a time: each one is written into your source, and that moves the line numbers the next one would be written against. Drop them one by one.',
-      },
-    }
-  }
-  if (!looksLikeImage(file)) {
-    return {
-      ok: false,
-      refusal: {
-        reason: 'not-an-image',
-        message: `"${file.name}" is ${describeFileType(file)}, and Studio only adds images this way. Drop a PNG, JPEG, WebP, AVIF, GIF or SVG.`,
-      },
-    }
+  const file = input.files[0]
+  const refusal = refuseDroppedFile({
+    count: input.files.length,
+    type: file?.type ?? '',
+    ...(file ? { name: file.name } : {}),
+  })
+  if (refusal || !file) {
+    return { ok: false, refusal: refusal ?? CANVAS_FILE_DROP_REFUSAL.noFrame }
   }
 
   const board = measureBoardDropSurfaces(input.transform)
   const surface = canvasSurfaceAtPoint(board, input.point)
   if (!surface || !surface.pageId) {
-    return {
-      ok: false,
-      refusal: {
-        reason: 'no-frame',
-        message:
-          'Drop the image onto a frame. The empty board is not a file, so there is nowhere for Studio to write the element.',
-      },
-    }
+    return { ok: false, refusal: CANVAS_FILE_DROP_REFUSAL.noFrame }
   }
 
   const tree = input.readPage(surface.pageId)
   if (!tree) {
-    return {
-      ok: false,
-      refusal: {
-        reason: 'no-frame',
-        message: 'That frame is no longer on the board. Reload the project and try again.',
-      },
-    }
+    return { ok: false, refusal: CANVAS_FILE_DROP_REFUSAL.frameGone }
   }
 
   const index = buildFrameCandidateIndex(surface.viewport, tree, surface.iframe, input.transform)
@@ -143,19 +206,13 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
     canHaveChildren,
   })
   if (!target) {
-    return {
-      ok: false,
-      refusal: {
-        reason: 'no-position',
-        message:
-          'Nothing under the pointer in that frame can hold an image. Drop it inside a container element instead.',
-      },
-    }
+    return { ok: false, refusal: CANVAS_FILE_DROP_REFUSAL.noPosition }
   }
 
   return { ok: true, file, pageId: surface.pageId, target }
 }
 
-function canHaveChildren(moduleId: string): boolean {
+/** Shared with the in-flight preview so both halves resolve the same containers. */
+export function canHaveChildren(moduleId: string): boolean {
   return registry.get(moduleId)?.canHaveChildren === true
 }
