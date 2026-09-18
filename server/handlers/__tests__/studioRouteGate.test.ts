@@ -239,6 +239,21 @@ describe('studio route gate — capability separation', () => {
     const trash = await harness.studio('/admin/api/studio/trash', { cookie: reviewer.cookie })
     expect(trash.status).toBe(200)
 
+    // `sec-18` — `GET github/device/poll` is a read-shaped verb that WRITES:
+    // on `status === 'authorized'` it calls `storeToken` and persists the
+    // GitHub credential. Under the old `github/` namespace it took
+    // `site.read`, so this reviewer could have completed a credential write.
+    const devicePoll = await harness.studio('/admin/api/studio/github/device/poll?flowId=x', {
+      cookie: reviewer.cookie,
+    })
+    expect(devicePoll.status).toBe(403)
+
+    // …while the two account-scoped GETs stay readable: they answer about the
+    // CALLER'S OWN credential (which a reviewer has none of) and keep the
+    // Version control panel openable instead of 403ing on mount.
+    const account = await harness.studio('/admin/api/studio/github/account', { cookie: reviewer.cookie })
+    expect(account.status).not.toBe(403)
+
     const purge = await harness.studio('/admin/api/studio/trash/purge', {
       cookie: reviewer.cookie,
       method: 'POST',
@@ -258,16 +273,46 @@ describe('studio route gate — undeclared paths', () => {
     '/admin/api/studio/save/extra',
     '/admin/api/studio/SAVE',
     '/admin/api/studio/loadx',
+    // `sec-18` — these four used to resolve, because the table declared
+    // `git/`, `github/`, `dev-server/`, `deploy/` and `install/` as
+    // NAMESPACES. An undeclared sub-path inherited the namespace's `read`,
+    // which was `site.read` for all five: a future GET-shaped verb under any
+    // of them would have let the read-only Client role reach it with no table
+    // edit for anyone to review (`sec-16`'s MEDIUM). There are no namespaces
+    // any more — every path is exact.
+    '/admin/api/studio/git/brand-new-verb',
+    '/admin/api/studio/github/brand-new-verb',
+    '/admin/api/studio/dev-server/restart',
+    '/admin/api/studio/deploy/run',
+    '/admin/api/studio/install/run',
+    // A job id is a UUID this server minted, and the marker matches nothing
+    // else — including a UUID with a segment after it.
+    '/admin/api/studio/deploy/not-a-uuid',
+    '/admin/api/studio/deploy/00000000-0000-4000-8000-000000000000/extra',
+    '/admin/api/studio/prototype/brand-new-verb',
+    '/admin/api/studio/trash/brand-new-verb',
   ] as const
 
   it('resolves no capability for a path the table does not name', () => {
     for (const path of probes) {
       expect(resolveStudioRouteCapability(path)).toBeNull()
     }
-    // …but a declared namespace root still resolves, so `git/<new-action>`
-    // inherits `studio.git.write` instead of arriving ungated.
-    expect(resolveStudioRouteCapability('/admin/api/studio/git/brand-new-verb')?.mutate)
-      .toBe('site.structure.edit')
+  })
+
+  it('resolves the two job-id routes, read-only', () => {
+    // The one dynamic shape the table admits. Both ids are
+    // `crypto.randomUUID()` (`deployJobs.ts`, `installDeps.ts`), so the marker
+    // is keyed on that shape rather than on "anything after the slash".
+    for (const parent of ['/admin/api/studio/deploy', '/admin/api/studio/install']) {
+      const resolved = resolveStudioRouteCapability(`${parent}/9f1c0b3a-5d2e-4a6b-8c7d-0e1f2a3b4c5d`)
+      expect(resolved).toEqual({ read: 'site.read', mutate: null })
+    }
+  })
+
+  it('refuses an unauthenticated job-id read, and a session without site.read', async () => {
+    const jobPath = '/admin/api/studio/deploy/9f1c0b3a-5d2e-4a6b-8c7d-0e1f2a3b4c5d'
+    expect((await harness.studio(jobPath)).status).toBe(401)
+    expect((await harness.studio(jobPath, { cookie: powerlessCookie })).status).toBe(403)
   })
 
   it('answers 404 for an undeclared path, even for the owner', async () => {

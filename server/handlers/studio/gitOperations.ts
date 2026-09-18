@@ -76,7 +76,7 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-import { isArgvSafeBranchName, parseGithubRemoteUrl } from './gitPaths'
+import { isArgvSafeBranchName, parseGithubRemoteUrl, redactRemoteUrlCredentials } from './gitPaths'
 import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
 import {
   clientSafeGitError,
@@ -221,9 +221,10 @@ export interface GitRemote {
 }
 
 /**
- * Every remote this repository has, as `git remote -v` reports them.
+ * Every remote this repository has, as `git remote -v` reports them, with any
+ * credential redacted out of the URLs — see {@link redactRemoteUrlCredentials}.
  *
- * Read-only and unfiltered: a project that already had three remotes when the
+ * Otherwise unfiltered: a project that already had three remotes when the
  * user opened it should SEE three, even though Studio will only ever write
  * `origin`. Hiding them would make the panel disagree with the user's
  * terminal, which is the failure mode `excludedCount` exists to avoid
@@ -240,8 +241,12 @@ export async function readRemotes(dir: string): Promise<GitRemote[] | GitOperati
     if (!match) continue
     const [, name, url, kind] = match
     const existing = byName.get(name) ?? { name, fetchUrl: '', pushUrl: '' }
-    if (kind === 'fetch') existing.fetchUrl = url
-    else existing.pushUrl = url
+    // Redacted HERE and not at the route, so every consumer of this function
+    // inherits it — `setOriginRemote` returns its result straight to the wire
+    // too, and a second redaction at a second call site is a second policy.
+    const safeUrl = redactRemoteUrlCredentials(url)
+    if (kind === 'fetch') existing.fetchUrl = safeUrl
+    else existing.pushUrl = safeUrl
     byName.set(name, existing)
   }
   return [...byName.values()]

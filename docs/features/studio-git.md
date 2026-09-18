@@ -94,6 +94,22 @@ rather than by a handler branch. `GET git/remotes` reports **all** of them,
 including ones Studio did not write: a panel that quietly disagrees with the
 user's terminal is the failure `excludedCount` exists to avoid elsewhere.
 
+**Every URL that route returns has its credential stripped first**
+(`redactRemoteUrlCredentials`, `gitOperations.ts`, applied inside
+`readRemotes` so `setOriginRemote`'s response inherits it too). Studio's own
+`setOriginRemote` re-composes through `parseGithubRemoteUrl` and never writes
+a credential into a remote — but a repository cloned OUTSIDE Studio routinely
+carries one, and `git remote -v` prints `.git/config` verbatim:
+`https://x-access-token:<token>@github.com/o/r` is what a GitHub Actions
+checkout leaves behind, `https://<pat>@github.com/o/r` what a token-pasted
+`git clone` leaves behind. `git/remotes` is a `site.read` route, so without
+this the **Client** role could read that token out of a repository the
+operator imported (`sec-16`'s informational finding). For `http`/`https` the
+whole userinfo goes, because a token with no password half is the commonest
+shape; for `ssh://` only the password does, since `git@` is the SSH account
+and removing it would make the panel disagree with the terminal. The scp-like
+`git@github.com:o/r.git` has no userinfo syntax and is untouched.
+
 **The URL is the widest-blast-radius input in this feature**, because git takes
 a *transport*, not an address: `ext::sh -c …` executes a shell command,
 `file://` and a bare path make a "remote" out of any directory on this server
@@ -312,7 +328,7 @@ the token they sign in with is stored per user, encrypted.
   Username prompt and the token to anything else. The `#!` line is what makes
   one script work on all three platforms: Git for Windows resolves the
   interpreter itself and runs the file through its own bundled `sh`.
-- **The 0600/0700 modes are a POSIX guarantee only.** On Windows Node maps
+- **The askpass script's 0600/0700 modes are a POSIX guarantee only.** On Windows Node maps
   `mode` onto the read-only attribute and nothing else — the script and its
   directory report `666` however they were asked for. What keeps the token
   private there is `%TEMP%`'s ACL (`C:\Users\<user>\AppData\Local\Temp` admits

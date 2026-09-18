@@ -228,11 +228,22 @@ running. `installDeps.ts`'s job registry is an in-memory
 `Map<jobId, JobRecord>`, so a naive implementation would strand the client
 polling a `jobId` the new process has never heard of, 404ing forever (from
 the UI: "the install button did nothing"). Every job is now ALSO mirrored to
-`<appRoot>/.studio/install-job.json` (`installJobStore.ts`) at start and at
+`<projectDir>/.studio/install-job.json` (`installJobStore.ts`) at start and at
 completion. A status query that finds a record on disk with no matching
 in-memory job — the process that owned it is gone — resolves it to a
 terminal `'interrupted'` status rather than reporting a phantom `'running'`
-forever (`resolvePersistedJobStatus` in `installDeps.ts`). Both status routes
+forever (`resolvePersistedJobStatus` in `installDeps.ts`). The sidecar is keyed
+on the **project** directory, never on the app root the install spawns in: on a
+monorepo import those differ, and writing it at the app root put a second
+`.studio/` directory inside the user's own git-tracked application that nothing
+else in Studio reads (`sec-15`, closed by `sec-18` — the same defect
+`server-25` fixed for `lastDeploy` one module over). The record's own `dir`
+field still names the app root, because that is what a poller asked about.
+There is no fallback read: a record left at an old app-root location by a
+previous build is ignored. The post-install profile re-probe moved with it, for
+a sharper reason — `probeProject` takes the project directory and finds the app
+root itself, so passing the app root re-detected an app root relative to the
+app root and cached the wrong paths where no reader would ever see them. Both status routes
 (`GET /admin/api/studio/install/status?dir=` and
 `GET /admin/api/studio/install/:id?dir=`) go through this resolution, so a
 completed-then-restarted install is still reported correctly — paired with
@@ -751,6 +762,13 @@ It now has its own edit kind and codemod. `saveSite` collapses `tag`/`customTag`
 `studioEditLocation` now rejects a `rel` that is absolute, contains a `..` or empty segment, or does not end in a JS/TS extension.
 
 This was a real hole, not a hypothetical one: the whole edit batch arrives from the client with `rel` inside each `nodeId`, and the save route builds its target with `join(dir, rel)` — so a `nodeId` of `../../.ssh/config:1:1` was an arbitrary file write. Nothing legitimate produces one (the parser mints ids from `path.relative(workspaceRoot, file)` for files it already found inside the workspace), and the check lives in the single decoder every path shares, so ordering, dedupe, touched-file collection, and apply all inherit it.
+
+**And it is checked on the REAL path, not the spelling.** `studioEditLocation(dir, nodeId)` resolves `join(dir, rel)` through `realpathSync.native` and re-derives `rel` from the real path of `dir`, so the `rel` every downstream step sees is the one the filesystem actually stores. Two things follow, and both were holes:
+
+- **Two spellings can name one file.** `pages/Home.tsx` vs `pages/home.tsx` on a case-insensitive filesystem (this machine, every Windows install, default macOS), or `mirror/Home.tsx` where `mirror` is a symlink or an NTFS junction to `pages` — the kind git stores, so an imported repo carries it. `sec-17` found the consequence: `transplantJsxElement`'s same-file guard compared the two strings, so a cross-frame move between two aliases wrote the destination and then clobbered it with the origin's text minus the moved element — the markup gone, inserted nowhere, `{ ok: true }` reported, and no undo entry for that family. That fix compared two realpaths inside one codemod; `sec-18` closed the property at the decoder, so `dedupeStudioEdits`' key, the batch's touched-file set, and every codemod's `join(dir, rel)` now agree about how many files a batch touches.
+- **A lexical guard is not containment.** A `.tsx` symlink INSIDE the project pointing at a file outside it has no `..`, is not absolute, and has the right extension — it passed cleanly and was written. `relative()` against the real project root turns it into a leading `..`, and the same guard then refuses it.
+
+A file that does not exist yet keeps its lexical `rel`: there is nothing to canonicalise against, the lexical guard has already passed, and every codemod refuses a missing file on its own. `orderStudioEditsForApply` is the one caller that deliberately does NOT canonicalise — it sorts by line number, descending globally and therefore also within each file, so which file a `rel` names never enters the comparison and an O(n log n) burst of `realpath` calls on the save path would buy nothing.
 
 ### A save only reloads when a write actually landed
 

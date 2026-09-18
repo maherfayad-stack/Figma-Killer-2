@@ -145,6 +145,16 @@ Studio reads and writes the user's repo. Every path is untrusted.
   (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`).
 - **Containment is checked on the real path, after resolving symlinks.** A repo
   can arrive from GitHub and git stores symlinks — a textual check is bypassable.
+  That includes the WRITEBACK decoder: `studioEditLocation(dir, nodeId)` and
+  `canonicalSourceRel(dir, rel)` realpath-resolve and re-derive the `rel`, so
+  two spellings of one file (`pages/Home.tsx` vs `pages/home.tsx`, or a
+  junctioned directory) can never be two write targets, and a `.tsx` symlink
+  pointing out of the project is refused even though it is lexically clean.
+- **A secret file on disk goes through `privateTempDir.ts`**, never
+  `mkdirSync({ mode })` + `chmodSync` — `chmod` decides nothing on Windows.
+  `createPrivateTempDir` / `ensurePrivateDirectory` for the directory,
+  `writePrivateFileExclusive` / `writePrivateFileReplacing` for the file. A
+  failed restriction is a REFUSAL at any caller about to write a secret.
 - Archive entries: decide *before* inflating (per-file cap, total cap, file
   count cap, traversal). See `studioGithubImport.ts`'s `filter` callback.
 - A write target is derived **server-side**. Never accept a caller-supplied

@@ -170,6 +170,65 @@ answers 404 and never reaches a sub-router. Five capabilities appear there —
 gates the agent tool rather than the human surface. The full mapping is in
 `docs/server.md` → "Per-request capability gating on the Studio routes".
 
+**Every entry is an exact path.** There are no namespace entries, and there
+have not been since `sec-18`. The six the table shipped with (`git/`,
+`github/`, `install/`, `deploy/`, `dev-server/`, `prototype/`) each answered for
+`${path}/<anything>`, which on the READ side handed an undeclared sub-path
+`site.read` — the Client role's capability. The only dynamic shape that
+remains is a job id, declared as `jobId` on `install` and `deploy` and matched
+against the UUID shape those registries mint, so `deploy/<uuid>` resolves and
+`deploy/run` 404s.
+
+#### Two reads that spawn
+
+`GET /admin/api/studio/load` takes `site.read`, and at Tier 1 it runs the
+workspace's own style toolchain (Sass/PostCSS/Tailwind) in a subprocess —
+`compileProjectStyles` → `styleCompileTier1.ts`. So a **Client**, who holds
+`site.read` and nothing else, can cause the project's code to run.
+
+That is deliberate, and the reasoning is a CAPABILITY boundary — not, as an
+earlier draft of this section claimed, a human consent. Be precise about which,
+because `sec-12` and `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2 already forbid
+the looser reading:
+
+- **What is actually guaranteed: a `studio.run.project` holder opened this
+  project at least once.** Nothing compiles at Tier 0, and the only way off
+  Tier 0 is `POST /trust-tier`, which requires `studio.run.project` — a
+  capability Owner and Admin hold and Client does not. On a project no
+  privileged user has ever opened, a Client's `GET /load` compiles nothing at
+  all. That is the whole of the boundary.
+- **What is NOT guaranteed: that a human answered a question.** For a Vite
+  project with a lockfile the editor fires that POST itself on first open and
+  shows a notice with an Undo (`LiveAutoPromoteNotice.tsx`). **Tier 2 for a
+  Vite project is a product default, not a consent boundary** — the brief says
+  so in as many words. So "the user consented to this compile" would be false
+  for exactly the projects most likely to reach it, and nothing downstream may
+  be built on it. Anything that genuinely needs a human to have agreed must
+  ask at the point of use.
+- **Gating the read on `studio.run.project` would break the feature, not the
+  attack.** At Tier 1 the compiled CSS *is* the document's appearance. A
+  reviewer who may see the document but triggers no compile sees an unstyled
+  board — which makes Tier 1 useless for exactly the role it exists to serve.
+  The alternative that would preserve both (serve a cached compile to
+  `site.read`, refuse to START one) was rejected as worse than the problem: it
+  makes what a reviewer sees depend on whether somebody else loaded the board
+  first, which is a silently wrong board rather than a refused one.
+- **The residual is resource, not confidentiality or integrity.** A `site.read`
+  holder can re-trigger a compile of code the operator installed. It is bounded
+  on both sides: the result is cached on disk by content hash
+  (`.studio/cache/styles-<hash>.{css,json}`), so a repeat load spawns nothing,
+  and the spawn goes through `runCappedSubprocess` — argv array, no shell,
+  `minimalSubprocessEnv`, a timeout, and capped stdout/stderr.
+- **The single-operator posture is what makes this acceptable at all.** In a
+  deployment with real third-party Clients, "who may cause this repository's
+  build to run" would need to be its own per-project authorisation, exactly as
+  the note above this section says about `studio.run.project` itself.
+
+The second half of `sec-16`'s note — that `GET component-bundle` spawns at
+`site.read` — was one verb off. That GET serves an already-built artefact from
+`.studio/cache/`; the `Bun.build` subprocess is on the **POST**, which is
+`studio.write`. Per-verb table entries are what made the difference visible.
+
 ---
 
 ## Roles

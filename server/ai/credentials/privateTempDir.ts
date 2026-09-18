@@ -1,6 +1,23 @@
 /**
- * privateTempDir — a temp directory only the current OS user can open, on
- * every platform Studio runs on.
+ * privateTempDir — a directory only the current OS user can open, and the two
+ * ways to write a secret into one, on every platform Studio runs on.
+ *
+ * Four exports, and which one to use is decided by the file's lifetime:
+ *
+ *   - {@link createPrivateTempDir} — a throwaway staging directory under
+ *     `os.tmpdir()` (the Claude CLI's MCP config file, the CLI probe's cwd).
+ *   - {@link ensurePrivateDirectory} — a PERSISTENT directory under a data
+ *     root (`.data/claude-cli/<user>`, `.data/mcp-server-secrets/<user>/…`).
+ *   - {@link writePrivateFileExclusive} — a file written ONCE into one of
+ *     those.
+ *   - {@link writePrivateFileReplacing} — a file that is genuinely rewritten.
+ *
+ * `sec-18` added the second and fourth. Before it, `mcpServerSecretStore.ts`,
+ * `cliMcpConnectionProbe.ts` and `claudeCliEnv.ts` — the last of which holds
+ * the Claude CLI's `.credentials.json` — each did their own
+ * `mkdirSync({ mode })` + `chmodSync`, which is the exact POSIX-only
+ * protection this module exists because of (`server-25` and `sec-15` both
+ * recorded them as still open).
  *
  * ## Why this is not just `mkdtempSync` + `chmodSync(0o700)`
  *
@@ -67,9 +84,9 @@
  * throws, degrading the turn to "no MCP tools" rather than putting a live
  * bearer token somewhere it could not set the access control on.
  */
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, parse } from 'node:path'
 import { minimalSubprocessEnv, runCappedSubprocess, type SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 
 /** Owner-only on a directory. Real on POSIX; decorative on Windows, where the DACL below is what holds. */
@@ -127,6 +144,81 @@ export async function createPrivateTempDir(
  */
 export function writePrivateFileExclusive(path: string, contents: string): void {
   writeFileSync(path, contents, { mode: PRIVATE_FILE_MODE, flag: 'wx' })
+}
+
+/**
+ * Replaces `path`'s contents, for a secret file that legitimately gets
+ * REWRITTEN (a store, not a one-shot staging file).
+ *
+ * {@link writePrivateFileExclusive} cannot do that job — `'wx'` refuses a name
+ * that already exists, which is exactly what makes it right for a fresh
+ * staging file and wrong for a store. But plain `writeFileSync` is worse than
+ * it looks: `'w'` opens-and-truncates, and truncation does not reset a DACL,
+ * so a file an attacker planted before the first write keeps their ACE and
+ * receives every later one (`sec-15`, measured on NTFS).
+ *
+ * So: write EXCLUSIVELY to a fresh sibling name, then rename over the target.
+ * The rename moves the object this process created inside the already-private
+ * directory, so the DACL that lands is the inherited single-ACE one (NTFS
+ * moves carry the source's DACL; POSIX renames carry the source inode's
+ * 0600). It is also atomic, so a reader never sees a half-written secret and
+ * a crash mid-write cannot destroy the previous value.
+ */
+export function writePrivateFileReplacing(path: string, contents: string): void {
+  const { dir, base } = parse(path)
+  const staging = join(dir, `${base}.${crypto.randomUUID()}.tmp`)
+  try {
+    writePrivateFileExclusive(staging, contents)
+    renameSync(staging, path)
+  } catch (err) {
+    try {
+      rmSync(staging, { force: true })
+    } catch {
+      // Best-effort cleanup; the throw below is the real outcome.
+    }
+    throw err
+  }
+}
+
+/**
+ * `mkdir -p` for a directory that will hold secrets, restricting every level
+ * this call actually CREATES to the current OS user.
+ *
+ * Returns `false` when any restriction failed — callers that are about to
+ * write a secret must treat that as a refusal, the way
+ * `claudeCliMcpConfigFile.ts` does. "Restrict this directory" and "write a
+ * secret into it" are two decisions and only the second one is dangerous, so
+ * this reports rather than throws.
+ *
+ * Only the levels this call creates are restricted, for two reasons. It keeps
+ * the `icacls` subprocess off the steady-state path entirely — the second and
+ * every later write creates nothing and spawns nothing — and restricting a
+ * directory that already existed would be a decision about somebody else's
+ * data-root layout (the roots here are `MCP_SERVER_SECRETS_DATA_DIR` /
+ * `CLAUDE_CLI_DATA_DIR`, both operator-configurable) rather than about the
+ * per-user leaf this module owns.
+ */
+export async function ensurePrivateDirectory(
+  dir: string,
+  options: PrivateTempDirOptions = {},
+): Promise<boolean> {
+  const missing: string[] = []
+  for (let current = dir; !existsSync(current); current = dirname(current)) {
+    missing.unshift(current)
+    if (dirname(current) === current) break
+  }
+  if (missing.length === 0) return true
+
+  mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE })
+
+  let ok = true
+  // Shallowest first: a child created later inherits the parent's already
+  // narrowed ACEs, which is the same create-time reasoning
+  // `createPrivateTempDir` relies on.
+  for (const created of missing) {
+    if (!(await restrictDirectoryToCurrentUser(created, options))) ok = false
+  }
+  return ok
 }
 
 /**

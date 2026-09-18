@@ -18,14 +18,12 @@
  * (mirrors `appRoot.ts`'s containment discipline for project-relative paths).
  */
 
-import { mkdirSync, chmodSync, existsSync, rmSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { ensurePrivateDirectory } from '../../ai/credentials/privateTempDir'
 import { assertPathWithin } from '../../util/pathWithin'
 import { projectsRootDir } from '../studioProjects'
 import { resolveValidatedWorkspaceDir } from './workspaceDir'
-
-/** 0700 — owner read/write/execute only. Best-effort on Windows (NTFS ACLs, not POSIX mode bits). */
-const CONFIG_DIR_MODE = 0o700
 
 /**
  * `userId` rows in this app are server-generated `nanoid()` values (default
@@ -82,19 +80,35 @@ export function resolveClaudeCliConfigDir(dataRoot: string, userId: string): str
 }
 
 /**
- * Create the per-user config directory if it doesn't exist, mode 0700.
- * Idempotent — safe to call before every spawn. Re-asserts the mode on an
- * existing directory too, in case it was created by an older code path or a
- * permissive umask left it wider than intended.
+ * Create the per-user config directory if it doesn't exist, restricted to the
+ * account this server runs as. Idempotent — safe to call before every spawn,
+ * and creating nothing is its own fast path (`ensurePrivateDirectory` spawns
+ * nothing when every level already exists).
+ *
+ * This is the directory the `claude` CLI writes `.credentials.json` into: the
+ * single highest-value secret Studio's filesystem holds, and the one Studio
+ * never reads itself. It used to be protected with `mkdirSync({ mode: 0700 })`
+ * + `chmodSync`, which is real on POSIX and very nearly a no-op on Windows —
+ * `chmod` maps onto the read-only attribute and never touches the DACL, so
+ * the only protection was whatever `.data/` inherited. `server-25`'s landmine
+ * ("the Windows chmod illusion is wider than this one file") named this file;
+ * `sec-18` routes it through the same `icacls`-backed helper the MCP config
+ * file already uses.
+ *
+ * **Deliberately fail-SOFT**, unlike `writeMcpConfigFile` and
+ * `mcpServerSecretStore`. Those two are about to write a secret Studio itself
+ * holds, so "never write a secret somewhere you failed to lock down" applies
+ * cleanly. Here Studio writes nothing — it creates a directory and sets an
+ * env var — and refusing would disable the entire Claude CLI driver on a
+ * machine where `icacls` happens to be unavailable. The failure is logged and
+ * named so an operator can see it.
  */
-export function ensureClaudeCliConfigDir(dataRoot: string, userId: string): string {
+export async function ensureClaudeCliConfigDir(dataRoot: string, userId: string): Promise<string> {
   const dir = resolveClaudeCliConfigDir(dataRoot, userId)
-  mkdirSync(dir, { recursive: true, mode: CONFIG_DIR_MODE })
-  try {
-    chmodSync(dir, CONFIG_DIR_MODE)
-  } catch {
-    // Best-effort on platforms without POSIX mode bits (Windows). The
-    // directory still exists and is still outside anything served over HTTP.
+  if (!(await ensurePrivateDirectory(dir))) {
+    console.error(
+      `[studio/claudeCliEnv] could not restrict the Claude CLI config directory to this account — it keeps the permissions it inherited from ${dataRoot}`,
+    )
   }
   return dir
 }

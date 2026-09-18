@@ -19,7 +19,8 @@
  * `studioWriteback.ts` re-exports all of it, so every existing import keeps
  * working and the writeback path still has one front door.
  */
-import { join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { join, relative, resolve, sep } from 'node:path'
 import { INLINE_ID_SEPARATOR } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { isSlotEditKind } from './studioSlotWriteback'
@@ -37,12 +38,10 @@ export interface StudioEditLocation {
 }
 
 /**
- * The source location a node id writes back to, or `null` for a synthetic node
- * (e.g. the `index:body` root) that has none.
- *
- * For a COMPOSITE (inlined) id — `callSite~component:line:col`, §2.4 — the
- * target is the LAST segment: the component's own file and position. That is
- * genuinely where the markup lives, so it is genuinely where an edit belongs.
+ * The GRAMMAR half of decoding a node id: split the composite id, match
+ * `rel:line:col`, apply the lexical path guard. Private, because a `rel` that
+ * has only been through this is not yet a write target — see
+ * {@link studioEditLocation}, which is the only exported way to get one.
  *
  * Splitting on `INLINE_ID_SEPARATOR` FIRST is not optional. `NODE_LOC_ID`'s
  * greedy `.*` matches straight through the separator, so running it on a whole
@@ -50,12 +49,90 @@ export interface StudioEditLocation {
  * `"pages/Home.jsx:77:19~components/Icon.jsx"` — a path that does not exist,
  * and if it ever did, a file the user never asked to modify.
  */
-export function studioEditLocation(nodeId: string): StudioEditLocation | null {
+function decodeNodeIdLocation(nodeId: string): StudioEditLocation | null {
   const target = nodeId.split(INLINE_ID_SEPARATOR).pop() ?? nodeId
   const m = NODE_LOC_ID.exec(target)
   if (!m) return null
   const rel = m[1]!
   return isWritableSourceRel(rel) ? { rel, line: Number(m[2]), col: Number(m[3]) } : null
+}
+
+/**
+ * The source location a node id writes back to inside `dir`, or `null` for a
+ * synthetic node (e.g. the `index:body` root) that has none, a path the
+ * lexical guard refuses, or a path that resolves outside the project.
+ *
+ * For a COMPOSITE (inlined) id — `callSite~component:line:col`, §2.4 — the
+ * target is the LAST segment: the component's own file and position. That is
+ * genuinely where the markup lives, so it is genuinely where an edit belongs.
+ *
+ * ## Why this takes `dir`, and why the `rel` it returns is not the one it read
+ *
+ * `sec-17` landmine 4: the guard used to be purely lexical, which means it had
+ * no opinion about two `rel`s that name ONE file. Two spellings do —
+ * `pages/Home.tsx` vs `pages/home.tsx` on a case-insensitive filesystem (this
+ * machine, every Windows install, default macOS), and `mirror/Home.tsx` where
+ * `mirror` is a symlink or an NTFS junction to `pages` (the kind git stores,
+ * so an imported repo carries it). The consequence was not theoretical:
+ * `transplantJsxElement`'s same-file guard compared the two strings, so a
+ * cross-frame move between two aliases of one file wrote the destination, then
+ * clobbered it with the origin's text minus the moved element — the markup
+ * gone, inserted nowhere, and `{ ok: true }` reported. `sec-17` fixed that ONE
+ * codemod by realpath-comparing its two ends; this closes the property itself,
+ * so nothing downstream has to remember.
+ *
+ * So the decode canonicalises: it resolves the real path of `join(dir, rel)`
+ * and re-derives `rel` from the real path of `dir`. Two aliases therefore
+ * produce the SAME `rel`, which is what makes `dedupeStudioEdits`' key, the
+ * batch's touched-file set, and every codemod's `join(dir, rel)` agree about
+ * how many files a batch touches.
+ *
+ * It also turns the lexical guard into a real containment check. A `.tsx`
+ * symlink INSIDE the project pointing outside it passed the old guard (no
+ * `..`, not absolute, right extension) and was written; now `relative()`
+ * reports a `..` segment and the decode refuses.
+ *
+ * A file that does not exist yet keeps its lexical `rel` — there is nothing to
+ * canonicalise against, the lexical guard has already passed, and every
+ * codemod here refuses a missing file on its own.
+ */
+export function studioEditLocation(dir: string, nodeId: string): StudioEditLocation | null {
+  const decoded = decodeNodeIdLocation(nodeId)
+  if (!decoded) return null
+  const rel = canonicalSourceRel(dir, decoded.rel)
+  return rel === null ? null : { rel, line: decoded.line, col: decoded.col }
+}
+
+/**
+ * `rel` as the filesystem actually spells it, relative to `dir` — or `null`
+ * when it is not a writable source path inside `dir`. See
+ * {@link studioEditLocation} for why this exists; exported so the few callers
+ * that hold a `rel` rather than a node id (`reloadScope.ts`'s round-tripped
+ * `files` list) can apply the same rule instead of a parallel one.
+ */
+export function canonicalSourceRel(dir: string, rel: string): string | null {
+  if (!isWritableSourceRel(rel)) return null
+
+  const abs = join(dir, ...rel.split(/[/\\]+/))
+  // `realpathSync.native` is the OS call: it resolves symlinks and junctions
+  // AND returns the on-disk casing, which the JS implementation does not.
+  const realDir = realpathOr(dir)
+  const realAbs = realpathOr(abs)
+
+  const canonical = relative(realDir, realAbs).split(sep).join('/')
+  // Re-run the lexical guard on the RESULT. `relative()` is what turns "a
+  // symlink pointing out of the project" into a leading `..`, and the guard
+  // is what refuses it.
+  return isWritableSourceRel(canonical) ? canonical : null
+}
+
+/** The real path, or the plainly-resolved one when the entry does not exist yet. */
+function realpathOr(path: string): string {
+  try {
+    return realpathSync.native(path)
+  } catch {
+    return resolve(path)
+  }
 }
 
 /** Files a writeback may touch. Never a `.env`, a lockfile, or anything else that isn't app source. */
@@ -147,11 +224,18 @@ export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']):
  * Edits whose id has no decodable location sort last — `applyStudioEdit`
  * no-ops on them anyway. Pure, so the ordering is unit-testable without
  * touching the filesystem.
+ *
+ * This is the one place that uses the GRAMMAR decode rather than
+ * `studioEditLocation`, and deliberately: ordering is about line numbers, and
+ * the sort is descending by line globally (therefore also within each file),
+ * so which file a `rel` names never enters the comparison. Canonicalising here
+ * would buy nothing and would cost an O(n log n) burst of `realpath` calls on
+ * the save path.
  */
 export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: readonly T[]): T[] {
   return [...edits].sort((a, b) => {
-    const la = studioEditLocation(a.nodeId)
-    const lb = studioEditLocation(b.nodeId)
+    const la = decodeNodeIdLocation(a.nodeId)
+    const lb = decodeNodeIdLocation(b.nodeId)
     if (!la) return 1
     if (!lb) return -1
     return lb.line - la.line || lb.col - la.col
@@ -167,6 +251,12 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * Without this, editing two instances in a single batch would apply both writes
  * to the same position — the second reading a file the first already changed,
  * for a silent last-write-wins with a stale intermediate.
+ *
+ * `dir` is here so the key is the CANONICAL `rel` (`studioEditLocation`):
+ * before `sec-18` this keyed on the raw string, so `pages/Home.tsx:10:5` and
+ * `pages/home.tsx:10:5` — one file on this filesystem — were two keys and both
+ * writes landed, which is precisely the stale-intermediate failure this
+ * function exists to prevent.
  *
  * ## Why `insert` and `insert-slot` are exempt
  *
@@ -204,11 +294,14 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * would be planned against a tree the first already changed). Collapsing it
  * would silently drop a copy while `written` reported the truth.
  */
-export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(edits: readonly T[]): T[] {
+export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
+  dir: string,
+  edits: readonly T[],
+): T[] {
   const byTarget = new Map<string, T>()
   const passthrough: T[] = []
   for (const edit of edits) {
-    const loc = studioEditLocation(edit.nodeId)
+    const loc = studioEditLocation(dir, edit.nodeId)
     // `styled` (W4-4 Phase B) joins the exemption for the same reason
     // `insert`/`insert-slot` are here: its identity is not the location alone.
     // Every declaration in one template shares that template's `line:col`, so
@@ -239,9 +332,10 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(ed
  * The absolute file a node id writes back to, or `null` for a synthetic node.
  * Exposed so the save route can build its "which files did this batch touch"
  * set (to detect a codemod-caused line-count shift) without re-deriving the
- * composite-id rule — see `studioEditLocation`.
+ * composite-id rule — see `studioEditLocation`, whose canonical `rel` is what
+ * makes two aliases of one file a single member of that set.
  */
 export function studioEditFile(dir: string, nodeId: string): string | null {
-  const loc = studioEditLocation(nodeId)
+  const loc = studioEditLocation(dir, nodeId)
   return loc ? join(dir, loc.rel) : null
 }

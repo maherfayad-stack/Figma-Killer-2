@@ -59,9 +59,9 @@
  *     NEVER spawns anything — a cold cache degrades to "unknown", exactly the
  *     "don't buy a guess with latency" rule `liveDigest.ts` already states.
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { createPrivateTempDir, writePrivateFileReplacing } from './privateTempDir'
 import {
   minimalSubprocessEnv,
   runCappedSubprocess,
@@ -155,7 +155,22 @@ export async function probeCliMcpConnections(options: ProbeCliMcpOptions): Promi
 
   let cwd: string | null = null
   try {
-    cwd = mkdtempSync(join(tmpdir(), 'studio-mcp-probe-'))
+    // The cwd is not just neutral, it is PRIVATE. `claude mcp list`'s own help
+    // warns it spawns approved `.mcp.json` stdio servers for health checks, and
+    // this module's doc names "a directory with no `.mcp.json` cannot do that"
+    // as the safety argument. `mkdtempSync` alone does not make that true on
+    // Windows, where a new directory under a redirected `%TEMP%` inherits
+    // whatever that volume grants and a watcher can plant a `.mcp.json` into
+    // it between creation and the spawn (`sec-15`'s measured window, one
+    // module over). A failed restriction is a refusal, not a warning: the
+    // degraded answer — an empty map, read by every caller as "nothing known"
+    // — already exists and costs a badge, not a turn.
+    const staging = await createPrivateTempDir('studio-mcp-probe-')
+    cwd = staging.dir
+    if (!staging.restricted) {
+      console.error('[ai/cliMcpConnectionProbe] could not restrict the probe directory — not spawning the CLI in it')
+      return new Map()
+    }
     const result = await runCappedSubprocess(['claude', 'mcp', 'list'], {
       cwd,
       env: minimalSubprocessEnv(['HOME', 'PATH'], { CLAUDE_CONFIG_DIR: options.configDir }),
@@ -220,7 +235,15 @@ export async function ensureCliMcpServerRegistered(options: {
 }): Promise<void> {
   let cwd: string | null = null
   try {
-    cwd = mkdtempSync(join(tmpdir(), 'studio-mcp-register-'))
+    // Same reasoning as `probeCliMcpConnections`' cwd, and the same refusal:
+    // this function is already best-effort, and "the printed fallback
+    // instructions are the answer" is the documented degradation.
+    const staging = await createPrivateTempDir('studio-mcp-register-')
+    cwd = staging.dir
+    if (!staging.restricted) {
+      console.error('[ai/cliMcpConnectionProbe] could not restrict the registration directory — not spawning the CLI in it')
+      return
+    }
     await runCappedSubprocess(
       ['claude', 'mcp', 'add', '-s', 'user', '--transport', 'http', options.name, options.url],
       {
@@ -278,7 +301,11 @@ export function rememberCliSignIn(configDir: string, name: string): void {
   try {
     const current = recallCliSignIns(configDir)
     if (current.includes(name)) return
-    writeFileSync(rememberedPath(configDir), JSON.stringify([...current, name]), { mode: 0o600 })
+    // Exclusive-create + rename, not `writeFileSync` with a mode: the mode is
+    // POSIX-only, and `'w'` would write into a file an attacker planted rather
+    // than refuse it. See `privateTempDir.ts`. The directory itself is
+    // `claudeCliEnv.ts`'s, restricted there.
+    writePrivateFileReplacing(rememberedPath(configDir), JSON.stringify([...current, name]))
   } catch (err) {
     console.error('[ai/cliMcpConnectionProbe] could not remember the CLI sign-in:', err)
   }
@@ -364,7 +391,7 @@ export function clearCliNeedsAuthCache(configDir: string, names: readonly string
       }
     }
     if (!changed) return
-    writeFileSync(path, JSON.stringify(entries))
+    writePrivateFileReplacing(path, JSON.stringify(entries))
   } catch (err) {
     console.error('[ai/cliMcpConnectionProbe] could not prune the CLI needs-auth cache:', err)
   }

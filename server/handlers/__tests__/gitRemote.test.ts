@@ -31,7 +31,7 @@ import {
   readGitCloneJob,
   startGitCloneJob,
 } from '../studio/gitClone'
-import { githubProjectFolderName, parseGithubRemoteUrl } from '../studio/gitPaths'
+import { githubProjectFolderName, parseGithubRemoteUrl, redactRemoteUrlCredentials } from '../studio/gitPaths'
 import { isGitFailure, originAcceptsStoredGithubToken, pushCurrentBranch } from '../studio/gitOperations'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
@@ -278,6 +278,32 @@ describe('git remote routes', () => {
     ).json()) as { remotes: Array<{ name: string; fetchUrl: string }> }
     expect(after.remotes).toHaveLength(1)
     expect(after.remotes[0]!.fetchUrl).toBe('git@github.com:octocat/other.git')
+  })
+
+  it('never reports a credential a repository cloned outside Studio carries', async () => {
+    // `GET git/remotes` is a `site.read` route, so this is what the CLIENT
+    // role would otherwise be able to read out of an imported repository.
+    // `x-access-token:<token>` is what a GitHub Actions checkout leaves in
+    // `.git/config`; the bare-token form is what a token-pasted `git clone`
+    // leaves. `sec-16` reported this; `sec-18` closed it.
+    await git(dir, ['remote', 'add', 'ci', 'https://x-access-token:ghp_NotARealToken1234@github.com/o/r.git'])
+    await git(dir, ['remote', 'add', 'pasted', 'https://ghp_AlsoNotReal5678@github.com/o/r.git'])
+    await git(dir, ['remote', 'add', 'ssh', 'ssh://git@github.com/o/r.git'])
+
+    const res = await call(`/admin/api/studio/git/remotes?dir=${encodeURIComponent(dir)}`)
+    const body = await res.text()
+    expect(body).not.toContain('ghp_NotARealToken1234')
+    expect(body).not.toContain('ghp_AlsoNotReal5678')
+    expect(body).not.toContain('x-access-token')
+
+    const listed = JSON.parse(body) as { remotes: Array<{ name: string; fetchUrl: string; pushUrl: string }> }
+    const by = (name: string) => listed.remotes.find((remote) => remote.name === name)!
+    expect(by('ci').fetchUrl).toBe('https://github.com/o/r.git')
+    expect(by('ci').pushUrl).toBe('https://github.com/o/r.git')
+    expect(by('pasted').fetchUrl).toBe('https://github.com/o/r.git')
+    // `git@` on an SSH remote is the ACCOUNT, not a secret — stripping it
+    // would make the panel disagree with the user's terminal.
+    expect(by('ssh').fetchUrl).toBe('ssh://git@github.com/o/r.git')
   })
 
   it('reports remotes Studio did not write, rather than hiding them', async () => {
@@ -609,4 +635,36 @@ describe('a stored GitHub token is only ever offered to github.com', () => {
     expect(isGitFailure(result)).toBe(true)
     expect(JSON.stringify(result)).not.toContain('not-a-token')
   }, 60_000)
+})
+
+describe('redactRemoteUrlCredentials', () => {
+  it.each([
+    // http/https — the WHOLE userinfo goes, because a token with no password
+    // half is the commonest credential shape there.
+    ['https://x-access-token:ghp_NotAReal@github.com/o/r.git', 'https://github.com/o/r.git'],
+    ['https://ghp_NotAReal@github.com/o/r.git', 'https://github.com/o/r.git'],
+    ['http://user:pw@example.test/o/r.git', 'http://example.test/o/r.git'],
+    ['HTTPS://user:pw@github.com/o/r.git', 'HTTPS://github.com/o/r.git'],
+    ['https://user:pw@github.com:8443/o/r.git?x=1#f', 'https://github.com:8443/o/r.git?x=1#f'],
+    ['https://user:p%40ss@github.com/o/r.git', 'https://github.com/o/r.git'],
+    // A userinfo containing an `@` splits on the LAST one, as a URL parser does.
+    ['https://us@er:pw@github.com/o/r.git', 'https://github.com/o/r.git'],
+    // Non-http: only the password half goes; the account stays.
+    ['ssh://git:secret@github.com/o/r.git', 'ssh://git@github.com/o/r.git'],
+  ])('redacts %s', (input, expected) => {
+    expect(redactRemoteUrlCredentials(input)).toBe(expected)
+  })
+
+  it.each([
+    'https://github.com/o/r.git',
+    'ssh://git@github.com/o/r.git',
+    // scp-like: no `scheme://`, so no userinfo syntax to strip.
+    'git@github.com:o/r.git',
+    'git@github.com:o/r@weird.git',
+    '/a/local/path',
+    'C:/a/windows/path',
+    '',
+  ])('leaves %s untouched', (input) => {
+    expect(redactRemoteUrlCredentials(input)).toBe(input)
+  })
 })

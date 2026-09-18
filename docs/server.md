@@ -380,11 +380,21 @@ The `AuthUser` the gate resolves is handed to `STUDIO_SESSION_SUB_ROUTERS` in `S
 |---|---|---|
 | `site.read` | every read; plus `reload-scope` and the two `node-{png,jsx}` exports, which are POST-shaped reads | A Studio project's source is the document, and `site.read` means "may see the document" |
 | `studio.write` | `save`, `boards`, `framework`, `frame-defaults`, project create/rename/duplicate/delete/sample, `page`, `pages-dir`, trash restore/purge, `install`, both imports, the uploads, `extract-component`, `i18n-setup`, `translations`, `tokens`, `stories`, `prototype`, `design-system/migrate`, `preview-axes`, `component-bundle` | Changes the project's files |
-| `studio.run.project` | `dev-server/*`, `deploy/*`, `trust-tier`, `style-compile-consent` | Makes Studio execute somebody's code — or hands out the right to. Trust promotion sits here deliberately |
-| `site.structure.edit` | `git/*`, `github/*` | Rewriting the repository's history, and the GitHub credential the network verbs need |
+| `studio.run.project` | `dev-server/{start,stop}`, `deploy` (the POST that starts one), `trust-tier`, `style-compile-consent` | Makes Studio execute somebody's code — or hands out the right to. Trust promotion sits here deliberately |
+| `site.structure.edit` | every mutating `git/<action>`, plus `github/device/start`, `github/token`, and the GET `github/device/poll` | Rewriting the repository's history, and the GitHub credential the network verbs need |
 | `site.content.edit` | `comments`, `shares` | Collaboration about a design rather than a change to it — the **Client** role holds this and is meant to |
 
-`subPaths: true` on an entry makes it answer for `${path}/<anything>` too. It is used only where the path is genuinely dynamic (a deploy or install job id) or where several sub-routers share one action namespace (`git/`, `github/`). A NEW action under a declared namespace therefore inherits that namespace's capability instead of arriving ungated.
+##### Every entry is an exact path
+
+There are no namespace entries. `sec-14` shipped six (`git/`, `github/`, `install/`, `deploy/`, `dev-server/`, `prototype/`) on the premise that inheriting a namespace's capability fails closed, since the namespace's capability is the stricter one. `sec-16` showed that is **false for a GET**: an undeclared sub-path inherited `read`, which for all six was `site.read` — the capability the **Client** role holds. A future `GET dev-server/restart` or `GET deploy/run` would have let a read-only reviewer spawn a dev server or a build on a project already at the `run-project` tier, with no table edit for anyone to review. `sec-18` removed the mechanism: every reachable path is named, per verb class, and `/admin/api/studio/git/brand-new-verb` now 404s.
+
+The one shape an exact path cannot express is a job id, and it is declared explicitly. `jobId: { read, mutate }` on the `install` and `deploy` entries answers for `${path}/<id>` — matched **only** against the `crypto.randomUUID()` shape both registries mint, so `deploy/<uuid>` resolves and `deploy/run` does not.
+
+##### Two reads that spawn, and one GET that writes
+
+- `GET /admin/api/studio/load` runs the project's own style toolchain in a capped subprocess at Tier 1 (`styleCompileTier1.ts`), and writes two Studio-owned sidecars (`recordProjectOpened`, `syncStoryBoardFrames`). The boundary is a capability — a `studio.run.project` holder got this project off Tier 0 — and **not** a human consent, because a Vite project auto-promotes. See `docs/reference/capabilities.md` → "Two reads that spawn" for the full reasoning and what it deliberately does not claim.
+- `GET /admin/api/studio/component-bundle` does **not** spawn: it serves an already-built `.studio/cache/bundle-<hash>.js`. The `Bun.build` subprocess is on the **POST**, which is `studio.write`. (`sec-16` recorded this route as spawning at `site.read`; per-verb entries showed it was one verb off.)
+- `GET /admin/api/studio/github/device/poll` **writes a credential** — on `status === 'authorized'` it calls `storeToken`. It therefore declares `read: 'site.structure.edit'`, the same capability as the `device/start` that must precede it. Under the old `github/` namespace it took `site.read`.
 
 **Git is deliberately not gated on `studio.git.write`.** That capability gates the AGENT tool `studio_git_commit` and is withheld from the Admin role on purpose (see `docs/reference/capabilities.md`): a human clicking Commit performs their own act, while an agent committing is a *delegation* of that identity. Gating these routes on it would fuse the two — every Admin would lose the Version control panel, and the only way to give it back would be to grant the role the capability that also hands its agent commit rights.
 
@@ -393,7 +403,7 @@ The `AuthUser` the gate resolves is handed to `STUDIO_SESSION_SUB_ROUTERS` in `S
 Add the line to `STUDIO_ROUTE_CAPABILITIES`. There is nothing else to remember, and forgetting is not silent:
 
 - at runtime, an undeclared path 404s — the route is dead, not open;
-- at build time, `src/__tests__/architecture/studio-routes-capability-declared.test.ts` scans every `'/admin/api/studio/…'` literal in `server/handlers/studio*` and fails, naming the path and the file. It also fails on a declaration no handler serves.
+- at build time, `src/__tests__/architecture/studio-routes-capability-declared.test.ts` fails, naming the path and the dispatch site. It scans route MATCHES, not just path literals — `pathname === '<literal>'`, `pathname === CONST`, `` pathname === `${CONST}/suffix` ``, `action === '<literal>'` against the file's own prefix constant, and the job-id `` pathname.startsWith(`${CONST}/`) `` — because `gitSyncRoutes.ts` dispatches on `action === 'conflict/resolve'` and no `/admin/api/studio/…` literal for that path exists anywhere. It also fails on a declaration no handler serves, on a `jobId` marker with no matching dispatch, and on a **method class** the tree dispatches on that the table declares `null`.
 
 `server/handlers/__tests__/studioRouteGate.test.ts` then walks the real table and asserts, for every declared route, that an unauthenticated caller gets 401, an under-privileged session gets 403 `{ error: 'Forbidden' }`, and a cross-origin `text/plain` form POST gets 403 `{ error: 'Forbidden: invalid origin' }`. A new route is covered the moment its declaration lands.
 
