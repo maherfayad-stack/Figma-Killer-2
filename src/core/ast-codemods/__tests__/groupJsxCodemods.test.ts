@@ -269,7 +269,7 @@ describe('unwrapJsxElement', () => {
 
   it('hoists the children into the parent at the wrapper index, dedented one level', () => {
     const file = writeFixture(WRAPPED)
-    expect(unwrapJsxElement({ file, ...locateTag(WRAPPED, 'div') })).toEqual({ ok: true })
+    expect(unwrapJsxElement({ file, ...locateTag(WRAPPED, 'div') })).toMatchObject({ ok: true })
 
     expect(fs.readFileSync(file, 'utf8')).toBe(
       WRAPPED.replace(
@@ -283,7 +283,7 @@ describe('unwrapJsxElement', () => {
     const source = 'export default () => <p>Hello <span className="x"><b>you</b></span> there</p>\n'
     const file = writeFixture(source)
 
-    expect(unwrapJsxElement({ file, ...locateTag(source, 'span') })).toEqual({ ok: true })
+    expect(unwrapJsxElement({ file, ...locateTag(source, 'span') })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       'export default () => <p>Hello <b>you</b> there</p>\n',
     )
@@ -298,7 +298,7 @@ describe('unwrapJsxElement', () => {
 )
 `
     const file = writeFixture(source)
-    expect(unwrapJsxElement({ file, ...locateTag(source, 'div') })).toEqual({ ok: true })
+    expect(unwrapJsxElement({ file, ...locateTag(source, 'div') })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('    <div className="spacer" />\n', ''))
   })
 
@@ -312,7 +312,7 @@ describe('unwrapJsxElement', () => {
 )
 `
     const file = writeFixture(source)
-    expect(unwrapJsxElement({ file, ...locateTag(source, 'div') })).toEqual({ ok: true })
+    expect(unwrapJsxElement({ file, ...locateTag(source, 'div') })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       source.replace(
         "    <div id=\"hero\" data-testid=\"hero\" style={{ display: 'flex' }}>\n      <p>Only child</p>\n    </div>\n",
@@ -427,7 +427,7 @@ describe('generic repo shapes — tabs, a fragment parent, plain JSX', () => {
     ).toMatchObject({ ok: true })
 
     const grouped = fs.readFileSync(file, 'utf8')
-    expect(unwrapJsxElement({ file, ...locateTag(grouped, 'div') })).toEqual({ ok: true })
+    expect(unwrapJsxElement({ file, ...locateTag(grouped, 'div') })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(PLAIN_JS)
   })
 })

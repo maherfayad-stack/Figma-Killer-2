@@ -100,12 +100,19 @@ describe('applyStudioEditBatch — the transplant kind (D2 G3)', () => {
   })
 
   /**
-   * `store-13` — the created id names the DESTINATION file. Only the origin is
-   * named by `edit.nodeId`, so a batch that minted the id off that would point
-   * the board's selection at a position in the file the markup just LEFT. The
-   * `createdIn` field on the apply outcome exists for exactly this kind.
+   * `store-13`/`store-14` — the id names the DESTINATION file. Only the origin
+   * is named by `edit.nodeId`, so a batch that minted the id off that would
+   * point the board's selection at a position in the file the markup just
+   * LEFT. The `createdIn`/`relocatedIn` fields on the apply outcome exist for
+   * exactly this kind.
+   *
+   * A MOVE reports through `relocatedNodeIds` and a COPY through
+   * `createdNodeIds`, because their undos differ: a copy is taken back by
+   * deleting what it made, a move by transplanting the element home
+   * (`structuralUndoPlan.ts`). The board selects the union, so what the user
+   * sees is the same either way.
    */
-  it('reports the created node id against the DESTINATION file, not the origin', () => {
+  it('reports a MOVE as relocated, against the DESTINATION file rather than the origin', () => {
     const result = applyStudioEditBatch(tmpDir, [
       {
         kind: 'transplant',
@@ -114,13 +121,31 @@ describe('applyStudioEditBatch — the transplant kind (D2 G3)', () => {
       },
     ])
 
-    expect(result.createdNodeIds).toHaveLength(1)
-    const created = result.createdNodeIds[0]!
-    expect(created.startsWith(`${ABOUT_REL}:`)).toBe(true)
+    expect(result.createdNodeIds).toEqual([])
+    expect(result.relocatedNodeIds).toHaveLength(1)
+    const relocated = result.relocatedNodeIds[0]!
+    expect(relocated.startsWith(`${ABOUT_REL}:`)).toBe(true)
     // The id the parser will mint for the same element on the next read.
     const after = read(ABOUT_REL)
     const badge = locateTag(after, 'Badge')
-    expect(created).toBe(`${ABOUT_REL}:${badge.line}:${badge.col}`)
+    expect(relocated).toBe(`${ABOUT_REL}:${badge.line}:${badge.col}`)
+  })
+
+  it('reports a COPY as created, so its undo deletes the copy rather than moving the original', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'transplant',
+        nodeId: id(HOME_REL, HOME, 'Badge'),
+        parentNodeId: id(ABOUT_REL, ABOUT, 'main'),
+        copy: true,
+      },
+    ])
+
+    expect(result.relocatedNodeIds).toEqual([])
+    expect(result.createdNodeIds).toHaveLength(1)
+    expect(result.createdNodeIds[0]!.startsWith(`${ABOUT_REL}:`)).toBe(true)
+    // The original is still where it was — this is a copy.
+    expect(read(HOME_REL)).toContain('<Badge')
   })
 
   it('prunes the import the move orphaned in the ORIGIN, and keeps the one it carried into the DESTINATION', () => {

@@ -156,31 +156,29 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 1 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). Two of this case's claims do not hold on the
-   * wave-1 tree, both measured:
+   * FIXED by `store-14`, so this is no longer an expected failure. Both
+   * defects `verify-3` measured here are closed:
    *
-   *   a. **Four of the five presses are dropped, not queued.**
-   *      `guardAgainstConcurrentStructuralCommit` (`store-11`, documented at
-   *      the top of `studioStructuralCommits.ts`) refuses presses 2–5 while the
-   *      first write is in flight, so a five-press burst adds ONE copy to the
-   *      `.tsx`. The refusal collapses onto a single `×4` warning card, which
-   *      is Z1 working — but "I pressed it five times and got one" is the
-   *      gesture failing.
-   *   b. **Nothing is selected afterwards.** On a studio-imported tree
-   *      `duplicateNode` returns `''` (the copy's id is the `line:col` the
-   *      codemod has not written yet), so `useCanvasNodeShortcuts` selects
-   *      nothing — `keys-01`'s own "Open follow-up: selecting a source-backed
-   *      duplicate/insert after the resync needs `commitStructural` to report
-   *      created node ids".
+   *   a. **The four later presses are QUEUED, not dropped.** `store-11`'s
+   *      guard used to refuse presses 2–5 while the first write was in flight
+   *      ("Still writing your last change"), so a five-press burst added ONE
+   *      copy. `structuralCommitQueue.ts` parks each of them as a thunk
+   *      instead and re-runs it — re-planned against the tree the previous
+   *      resync left behind — the moment the wire is clear. The serialization
+   *      that closed the original double-write race is intact; only the
+   *      refusal is gone.
+   *   b. **The last copy is selected.** `store-13` made the save route report
+   *      `createdNodeIds`; `store-14` made the route actually forward them (it
+   *      never did), so `pendingStructuralOutcome.ts` has something to hand the
+   *      resync.
    *
-   * Owners: `store-12`/`store-11` for (a) — serializing a burst instead of
-   * refusing it is a queueing design decision, not a local edit — and
-   * `keys-01` for (b).
+   * The toast assertions are unchanged and are still the tightest part of this
+   * case: five successes collapse onto ONE card (Z1), and there should now be
+   * ZERO warning cards where there used to be one carrying a ×4 counter.
    */
   test('⌘D five times inside 300ms makes five siblings, five copies in the file, and one collapsed toast', async ({
     page,
   }) => {
-    test.fail()
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
     const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
@@ -515,43 +513,31 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 4 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). Four of this case's six claims now hold, and
-   * the two that do not have moved owners — read the list before assuming the
-   * red means what it used to.
+   * GREEN as of wave 3, and it took both halves. `verify-3` recorded three
+   * defects here; each was owned by a different layer and each is now closed:
    *
-   * HOLDS: ⌘G writes real source · ⌘⇧G takes the file back byte for byte ·
-   * the new wrapper IS the selection (`store-13`'s created ids; it occupies
-   * the first sibling's old `line:col`, which is why the assertion below
-   * compares its TAG rather than its id — `meta-16` landmine 7) · **the tag
-   * follows the HTML content model** (`struct-11`). That last one was the
-   * worst finding in this file: the run this case groups lives inside a
-   * `<span>` inside a `<p>`, and the old hard-coded `<div>` made React report
-   * "In HTML, <div> cannot be a descendant of <p>. This will cause a hydration
-   * error." in the user's own app. It is a `<span>` now, asserted below, and
-   * case 7 is green because of it.
-   *
-   * STILL RED, both owned by the structural-commit layer rather than by the
-   * codemods:
-   *
-   *   a. **A second ⌘G fired while the ungroup's resync is still in flight is
-   *      REFUSED**, with "Still writing your last change" —
-   *      `guardAgainstConcurrentStructuralCommit`. Measured: the guard clears
-   *      on its own and the identical gesture succeeds first time once the
-   *      resync has landed, so this is a race, not a stuck flag. The fix is
-   *      the same one case 1 needs: structural writes must QUEUE, not refuse
-   *      (`STUDIO-FIGMA-FEEL-PLAN.md` wave 3, `store-11`/`store-12`).
-   *   b. **A group has no undo entry at all.** `structuralHistory.ts` records
-   *      an inverse write for `move` and refuses one for `delete`; `group`
-   *      pushes nothing, so the ⌘Z below cannot take the file back. That is
-   *      "undo for the structural family" (`canvas-20` landmine 10), also
-   *      wave 3.
-   *
-   * Neither is a parser change, and neither is a small edit inside one file.
+   *   a. **The wrapper tag was always `<div>`**, so grouping two inline
+   *      `<span>`s inside a `<p>` wrote `<div>` into phrasing content and
+   *      React reported a hydration error in the user's own app. Closed by
+   *      `struct-11`: the tag follows the HTML content model
+   *      (`@core/utils/htmlContentModel`), so this run groups into a `<span>`,
+   *      asserted below. Case 7's console gate was red for exactly those two
+   *      React errors and is an ordinary pass because of this.
+   *   b. **The new wrapper was not selected.** Closed: `store-13` made the
+   *      batch report created node ids and `store-14` made `/save` forward
+   *      them, so ⌘G ends with the group selected. It occupies the first
+   *      sibling's old `line:col`, which is why the assertion below compares
+   *      its TAG rather than its id (`meta-16` landmine 7).
+   *   c. **A second ⌘G in the same session wrote nothing.** Closed: that was
+   *      `store-11`'s in-flight refusal; gestures now queue
+   *      (`structuralCommitQueue.ts`) instead of being dropped.
+   *   — and the ⌘Z claim, unreachable before (c) was fixed, holds too: a group
+   *      written to source records a patch-free history entry whose inverse is
+   *      an `ungroup`, and one ⌘Z posts it.
    */
   test('⌘G groups two siblings into real source, ⌘⇧G takes it back, and ⌘Z undoes each in one step', async ({
     page,
   }) => {
-    test.fail()
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
     const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
@@ -669,6 +655,18 @@ test.describe('Phase 0 exit dogfood', () => {
     expect
       .soft(regrouped, 'the second ⌘G did not write anything, so there is nothing for ⌘Z to undo')
       .toBe(true)
+
+    // Wait for the BOARD to catch up, not just the file. A source write's
+    // history entry is pushed by the resync drain (`applyStructuralWriteOutcome`,
+    // called immediately after `patchPages`) — the same drain that moves the
+    // selection onto the new wrapper. Two rings means the shift-click selection
+    // is still standing and the resync has not landed; pressing ⌘Z there would
+    // find an empty undo stack and do nothing, which reads as "undo is broken"
+    // rather than "the spec was early".
+    await expect(
+      contentFrame.locator(SELECTION_RING),
+      'the second ⌘G never put the selection on its new wrapper, so its undo entry had not been recorded either',
+    ).toHaveCount(1, { timeout: 60_000 })
 
     await page.keyboard.press('Control+z')
     const undone = await settle(() => readNodeSourceFile(fixture, location), before)

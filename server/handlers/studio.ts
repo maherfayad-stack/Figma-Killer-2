@@ -457,8 +457,19 @@ export async function tryServeStudio(
       // Ordering, dedup, per-edit try/catch, and shift/shared-component
       // detection all live in `applyStudioEditBatch` — the single engine both
       // this route and `studio_apply_edits` (MCP) run through.
-      const { written, skipped, shifted, sharedComponents, refusals, swapDetails, createdStylesheets, unexplainedSkips, touchedFiles } =
-        await applyStudioEditBatchLocked(dir, edits)
+      const {
+        written,
+        skipped,
+        shifted,
+        sharedComponents,
+        refusals,
+        swapDetails,
+        createdStylesheets,
+        unexplainedSkips,
+        touchedFiles,
+        createdNodeIds,
+        relocatedNodeIds,
+      } = await applyStudioEditBatchLocked(dir, edits)
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically
@@ -488,6 +499,15 @@ export async function tryServeStudio(
         createdStylesheets,
         unexplainedSkips,
         touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
+        // `store-13`/`store-14` — the node ids this batch made and moved.
+        // `applyStudioEditBatch` has computed these since `store-13`, but the
+        // route did not forward them, so the board had nothing to select after
+        // a ⌘D / ⌘G / Alt+drag and no way to address its own undo. They are
+        // already plain workspace-relative `rel:line:col` ids (minted through
+        // `buildSourceNodeId`), so unlike `touchedFiles` there is no absolute
+        // path to strip.
+        createdNodeIds,
+        relocatedNodeIds,
       })
     } catch (err) {
       return studioRouteFailure(err)

@@ -249,32 +249,24 @@ work that was never folded into that matrix at all — each spec below cites the
 | V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
 | Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
 
-#### `studio-feel-phase0.e2e.ts` runs three cases that are EXPECTED to fail
+#### `studio-feel-phase0.e2e.ts` — the plan's exit dogfood, now fully green
 
-This spec is the plan's exit dogfood, so it asserts what the product was
-promised to do, not what it currently does. The remaining cases carry
-`test.fail()` with the defect and its owning `STATE.md` entry named in a
-docblock directly above them, and Playwright fails the run if one of them starts
-**passing** — so a fix cannot land silently and the annotation cannot rot. A run
-where all eight report `ok`/`x` is a clean run; read the `[phase0] …`
-annotations for the measurements.
+This spec asserts what the product was promised to do, not what it currently
+does, so for two waves most of it ran as expected failures. **As of wave 3 all
+seven cases assert and pass, and none carries `test.fail()`.** It took four
+entries to get there and they are worth naming, because each closed a defect a
+different layer owned: `panel-40` (a panel that throws no longer takes the
+editor with it — case 5), `struct-11` (the ⌘G wrapper follows the HTML content
+model, so Studio stopped writing `<div>` into a `<p>` in the user's own file —
+case 4, and the two React errors that kept case 7 red), `store-13` + `store-14`
+(created ids reach the client, structural gestures queue instead of refusing,
+and the family has a real undo — cases 1 and 4).
 
-**Case 5 ("a panel that throws") was the first to graduate.** `panel-40` gave
-every editor panel, inspector tab and inspector section its own `PanelBoundary`
-(`docs/reference/error-boundaries.md`), so the case now asserts rather than
-documents. Its probe event names the boundary's own `location`
-(`detail: 'panel:design'`), not a bare panel word.
-
-**It was four until `struct-11`.** Case 7 ("no unexplained console errors") was
-red for exactly one reason: React's two complaints that ⌘G had written a
-`<div>` into a `<p>` in the user's own file. The wrapper tag now follows the
-HTML content model, those errors are gone, and case 7 is an ordinary pass and
-the file's backstop — any NEW error from any case fails there. Case 4 is still
-`test.fail()`, on two claims that moved owners rather than the one it was
-written for: a second ⌘G fired while the previous write's resync is in flight
-is refused (the structural-commit QUEUE, wave 3) and a group has no undo entry
-at all (`structuralHistory.ts` records one for `move` only). Its docblock is
-the current list; read it before assuming the red still means the wrapper tag.
+Playwright fails a run in which a `test.fail()` case starts **passing**, so a
+fix cannot land silently and an annotation cannot rot. Read the `[phase0] …`
+annotations for the measurements; case 7 is the file's backstop, and any NEW
+console error from any case fails there. Case 5's probe event names the
+boundary's own `location` (`detail: 'panel:design'`), not a bare panel word.
 
 It also writes to a project's real `.tsx`, so `helpers/studioFixtureProject.ts`
 copies `studio-workspace/test4` to `studio-workspace/__e2e-phase0` **before each

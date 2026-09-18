@@ -124,6 +124,16 @@ export const StudioSaveResponseSchema = Type.Object({
    * an error.
    */
   createdNodeIds: Type.Optional(Type.Array(Type.String())),
+  /**
+   * `store-14` — the node id every element this batch MOVED now has
+   * (`move`/`reparent`/`ungroup`, and a `transplant` that moved rather than
+   * copied), in the same plain `rel:line:col` shape as `createdNodeIds`.
+   * `commitStructural` selects these alongside the created ones, so a reorder
+   * or an ungroup keeps pointing at what the user just moved, and resolves the
+   * gesture's own undo against them. `Type.Optional`, same tolerant-rollout
+   * reasoning as the fields above.
+   */
+  relocatedNodeIds: Type.Optional(Type.Array(Type.String())),
 })
 
 export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>

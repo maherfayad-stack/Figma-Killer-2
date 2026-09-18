@@ -27,7 +27,8 @@
  * repository, and writing an empty string would assert the image is decorative,
  * which Studio has no way to know.
  */
-import { commitStudioInsert, guardAgainstConcurrentStructuralCommit } from '@site/studio/studioStructuralCommits'
+import { commitStudioInsert } from '@site/studio/studioStructuralCommits'
+import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceInsert, presentStructuralRefusal } from './structuralSourceEdits'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
@@ -38,10 +39,18 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
 
   const actions: ImageDropActions = {
     insertImageIntoPage: (pageId, parentId, index, image) => {
-      // `store-11`'s guard: this gesture shows nothing optimistically, so a
+      // `store-14`'s queue: this gesture shows nothing optimistically, so a
       // second drop fired before the first one's resync would plan against the
-      // still-unshifted file and post a second real write.
-      if (guardAgainstConcurrentStructuralCommit()) return
+      // still-unshifted file and post a second real write. Parked and re-run
+      // (re-planned) once the first one's resync has landed — dropping three
+      // files at once is three images, not one.
+      if (
+        deferWhileStructuralCommitInFlight(() => {
+          actions.insertImageIntoPage(pageId, parentId, index, image)
+        })
+      ) {
+        return
+      }
 
       const site = get().site
       if (!site) return

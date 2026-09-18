@@ -32,7 +32,9 @@
  * or added elements all fail the walk and wipe exactly as before.
  *
  * Scope, matching `historyPreservation.ts`: PATH segments after a literal
- * `'nodes'` key, plus the node ids a structural history entry names. Node ids
+ * `'nodes'` key, plus the node ids a structural history entry names — for a
+ * `store-14` SOURCE entry that means the edit payloads its ⌘Z and ⌘⇧Z would
+ * post, which are nothing BUT node ids. Node ids
  * embedded in a patch's VALUE (a `children` array, a re-added subtree) are not
  * rewritten — a structural entry's patches are never replayed (see
  * `undoRedoActions.ts`), and a value edit's patch values contain prop values,
@@ -40,6 +42,7 @@
  */
 import type { Patches } from 'mutative'
 import type { NodeTree, PageNode, SiteDocument } from '@core/page-tree'
+import { remapInverseTemplate, remapStructuralEditIds } from '@site/studio/structuralUndoPlan'
 import type { HistoryEntry, StructuralHistory } from './types'
 
 /**
@@ -122,6 +125,22 @@ function remapStructural(
   structural: StructuralHistory,
   remap: ReadonlyMap<string, string>,
 ): StructuralHistory {
+  // `store-14` — a SOURCE gesture's entry holds no patches at all; what it
+  // names are the edits it would post on ⌘Z / ⌘⇧Z. Those address exactly the
+  // `rel:line:col` ids a later write in the same file renumbers, so they need
+  // the same re-addressing the move steps get. Without it, undoing a duplicate
+  // after some other structural write landed above it would delete whichever
+  // element inherited that line.
+  if (structural.gesture === 'source') {
+    const { source } = structural
+    const forward = remapStructuralEditIds(source.forward, remap)
+    const inverse = source.inverse === null ? null : remapStructuralEditIds(source.inverse, remap)
+    const inverseTemplate = remapInverseTemplate(source.inverseTemplate, remap)
+    if (forward === source.forward && inverse === source.inverse && inverseTemplate === source.inverseTemplate) {
+      return structural
+    }
+    return { gesture: 'source', source: { ...source, forward, inverse, inverseTemplate } }
+  }
   if (structural.gesture !== 'move') return structural
   const step = (s: { nodeId: string; parentId: string; index: number }) => ({
     ...s,

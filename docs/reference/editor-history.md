@@ -320,6 +320,50 @@ patches:
 |---|---|---|
 | `move` (canvas body drag, layers-panel drag, reorder + reparent) | re-issues `moveNodes` back to the captured pre-move `(parentId, index)` — re-planned against the live tree, so it rides every refusal gate and writes to source once | re-issues the original move |
 | `delete` | **refuses, with a toast.** No `StudioEdit` kind carries a subtree's source text, so there is nothing honest to write; re-adding the nodes in memory would be a canvas that disagrees with the file | — |
+| `source` (`store-14`) — insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, OS image drop | posts the INVERSE EDITS through the same `/save` route the gesture used (`commitStudioStructuralReissue`) | re-posts the gesture's own `forward` edits |
+
+### The `source` gesture — the family that mutated no tree
+
+`store-14`. The eight gestures above mutate **no** tree on a studio-imported
+board: the element does not exist until the codemod has written it, and its id
+is the `line:col` that write produces. So they committed no transaction, pushed
+no entry, and ⌘Z after one of them undid whatever came before it
+(`canvas-20`, landmine 10). Their entry now carries **no patches at all** — only
+`structural.source` — the same way a board-only entry carries only
+`structural`/`board`.
+
+The inverse is expressed in the edit kinds that already exist. There is no
+`revert` kind and no file snapshot:
+
+| gesture | inverse |
+|---|---|
+| insert / duplicate / paste / image drop | `delete` what it created |
+| wrap / group | `ungroup` the container it created |
+| ungroup | `group` the children it released, into the same container |
+| transplant (move) | `transplant` back to the parent it left |
+| transplant (copy) | `delete` the copy it created |
+
+Because the inverse addresses elements the write had not made yet, the gesture
+records a **template** (`structuralUndoPlan.ts`) and `resolveStructuralInverse`
+fills it in from the batch's `createdNodeIds`/`relocatedNodeIds`. A template
+rather than a closure, because a redo has to re-resolve it: the gesture has been
+performed a second time, possibly at a different position, and the entry's
+inverse has to describe THAT one.
+
+**Two refusals are deliberate, and say so at ⌘Z rather than posting a write the
+server would decline:** a group into a COMPONENT container (dissolving it would
+delete a call site — `unwrapJsxElement`'s `has-behaviour`), and an ungroup of a
+container carrying a `className`/`style`/`id` (a re-wrap writes a bare tag and
+would drop what it carried). Closing the second needs `props` on the
+`wrap`/`group` edit.
+
+**Why absolute ids are safe here:** undo is strictly LIFO, so undoing the top
+entry restores the file to the state the entry below it was recorded against —
+each inverse is always evaluated against exactly the state it was computed in.
+What can break the chain is a write that is not on the stack, and
+`reissueStructuralSourceEdits` checks every id against the live tree first,
+refusing through `RefusalDialog` and naming the file rather than editing
+whatever now sits at that line.
 
 The re-issued gesture is an ordinary mutation: it pushes its own history entry
 and clears the redo stack. `runStructuralStep` undoes both, so one Ctrl+Z
@@ -345,7 +389,9 @@ decide what happens to the stack when the board re-reads from disk
    shape (the optimistic mutation and the source write describe the same
    result), so the two trees are isomorphic. A parallel walk from each page's
    root yields an exact old-id → new-id map, and `remapHistoryEntries` rewrites
-   every patch path and structural node id through it. Strict by design — same
+   every patch path and structural node id through it — including, for a
+   `source` entry, the node ids in the edit payloads its ⌘Z and ⌘⇧Z would post,
+   which are nothing but node ids. Strict by design — same
    page SET, same `moduleId` and same child count at every node, no conflicting
    mapping for a shared `layout.tsx` id — because a wrong remap is worse than a
    wipe.
@@ -383,10 +429,10 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 - **Board/annotation SELECTION, `activeBoardId` on its own, snap guides,
   `frameDefaults`** — editor-local, same rule as node selection. (Undo does
   PRUNE an annotation selection that points at something the restore removed.)
-- **Undo of a source `delete`, `duplicate`, `wrap` or `insert`.** `duplicate`,
-  `wrap` and `insert` do not mutate the tree at all on a studio-imported board
-  (the source grows and the board re-reads), so they never produce a history
-  entry; `delete` produces one but refuses to replay it. See "Structural undo".
+- **Undo of a source `delete`.** It produces an entry and refuses to replay it:
+  no `StudioEdit` kind carries a subtree's source text. `duplicate`, `wrap`,
+  `insert`, `group`, `ungroup`, paste, transplant and image drop ARE undoable
+  since `store-14` — see "The `source` gesture" above.
 - `mutateSiteState` — the recipe may write editor fields (e.g. `activeDocument`) alongside a `site` mutation; the editor fields go live but only the `site` patches enter history (parity with the prior snapshot model).
 - History stacks themselves — resetting to `[]` on `clearSite` is a lifecycle operation, not a mutation.
 

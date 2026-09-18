@@ -476,6 +476,16 @@ export const STRUCTURAL_REFUSAL_TITLE = {
    * regardless, so one refusal vocabulary reaches the user.
    */
   freeMove: 'Cannot place this by hand',
+  /**
+   * `store-14` — ⌘Z / ⌘⇧Z on a gesture that wrote the user's source. Its own
+   * titles because the user is not being told a gesture was refused; they are
+   * being told their last change is still there. That has to interrupt, which
+   * is why the sentence behind it always names the file (`stale-undo` carries
+   * a jump-to-source action, so this reaches `RefusalDialog`, not a toast that
+   * dismisses itself while they look away).
+   */
+  undo: 'Undo refused',
+  redo: 'Redo refused',
 } as const
 
 /**

@@ -121,6 +121,11 @@ const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructur
   // "go and look at it" is both true and the fastest way to the fix: the user
   // either moves the elements out of it or adds the container by hand.
   'content-model': jumpToSourceAction,
+  // `store-14` — the file moved on under a stored undo. The one useful next
+  // step is to look at what changed in it, which is exactly what this action
+  // opens; without a node to point at, the sentence names the file and is the
+  // whole answer.
+  'stale-undo': jumpToSourceAction,
 }
 
 function structuralActions(

@@ -481,7 +481,7 @@ describe('moveJsxElement — the reparent form', () => {
       destinationLine: aside.line,
       destinationCol: aside.col,
     })
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace('      <p className="first">First</p>\n', '').replace(
         '      <aside className="empty"></aside>',
@@ -501,7 +501,7 @@ describe('moveJsxElement — the reparent form', () => {
       destinationLine: aside.line,
       destinationCol: aside.col,
     })
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       TWO_COMPONENTS.replace('        <h1>Welcome</h1>\n', '').replace(
         '      <aside className="rail" />',
@@ -525,7 +525,7 @@ describe('moveJsxElement — the reparent form', () => {
       anchorCol: h1.col,
       position: 'before',
     })
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       TWO_COMPONENTS.replace('      <Card title="One" />\n', '').replace(
         '        <h1>Welcome</h1>',
@@ -575,7 +575,7 @@ describe('moveJsxElement — the reparent form', () => {
 
     // `items` is the component's own prop, in scope in both places.
     const result = moveJsxElement({ file, ...p, destinationLine: ul.line, destinationCol: ul.col })
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     const after = fs.readFileSync(file, 'utf8')
     expect(after).toContain('        <p>{items.length} rows</p>\n      </ul>')
     expect(after).toContain('      <section className="tail">\n      </section>')

@@ -30,6 +30,7 @@ import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
+import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
 
@@ -97,6 +98,7 @@ export type {
   BoardHistory,
   StructuralHistoryMove,
   StructuralHistory,
+  StructuralSourceHistory,
 } from './historyTypes'
 
 export interface SiteSlice {
@@ -522,6 +524,14 @@ export interface SiteSlice {
   _historyCoalesceKey: string | null
   undo: () => void
   redo: () => void
+  /**
+   * `store-14` — apply what a landed STRUCTURAL SOURCE write means for the undo
+   * stack: push the gesture's own entry, or refresh the one an undo/redo just
+   * moved. Called by `usePersistence.ts` when it drains
+   * `pendingStructuralOutcome.ts`, which is the first moment the board holds
+   * the nodes the write made — see `structuralSourceHistory.ts`.
+   */
+  recordStructuralSourceWrite: (history: PendingStructuralHistory) => void
 
   // ─── Node-lookup indexes (WS-5.2) ────────────────────────────────────────
   /**

@@ -65,7 +65,7 @@ import {
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { takePendingCreatedSelection } from '@site/studio/pendingCreatedSelection'
+import { takePendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
 import { registerEditorSave } from './editorSaveRef'
 
 /**
@@ -155,32 +155,39 @@ function applyDefaultBreakpointPreference(
 }
 
 /**
- * `store-13` — put the selection on whatever a structural source write just
- * created, now that the board has read it back.
+ * `store-13`/`store-14` — apply what the structural source write that just
+ * landed means, now that the board has read it back: put the selection on what
+ * it made or moved, and give the gesture its undo entry.
  *
  * Runs at both ends of the re-read: the narrow `patchPages` path and the full
- * `loadSite()` one. The ids come from `pendingCreatedSelection.ts`, which the
- * commit filled before triggering either — see that module for why the handoff
- * is a box rather than a callback.
+ * `loadSite()` one. Both halves come from `pendingStructuralOutcome.ts`, which
+ * the commit filled before triggering either — see that module for why the
+ * handoff is a box rather than a callback, and why the two answers share one
+ * slot.
  *
  * Every id is checked against `_nodeIdToPageIds` (O(1) per id, the WS-5.2
- * index) before it is used, and a write whose elements did not come back
- * selects nothing at all rather than part of itself: a half-applied selection
- * points the inspector at one of several things the user just made, which
- * reads as the gesture having half-failed.
+ * index) before the SELECTION uses it, and a write whose elements did not come
+ * back selects nothing at all rather than part of itself: a half-applied
+ * selection points the inspector at one of several things the user just made,
+ * which reads as the gesture having half-failed. The history entry is recorded
+ * either way — a gesture whose result the board cannot point at was still
+ * written to the file, and ⌘Z has to be able to take it back.
  *
  * Exported as a test seam, the same way `resolveAutoSaveDelayMs` is: the two
  * callers are inside effects, and the behaviour worth pinning — "the gesture's
- * result is what the board points at once the resync lands" — is otherwise
- * only reachable by mounting the whole hook.
+ * result is what the board points at once the resync lands, and one ⌘Z undoes
+ * it" — is otherwise only reachable by mounting the whole hook.
  */
-export function selectNodesCreatedByLastWrite(): void {
-  const created = takePendingCreatedSelection()
-  if (created.length === 0) return
+export function applyStructuralWriteOutcome(): void {
+  const outcome = takePendingStructuralOutcome()
+  if (!outcome) return
   const state = useEditorStore.getState()
-  if (!created.every((id) => state._nodeIdToPageIds.has(id))) return
-  if (created.length === 1) state.selectNode(created[0]!)
-  else state.selectMany([...created])
+  if (outcome.history) state.recordStructuralSourceWrite(outcome.history)
+  const { selectNodeIds } = outcome
+  if (selectNodeIds.length === 0) return
+  if (!selectNodeIds.every((id) => state._nodeIdToPageIds.has(id))) return
+  if (selectNodeIds.length === 1) state.selectNode(selectNodeIds[0]!)
+  else state.selectMany([...selectNodeIds])
 }
 
 /**
@@ -484,7 +491,7 @@ export function usePersistence(
         // The site doc on disk is now authoritative; clear the unsaved flag so
         // the auto-save loop doesn't immediately overwrite it back.
         setHasUnsavedChanges(false)
-        selectNodesCreatedByLastWrite()
+        applyStructuralWriteOutcome()
         if (pendingCmsSiteReload) consumePendingCmsSiteReload()
         setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
       } catch (err) {
@@ -521,7 +528,7 @@ export function usePersistence(
         styleRules: detail.styleRules,
         conditions: detail.conditions,
       })
-      selectNodesCreatedByLastWrite()
+      applyStructuralWriteOutcome()
     }
 
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, handlePagesPatch)

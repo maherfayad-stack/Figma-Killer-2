@@ -21,7 +21,7 @@ import {
 import { registry } from '@core/module-engine'
 import { importHtml } from '@core/htmlImport'
 import { renderNode, type RenderAccumulators, type RenderConfig } from '@core/publisher'
-import { HTML_IMPORT_ON_SOURCE_REFUSAL } from '@site/store/slices/site/studioSourceWrites'
+import { HTML_IMPORT_ON_SOURCE_REFUSAL } from '@site/store/slices/site/studioSourceRefusals'
 import type { EditorStore } from '@site/store/types'
 import { getAgentStoreApi } from './storeRef'
 import { parseImportedStyleCss } from './cssTools'

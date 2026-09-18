@@ -37,7 +37,7 @@
  * `null`. A wrong id is worse than no id — it would select, and then let the
  * user edit, something they never created.
  */
-import type { SourceFile } from 'ts-morph'
+import { Node, type SourceFile } from 'ts-morph'
 import { findJsxElementAtLocation } from './locateJsxElement'
 import type { TextEdit } from './jsxChildRange'
 
@@ -81,4 +81,44 @@ export function createdJsxLocation(
   if (openingAngle === -1) return null
   const { line, column } = sourceFile.getLineAndColumnAtPos(blockStart + openingAngle + 1)
   return findJsxElementAtLocation(sourceFile, line, column) ? { line, col: column } : null
+}
+
+/**
+ * `store-14` — the tag-name locations of every OUTERMOST JSX element now
+ * written between `start` and `end` in the (already re-parsed) `sourceFile`.
+ *
+ * `createdJsxLocation` above answers for a block that opens exactly one
+ * element, which is every placement shape a create-one-thing codemod produces.
+ * An UNGROUP is the one write that hands several elements back at once — the
+ * container's children take its place — so "which node ids did this write
+ * leave behind" is a list, and it cannot be derived from the first `<` in the
+ * block: the second child's position depends on how long the first one is.
+ *
+ * Reading it off the re-parsed AST is the same discipline
+ * `createdJsxLocation` applies (verify, never guess), one step further: the
+ * positions are not computed at all, they are read from elements that
+ * demonstrably exist. Only the outermost ones are returned — a released child's
+ * own children are not what the gesture relocated.
+ */
+export function createdJsxLocationsIn(
+  sourceFile: SourceFile,
+  start: number,
+  end: number,
+): CreatedJsxLocation[] {
+  const locations: CreatedJsxLocation[] = []
+  sourceFile.forEachDescendant((node, traversal) => {
+    if (node.getStart() < start || node.getEnd() > end) return
+    const opening = Node.isJsxElement(node)
+      ? node.getOpeningElement()
+      : Node.isJsxSelfClosingElement(node)
+        ? node
+        : null
+    if (!opening) return
+    const { line, column } = sourceFile.getLineAndColumnAtPos(opening.getTagNameNode().getStart())
+    locations.push({ line, col: column })
+    // Everything below an outermost element is part of what that element
+    // carries, not a separate thing this write relocated.
+    traversal.skip()
+  })
+  return locations
 }
