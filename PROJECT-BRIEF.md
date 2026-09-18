@@ -532,7 +532,13 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     alm:sync` *overwrites* the real design-system manifest with 39 propless
     components — `vendorDocs.ts` matches headings with `/^(#{1,6})\s+(.*)$/`,
     and JavaScript's `.` does not match `\r`. Never add a `-text` or CRLF rule
-    for those paths.
+    for those paths. **The USER's repo is the other half of this**, and it is
+    not `.gitattributes`-fixable: `parser-13` put the one seam in
+    `EolPreservingFileSystem` (`src/core/page-parser/eolFileSystem.ts`) — every
+    disk-backed ts-morph `Project` reads LF-only and writes the file's own
+    ending back, and anything reading a user file line-wise uses `splitLines`
+    from `@core/utils/lineEndings`, never `text.split('\n')`. See
+    `docs/features/studio-import.md` → "Line endings".
 16. **A Studio route that is not in the capability table does not exist.**
     Every `/admin/api/studio/*` request passes `gateStudioRequest`
     (`server/handlers/studio/routeGate.ts`) before any sub-router: the path

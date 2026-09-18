@@ -34,6 +34,7 @@ import { join } from 'node:path'
 import { Node, Project, SyntaxKind, type JsxExpression, type SourceFile } from 'ts-morph'
 import { listWorkspaceFiles } from '@core/page-parser'
 import { readTextCapped } from './cappedFileRead'
+import { toLf } from '@core/utils/lineEndings'
 import { resolveAppRoot } from './appRoot'
 
 const MAX_FILE_BYTES = 300_000
@@ -226,7 +227,12 @@ function scanFile(absPath: string, relPath: string, out: HardcodedString[]): voi
   if (text === undefined) return
 
   const project = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
-  const sourceFile = project.createSourceFile('scan.tsx', text)
+  // LF-normalised so the `text` this scan reports for a multi-line JSX block
+  // is the same string `extractStringsToDictionary` re-checks it against — that
+  // codemod parses LF-only, and a `\r` surviving on only one side of the
+  // comparison turns every such string into a `text-changed` refusal on a
+  // Windows checkout.
+  const sourceFile = project.createSourceFile('scan.tsx', toLf(text))
 
   for (const attribute of sourceFile.getDescendantsOfKind(SyntaxKind.JsxAttribute)) {
     if (out.length >= MAX_STRINGS) return

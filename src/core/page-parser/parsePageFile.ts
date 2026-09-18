@@ -45,6 +45,7 @@ import {
 } from './jsxAttributeReaders'
 import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
 import { createCssInJsScope } from './cssInJsExtract'
+import { EolPreservingFileSystem } from './eolFileSystem'
 import { applyStyledAttachment, resolveStyledAttachment } from './cssInJsAttach'
 import { serializeInlineSvg } from './inlineSvg'
 import { extractRawSvgMarkup } from './iconPropValues'
@@ -83,7 +84,11 @@ export const DYNAMIC_SVG_LOCK_REASON = 'SVG built in code'
 export function parsePageFile(
   file: string,
   appDir: string,
-  project: Project = new Project({ useInMemoryFileSystem: false }),
+  // The default single-file project gets the same CRLF-normalising file
+  // system `createWorkspaceProject` uses, so a lone-file parse of a Windows
+  // checkout produces the same tree as the workspace-wide one. See
+  // `./eolFileSystem`.
+  project: Project = new Project({ useInMemoryFileSystem: false, fileSystem: new EolPreservingFileSystem() }),
   evalOptions?: StaticEvalOptions,
 ): ParsedPage {
   try {

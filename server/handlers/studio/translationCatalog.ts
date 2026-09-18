@@ -35,6 +35,7 @@ import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Node, Project, SyntaxKind, type ObjectLiteralExpression, type SourceFile } from 'ts-morph'
 import { readTextCapped } from './cappedFileRead'
+import { toLf } from '@core/utils/lineEndings'
 import { resolveProjectProfile } from './projectProbe'
 import { resolveAppRoot } from './appRoot'
 import type { LocalesCapability } from './projectProfileSchema'
@@ -120,7 +121,7 @@ function readDictionaryFile(absFile: string, capability: LocalesCapability): Tra
   if (text === undefined) return null
 
   const project = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
-  const sourceFile = project.createSourceFile('dictionary.tsx', text)
+  const sourceFile = project.createSourceFile('dictionary.tsx', toLf(text))
   const root = findLocaleRootLiteral(sourceFile, capability.keys)
   if (!root) return null
 

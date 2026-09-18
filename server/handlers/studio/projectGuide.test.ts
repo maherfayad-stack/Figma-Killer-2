@@ -628,3 +628,72 @@ describe('generateStudioProjectGuide — design-system knowledge for a non-ALM p
     expect(guide).toContain('studio_list_components')
   })
 })
+
+/**
+ * `parser-13` — the design system a user installed can be a CRLF checkout, and
+ * a heading regex anchored with `$` matches NOTHING in one. That exact failure
+ * emptied Studio's OWN vendored manifest (`STATE.md` `server-24`); this is the
+ * same bug one directory over, in a package Studio does not control.
+ *
+ * The doc's bytes are written by the test, LF twin and CRLF twin, because this
+ * repository's working tree is CRLF-converted by Git on checkout.
+ */
+describe('buildDesignSystemGuide against a CRLF-checked-out package', () => {
+  const CLAUDE_MD_LINES = [
+    '# Kit',
+    '',
+    '## Components',
+    '',
+    '### Panel',
+    '',
+    '```jsx',
+    '<Panel tone="quiet" />',
+    '```',
+    '',
+    '### Ribbon',
+    '',
+    '```jsx',
+    '<Ribbon label="New" />',
+    '```',
+  ]
+  const DESIGN_MD_LINES = [
+    '# Kit intent',
+    '',
+    '## Component Decision Map',
+    '',
+    '| I want to… | Use |',
+    '|---|---|',
+    '| Group related controls | `Panel` |',
+    '',
+    '## Panel',
+    '',
+    'Panels group related controls.',
+  ]
+
+  function buildPackage(eol: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-ds-eol-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@scope/kit', main: './dist/index.js' }), 'utf8')
+    writeFileSync(join(dir, 'CLAUDE.md'), CLAUDE_MD_LINES.join(eol), 'utf8')
+    writeFileSync(join(dir, 'design.md'), DESIGN_MD_LINES.join(eol), 'utf8')
+    return dir
+  }
+
+  it('reads the same guide out of a CRLF package as out of its LF twin', () => {
+    const lfDir = buildPackage('\n')
+    const crlfDir = buildPackage('\r\n')
+    try {
+      const lf = buildDesignSystemGuide(lfDir, '@scope/kit')!
+      const crlf = buildDesignSystemGuide(crlfDir, '@scope/kit')!
+
+      expect(crlf.components.map((c) => c.name)).toEqual(['Panel', 'Ribbon'])
+      expect(crlf.components.map((c) => c.name)).toEqual(lf.components.map((c) => c.name))
+      expect(crlf.components[0]!.summary).toBe('Panels group related controls.')
+      expect(crlf.decisionMap).toContain('`Panel`')
+      // No `\r` may survive into text the agent is shown.
+      expect(JSON.stringify(crlf)).not.toContain('\\r')
+    } finally {
+      rmSync(lfDir, { recursive: true, force: true })
+      rmSync(crlfDir, { recursive: true, force: true })
+    }
+  })
+})

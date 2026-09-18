@@ -46,6 +46,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Project } from 'ts-morph'
+import { EolPreservingFileSystem } from '@core/page-parser'
 import { Type, type Static, type TSchema } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
 import { buildComponentSpec, toPosix } from './componentSpecExtract'
@@ -114,7 +115,9 @@ export function resolvePackageTsxEntry(dir: string, pkgName: string): string | u
 
 /** One ts-morph `Project` scoped to a single package directory's declaration/source tree — never the workspace's own files, never `react`'s (see module doc for why that's deliberate). Every file matching `glob` is added so the entry file's `export * from './Button'`-style re-export chains resolve; only the ENTRY file's own resolved export map is walked, though — see `manifestFromEntry` — so an internal helper `.d.ts` never masquerades as public API. */
 function createPackageProject(pkgDir: string, glob: string): Project {
-  const project = new Project({ useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true, compilerOptions: { allowJs: true } })
+  // LF-normalised reads (see `@core/page-parser`'s `eolFileSystem.ts`) so a
+  // CRLF-checked-out package yields the same manifest as an LF one.
+  const project = new Project({ useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true, compilerOptions: { allowJs: true }, fileSystem: new EolPreservingFileSystem() })
   project.addSourceFilesAtPaths(`${toPosix(pkgDir)}/${glob}`)
   return project
 }

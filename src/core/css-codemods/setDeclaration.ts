@@ -48,6 +48,7 @@
  *     end-to-end path from a canvas edit to a saved file.
  */
 import postcss, { type Root, type Container, type Rule } from 'postcss'
+import { preservingLineEndings } from './preserveLineEndings'
 
 export interface SetDeclarationResult {
   /** The rewritten stylesheet text — identical to the input when `changed` is `false`. */
@@ -125,18 +126,20 @@ function buildRule(selector: string, property: string, value: string, indent = '
  * rule at the end of the file if it doesn't exist.
  */
 export function setDeclaration(cssText: string, selector: string, property: string, value: string): SetDeclarationResult {
-  const root: Root = postcss.parse(cssText)
-  const existingRule = findRule(root, selector)
+  return preservingLineEndings(cssText, (source) => {
+    const root: Root = postcss.parse(source)
+    const existingRule = findRule(root, selector)
 
-  if (existingRule) {
-    const changed = applyDeclaration(existingRule, property, value)
-    return { css: changed ? root.toString() : cssText, changed }
-  }
+    if (existingRule) {
+      const changed = applyDeclaration(existingRule, property, value)
+      return { css: changed ? root.toString() : source, changed }
+    }
 
-  const rule = buildRule(selector, property, value)
-  if (root.nodes.length > 0) rule.raws.before = '\n\n'
-  root.append(rule)
-  return { css: root.toString(), changed: true }
+    const rule = buildRule(selector, property, value)
+    if (root.nodes.length > 0) rule.raws.before = '\n\n'
+    root.append(rule)
+    return { css: root.toString(), changed: true }
+  })
 }
 
 /**
@@ -153,43 +156,45 @@ export function setDeclarationAtMedia(
   property: string,
   value: string,
 ): SetDeclarationResult {
-  const root: Root = postcss.parse(cssText)
-  const query = mediaQuery.trim()
+  return preservingLineEndings(cssText, (source) => {
+    const root: Root = postcss.parse(source)
+    const query = mediaQuery.trim()
 
-  let mediaAtRule: Root['nodes'][number] | undefined
-  root.each((node) => {
-    if (node.type === 'atrule' && node.name === 'media' && node.params.trim() === query) {
-      mediaAtRule = node
-      return false
-    }
-    return undefined
-  })
+    let mediaAtRule: Root['nodes'][number] | undefined
+    root.each((node) => {
+      if (node.type === 'atrule' && node.name === 'media' && node.params.trim() === query) {
+        mediaAtRule = node
+        return false
+      }
+      return undefined
+    })
 
-  if (mediaAtRule && mediaAtRule.type === 'atrule') {
-    const existingRule = findRule(mediaAtRule, selector)
-    if (existingRule) {
-      const changed = applyDeclaration(existingRule, property, value)
-      return { css: changed ? root.toString() : cssText, changed }
+    if (mediaAtRule && mediaAtRule.type === 'atrule') {
+      const existingRule = findRule(mediaAtRule, selector)
+      if (existingRule) {
+        const changed = applyDeclaration(existingRule, property, value)
+        return { css: changed ? root.toString() : source, changed }
+      }
+      const rule = buildRule(selector, property, value, '  ')
+      mediaAtRule.append(rule)
+      return { css: root.toString(), changed: true }
     }
-    const rule = buildRule(selector, property, value, '  ')
-    mediaAtRule.append(rule)
+
+    // Neither the @media block nor the rule exists — create both as one literal
+    // fragment (not by re-serializing a separately-built rule node and
+    // re-embedding the string — `Node#toString()` does not include that node's
+    // own `raws.before`, which silently ate the nested rule's indentation the
+    // first time this was written; parsing one fragment sidesteps the issue
+    // entirely).
+    const newMediaFragment = postcss.parse(
+      `@media ${query} {\n  ${selector} {\n    ${property}: ${value};\n  }\n}`,
+    )
+    const newMedia = newMediaFragment.first
+    if (!newMedia || newMedia.type !== 'atrule') {
+      throw new Error('[css-codemods] unreachable: parsed fragment did not yield an at-rule node')
+    }
+    if (root.nodes.length > 0) newMedia.raws.before = '\n\n'
+    root.append(newMedia)
     return { css: root.toString(), changed: true }
-  }
-
-  // Neither the @media block nor the rule exists — create both as one literal
-  // fragment (not by re-serializing a separately-built rule node and
-  // re-embedding the string — `Node#toString()` does not include that node's
-  // own `raws.before`, which silently ate the nested rule's indentation the
-  // first time this was written; parsing one fragment sidesteps the issue
-  // entirely).
-  const newMediaFragment = postcss.parse(
-    `@media ${query} {\n  ${selector} {\n    ${property}: ${value};\n  }\n}`,
-  )
-  const newMedia = newMediaFragment.first
-  if (!newMedia || newMedia.type !== 'atrule') {
-    throw new Error('[css-codemods] unreachable: parsed fragment did not yield an at-rule node')
-  }
-  if (root.nodes.length > 0) newMedia.raws.before = '\n\n'
-  root.append(newMedia)
-  return { css: root.toString(), changed: true }
+  })
 }

@@ -57,7 +57,7 @@
  */
 import { join } from 'node:path'
 import { Node, Project, SyntaxKind, type ObjectLiteralExpression, type SourceFile } from 'ts-morph'
-import { listWorkspaceFiles } from '@core/page-parser'
+import { EolPreservingFileSystem, listWorkspaceFiles } from '@core/page-parser'
 import type { ProbeWarning } from './projectProfileSchema'
 import type {
   FigmaCodeConnectComponent,
@@ -307,7 +307,7 @@ export function collectFigmaCodeConnectComponents(pkgDir: string, packageName: s
   for (const relFile of files) {
     if (components.length >= MAX_FIGMA_CONNECT_COMPONENTS) break
     try {
-      const project = new Project({ useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true, compilerOptions: { allowJs: true } })
+      const project = new Project({ useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true, compilerOptions: { allowJs: true }, fileSystem: new EolPreservingFileSystem() })
       const sourceFile = project.addSourceFileAtPath(join(pkgDir, ...relFile.split('/')))
       const specs = parseFigmaCodeConnectFile(sourceFile, relFile)
       if (specs.length === 0) {

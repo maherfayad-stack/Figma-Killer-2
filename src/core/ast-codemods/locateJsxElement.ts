@@ -21,7 +21,8 @@
  *   3. The first element whose tag-name start matches the position is the
  *      target. If none match, the location does not point at a JSX element.
  */
-import { Node, Project, SyntaxKind, type JsxOpeningElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
+import { Node, NewLineKind, Project, SyntaxKind, type JsxOpeningElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
+import { EolPreservingFileSystem } from '@core/page-parser'
 
 export type JsxOpeningLikeElement = JsxOpeningElement | JsxSelfClosingElement
 
@@ -42,9 +43,23 @@ export function loadSourceFile(project: Project, file: string): SourceFile {
   return project.addSourceFileAtPath(file)
 }
 
-/** Creates a fresh, disk-backed ts-morph project (no in-memory fs). */
+/**
+ * Creates a fresh, disk-backed ts-morph project (no in-memory fs).
+ *
+ * It reads and writes through `EolPreservingFileSystem`, so a codemod run
+ * against a CRLF checkout of the user's repo sees LF-only text — every
+ * insertion string in this module family is authored with `'\n'` — and the
+ * file goes back to disk with its own `\r\n`. `newLineKind` is pinned to LF
+ * for the same reason: ts-morph's own structure printer must agree with the
+ * hand-built text, and the file system is the single place the ending is
+ * decided. See `@core/page-parser`'s `eolFileSystem.ts`.
+ */
 export function createProject(): Project {
-  return new Project({ useInMemoryFileSystem: false })
+  return new Project({
+    useInMemoryFileSystem: false,
+    fileSystem: new EolPreservingFileSystem(),
+    manipulationSettings: { newLineKind: NewLineKind.LineFeed },
+  })
 }
 
 /**
