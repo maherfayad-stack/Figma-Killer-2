@@ -152,6 +152,58 @@ source id. The success toast is therefore pushed by `commitStudioInsert`, not by
 the inserter: until the write lands there is nothing to report. Announced, not silent: unlike a
 value refusal, the gesture is always a deliberate one a person just made.
 
+**A structural write reports what it created, and the board selects it
+(`store-13`).** `insert`, `duplicate`, `wrap` and `group` create markup that has
+no node id until the board re-reads the file, which is why `keys-01`'s K7 could
+select a duplicate only on the in-memory path — on a source-backed project ⌘D
+left the ORIGINAL selected. Now each of the four codemods returns the created
+element's own tag-name `line:col` (`createdJsxLocation.ts`, verified against the
+re-parsed file — an unconfirmable position reports `null`, never a guess),
+`applyStudioEditBatch` turns them into `StudioEditBatchResult.createdNodeIds`
+(the plain `rel:line:col` ids the parser will mint for the same elements), and
+`commitStructural` parks them in `pendingCreatedSelection.ts`.
+`usePersistence.ts` claims them on BOTH re-read paths — the narrow `patchPages`
+and the full `loadSite` — and selects them, checking every id against the O(1)
+`_nodeIdToPageIds` index first. A write whose elements did not all come back
+selects nothing rather than part of itself.
+
+*Two details worth knowing.* The handoff is a one-slot, expiring BOX rather
+than a callback because `studioStructuralCommits.ts` sits inside the store's own
+build graph, where importing `useEditorStore` closes the cycle `adminEvents.ts`
+exists to break. And the batch pins each created element to its distance from
+the END of its file, not to an absolute line: a batch applies bottom-to-top, so
+a later edit sits above an element an earlier one created and pushes it down —
+recording the line is stale for every created element but the last, which a
+multi-selection ⌘D reaches immediately.
+
+**⌘V is a source write too (`store-13`).** `pasteNode` used to be the one
+structural gesture that never asked: it restored the clipboard SNAPSHOT as
+nanoid nodes, `saveSite` diffs values only, and the next parse deleted them
+without a word. On a studio-imported tree a paste is now committed as a
+`duplicate` of the clipboard's own roots into the destination container
+(`writePasteToSource`, `studioSourceWrites.ts`), so the pasted element arrives
+as an ordinary parsed node and is selected by the same created-id path above. A
+clipboard whose roots are no longer elements in this file — copied from another
+project, another page, or a session before the file changed — refuses by name
+instead of minting an orphan.
+
+**An HTML import refuses on a studio tree (`mcp-21`).** `insertImportedNodes`
+had the same defect and a worse blast radius: `site_insert_html` /
+`site_replace_node_html` reach it through the editor bridge, so an external MCP
+client with `ai.tools.write` could merge nanoid nodes into a real repository's
+board. It now refuses the whole fragment (`refuseImportedNodesInto`). There is
+no source write to route to instead: the importer's rule table maps HTML onto
+~15 base modules and exactly two — `base.container` and `base.text` — can spell
+themselves in a user's repo (`ModuleDefinition.sourceIntrinsic`); the `<style>`
+half of the payload belongs in a stylesheet rather than the markup; and the
+tool's own answer (the ids it created, so the caller can address them) cannot be
+produced by a write whose ids do not exist until the resync. The action returns
+`ImportedNodesResult` so the reason travels to the modal and to the tool
+instead of an invented sentence about containers. `refuseImportedNodesInto` is
+also exposed as a store action, for the one caller that must destroy before it
+inserts — `site_replace_node_html` deletes the target's children first, so a
+refusal discovered at insert time emptied the node and wrote nothing.
+
 **`updateNodeProps` and `setNodeInlineStyles` refuse a patch if *any* key is
 code-valued** — all-or-nothing, because a half-applied patch is a canvas that
 disagrees with the file it mirrors. Both refuse **silently**: they are also

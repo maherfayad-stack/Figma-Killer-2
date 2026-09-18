@@ -60,6 +60,7 @@ import {
   type JsxChildRangeReason,
 } from './jsxChildRange'
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
+import { createdJsxLocation, type CreatedJsxLocation } from './createdJsxLocation'
 import { freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
 
 export interface DuplicateJsxElementParams {
@@ -118,7 +119,10 @@ export interface DuplicateJsxRefusal {
   message: string
 }
 
-export type DuplicateJsxElementResult = { ok: true } | { ok: false; refusal: DuplicateJsxRefusal }
+/** `created` is the COPY's own tag-name `line:col` — see `createdJsxLocation.ts`. */
+export type DuplicateJsxElementResult =
+  | { ok: true; created: CreatedJsxLocation | null }
+  | { ok: false; refusal: DuplicateJsxRefusal }
 
 function refuseDuplicate(
   reason: DuplicateJsxRefusalReason,
@@ -164,7 +168,7 @@ function duplicateInPlace(
   const inserted = wholeLine ? copy : ` ${copy}`
 
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, end) + inserted + verbatim.slice(end))
-  return { ok: true }
+  return { ok: true, created: createdJsxLocation(sourceFile, end, inserted) }
 }
 
 /**
@@ -235,5 +239,5 @@ function duplicateInto(
 
   const { start, end, text } = placement.edit
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, start) + text + verbatim.slice(end))
-  return { ok: true }
+  return { ok: true, created: createdJsxLocation(sourceFile, start, text) }
 }

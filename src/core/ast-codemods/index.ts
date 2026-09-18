@@ -64,6 +64,7 @@ export type {
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'
 export type {

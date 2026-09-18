@@ -36,6 +36,7 @@ import {
   unwrapJsxElement,
   wrapJsxElement,
   wrapJsxElements,
+  type CreatedJsxLocation,
 } from '@core/ast-codemods'
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -385,8 +386,21 @@ export function resolveDesignSystemImports<TProps>(
   })
 }
 
-/** Applied, or refused with a reason the caller turns into a `StudioEditRefusalError`. */
-export type StructuralEditOutcome = { ok: true } | { ok: false; reason: string; message: string }
+/**
+ * Applied, or refused with a reason the caller turns into a
+ * `StudioEditRefusalError`.
+ *
+ * `created` (`store-13`) is the tag-name `line:col` of the element this write
+ * brought into existence — an `insert`'s new child, a `duplicate`'s copy, a
+ * `wrap`/`group`'s container. Absent for the kinds that create nothing
+ * (`move`, `delete`, `reparent`, `ungroup`), and `null` when the codemod wrote
+ * but could not confirm the position against the re-parsed file. The caller
+ * mints the node id from it; see `createdJsxLocation.ts` for why it is never
+ * guessed at.
+ */
+export type StructuralEditOutcome =
+  | { ok: true; created?: CreatedJsxLocation | null }
+  | { ok: false; reason: string; message: string }
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
 export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind'] {
@@ -479,7 +493,7 @@ export function applyStructuralEdit(
         ...(importSpecifier === undefined ? {} : { importSpecifier }),
         ...(children === undefined ? {} : { children }),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'duplicate': {
       // K2 — `parentNodeId` present means Alt+drag: the copy goes INTO that
@@ -501,7 +515,7 @@ export function applyStructuralEdit(
         ...(destination ? { destinationLine: destination.line, destinationCol: destination.col } : {}),
         ...(destination && anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'wrap': {
       const wrapperSpecifier = resolveNodeImport(edit, targetRel)
@@ -510,7 +524,7 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'group': {
       // The run's REST arrive as their own decoded locations (`siblings`) —
@@ -533,7 +547,7 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'ungroup': {
       const result = unwrapJsxElement(loc)

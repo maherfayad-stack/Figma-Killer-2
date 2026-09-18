@@ -1156,7 +1156,7 @@ Browser: processStreamEvent(event) in streamEvents.ts
     ├─→ 'bridgeReady'   → store bridgeId in closure
     ├─→ 'toolRequest'   → executeAgentTool(toolName, input)  (executor.ts)
     │       – TypeBox-validates input
-    │       – e.g. runInsertHtml → importHtml(html) → insertImportedNodes(parentId, …)
+    │       – e.g. runInsertHtml (htmlTools.ts) → importHtml(html) → insertImportedNodes(parentId, …)
     │       → POST /admin/api/ai/tool-result { bridgeId, requestId, result }
     │       → server resolves pending waiter → driver sees tool_result → continues
     └─→ 'text' / 'toolCall' / 'toolResult' / 'done'  → update agentSlice.agentMessages
@@ -1303,6 +1303,16 @@ Styling rides on the `html` payload — there is no separate `classes` parameter
 - inline `style="…"` attributes → the node's inline styles.
 
 `insertImportedNodes` then links every `class=` token on the imported nodes to its registry class id in the same undo step, so `class="hero-section"` renders and is styleable whether its styles came from a `<style>` rule or an automatically-created bare class. See [html-import.md → Class linking](html-import.md#class-linking-name--id).
+
+**Both tools refuse outright on a studio-imported board (`mcp-21`, fixed in `store-13`).** On a project whose source of truth is a real React repository, importing HTML produced nodes carrying nanoid ids that no codemod can write back: the elements appeared on the canvas and the next parse deleted them, with nothing said. Reachable with no UI at all — an external MCP connector holding `ai.tools.write` calls both tools through the editor bridge.
+
+There is no source write to route them to instead, and the reason is structural rather than a gap waiting to be closed:
+
+1. The importer's rule table maps HTML onto ~15 base modules, and exactly two of them — `base.container` and `base.text` — can say what they are in a user's repo (`ModuleDefinition.sourceIntrinsic`). A link, a button, an image, every form control, `<studio-loop>` and `<studio-outlet>` have no JSX form Studio may write. Writing the part that can be written and dropping the rest is a half-applied patch.
+2. The `<style>` block belongs in a stylesheet, not in the `.tsx`, so one call would have to land two writes in two files or leave the structure unstyled.
+3. The tools' own answer — `nodeIds` / `created`, so the caller can address a nested node — cannot be produced by a source write: those ids are the `line:col`s the codemod emits and do not exist until the board has re-read the file, which is after the tool has returned.
+
+The refusal names the path that does write real code: `studio_apply_edits`' `insert` edit, which writes JSX into the file and returns an addressable node id. `site_replace_node_html` asks BEFORE deleting the target's children (`refuseImportedNodesInto`), so a refused replace never leaves the node empty.
 
 **Authoring CSS with `site_apply_css`.** The required `operation` discriminator makes destructive intent explicit:
 

@@ -1,7 +1,7 @@
 /**
  * The structural gestures that, on a studio-imported tree, are a SOURCE WRITE
- * rather than a tree mutation: insert, duplicate, wrap, and (K3) group and
- * ungroup.
+ * rather than a tree mutation: insert, duplicate, wrap, (K3) group and
+ * ungroup, and (`store-13`) paste.
  *
  * `struct-02` shipped the first one and W4-1 added the other two, at which
  * point they stopped being a detail of `nodeActions.ts` and became a thing of
@@ -22,12 +22,17 @@
  * Step 4 is why these return `true` for both outcomes — written and refused.
  * Either way the caller must not mint anything.
  *
+ * `store-13` — the new element is nonetheless SELECTED once it arrives. The
+ * save route reports the ids it created and `commitStructural` leaves them in
+ * `pendingCreatedSelection.ts` for the resync to claim, so "no id to return
+ * here" no longer means "the gesture's result is never pointed at".
+ *
  * The wrapper/element spelling comes from the MODULE REGISTRY
  * (`sourceImport` / `sourceIntrinsic`), never from a hardcoded design system,
  * so a project with its own component library writes its own components.
  */
 import { registry } from '@core/module-engine'
-import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
+import { describeStructuralRefusal, isSourceDerivedNodeId, type NodeTree, type PageNode } from '@core/page-tree'
 import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import {
   commitStudioDuplicate,
@@ -61,6 +66,15 @@ export interface StudioSourceWrites {
    * directly rather than posting a source write).
    */
   refuseInsertInto: (parentId: string, retryWithParent?: (newParentId: string) => void) => boolean
+  /**
+   * `mcp-21` / `store-13` — why a fragment of imported HTML cannot be inserted
+   * into `parentId`, already presented to the user; `null` when it can.
+   *
+   * A separate question from `refuseInsertInto` because imported HTML has a
+   * second way to fail that a component insert does not: see
+   * `HTML_IMPORT_ON_SOURCE_REFUSAL`.
+   */
+  refuseImportedNodesInto: (parentId: string, retryWithParent?: (newParentId: string) => void) => string | null
   /** True when the caller must stop: the element was written to source, or the write was refused out loud. */
   writeInsertToSource: (
     moduleId: string,
@@ -91,6 +105,12 @@ export interface StudioSourceWrites {
   ) => boolean
   /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
   writeUngroupToSource: (nodeId: string) => boolean
+  /**
+   * `store-13` — ⌘V. True when the caller must stop: the paste was written to
+   * source, or refused out loud. `false` only for an ordinary CMS tree, which
+   * takes the clipboard-snapshot path unchanged.
+   */
+  writePasteToSource: (clipboardRootIds: readonly string[], parentId: string, index?: number) => boolean
 }
 
 /**
@@ -108,21 +128,84 @@ export function createStudioSourceWrites(
 
   /**
    * `struct-01` — refuse a structural gesture that cannot be written back to
-   * a studio-imported `.tsx`. Returns true when the caller must stop.
-   * A `null` tree (no site loaded) is not this guard's business.
+   * a studio-imported `.tsx`. Returns the sentence the user was shown, or
+   * `null` when the gesture may proceed. A `null` tree (no site loaded) is not
+   * this guard's business.
    */
-  const refuseInsertInto = (parentId: string, retryWithParent?: (newParentId: string) => void): boolean => {
+  const refuseInsertIntoWithReason = (
+    parentId: string,
+    retryWithParent?: (newParentId: string) => void,
+  ): string | null => {
     const tree = readTree()
-    if (!tree) return false
+    if (!tree) return null
     const plan = planSourceInsert(tree, parentId)
-    if (plan.ok) return false
+    if (plan.ok) return null
     presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
       nodeId: plan.nodeId,
       retry: retryWithParent,
       getState: get,
       set,
     })
-    return true
+    return plan.constraint.explanation
+  }
+
+  /** `struct-01` — the boolean reading every caller but the HTML importer wants. */
+  const refuseInsertInto = (parentId: string, retryWithParent?: (newParentId: string) => void): boolean =>
+    refuseInsertIntoWithReason(parentId, retryWithParent) !== null
+
+  /**
+   * `mcp-21`'s open defect — a fragment of imported HTML on a studio-imported
+   * tree.
+   *
+   * `insertImportedNodes` merged the fragment straight into the page as nanoid
+   * nodes and posted no source write at all, so the elements showed on the
+   * canvas until the next parse and then silently did not. Reachable from the
+   * paste-HTML modal and, more seriously, from an external MCP client with
+   * `ai.tools.write` calling `site_insert_html` / `site_replace_node_html`.
+   *
+   * This refuses it. Unlike `insert`/`duplicate`/`wrap`/`paste`, an HTML
+   * fragment has no source write to route to instead, and the reason is
+   * structural rather than a gap to be closed later:
+   *
+   *  1. **Most of it has no spelling.** The importer's own rule table maps HTML
+   *     onto ~15 base modules, and exactly two of them — `base.container` and
+   *     `base.text` — can say what they are in a user's repo
+   *     (`ModuleDefinition.sourceIntrinsic`). A link, a button, an image, every
+   *     form control, `<studio-loop>` and `<studio-outlet>` have no JSX form
+   *     Studio may write. Writing the part that can be written and dropping the
+   *     rest is the half-applied patch this store refuses everywhere else.
+   *  2. **The CSS has a different target.** The `<style>` block that comes with
+   *     the markup belongs in a stylesheet, not in the `.tsx`, so one call
+   *     would have to land two writes in two files or leave the structure
+   *     unstyled.
+   *  3. **The tool's own answer cannot be honoured.** `site_insert_html`
+   *     returns the ids it created so the caller can address them; a source
+   *     write's ids are the `line:col`s the codemod produces and do not exist
+   *     until the resync, which is after the tool has returned.
+   *
+   * So: the whole fragment, or none of it. The refusal names the two paths that
+   * do write real code.
+   */
+  const refuseImportedNodesInto = (
+    parentId: string,
+    retryWithParent?: (newParentId: string) => void,
+  ): string | null => {
+    const containerRefusal = refuseInsertIntoWithReason(parentId, retryWithParent)
+    if (containerRefusal) return containerRefusal
+    const tree = readTree()
+    if (!tree) return null
+    const plan = planSourceInsert(tree, parentId)
+    // `commit: null` is an ordinary CMS tree — imported HTML is exactly what
+    // that path is for, and nothing here applies to it.
+    if (!plan.ok || !plan.commit) return null
+    // Always `actions: []` — always the toast, never the dialog: the remedy is
+    // a different tool, not a button on this node.
+    presentStructuralRefusal(
+      STRUCTURAL_REFUSAL_TITLE.insert,
+      describeStructuralRefusal({ refusal: { reason: 'insert', message: HTML_IMPORT_ON_SOURCE_REFUSAL } }),
+      { getState: get, set },
+    )
+    return HTML_IMPORT_ON_SOURCE_REFUSAL
   }
 
   /**
@@ -452,15 +535,116 @@ export function createStudioSourceWrites(
     return true
   }
 
+  /**
+   * `store-13` — ⌘V on a studio-imported tree is a SOURCE write, for the same
+   * reason every other gesture in this module is.
+   *
+   * Paste was the one structural gesture that never asked. It restored the
+   * clipboard SNAPSHOT — a set of nodes carrying nanoid ids — straight into
+   * the tree, and `saveSite` diffs values only, so nothing about the new
+   * elements ever reached the `.tsx`. The board showed them until the next
+   * parse and then silently did not, which is precisely the failure
+   * `struct-01` removed for move and delete and `struct-02` for insert.
+   *
+   * The honest write is a DUPLICATE-TO: the clipboard's roots are elements
+   * that exist (or existed) in this project's code, and `duplicateJsxElement`
+   * can copy their own source text into the destination container. So this
+   * asks the same two questions in the same order every other writer here
+   * asks, then commits through the identical path — which is also how a
+   * pasted element ends up selected after the resync
+   * (`pendingCreatedSelection.ts`).
+   *
+   * What it will NOT do is fall back to the snapshot path on a studio tree.
+   * A clipboard entry whose roots are no longer elements in this file — copied
+   * from another project, from another page, or from a session before the file
+   * changed — has no source text to copy, and restoring the snapshot anyway is
+   * the orphan this function exists to stop. That refuses, by name.
+   */
+  const writePasteToSource = (
+    clipboardRootIds: readonly string[],
+    parentId: string,
+    index?: number,
+  ): boolean => {
+    if (clipboardRootIds.length === 0) return false
+    const tree = readTree()
+    if (!tree) return false
+
+    // Is this a studio-imported tree at all? `planSourceInsert` answers with
+    // `commit: null` for an ordinary CMS container, and that is the ONLY
+    // outcome that may take the snapshot path.
+    const container = planSourceInsert(tree, parentId, index)
+    if (container.ok && !container.commit) return false
+
+    // `store-11` — a paste is as much a real write as a duplicate is, and two
+    // in flight plan against the same unshifted source.
+    if (guardAgainstConcurrentStructuralCommit()) return true
+
+    if (!container.ok) {
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, container.constraint, {
+        nodeId: container.nodeId,
+        retry: (newParentId) => { writePasteToSource(clipboardRootIds, newParentId, index) },
+        getState: get,
+        set,
+      })
+      return true
+    }
+
+    const orphaned = clipboardRootIds.filter((id) => !isSourceDerivedNodeId(id) || !tree.nodes[id])
+    if (orphaned.length > 0) {
+      // Always `actions: []` — always the toast, never the dialog: there is no
+      // node left to offer a remedy against.
+      presentStructuralRefusal(
+        STRUCTURAL_REFUSAL_TITLE.insert,
+        describeStructuralRefusal({
+          refusal: {
+            reason: 'insert',
+            message:
+              'What you copied is not part of this page’s code any more, so Studio has no source to copy from — pasting it would put elements on the canvas that the files do not contain. Copy the element again from this page and paste it.',
+          },
+        }),
+        { getState: get, set },
+      )
+      return true
+    }
+
+    const plan = planSourceDuplicateTo(tree, clipboardRootIds, parentId, index ?? Number.MAX_SAFE_INTEGER)
+    if (!plan.ok) {
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
+        nodeId: plan.nodeId,
+        getState: get,
+        set,
+      })
+      return true
+    }
+    // `commit: null` here would mean "not a source-derived tree", which the
+    // container check above already ruled out — but a stale root is also
+    // reported that way, and there is nothing to write either way.
+    if (!plan.commit) return true
+    const { nodeId, ...where } = plan.commit
+    void commitStudioDuplicate([nodeId], where)
+    return true
+  }
+
   return {
     refuseInsertInto,
+    refuseImportedNodesInto,
     writeInsertToSource,
     writeDuplicateToSource,
     writeWrapToSource,
     writeGroupToSource,
     writeUngroupToSource,
+    writePasteToSource,
   }
 }
+
+/**
+ * The one sentence behind every refused HTML import on a studio-imported tree.
+ * A module constant rather than an inline string because both audiences read
+ * it: the paste-HTML modal shows it inline, and the agent executor returns it
+ * as the tool's error. See `refuseImportedNodesInto` for the three reasons.
+ */
+export const HTML_IMPORT_ON_SOURCE_REFUSAL =
+  'Every element on this board is written back into your project’s React files, and a block of HTML has no single honest form to write there: most of its tags (links, buttons, images, form controls) have no component in this project, and its CSS belongs in a stylesheet rather than in the markup. Nothing was added. Add elements one at a time from the component picker, which writes real JSX.'
 
 /**
  * How a registered module spells itself as a WRITTEN TAG — a package component

@@ -62,6 +62,7 @@ type NodeActions = Pick<
   | 'insertNode'
   | 'insertComponentRef'
   | 'insertImportedNodes'
+  | 'refuseImportedNodesInto'
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
@@ -120,7 +121,13 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   const readTree = (): NodeTree<PageNode> | null => resolveActiveTreeTarget(get())?.tree ?? null
 
   const sourceWrites = createStudioSourceWrites(helpers, readTree)
-  const { refuseInsertInto, writeInsertToSource, writeDuplicateToSource, writeWrapToSource } = sourceWrites
+  const {
+    refuseInsertInto,
+    refuseImportedNodesInto,
+    writeInsertToSource,
+    writeDuplicateToSource,
+    writeWrapToSource,
+  } = sourceWrites
 
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index, inlineStyles) => {
@@ -163,11 +170,19 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return inserted ? newNode.id : ''
     },
 
+    // `mcp-21` — the same guard `insertImportedNodes` runs, asked on its own by
+    // the one caller that must destroy something before it can insert. See
+    // `SiteSlice.refuseImportedNodesInto`.
+    refuseImportedNodesInto: (parentId) => refuseImportedNodesInto(parentId),
+
     insertImportedNodes: (parentId, fragment, opts) => {
-      if (fragment.rootIds.length === 0) return []
-      if (refuseInsertInto(parentId, (newParentId) => { actions.insertImportedNodes(newParentId, fragment, opts) })) {
-        return []
-      }
+      if (fragment.rootIds.length === 0) return { ok: false, message: 'That HTML carried no elements to insert.' }
+      // `mcp-21` — the studio-tree refusal rides the SAME guard as the
+      // container check, so both reasons reach the caller as one sentence.
+      const refusal = refuseImportedNodesInto(parentId, (newParentId) => {
+        actions.insertImportedNodes(newParentId, fragment, opts)
+      })
+      if (refusal) return { ok: false, message: refusal }
       const insertedRootIds: string[] = []
       mutateActiveTreeAndSite((tree, site) => {
         const parent = tree.nodes[parentId]
@@ -228,7 +243,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         reindexNodeParents(tree.nodes)
         return true
       })
-      return insertedRootIds
+      return insertedRootIds.length > 0
+        ? { ok: true, rootIds: insertedRootIds }
+        : { ok: false, message: 'That container does not accept children.' }
     },
 
     insertComponentRef: (parentId, componentId, index) => {

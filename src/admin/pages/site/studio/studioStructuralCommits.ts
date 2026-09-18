@@ -20,6 +20,7 @@
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
+import { setPendingCreatedSelection } from './pendingCreatedSelection'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { postEdits, type InsertPropValue } from './studioSaveRequests'
 
@@ -496,6 +497,22 @@ async function commitStructuralBody(
           : 'The code no longer has an element at the position the canvas was showing.',
       })
     }
+    // `store-13` — what this write CREATED, claimed by the re-read below.
+    //
+    // Set BEFORE the resync, not after, because the narrow path applies its
+    // patch synchronously inside `resyncBoardAfterWrite` (it dispatches an
+    // admin event that `usePersistence` handles on the spot) — an answer left
+    // until afterwards would arrive one beat too late. Set on EVERY landed
+    // write, including the ones that create nothing: an empty list clears the
+    // slot, so a move can never inherit the copy a duplicate left behind.
+    //
+    // `insert`/`duplicate`/`wrap`/`group` are the only kinds that fill it, and
+    // on a studio-imported tree they are only ever reached from an editor
+    // gesture or an agent tool that has already navigated the canvas to the
+    // node it is editing. There is no user selection to steal either way: the
+    // resync re-mints every id the write shifted, and `patchPages` drops a
+    // selection that no longer resolves.
+    if (willReload) setPendingCreatedSelection(result.createdNodeIds ?? [])
     // trap #5 — reload only when a write actually landed. Nothing reaching
     // disk means there is nothing to resync FROM; reloading anyway would
     // replace whatever the canvas is currently (optimistically) showing with

@@ -504,8 +504,12 @@ describe('insertImportedNodes regression — linking refactor', () => {
 
     const fragment = makeFragment(['hero-title'])
 
-    const insertedIds = useEditorStore.getState().insertImportedNodes(rootId, fragment)
-    expect(insertedIds).toHaveLength(1)
+    const inserted = useEditorStore.getState().insertImportedNodes(rootId, fragment)
+    // `store-13` — the action answers `ImportedNodesResult`, so a refusal can
+    // carry its reason (see `importedNodesResult.ts`). This is a CMS tree, so
+    // the import lands as it always did.
+    expect(inserted.ok).toBe(true)
+    expect(inserted.ok && inserted.rootIds).toHaveLength(1)
 
     const { site: updatedSite } = useEditorStore.getState()
     const page = updatedSite!.pages[0]!

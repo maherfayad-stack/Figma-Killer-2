@@ -73,7 +73,7 @@ describe('wrapJsxElements', () => {
     const first = locateTag(PAGE, 'p', 1)
     const second = locateTag(PAGE, 'p', 2)
 
-    expect(wrapJsxElements({ file, targets: [first, second], name: 'div' })).toEqual({ ok: true })
+    expect(wrapJsxElements({ file, targets: [first, second], name: 'div' })).toMatchObject({ ok: true })
 
     // The blank line between the two paragraphs is INSIDE the span, so it
     // travels verbatim; the comment above them does not move at all.
@@ -99,7 +99,7 @@ describe('wrapJsxElements', () => {
     const file = writeFixture(source)
     expect(
       wrapJsxElements({ file, targets: [locateTag(source, 'b'), locateTag(source, 'i')], name: 'span' }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
 
     // `and` is an ordinary text child sitting between the two elements. It is
     // inside the span, so it is grouped with them — leaving it outside would
@@ -117,7 +117,7 @@ describe('wrapJsxElements', () => {
     const a = locateTag(PAGE, 'a', 1)
     const b = locateTag(PAGE, 'a', 2)
 
-    expect(wrapJsxElements({ file, targets: [a, b], name: 'span' })).toEqual({ ok: true })
+    expect(wrapJsxElements({ file, targets: [a, b], name: 'span' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace(
         '<footer><a href="/a">A</a><a href="/b">B</a></footer>',
@@ -131,7 +131,7 @@ describe('wrapJsxElements', () => {
     const second = locateTag(PAGE, 'p', 2)
     const third = locateTag(PAGE, 'Third')
 
-    expect(wrapJsxElements({ file, targets: [third, second, third], name: 'div' })).toEqual({ ok: true })
+    expect(wrapJsxElements({ file, targets: [third, second, third], name: 'div' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace(
         '      <p className="second">Second</p>\n      <Third\n        label="third"\n        tone="quiet"\n      />\n',
@@ -152,7 +152,7 @@ describe('wrapJsxElements', () => {
 
     expect(
       wrapJsxElements({ file, targets: [first, second], name: 'Stack', importSpecifier: '@acme/ui' }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
     const after = fs.readFileSync(file, 'utf8')
     expect(after).toContain("import { Stack } from '@acme/ui'\n")
     expect(after).toContain('      <Stack>\n        <p className="first">First</p>\n')
@@ -404,7 +404,7 @@ describe('generic repo shapes — tabs, a fragment parent, plain JSX', () => {
         targets: [locateTag(PLAIN_JS, 'ul'), locateTag(PLAIN_JS, 'button')],
         name: 'div',
       }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
 
     const after = fs.readFileSync(file, 'utf8')
     expect(after).toBe(
@@ -424,7 +424,7 @@ describe('generic repo shapes — tabs, a fragment parent, plain JSX', () => {
         targets: [locateTag(PLAIN_JS, 'ul'), locateTag(PLAIN_JS, 'button')],
         name: 'div',
       }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
 
     const grouped = fs.readFileSync(file, 'utf8')
     expect(unwrapJsxElement({ file, ...locateTag(grouped, 'div') })).toEqual({ ok: true })

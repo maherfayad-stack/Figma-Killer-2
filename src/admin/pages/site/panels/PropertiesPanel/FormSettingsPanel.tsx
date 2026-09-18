@@ -128,7 +128,9 @@ export function FormSettingsPanel({
       fragment,
       { index: fieldInsertIndex(page, formNode.id) },
     )
-    if (inserted[0]) selectNode(inserted[0])
+    // A refusal has already been surfaced by the store (`insertImportedNodes`),
+    // so there is nothing to report here beyond leaving the selection alone.
+    if (inserted.ok && inserted.rootIds[0]) selectNode(inserted.rootIds[0])
   }
 
   return (
