@@ -3768,10 +3768,127 @@ insert palette, which is where a user can act on it.
 
 ---
 
+### verify-2 — the e2e stack starts itself on Windows, the perf gate has a tracked corpus, and a run leaves the tree clean
+
+- **Agent:** test-engineer (parallel wave 2, `standing-05`)
+- **Stage:** done — PR #181 MERGED into `feat/alm-figma-killer-studio-shell` as `a866f492` (2026-09-18, orchestrator; build + lint re-run clean on the merged tree). One residual defect named below is NOT closed; the 64 failing specs in the full cold e2e run are `verify-4`'s baseline work.
+- **Branch + PR:** `test/e2e-windows-stack-and-corpus`, rebased onto `58c0efe3` (post-wave-2 `feat/alm-figma-killer-studio-shell`) — **PR #181** (draft) → `feat/alm-figma-killer-studio-shell`. Seven commits: `d212695a` · `88141c28` · `1c170c30` · `19683a42` · `198a3842` · `2f24ccb8` · `d40ca072`
+- **Updated:** 2026-09-18
+- **Goal:** `STUDIO-FIGMA-FEEL-PLAN.md` §9 items 4/5/6 (= `verify-01` findings 3/1/4) and `meta-14` landmine 3. Done when `bun run test:e2e` starts its own stack on Windows, the canvas budgets are measured against a tracked board on every run, and a run leaves `git status --porcelain studio-workspace/` empty.
+- **Scope:** `playwright.config.ts` · `scripts/{e2e-dev.ts,dev.ts,lib/e2eStack.ts,lib/stackChild.ts,bench/studioBoard.bench.ts}` · `tests/e2e/{helpers/{constants,canvasPerf,studioFixtureProject}.ts,studio-board-perf,studio-feel,inspector-height,inspector-panel-measurement}.e2e.ts` · deleted `tests/e2e/_perf-diagnostic-studioboard.e2e.ts` · `src/__tests__/devWorkflow.test.ts` · `studio-workspace/__board-perf-fixture/**` · `.gitignore` · `.github/workflows/ci.yml` · `docs/e2e/README.md` · `PROJECT-BRIEF.md`
+
+---
+
+#### Done so far
+
+**(a) The stack starts itself — root cause found, not worked around.**
+Playwright's `webServer` spawns with all three stdio as pipes; `scripts/e2e-dev.ts` handed those pipes to Vite, and Vite then intermittently **bound its port, printed nothing, and answered nothing** — blocked inside a write. Playwright's probe connected and hung, so a failure looked like "the CMS started and then a bare timeout". Measured under a real `webServer`, ten boots per configuration, ports asserted free before each:
+
+| Children's stdout/stderr | boots that came up |
+|---|---|
+| inherited from our pipes | 3 / 10 |
+| `'pipe'` + forwarded by us | 3 / 10 |
+| `'ignore'` | 6 / 8 |
+| **a FILE, tailed by us** | **8 / 10** |
+
+Ruled out with their own measurements: the two-children spawn race (reproduces with Vite alone, 6/10), the runner (`node` no better than `bun`), `stdin` inheritance (5/8), and the workspace copy this branch adds (3/10 with and without).
+
+- `scripts/lib/stackChild.ts` — one rule from one fact (`isTTY`): inherit a real terminal, otherwise give the child a log FILE and tail it. A file write cannot block on a reader. Used by BOTH supervisors, so `bun run dev > dev.log` cannot reproduce it either.
+- `scripts/e2e-dev.ts` — supervises Vite's boot: asks for `/admin` (a page Vite serves itself), distinguishes "still pre-bundling" from "stuck" by **whether anything is listening yet**, restarts up to 3 attempts and names which of three failure shapes it saw. The boot ceiling is 60 s with a warm `node_modules/.vite/deps/_metadata.json` and 180 s without.
+- `AbortSignal.timeout` on the readiness request (`2f24ccb8`) — **without it the supervisor hangs inside its own first await** against exactly the failure it exists for. Observed: attempt 1 reported, then nine minutes of silence.
+- `playwright.config.ts` sets `VITE_ALLOWED_ORIGIN` for whatever ports it chose; `scripts/lib/e2eStack.ts` is the single source for the ports, origins and data roots that the config, the stack script and the specs must agree on. `E2E_REUSE_SERVER=1` untouched.
+- `.github/workflows/ci.yml`'s `e2e-budgets` job stops starting the stack by hand and uses the config's own `webServer`.
+
+**(b) A tracked twelve-frame corpus.** `studio-workspace/__board-perf-fixture` — twelve ~28-element screens, one shared plain stylesheet, a committed `boards.json` pinning all twelve frames. `studio-board-perf.e2e.ts` points there and **fails rather than skips** when it is missing. Measured cold, three separate runs, all 2/2: 12 board frames, 6–8 live at the opening zoom, **6→12 / 8→12 live across the scripted zoom-out**, pan worst 18.4–19.1 ms, zoom worst 41.8–49.9 ms (budget 250), zoom mean 16.8–17.0 ms (budget 35), posters **4/4**.
+
+**(c) A run leaves the tree clean.** `scripts/e2e-dev.ts` copies `studio-workspace/` to `.tmp/e2e-workspace` and exports `STUDIO_WORKSPACE_DIR`. Proven twice: after a run, `git status --porcelain studio-workspace/` is empty, and `diff -r studio-workspace .tmp/e2e-workspace` shows exactly the writes that used to dirty the tracked tree — `lastOpenedAt`, `.studio/framework.json`, `.studio/shell.json`, `index.html`, a rewritten `package.json`.
+
+**(d)** `bun run test:e2e` is stated as the fourth gate in `docs/e2e/README.md` (with the four budget specs to run by path) and in `PROJECT-BRIEF.md`.
+
+---
+
+#### Tests added / changed, and the contract each locks in
+
+| Test | Contract |
+|---|---|
+| `studio-board-perf.e2e.ts` corpus assertion | A missing corpus is a **failure**, not a skip, with a message naming the fixture and `STUDIO_WORKSPACE_DIR`. The previous `test.skip` is why this file measured nothing for seven weeks. |
+| …its zoom-mean assertion | `BUDGET_ZOOM_MEAN_FRAME_MS` (35 ms) is now asserted on the board where the gesture really mounts frames, not only on the three-frame `test4` where it mounts none. |
+| …its poster assertion | The WS-5.3 criterion is no longer wrapped in `if (departed.length > 0)` — a pan that stops pushing frames out of the pool used to pass silently. A new assertion fails with a named reason when nothing departs. |
+| `studio-workspace/__board-perf-fixture` | The canvas budgets are measured on **every** run and in CI, on a board deliberately ≥9 frames so the mount path exists at all. |
+| `devWorkflow.test.ts` preflight gate | **Assertion deliberately changed:** it pinned "the preflight runs before anything is spawned" to the literal `Bun.spawn(cfg.command`, which this branch replaced with `spawnStackChild(cfg.command`. Same contract, one moved string. It still fails if the preflight moves after the spawn. |
+| `inspector-height` / `inspector-panel-measurement` / `studio-feel` / `studioFixtureProject` | A spec's fixture project lands inside the root the SERVER resolved. Writing outside it is a 404 from `resolveProjectDir`'s containment check, and dirties the tracked tree on the way. |
+| **Deleted** `_perf-diagnostic-studioboard.e2e.ts` | Its own header said to delete it after calibrating `perf-01`; it writes its synthetic project to `.tmp/`, outside the workspace root, so it could only ever fail. (That deletion rode along in commit `d212695a` rather than `1c170c30` — noted in both the PR body and the commit message.) |
+
+---
+
+#### Decisions
+
+1. **File-backed child stdio, not a forwarded pipe.** Measured, not assumed: forwarding a pipe is no better than inheriting one (3/10 both). The children's liveness must not depend on anyone reading our output.
+2. **A supervisor that supervises is not a band-aid.** The underlying defect is in Bun/Vite process startup on Windows, outside this repo. What is in scope is that a supervisor notices a child that never came up and says so. It is a documented, measured mechanism, not a retry sprinkled on a flake.
+3. **"Still starting" vs "stuck" is decided by the LISTENER, not a clock.** A cold dependency pre-bundle has not called `listen()`; a stuck Vite has. Killing the former would be wrong and the retry would start over.
+4. **CI uses the default `webServer` path.** A job that bypassed it would let the bypass rot into the only thing that works — the exact shape that hid this bug for seven weeks. Risk stated: I cannot execute the Linux job from here.
+5. **Reset-on-start, not remove-on-teardown, for the throwaway workspace.** Playwright cannot shut a webServer down gracefully on Windows, so a teardown hook is the one thing that never runs. A failed run's evidence is worth keeping anyway.
+6. **The 40 ms pan budget was NOT raised** to accommodate a 48.3 ms reading taken while eleven agents were hammering the machine. Same tree measured 18.4 / 19.1 / 20.6 ms on three quieter runs.
+
+---
+
+#### Landmines
+
+1. **A bare `fetch` against a hung listener never settles.** Any readiness probe in this repo needs `AbortSignal.timeout`. This cost nine minutes of silence per run and looked like a supervisor that had crashed.
+2. **Orphaned stacks poison the next run and look exactly like a boot bug.** A leftover CMS holds `.tmp/e2e-agent.db` (`EBUSY` on reset, now reported with the `taskkill` line that fixes it) and a leftover Vite holds 5174 (`is already used`). **Several of my own early measurements were invalid because of this** — check `netstat -ano | grep LISTENING | grep -E ":5174|:3002"` before trusting a boot-reliability number. Killing the Playwright runner (`node.exe`) always orphans the stack.
+3. **`scripts/` and `playwright.config.ts` are in no `tsconfig` project.** `bun run build` will not catch a broken import there. I shipped a call to a function that did not exist and `tsc -b` was green. Run the script.
+4. **`vite.config.ts` proxies `/` into the CMS's public-site renderer**, and on a fresh database that took 4.4 s when it worked at all. Never use `/` as a readiness URL for this stack; `/admin` is Vite's own.
+5. **Adding a project under `studio-workspace/` can change the DEFAULT project.** `listStudioProjects` sorts by `displayName` and `defaultProjectDir` takes `[0]`; `__board-perf-fixture`'s display name ("Perf Board Fixture") deliberately sorts after `__canonical-fixture`'s. Do not rename it to something starting with A or B.
+6. **`.gitignore` ignores `studio-workspace/*` with an explicit negation list.** A new tracked fixture needs its own `!studio-workspace/<name>/` line or it is silently invisible to `git status`.
+7. **A worktree cut from an older commit can carry CRLF copies of `studio-workspace/**` even after `git reset --hard`** (git leaves files it believes unchanged). `git checkout -- studio-workspace/` fixes it. 48 files showed as modified before I touched anything.
+8. **`framePosterQueue` drains serially at ~117 ms/frame after a 700 ms quiet period**, and a frame that leaves the viewport has its capture withdrawn. Any poster assertion needs ≥ `700 + frames × 117` ms of quiet BEFORE the pan that pushes frames offscreen.
+
+---
+
+#### Verification, with real numbers
+
+Windows, eleven agents in parallel — load matters to several of these.
+
+- `bun run build` **exit 0** · `bun run lint` **exit 0**
+- `bun test src/__tests__/architecture` **622 pass / 1 fail**; the fail is `ai-driver-isolation`'s whole-tree scan at 17.5 s against a 20 s budget under load — **6/0 run alone** (`standing-01`'s named artefact)
+- full `bun test` **13,630 pass / 2 skip / 12 fail**, 1,241 files, **741 s**. Six are `standing-01`'s named set (`claudeCli` 0600, `studio.test.ts` nested page, `parityMatrix`, `studio_compare` ×2, `studio_list_projects`). The other six — `loadStudioPageInLocale`, `prewarmCaptureBrowser`, `captureFramesHeadless` ×4 — are all 5 s timeouts and **pass 17/0 when re-run alone**. **Zero new reds.**
+- **Budget slice, cold, no hand-started server** (`studio-board-perf` + `inspector-panel-measurement` + `inspector-height` + `studio-feel` + wave 2's `studio-feel-phase0`): **16 passed / 4 failed in 10.3 min**, and `git status --porcelain studio-workspace/` **empty** afterwards. The four: `studio-board-perf`'s pan worst frame 48.3 ms vs a budget of 40 (load — 18.4/19.1/20.6 ms on three quieter runs of the same tree); `studio-feel`'s Alt+drag case, red since #152; two cases in `studio-feel-phase0.e2e.ts`, which this PR does not touch.
+- **`studio-board-perf.e2e.ts` cold, three separate runs: 2/2 each.** Numbers above. One of the three had attempt 1 hang and attempt 2 come up in 653 ms — the supervision working, in the run that produced those numbers.
+- **The `bun run test:e2e` cold proof, pasted as asked:**
+
+```
+$ bun run test:e2e          # no hand-started server, ports verified free first
+$ playwright test
+  ...
+  23 passed
+  64 failed
+  13 skipped                                                   (53.0m)
+E2E_EXIT=1
+```
+
+  The stack started itself; **every failure is a spec failure, not a boot failure.** Reading them: the full suite has never been run end to end here (CI runs four specs), and the two mechanical causes I confirmed are specs that navigate to workspaces deleted in PR #18 (`admin-navigation`: "moves between Site, **Content**, Plugins, Users" — that toolbar entry does not exist) and specs whose fixture projects live in `os.tmpdir()`, outside the containment root, which 404s — true before this branch too. **I am not claiming all 64 are pre-existing: no baseline of the full suite exists to diff against, and producing one is the obvious next piece of work.**
+
+---
+
+#### Residual defect, stated plainly
+
+**Vite still hangs at boot roughly a third of the time on this machine** under eleven-agent load, and the supervisor's job is to notice and restart it. On one budget-slice attempt all three attempts hung and the run failed in ~3 minutes with the supervisor's own explanation — better than a ten-minute bare timeout, but not a green run. The immediate retry passed. The underlying defect is in child-process startup outside this repo (reproduced with Vite alone, under `bun` and under `node`, with piped / ignored / file-backed stdio). If this proves painful, the next lever is raising `VITE_BOOT_ATTEMPTS` — the cost of one wasted attempt is 60 s with a warm dependency cache.
+
+---
+
+#### Human action needed
+
+1. **Review PR #181.** The one assertion I deliberately changed is `devWorkflow.test.ts`'s preflight gate (same contract, one moved string); the rest of the assertion changes are strictly tighter.
+2. **Watch the first CI run of `e2e-budgets` on this branch.** It now uses the config's `webServer` instead of starting the stack by hand, and Linux is the one platform I cannot exercise from here. If it fails to boot, the fallback is four lines: re-add the explicit start plus `E2E_REUSE_SERVER: '1'`.
+3. **The orchestrator mirrors the fourth-gate line into `CLAUDE.md`'s Verification section** — I was forbidden to edit it. The exact wording is already in `docs/e2e/README.md` § "`bun run test:e2e` is the fourth gate" and in `PROJECT-BRIEF.md`; the sentence for `CLAUDE.md` is: *"Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra."*
+4. **No dogfood needed for this change** (`standing-02`: this is test infrastructure, not a user surface). The useful human check is one `bun run test:e2e` on a quiet machine, then `git status` — it must be clean.
+
+---
+
 ### meta-16 — wave 2 integrated: 13 merges, 6 named reds closed, `verify-2` never opened a PR
 
 - **Agent:** studio-implementer (integrator), own worktree
-- **Stage:** done — PR #178 MERGED into `feat/alm-figma-killer-studio-shell` as `be13d46f` (2026-09-18, orchestrator). `verify-2` lands as a follow-up merge.
+- **Stage:** done — PR #178 MERGED into `feat/alm-figma-killer-studio-shell` as `be13d46f` (2026-09-18, orchestrator). `verify-2` landed as the follow-up merge `a866f492` (PR #181).
 - **Branch + PR:** `integration/figma-feel-wave-2` @ `87ac5658` → draft **PR #178** against `feat/alm-figma-killer-studio-shell` — https://github.com/maherfayad-stack/Figma-Killer-2/pull/178
 - **Updated:** 2026-09-18
 - **Goal:** merge wave 2's ten work-order PRs plus four security reviews in dependency order onto one branch, resolve every conflict by keeping both sides' intent, do the integration work no single PR could, and verify with real numbers.
