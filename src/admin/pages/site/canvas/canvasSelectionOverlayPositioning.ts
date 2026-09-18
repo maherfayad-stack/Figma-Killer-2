@@ -6,9 +6,9 @@ import type {
 } from './canvasOverlayGeometry'
 import type {
   CanvasDropAxis,
-  CanvasDropTarget,
   CanvasRect,
 } from './canvasDnd'
+import type { CanvasDragPaintTarget } from './canvasDragPainter'
 
 const TOOLBAR_VERTICAL_OFFSET = 30
 const INSPECTOR_VERTICAL_GAP = 12
@@ -439,7 +439,7 @@ export function positionNodeBadge(
  */
 export type CanvasDropVars = Record<string, string>
 
-export function dropIndicatorStyle(target: CanvasDropTarget): CanvasDropVars {
+export function dropIndicatorStyle(target: CanvasDragPaintTarget): CanvasDropVars {
   if (target.position === 'inside') return rectStyle(target.rect)
   return lineStyle(target.rect, target.position, target.axis)
 }
