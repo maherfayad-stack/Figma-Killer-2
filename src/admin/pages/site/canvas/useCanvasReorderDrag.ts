@@ -54,6 +54,7 @@ import { measureBoardDropSurfaces } from './canvasDragBoard'
 import { commitCanvasDrag } from './canvasDragCommit'
 import {
   DRAG_ACTIVATE_PX,
+  EMPTY_REFLOW,
   EMPTY_RESOLUTION,
   EMPTY_TRANSPLANT_RESOLUTION,
   dragLabel,
@@ -408,6 +409,10 @@ export function useCanvasReorderDrag({
       foreign: null,
       foreignResolution: EMPTY_TRANSPLANT_RESOLUTION,
       paintedLayer: null,
+      // K6 — no drop target has been resolved yet, so no sibling is making
+      // room for one. Filled by the first frame that resolves one.
+      reflow: EMPTY_REFLOW,
+      reflowKey: '',
     } satisfies DragSession
 
     // Cross-frame drag signal. Every iframe's pointer relay (see

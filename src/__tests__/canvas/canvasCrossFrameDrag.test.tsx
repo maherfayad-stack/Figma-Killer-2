@@ -249,6 +249,26 @@ async function beginDragOverHome(result: { current: ReturnType<typeof useCanvasR
   await nextFrame()
 }
 
+/**
+ * "Nothing in this layer is claiming a drop."
+ *
+ * Two hiding channels, deliberately, and a test that only knew about the first
+ * would pass while a reflow box sat over a frame the pointer had left. The
+ * drop line, the refused box, the chip and the ghost hide with `display`; K6's
+ * reflow boxes never do, because a `display: none` element cannot travel and
+ * the pool has to stay resident for the whole gesture - they go to rest by
+ * dropping `data-shifting`.
+ */
+function expectLayerCleared(layer: HTMLElement): void {
+  for (const child of Array.from(layer.children) as HTMLElement[]) {
+    if (child.hasAttribute('data-canvas-reflow-ghost')) {
+      expect(child.getAttribute('data-shifting')).toBeNull()
+      continue
+    }
+    expect(child.style.display).toBe('none')
+  }
+}
+
 describe('cross-frame drag — where the chrome is painted', () => {
   it('paints the drop line in the frame the pointer is over, and clears the one it left', async () => {
     registerAboutSurface()
@@ -271,18 +291,14 @@ describe('cross-frame drag — where the chrome is painted', () => {
     expect(aboutIndicator!.style.display).not.toBe('none')
     // Everything the origin frame was showing is hidden — nothing is left
     // behind in a frame the pointer has gone from.
-    for (const child of Array.from(originLayer.children)) {
-      expect((child as HTMLElement).style.display).toBe('none')
-    }
+    expectLayerCleared(originLayer)
 
     // ...and back again.
     await act(async () => {
       dispatchPointer('pointermove', 140, 300)
     })
     await nextFrame()
-    for (const child of Array.from(aboutLayer.children)) {
-      expect((child as HTMLElement).style.display).toBe('none')
-    }
+    expectLayerCleared(aboutLayer)
   })
 
   it('leaves the gesture alone when the other frame renders the SAME page', async () => {
@@ -386,9 +402,7 @@ describe('cross-frame drag — what the drop writes', () => {
     })
 
     expect(transplantCalls).toHaveLength(0)
-    for (const child of Array.from(aboutLayer.children)) {
-      expect((child as HTMLElement).style.display).toBe('none')
-    }
+    expectLayerCleared(aboutLayer)
   })
 })
 
@@ -430,5 +444,41 @@ describe('cross-frame drag — a refused drop says so while the pointer is down'
       dispatchPointer('pointerup', 700, 100)
     })
     expect(transplantCalls).toHaveLength(0)
+  })
+})
+
+/**
+ * K6's reflow preview across a frame boundary.
+ *
+ * The preview has to follow the chrome: it is painted in the DESTINATION
+ * frame's own layer, in that frame's own space, against that frame's own tree.
+ * The origin frame gets none - not because the origin list would not close up
+ * (it would), but because its layer is not the one being painted, and a box
+ * drawn there while the pointer is elsewhere is drawn inside an
+ * `overflow: hidden` viewport nobody is looking at.
+ */
+describe('cross-frame drag - the reflow preview follows the chrome', () => {
+  it('shows the destination frame making room, and leaves the origin frame alone', async () => {
+    registerAboutSurface()
+    const { result } = renderDrag()
+    const originLayer = mountOriginLayer(result.current.dropLayerRef)
+
+    await beginDragOverHome(result)
+    await act(async () => {
+      dispatchPointer('pointermove', 700, 30)
+    })
+    await nextFrame()
+
+    const shifting = Array.from(
+      aboutLayer.querySelectorAll<HTMLElement>('[data-canvas-reflow-ghost][data-shifting="true"]'),
+    )
+    expect(shifting).toHaveLength(1)
+    // `<h1>` is 190 tall; the dragged element is 190 tall too, so it moves down
+    // by its own extent (the container has one child, so no gap is observable).
+    expect(shifting[0]!.style.translate).toBe('0px 190px')
+
+    expect(
+      originLayer.querySelectorAll('[data-canvas-reflow-ghost][data-shifting="true"]'),
+    ).toHaveLength(0)
   })
 })

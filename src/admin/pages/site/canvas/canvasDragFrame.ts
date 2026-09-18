@@ -65,6 +65,7 @@ import {
   type FreeMoveResolution,
   type FreeMoveStep,
 } from './canvasFreeMove'
+import { resolveCanvasReflowShifts, type CanvasReflowShift } from './canvasReflowPreview'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { CanvasTransform } from './math'
 
@@ -157,6 +158,18 @@ export interface DragSession {
    * clears it before the new one is written — see this module's own doc.
    */
   paintedLayer: HTMLElement | null
+  /**
+   * K6 — the siblings that would make room for the CURRENT drop target, and
+   * the key that identifies which target that was.
+   *
+   * Cached because the answer only changes when the target does: a pointer
+   * moving inside one drop zone resolves the same `(parent, index)` on every
+   * frame, and re-packing the container for it would be work whose output is
+   * byte-identical. Same "skip the write whose value is unchanged" discipline
+   * the painter itself follows, one level up.
+   */
+  reflow: readonly CanvasReflowShift[]
+  reflowKey: string
 }
 
 /**
@@ -219,6 +232,9 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     // A gesture that was crossing frames and then had ⌘ pressed has chrome in
     // a foreign layer that nothing below will touch — clear it here.
     leaveForeignFrame(session)
+    // A free move reorders nothing, so no sibling makes room for it.
+    session.reflow = EMPTY_REFLOW
+    session.reflowKey = ''
     session.freeStep = paintFreeMoveFrame({
       layer: env.dropLayer,
       resolution: free,
@@ -273,6 +289,8 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     session.foreignResolution = EMPTY_TRANSPLANT_RESOLUTION
   }
 
+  refreshReflowPreview(session, foreign, index)
+
   const pan = autoPanDelta(env.canvasRoot, screenPoint)
 
   // ── WRITE ─────────────────────────────────────────────────────────────
@@ -280,7 +298,11 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
   if (session.paintedLayer && session.paintedLayer !== layer) paintCanvasDrag(session.paintedLayer, null)
   session.foreign = foreign
   session.paintedLayer = layer
-  paintCanvasDrag(layer, { ...(foreign ? session.foreignResolution : session.resolution), ghost })
+  paintCanvasDrag(layer, {
+    ...(foreign ? session.foreignResolution : session.resolution),
+    ghost,
+    reflow: session.reflow,
+  })
 
   if (pan && env.panBy) {
     env.panBy(pan.dx, pan.dy)
@@ -290,6 +312,55 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     // transform on their own.
     env.scheduleFrame()
   }
+}
+
+export const EMPTY_REFLOW: readonly CanvasReflowShift[] = []
+
+/**
+ * K6 — recompute the reflow preview when, and only when, the drop target the
+ * gesture resolved has actually changed.
+ *
+ * Runs in the READ half (it reads the already-measured candidate index and
+ * nothing else) and writes only the session. A cross-frame drop gets the same
+ * preview **in the destination frame**, against that frame's own tree and its
+ * own candidates — and never an origin-side one, because the origin frame's
+ * layer is not the one being painted.
+ */
+function refreshReflowPreview(
+  session: DragSession,
+  foreign: ForeignFrameDrop | null,
+  index: FrameCandidateIndex,
+): void {
+  const target = foreign ? session.foreignResolution.target : session.resolution.target
+  const key = target ? `${foreign ? foreign.pageId : ''}|${target.parentId}|${target.index}|${session.duplicating}` : ''
+  if (key === session.reflowKey) return
+  session.reflowKey = key
+  if (!target) {
+    session.reflow = EMPTY_REFLOW
+    return
+  }
+
+  // The room the drop needs is the dragged element's own extent, which is
+  // measured in the ORIGIN frame — the same frame-space units the destination's
+  // rects use, so nothing needs converting even across frames.
+  const dragged = session.index.candidates.find((candidate) => candidate.nodeId === session.draggedId)
+  if (!dragged) {
+    session.reflow = EMPTY_REFLOW
+    return
+  }
+
+  session.reflow = resolveCanvasReflowShifts({
+    tree: foreign ? foreign.tree : session.tree,
+    candidates: index.candidates,
+    parentId: target.parentId,
+    index: target.index,
+    draggedIds: session.draggedIds,
+    draggedExtent: target.axis === 'horizontal' ? dragged.rect.width : dragged.rect.height,
+    // Across frames the run is leaving a tree this preview cannot paint into;
+    // within one frame it is the container the drag started in.
+    originParentId: foreign ? null : (session.tree.nodes[session.draggedId]?.parentId ?? null),
+    copy: session.duplicating,
+  })
 }
 
 /** Drop any chrome painted into a frame the gesture has left, and forget it. */
