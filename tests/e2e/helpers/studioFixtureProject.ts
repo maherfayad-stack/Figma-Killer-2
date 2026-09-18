@@ -58,8 +58,77 @@ export function createFixtureProject(sourceName: string, fixtureName: string): F
   return { dir, ready: true }
 }
 
+/**
+ * A fixture project the spec AUTHORS, rather than copies — an empty directory
+ * under the workspace root, with its files written by the caller.
+ *
+ * Three specs (`css-writeback`, `structural-writeback`, `design-system-insert`)
+ * used to build their fixture with `fs.mkdtempSync(os.tmpdir())` and open it by
+ * absolute path. That cannot work: `resolveProjectDir`'s containment check
+ * rejects any directory outside the root the SERVER resolved, so the board
+ * route answers 404 and the spec fails on a timeout that reads like a product
+ * bug. The safety argument those specs make — "never write into
+ * `studio-workspace/`" — is satisfied by `WORKSPACE_ROOT` being this run's
+ * throwaway copy (`scripts/e2e-dev.ts`), which is exactly what an OS temp dir
+ * was reaching for.
+ *
+ * The name is FIXED, not per-PID, for the same reason `createFixtureProject`'s
+ * is: a crashed run's leftovers are overwritten by the next run rather than
+ * accumulating.
+ *
+ * @param fixtureName Directory name under the workspace root. Prefix it with
+ * `__` so it sorts away from real projects and never becomes the DEFAULT
+ * project (`listStudioProjects` sorts by display name and `defaultProjectDir`
+ * takes the first).
+ */
+export function createAuthoredFixtureProject(
+  fixtureName: string,
+  files: Readonly<Record<string, string>>,
+): FixtureProject {
+  const dir = path.join(WORKSPACE_ROOT, fixtureName)
+  fs.rmSync(dir, { recursive: true, force: true })
+  for (const [relative, contents] of Object.entries(files)) {
+    const target = path.join(dir, ...relative.split('/'))
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, contents, 'utf8')
+  }
+  return { dir, ready: true }
+}
+
 export function removeFixtureProject(fixture: FixtureProject): void {
   fs.rmSync(fixture.dir, { recursive: true, force: true })
+}
+
+/** The three `.studio/meta.json` fields the trust-tier contract is written in. */
+export interface FixtureTrustMeta {
+  /** Absent means Tier 0 — `trustTier.ts` defaults a missing field to `static`. */
+  trust?: string
+  /** True when the promotion's ORIGIN was Studio rather than a click. */
+  trustAutoPromoted?: boolean
+  /** Epoch ms of the ONE automatic promotion. Its presence is the latch. */
+  trustAutoPromotedAt?: number
+}
+
+/**
+ * Read the fixture's trust fields straight off disk.
+ *
+ * Deliberately the FILE and not the `/trust-tier` route: the route is the thing
+ * under test, and a gate that has stopped writing the latch would still report
+ * whatever it holds in memory. `.studio/meta.json` is where the once-only
+ * promise actually lives across a reload.
+ */
+export function readFixtureTrustMeta(fixture: FixtureProject): FixtureTrustMeta {
+  const metaPath = path.join(fixture.dir, '.studio', 'meta.json')
+  if (!fs.existsSync(metaPath)) return {}
+  const raw: unknown = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+  if (typeof raw !== 'object' || raw === null) return {}
+  const record = raw as Record<string, unknown>
+  return {
+    trust: typeof record.trust === 'string' ? record.trust : undefined,
+    trustAutoPromoted: typeof record.trustAutoPromoted === 'boolean' ? record.trustAutoPromoted : undefined,
+    trustAutoPromotedAt:
+      typeof record.trustAutoPromotedAt === 'number' ? record.trustAutoPromotedAt : undefined,
+  }
 }
 
 /**

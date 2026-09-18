@@ -1,7 +1,11 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
+import {
+  createAuthoredFixtureProject,
+  removeFixtureProject,
+  type FixtureProject,
+} from './helpers/studioFixtureProject'
 
 /**
  * `panel-02` (WS-6.3) — real-browser proof that changing a value in the Figma
@@ -27,11 +31,16 @@ import * as path from 'node:path'
  *      last, so the write would change the file and change nothing on screen.
  *      The user gets a readable reason and the file is untouched.
  *
- * SAFETY — this spec WRITES, so it must never point at real user data.
- * `studio-workspace/` is read-only for tests. The fixture below is created
- * fresh in an OS temp directory, opened by absolute path (the studio dir
- * resolver accepts one), and removed afterwards. Nothing under
- * `studio-workspace/` is read or written at any point.
+ * SAFETY — this spec WRITES, so it must never point at real user data. The
+ * fixture is created fresh under this RUN's THROWAWAY COPY of
+ * `studio-workspace/` (`WORKSPACE_ROOT`, made by `scripts/e2e-dev.ts`) and
+ * removed afterwards; the tracked tree is never read or written.
+ *
+ * It used to be created in an OS temp directory and opened by absolute path.
+ * That cannot work and never did: `resolveProjectDir`'s containment check
+ * rejects any directory outside the root the SERVER resolved, so the board
+ * route 404s and both cases fail on a 20 s timeout that reads exactly like a
+ * product bug. The throwaway copy gives the same safety property for real.
  */
 
 const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
@@ -78,10 +87,10 @@ export default function Home() {
 }
 `
 
-let fixtureDir: string
+let fixture: FixtureProject
 
 function cssPath(): string {
-  return path.join(fixtureDir, 'pages', 'Home.css')
+  return path.join(fixture.dir, 'pages', 'Home.css')
 }
 
 function readCss(): string {
@@ -89,20 +98,20 @@ function readCss(): string {
 }
 
 test.beforeAll(() => {
-  fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-panel02-'))
-  fs.mkdirSync(path.join(fixtureDir, 'pages'), { recursive: true })
-  fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.css'), FIXTURE_CSS, 'utf8')
-  fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.tsx'), FIXTURE_PAGE, 'utf8')
+  fixture = createAuthoredFixtureProject('__e2e-css-writeback', {
+    'pages/Home.css': FIXTURE_CSS,
+    'pages/Home.tsx': FIXTURE_PAGE,
+  })
 })
 
 test.afterAll(() => {
-  if (fixtureDir) fs.rmSync(fixtureDir, { recursive: true, force: true })
+  if (fixture) removeFixtureProject(fixture)
 })
 
 /**
- * Open the studio board on the temp fixture with auto-save ON — unlike every
- * other studio spec, reaching disk IS the thing under test here. Safe only
- * because `fixtureDir` is a throwaway temp directory.
+ * Open the studio board on the fixture with auto-save ON — unlike every other
+ * studio spec, reaching disk IS the thing under test here. Safe only because
+ * the fixture lives in this run's throwaway workspace copy.
  */
 async function openStudioBoard(page: Page, projectDir: string): Promise<Locator> {
   await page.addInitScript((dir: string) => {
@@ -160,7 +169,7 @@ test.describe('panel-02 — CSS write-back reaches disk, and refuses when it can
   test.setTimeout(180_000)
 
   test('an inspector width change is written into the real .css file, byte-exact elsewhere', async ({ page }) => {
-    await openStudioBoard(page, fixtureDir)
+    await openStudioBoard(page, fixture.dir)
 
     const frame = page.locator('[data-page-id]').first()
     const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
@@ -200,7 +209,7 @@ test.describe('panel-02 — CSS write-back reaches disk, and refuses when it can
   })
 
   test('a selector declared twice REFUSES with a readable reason and leaves the file untouched', async ({ page }) => {
-    await openStudioBoard(page, fixtureDir)
+    await openStudioBoard(page, fixture.dir)
 
     const frame = page.locator('[data-page-id]').first()
     const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)

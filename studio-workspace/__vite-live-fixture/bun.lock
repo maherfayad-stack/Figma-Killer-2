@@ -1,0 +1,30 @@
+// A MARKER, not a resolved dependency set.
+//
+// `server/handlers/studio/liveCapability.ts` checks for the PRESENCE of one of
+// five lockfile names and never opens the file: "a lockfile is the cheapest
+// honest proxy for 'this project has been installed at least once, on
+// purpose'". This fixture exists to be the smallest project that satisfies that
+// check, and committing a real `node_modules` tree (or the thousands of lines a
+// real lockfile carries) into this repository is exactly what the
+// studio-workspace section of `.gitignore` exists to prevent.
+//
+// Consequence, stated in this project's README and asserted by the phase-0
+// spec: the dev server this project is now ALLOWED to start cannot actually
+// boot here. The promotion, the notice, the Undo and the once-only latch are
+// all still observable — they are file-and-DOM facts.
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "vite-live-fixture",
+      "dependencies": {
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0"
+      },
+      "devDependencies": {
+        "vite": "^7.0.0"
+      }
+    }
+  },
+  "packages": {}
+}
